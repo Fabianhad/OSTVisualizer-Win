@@ -163,6 +163,37 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             combo.cleanup()
             combo.deleteLater()
 
+    def test_takeoff_event_for_another_bid_is_ignored_and_batches_refresh_target(self):
+        pages_with_takeoffs = set()
+        manager, window, combo, refreshes = self._make_indicator_manager(
+            AnnotationViewWindow,
+            target_page_uid="p2",
+            pages_with_takeoffs=pages_with_takeoffs,
+        )
+        try:
+            pages_with_takeoffs.add("p1")
+            self.assertFalse(self._indicator_is_active(combo, "p1"))
+            manager.project_data.get_current_bid_ref = lambda: BidRef(
+                "memory-test.mdb", "other-bid"
+            )
+            manager._on_takeoffs_changed(page_uid="p1", takeoff_uids=["t1"])
+            self.assertFalse(self._indicator_is_active(combo, "p1"))
+            self.assertEqual(window._pages_with_takeoffs, set())
+            self.assertEqual(refreshes, [])
+            # Positive control: the same event for the displayed bid applies,
+            # and a batched event updates every listed page and refreshes the
+            # displayed (target) page once.
+            manager.project_data.get_current_bid_ref = lambda: BidRef(
+                "memory-test.mdb", "bid-1"
+            )
+            manager._on_takeoffs_changed(page_uids=["p1", "p2"], takeoff_uids=["t1"])
+            self.assertTrue(self._indicator_is_active(combo, "p1"))
+            self.assertFalse(self._indicator_is_active(combo, "p2"))
+            self.assertEqual(refreshes, ["p2"])
+        finally:
+            combo.cleanup()
+            combo.deleteLater()
+
     def test_takeoff_event_fans_out_to_annotation_and_view_models(self):
         pages_with_takeoffs = set()
         (

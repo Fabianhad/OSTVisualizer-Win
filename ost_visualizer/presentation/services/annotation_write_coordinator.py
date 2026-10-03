@@ -2,6 +2,7 @@ from .annotation_history import (
     AnnotationHistoryBinding,
     capture_annotation_targets,
     capture_annotation_page_scales,
+    capture_hotlink_view_dependencies,
 )
 from .undo_redo_service import AnnotationHistoryTarget
 from typing import Callable, List, Optional
@@ -11,7 +12,10 @@ from ...application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     PlanItemsPastePayload,
 )
-from ...application.dtos.collaboration_resource_catalog import annotation_resource_id
+from ...application.dtos.collaboration_resource_catalog import (
+    annotation_resource_id,
+    parse_annotation_resource_id,
+)
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
@@ -33,16 +37,23 @@ class AnnotationWriteCoordinator:
     def capture_page_scales(self, page_uids):
         return capture_annotation_page_scales(self._data_svc, page_uids)
 
-    def capture_history(self, bid_ref, updates, undo, *, captured_scales=None):
+    def capture_history(
+        self, bid_ref, updates, undo, *, captured_scales=None, specs=()
+    ):
         return AnnotationHistoryBinding(
             self._data_svc,
             undo,
             bid_ref,
             capture_annotation_targets(self._data_svc, bid_ref, updates),
             captured_scales=captured_scales,
+            view_dependencies=capture_hotlink_view_dependencies(
+                self._data_svc, bid_ref, specs
+            ),
         )
 
-    def history_from_specs(self, bid_ref, specs, uids, undo, *, captured_scales=None):
+    def history_from_specs(
+        self, bid_ref, specs, uids, undo, *, captured_scales=None, source_uids=()
+    ):
         return AnnotationHistoryBinding(
             self._data_svc,
             undo,
@@ -54,7 +65,18 @@ class AnnotationWriteCoordinator:
                 for uid, spec in zip(uids, specs)
             },
             captured_scales=captured_scales,
+            view_dependencies=capture_hotlink_view_dependencies(
+                self._data_svc,
+                bid_ref,
+                specs,
+                self._named_view_uids_from_sources(source_uids),
+            ),
         )
+
+    @staticmethod
+    def _named_view_uids_from_sources(source_uids):
+        parsed = [parse_annotation_resource_id(source) for source in source_uids]
+        return {uid for kind, uid in parsed if kind == ANNOTATION_TYPE_NAMED_VIEW}
 
     def history_from_saved(self, bid_ref, annotations, undo, *, captured_scales=None):
         return AnnotationHistoryBinding(
@@ -68,6 +90,12 @@ class AnnotationWriteCoordinator:
                 for item in annotations
             },
             captured_scales=captured_scales,
+            view_dependencies=capture_hotlink_view_dependencies(
+                self._data_svc,
+                bid_ref,
+                annotations,
+                {str(item.uid) for item in annotations if item.is_namedview},
+            ),
         )
 
     def save_positions(self, db_path: str, positions: List[tuple]) -> bool:

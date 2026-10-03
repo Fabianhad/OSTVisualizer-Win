@@ -276,3 +276,200 @@ class DatabaseCapabilityServiceDatabaseDescriptorTests(unittest.TestCase):
         descriptor = DatabaseDescriptor.for_access(r"C:\data\sample.mdb")
         registry.register(descriptor)
         self.assertTrue(service.is_editable(descriptor.access_path))
+
+
+class DatabaseCapabilityBoundarySecondPassTests(unittest.TestCase):
+    """Strict boundary contracts: exact booleans, resource typing and revocation."""
+
+    @staticmethod
+    def _sql_service(editable=True):
+        class Probe:
+            def __init__(self):
+                self.editable = editable
+                self.requests = []
+
+            def can_edit(self, database_id):
+                self.requests.append(database_id)
+                return self.editable
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="Boundary"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        probe = Probe()
+        service = DatabaseCapabilityService(registry, probe)
+        return service, registry, descriptor, probe
+
+    def test_unknown_locator_is_denied_with_an_exact_false(self):
+        service, _registry, _descriptor, _probe = self._sql_service()
+        self.assertIs(service.is_editable("unknown"), False)
+        self.assertIs(
+            service.is_editable("unknown", ResourceRef("condition", "1", 8)), False
+        )
+
+    def test_connecting_unknown_database_reports_false_and_revokes_prior_grant(self):
+        service, registry, descriptor, _probe = self._sql_service()
+        self.assertIs(service.mark_connected(descriptor.database_id), True)
+        service.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        self.assertIs(service.is_editable(descriptor.database_id), True)
+        registry.unregister(descriptor.database_id)
+        self.assertIs(service.mark_connected(descriptor.database_id), False)
+        registry.register(descriptor)
+        # The descriptor is back and collaboration is healthy: only the revoked
+        # permission grant can still deny editing.
+        self.assertIs(service.is_editable(descriptor.database_id), False)
+
+    def test_access_database_is_connected_without_probe_and_has_no_collaboration_state(
+        self,
+    ):
+        registry = DatabaseDescriptorRegistry()
+        access = DatabaseDescriptor.for_access(r"C:\data\local.mdb")
+        registry.register(access)
+
+        class ForbiddenProbe:
+            def can_edit(self, _database_id):
+                raise AssertionError("Access has an immediate local grant")
+
+        service = DatabaseCapabilityService(registry, ForbiddenProbe())
+        self.assertIs(service.mark_connected(access.database_id), True)
+        for state in (SynchronizationState.HEALTHY, SynchronizationState.CONFLICTED):
+            service.set_collaboration_state(access.database_id, state, "ignored")
+            status = service.collaboration_status(access.database_id)
+            self.assertEqual(status.state, SynchronizationState.STOPPED)
+            self.assertEqual(status.message, "")
+            self.assertIs(service.is_editable(access.database_id), True)
+            self.assertIs(
+                service.is_editable(
+                    access.database_id, ResourceRef("condition", "1", 8)
+                ),
+                True,
+            )
+        service.set_collaboration_state(
+            "never-registered", SynchronizationState.HEALTHY
+        )
+        self.assertEqual(
+            service.collaboration_status("never-registered").state,
+            SynchronizationState.STOPPED,
+        )
+
+    def test_disconnect_revokes_permission_independently_of_collaboration_state(self):
+        service, _registry, descriptor, probe = self._sql_service()
+        service.mark_connected(descriptor.database_id)
+        service.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        self.assertIs(service.is_editable(descriptor.database_id), True)
+        service.mark_disconnected(descriptor.database_id)
+        # A late HEALTHY report without a fresh permission probe must not grant.
+        service.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        self.assertIs(service.is_editable(descriptor.database_id), False)
+        self.assertEqual(probe.requests, [descriptor.database_id])
+
+    def test_unhealthy_database_denies_even_unlocked_resources(self):
+        service, _registry, descriptor, _probe = self._sql_service()
+        service.mark_connected(descriptor.database_id)
+        resource = ResourceRef("condition", "42", 8)
+        for state in (
+            SynchronizationState.STOPPED,
+            SynchronizationState.CONNECTING,
+            SynchronizationState.CATCHING_UP,
+            SynchronizationState.DISCONNECTED,
+            SynchronizationState.READ_ONLY,
+            SynchronizationState.CONFLICTED,
+        ):
+            with self.subTest(state=state):
+                service.set_collaboration_state(descriptor.database_id, state)
+                self.assertIs(
+                    service.is_editable(descriptor.database_id, resource), False
+                )
+        service.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        self.assertIs(service.is_editable(descriptor.database_id, resource), True)
+
+    def test_collaboration_message_defaults_to_empty_and_is_replaced_by_the_next_state(
+        self,
+    ):
+        service, _registry, descriptor, _probe = self._sql_service()
+        database_id = descriptor.database_id
+        service.set_collaboration_state(
+            database_id, SynchronizationState.DISCONNECTED, "offline"
+        )
+        self.assertEqual(service.collaboration_status(database_id).message, "offline")
+        service.set_collaboration_state(database_id, SynchronizationState.HEALTHY)
+        status = service.collaboration_status(database_id)
+        self.assertEqual(
+            (status.state, status.message), (SynchronizationState.HEALTHY, "")
+        )
+
+    def test_database_level_check_ignores_resource_locks(self):
+        service, _registry, descriptor, _probe = self._sql_service()
+        service.mark_connected(descriptor.database_id)
+        service.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        service.update_collaboration_resources(
+            descriptor.database_id,
+            frozenset({ResourceRef("condition", "42", 8)}),
+            frozenset({ResourceRef("page", "9", 8)}),
+        )
+        self.assertIs(service.is_editable(descriptor.database_id), True)
+
+    def test_resource_blocking_requires_matching_type_and_bid_scope(self):
+        service, _registry, descriptor, _probe = self._sql_service()
+        database_id = descriptor.database_id
+        service.mark_connected(database_id)
+        service.set_collaboration_state(database_id, SynchronizationState.HEALTHY)
+        # Same identity text under another type is a different resource.
+        service.update_collaboration_resources(
+            database_id, frozenset({ResourceRef("condition", "42", 8)})
+        )
+        self.assertIs(
+            service.is_editable(database_id, ResourceRef("page", "42", 8)), True
+        )
+        self.assertIs(
+            service.is_editable(database_id, ResourceRef("condition", "42", 8)), False
+        )
+        # A non-Bid resource whose id equals a Bid uid in another Bid is not blocked
+        # by a lock on that other resource, only by a Bid lock.
+        service.update_collaboration_resources(
+            database_id, frozenset({ResourceRef("condition", "8", 3)})
+        )
+        self.assertIs(
+            service.is_editable(database_id, ResourceRef("page", "12", 8)), True
+        )
+        service.update_collaboration_resources(
+            database_id, frozenset({ResourceRef("bid", "8", 8)})
+        )
+        self.assertIs(
+            service.is_editable(database_id, ResourceRef("page", "12", 8)), False
+        )
+        self.assertIs(
+            service.is_editable(database_id, ResourceRef("page", "12", 9)), True
+        )
+        # Unscoped resources are never blocked by a Bid lock or Bid-scoped identity.
+        service.update_collaboration_resources(
+            database_id, frozenset({ResourceRef("projects_collection", "database")})
+        )
+        self.assertIs(service.is_editable(database_id, ResourceRef("bid", "9")), True)
+        self.assertIs(
+            service.is_editable(
+                database_id, ResourceRef("projects_collection", "database")
+            ),
+            False,
+        )
+        service.update_collaboration_resources(
+            database_id, frozenset({ResourceRef("bid", "None")})
+        )
+        self.assertIs(
+            service.is_editable(
+                database_id, ResourceRef("job_statuses_collection", "database")
+            ),
+            True,
+        )

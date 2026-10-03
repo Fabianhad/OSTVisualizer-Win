@@ -33,7 +33,6 @@ from ...application.interfaces.i_shutdown_aware import IShutdownAware
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.annotation_view import AnnotationView
 from ...domain.entities.file_state import normalize_path
-from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.workspace_state import DetachedWindowState
 from ...domain.repositories.i_annotation_view_repository import (
@@ -364,7 +363,11 @@ class DetachedPageViewManager(IShutdownAware):
         if not view:
             return
         bid_ref = view.bid_ref
-        if bid_ref and file_path and bid_ref.file_path != file_path:
+        if (
+            bid_ref
+            and file_path
+            and normalize_path(bid_ref.file_path) != normalize_path(file_path)
+        ):
             return
         if not image_sources_unchanged:
             self._invalidate_view_image_sources(view)
@@ -386,7 +389,9 @@ class DetachedPageViewManager(IShutdownAware):
         view = self.repository.get_active_view()
         if (
             view is None
-            or view.bid_ref != BidRef(database_id, bid_uid)
+            or view.bid_ref is None
+            or normalize_path(view.bid_ref.file_path) != normalize_path(database_id)
+            or view.bid_ref.bid_uid != bid_uid
             or view.bid_ref != self.project_data.get_current_bid_ref()
         ):
             return
@@ -420,7 +425,10 @@ class DetachedPageViewManager(IShutdownAware):
         if not view:
             return
         bid_ref = view.bid_ref
-        if bid_ref and (bid_ref.file_path != file_path or bid_ref.bid_uid != bid_uid):
+        if bid_ref and (
+            normalize_path(bid_ref.file_path) != normalize_path(file_path)
+            or bid_ref.bid_uid != bid_uid
+        ):
             return
         self._refresh_signaler.request()
 
@@ -533,7 +541,7 @@ class DetachedPageViewManager(IShutdownAware):
         if (
             view is None
             or view.bid_ref is None
-            or view.bid_ref.file_path != database_id
+            or normalize_path(view.bid_ref.file_path) != normalize_path(database_id)
             or view.bid_ref.bid_uid != bid_uid
         ):
             return
@@ -552,7 +560,9 @@ class DetachedPageViewManager(IShutdownAware):
         if (
             area_uids
             and view is not None
-            and view.bid_ref == BidRef(database_id, bid_uid)
+            and view.bid_ref is not None
+            and normalize_path(view.bid_ref.file_path) == normalize_path(database_id)
+            and view.bid_ref.bid_uid == bid_uid
             and self._window_undo_service is not None
         ):
             self._window_undo_service.clear()
@@ -569,7 +579,9 @@ class DetachedPageViewManager(IShutdownAware):
         if (
             not local_completion
             and view is not None
-            and view.bid_ref == BidRef(database_id, bid_uid)
+            and view.bid_ref is not None
+            and normalize_path(view.bid_ref.file_path) == normalize_path(database_id)
+            and view.bid_ref.bid_uid == bid_uid
         ):
             self._prepare_window_for_authoritative_change_if_blocked()
         self._on_conditions_changed(

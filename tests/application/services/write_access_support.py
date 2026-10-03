@@ -83,6 +83,7 @@ class _ConcurrencyTokens:
         self.load_calls = 0
         self.loaded = []
         self.expected = ()
+        self.expected_requests = []
         self.applied = []
         self.scope = []
 
@@ -98,7 +99,8 @@ class _ConcurrencyTokens:
         finally:
             self.scope.append(("exit", database_id))
 
-    def expected_versions(self, _database_id, _resources):
+    def expected_versions(self, database_id, resources):
+        self.expected_requests.append((database_id, resources))
         return self.expected
 
     def apply_result(self, database_id, versions):

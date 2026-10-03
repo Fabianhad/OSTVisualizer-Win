@@ -31,28 +31,36 @@ from PySide6.QtGui import QColor, QImage
 _DISABLED_CAPTION_SETTINGS = AnnotationCaptionSettingsDto(False, ())
 
 
+def _geometry(visible_box=(0.0, 0.0, 612.0, 792.0), user_unit=1.0, rotation=0):
+    return SimpleNamespace(
+        media_box=tuple(visible_box),
+        crop_box=tuple(visible_box),
+        visible_box=tuple(visible_box),
+        user_unit=user_unit,
+        rotation=rotation,
+    )
+
+
 class _FakeWriter:
     def __init__(self):
         self.pages = []
         self.merge_calls = 0
+        self.output_paths = []
+        self.merge_result = True
+        self.last_error = ""
 
     def get_page_geometries(self, _path):
-        geometry = SimpleNamespace(
-            media_box=(0.0, 0.0, 612.0, 792.0),
-            crop_box=(0.0, 0.0, 612.0, 792.0),
-            visible_box=(0.0, 0.0, 612.0, 792.0),
-            user_unit=1.0,
-            rotation=0,
-        )
+        geometry = _geometry()
         return [geometry, geometry, geometry]
 
-    def merge_pages_with_annotations(self, pages, _output_path):
+    def merge_pages_with_annotations(self, pages, output_path):
         self.merge_calls += 1
+        self.output_paths.append(output_path)
         self.pages = list(pages)
-        return True
+        return self.merge_result
 
     def get_last_error(self):
-        return ""
+        return self.last_error
 
 
 class _ColorService:

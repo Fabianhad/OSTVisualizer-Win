@@ -25,7 +25,7 @@ from ost_visualizer.presentation.components.plan_view.components.zoom_handler im
     ZoomHandlerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QApplication
 import tests.integration.persistence.test_plan_property_ownership as storage_fixtures
@@ -108,6 +108,7 @@ class LinearPlacementIncrementTests(unittest.TestCase):
     def test_preview_matches_commit_across_increments_scale_zoom_and_page_transform(
         self,
     ):
+        exact_checked = 0
         for increment, ratio, resolution, zoom, direction, transform in product(
             (0.25, 1.0, 3.0),
             (24.0, 48.0, 96.0),
@@ -144,11 +145,32 @@ class LinearPlacementIncrementTests(unittest.TestCase):
                 self.assertAlmostEqual(
                     length / increment, round(length / increment), places=10
                 )
+                # When one viewport pixel is a small fraction of the increment the
+                # cursor target is unambiguous, so the committed length is the
+                # hand-computed whole number of increments nearest the drag
+                # (round(hypot(12, 0)) = 12, round(hypot(9, 7)) = 11).
+                origin = harness._scene_pos_to_ost(harness.mapToScene(QPoint(0, 0)))
+                pixel = max(
+                    math.hypot(point.x() - origin.x(), point.y() - origin.y())
+                    for point in (
+                        harness._scene_pos_to_ost(harness.mapToScene(QPoint(1, 0))),
+                        harness._scene_pos_to_ost(harness.mapToScene(QPoint(0, 1))),
+                    )
+                )
+                if pixel * 4 <= increment:
+                    exact_checked += 1
+                    self.assertAlmostEqual(
+                        length / increment,
+                        round(math.hypot(*direction)),
+                        places=10,
+                    )
                 page_transform = harness._current_page_transform()
                 self.assertEqual(
                     page_transform.map(QPointF(*preview[2:])),
                     page_transform.map(QPointF(*projected[2:])),
                 )
+        # Guard against the pixel-size condition silently excluding every case.
+        self.assertGreater(exact_checked, 200)
 
     def test_snapped_geometry_survives_insert_update_curve_and_reload(self):
         fixture = storage_fixtures.PlanPropertyOwnershipTests()
@@ -191,11 +213,20 @@ class LinearPlacementIncrementTests(unittest.TestCase):
         self.assertTrue(
             fixture.ops.save_takeoff_positions("database.mdb", [(uids[0], position)])
         )
+
+        def stored_curve():
+            return fixture.conn.execute(
+                "SELECT Curve FROM BidTakeoffs WHERE UID=?", (int(uids[0]),)
+            ).fetchone()[0]
+
         assert_round_trip()
+        curve_before = stored_curve()
+        self.assertNotEqual(curve_before, 0)
         self.assertTrue(
             fixture.ops.set_takeoff_curve("database.mdb", uids[0], position, 0)
         )
         assert_round_trip()
+        self.assertEqual(stored_curve(), 0)
 
     def test_shift_angle_override_keeps_measurement_increment_and_preview(self):
         for modifier in (
@@ -216,6 +247,55 @@ class LinearPlacementIncrementTests(unittest.TestCase):
                     committed[2] - committed[0], committed[3] - committed[1]
                 )
                 self.assertAlmostEqual(length, round(length), places=10)
+
+    def test_grid_distance_rounds_to_nearest_increment(self):
+        # Drag targets 20.81 and 20.25 increments away; the nearest whole numbers
+        # are 21 (up) and 20 (down), so floor/ceil style rounding is distinguished.
+        for modifier in (
+            Qt.KeyboardModifier.NoModifier,
+            Qt.KeyboardModifier.ShiftModifier,
+        ):
+            for direction, expected_length in (
+                ((17.0, 12.0), 21.0),
+                ((17.0, 11.0), 20.0),
+            ):
+                with self.subTest(modifier=modifier, direction=direction), patch.object(
+                    placement_mode.QGuiApplication,
+                    "keyboardModifiers",
+                    return_value=modifier,
+                ):
+                    harness = LinearPlacementHarness(ratio=96.0)
+                    _preview, committed = harness.preview_and_release(*direction)
+                    self.assertAlmostEqual(
+                        math.hypot(
+                            committed[2] - committed[0], committed[3] - committed[1]
+                        ),
+                        expected_length,
+                        places=9,
+                    )
+
+    def test_line_snap_commits_the_exact_snapped_point_without_distance_rounding(self):
+        from ost_visualizer.presentation.components.plan_view.components.snap_index import (
+            ENDPOINT,
+        )
+
+        class EndpointSnapHarness(LinearPlacementHarness):
+            def _query_takeoff_snap(self, *args):
+                return (12.37, 11.21, ENDPOINT, 0)
+
+        with patch.object(
+            placement_mode.QGuiApplication,
+            "keyboardModifiers",
+            return_value=Qt.KeyboardModifier.ShiftModifier,
+        ):
+            harness = EndpointSnapHarness(ratio=96.0)
+            preview, committed = harness.preview_and_release(9.0, 7.0)
+        # The start is (3, 4); the endpoint snap wins over the 1 inch grid, so the
+        # 11.82 inch chord is kept (it is not a whole number of increments).
+        self.assertEqual(len(committed), 4)
+        for actual, expected in zip(committed, (3.0, 4.0, 12.37, 11.21)):
+            self.assertAlmostEqual(actual, expected, places=9)
+        self.assertEqual(preview, harness.cs.transform_vertices_to_2d(committed))
 
     def test_placement_undo_redo_retains_exact_snapped_coordinates(self):
         harness = LinearPlacementHarness()

@@ -63,6 +63,54 @@ class SchemaTransactionLockTests(unittest.TestCase):
                         acquire(cursor, *args)
                     self.assertEqual(raised.exception.details.code, SqlErrorCode.LOCKED)
 
+    def test_a_refused_operation_lock_tells_the_user_to_reconnect(self):
+        # G2 (user decision): the marker-lookup lock failure is shown to the user
+        # as the disconnected-state message, so it says what to do. The error
+        # class, code and flags are unchanged (non-retryable LOCKED).
+        for result in (None, (-1,), (-2,), (-3,), (-999,)):
+            with self.subTest(result=result):
+                cursor = Mock(spec=["execute", "fetchone"])
+                cursor.fetchone.return_value = result
+                with self.assertRaises(SqlInfrastructureError) as raised:
+                    acquire_operation_transaction_lock(cursor, "operation-1")
+                error = raised.exception
+                self.assertEqual(
+                    str(error),
+                    "Another session is resolving the same SQL operation. Reconnect to the database to finish resolving it.",
+                )
+                self.assertEqual(error.details.user_message, str(error))
+                self.assertIn("reconnect", str(error).lower())
+                self.assertEqual(error.details.code, SqlErrorCode.LOCKED)
+                self.assertEqual(
+                    (
+                        error.retryable,
+                        error.credential_required,
+                        error.read_only_required,
+                        error.session_expired,
+                    ),
+                    (False, False, False, False),
+                )
+
+    def test_the_other_lock_messages_are_unchanged(self):
+        # Control for G2: only the operation lock message gained the guidance.
+        cursor = Mock(spec=["execute", "fetchone", "fetchall"])
+        cursor.fetchone.return_value = (-1,)
+        with self.assertRaises(SqlInfrastructureError) as schema:
+            acquire_schema_transaction_lock(cursor)
+        self.assertEqual(
+            str(schema.exception),
+            "Another client is initializing this database schema.",
+        )
+        cursor.fetchall.return_value = [(0, -1)]
+        with self.assertRaises(SqlInfrastructureError) as resource:
+            acquire_resource_transaction_locks(
+                cursor, ((ResourceRef("takeoff", "1", 1), "Exclusive"),)
+            )
+        self.assertEqual(
+            str(resource.exception),
+            "Another session is changing the same SQL resource.",
+        )
+
 
 class ResourceTransactionLockTests(unittest.TestCase):
     def setUp(self):
@@ -116,3 +164,137 @@ class ResourceTransactionLockTests(unittest.TestCase):
                 with self.assertRaises(SqlInfrastructureError) as raised:
                     acquire_resource_transaction_locks(cursor, self.resources)
                 self.assertEqual(raised.exception.details.code, SqlErrorCode.LOCKED)
+
+
+import pyodbc  # noqa: E402
+from ost_visualizer.domain.entities.database_descriptor import (  # noqa: E402
+    SqlServerDatabaseLocation,
+)
+from ost_visualizer.infrastructure.sql.connection_manager import (  # noqa: E402
+    SqlConnectionRequest,
+)
+from tests.helpers.sql.strict_sql_fakes import (  # noqa: E402
+    Reply,
+    StrictSqlServer,
+    StrictSqlViolation,
+    applock_rules,
+)
+
+
+class StrictApplockSemanticsTests(unittest.TestCase):
+    """The lock helpers against the strict `sp_getapplock` model (not Mock cursors)."""
+
+    def setUp(self):
+        self.server = StrictSqlServer()
+        applock_rules(self.server)
+        self.manager = self.server.manager()
+        self.request = SqlConnectionRequest(
+            SqlServerDatabaseLocation(server="localhost", database="TEST")
+        )
+
+    def _locked(self, call, *, autocommit=False):
+        with self.server.patched():
+            with self.manager.connection(self.request, autocommit=autocommit) as lease:
+                with lease.cursor() as cursor:
+                    call(cursor)
+                    return lease
+
+    def test_schema_lock_is_exclusive_across_connections_and_freed_by_each_transaction_end(
+        self,
+    ):
+        with self.server.patched():
+            with self.manager.connection(self.request) as first:
+                with first.cursor() as cursor:
+                    acquire_schema_transaction_lock(cursor)
+                self.assertEqual(
+                    self.server.applocks.holders(SQL_SCHEMA_LOCK_RESOURCE), [1]
+                )
+                with self.manager.connection(self.request) as second:
+                    with second.cursor() as cursor:
+                        with self.assertRaises(SqlInfrastructureError) as raised:
+                            acquire_schema_transaction_lock(cursor)
+                    self.assertEqual(raised.exception.details.code, SqlErrorCode.LOCKED)
+                first.rollback()
+                self.assertEqual(
+                    self.server.applocks.holders(SQL_SCHEMA_LOCK_RESOURCE), []
+                )
+                with self.manager.connection(self.request) as third:
+                    with third.cursor() as cursor:
+                        acquire_schema_transaction_lock(cursor)
+                    third.commit()
+                self.assertEqual(
+                    self.server.applocks.holders(SQL_SCHEMA_LOCK_RESOURCE), []
+                )
+
+    def test_operation_lock_serialises_two_sessions_resolving_the_same_operation(self):
+        with self.server.patched():
+            with self.manager.connection(self.request) as first:
+                with first.cursor() as cursor:
+                    acquire_operation_transaction_lock(cursor, "op-1")
+                with self.manager.connection(self.request) as other:
+                    with other.cursor() as cursor:
+                        # a different operation is independent
+                        acquire_operation_transaction_lock(cursor, "op-2")
+                        with self.assertRaises(SqlInfrastructureError):
+                            acquire_operation_transaction_lock(cursor, "op-1")
+
+    def test_transaction_owned_locks_require_a_transaction(self):
+        with self.assertRaisesRegex(StrictSqlViolation, "autocommit"):
+            self._locked(acquire_schema_transaction_lock, autocommit=True)
+        with self.assertRaisesRegex(StrictSqlViolation, "autocommit"):
+            self._locked(
+                lambda cursor: acquire_resource_transaction_locks(
+                    cursor, ((ResourceRef("takeoff", "1", 1), "Exclusive"),)
+                ),
+                autocommit=True,
+            )
+
+    def test_resource_batch_stops_at_the_first_refused_lock_and_keeps_none_after_rollback(
+        self,
+    ):
+        resources = (
+            (ResourceRef("bid", "3", 3), "Shared"),
+            (ResourceRef("takeoff", "10", 3), "Exclusive"),
+            (ResourceRef("takeoff", "11", 3), "Exclusive"),
+        )
+        with self.server.patched():
+            holder = self.server.connect("holder", autocommit=False)
+            self.server.applocks.acquire(holder, "OSTV:takeoff:10", "Exclusive")
+            with self.manager.connection(self.request) as lease:
+                with lease.cursor() as cursor:
+                    with self.assertRaises(SqlInfrastructureError) as raised:
+                        acquire_resource_transaction_locks(cursor, resources)
+                self.assertEqual(raised.exception.details.code, SqlErrorCode.LOCKED)
+                lease.rollback()
+        mine = [
+            (resource, code)
+            for number, resource, _mode, code in self.server.applocks.log
+            if number != holder.number
+        ]
+        # the batch stops at the refusal: takeoff 11 is never attempted
+        self.assertEqual(mine, [("OSTV:bid:3", 0), ("OSTV:takeoff:10", -1)])
+        self.assertEqual(self.server.applocks.holders("OSTV:bid:3"), [])
+
+    def test_shared_locks_coexist_but_conflict_with_exclusive_requests(self):
+        def lock(mode):
+            def call(cursor):
+                acquire_resource_transaction_locks(
+                    cursor, ((ResourceRef("bid", "3", 3), mode),)
+                )
+
+            return call
+
+        with self.server.patched():
+            with self.manager.connection(self.request) as first:
+                with first.cursor() as cursor:
+                    lock("Shared")(cursor)
+                with self.manager.connection(self.request) as second:
+                    with second.cursor() as cursor:
+                        lock("Shared")(cursor)
+                        with self.assertRaises(SqlInfrastructureError):
+                            lock("Exclusive")(cursor)
+        self.assertEqual(self.server.applocks.holders("OSTV:bid:3"), [])
+
+    def test_empty_resource_set_is_a_valid_complete_batch(self):
+        self._locked(lambda cursor: acquire_resource_transaction_locks(cursor, ()))
+        self.assertEqual(len(self.server.statements(1)), 1)

@@ -15,8 +15,10 @@ from PySide6 import QtWidgets
 class _SidebarProjection:
     def __init__(self, page_combo):
         self._page_combo = page_combo
-        self.rows = {"condition-1": {"uom": "EA", "quantity": 5.0}}
+        # Stale display state that only a quantity projection can replace.
+        self.rows = {"condition-1": {"uom": "EA", "quantity": 1.0}}
         self.quantity_refreshes = 0
+        self.calls = []
 
     def load_takeoff_sidebar_from_memory(self, *_args):
         raise AssertionError("MDB refresh must not use the SQL memory path")
@@ -30,9 +32,11 @@ class _SidebarProjection:
     def load_conditions_sidebar(self):
         # Rebuilding condition rows intentionally starts with empty display cells;
         # the authoritative quantity projection must run after the rebuild.
+        self.calls.append("load_conditions_sidebar")
         self.rows = {"condition-1": {"uom": "", "quantity": None}}
 
     def update_conditions_quantities(self):
+        self.calls.append("update_conditions_quantities")
         self.quantity_refreshes += 1
         self.rows = {"condition-1": {"uom": "EA", "quantity": 5.0}}
 
@@ -62,9 +66,8 @@ class PageNavigationQuantityProjectionTests(unittest.TestCase):
         page_combo.load_bid(initial_bid)
         page_combo.restore_selection(["page-1"], "page-1")
         projection = _SidebarProjection(page_combo)
-        page_combo.active_page_changed.connect(
-            lambda _page_uid: projection.update_conditions_quantities()
-        )
+        active_page_events = []
+        page_combo.active_page_changed.connect(active_page_events.append)
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: bid_ref,
@@ -103,9 +106,10 @@ class PageNavigationQuantityProjectionTests(unittest.TestCase):
         )
         coordinator._sync_embedded_renderer_exposure = lambda: None
         coordinator._sync_page_info_status = lambda: None
-        coordinator.handle_active_page_changed = (
-            lambda _page_uid: projection.update_conditions_quantities()
-        )
+        # The page is unchanged, so the page handler must not be what refreshes the
+        # quantities: record it separately from the sidebar projection.
+        handled_pages = []
+        coordinator.handle_active_page_changed = handled_pages.append
         try:
             coordinator._activate_takeoff_workspace()
         finally:
@@ -114,7 +118,13 @@ class PageNavigationQuantityProjectionTests(unittest.TestCase):
             projection.rows,
             {"condition-1": {"uom": "EA", "quantity": 5.0}},
         )
-        self.assertGreaterEqual(projection.quantity_refreshes, 1)
+        # The projection ran after the condition rows were rebuilt, once.
+        self.assertEqual(
+            projection.calls,
+            ["load_conditions_sidebar", "update_conditions_quantities"],
+        )
+        self.assertEqual(handled_pages, ["page-1"])
+        self.assertEqual(active_page_events, [])
 
     def test_current_page_deletion_activates_a_remaining_page_and_projects_uoms(self):
         bid_ref = BidRef("cover-sheet.mdb", "7")
@@ -187,3 +197,7 @@ class PageNavigationQuantityProjectionTests(unittest.TestCase):
             projection.rows,
             {"condition-1": {"uom": "EA", "quantity": 5.0}},
         )
+        # Rows were rebuilt first and the final display state is a projection.
+        self.assertEqual(projection.calls[0], "load_conditions_sidebar")
+        self.assertEqual(projection.calls[-1], "update_conditions_quantities")
+        self.assertEqual(projection.calls.count("load_conditions_sidebar"), 1)

@@ -31,6 +31,9 @@ from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
     PlanSurfaceAccessState,
 )
+from ost_visualizer.presentation.visualization.services.color_service import (
+    ColorService,
+)
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PASTE_BACKOUT,
@@ -148,7 +151,7 @@ class PlanSelectionSidebarWorkflowTests(unittest.TestCase):
         all_takeoffs = [*page_takeoffs, other_page_takeoff]
         takeoff_by_uid = {takeoff.uid: takeoff for takeoff in all_takeoffs}
         view = TakeoffPlanView(
-            color_service=FakeColorService(),
+            color_service=ColorService(),
             rendering_service=FakeRenderingService(),
             load_coordinator=FakeLoadCoordinator(),
             takeoff_renderer=RecordingPathTakeoffRenderer(),
@@ -377,3 +380,45 @@ class PlanSelectionSidebarWorkflowTests(unittest.TestCase):
         select_all_action._select_all()
         self.app.processEvents()
         assert_projection(all_selected, represented)
+        # The sidebar projection alone diverges while the Plan selection and the
+        # highlighted-condition state stay intact: the next command must repair it.
+        sidebar.highlight_conditions({"linear"})
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["linear"])
+        self.assertEqual(ui_state.highlighted_condition_uids, represented)
+        self.assertEqual(set(view.get_selected_takeoff_uids()), all_selected)
+        select_all_action._select_all()
+        self.app.processEvents()
+        assert_projection(all_selected, represented)
+        # While Placement owns one of the projected conditions, clearing the Plan
+        # selection leaves the sidebar projection alone.
+        self.assertTrue(coordinator._placement.enter("linear", ["linear"]))
+        view.clear_selection()
+        self.app.processEvents()
+        self.assertEqual(view.get_selected_takeoff_uids(), [])
+        self.assertEqual(set(sidebar.get_selected_condition_uids()), represented)
+        self.assertEqual(ui_state.highlighted_condition_uids, represented)
+        coordinator._placement.force_exit()
+        view.set_cursor_mode(CURSOR_MODE_SELECT)
+        select_all_action._select_all()
+        assert_projection(all_selected, represented)
+        # Without Placement the selection owns the projection and releases it.
+        view.clear_selection()
+        self.app.processEvents()
+        self.assertEqual(view.get_selected_takeoff_uids(), [])
+        self.assertEqual(sidebar.get_selected_condition_uids(), [])
+        self.assertEqual(ui_state.highlighted_condition_uids, set())
+        # Select All outside the Take-off tab is not a Plan command.
+        select_all_action.tab_widget = SimpleNamespace(
+            currentIndex=lambda: TAB_INDEX_TAKEOFF + 1
+        )
+        select_all_action._select_all()
+        self.assertEqual(view.get_selected_takeoff_uids(), [])
+        select_all_action.tab_widget = SimpleNamespace(
+            currentIndex=lambda: TAB_INDEX_TAKEOFF
+        )
+        select_all_action._select_all()
+        assert_projection(all_selected, represented)
+        # Selection notifications for UIDs that are not Project takeoffs (stale
+        # or non-takeoff plan items) never enter the canonical selection.
+        coordinator._on_takeoff_selection_changed(["1", "not-a-takeoff"])
+        self.assertEqual(coordinator._selected_takeoff_uids, ("1",))

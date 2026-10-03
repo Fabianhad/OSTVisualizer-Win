@@ -98,11 +98,23 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         pdf_text = self._write_native_pdf_pages([first, second])
         page_to_annots = self._page_annotation_refs(pdf_text)
         self.assertEqual(len(page_to_annots), 2)
-        for page_object, annot_objects in page_to_annots.items():
+        subjects_by_page = []
+        for page_object, annot_objects in sorted(page_to_annots.items()):
             self.assertGreater(len(annot_objects), 0)
+            subjects = []
             for annot_object in annot_objects:
                 annot_block = self._object_block(pdf_text, annot_object)
                 self.assertRegex(annot_block, rf"/P\s+{page_object}\s+0\s+R")
+                subjects.append(re.search(r"/Subj \((.*?)\)", annot_block).group(1))
+            subjects_by_page.append(sorted(subjects))
+        # Each page owns exactly the annotations it was given, no more, no less.
+        self.assertEqual(
+            subjects_by_page,
+            [
+                ["Arrow", "Highlight", "Line", "Rectangle", "Text Box"],
+                ["Ellipse", "Pen", "Polygon", "Text Box"],
+            ],
+        )
 
     def test_native_pdf_export_writes_bluebeam_like_supported_annotation_fields(self):
         pdf_text = self._write_native_pdf(

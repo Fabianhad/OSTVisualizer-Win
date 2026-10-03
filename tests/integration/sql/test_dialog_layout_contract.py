@@ -39,7 +39,7 @@ from ost_visualizer.presentation.dialogs.sql_database_dialog import (
     SqlDatabasePropertiesMode,
     SqlDatabasePropertiesResult,
 )
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from tests.helpers.sql.database_foundation_support import (
     _Catalog as _database_foundation_support__Catalog,
     _IconProvider as _database_foundation_support__IconProvider,
@@ -67,6 +67,16 @@ from tests.helpers.sql.creation_handoff_support import (
     _CREATOR as _creation_handoff_support__CREATOR,
     _RUNTIME as _creation_handoff_support__RUNTIME,
 )
+
+
+def _content_height(dialog):
+    """Height the dialog's contents need at its (fixed) width.
+    A label that word-wraps at the fixed width needs more than the layout's size hint,
+    so the expectation follows the layout's height for the width as well; with fonts
+    that do not wrap it equals the size hint, which keeps the check font independent.
+    """
+    layout = dialog.layout()
+    return max(layout.sizeHint().height(), layout.totalHeightForWidth(dialog.width()))
 
 
 class DialogLayoutContractSqlDialogTests(unittest.TestCase):
@@ -114,9 +124,7 @@ class DialogLayoutContractSqlDialogTests(unittest.TestCase):
             self.assertEqual(
                 dialog.size().width(), SQL_DATABASE_PROPERTIES_DIALOG_WIDTH
             )
-            self.assertEqual(
-                dialog.size().height(), dialog.layout().sizeHint().height()
-            )
+            self.assertEqual(dialog.size().height(), _content_height(dialog))
             self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
             self.assertTrue(dialog.server_input.isReadOnly())
             self.assertFalse(dialog.database_combo.isHidden())
@@ -218,19 +226,29 @@ class DialogLayoutContractCreationDialogIdentityTests(unittest.TestCase):
         )
 
         original_font = self.app.font()
-        larger_font = self.app.font()
-        larger_font.setPointSize(original_font.pointSize() + 4)
-        normal = (self._dialog(Mock()), SqlConnectionDialog(Mock()))
+        larger_font = QtGui.QFont(original_font)
+        # Derive the larger size from whichever unit the platform default uses.
+        if original_font.pointSizeF() > 0:
+            larger_font.setPointSizeF(original_font.pointSizeF() + 4)
+        else:
+            larger_font.setPixelSize(original_font.pixelSize() + 6)
+        normal = (
+            self._dialog(_database_foundation_support__SqlDatabaseCreator()),
+            SqlConnectionDialog(_database_foundation_support__IconProvider()),
+        )
         self.addCleanup(normal[1].deleteLater)
         self.addCleanup(normal[1].cleanup)
         try:
             self.app.setFont(larger_font)
-            larger = (self._dialog(Mock()), SqlConnectionDialog(Mock()))
+            larger = (
+                self._dialog(_database_foundation_support__SqlDatabaseCreator()),
+                SqlConnectionDialog(_database_foundation_support__IconProvider()),
+            )
             self.addCleanup(larger[1].deleteLater)
             self.addCleanup(larger[1].cleanup)
             for before, after in zip(normal, larger):
                 self.assertGreater(after.height(), before.height())
-                self.assertEqual(after.height(), after.layout().sizeHint().height())
+                self.assertEqual(after.height(), _content_height(after))
                 self.assertFalse(hasattr(after, "options_button"))
         finally:
             self.app.setFont(original_font)

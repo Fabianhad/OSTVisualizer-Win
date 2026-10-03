@@ -85,6 +85,12 @@ from tests.helpers.sql.collaboration import (
     _token_service,
 )
 
+# How long a blocked operation must stay blocked before it counts as serialised. A
+# correct implementation always waits the whole window; a regression is detected at once.
+# Only a thread starved for longer than the window could make a regression pass the
+# negative check, so it is generous compared with the microseconds a start takes.
+_NEGATIVE_WINDOW = 0.25
+
 
 class WriteTokenOrderingCollaborationTests(unittest.TestCase):
     def test_queued_mutation_conflict_is_published_only_after_qt_dispatch(self):
@@ -258,7 +264,7 @@ class WriteTokenOrderingCollaborationTests(unittest.TestCase):
                     first = not self.first_entered.is_set()
                     self.first_entered.set()
                 if first:
-                    self.release_first.wait(0.2)
+                    self.release_first.wait(_NEGATIVE_WINDOW)
                 presented = request.expected_versions[0].expected
                 success = presented == self.current
                 if success:
@@ -373,7 +379,7 @@ class WriteTokenOrderingCollaborationTests(unittest.TestCase):
             target=lambda: (tokens.clear_database(database_id), cleared.set())
         )
         clearing.start()
-        self.assertFalse(cleared.wait(0.05))
+        self.assertFalse(cleared.wait(_NEGATIVE_WINDOW))
         release.set()
         mutation.join(2)
         clearing.join(2)
@@ -439,12 +445,15 @@ class WriteTokenOrderingCollaborationTests(unittest.TestCase):
             )
         )
         reload.start()
-        self.assertFalse(reader.entered.wait(0.05))
+        self.assertFalse(reader.entered.wait(_NEGATIVE_WINDOW))
         self.assertFalse(reload_complete.is_set())
         release_mutation.set()
         mutation.join(2)
         reload.join(2)
+        self.assertFalse(mutation.is_alive())
+        self.assertFalse(reload.is_alive())
         self.assertTrue(reload_complete.is_set())
+        self.assertTrue(reader.entered.is_set())
         self.assertEqual(
             tokens.expected_versions(database_id, (resource,))[0].expected,
             committed,

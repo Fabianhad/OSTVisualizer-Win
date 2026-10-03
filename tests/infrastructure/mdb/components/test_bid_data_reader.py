@@ -1220,6 +1220,22 @@ class OverlayCoordinateContractTests(unittest.TestCase):
             )
         )
 
+    def test_mdb_reader_rejects_page_uid_zero_instead_of_loading_a_page(self):
+        # Decision D11: 0 can never be a Page UID (it is the "no page" spelling
+        # that the page-area canonicalisation relies on), so a stored BidPages row
+        # with UID 0 fails the Bid load rather than becoming a page "0".
+        row = _overlay_calibration_support__page_row(
+            _overlay_calibration_support_CALIBRATED_64_RECT
+        )
+        row.UID = 0
+        with self.assertRaisesRegex(RuntimeError, "BidPages contains malformed UID 0"):
+            BidDataReaderMixin()._parse_bid_pages_for_bid(
+                _overlay_calibration_support__RowsConnection([row]),
+                "57895",
+                {},
+                _overlay_calibration_support__AllPageColumnsSchema(),
+            )
+
     def test_mdb_reader_exposes_malformed_rect_as_no_geometry(self):
         row = _overlay_calibration_support__page_row(
             _overlay_calibration_support_CALIBRATED_64_RECT

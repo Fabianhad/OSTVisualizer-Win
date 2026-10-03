@@ -217,42 +217,9 @@ def render_wireguard_config() -> dict[str, object]:
     ]
     used_addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
     for path in sorted(peers_directory.glob("*.json")):
-        require_private_file(path, label="WireGuard peer record")
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Invalid WireGuard peer record: {path.name}") from exc
-        if not isinstance(payload, dict) or set(payload) != {
-            "name",
-            "public_key",
-            "allowed_ip",
-        }:
-            raise RuntimeError(f"Invalid WireGuard peer record: {path.name}")
-        name = payload["name"]
-        public_key = payload["public_key"]
-        if not isinstance(name, str) or not SAFE_PEER_NAME.fullmatch(name):
-            raise RuntimeError(f"Invalid WireGuard peer name: {path.name}")
-        if path.name != f"{name}.json":
-            raise RuntimeError(
-                f"WireGuard peer filename does not match its name: {path.name}"
-            )
-        if not isinstance(public_key, str) or not WIREGUARD_KEY.fullmatch(public_key):
-            raise RuntimeError(f"Invalid WireGuard public key: {path.name}")
-        try:
-            allowed = ipaddress.ip_address(payload["allowed_ip"])
-        except ValueError as exc:
-            raise RuntimeError(f"Invalid WireGuard peer address: {path.name}") from exc
-        if (
-            allowed not in network.network
-            or allowed == network.ip
-            or allowed in used_addresses
-            or allowed
-            in {network.network.network_address, network.network.broadcast_address}
-        ):
-            raise RuntimeError(
-                f"Invalid or duplicate WireGuard peer address: {path.name}"
-            )
-        used_addresses.add(allowed)
+        name, public_key, allowed = _read_wireguard_peer_record(
+            path, network, used_addresses
+        )
         blocks.extend(
             (
                 f"# peer: {name}",
@@ -307,14 +274,11 @@ def create_wireguard_peer(
         raise RuntimeError(
             "The peer or an undelivered client configuration already exists."
         )
+    used_addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
     for path in sorted(peers_directory.glob("*.json")):
-        require_private_file(path, label="WireGuard peer record")
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Invalid WireGuard peer record: {path.name}") from exc
-        if isinstance(existing, dict) and existing.get("allowed_ip") == str(peer):
-            raise RuntimeError("The WireGuard peer address is already authorized.")
+        _read_wireguard_peer_record(path, network, used_addresses)
+    if peer in used_addresses:
+        raise RuntimeError("The WireGuard peer address is already authorized.")
     record = {"name": name, "public_key": public_key, "allowed_ip": str(peer)}
     endpoint = values["OSTV_PUBLIC_ENDPOINT"]
     if ":" in endpoint:
@@ -336,16 +300,13 @@ def create_wireguard_peer(
             "",
         )
     )
-    record_created = False
     try:
         atomic_write_private(
             record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
         )
-        record_created = True
         atomic_write_private(config_path, client_config)
     except Exception:
-        if record_created:
-            record_path.unlink(missing_ok=True)
+        record_path.unlink(missing_ok=True)
         config_path.unlink(missing_ok=True)
         raise
     return {
@@ -355,6 +316,50 @@ def create_wireguard_peer(
         "sql_port": int(values["OSTV_SQL_VPN_PORT"]),
         "certificate_name": values["OSTV_SQL_CERTIFICATE_NAME"],
     }
+
+
+def _read_wireguard_peer_record(
+    path: Path,
+    network: ipaddress.IPv4Interface | ipaddress.IPv6Interface,
+    used_addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address],
+) -> tuple[str, str, ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    require_private_file(path, label="WireGuard peer record")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Invalid WireGuard peer record: {path.name}") from exc
+    if not isinstance(payload, dict) or set(payload) != {
+        "name",
+        "public_key",
+        "allowed_ip",
+    }:
+        raise RuntimeError(f"Invalid WireGuard peer record: {path.name}")
+    name = payload["name"]
+    public_key = payload["public_key"]
+    if not isinstance(name, str) or not SAFE_PEER_NAME.fullmatch(name):
+        raise RuntimeError(f"Invalid WireGuard peer name: {path.name}")
+    if path.name != f"{name}.json":
+        raise RuntimeError(
+            f"WireGuard peer filename does not match its name: {path.name}"
+        )
+    if not isinstance(public_key, str) or not WIREGUARD_KEY.fullmatch(public_key):
+        raise RuntimeError(f"Invalid WireGuard public key: {path.name}")
+    try:
+        allowed = ipaddress.ip_address(payload["allowed_ip"])
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid WireGuard peer address: {path.name}") from exc
+    if (
+        allowed not in network.network
+        or allowed == network.ip
+        or allowed in used_addresses
+        or allowed
+        in {network.network.network_address, network.network.broadcast_address}
+    ):
+        raise RuntimeError(
+            f"Invalid or duplicate WireGuard peer address: {path.name}"
+        )
+    used_addresses.add(allowed)
+    return name, public_key, allowed
 
 
 def _read_wireguard_key(path: Path) -> str:

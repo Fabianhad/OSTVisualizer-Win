@@ -27,6 +27,7 @@ class MdbConnectionManager:
         self._path_locks = {}
         self._active_leases: Dict[str, tuple[bool, int]] = {}
         self._unhealthy_connection_ids: set[int] = set()
+        self._deferred_eviction_ids: set[int] = set()
         self._writer_read_paths: set[str] = set()
         self._write_blocked = False
         self._maintenance_paths: set[str] = set()
@@ -109,6 +110,12 @@ class MdbConnectionManager:
                             pool = self._write_conns
                             borrowed_write_connection = True
                 if conn is not None and id(conn) in self._unhealthy_connection_ids:
+                    if active_lease is not None:
+                        raise RuntimeError(
+                            "The shared MDB connection is unusable after a cursor "
+                            "cleanup failed, a connection error or a failed health "
+                            "probe; it is closed when the outermost lease ends"
+                        )
                     self._close_single(pool, abs_path)
                     conn = None
                     if borrowed_write_connection:
@@ -119,8 +126,17 @@ class MdbConnectionManager:
                 if conn is not None:
                     try:
                         conn.cursor().close()
-                    except pyodbc.Error:
+                    except pyodbc.Error as probe_error:
                         self._unhealthy_connection_ids.add(id(conn))
+                        if active_lease is not None:
+                            self._deferred_eviction_ids.add(id(conn))
+                            raise RuntimeError(
+                                "The shared MDB connection failed its health "
+                                "probe for a nested lease; it is unusable after a "
+                                "cursor cleanup failed, a connection error or a "
+                                "failed health probe and is closed when the "
+                                "outermost lease ends"
+                            ) from probe_error
                         self._close_single(pool, abs_path)
                         conn = None
                         if borrowed_write_connection:
@@ -152,17 +168,25 @@ class MdbConnectionManager:
                 finally:
                     cursor_cleanup_errors = wrapper.close_cursors()
                     if borrowed_write_connection:
-                        conn.rollback()
+                        wrapper.rollback()
             except pyodbc.Error as operation_error:
-                should_replace = self._connection_requires_replacement(
-                    conn,
-                    operation_error,
+                should_replace = (
+                    wrapper.rollback_failed
+                    or self._connection_requires_replacement(
+                        conn,
+                        operation_error,
+                    )
                 )
                 if should_replace:
                     with self._lock:
                         _active_mode, active_depth = self._active_leases[abs_path]
-                        if active_depth == 1:
+                        if active_depth > 1:
+                            if pool.get(abs_path) is conn:
+                                self._unhealthy_connection_ids.add(id(conn))
+                                self._deferred_eviction_ids.add(id(conn))
+                        else:
                             self._unhealthy_connection_ids.add(id(conn))
+                            self._deferred_eviction_ids.discard(id(conn))
                             try:
                                 self._close_single(pool, abs_path)
                             except pyodbc.Error as close_error:
@@ -172,23 +196,31 @@ class MdbConnectionManager:
                                 )
                 raise
             finally:
-                if cursor_cleanup_errors:
-                    with self._lock:
-                        self._unhealthy_connection_ids.add(id(conn))
-                        try:
-                            self._close_single(pool, abs_path)
-                        except pyodbc.Error as close_error:
-                            cursor_cleanup_errors[0].add_note(
-                                "The MDB connection with an unclosed cursor could "
-                                f"not be closed: {close_error}"
-                            )
                 with self._lock:
                     active_mode, depth = self._active_leases[abs_path]
-                    depth -= 1
-                    if depth:
-                        self._active_leases[abs_path] = (active_mode, depth)
+                    owned = pool.get(abs_path) is conn
+                    if (
+                        cursor_cleanup_errors
+                        and owned
+                        and id(conn) not in self._unhealthy_connection_ids
+                    ):
+                        self._unhealthy_connection_ids.add(id(conn))
+                        self._deferred_eviction_ids.add(id(conn))
+                    if depth > 1:
+                        self._active_leases[abs_path] = (active_mode, depth - 1)
                     else:
                         self._active_leases.pop(abs_path)
+                        if id(conn) in self._deferred_eviction_ids:
+                            self._deferred_eviction_ids.discard(id(conn))
+                            if owned:
+                                try:
+                                    self._close_single(pool, abs_path)
+                                except pyodbc.Error as close_error:
+                                    if cursor_cleanup_errors:
+                                        cursor_cleanup_errors[0].add_note(
+                                            "The MDB connection with an unclosed "
+                                            f"cursor could not be closed: {close_error}"
+                                        )
 
     def use_committed_writer_for_reads(self, db_path: str) -> None:
         abs_path = os.path.normcase(os.path.abspath(db_path))

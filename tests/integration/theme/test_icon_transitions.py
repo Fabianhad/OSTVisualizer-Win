@@ -176,11 +176,16 @@ class ThemeIconTransitionTests(unittest.TestCase):
             )
 
     def test_tree_bindings_survive_python_scope_and_release_deleted_items(self):
+        # Start from the opposite theme so the later change is observable.
+        self.transition("#ffffff")
         tree = QtWidgets.QTreeWidget(self.window)
         tree.setColumnCount(2)
         item = QtWidgets.QTreeWidgetItem(tree, ["Folder", "Bid"])
         IconManager.apply_to_item(item, 0, IconId.FOLDER)
         IconManager.apply_to_item(item, 1, IconId.PROJECT_TREE_BID)
+        self.assertEqual(self.color(item.icon(0)), "#ffffff")
+        self.assertEqual(self.color(item.icon(1)), "#ffffff")
+        self.assertEqual(len(themed_icon._REGISTRY), 2)
         reference = weakref.ref(item)
         del item
         gc.collect()
@@ -195,6 +200,17 @@ class ThemeIconTransitionTests(unittest.TestCase):
         del retained
         gc.collect()
         self.assertIsNone(reference())
+
+    def test_registry_entry_is_released_with_its_python_target(self):
+        action = QtGui.QAction()
+        IconManager.apply(action, IconId.PAN_TOOL)
+        self.assertEqual(len(themed_icon._REGISTRY), 1)
+        reference = weakref.ref(action)
+        del action
+        gc.collect()
+        self.assertIsNone(reference())
+        # No palette change or rebuild ran: the weakref callback alone released it.
+        self.assertEqual(themed_icon._REGISTRY, {})
 
     def test_cached_source_render_matches_fresh_render_after_return_to_dark(self):
         self.transition("#ffffff")
@@ -227,6 +243,8 @@ class ThemeIconTransitionTests(unittest.TestCase):
             for spec in PLAN_ANNOTATION_TOOL_SPECS:
                 with self.subTest(tool=spec.action_key, foreground=foreground):
                     expected = get_annotation_style_for_tool(spec.annotation_type).color
+                    # The tool color must be distinguishable from the theme color.
+                    self.assertNotIn(expected, ("#000000", "#ffffff"))
                     self.assertEqual(
                         self.color(actions[spec.action_key].icon()), expected
                     )

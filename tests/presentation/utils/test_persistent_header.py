@@ -196,6 +196,10 @@ class PersistentHeaderTests(unittest.TestCase):
             default_sort_column="number",
         )
         header = tree.header()
+        # A user width that the stored layout cannot restore must fall back to
+        # the construction-time default, not stay at the current value.
+        header.resizeSection(2, 200)
+        self.assertEqual(repository.saves, 1)
         state = model.state
         state.header_layouts["ordinary_table"] = HeaderLayoutState(
             widths={"name": 300, "quantity": 5000},
@@ -204,9 +208,9 @@ class PersistentHeaderTests(unittest.TestCase):
             sort_descending=True,
         )
         model.update_state(state)
-        self.assertEqual(repository.saves, 1)
+        self.assertEqual(repository.saves, 2)
         controller.restore()
-        self.assertEqual(repository.saves, 1)
+        self.assertEqual(repository.saves, 2)
         self.assertEqual([header.logicalIndex(i) for i in range(3)], [1, 2, 0])
         self.assertEqual(header.sectionSize(1), 300)
         self.assertEqual(header.sectionSize(2), 120)
@@ -230,12 +234,20 @@ class PersistentHeaderTests(unittest.TestCase):
             movable=True,
             default_sort_column="number",
         )
+        header = tree.header()
         try:
+            # Slots invoked by Qt signals swallow exceptions, so change the
+            # header silently and call the save slot directly to observe them.
+            header.blockSignals(True)
+            header.resizeSection(1, 245)
+            header.blockSignals(False)
             with mock.patch.object(
                 WorkspaceStateAggregate, "update_state", side_effect=OSError("disk")
-            ):
-                tree.header().resizeSection(1, 245)
-            self.assertEqual(tree.header().sectionSize(1), 245)
+            ) as update_state:
+                controller._save()
+            update_state.assert_called_once()
+            self.assertEqual(header.sectionSize(1), 245)
+            self.assertEqual(repository.saves, 0)
         finally:
             del controller
             tree.deleteLater()
@@ -267,6 +279,25 @@ class PersistentHeaderTests(unittest.TestCase):
                     sorting=True,
                     movable=True,
                     default_sort_column="missing",
+                )
+            with self.assertRaises(ValueError):
+                PersistentHeaderController(
+                    tree,
+                    "",
+                    ("number", "name", "quantity"),
+                    self.model,
+                    sorting=True,
+                    movable=True,
+                )
+            with self.assertRaises(ValueError):
+                PersistentHeaderController(
+                    tree,
+                    "ordinary_table",
+                    ("number", "name", "quantity"),
+                    self.model,
+                    sorting=True,
+                    movable=True,
+                    persisted_width_keys=("number", "missing"),
                 )
         finally:
             tree.deleteLater()

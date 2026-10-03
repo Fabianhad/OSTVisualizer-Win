@@ -245,6 +245,14 @@ class PersistentDialogWindowStateTests(unittest.TestCase):
         self.assertEqual(self.dialog.size(), available_size)
 
     def test_dialog_keeps_close_and_maximize_but_not_minimize_buttons(self):
+        # Start from the opposite of every expectation so the controller is
+        # what sets each hint rather than the QDialog defaults.
+        self.dialog.setWindowFlag(QtCore.Qt.WindowType.WindowCloseButtonHint, False)
+        self.dialog.setWindowFlag(QtCore.Qt.WindowType.WindowMinimizeButtonHint, True)
+        self.dialog.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, False)
+        flags = self.dialog.windowFlags()
+        self.assertFalse(flags & QtCore.Qt.WindowType.WindowCloseButtonHint)
+        self.assertTrue(flags & QtCore.Qt.WindowType.WindowMinimizeButtonHint)
         self._state()
         flags = self.dialog.windowFlags()
         self.assertTrue(flags & QtCore.Qt.WindowType.WindowCloseButtonHint)
@@ -263,11 +271,14 @@ class PersistentDialogWindowStateTests(unittest.TestCase):
         self.assertEqual(self.repository.saves, saves_before + 1)
 
     def test_workspace_write_failure_on_finish_is_ignored(self):
-        self._state(default_size=QtCore.QSize(450, 350))
+        window_state = self._state(default_size=QtCore.QSize(450, 350))
         with mock.patch.object(
             WorkspaceStateAggregate, "update_state", side_effect=OSError("disk")
-        ):
-            self.dialog.finished.emit(0)
+        ) as update_state:
+            # Signal-delivered slot exceptions are swallowed by Qt bindings, so
+            # call the slot directly to prove the OSError is handled.
+            window_state._on_finished(0)
+        update_state.assert_called_once()
 
     def test_saved_maximized_state_is_applied_once_on_show(self):
         state = self.model.state

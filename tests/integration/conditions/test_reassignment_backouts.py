@@ -192,6 +192,51 @@ class ConditionReassignmentBackoutTests(unittest.TestCase):
                     )
                 self.assertEqual(caught.exception.details.code, SqlErrorCode.CONFLICT)
 
+    def test_captured_reassignment_rejects_child_added_after_capture(self):
+        # A backout created after the batch was captured is not part of the
+        # captured set; applying the batch would leave it with the old
+        # Condition, so both the local and the queued path must reject it.
+        fixture = self.persistence_fixture()
+        targets = expand_takeoff_uids_with_descendants(fixture.takeoffs(), ("10", "11"))
+        updates = [(uid, "32") for uid in sorted(targets)]
+        payload = fixture.service._plan_property_payload(
+            "database.mdb", "7", "takeoff_condition", updates
+        )
+        queued = []
+        fixture.service._sql_collaboration_provider = lambda: SimpleNamespace(
+            queue_request=lambda *args: queued.append(args) or 1
+        )
+        fixture.service.queue_plan_properties(
+            "database.mdb", "7", "takeoff_condition", updates, lambda _result: None
+        )
+        initial = fixture.snapshot()
+        # Positive control: the unchanged graph applies and retypes every row.
+        fixture.apply(payload)
+        self.assertEqual(
+            {
+                str(row[0]): str(row[3])
+                for row in fixture.snapshot()
+                if str(row[0]) in targets
+            },
+            dict(updates),
+        )
+        for row in initial:
+            fixture.conn.execute(
+                "UPDATE BidTakeoffs SET BidConditionUID=? WHERE UID=?",
+                (row[3], row[0]),
+            )
+        fixture.conn.execute(
+            "INSERT INTO BidTakeoffs VALUES (15,7,20,31,2,10,'5;5;6;5;6;6')"
+        )
+        fixture.conn.commit()
+        before = fixture.snapshot()
+        with self.assertRaises(MissingBidOwnedUidError):
+            fixture.apply(payload)
+        self.assertEqual(fixture.snapshot(), before)
+        with self.assertRaises(MissingBidOwnedUidError):
+            queued[0][1]()
+        self.assertEqual(fixture.snapshot(), before)
+
     def test_parent_reassignment_and_history_include_all_backouts_on_both_paths(self):
         fixture = history.PlanPropertyHistoryIdentityTests()
         for queued in (False, True):

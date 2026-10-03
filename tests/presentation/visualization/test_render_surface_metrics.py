@@ -44,12 +44,20 @@ class RenderSurfaceSizingTests(unittest.TestCase):
         metrics = RenderSurfaceMetrics.from_logical_size(801, 603, 1.25)
         renderer = _Renderer()
         renderer.resize(*metrics.physical_size)
+        self.assertEqual(renderer.resize_calls, [(1001, 754)])
         self.assertAlmostEqual(renderer.camera.aspect_ratio, 1001 / 754)
+        # The rounded physical aspect differs from the logical one, so a
+        # boundary that handed the renderer logical pixels would be caught.
+        self.assertNotAlmostEqual(renderer.camera.aspect_ratio, 801 / 603, places=5)
 
     def test_fractional_input_coordinates_map_to_framebuffer_pixels(self):
         metrics = RenderSurfaceMetrics.from_logical_size(801, 603, 1.25)
         self.assertEqual(metrics.to_physical_point(13, 17), (16, 21))
         self.assertEqual(metrics.to_physical_point(-0.1, -0.1), (-1, -1))
+        # 15 * 1.25 = 18.75 and 14 * 1.25 = 17.5 distinguish flooring from
+        # rounding; picking must address the pixel that contains the point.
+        self.assertEqual(metrics.to_physical_point(15, 14), (18, 17))
+        self.assertEqual(metrics.to_physical_point(13.9, 17.6), (17, 22))
 
     def test_zero_size_has_no_render_target(self):
         for logical_size in ((0, 0), (0, 100), (100, 0)):
@@ -58,8 +66,25 @@ class RenderSurfaceSizingTests(unittest.TestCase):
                     *logical_size, device_pixel_ratio=2.0
                 )
                 self.assertFalse(metrics.has_render_target)
+        positive_control = RenderSurfaceMetrics.from_logical_size(1, 1, 1.0)
+        self.assertTrue(positive_control.has_render_target)
+
+    def test_physical_extent_rounds_half_up_and_can_collapse_to_no_target(self):
+        half = RenderSurfaceMetrics.from_logical_size(3, 5, 0.5)
+        self.assertEqual(half.physical_size, (2, 3))
+        self.assertTrue(half.has_render_target)
+        collapsed = RenderSurfaceMetrics.from_logical_size(1, 100, 0.4)
+        self.assertEqual(collapsed.physical_size, (0, 40))
+        self.assertFalse(collapsed.has_render_target)
 
     def test_invalid_dimensions_and_ratios_are_rejected(self):
-        for args in ((-1, 10, 1.0), (10, -1, 1.0), (10, 10, 0.0)):
+        for args in (
+            (-1, 10, 1.0),
+            (10, -1, 1.0),
+            (10, 10, 0.0),
+            (10, 10, -1.0),
+            (10, 10, float("nan")),
+            (10, 10, float("inf")),
+        ):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 RenderSurfaceMetrics.from_logical_size(*args)

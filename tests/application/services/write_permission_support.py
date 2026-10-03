@@ -253,7 +253,7 @@ def _write_service(
         reload_database=lambda _file_path: reload_success,
         event_bus=event_bus or _EventBus(),
         logger=logger,
-        bid_write_guard=ActiveBidWriteGuard(project_data, logger),
+        bid_write_guard=ActiveBidWriteGuard(project_data),
         project_data_service=project_data,
         mutation_executor=mutation_executor or _MutationExecutor(),
         session_registry=_SessionRegistry(),

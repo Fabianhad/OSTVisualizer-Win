@@ -1550,7 +1550,12 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             self.assertTrue(view.show_overlay_move_handle())
             complete_move_previews()
             finish_move(QtCore.QPointF(72.0, 36.0))
+            frame_requests = len(view._rendering_service.composite_frame_requests)
             view._update_tile_coverage(4.0)
+            # While the overlay is being moved no tile coverage may be requested.
+            self.assertEqual(
+                len(view._rendering_service.composite_frame_requests), frame_requests
+            )
             assert_preview_is_exclusive()
             view.set_overlay_rect_save_handler(lambda _rect: True)
             view._commit_overlay_move()
@@ -9997,3 +10002,16625 @@ class PresentationChaosHarnessTests(unittest.TestCase):
             self.assertEqual(harness.view._place_preview_items, [])
         finally:
             harness.cleanup()
+
+
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_MOVE_OVERLAY,
+    CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+)
+
+
+class TakeoffPlanViewOverlayMoveLifecycleTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """State transitions of the overlay move lifecycle with recorded collaborators."""
+
+    RECT = (3.0, 4.0, 544.0, 704.0)
+
+    def _page(self, **overrides):
+        values = dict(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=SHOW_BOTH,
+            width_pts=612.0,
+            height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
+            overlay_rect=self.RECT,
+        )
+        values.update(overrides)
+        return Page(**values)
+
+    def _view(self, page=None, install=True):
+        view = self._make_plan_view()
+        page = page if page is not None else self._page()
+        if install:
+            self._install_page_canvas(view, page)
+        else:
+            view._current_page = page
+        self.events = []
+        return view, page
+
+    def _record(self, view, *names, results=None):
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    self.events.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+
+    # ---- can_move_overlay_image / _overlay_rect_tuple
+    def test_overlay_can_only_move_for_a_page_with_an_overlay_and_a_positive_rect(self):
+        view, page = self._view()
+        self.assertIs(view.can_move_overlay_image(), True)
+        for label, change in (
+            ("no overlay image", lambda: setattr(page, "overlay_image_path", "")),
+            (
+                "zero width",
+                lambda: setattr(page, "overlay_rect", (0.0, 0.0, 0.0, 10.0)),
+            ),
+            (
+                "zero height",
+                lambda: setattr(page, "overlay_rect", (0.0, 0.0, 10.0, 0.0)),
+            ),
+            (
+                "negative width",
+                lambda: setattr(page, "overlay_rect", (0.0, 0.0, -1.0, 10.0)),
+            ),
+            (
+                "negative height",
+                lambda: setattr(page, "overlay_rect", (0.0, 0.0, 10.0, -1.0)),
+            ),
+            ("no rect", lambda: setattr(page, "overlay_rect", None)),
+        ):
+            with self.subTest(label):
+                page.overlay_image_path = "overlay.pdf"
+                page.overlay_rect = self.RECT
+                change()
+                self.assertIs(view.can_move_overlay_image(), False)
+        view._current_page = None
+        self.assertIs(view.can_move_overlay_image(), False)
+
+    def test_overlay_can_move_with_a_tiny_positive_rect(self):
+        view, page = self._view()
+        page.overlay_rect = (0.0, 0.0, 0.001, 0.002)
+        self.assertIs(view.can_move_overlay_image(), True)
+
+    def test_overlay_rect_tuple_normalises_numbers_and_rejects_malformed_values(self):
+        view, page = self._view()
+        page.overlay_rect = (1, "2", 3.5, 4)
+        self.assertEqual(view._overlay_rect_tuple(page), (1.0, 2.0, 3.5, 4.0))
+        for bad in (None, (1, 2, 3), (1, 2, 3, "x"), 5):
+            with self.subTest(bad=bad):
+                page.overlay_rect = bad
+                self.assertIsNone(view._overlay_rect_tuple(page))
+
+    def test_overlay_page_copy_carries_the_rect_without_touching_the_page(self):
+        view, page = self._view()
+        copy = view._overlay_move_page_for_rect((10, 20, 30, 40))
+        self.assertEqual(copy.overlay_rect, (10.0, 20.0, 30.0, 40.0))
+        self.assertEqual(page.overlay_rect, self.RECT)
+        self.assertIsNot(copy, page)
+        view._current_page = None
+        self.assertIsNone(view._overlay_move_page_for_rect((1, 2, 3, 4)))
+
+    def test_overlay_move_suppresses_normal_tiles_while_an_original_rect_is_held(self):
+        view, _page = self._view()
+        self.assertIs(view._overlay_move_suppresses_normal_tiles(), False)
+        view._overlay_move_original_rect = self.RECT
+        self.assertIs(view._overlay_move_suppresses_normal_tiles(), True)
+
+    # ---- show_overlay_move_handle
+    HANDLE_COLLABORATORS = (
+        "finish_intelligent_paste_placement",
+        "_exit_place_mode",
+        "_exit_annotation_place_mode",
+        "_clear_backout_state",
+        "_clear_text_toolbar_target",
+        "_clear_pdf_text_selection",
+        "_on_selection_changed",
+        "update_selection_visuals",
+        "_remove_rotate_handle",
+        "_remove_overlay_move_handle",
+        "_start_overlay_move_preview_setup",
+        "_apply_cursor_mode",
+        "_update_cursor",
+    )
+
+    def _handle_view(self, center=QtCore.QPointF(7.0, 8.0), handle_ok=True):
+        view, page = self._view()
+        self._record(view, *self.HANDLE_COLLABORATORS)
+        view._viewport_center_pixel_scene_pos = lambda: center
+        view._set_overlay_move_handle_pos = lambda pos: (
+            self.events.append(("set_handle", (pos,), {})) or handle_ok
+        )
+        modes = []
+        view.cursor_mode_change_requested.connect(modes.append)
+        self.modes = modes
+        return view, page
+
+    def test_showing_the_move_handle_prepares_the_view_in_a_fixed_order(self):
+        view, _page = self._handle_view()
+        view._selected_uids = {"t1", "t2"}
+        view._overlay_move_anchor_scene = QtCore.QPointF(1.0, 1.0)
+        view._overlay_move_drag_start_rect = (1.0, 1.0, 1.0, 1.0)
+        view._overlay_move_dragging = True
+        self.assertIs(view.show_overlay_move_handle(), True)
+        self.assertEqual(
+            [name for name, _args, _kwargs in self.events],
+            [
+                "finish_intelligent_paste_placement",
+                "_exit_place_mode",
+                "_exit_annotation_place_mode",
+                "_clear_backout_state",
+                "_clear_text_toolbar_target",
+                "_clear_pdf_text_selection",
+                "_on_selection_changed",
+                "update_selection_visuals",
+                "_remove_rotate_handle",
+                "_remove_overlay_move_handle",
+                "_start_overlay_move_preview_setup",
+                "set_handle",
+                "_apply_cursor_mode",
+                "_update_cursor",
+            ],
+        )
+        self.assertEqual(view._selected_uids, set())
+        self.assertEqual(view._overlay_move_original_rect, self.RECT)
+        self.assertEqual(view._overlay_move_preview_rect, self.RECT)
+        self.assertIsNone(view._overlay_move_anchor_scene)
+        self.assertIsNone(view._overlay_move_drag_start_rect)
+        self.assertIs(view._overlay_move_dragging, False)
+        setup = [e for e in self.events if e[0] == "_start_overlay_move_preview_setup"][
+            0
+        ]
+        self.assertEqual(setup[1], (self.RECT,))
+        handle = [e for e in self.events if e[0] == "set_handle"][0]
+        self.assertEqual(handle[1], (QtCore.QPointF(7.0, 8.0),))
+        mode = [e for e in self.events if e[0] == "_apply_cursor_mode"][0]
+        self.assertEqual(mode[1], (CURSOR_MODE_MOVE_OVERLAY_HANDLE,))
+        self.assertEqual(self.modes, [CURSOR_MODE_MOVE_OVERLAY_HANDLE])
+
+    def test_move_handle_needs_edit_access(self):
+        view, _page = self._handle_view()
+        view._editing_enabled = False
+        self.assertIs(view.show_overlay_move_handle(), False)
+        self.assertEqual(self.events, [])
+
+    def test_move_handle_for_a_page_without_a_movable_overlay_cancels_the_mode(self):
+        view, page = self._handle_view()
+        page.overlay_image_path = ""
+        view.cancel_overlay_move_mode = lambda restore_preview=True: self.events.append(
+            ("cancel", (restore_preview,), {})
+        )
+        self.assertIs(view.show_overlay_move_handle(), False)
+        self.assertEqual(self.events, [("cancel", (True,), {})])
+        self.assertEqual(self.modes, [])
+
+    def test_move_handle_reports_failure_without_a_viewport_centre_or_handle(self):
+        view, _page = self._handle_view(center=None)
+        self.assertIs(view.show_overlay_move_handle(), False)
+        self.assertNotIn("set_handle", [e[0] for e in self.events])
+        self.assertEqual(self.modes, [])
+        view, _page = self._handle_view(handle_ok=False)
+        self.assertIs(view.show_overlay_move_handle(), False)
+        self.assertNotIn("_apply_cursor_mode", [e[0] for e in self.events])
+        self.assertEqual(self.modes, [])
+
+    # ---- cancel_overlay_move_mode
+    def _cancel_view(self, mode=CURSOR_MODE_MOVE_OVERLAY_HANDLE):
+        view, page = self._view()
+        view._overlay_move_original_rect = (9.0, 9.0, 99.0, 99.0)
+        view._overlay_move_preview_rect = (1.0, 1.0, 1.0, 1.0)
+        view._overlay_move_anchor_scene = QtCore.QPointF(1.0, 1.0)
+        view._overlay_move_drag_start_rect = (2.0, 2.0, 2.0, 2.0)
+        view._overlay_move_dragging = True
+        view._cursor_mode = mode
+        self._record(
+            view,
+            "_remove_overlay_move_handle",
+            "_clear_overlay_move_preview_visuals",
+            "_apply_cursor_mode",
+            "_update_cursor",
+        )
+        view._build_render_identity = lambda page, bid_ref: (
+            "identity",
+            page.uid,
+            bid_ref,
+        )
+        self.modes = []
+        view.cursor_mode_change_requested.connect(self.modes.append)
+        return view, page
+
+    def test_cancelling_with_restore_puts_the_original_rect_back_and_resets_state(self):
+        view, page = self._cancel_view()
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view.cancel_overlay_move_mode(restore_preview=True)
+        self.assertEqual(page.overlay_rect, (9.0, 9.0, 99.0, 99.0))
+        self.assertEqual(
+            view._current_render_identity, ("identity", "p1", BidRef("db.mdb", "bid-1"))
+        )
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        self.assertIsNone(view._overlay_move_anchor_scene)
+        self.assertIsNone(view._overlay_move_drag_start_rect)
+        self.assertIs(view._overlay_move_dragging, False)
+        names = [e[0] for e in self.events]
+        self.assertEqual(
+            names,
+            [
+                "_remove_overlay_move_handle",
+                "_clear_overlay_move_preview_visuals",
+                "_apply_cursor_mode",
+                "_update_cursor",
+            ],
+        )
+        self.assertEqual(self.events[1][2], {"restore_normal": True})
+        self.assertEqual(self.events[2][1], (CURSOR_MODE_SELECT,))
+        self.assertEqual(self.modes, [CURSOR_MODE_SELECT])
+
+    def test_cancelling_without_restore_keeps_the_page_rect(self):
+        view, page = self._cancel_view()
+        previous_identity = view._current_render_identity
+        view.cancel_overlay_move_mode(restore_preview=False)
+        self.assertEqual(page.overlay_rect, self.RECT)
+        self.assertEqual(view._current_render_identity, previous_identity)
+        self.assertIsNone(view._overlay_move_original_rect)
+
+    def test_cancelling_needs_a_held_rect_and_a_page_to_restore(self):
+        view, page = self._cancel_view()
+        view._overlay_move_original_rect = None
+        view.cancel_overlay_move_mode(restore_preview=True)
+        self.assertEqual(page.overlay_rect, self.RECT)
+        view, page = self._cancel_view()
+        view._current_page = None
+        view.cancel_overlay_move_mode(restore_preview=True)
+        self.assertEqual(page.overlay_rect, self.RECT)
+
+    def test_cancelling_leaves_other_cursor_modes_alone(self):
+        for mode in (CURSOR_MODE_SELECT, CURSOR_MODE_PLACE):
+            with self.subTest(mode=mode):
+                view, _page = self._cancel_view(mode=mode)
+                view.cancel_overlay_move_mode()
+                self.assertEqual(self.modes, [])
+                self.assertNotIn("_apply_cursor_mode", [e[0] for e in self.events])
+        view, _page = self._cancel_view(mode=CURSOR_MODE_MOVE_OVERLAY)
+        view.cancel_overlay_move_mode()
+        self.assertEqual(self.modes, [CURSOR_MODE_SELECT])
+
+    def test_cancel_defaults_to_restoring_the_preview(self):
+        view, page = self._cancel_view()
+        view.cancel_overlay_move_mode()
+        self.assertEqual(page.overlay_rect, (9.0, 9.0, 99.0, 99.0))
+
+    # ---- accept / project
+    def test_accepting_a_preview_rect_commits_it_and_clears_the_move_state(self):
+        view, page = self._view()
+        view._overlay_move_original_rect = self.RECT
+        view._overlay_move_preview_rect = (1.0, 1.0, 1.0, 1.0)
+        view._overlay_move_anchor_scene = QtCore.QPointF(1.0, 1.0)
+        view._overlay_move_drag_start_rect = (2.0, 2.0, 2.0, 2.0)
+        view._overlay_move_dragging = True
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view._build_render_identity = lambda page, bid_ref: (
+            "identity",
+            page.overlay_rect,
+        )
+        self._record(
+            view,
+            "_invalidate_overlay_move_preview_requests",
+            "_clear_visible_frame",
+            "_cancel_optional_base_correction",
+        )
+        view._accept_overlay_move_preview_rect((5, 6, 7, 8))
+        self.assertEqual(page.overlay_rect, (5.0, 6.0, 7.0, 8.0))
+        self.assertEqual(
+            view._current_render_identity, ("identity", (5.0, 6.0, 7.0, 8.0))
+        )
+        self.assertEqual(
+            [name for name, _a, _k in self.events],
+            [
+                "_invalidate_overlay_move_preview_requests",
+                "_clear_visible_frame",
+                "_cancel_optional_base_correction",
+            ],
+        )
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        self.assertIsNone(view._overlay_move_anchor_scene)
+        self.assertIsNone(view._overlay_move_drag_start_rect)
+        self.assertIs(view._overlay_move_dragging, False)
+
+    def test_accepting_a_preview_rect_without_a_page_does_nothing(self):
+        view, _page = self._view()
+        view._current_page = None
+        view._overlay_move_dragging = True
+        self._record(view, "_invalidate_overlay_move_preview_requests")
+        view._accept_overlay_move_preview_rect((5, 6, 7, 8))
+        self.assertEqual(self.events, [])
+        self.assertIs(view._overlay_move_dragging, True)
+
+    def test_projecting_an_overlay_rect_applies_it_and_reloads_the_visuals(self):
+        view, page = self._view()
+        accepted = []
+        view._accept_overlay_move_preview_rect = accepted.append
+        view._force_reload_current_page_visuals = lambda: "reloaded"
+        self.assertEqual(view.project_overlay_rect("p1", (1, 2, 3, 4)), "reloaded")
+        self.assertEqual(accepted, [(1, 2, 3, 4)])
+
+    def test_projecting_none_clears_the_rect_and_rebuilds_the_identity(self):
+        view, page = self._view()
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view._build_render_identity = lambda page, bid_ref: (
+            "identity",
+            page.overlay_rect,
+        )
+        view._force_reload_current_page_visuals = lambda: True
+        view._accept_overlay_move_preview_rect = lambda rect: self.fail("not accepted")
+        self.assertIs(view.project_overlay_rect("p1", None), True)
+        self.assertIsNone(page.overlay_rect)
+        self.assertEqual(view._current_render_identity, ("identity", None))
+
+    def test_projecting_for_another_page_is_refused(self):
+        view, page = self._view()
+        view._force_reload_current_page_visuals = lambda: self.fail("no reload")
+        self.assertIs(view.project_overlay_rect("other", (1, 2, 3, 4)), False)
+        self.assertEqual(page.overlay_rect, self.RECT)
+        view._current_page = None
+        self.assertIs(view.project_overlay_rect("p1", (1, 2, 3, 4)), False)
+
+
+from ost_visualizer.presentation.scene.plan_view_z_order import OVERLAY_MOVE_BASE_Z
+
+
+class TakeoffPlanViewOverlayMoveVisualTests(_TakeoffPlanViewOverlayRefreshFixture):
+    RECT = TakeoffPlanViewOverlayMoveLifecycleTests.RECT
+
+    def _page(self, **overrides):
+        return TakeoffPlanViewOverlayMoveLifecycleTests._page(self, **overrides)
+
+    def _view(self, page=None):
+        view = self._make_plan_view()
+        page = page if page is not None else self._page()
+        self._install_page_canvas(view, page)
+        self.events = []
+        return view, page
+
+    def _item(self, view, visible=True, scene=True):
+        item = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        item.setVisible(visible)
+        if scene:
+            view._scene.addItem(item)
+        return item
+
+    # ---- normal visuals hide / restore
+    def test_normal_visual_items_exclude_previews_missing_and_deleted_items(self):
+        view, _page = self._view()
+        background = self._item(view)
+        frame = self._item(view)
+        overlay = self._item(view)
+        preview_base = self._item(view)
+        preview_overlay = self._item(view)
+        deleted = self._item(view)
+        view._background_item = background
+        view._visible_frame_item = frame
+        view._overlay_items = [overlay, preview_base, None, deleted]
+        view._overlay_move_preview_base_item = preview_base
+        view._overlay_move_preview_overlay_item = preview_overlay
+        delete(deleted)
+        self.assertEqual(
+            view._overlay_move_normal_visual_items(), [background, frame, overlay]
+        )
+        view._background_item = None
+        view._visible_frame_item = None
+        self.assertEqual(view._overlay_move_normal_visual_items(), [overlay])
+
+    def test_hiding_normal_visuals_remembers_each_original_visibility_once(self):
+        view, _page = self._view()
+        shown = self._item(view, visible=True)
+        already_hidden = self._item(view, visible=False)
+        view._background_item = shown
+        view._visible_frame_item = None
+        view._overlay_items = [already_hidden]
+        view._hide_overlay_move_normal_visuals()
+        self.assertFalse(shown.isVisible())
+        self.assertEqual(
+            view._overlay_move_hidden_visual_visibility,
+            {shown: True, already_hidden: False},
+        )
+        self.assertIs(view._overlay_move_normal_visuals_hidden, True)
+        view._hide_overlay_move_normal_visuals()
+        self.assertEqual(
+            view._overlay_move_hidden_visual_visibility,
+            {shown: True, already_hidden: False},
+        )
+
+    def test_restoring_normal_visuals_reapplies_visibility_to_live_scene_items_only(
+        self,
+    ):
+        view, _page = self._view()
+        shown = self._item(view, visible=False)
+        hidden = self._item(view, visible=True)
+        detached = self._item(view, visible=True, scene=False)
+        deleted = self._item(view)
+        view._overlay_move_hidden_visual_visibility = {
+            shown: True,
+            hidden: False,
+            detached: False,
+            deleted: True,
+        }
+        delete(deleted)
+        view._overlay_move_normal_visuals_hidden = True
+        view._restore_overlay_move_normal_visuals()
+        self.assertTrue(shown.isVisible())
+        self.assertFalse(hidden.isVisible())
+        self.assertTrue(detached.isVisible())
+        self.assertEqual(view._overlay_move_hidden_visual_visibility, {})
+        self.assertIs(view._overlay_move_normal_visuals_hidden, False)
+
+    def test_preview_items_follow_the_requested_visibility(self):
+        view, _page = self._view()
+        base = self._item(view, visible=False)
+        overlay = self._item(view, visible=False)
+        deleted = self._item(view)
+        view._overlay_move_preview_base_item = base
+        view._overlay_move_preview_overlay_item = overlay
+        view._set_overlay_move_preview_items_visible(True)
+        self.assertTrue(base.isVisible() and overlay.isVisible())
+        view._set_overlay_move_preview_items_visible(False)
+        self.assertFalse(base.isVisible() or overlay.isVisible())
+        view._overlay_move_preview_overlay_item = deleted
+        delete(deleted)
+        view._set_overlay_move_preview_items_visible(True)
+        self.assertTrue(base.isVisible())
+        view._overlay_move_preview_base_item = None
+        view._overlay_move_preview_overlay_item = None
+        view._set_overlay_move_preview_items_visible(False)
+
+    def test_base_preview_is_ready_without_a_base_image_or_once_the_item_exists(self):
+        view, page = self._view()
+        self.assertIs(view._overlay_move_preview_base_ready(), False)
+        item = self._item(view)
+        view._overlay_move_preview_base_item = item
+        self.assertIs(view._overlay_move_preview_base_ready(), True)
+        delete(item)
+        self.assertIs(view._overlay_move_preview_base_ready(), False)
+        view._overlay_move_preview_base_item = None
+        page.image_path = ""
+        self.assertIs(view._overlay_move_preview_base_ready(), True)
+        view._current_page = None
+        self.assertIs(view._overlay_move_preview_base_ready(), True)
+
+    def test_activating_the_preview_waits_for_the_base_unless_forced(self):
+        view, _page = self._view()
+        hides = []
+        shows = []
+        view._hide_overlay_move_normal_visuals = lambda: hides.append(True)
+        view._set_overlay_move_preview_items_visible = shows.append
+        updates = []
+        view.viewport().update = lambda *a: updates.append(True)
+        view._activate_overlay_move_preview_visuals()
+        self.assertEqual((hides, shows, updates), ([], [], []))
+        view._activate_overlay_move_preview_visuals(force=True)
+        self.assertEqual((hides, shows, updates), ([True], [True], [True]))
+        view._overlay_move_preview_base_item = self._item(view)
+        view._activate_overlay_move_preview_visuals()
+        self.assertEqual((len(hides), len(shows), len(updates)), (2, 2, 2))
+
+    # ---- request bookkeeping
+    def test_cancelling_preview_requests_cancels_only_pending_ones(self):
+        view, _page = self._view()
+        view._rendering_service.cancelled_requests.clear()
+        view._overlay_move_preview_base_request_id = "page-7"
+        view._overlay_move_preview_overlay_request_id = "overlay-8"
+        view._overlay_move_preview_overlay_request_scale = 1.5
+        view._cancel_overlay_move_preview_requests()
+        self.assertEqual(
+            view._rendering_service.cancelled_requests, ["page-7", "overlay-8"]
+        )
+        self.assertIsNone(view._overlay_move_preview_base_request_id)
+        self.assertIsNone(view._overlay_move_preview_overlay_request_id)
+        self.assertEqual(view._overlay_move_preview_overlay_request_scale, 0.0)
+        view._rendering_service.cancelled_requests.clear()
+        view._cancel_overlay_move_preview_requests()
+        self.assertEqual(view._rendering_service.cancelled_requests, [])
+
+    def test_cancelling_only_the_overlay_request_keeps_the_base_request(self):
+        view, _page = self._view()
+        view._rendering_service.cancelled_requests.clear()
+        view._overlay_move_preview_base_request_id = "page-7"
+        view._overlay_move_preview_overlay_request_id = "overlay-8"
+        view._overlay_move_preview_overlay_request_scale = 1.5
+        view._cancel_overlay_move_overlay_request()
+        self.assertEqual(view._rendering_service.cancelled_requests, ["overlay-8"])
+        self.assertEqual(view._overlay_move_preview_base_request_id, "page-7")
+        self.assertEqual(view._overlay_move_preview_overlay_request_scale, 0.0)
+
+    def test_invalidating_preview_requests_advances_the_generation_by_one(self):
+        view, _page = self._view()
+        view._overlay_move_preview_generation_id = 4
+        view._overlay_move_preview_base_request_id = "page-7"
+        view._invalidate_overlay_move_preview_requests()
+        self.assertEqual(view._overlay_move_preview_generation_id, 5)
+        self.assertIsNone(view._overlay_move_preview_base_request_id)
+
+    def test_clearing_preview_visuals_releases_images_and_detaches_items(self):
+        view, _page = self._view()
+        image = QImage(10, 10, QImage.Format.Format_ARGB32)
+        base = ImageBackgroundItem(image, 10.0, 10.0)
+        overlay = QGraphicsPixmapItem(QPixmap.fromImage(image))
+        view._scene.addItem(base)
+        view._scene.addItem(overlay)
+        view._overlay_move_preview_base_item = base
+        view._overlay_move_preview_overlay_item = overlay
+        view._overlay_move_preview_generation_id = 2
+        view._overlay_move_hidden_visual_visibility = {base: True}
+        view._overlay_move_normal_visuals_hidden = True
+        updates = []
+        view.viewport().update = lambda *a: updates.append(True)
+        view._clear_overlay_move_preview_visuals(restore_normal=False)
+        self.assertEqual(view._overlay_move_preview_generation_id, 3)
+        self.assertTrue(base._image.isNull())
+        self.assertTrue(overlay.pixmap().isNull())
+        self.assertIsNone(base.scene())
+        self.assertIsNone(overlay.scene())
+        self.assertIsNone(view._overlay_move_preview_base_item)
+        self.assertIsNone(view._overlay_move_preview_overlay_item)
+        self.assertEqual(view._overlay_move_hidden_visual_visibility, {})
+        self.assertIs(view._overlay_move_normal_visuals_hidden, False)
+        self.assertEqual(updates, [True])
+
+    def test_clearing_preview_visuals_can_restore_the_normal_visuals(self):
+        view, _page = self._view()
+        normal = self._item(view, visible=False)
+        view._overlay_move_hidden_visual_visibility = {normal: True}
+        view._overlay_move_normal_visuals_hidden = True
+        view._clear_overlay_move_preview_visuals(restore_normal=True)
+        self.assertTrue(normal.isVisible())
+        self.assertIs(view._overlay_move_normal_visuals_hidden, False)
+
+    def test_clearing_preview_visuals_tolerates_deleted_and_detached_items(self):
+        view, _page = self._view()
+        deleted = self._item(view)
+        detached = ImageBackgroundItem(
+            QImage(4, 4, QImage.Format.Format_ARGB32), 4.0, 4.0
+        )
+        view._overlay_move_preview_base_item = deleted
+        view._overlay_move_preview_overlay_item = detached
+        delete(deleted)
+        view._clear_overlay_move_preview_visuals(restore_normal=False)
+        self.assertTrue(detached._image.isNull())
+
+    def test_starting_the_preview_setup_requests_only_the_images_the_page_has(self):
+        view, page = self._view()
+        steps = []
+        view._clear_overlay_move_preview_visuals = lambda restore_normal: steps.append(
+            ("clear", restore_normal)
+        )
+        view._ensure_overlay_move_white_canvas = lambda: steps.append("canvas")
+        view._request_overlay_move_base_preview = lambda gid: steps.append(
+            ("base", gid)
+        )
+        view._request_overlay_move_overlay_preview = lambda gid, rect: steps.append(
+            ("overlay", gid, rect)
+        )
+        view._activate_overlay_move_preview_visuals = lambda: steps.append("activate")
+        view._overlay_move_preview_generation_id = 11
+        view._start_overlay_move_preview_setup(self.RECT)
+        self.assertEqual(
+            steps,
+            [
+                ("clear", True),
+                "canvas",
+                ("base", 11),
+                ("overlay", 11, self.RECT),
+                "activate",
+            ],
+        )
+        steps.clear()
+        page.image_path = ""
+        view._start_overlay_move_preview_setup(self.RECT)
+        self.assertEqual(
+            steps, [("clear", True), "canvas", ("overlay", 11, self.RECT), "activate"]
+        )
+        steps.clear()
+        page.image_path = "base.pdf"
+        page.overlay_image_path = ""
+        view._start_overlay_move_preview_setup(self.RECT)
+        self.assertEqual(steps, [("clear", True), "canvas", ("base", 11), "activate"])
+        steps.clear()
+        view._current_page = None
+        view._start_overlay_move_preview_setup(self.RECT)
+        self.assertEqual(steps, [])
+
+    def test_the_white_canvas_is_only_created_when_missing_and_sizeable(self):
+        view, page = self._view()
+        calls = []
+        view._ensure_page_canvas = lambda w, h: calls.append(("canvas", w, h))
+        view._apply_page_transform_to_items = lambda: calls.append("transform")
+        view._update_scene_rect = lambda: calls.append("scene_rect")
+        view._ensure_overlay_move_white_canvas()
+        self.assertEqual(calls, [])
+        view._white_canvas_item = None
+        view._ensure_overlay_move_white_canvas()
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "canvas",
+                    page.effective_width_pts * view._scene_scale,
+                    page.effective_height_pts * view._scene_scale,
+                ),
+                "transform",
+                "scene_rect",
+            ],
+        )
+        calls.clear()
+        view._scene_scale = 0.0
+        view._ensure_overlay_move_white_canvas()
+        self.assertEqual(calls, [])
+        view._scene_scale = 2.0
+        view._current_page = None
+        view._ensure_overlay_move_white_canvas()
+        self.assertEqual(calls, [])
+
+    def test_base_preview_request_uses_the_page_render_options(self):
+        view, page = self._view()
+        service = view._rendering_service
+        service.page_requests.clear()
+        page.invert = True
+        page.bitonal = True
+        view._overlay_move_preview_generation_id = 9
+        view._request_overlay_move_base_preview(9)
+        request_id, options = service.page_requests[-1]
+        self.assertEqual(view._overlay_move_preview_base_request_id, request_id)
+        self.assertEqual(options["file_path"], "base.pdf")
+        self.assertEqual(options["page_index"], page.page_index)
+        self.assertEqual(options["scale"], INTERACTIVE_PDF_RENDER_SCALE)
+        self.assertEqual(options["rotation"], 0)
+        self.assertEqual(options["priority"], 0)
+        self.assertIs(options["invert"], True)
+        self.assertIs(options["bitonal"], True)
+        self.assertEqual(options["tint_rgb"], (255, 80, 80))
+        self.assertIs(options["apply_invert_effect"], True)
+        self.assertIs(options["apply_bitonal_effect"], False)
+
+    def test_base_preview_request_without_tint_applies_the_bitonal_effect(self):
+        view, page = self._view()
+        page.image_show_mode = SHOW_ORIGINAL
+        view._request_overlay_move_base_preview(1)
+        options = view._rendering_service.page_requests[-1][1]
+        self.assertIsNone(options["tint_rgb"])
+        self.assertIs(options["apply_bitonal_effect"], True)
+
+    def test_raster_base_preview_uses_the_native_raster_scale(self):
+        view, page = self._view()
+        page.image_path = "base.png"
+        view._base_raster_scale = 3.5
+        view._request_overlay_move_base_preview(1)
+        self.assertEqual(view._rendering_service.page_requests[-1][1]["scale"], 3.5)
+        view._base_raster_scale = 0.0
+        view._scene_scale = 2.25
+        view._request_overlay_move_base_preview(1)
+        self.assertEqual(view._rendering_service.page_requests[-1][1]["scale"], 2.25)
+
+    def test_base_preview_request_needs_a_page_with_a_base_image(self):
+        view, page = self._view()
+        view._rendering_service.page_requests.clear()
+        page.image_path = ""
+        view._request_overlay_move_base_preview(1)
+        view._current_page = None
+        view._request_overlay_move_base_preview(1)
+        self.assertEqual(view._rendering_service.page_requests, [])
+
+    def test_base_preview_callback_reports_the_request_generation(self):
+        view, _page = self._view()
+        loaded = []
+        view._on_overlay_move_base_preview_loaded = lambda result, gid: loaded.append(
+            (result, gid)
+        )
+        view._request_overlay_move_base_preview(5)
+        _request_id, options = view._rendering_service.page_requests[-1]
+        options["callback"]("result")
+        self.assertEqual(loaded, [("result", 5)])
+
+    def _loaded_base_view(self):
+        view, page = self._view()
+        view._overlay_move_preview_generation_id = 3
+        view._overlay_move_preview_base_request_id = "page-1"
+        view._overlay_move_normal_visuals_hidden = True
+        view._pdf_width_pts = 612.0
+        view._pdf_height_pts = 792.0
+        view._current_rotation = 0
+        self.activations = []
+        view._activate_overlay_move_preview_visuals = (
+            lambda *a, **k: self.activations.append(True)
+        )
+        view._apply_overlay_move_preview_page_transform = (
+            lambda: self.activations.append("transform")
+        )
+        return view, page
+
+    def test_loaded_base_preview_becomes_a_scene_item_at_the_logical_page_size(self):
+        view, _page = self._loaded_base_view()
+        image = QImage(1224, 1584, QImage.Format.Format_ARGB32)
+        view._on_overlay_move_base_preview_loaded(
+            RenderResult("page-1", True, image, None), 3
+        )
+        item = view._overlay_move_preview_base_item
+        self.assertIsInstance(item, ImageBackgroundItem)
+        self.assertIs(item.scene(), view._scene)
+        self.assertEqual(item.zValue(), OVERLAY_MOVE_BASE_Z)
+        self.assertTrue(item.isVisible())
+        self.assertEqual(item.boundingRect(), QtCore.QRectF(0.0, 0.0, 1224.0, 1584.0))
+        self.assertIsNone(view._overlay_move_preview_base_request_id)
+        self.assertEqual(self.activations, ["transform", True])
+
+    def test_loaded_raster_base_preview_keeps_the_image_size(self):
+        view, page = self._loaded_base_view()
+        page.image_path = "base.png"
+        view._on_overlay_move_base_preview_loaded(
+            RenderResult(
+                "page-1", True, QImage(300, 200, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertEqual(
+            view._overlay_move_preview_base_item.boundingRect(),
+            QtCore.QRectF(0.0, 0.0, 300.0, 200.0),
+        )
+
+    def test_loaded_base_preview_starts_hidden_until_normal_visuals_are_hidden(self):
+        view, _page = self._loaded_base_view()
+        view._overlay_move_normal_visuals_hidden = False
+        view._on_overlay_move_base_preview_loaded(
+            RenderResult(
+                "page-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertFalse(view._overlay_move_preview_base_item.isVisible())
+
+    def test_loaded_base_preview_replaces_the_previous_preview_item(self):
+        view, _page = self._loaded_base_view()
+        old = ImageBackgroundItem(QImage(8, 8, QImage.Format.Format_ARGB32), 8.0, 8.0)
+        view._scene.addItem(old)
+        view._overlay_move_preview_base_item = old
+        view._on_overlay_move_base_preview_loaded(
+            RenderResult(
+                "page-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertIsNone(old.scene())
+        self.assertTrue(old._image.isNull())
+        self.assertIsNot(view._overlay_move_preview_base_item, old)
+
+    def test_stale_or_failed_base_preview_results_are_dropped(self):
+        image = QImage(100, 100, QImage.Format.Format_ARGB32)
+        cases = (
+            ("other request", RenderResult("page-9", True, image, None), 3, False),
+            ("other generation", RenderResult("page-1", True, image, None), 2, True),
+            ("failure", RenderResult("page-1", False, image, None), 3, True),
+            ("no image", RenderResult("page-1", True, None, None), 3, True),
+        )
+        for label, result, generation, request_cleared in cases:
+            with self.subTest(label):
+                view, _page = self._loaded_base_view()
+                view._on_overlay_move_base_preview_loaded(result, generation)
+                self.assertIsNone(view._overlay_move_preview_base_item)
+                self.assertEqual(self.activations, [])
+                self.assertEqual(
+                    view._overlay_move_preview_base_request_id,
+                    None if request_cleared else "page-1",
+                )
+        view, _page = self._loaded_base_view()
+        view._current_page = None
+        view._on_overlay_move_base_preview_loaded(
+            RenderResult("page-1", True, image, None), 3
+        )
+        self.assertIsNone(view._overlay_move_preview_base_item)
+
+
+from ost_visualizer.application.render_quality import baseline_render_scale
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    OVERLAY_MOVE_FOREGROUND_Z,
+    overlay_visual_z,
+)
+
+
+class TakeoffPlanViewOverlayMoveOverlayPreviewTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    RECT = TakeoffPlanViewOverlayMoveLifecycleTests.RECT
+
+    def _view(self, **page_overrides):
+        view = self._make_plan_view()
+        page = TakeoffPlanViewOverlayMoveLifecycleTests._page(self, **page_overrides)
+        self._install_page_canvas(view, page)
+        view._rendering_service.overlay_requests.clear()
+        view._rendering_service.cancelled_requests.clear()
+        return view, page
+
+    # ---- requesting the overlay preview
+    def test_overlay_preview_request_renders_the_page_copy_with_the_new_rect(self):
+        view, page = self._view()
+        view._overlay_move_preview_overlay_request_id = None
+        view._request_overlay_move_overlay_preview(7, (10.0, 20.0, 30.0, 40.0))
+        request_id, options = view._rendering_service.overlay_requests[-1]
+        self.assertEqual(view._overlay_move_preview_overlay_request_id, request_id)
+        self.assertEqual(options["page"].overlay_rect, (10.0, 20.0, 30.0, 40.0))
+        self.assertEqual(page.overlay_rect, self.RECT)
+        self.assertEqual(options["show_mode"], SHOW_BOTH)
+        self.assertEqual(options["rotation"], view._active_page_raster_rotation())
+        self.assertEqual(options["rotation"], 0)
+        self.assertEqual(options["priority"], 0)
+        self.assertEqual(
+            options["render_scale"], view._overlay_move_overlay_render_scale()
+        )
+        self.assertEqual(options["render_scale"], 3.0)
+        self.assertEqual(
+            view._overlay_move_preview_overlay_request_scale, options["render_scale"]
+        )
+        self.assertIs(options["apply_invert_effect"], True)
+        self.assertIs(options["apply_bitonal_effect"], False)
+
+    def test_overlay_preview_request_applies_the_bitonal_effect_without_a_tint(self):
+        view, page = self._view(image_show_mode=SHOW_OVERLAY)
+        view._request_overlay_move_overlay_preview(1, self.RECT)
+        self.assertIs(
+            view._rendering_service.overlay_requests[-1][1]["apply_bitonal_effect"],
+            True,
+        )
+
+    def test_overlay_preview_request_replaces_a_pending_request(self):
+        view, _page = self._view()
+        view._overlay_move_preview_overlay_request_id = "overlay-old"
+        view._overlay_move_preview_overlay_request_scale = 9.0
+        view._request_overlay_move_overlay_preview(1, self.RECT)
+        self.assertEqual(view._rendering_service.cancelled_requests, ["overlay-old"])
+        self.assertNotEqual(
+            view._overlay_move_preview_overlay_request_id, "overlay-old"
+        )
+
+    def test_overlay_preview_request_needs_an_overlay_image(self):
+        view, page = self._view()
+        page.overlay_image_path = ""
+        view._request_overlay_move_overlay_preview(1, self.RECT)
+        view._current_page = None
+        view._request_overlay_move_overlay_preview(1, self.RECT)
+        self.assertEqual(view._rendering_service.overlay_requests, [])
+
+    def test_overlay_render_scale_depends_on_the_overlay_file_type(self):
+        view, page = self._view()
+        self.assertEqual(
+            view._overlay_move_overlay_render_scale(),
+            baseline_render_scale(is_pdf=True),
+        )
+        self.assertEqual(view._overlay_move_overlay_render_scale(), 3.0)
+        page.overlay_image_path = "overlay.png"
+        self.assertEqual(
+            view._overlay_move_overlay_render_scale(),
+            baseline_render_scale(is_pdf=False),
+        )
+        self.assertEqual(view._overlay_move_overlay_render_scale(), 1.0)
+        page.overlay_image_path = ""
+        self.assertEqual(
+            view._overlay_move_overlay_render_scale(), INTERACTIVE_PDF_RENDER_SCALE
+        )
+        self.assertEqual(view._overlay_move_overlay_render_scale(), 3.0)
+        view._current_page = None
+        self.assertEqual(
+            view._overlay_move_overlay_render_scale(), INTERACTIVE_PDF_RENDER_SCALE
+        )
+
+    def test_overlay_preview_callback_reports_the_request_generation(self):
+        view, _page = self._view()
+        loaded = []
+        view._on_overlay_move_overlay_preview_loaded = (
+            lambda result, gid: loaded.append((result, gid))
+        )
+        view._request_overlay_move_overlay_preview(6, self.RECT)
+        view._rendering_service.overlay_requests[-1][1]["callback"]("result")
+        self.assertEqual(loaded, [("result", 6)])
+
+    # ---- receiving the overlay preview
+    def _pending(self, view, scale=2.0, generation=3):
+        view._overlay_move_preview_generation_id = generation
+        view._overlay_move_preview_overlay_request_id = "overlay-1"
+        view._overlay_move_preview_overlay_request_scale = scale
+        view._overlay_move_preview_rect = (5.0, 6.0, 544.0, 704.0)
+        view._overlay_move_normal_visuals_hidden = True
+        self.activations = []
+        view._activate_overlay_move_preview_visuals = (
+            lambda *a, **k: self.activations.append(True)
+        )
+
+    def test_loaded_overlay_preview_becomes_a_scene_item_with_the_preview_transform(
+        self,
+    ):
+        view, page = self._view()
+        self._pending(view, scale=2.0)
+        image = QImage(1088, 1408, QImage.Format.Format_ARGB32)
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult("overlay-1", True, image, None), 3
+        )
+        item = view._overlay_move_preview_overlay_item
+        self.assertIsNotNone(item)
+        self.assertIs(item.scene(), view._scene)
+        self.assertTrue(item.isVisible())
+        self.assertEqual(
+            item.zValue(),
+            overlay_visual_z(
+                page.image_show_mode,
+                primary_z=PAGE_VISIBLE_FRAME_Z,
+                foreground_z=OVERLAY_MOVE_FOREGROUND_Z,
+            ),
+        )
+        self.assertEqual(item.pixmap().size(), image.size())
+        self.assertFalse(item.transform().isIdentity())
+        self.assertEqual(
+            item.transform(),
+            view._overlay_graphics_transform(
+                view._overlay_move_page_for_rect((5.0, 6.0, 544.0, 704.0)),
+                1088,
+                1408,
+                view._scene_scale,
+            ),
+        )
+        self.assertIsNone(view._overlay_move_preview_overlay_request_id)
+        self.assertEqual(view._overlay_move_preview_overlay_request_scale, 0.0)
+        self.assertEqual(view._overlay_pdf_width_pts, 1088.0 / 2.0)
+        self.assertEqual(view._overlay_pdf_height_pts, 1408.0 / 2.0)
+        self.assertEqual(self.activations, [True])
+
+    def test_loaded_overlay_preview_starts_hidden_until_normal_visuals_are_hidden(self):
+        view, _page = self._view()
+        self._pending(view)
+        view._overlay_move_normal_visuals_hidden = False
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertFalse(view._overlay_move_preview_overlay_item.isVisible())
+
+    def test_loaded_overlay_preview_uses_the_preview_rect_for_the_item_geometry(self):
+        view, _page = self._view()
+        self._pending(view)
+        view._overlay_move_preview_rect = (50.0, 60.0, 100.0, 120.0)
+        image = QImage(100, 100, QImage.Format.Format_ARGB32)
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult("overlay-1", True, image, None), 3
+        )
+        moved = view._overlay_move_preview_overlay_item.transform()
+        view._overlay_move_preview_rect = (0.0, 0.0, 100.0, 120.0)
+        self._pending(view)
+        view._overlay_move_preview_rect = (0.0, 0.0, 100.0, 120.0)
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult("overlay-1", True, image, None), 3
+        )
+        self.assertNotEqual(moved, view._overlay_move_preview_overlay_item.transform())
+
+    def test_loaded_overlay_preview_without_a_preview_rect_uses_the_current_page(self):
+        view, page = self._view()
+        image = QImage(100, 100, QImage.Format.Format_ARGB32)
+        self._pending(view)
+        view._overlay_move_preview_rect = None
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult("overlay-1", True, image, None), 3
+        )
+        item = view._overlay_move_preview_overlay_item
+        self.assertIsNotNone(item)
+        without_rect = item.transform()
+        self.assertFalse(without_rect.isIdentity())
+        # The page rect is what a preview rect equal to it would give; a moved rect differs.
+        self._pending(view)
+        view._overlay_move_preview_rect = self.RECT
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult("overlay-1", True, image, None), 3
+        )
+        self.assertEqual(
+            view._overlay_move_preview_overlay_item.transform(), without_rect
+        )
+        self._pending(view)
+        view._overlay_move_preview_rect = (50.0, 60.0, 544.0, 704.0)
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult("overlay-1", True, image, None), 3
+        )
+        self.assertNotEqual(
+            view._overlay_move_preview_overlay_item.transform(), without_rect
+        )
+
+    def test_loaded_overlay_preview_replaces_the_previous_preview_item(self):
+        view, _page = self._view()
+        self._pending(view)
+        old = QGraphicsPixmapItem(QPixmap(8, 8))
+        view._scene.addItem(old)
+        view._overlay_move_preview_overlay_item = old
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertIsNone(old.scene())
+        self.assertTrue(old.pixmap().isNull())
+        self.assertIsNot(view._overlay_move_preview_overlay_item, old)
+
+    def test_loaded_raster_overlay_preview_keeps_the_pdf_point_size_unchanged(self):
+        view, page = self._view(overlay_image_path="overlay.png")
+        self._pending(view)
+        view._overlay_pdf_width_pts = 11.0
+        view._overlay_pdf_height_pts = 12.0
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertEqual(
+            (view._overlay_pdf_width_pts, view._overlay_pdf_height_pts), (11.0, 12.0)
+        )
+
+    def test_overlay_preview_without_a_render_scale_does_not_touch_the_pdf_size(self):
+        view, _page = self._view()
+        self._pending(view, scale=0.0)
+        view._overlay_pdf_width_pts = 11.0
+        view._overlay_pdf_height_pts = 12.0
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertEqual(
+            (view._overlay_pdf_width_pts, view._overlay_pdf_height_pts), (11.0, 12.0)
+        )
+        self.assertIsNotNone(view._overlay_move_preview_overlay_item)
+
+    def test_stale_or_failed_overlay_preview_results_are_dropped(self):
+        image = QImage(100, 100, QImage.Format.Format_ARGB32)
+        cases = (
+            ("other request", RenderResult("overlay-9", True, image, None), 3, False),
+            ("other generation", RenderResult("overlay-1", True, image, None), 2, True),
+            ("failure", RenderResult("overlay-1", False, image, None), 3, True),
+            ("no image", RenderResult("overlay-1", True, None, None), 3, True),
+        )
+        for label, result, generation, consumed in cases:
+            with self.subTest(label):
+                view, _page = self._view()
+                self._pending(view)
+                view._on_overlay_move_overlay_preview_loaded(result, generation)
+                self.assertIsNone(view._overlay_move_preview_overlay_item)
+                self.assertEqual(self.activations, [])
+                self.assertEqual(
+                    view._overlay_move_preview_overlay_request_id,
+                    None if consumed else "overlay-1",
+                )
+                self.assertEqual(
+                    view._overlay_move_preview_overlay_request_scale,
+                    0.0 if consumed else 2.0,
+                )
+
+    def test_overlay_preview_without_any_page_is_dropped(self):
+        view, _page = self._view()
+        self._pending(view)
+        view._overlay_move_preview_rect = None
+        view._current_page = None
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertIsNone(view._overlay_move_preview_overlay_item)
+
+    def test_overlay_preview_that_cannot_build_an_item_is_dropped(self):
+        view, _page = self._view()
+        self._pending(view)
+        view._create_overlay_graphics_item = lambda *args: None
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertIsNone(view._overlay_move_preview_overlay_item)
+        self.assertEqual(self.activations, [])
+
+    # ---- applying the preview to the visuals
+    def test_preview_transform_is_applied_to_the_base_preview_item_only(self):
+        view, _page = self._view()
+        item = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        view._scene.addItem(item)
+        view._overlay_move_preview_base_item = item
+        view._get_page_rect_dimensions = lambda: (11.0, 22.0)
+        seen = []
+        view._get_page_transform = lambda w, h: seen.append(
+            (w, h)
+        ) or QTransform().scale(2.0, 3.0)
+        view._apply_overlay_move_preview_page_transform()
+        self.assertEqual(seen, [(11.0, 22.0)])
+        self.assertEqual(item.transform(), QTransform().scale(2.0, 3.0))
+        view._get_page_rect_dimensions = lambda: None
+        item.setTransform(QTransform())
+        view._apply_overlay_move_preview_page_transform()
+        self.assertTrue(item.transform().isIdentity())
+
+    def test_preview_transform_skips_a_missing_or_deleted_item(self):
+        view, _page = self._view()
+        view._get_page_rect_dimensions = lambda: (11.0, 22.0)
+        view._get_page_transform = lambda w, h: QTransform().scale(2.0, 3.0)
+        view._overlay_move_preview_base_item = None
+        view._apply_overlay_move_preview_page_transform()
+        item = QGraphicsRectItem()
+        view._overlay_move_preview_base_item = item
+        delete(item)
+        view._apply_overlay_move_preview_page_transform()
+
+    def test_preview_rect_updates_the_overlay_item_transform_and_repaints(self):
+        view, page = self._view()
+        item = QGraphicsPixmapItem(QPixmap(40, 30))
+        view._scene.addItem(item)
+        view._overlay_move_preview_overlay_item = item
+        view._overlay_move_preview_rect = (7.0, 8.0, 100.0, 120.0)
+        seen = []
+        view._overlay_graphics_transform = lambda page, w, h, scale: (
+            seen.append((page.overlay_rect, w, h, scale))
+            or QTransform().scale(4.0, 5.0)
+        )
+        updates = []
+        view.viewport().update = lambda *a: updates.append(True)
+        view._apply_overlay_move_preview_rect_to_visuals()
+        self.assertEqual(seen, [((7.0, 8.0, 100.0, 120.0), 40, 30, view._scene_scale)])
+        self.assertEqual(item.transform(), QTransform().scale(4.0, 5.0))
+        self.assertEqual(updates, [True])
+
+    def test_preview_rect_without_a_transform_only_repaints(self):
+        view, _page = self._view()
+        item = QGraphicsPixmapItem(QPixmap(40, 30))
+        view._scene.addItem(item)
+        view._overlay_move_preview_overlay_item = item
+        view._overlay_move_preview_rect = (7.0, 8.0, 100.0, 120.0)
+        view._overlay_graphics_transform = lambda *args: None
+        updates = []
+        view.viewport().update = lambda *a: updates.append(True)
+        view._apply_overlay_move_preview_rect_to_visuals()
+        self.assertTrue(item.transform().isIdentity())
+        self.assertEqual(updates, [True])
+
+    def test_preview_rect_without_an_item_or_rect_only_repaints(self):
+        for label, rect, make_item in (
+            ("no rect", None, True),
+            ("no item", (7.0, 8.0, 100.0, 120.0), False),
+        ):
+            with self.subTest(label):
+                view, _page = self._view()
+                view._overlay_move_preview_rect = rect
+                view._overlay_move_preview_overlay_item = (
+                    QGraphicsPixmapItem(QPixmap(4, 4)) if make_item else None
+                )
+                view._overlay_graphics_transform = lambda *args: self.fail(
+                    "no transform"
+                )
+                updates = []
+                view.viewport().update = lambda *a: updates.append(True)
+                view._apply_overlay_move_preview_rect_to_visuals()
+                self.assertEqual(updates, [True])
+        view, _page = self._view()
+        view._overlay_move_preview_rect = (7.0, 8.0, 100.0, 120.0)
+        item = QGraphicsPixmapItem(QPixmap(4, 4))
+        view._overlay_move_preview_overlay_item = item
+        delete(item)
+        view._overlay_graphics_transform = lambda *args: self.fail("no transform")
+        updates = []
+        view.viewport().update = lambda *a: updates.append(True)
+        view._apply_overlay_move_preview_rect_to_visuals()
+        self.assertEqual(updates, [True])
+
+
+class TakeoffPlanViewOverlayMoveHandleTests(_TakeoffPlanViewOverlayRefreshFixture):
+    RECT = TakeoffPlanViewOverlayMoveLifecycleTests.RECT
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = TakeoffPlanViewOverlayMoveLifecycleTests._page(self)
+        self._install_page_canvas(view, page)
+        view.show()
+        QApplication.processEvents()
+        return view, page
+
+    # ---- handle item
+    def test_handle_item_is_created_once_and_follows_the_requested_position(self):
+        view, _page = self._view()
+        self.assertIs(
+            view._set_overlay_move_handle_pos(QtCore.QPointF(10.0, 20.0)), True
+        )
+        handle = view._overlay_move_handle_item
+        self.assertIsInstance(handle, QGraphicsPixmapItem)
+        self.assertIs(handle.scene(), view._scene)
+        self.assertEqual(handle.pos(), QtCore.QPointF(10.0, 20.0))
+        self.assertEqual(handle.zValue(), 30)
+        self.assertEqual(handle.offset(), QtCore.QPointF(-13.0, -13.0))
+        self.assertTrue(
+            handle.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        )
+        self.assertEqual(handle.pixmap().size(), QtCore.QSize(26, 26))
+        view._set_overlay_move_handle_pos(QtCore.QPointF(30.0, 40.0))
+        self.assertIs(view._overlay_move_handle_item, handle)
+        self.assertEqual(handle.pos(), QtCore.QPointF(30.0, 40.0))
+
+    def test_detached_handle_is_put_back_into_the_scene(self):
+        view, _page = self._view()
+        view._set_overlay_move_handle_pos(QtCore.QPointF(10.0, 20.0))
+        handle = view._overlay_move_handle_item
+        view._scene.removeItem(handle)
+        view._set_overlay_move_handle_pos(QtCore.QPointF(1.0, 2.0))
+        self.assertIs(handle.scene(), view._scene)
+        self.assertIs(view._overlay_move_handle_item, handle)
+
+    def test_deleted_handle_item_is_replaced(self):
+        view, _page = self._view()
+        view._set_overlay_move_handle_pos(QtCore.QPointF(10.0, 20.0))
+        old = view._overlay_move_handle_item
+        delete(old)
+        self.assertIs(view._set_overlay_move_handle_pos(QtCore.QPointF(1.0, 2.0)), True)
+        self.assertIsNot(view._overlay_move_handle_item, old)
+        self.assertEqual(view._overlay_move_handle_item.pos(), QtCore.QPointF(1.0, 2.0))
+
+    def test_handle_creation_fails_without_an_icon(self):
+        view, _page = self._view()
+        view._outlined_icon_pixmap = lambda name, color: QPixmap()
+        self.assertIs(
+            view._set_overlay_move_handle_pos(QtCore.QPointF(1.0, 2.0)), False
+        )
+        self.assertIsNone(view._overlay_move_handle_item)
+
+    def test_removing_the_handle_detaches_and_forgets_it(self):
+        view, _page = self._view()
+        view._remove_overlay_move_handle()
+        view._set_overlay_move_handle_pos(QtCore.QPointF(10.0, 20.0))
+        handle = view._overlay_move_handle_item
+        view._remove_overlay_move_handle()
+        self.assertIsNone(handle.scene())
+        self.assertIsNone(view._overlay_move_handle_item)
+        view._set_overlay_move_handle_pos(QtCore.QPointF(10.0, 20.0))
+        deleted = view._overlay_move_handle_item
+        delete(deleted)
+        view._remove_overlay_move_handle()
+        self.assertIsNone(view._overlay_move_handle_item)
+
+    def test_hit_test_accepts_points_within_sixteen_viewport_pixels(self):
+        view, _page = self._view()
+        self.assertIs(view._is_over_overlay_move_handle(QtCore.QPoint(0, 0)), False)
+        view._set_overlay_move_handle_pos(QtCore.QPointF(50.0, 60.0))
+        center = view.mapFromScene(QtCore.QPointF(50.0, 60.0))
+        self.assertIs(view._is_over_overlay_move_handle(center), True)
+        self.assertIs(
+            view._is_over_overlay_move_handle(center + QtCore.QPoint(16, 0)), True
+        )
+        self.assertIs(
+            view._is_over_overlay_move_handle(center + QtCore.QPoint(0, -16)), True
+        )
+        self.assertIs(
+            view._is_over_overlay_move_handle(center + QtCore.QPoint(17, 0)), False
+        )
+        self.assertIs(
+            view._is_over_overlay_move_handle(center + QtCore.QPoint(0, 17)), False
+        )
+        self.assertIs(
+            view._is_over_overlay_move_handle(center + QtCore.QPoint(12, 12)), False
+        )
+        self.assertIs(
+            view._is_over_overlay_move_handle(center + QtCore.QPoint(9, 9)), True
+        )
+        self.assertIs(view._is_over_overlay_move_handle(None), False)
+
+    def test_hit_test_forgets_a_deleted_handle(self):
+        view, _page = self._view()
+        view._set_overlay_move_handle_pos(QtCore.QPointF(50.0, 60.0))
+        handle = view._overlay_move_handle_item
+        delete(handle)
+        self.assertIs(view._is_over_overlay_move_handle(QtCore.QPoint(5, 5)), False)
+        self.assertIsNone(view._overlay_move_handle_item)
+
+    # ---- viewport centre
+    def test_viewport_centre_is_the_scene_point_under_the_viewport_centre(self):
+        view, _page = self._view()
+        center = view._viewport_center_pixel_scene_pos()
+        self.assertEqual(center, view.mapToScene(view.viewport().rect().center()))
+
+    def test_viewport_centre_needs_a_valid_size_and_finite_coordinates(self):
+        view, _page = self._view()
+        real_viewport = view.viewport()
+        view.viewport = lambda: SimpleNamespace(
+            size=lambda: QtCore.QSize(-1, -1), rect=real_viewport.rect
+        )
+        self.assertIsNone(view._viewport_center_pixel_scene_pos())
+        view.viewport = lambda: None
+        self.assertIsNone(view._viewport_center_pixel_scene_pos())
+        view.viewport = lambda: real_viewport
+        for bad in (float("nan"), float("inf")):
+            with self.subTest(bad=bad):
+                view.mapToScene = lambda point, bad=bad: QtCore.QPointF(bad, 1.0)
+                self.assertIsNone(view._viewport_center_pixel_scene_pos())
+                view.mapToScene = lambda point, bad=bad: QtCore.QPointF(1.0, bad)
+                self.assertIsNone(view._viewport_center_pixel_scene_pos())
+
+    # ---- keeping the handle centred
+    def test_handle_follows_the_viewport_centre_only_in_handle_mode(self):
+        view, _page = self._view()
+        view._set_overlay_move_handle_pos(QtCore.QPointF(1.0, 2.0))
+        cursors = []
+        view._update_cursor = lambda *a: cursors.append(a)
+        view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY_HANDLE
+        view._overlay_move_dragging = False
+        view._update_overlay_move_handle_position()
+        self.assertEqual(
+            view._overlay_move_handle_item.pos(),
+            view._viewport_center_pixel_scene_pos(),
+        )
+        self.assertEqual(cursors, [()])
+        for label, change in (
+            ("other mode", lambda: setattr(view, "_cursor_mode", CURSOR_MODE_SELECT)),
+            ("dragging", lambda: setattr(view, "_overlay_move_dragging", True)),
+            ("no handle", lambda: setattr(view, "_overlay_move_handle_item", None)),
+        ):
+            with self.subTest(label):
+                view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY_HANDLE
+                view._overlay_move_dragging = False
+                view._set_overlay_move_handle_pos(QtCore.QPointF(1.0, 2.0))
+                cursors.clear()
+                change()
+                view._update_overlay_move_handle_position()
+                self.assertEqual(cursors, [])
+                if label != "no handle":
+                    self.assertEqual(
+                        view._overlay_move_handle_item.pos(), QtCore.QPointF(1.0, 2.0)
+                    )
+
+    def test_handle_stays_put_when_the_centre_is_unknown_or_the_handle_cannot_move(
+        self,
+    ):
+        view, _page = self._view()
+        view._set_overlay_move_handle_pos(QtCore.QPointF(1.0, 2.0))
+        view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY_HANDLE
+        cursors = []
+        view._update_cursor = lambda *a: cursors.append(a)
+        view._viewport_center_pixel_scene_pos = lambda: None
+        view._update_overlay_move_handle_position()
+        self.assertEqual(cursors, [])
+        view._viewport_center_pixel_scene_pos = lambda: QtCore.QPointF(5.0, 6.0)
+        view._set_overlay_move_handle_pos = lambda pos: False
+        view._update_overlay_move_handle_position()
+        self.assertEqual(cursors, [])
+
+    # ---- beginning, previewing and finishing a drag
+    def _drag_view(self):
+        view, page = self._view()
+        view._overlay_move_original_rect = self.RECT
+        view._overlay_move_preview_rect = self.RECT
+        calls = []
+        view._activate_overlay_move_preview_visuals = lambda *a, **k: calls.append(
+            "activate"
+        )
+        view._apply_cursor_mode = lambda mode: calls.append(("mode", mode))
+        view._update_cursor = lambda *a: calls.append(("cursor", a))
+        modes = []
+        view.cursor_mode_change_requested.connect(modes.append)
+        self.calls = calls
+        self.modes = modes
+        return view, page
+
+    def test_beginning_a_drag_anchors_it_at_the_press_position(self):
+        view, _page = self._drag_view()
+        view._overlay_move_preview_rect = (9.0, 9.0, 544.0, 704.0)
+        point = QtCore.QPoint(40, 50)
+        self.assertIs(view._begin_overlay_move(point), True)
+        self.assertEqual(view._overlay_move_anchor_scene, view.mapToScene(point))
+        self.assertEqual(view._overlay_move_drag_start_rect, (9.0, 9.0, 544.0, 704.0))
+        self.assertEqual(view._overlay_move_preview_rect, (9.0, 9.0, 544.0, 704.0))
+        self.assertIs(view._overlay_move_dragging, True)
+        self.assertEqual(
+            self.calls,
+            ["activate", ("mode", CURSOR_MODE_MOVE_OVERLAY), ("cursor", (point,))],
+        )
+        self.assertEqual(self.modes, [CURSOR_MODE_MOVE_OVERLAY])
+
+    def test_beginning_a_drag_without_a_preview_uses_the_page_rect_and_records_the_original(
+        self,
+    ):
+        view, page = self._drag_view()
+        view._overlay_move_original_rect = None
+        view._overlay_move_preview_rect = None
+        view._begin_overlay_move(QtCore.QPoint(1, 1))
+        self.assertEqual(view._overlay_move_original_rect, self.RECT)
+        self.assertEqual(view._overlay_move_preview_rect, self.RECT)
+        self.assertEqual(view._overlay_move_drag_start_rect, self.RECT)
+
+    def test_beginning_a_drag_keeps_an_existing_original_rect(self):
+        view, _page = self._drag_view()
+        view._overlay_move_original_rect = (1.0, 1.0, 1.0, 1.0)
+        view._begin_overlay_move(QtCore.QPoint(1, 1))
+        self.assertEqual(view._overlay_move_original_rect, (1.0, 1.0, 1.0, 1.0))
+
+    def test_beginning_a_drag_needs_edit_access_a_page_and_a_rect(self):
+        view, page = self._drag_view()
+        view._editing_enabled = False
+        self.assertIs(view._begin_overlay_move(QtCore.QPoint(1, 1)), False)
+        view, page = self._drag_view()
+        view._current_page = None
+        self.assertIs(view._begin_overlay_move(QtCore.QPoint(1, 1)), False)
+        view, page = self._drag_view()
+        view._overlay_move_preview_rect = None
+        page.overlay_rect = None
+        self.assertIs(view._begin_overlay_move(QtCore.QPoint(1, 1)), False)
+        self.assertIs(view._overlay_move_dragging, False)
+        self.assertEqual(self.calls, [])
+
+    def _anchored_view(self):
+        view, page = self._drag_view()
+        view._overlay_move_anchor_scene = QtCore.QPointF(10.0, 20.0)
+        view._overlay_move_drag_start_rect = (100.0, 200.0, 544.0, 704.0)
+        view._overlay_move_dragging = True
+        handle_calls = []
+        view._set_overlay_move_handle_pos = lambda pos: handle_calls.append(pos) or True
+        visuals = []
+        view._apply_overlay_move_preview_rect_to_visuals = lambda: visuals.append(True)
+        self.handle_calls = handle_calls
+        self.visuals = visuals
+        return view, page
+
+    def test_previewing_a_move_offsets_the_start_rect_by_the_converted_delta(self):
+        view, page = self._anchored_view()
+        scene_pos = QtCore.QPointF(34.0, 62.0)
+        view._preview_overlay_move(scene_pos)
+        delta = page.canvas_point_to_overlay_rect_units(
+            24.0,
+            42.0,
+            page.effective_width_pts * view._scene_scale,
+            page.effective_height_pts * view._scene_scale,
+        )
+        self.assertEqual(
+            view._overlay_move_preview_rect,
+            (100.0 + delta[0], 200.0 + delta[1], 544.0, 704.0),
+        )
+        self.assertEqual(self.handle_calls, [scene_pos])
+        self.assertEqual(self.visuals, [True])
+
+    def test_previewing_the_same_position_twice_repaints_once(self):
+        view, _page = self._anchored_view()
+        scene_pos = QtCore.QPointF(34.0, 62.0)
+        view._preview_overlay_move(scene_pos)
+        view._preview_overlay_move(scene_pos)
+        self.assertEqual(self.visuals, [True])
+        self.assertEqual(self.handle_calls, [scene_pos, scene_pos])
+
+    def test_previewing_needs_an_active_anchored_drag(self):
+        for label, change in (
+            ("no page", lambda v: setattr(v, "_current_page", None)),
+            ("no original", lambda v: setattr(v, "_overlay_move_original_rect", None)),
+            ("no anchor", lambda v: setattr(v, "_overlay_move_anchor_scene", None)),
+            (
+                "no start rect",
+                lambda v: setattr(v, "_overlay_move_drag_start_rect", None),
+            ),
+        ):
+            with self.subTest(label):
+                view, _page = self._anchored_view()
+                change(view)
+                before = view._overlay_move_preview_rect
+                view._preview_overlay_move(QtCore.QPointF(34.0, 62.0))
+                self.assertEqual(view._overlay_move_preview_rect, before)
+                self.assertEqual(self.handle_calls, [])
+
+    def test_previewing_with_an_unconvertible_delta_changes_nothing(self):
+        view, page = self._anchored_view()
+        page.canvas_point_to_overlay_rect_units = lambda *a: None
+        before = view._overlay_move_preview_rect
+        view._preview_overlay_move(QtCore.QPointF(34.0, 62.0))
+        self.assertEqual(view._overlay_move_preview_rect, before)
+        self.assertEqual(self.handle_calls, [])
+
+    def test_finishing_a_drag_previews_the_release_and_returns_to_handle_mode(self):
+        view, _page = self._anchored_view()
+        previews = []
+        view._preview_overlay_move = previews.append
+        updates = []
+        view._update_overlay_move_handle_position = lambda *a: updates.append(True)
+        scene_pos = QtCore.QPointF(34.0, 62.0)
+        view._finish_overlay_move_drag(scene_pos)
+        self.assertEqual(previews, [scene_pos])
+        self.assertIsNone(view._overlay_move_anchor_scene)
+        self.assertIsNone(view._overlay_move_drag_start_rect)
+        self.assertIs(view._overlay_move_dragging, False)
+        self.assertEqual(self.handle_calls, [scene_pos])
+        self.assertEqual(self.calls, [("mode", CURSOR_MODE_MOVE_OVERLAY_HANDLE)])
+        self.assertEqual(self.modes, [CURSOR_MODE_MOVE_OVERLAY_HANDLE])
+        self.assertEqual(updates, [True])
+
+    def test_finishing_without_a_drag_does_nothing(self):
+        view, _page = self._anchored_view()
+        view._overlay_move_dragging = False
+        view._preview_overlay_move = lambda pos: self.fail("no preview")
+        view._finish_overlay_move_drag(QtCore.QPointF(1.0, 1.0))
+        self.assertEqual(self.handle_calls, [])
+        self.assertIsNotNone(view._overlay_move_anchor_scene)
+
+
+from ost_visualizer.presentation.components.plan_view import view as plan_view_module
+
+
+class PlanViewModuleHelperTests(unittest.TestCase):
+    def _annotation(self, uid, annotation_type="rect"):
+        return BidAnnotation(
+            uid=uid, annotation_type=annotation_type, position=[0.0, 0.0]
+        )
+
+    def test_annotation_dict_keys_unique_uids_directly(self):
+        first, second = self._annotation("a"), self._annotation("b")
+        result, db_map = plan_view_module._build_annotation_dict([first, second])
+        self.assertEqual(result, {"a": first, "b": second})
+        self.assertEqual(db_map, {})
+
+    def test_annotation_dict_renames_duplicate_uids_and_remembers_the_database_uid(
+        self,
+    ):
+        first, second, third = (
+            self._annotation("a"),
+            self._annotation("a", "oval"),
+            self._annotation("a", "oval"),
+        )
+        result, db_map = plan_view_module._build_annotation_dict([first, second, third])
+        self.assertEqual(set(result), {"a", "a_oval", "a_oval_1"})
+        self.assertIs(result["a"], first)
+        self.assertIs(result["a_oval"], second)
+        self.assertIs(result["a_oval_1"], third)
+        self.assertEqual(db_map, {"a_oval": "a", "a_oval_1": "a"})
+
+    def test_annotation_dict_avoids_reserved_takeoff_uids(self):
+        annotation = self._annotation("t1", "text")
+        result, db_map = plan_view_module._build_annotation_dict(
+            [annotation], {"t1", "t1_text"}
+        )
+        self.assertEqual(list(result), ["t1_text_1"])
+        self.assertEqual(db_map, {"t1_text_1": "t1"})
+        result, db_map = plan_view_module._build_annotation_dict([annotation], set())
+        self.assertEqual(list(result), ["t1"])
+        result, db_map = plan_view_module._build_annotation_dict([annotation], None)
+        self.assertEqual(list(result), ["t1"])
+
+    def test_rects_are_nearly_equal_within_the_tolerance_on_every_side(self):
+        base = QtCore.QRectF(10.0, 20.0, 30.0, 40.0)
+        near = plan_view_module._rects_nearly_equal
+        self.assertTrue(near(base, QtCore.QRectF(base)))
+        for dx, dy, dw, dh in (
+            (0.0005, 0, 0, 0),
+            (0, 0.0005, 0, 0),
+            (0, 0, 0.0005, 0),
+            (0, 0, 0, 0.0005),
+            (-0.0005, -0.0005, -0.0005, -0.0005),
+        ):
+            with self.subTest(delta=(dx, dy, dw, dh)):
+                other = QtCore.QRectF(10.0 + dx, 20.0 + dy, 30.0 + dw, 40.0 + dh)
+                self.assertTrue(near(base, other))
+        for dx, dy, dw, dh in (
+            (0.002, 0, 0, 0),
+            (0, 0.002, 0, 0),
+            (0, 0, 0.002, 0),
+            (0, 0, 0, 0.002),
+            (-0.002, 0, 0, 0),
+        ):
+            with self.subTest(delta=(dx, dy, dw, dh)):
+                other = QtCore.QRectF(10.0 + dx, 20.0 + dy, 30.0 + dw, 40.0 + dh)
+                self.assertFalse(near(base, other))
+
+    def test_rects_nearly_equal_includes_a_difference_exactly_at_the_tolerance(self):
+        base = QtCore.QRectF(0.0, 0.0, 10.0, 10.0)
+        for delta in ((0.5, 0, 0, 0), (0, 0.5, 0, 0), (0, 0, 0.5, 0), (0, 0, 0, 0.5)):
+            with self.subTest(delta=delta):
+                other = QtCore.QRectF(
+                    0.0 + delta[0], 0.0 + delta[1], 10.0 + delta[2], 10.0 + delta[3]
+                )
+                self.assertTrue(
+                    plan_view_module._rects_nearly_equal(base, other, tolerance=0.5)
+                )
+                self.assertFalse(
+                    plan_view_module._rects_nearly_equal(base, other, tolerance=0.25)
+                )
+
+    def test_rects_nearly_equal_honours_a_custom_tolerance(self):
+        base = QtCore.QRectF(0.0, 0.0, 10.0, 10.0)
+        other = QtCore.QRectF(0.4, 0.0, 10.0, 10.0)
+        self.assertFalse(plan_view_module._rects_nearly_equal(base, other))
+        self.assertTrue(
+            plan_view_module._rects_nearly_equal(base, other, tolerance=0.5)
+        )
+        self.assertFalse(
+            plan_view_module._rects_nearly_equal(base, other, tolerance=0.3)
+        )
+
+
+class TakeoffPlanViewStateAndFlushTests(_TakeoffPlanViewOverlayRefreshFixture):
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            page_index=3,
+            width_pts=612.0,
+            height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
+            rotation=90,
+            flip_x=True,
+            flip_y=False,
+            invert=True,
+            bitonal=False,
+            image_show_mode=SHOW_BOTH,
+            overlay_rect=(1.0, 2.0, 3.0, 4.0),
+            overlay_rotation=5.0,
+            deskew_rotation_overlay=6.0,
+        )
+        self._install_page_canvas(view, page)
+        return view, page
+
+    def test_render_identity_describes_every_render_relevant_page_field(self):
+        view, page = self._view()
+        bid_ref = BidRef("db.mdb", "bid-1")
+        with patch.object(
+            plan_view_module,
+            "source_file_signature",
+            side_effect=lambda path: ("sig", path),
+        ):
+            identity = view._build_render_identity(page, bid_ref)
+        self.assertEqual(
+            identity,
+            {
+                "bid_ref": bid_ref,
+                "page_uid": "p1",
+                "page_index": 3,
+                "image_path": "base.pdf",
+                "overlay_image_path": "overlay.pdf",
+                "image_signature": ("sig", "base.pdf"),
+                "overlay_signature": ("sig", "overlay.pdf"),
+                "show_mode": SHOW_BOTH,
+                "rotation": 90,
+                "flip_x": True,
+                "flip_y": False,
+                "invert": True,
+                "bitonal": False,
+                "width_pts": 612.0,
+                "height_pts": 792.0,
+                # 12.0 units per 0.1875 sheet inch, written out independently of Page.
+                "overlay_units_per_sheet_inch": 64.0,
+                "overlay_rect": (1.0, 2.0, 3.0, 4.0),
+                "overlay_rotation": 5.0,
+                "overlay_deskew": 6.0,
+            },
+        )
+
+    def test_render_identity_uses_empty_strings_for_missing_image_paths(self):
+        view, page = self._view()
+        page.image_path = None
+        page.overlay_image_path = None
+        with patch.object(
+            plan_view_module,
+            "source_file_signature",
+            side_effect=lambda path: ("sig", path),
+        ):
+            identity = view._build_render_identity(page, None)
+        self.assertEqual(identity["image_path"], "")
+        self.assertEqual(identity["overlay_image_path"], "")
+        self.assertEqual(identity["image_signature"], ("sig", ""))
+        self.assertEqual(identity["overlay_signature"], ("sig", ""))
+        self.assertIsNone(identity["bid_ref"])
+
+    # ---- dirty position flush
+    def test_flushing_dirty_positions_reports_changes_and_clears_the_buffers(self):
+        view, _page = self._view()
+        view._ann_db_uid_map = {"a1_oval": "a1"}
+        view._dirty_positions = {"t1": [1.0, 2.0], "t2": [7.0, 8.0]}
+        view._dirty_ann_positions = {
+            "a1_oval": ("oval", [3.0, 4.0]),
+            "a2": ("rect", [5.0, 6.0]),
+        }
+        view._position_before_edit = {"t1": [0.0, 0.0], "a1_oval": [9.0, 9.0]}
+        view._keyboard_move_dirty = True
+        invalidated = []
+        view._invalidate_snap_index = lambda: invalidated.append(True)
+        emitted = []
+        view.positions_flushed.connect(lambda t, a: emitted.append((t, a)))
+        view._flush_dirty_positions()
+        self.assertEqual(
+            emitted,
+            [
+                (
+                    [("t1", [0.0, 0.0], [1.0, 2.0]), ("t2", [], [7.0, 8.0])],
+                    [
+                        ("a1", "oval", [9.0, 9.0], [3.0, 4.0]),
+                        ("a2", "rect", [], [5.0, 6.0]),
+                    ],
+                )
+            ],
+        )
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(view._dirty_ann_positions, {})
+        self.assertEqual(view._position_before_edit, {})
+        self.assertIs(view._keyboard_move_dirty, False)
+        self.assertEqual(invalidated, [True])
+
+    def test_flushing_only_takeoff_positions_reports_them_and_invalidates_the_snap_index(
+        self,
+    ):
+        view, _page = self._view()
+        view._dirty_positions = {"t1": [1.0, 2.0]}
+        view._dirty_ann_positions = {}
+        view._position_before_edit = {"t1": [0.0, 0.0]}
+        invalidated = []
+        view._invalidate_snap_index = lambda: invalidated.append(True)
+        emitted = []
+        view.positions_flushed.connect(lambda t, a: emitted.append((t, a)))
+        view._flush_dirty_positions()
+        self.assertEqual(emitted, [([("t1", [0.0, 0.0], [1.0, 2.0])], [])])
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(invalidated, [True])
+
+    def test_flushing_only_annotation_positions_does_not_invalidate_the_snap_index(
+        self,
+    ):
+        view, _page = self._view()
+        view._dirty_positions = {}
+        view._dirty_ann_positions = {"a2": ("rect", [5.0, 6.0])}
+        invalidated = []
+        view._invalidate_snap_index = lambda: invalidated.append(True)
+        emitted = []
+        view.positions_flushed.connect(lambda t, a: emitted.append((t, a)))
+        view._flush_dirty_positions()
+        self.assertEqual(emitted, [([], [("a2", "rect", [], [5.0, 6.0])])])
+        self.assertEqual(invalidated, [])
+
+    def test_flushing_nothing_only_clears_the_keyboard_move_flag(self):
+        view, _page = self._view()
+        view._keyboard_move_dirty = True
+        view._position_before_edit = {"t1": [0.0, 0.0]}
+        emitted = []
+        view.positions_flushed.connect(lambda t, a: emitted.append((t, a)))
+        view._flush_dirty_positions()
+        self.assertEqual(emitted, [])
+        self.assertIs(view._keyboard_move_dirty, False)
+        self.assertEqual(view._position_before_edit, {"t1": [0.0, 0.0]})
+
+    def test_flushing_is_deferred_while_overlays_refresh(self):
+        view, _page = self._view()
+        view._refreshing_overlays = True
+        view._keyboard_move_dirty = True
+        view._dirty_positions = {"t1": [1.0, 2.0]}
+        emitted = []
+        view.positions_flushed.connect(lambda t, a: emitted.append((t, a)))
+        view._flush_dirty_positions()
+        self.assertEqual(emitted, [])
+        self.assertEqual(view._dirty_positions, {"t1": [1.0, 2.0]})
+        self.assertIs(view._keyboard_move_dirty, True)
+
+    def test_flushing_dirty_rotations_reports_before_and_after_values(self):
+        view, _page = self._view()
+        view._dirty_rotations = {"t1": 0.5, "t2": 1.5}
+        view._rotation_before_edit = {"t1": 0.25}
+        emitted = []
+        view.rotations_flushed.connect(emitted.append)
+        view._flush_dirty_rotations()
+        self.assertEqual(emitted, [[("t1", 0.25, 0.5), ("t2", 0.0, 1.5)]])
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertEqual(view._rotation_before_edit, {})
+        view._flush_dirty_rotations()
+        self.assertEqual(len(emitted), 1)
+
+    # ---- page view state
+    def test_view_state_is_captured_into_the_page_once_the_load_is_applied(self):
+        view, page = self._view()
+        view._current_bid_page_uid = "p1"
+        view._load_view_applied = True
+        view.get_view_state = lambda: (2.5, 11.0, 22.0)
+        view._capture_view_state_to_page(page)
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y), (2.5, 11.0, 22.0)
+        )
+
+    def test_view_state_capture_is_skipped_when_it_would_be_meaningless(self):
+        view, page = self._view()
+        view._current_bid_page_uid = "p1"
+        view._load_view_applied = True
+        view.get_view_state = lambda: (2.5, 11.0, 22.0)
+        for label, setup in (
+            ("no page", lambda: None),
+            ("other page", lambda: setattr(view, "_current_bid_page_uid", "other")),
+            ("load pending", lambda: setattr(view, "_load_view_applied", False)),
+            ("invalid scene rect", lambda: view._scene.setSceneRect(QtCore.QRectF())),
+            (
+                "zero zoom",
+                lambda: setattr(view, "get_view_state", lambda: (0.0, 1.0, 2.0)),
+            ),
+        ):
+            with self.subTest(label):
+                page.zoom_fac, page.current_x, page.current_y = 0.0, 0.0, 0.0
+                view._current_bid_page_uid = "p1"
+                view._load_view_applied = True
+                view.get_view_state = lambda: (2.5, 11.0, 22.0)
+                view._scene.setSceneRect(QtCore.QRectF(0.0, 0.0, 100.0, 100.0))
+                setup()
+                target = None if label == "no page" else page
+                view._capture_view_state_to_page(target)
+                self.assertEqual(
+                    (page.zoom_fac, page.current_x, page.current_y), (0.0, 0.0, 0.0)
+                )
+
+    def test_pending_load_state_is_captured_only_when_explicitly_allowed(self):
+        view, page = self._view()
+        view._current_bid_page_uid = "p1"
+        view._load_view_applied = False
+        view.get_view_state = lambda: (2.5, 11.0, 22.0)
+        view._capture_view_state_to_page(page, allow_pending_load=True)
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y), (2.5, 11.0, 22.0)
+        )
+
+    def test_publishing_the_view_state_emits_the_captured_values(self):
+        view, page = self._view()
+        view._current_bid_page_uid = "p1"
+        view._load_view_applied = True
+        view.get_view_state = lambda: (2.5, 11.0, 22.0)
+        emitted = []
+        view.page_view_state_changed.connect(lambda *args: emitted.append(args))
+        view._publish_current_page_view_state()
+        self.assertEqual(emitted, [("p1", 2.5, 11.0, 22.0)])
+
+    def test_publishing_is_skipped_for_unready_or_foreign_state(self):
+        view, page = self._view()
+        emitted = []
+        view.page_view_state_changed.connect(lambda *args: emitted.append(args))
+        for label, setup in (
+            ("other page", lambda: setattr(view, "_current_bid_page_uid", "other")),
+            ("load pending", lambda: setattr(view, "_load_view_applied", False)),
+            ("invalid scene rect", lambda: view._scene.setSceneRect(QtCore.QRectF())),
+            (
+                "zero zoom",
+                lambda: setattr(view, "get_view_state", lambda: (0.0, 1.0, 2.0)),
+            ),
+        ):
+            with self.subTest(label):
+                view._current_bid_page_uid = "p1"
+                view._load_view_applied = True
+                view.get_view_state = lambda: (2.5, 11.0, 22.0)
+                view._scene.setSceneRect(QtCore.QRectF(0.0, 0.0, 100.0, 100.0))
+                # A stored positive zoom must not leak out for unready or foreign
+                # state; only the zero-zoom case has nothing worth publishing.
+                page.zoom_fac = 0.0 if label == "zero zoom" else 1.5
+                setup()
+                view._publish_current_page_view_state()
+                self.assertEqual(emitted, [])
+        view._current_page = None
+        view._publish_current_page_view_state()
+        self.assertEqual(emitted, [])
+
+    def test_publishing_with_a_stored_zoom_works_even_when_capture_is_skipped(self):
+        view, page = self._view()
+        view._current_bid_page_uid = "p1"
+        view._load_view_applied = True
+        view.get_view_state = lambda: (0.0, 1.0, 2.0)
+        page.zoom_fac, page.current_x, page.current_y = 1.5, 3.0, 4.0
+        emitted = []
+        view.page_view_state_changed.connect(lambda *args: emitted.append(args))
+        view._publish_current_page_view_state()
+        self.assertEqual(emitted, [("p1", 1.5, 3.0, 4.0)])
+
+    def test_pending_load_state_publishes_only_when_allowed(self):
+        view, page = self._view()
+        view._current_bid_page_uid = "p1"
+        view._load_view_applied = False
+        view.get_view_state = lambda: (2.5, 11.0, 22.0)
+        emitted = []
+        view.page_view_state_changed.connect(lambda *args: emitted.append(args))
+        view._publish_current_page_view_state()
+        self.assertEqual(emitted, [])
+        view._publish_current_page_view_state(allow_pending_load=True)
+        self.assertEqual(emitted, [("p1", 2.5, 11.0, 22.0)])
+
+    # ---- scene rect
+    def test_page_scene_rect_prefers_the_background_item_in_the_scene(self):
+        view, page = self._view()
+        background = QGraphicsRectItem(0.0, 0.0, 30.0, 40.0)
+        background.setPen(QPen(Qt.PenStyle.NoPen))
+        view._scene.addItem(background)
+        view._background_item = background
+        canvas = view._white_canvas_item
+        self.assertEqual(view._page_scene_rect(), background.sceneBoundingRect())
+        view._scene.removeItem(background)
+        self.assertEqual(view._page_scene_rect(), canvas.sceneBoundingRect())
+        view._white_canvas_item = None
+        self.assertEqual(view._page_scene_rect(), QtCore.QRectF())
+        empty = QGraphicsRectItem(0.0, 0.0, 0.0, 0.0)
+        empty.setPen(QPen(Qt.PenStyle.NoPen))
+        view._scene.addItem(empty)
+        view._background_item = empty
+        view._white_canvas_item = canvas
+        self.assertEqual(view._page_scene_rect(), canvas.sceneBoundingRect())
+
+    def test_page_reset_scene_rect_adds_the_scene_margin(self):
+        view, page = self._view()
+        rect = view._page_scene_rect()
+        reset = view._page_reset_scene_rect()
+        self.assertEqual(
+            reset,
+            QtCore.QRectF(
+                rect.x() - 50.0,
+                rect.y() - 50.0,
+                rect.width() + 100.0,
+                rect.height() + 100.0,
+            ),
+        )
+        view._white_canvas_item = None
+        view._background_item = None
+        self.assertTrue(view._page_reset_scene_rect().isNull())
+
+    def test_scene_rect_change_keeps_the_view_centre_only_after_the_load_applied(self):
+        view, _page = self._view()
+        centers = []
+        view.get_precise_viewport_scene_center = lambda: QtCore.QPointF(7.0, 8.0)
+        view.centerOn = lambda point: centers.append(point)
+        handle_updates = []
+        view._update_overlay_move_handle_position = lambda *a: handle_updates.append(
+            True
+        )
+        view._scene.setSceneRect(QtCore.QRectF(0.0, 0.0, 100.0, 100.0))
+        view._load_view_applied = True
+        view._set_scene_rect_preserving_view_center(
+            QtCore.QRectF(0.0, 0.0, 200.0, 200.0)
+        )
+        self.assertEqual(view._scene.sceneRect(), QtCore.QRectF(0.0, 0.0, 200.0, 200.0))
+        self.assertEqual(centers, [QtCore.QPointF(7.0, 8.0)])
+        self.assertEqual(handle_updates, [True])
+        centers.clear()
+        view._load_view_applied = False
+        view._set_scene_rect_preserving_view_center(
+            QtCore.QRectF(0.0, 0.0, 300.0, 300.0)
+        )
+        self.assertEqual(view._scene.sceneRect(), QtCore.QRectF(0.0, 0.0, 300.0, 300.0))
+        self.assertEqual(centers, [])
+
+    def test_a_nearly_identical_scene_rect_is_left_alone(self):
+        view, _page = self._view()
+        view._scene.setSceneRect(QtCore.QRectF(0.0, 0.0, 100.0, 100.0))
+        view._load_view_applied = True
+        view.get_precise_viewport_scene_center = lambda: self.fail("no centre needed")
+        view._set_scene_rect_preserving_view_center(
+            QtCore.QRectF(0.0005, 0.0, 100.0, 100.0)
+        )
+        self.assertEqual(view._scene.sceneRect(), QtCore.QRectF(0.0, 0.0, 100.0, 100.0))
+
+    def test_update_scene_rect_unites_page_and_takeoff_items_with_a_margin(self):
+        view, _page = self._view()
+        view._background_item = None
+        view._white_canvas_item = QGraphicsRectItem(0.0, 0.0, 100.0, 80.0)
+        takeoff = QGraphicsRectItem(150.0, 120.0, 10.0, 10.0)
+        detached = QGraphicsRectItem(900.0, 900.0, 10.0, 10.0)
+        hotlink = QGraphicsRectItem(-30.0, -20.0, 5.0, 5.0)
+        for item in (view._white_canvas_item, takeoff, hotlink, detached):
+            item.setPen(QPen(Qt.PenStyle.NoPen))
+        for item in (view._white_canvas_item, takeoff, hotlink):
+            view._scene.addItem(item)
+        view._takeoff_items = [takeoff, detached, None]
+        view._hotlink_items = [(hotlink, None)]
+        applied = []
+        view._set_scene_rect_preserving_view_center = applied.append
+        view._update_scene_rect()
+        self.assertEqual(applied, [QtCore.QRectF(-80.0, -70.0, 290.0, 250.0)])
+
+    def test_update_scene_rect_without_items_defers_to_the_scene_builder(self):
+        view, _page = self._view()
+        view._background_item = None
+        view._white_canvas_item = None
+        view._takeoff_items = []
+        view._hotlink_items = []
+        calls = []
+        view._scene_builder.update_scene_rect = lambda scene: calls.append(scene)
+        view._set_scene_rect_preserving_view_center = lambda rect: self.fail("no rect")
+        view._update_scene_rect()
+        self.assertEqual(calls, [view._scene])
+
+    def test_ost_positions_convert_to_scene_points_through_the_page_scale(self):
+        view, _page = self._view()
+        cs = view._scene_builder.get_coordinate_system()
+        view._pt_to_scene = lambda x, y: QtCore.QPointF(x, y)
+        # Distinct scales so swapping or dropping either one changes the result:
+        # 72 points per unit * 2 view scale / 4 ratio = 36 points per OST unit.
+        # The fake coordinate system is shared by every view: restore it afterwards.
+        self.addCleanup(setattr, cs, "view_scale", cs.view_scale)
+        self.addCleanup(setattr, cs, "scale_ratio", cs.scale_ratio)
+        cs.view_scale = 2.0
+        cs.scale_ratio = 4.0
+        self.assertEqual(view._ost_to_scene_pos(3.0, 5.0), QtCore.QPointF(108.0, 180.0))
+
+
+class _ScriptedCurveGeometry:
+    def __init__(self, processed):
+        self.processed = processed
+        self.calls = []
+
+    def proc_curved_pos(self, *args):
+        self.calls.append(args)
+        return self.processed
+
+
+class _ScalingCoordinateSystem(_interaction_support_FakeCoordinateSystem):
+    """Identity parse, but 2D transform doubles every value so the modes differ."""
+
+    def transform_vertices_to_2d(self, pos):
+        return [value * 2.0 for value in pos]
+
+
+class TakeoffPlanViewElementCenterAndRotateHandleTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    def _view(self, geometry=None):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view._scene_builder = _interaction_support_FakeSceneBuilder()
+        view._scene_builder.cs = _ScalingCoordinateSystem()
+        view._pt_to_scene = lambda x, y: QtCore.QPointF(x, y)
+        view._linear_geom = geometry or _ScriptedCurveGeometry((0.0,) * 6)
+        view._current_conditions = {
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+            "count": Condition(uid="count", condition_type=Condition.TYPE_COUNT),
+        }
+        view._current_takeoffs = {}
+        view._current_annotations = {}
+        return view, view._scene_builder.cs
+
+    @staticmethod
+    def _takeoff(uid, condition_uid, position, curve=-1):
+        return Takeoff(
+            uid=uid, condition_uid=condition_uid, position=list(position), curve=curve
+        )
+
+    @staticmethod
+    def _annotation(uid, annotation_type, position):
+        return BidAnnotation(
+            uid=uid, annotation_type=annotation_type, position=list(position)
+        )
+
+    # ---- _element_center
+    def test_linear_takeoff_centre_is_the_midpoint_of_its_end_points(self):
+        view, cs = self._view()
+        view._current_takeoffs["l"] = self._takeoff(
+            "l", "linear", [2.0, 4.0, 10.0, 12.0]
+        )
+        self.assertEqual(view._element_center("l", cs, "screen"), (12.0, 16.0))
+        self.assertEqual(view._element_center("l", cs, "ost"), (6.0, 8.0))
+
+    def test_curved_linear_takeoff_centre_is_its_processed_control_point(self):
+        geometry = _ScriptedCurveGeometry((1.0, 2.0, 3.0, 4.0, 5.5, 6.5))
+        view, cs = self._view(geometry)
+        position = [2.0, 4.0, 10.0, 12.0, 6.0, 9.0]
+        view._current_takeoffs["l"] = self._takeoff("l", "linear", position, curve=0)
+        self.assertEqual(view._element_center("l", cs, "ost"), (5.5, 6.5))
+        self.assertEqual(geometry.calls, [(position, 2.0, 4.0, 10.0, 12.0, 6.0, 9.0)])
+        self.assertEqual(view._element_center("l", cs, "screen"), (11.0, 13.0))
+
+    def test_straight_or_short_linear_takeoffs_ignore_the_curve_geometry(self):
+        geometry = _ScriptedCurveGeometry((1.0, 2.0, 3.0, 4.0, 5.5, 6.5))
+        view, cs = self._view(geometry)
+        view._current_takeoffs["straight"] = self._takeoff(
+            "straight", "linear", [2.0, 4.0, 10.0, 12.0, 6.0, 40.0], curve=-1
+        )
+        view._current_takeoffs["five"] = self._takeoff(
+            "five", "linear", [2.0, 4.0, 10.0, 12.0, 6.0], curve=0
+        )
+        view._current_takeoffs["short"] = self._takeoff(
+            "short", "linear", [2.0, 4.0, 10.0, 12.0], curve=0
+        )
+        self.assertEqual(view._element_center("straight", cs, "ost"), (6.0, 8.0))
+        self.assertEqual(view._element_center("short", cs, "ost"), (6.0, 8.0))
+        self.assertEqual(view._element_center("five", cs, "ost"), (6.0, 8.0))
+        self.assertEqual(geometry.calls, [])
+
+    def test_area_takeoff_centre_is_the_polygon_centroid(self):
+        view, cs = self._view()
+        view._current_takeoffs["a"] = self._takeoff(
+            "a", "area", [0.0, 0.0, 6.0, 0.0, 0.0, 3.0]
+        )
+        self.assertEqual(view._element_center("a", cs, "ost"), (2.0, 1.0))
+        self.assertEqual(view._element_center("a", cs, "screen"), (4.0, 2.0))
+        # A curve flag on a non-linear condition never routes through the curve geometry.
+        view._current_takeoffs["c"] = self._takeoff(
+            "c", "area", [0.0, 0.0, 6.0, 0.0, 0.0, 3.0], curve=0
+        )
+        self.assertEqual(view._element_center("c", cs, "ost"), (2.0, 1.0))
+        self.assertEqual(view._linear_geom.calls, [])
+
+    def test_area_takeoff_with_two_points_uses_its_bounding_box(self):
+        view, cs = self._view()
+        view._current_takeoffs["a"] = self._takeoff("a", "area", [0.0, 0.0, 6.0, 4.0])
+        self.assertEqual(view._element_center("a", cs, "ost"), (3.0, 2.0))
+
+    def test_point_takeoff_centre_is_the_middle_of_its_bounding_box(self):
+        view, cs = self._view()
+        view._current_takeoffs["c"] = self._takeoff("c", "count", [4.0, 6.0])
+        self.assertEqual(view._element_center("c", cs, "ost"), (4.0, 6.0))
+        view._current_takeoffs["u"] = self._takeoff(
+            "u", "ghost", [0.0, 2.0, 8.0, 10.0, 4.0, 3.0]
+        )
+        self.assertEqual(view._element_center("u", cs, "ost"), (4.0, 6.0))
+        # Only linear conditions use the first two end points; other multi-point
+        # shapes use the bounding box (x 0..10, y 0..6 here, not the 0,0-2,2 midpoint).
+        view._current_takeoffs["m"] = self._takeoff(
+            "m", "count", [0.0, 0.0, 2.0, 2.0, 10.0, 6.0]
+        )
+        self.assertEqual(view._element_center("m", cs, "ost"), (5.0, 3.0))
+        # A linear takeoff with a single point has no second end point to average with.
+        view._current_takeoffs["lp"] = self._takeoff("lp", "linear", [4.0, 6.0])
+        self.assertEqual(view._element_center("lp", cs, "ost"), (4.0, 6.0))
+
+    def test_takeoff_with_an_unusable_position_has_no_centre(self):
+        view, cs = self._view()
+        view._current_takeoffs["empty"] = self._takeoff("empty", "count", [])
+        self.assertIsNone(view._element_center("empty", cs, "ost"))
+        self.assertIsNone(view._element_center("missing", cs, "ost"))
+        view._current_takeoffs["short"] = self._takeoff("short", "count", [1.0])
+        self.assertIsNone(view._element_center("short", cs, "ost"))
+        view._current_takeoffs["unparsable"] = self._takeoff(
+            "unparsable", "count", [1.0, 2.0]
+        )
+        cs.parse_position = lambda position: None
+        self.assertIsNone(view._element_center("unparsable", cs, "ost"))
+
+    def test_text_annotation_centre_is_its_anchor_whether_or_not_it_is_rotated(self):
+        view, cs = self._view()
+        for uid, position in (
+            ("t", [10.0, 20.0, 8.0, 4.0]),
+            ("r", [10.0, 20.0, 8.0, 4.0, math.pi / 2]),
+            ("h", [10.0, 20.0, 8.0, 4.0, math.pi]),
+            ("one", [10.0, 20.0, 8.0, 4.0, 1.0]),
+        ):
+            view._current_annotations[uid] = self._annotation(uid, "text", position)
+            with self.subTest(uid=uid):
+                self.assertEqual(view._element_center(uid, cs, "ost"), (10.0, 20.0))
+                self.assertEqual(view._element_center(uid, cs, "screen"), (20.0, 40.0))
+        view._current_annotations["flat"] = self._annotation(
+            "flat", "text", [10.0, 20.0, 8.0, 0.0, math.pi / 2]
+        )
+        self.assertEqual(view._element_center("flat", cs, "screen"), (20.0, 40.0))
+
+    def test_unrotated_text_with_a_zero_rotation_slot_uses_the_plain_anchor(self):
+        view, cs = self._view()
+        view._current_annotations["t"] = self._annotation(
+            "t", "text", [10.0, 20.0, 8.0, 4.0, 0.0]
+        )
+        self.assertEqual(view._element_center("t", cs, "screen"), (20.0, 40.0))
+
+    def test_box_and_line_annotations_use_the_middle_of_their_extremes(self):
+        view, cs = self._view()
+        view._current_annotations["r"] = self._annotation(
+            "r", "rect", [2.0, 4.0, 10.0, 12.0, 6.0, 20.0]
+        )
+        self.assertEqual(view._element_center("r", cs, "ost"), (6.0, 12.0))
+        self.assertEqual(view._element_center("r", cs, "screen"), (12.0, 24.0))
+
+    def test_single_point_annotation_centre_is_the_point_itself(self):
+        view, cs = self._view()
+        view._current_annotations["h"] = self._annotation("h", "hotlink", [3.0, 5.0])
+        self.assertEqual(view._element_center("h", cs, "ost"), (3.0, 5.0))
+        self.assertEqual(view._element_center("h", cs, "screen"), (6.0, 10.0))
+
+    def test_ink_annotation_centre_skips_the_style_prefix(self):
+        view, cs = self._view()
+        view._current_annotations["i"] = self._annotation(
+            "i", "ink", [9.0, 2.0, 4.0, 10.0, 8.0]
+        )
+        self.assertEqual(view._element_center("i", cs, "ost"), (6.0, 6.0))
+        self.assertEqual(view._element_center("i", cs, "screen"), (12.0, 12.0))
+        view._current_annotations["j"] = self._annotation(
+            "j", "ink", [2.0, 4.0, 10.0, 8.0]
+        )
+        self.assertEqual(view._element_center("j", cs, "ost"), (6.0, 6.0))
+
+    def test_annotations_that_cannot_be_centred_report_none(self):
+        view, cs = self._view()
+        view._current_annotations["u"] = self._annotation("u", "unknown", [1.0, 2.0])
+        view._current_annotations["s"] = self._annotation("s", "rect", [1.0])
+        self.assertIsNone(view._element_center("u", cs, "ost"))
+        self.assertIsNone(view._element_center("s", cs, "ost"))
+        self.assertIsNone(view._element_center("nothing", cs, "ost"))
+
+    def test_takeoffs_take_precedence_over_annotations_with_the_same_uid(self):
+        view, cs = self._view()
+        view._current_takeoffs["x"] = self._takeoff("x", "count", [4.0, 6.0])
+        view._current_annotations["x"] = self._annotation(
+            "x", "rect", [0.0, 0.0, 100.0, 100.0]
+        )
+        self.assertEqual(view._element_center("x", cs, "ost"), (4.0, 6.0))
+        view._current_takeoffs["x"].position = []
+        self.assertEqual(view._element_center("x", cs, "ost"), (50.0, 50.0))
+
+    # ---- rotatable uids
+    def test_rotatable_uids_are_known_takeoffs_or_rotatable_annotations(self):
+        view, _cs = self._view()
+        view._current_takeoffs["t"] = self._takeoff("t", "count", [1.0, 1.0])
+        view._current_annotations["r"] = self._annotation(
+            "r", "rect", [0.0, 0.0, 1.0, 1.0]
+        )
+        view._current_annotations["u"] = self._annotation("u", "unknown", [0.0, 0.0])
+        view._current_annotations["t"] = self._annotation("t", "unknown", [0.0, 0.0])
+        view._current_annotations["h"] = self._annotation("h", "hotlink", [3.0, 5.0])
+        self.assertIs(view._is_rotatable_uid("r"), True)
+        self.assertIs(view._is_rotatable_uid("h"), False)
+        self.assertIs(view._is_rotatable_uid("u"), False)
+        self.assertIs(view._is_rotatable_uid("t"), False)
+        view._current_annotations.pop("t")
+        self.assertIs(view._is_rotatable_uid("t"), True)
+        self.assertIs(view._is_rotatable_uid("missing"), False)
+
+    # ---- rotate handle
+    def _handle_view(self):
+        view, cs = self._view()
+        view._current_takeoffs["a"] = self._takeoff("a", "count", [4.0, 6.0])
+        view._current_takeoffs["b"] = self._takeoff("b", "count", [10.0, 18.0])
+        view.resetTransform()
+        view.scale(2.0, 2.0)
+        return view
+
+    def test_creating_the_rotate_handle_places_it_above_the_selection_centre(self):
+        view = self._handle_view()
+        self.assertIs(view._create_rotate_handle({"a"}), True)
+        # Screen centre (8, 12); radius 60 / zoom 2 = 30 straight up (-90 degrees).
+        self.assertEqual(view._rotate_center_scene, QtCore.QPointF(8.0, 12.0))
+        self.assertAlmostEqual(view._rotate_handle_radius, 30.0, places=9)
+        self.assertEqual(view._rotate_handle_start_angle_deg, -90.0)
+        self.assertAlmostEqual(view._rotate_handle_item.pos().x(), 8.0, places=9)
+        self.assertAlmostEqual(view._rotate_handle_item.pos().y(), -18.0, places=9)
+        self.assertEqual(view._rotate_ost_center, (4.0, 6.0))
+        self.assertEqual(view._rotate_handle_uid, "a")
+
+    def test_rotate_handle_centre_averages_the_selected_item_centres(self):
+        view = self._handle_view()
+        self.assertIs(view._create_rotate_handle({"a", "b"}), True)
+        self.assertEqual(view._rotate_ost_center, (7.0, 12.0))
+        self.assertEqual(view._rotate_center_scene, QtCore.QPointF(14.0, 24.0))
+        self.assertIn(view._rotate_handle_uid, {"a", "b"})
+
+    def test_rotate_handle_accepts_a_single_uid_string_and_the_current_selection(self):
+        view = self._handle_view()
+        self.assertIs(view._create_rotate_handle("a"), True)
+        self.assertEqual(view._rotate_handle_uid, "a")
+        view._current_takeoffs["longuid"] = self._takeoff(
+            "longuid", "count", [2.0, 3.0]
+        )
+        self.assertIs(view._create_rotate_handle("longuid"), True)
+        self.assertEqual(view._rotate_handle_uid, "longuid")
+        self.assertEqual(view._rotate_ost_center, (2.0, 3.0))
+        view._selected_uids = {"b"}
+        self.assertIs(view._create_rotate_handle(), True)
+        self.assertEqual(view._rotate_handle_uid, "b")
+        self.assertEqual(view._rotate_ost_center, (10.0, 18.0))
+
+    def test_rotate_handle_ignores_selected_items_that_cannot_rotate(self):
+        view = self._handle_view()
+        view._current_annotations["h"] = self._annotation(
+            "h", "hotlink", [100.0, 100.0]
+        )
+        self.assertIs(view._create_rotate_handle({"a", "h"}), True)
+        self.assertEqual(view._rotate_ost_center, (4.0, 6.0))
+        self.assertEqual(view._rotate_center_scene, QtCore.QPointF(8.0, 12.0))
+        self.assertEqual(view._rotate_handle_uid, "a")
+        self.assertIs(view._create_rotate_handle({"h"}), False)
+        self.assertIsNone(view._rotate_handle_item)
+
+    def test_rotate_handle_start_angle_can_be_overridden(self):
+        view = self._handle_view()
+        view._create_rotate_handle({"a"}, start_angle_degrees=0.0)
+        self.assertEqual(view._rotate_handle_start_angle_deg, 0.0)
+        self.assertAlmostEqual(view._rotate_handle_item.pos().x(), 38.0, places=9)
+        self.assertAlmostEqual(view._rotate_handle_item.pos().y(), 12.0, places=9)
+
+    def test_rotate_handle_scene_items_have_the_documented_style(self):
+        view = self._handle_view()
+        view._create_rotate_handle({"a"})
+        handle, line, outline = (
+            view._rotate_handle_item,
+            view._rotate_line_item,
+            view._rotate_line_outline_item,
+        )
+        for item in (handle, line, outline):
+            self.assertIs(item.scene(), view._scene)
+        self.assertEqual(
+            (handle.zValue(), line.zValue(), outline.zValue()), (20, 18, 17)
+        )
+        self.assertEqual(handle.offset(), QtCore.QPointF(-13.0, -13.0))
+        self.assertTrue(
+            handle.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        )
+        self.assertAlmostEqual(line.line().x1(), 8.0, places=9)
+        self.assertAlmostEqual(line.line().y1(), 12.0, places=9)
+        self.assertAlmostEqual(line.line().x2(), 8.0, places=9)
+        self.assertAlmostEqual(line.line().y2(), -18.0, places=9)
+        self.assertEqual(outline.line(), line.line())
+        self.assertEqual(outline.pen().color(), QColor(0, 0, 0))
+        self.assertEqual(outline.pen().widthF(), 3.0)
+        self.assertTrue(outline.pen().isCosmetic())
+        self.assertEqual(line.pen().color(), QColor(255, 255, 255))
+        self.assertEqual(line.pen().widthF(), 1.0)
+        self.assertTrue(line.pen().isCosmetic())
+        # The handle shows the "replay" icon recoloured to the standard white.
+        expected = view._outlined_icon_pixmap(
+            "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg", "#ffffff"
+        )
+        self.assertFalse(expected.isNull())
+        self.assertEqual(handle.pixmap().toImage(), expected.toImage())
+        self.assertNotEqual(
+            handle.pixmap().toImage(),
+            view._outlined_icon_pixmap(
+                "recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg", "#ffffff"
+            ).toImage(),
+        )
+
+    def test_slope_mode_rotate_handle_uses_the_slope_colour(self):
+        view = self._handle_view()
+        view._create_rotate_handle({"a"}, slope_mode=True)
+        self.assertEqual(view._rotate_line_item.pen().color(), QColor(47, 158, 68))
+        expected = view._outlined_icon_pixmap(
+            "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg", "#2f9e44"
+        )
+        self.assertEqual(
+            view._rotate_handle_item.pixmap().toImage(), expected.toImage()
+        )
+        self.assertNotEqual(
+            view._rotate_handle_item.pixmap().toImage(),
+            view._outlined_icon_pixmap(
+                "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg", "#ffffff"
+            ).toImage(),
+        )
+
+    def test_rotate_handle_needs_rotatable_items_with_a_centre(self):
+        view = self._handle_view()
+        self.assertIs(view._create_rotate_handle({"ghost"}), False)
+        self.assertIsNone(view._rotate_handle_item)
+        view._current_takeoffs["empty"] = self._takeoff("empty", "count", [])
+        self.assertIs(view._create_rotate_handle({"empty"}), False)
+        self.assertIs(view._create_rotate_handle(set()), False)
+
+    def test_creating_a_new_rotate_handle_replaces_the_previous_one(self):
+        view = self._handle_view()
+        view._create_rotate_handle({"a"})
+        first = view._rotate_handle_item
+        view._create_rotate_handle({"b"})
+        self.assertIsNone(first.scene())
+        self.assertIsNot(view._rotate_handle_item, first)
+        count = len(
+            [
+                item
+                for item in view._scene.items()
+                if isinstance(item, QGraphicsPixmapItem)
+            ]
+        )
+        self.assertEqual(count, 1)
+
+    def test_removing_the_rotate_handle_clears_items_and_drag_state(self):
+        view = self._handle_view()
+        view._create_rotate_handle({"a"})
+        items = (
+            view._rotate_handle_item,
+            view._rotate_line_item,
+            view._rotate_line_outline_item,
+        )
+        view._rotation_drag_uid = "a"
+        view._rotation_drag_active = True
+        view._rotate_handle_start_angle_deg = 12.0
+        view._remove_rotate_handle()
+        for item in items:
+            self.assertIsNone(item.scene())
+        self.assertIsNone(view._rotate_handle_item)
+        self.assertIsNone(view._rotate_line_item)
+        self.assertIsNone(view._rotate_line_outline_item)
+        self.assertIsNone(view._rotate_handle_uid)
+        self.assertEqual(view._rotate_handle_start_angle_deg, -90.0)
+        self.assertIsNone(view._rotation_drag_uid)
+        self.assertIs(view._rotation_drag_active, False)
+        view._remove_rotate_handle()
+
+    def test_removing_a_detached_rotate_handle_item_does_not_touch_the_scene(self):
+        view = self._handle_view()
+        view._create_rotate_handle({"a"})
+        view._scene.removeItem(view._rotate_line_item)
+        # Removing an item the scene no longer owns only logs a Qt warning, so
+        # capture the Qt message stream to prove production never tries it.
+        messages = []
+        previous = QtCore.qInstallMessageHandler(
+            lambda mode, ctx, msg: messages.append(msg)
+        )
+        try:
+            view._remove_rotate_handle()
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+        self.assertEqual(messages, [])
+        self.assertIsNone(view._rotate_line_item)
+        self.assertIsNone(view._rotate_handle_item)
+        self.assertIsNone(view._rotate_line_outline_item)
+
+
+class TakeoffPlanViewSelectionAndEventHooksTests(_TakeoffPlanViewOverlayRefreshFixture):
+    def _view(self):
+        view = self._make_plan_view()
+        self._install_page_canvas(
+            view, Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        )
+        return view
+
+    # ---- selection revision
+    def test_selection_changes_advance_the_revision_one_step_at_a_time(self):
+        view = self._view()
+        start = view.selection_revision
+        view._on_selection_changed()
+        self.assertEqual(view.selection_revision, start + 1)
+        view._on_selection_changed()
+        self.assertEqual(view.selection_revision, start + 2)
+        self.assertEqual(view.begin_deferred_selection(), start + 3)
+        self.assertEqual(view.selection_revision, start + 3)
+
+    def test_selection_change_finishes_a_paste_whose_items_are_no_longer_selected(self):
+        view = self._view()
+        finished = []
+        view.finish_intelligent_paste_placement = lambda: finished.append(True)
+        view._intelligent_paste_pending_uids = {"t1", "t2"}
+        view._selected_uids = {"t1", "t2", "t3"}
+        view._on_selection_changed()
+        self.assertEqual(finished, [])
+        view._selected_uids = {"t1"}
+        view._on_selection_changed()
+        self.assertEqual(finished, [True])
+        view._intelligent_paste_pending_uids = set()
+        view._selected_uids = set()
+        view._on_selection_changed()
+        self.assertEqual(finished, [True])
+
+    def test_selection_change_clears_a_text_selection_that_left_the_selection(self):
+        view = self._view()
+        cleared = []
+        view._clear_text_selection = lambda: cleared.append(True)
+        view._selected_text_annotation_uid = "a1"
+        view._selected_uids = {"a1"}
+        view._on_selection_changed()
+        self.assertEqual(cleared, [])
+        view._selected_uids = {"other"}
+        view._on_selection_changed()
+        self.assertEqual(cleared, [True])
+        view._selected_text_annotation_uid = None
+        view._on_selection_changed()
+        self.assertEqual(cleared, [True])
+
+    # ---- event filter / scroll hooks
+    def test_viewport_geometry_events_reposition_the_overlay_bars_and_move_handle(self):
+        view = self._view()
+        calls = []
+        view._position_viewport_overlay_bars = lambda: calls.append("bars")
+        view._update_overlay_move_handle_position = lambda *a: calls.append("handle")
+        for event_type in (
+            QtCore.QEvent.Type.Move,
+            QtCore.QEvent.Type.Resize,
+            QtCore.QEvent.Type.Show,
+        ):
+            with self.subTest(event_type=event_type):
+                calls.clear()
+                view.eventFilter(view.viewport(), QtCore.QEvent(event_type))
+                self.assertEqual(calls, ["bars", "handle"])
+        calls.clear()
+        view.eventFilter(view.viewport(), QtCore.QEvent(QtCore.QEvent.Type.Hide))
+        view.eventFilter(view, QtCore.QEvent(QtCore.QEvent.Type.Resize))
+        self.assertEqual(calls, [])
+
+    def test_scrolling_repositions_the_overlay_move_handle_only_when_the_view_moved(
+        self,
+    ):
+        view = self._view()
+        calls = []
+        view._update_overlay_move_handle_position = lambda *a: calls.append(a)
+        view.scrollContentsBy(0, 0)
+        self.assertEqual(calls, [])
+        view.scrollContentsBy(3, 0)
+        view.scrollContentsBy(0, -2)
+        self.assertEqual(len(calls), 2)
+
+    # ---- backout validity
+    def test_invalid_backout_state_is_cleared_only_when_present(self):
+        view = self._view()
+        cleared = []
+        view._clear_backout_state = lambda: cleared.append(True)
+        view.is_backout_context_valid = lambda: False
+        view._backout_mode_active = False
+        view._backout_parent_uid = None
+        view._backout_active_uid = None
+        view._cancel_backout_if_invalid()
+        self.assertEqual(cleared, [])
+        for name, value in (
+            ("_backout_mode_active", True),
+            ("_backout_parent_uid", "parent"),
+            ("_backout_active_uid", "active"),
+        ):
+            with self.subTest(name=name):
+                view._backout_mode_active = False
+                view._backout_parent_uid = None
+                view._backout_active_uid = None
+                setattr(view, name, value)
+                cleared.clear()
+                view._cancel_backout_if_invalid()
+                self.assertEqual(cleared, [True])
+        view._backout_mode_active = True
+        view.is_backout_context_valid = lambda: True
+        cleared.clear()
+        view._cancel_backout_if_invalid()
+        self.assertEqual(cleared, [])
+
+    # ---- crosshair foreground
+    class _RecordingPainter:
+        def __init__(self):
+            self.calls = []
+
+        def save(self):
+            self.calls.append("save")
+
+        def restore(self):
+            self.calls.append("restore")
+
+        def setPen(self, pen):
+            self.calls.append(
+                ("pen", pen.color().name(), pen.widthF(), pen.isCosmetic())
+            )
+
+        def drawLine(self, p1, p2):
+            self.calls.append(("line", p1, p2))
+
+    def _crosshair_view(self):
+        view = self._view()
+        view.resize(300, 200)
+        view.show()
+        QApplication.processEvents()
+        view._use_full_window_crosshairs = True
+        view._cursor_mode = CURSOR_MODE_PLACE
+        view._last_mouse_vp_pos = QtCore.QPoint(120, 80)
+        view._crosshair_color = "#12ab34"
+        view._crosshair_line_thickness = 3
+        return view
+
+    def _draw(self, view):
+        painter = self._RecordingPainter()
+        with patch.object(QtWidgets.QGraphicsView, "drawForeground"):
+            view.drawForeground(painter, QtCore.QRectF())
+        return painter.calls
+
+    def test_full_window_crosshair_spans_the_visible_scene_through_the_pointer(self):
+        view = self._crosshair_view()
+        calls = self._draw(view)
+        scene_pos = view.mapToScene(QtCore.QPoint(120, 80))
+        visible = view.mapToScene(view.viewport().rect()).boundingRect()
+        self.assertEqual(
+            calls,
+            [
+                "save",
+                ("pen", "#12ab34", 3.0, True),
+                (
+                    "line",
+                    QtCore.QPointF(visible.left(), scene_pos.y()),
+                    QtCore.QPointF(visible.right(), scene_pos.y()),
+                ),
+                (
+                    "line",
+                    QtCore.QPointF(scene_pos.x(), visible.top()),
+                    QtCore.QPointF(scene_pos.x(), visible.bottom()),
+                ),
+                "restore",
+            ],
+        )
+
+    def test_crosshair_is_only_drawn_in_place_mode_with_the_option_and_a_pointer(self):
+        for label, change in (
+            ("option off", lambda v: setattr(v, "_use_full_window_crosshairs", False)),
+            ("other mode", lambda v: setattr(v, "_cursor_mode", CURSOR_MODE_SELECT)),
+            ("no pointer", lambda v: setattr(v, "_last_mouse_vp_pos", None)),
+            (
+                "pointer outside",
+                lambda v: setattr(v, "_last_mouse_vp_pos", QtCore.QPoint(5000, 5000)),
+            ),
+        ):
+            with self.subTest(label):
+                view = self._crosshair_view()
+                change(view)
+                self.assertEqual(self._draw(view), [])
+
+    def test_crosshair_is_skipped_for_an_invalid_visible_rect(self):
+        view = self._crosshair_view()
+        view.mapToScene = lambda arg: (
+            QtGui.QPolygonF()
+            if isinstance(arg, QtCore.QRect)
+            else QtCore.QPointF(1.0, 2.0)
+        )
+        self.assertEqual(self._draw(view), [])
+
+
+class _UpdateRecordingPixmapItem(QGraphicsPixmapItem):
+    """Pixmap item that records the repaint requests made on it."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.update_calls = 0
+
+    def update(self, *args):
+        self.update_calls += 1
+        super().update(*args)
+
+
+class TakeoffPlanViewOverlayMoveSweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Overlay move guards that the lifecycle/visual/preview/handle classes left unpinned."""
+
+    RECT = TakeoffPlanViewOverlayMoveLifecycleTests.RECT
+
+    def _page(self, **overrides):
+        return TakeoffPlanViewOverlayMoveLifecycleTests._page(self, **overrides)
+
+    def _view(self, page=None):
+        view = self._make_plan_view()
+        page = page if page is not None else self._page()
+        self._install_page_canvas(view, page)
+        view._rendering_service.overlay_requests.clear()
+        view._rendering_service.cancelled_requests.clear()
+        return view, page
+
+    def _loaded_base_view(self):
+        return TakeoffPlanViewOverlayMoveVisualTests._loaded_base_view(self)
+
+    def _pending(self, view, scale=2.0, generation=3):
+        TakeoffPlanViewOverlayMoveOverlayPreviewTests._pending(
+            self, view, scale=scale, generation=generation
+        )
+
+    # ---- show_overlay_move_handle
+    def test_move_handle_is_refused_when_the_rect_cannot_be_read_even_if_a_move_is_allowed(
+        self,
+    ):
+        view, page = self._view()
+        prepared = []
+        view.finish_intelligent_paste_placement = lambda: prepared.append("paste")
+        view._start_overlay_move_preview_setup = lambda rect: prepared.append("setup")
+        view.can_move_overlay_image = lambda: True
+        page.overlay_rect = None
+        self.assertIs(view.show_overlay_move_handle(), False)
+        self.assertEqual(prepared, [])
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_handle_item)
+
+    # ---- the white canvas needs a positive size in both directions
+    def test_the_white_canvas_needs_a_positive_width_and_height_individually(self):
+        for label, width_pts, height_pts, created in (
+            ("zero width", 0.0, 792.0, False),
+            ("zero height", 612.0, 0.0, False),
+            ("tiny width", 0.2, 792.0, True),
+            ("tiny height", 612.0, 0.3, True),
+            ("tiny both", 0.2, 0.3, True),
+        ):
+            with self.subTest(label):
+                view, page = self._view(
+                    self._page(width_pts=width_pts, height_pts=height_pts)
+                )
+                calls = []
+                view._ensure_page_canvas = lambda w, h: calls.append(("canvas", w, h))
+                view._apply_page_transform_to_items = lambda: calls.append("transform")
+                view._update_scene_rect = lambda: calls.append("scene_rect")
+                view._white_canvas_item = None
+                view._ensure_overlay_move_white_canvas()
+                if created:
+                    self.assertEqual(
+                        calls,
+                        [
+                            ("canvas", width_pts * 2.0, height_pts * 2.0),
+                            "transform",
+                            "scene_rect",
+                        ],
+                    )
+                else:
+                    self.assertEqual(calls, [])
+
+    # ---- replacing a previous preview item only tears down items this scene owns
+    def test_loaded_base_preview_replaces_a_previous_item_that_was_already_deleted(
+        self,
+    ):
+        view, _page = self._loaded_base_view()
+        old = ImageBackgroundItem(QImage(8, 8, QImage.Format.Format_ARGB32), 8.0, 8.0)
+        view._scene.addItem(old)
+        view._overlay_move_preview_base_item = old
+        delete(old)
+        view._on_overlay_move_base_preview_loaded(
+            RenderResult(
+                "page-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        item = view._overlay_move_preview_base_item
+        self.assertIsNotNone(item)
+        self.assertIs(item.scene(), view._scene)
+
+    def test_loaded_base_preview_leaves_a_previous_item_outside_the_scene_untouched(
+        self,
+    ):
+        view, _page = self._loaded_base_view()
+        old = ImageBackgroundItem(QImage(8, 8, QImage.Format.Format_ARGB32), 8.0, 8.0)
+        view._overlay_move_preview_base_item = old
+        view._on_overlay_move_base_preview_loaded(
+            RenderResult(
+                "page-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertFalse(old._image.isNull())
+        self.assertIsNot(view._overlay_move_preview_base_item, old)
+        self.assertIs(view._overlay_move_preview_base_item.scene(), view._scene)
+
+    def test_loaded_overlay_preview_replaces_a_previous_item_that_was_already_deleted(
+        self,
+    ):
+        view, _page = self._view()
+        self._pending(view)
+        old = QGraphicsPixmapItem(QPixmap(8, 8))
+        view._scene.addItem(old)
+        view._overlay_move_preview_overlay_item = old
+        delete(old)
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        item = view._overlay_move_preview_overlay_item
+        self.assertIsNotNone(item)
+        self.assertIs(item.scene(), view._scene)
+
+    def test_loaded_overlay_preview_leaves_a_previous_item_outside_the_scene_untouched(
+        self,
+    ):
+        view, _page = self._view()
+        self._pending(view)
+        old = QGraphicsPixmapItem(QPixmap(8, 8))
+        view._overlay_move_preview_overlay_item = old
+        view._on_overlay_move_overlay_preview_loaded(
+            RenderResult(
+                "overlay-1", True, QImage(100, 100, QImage.Format.Format_ARGB32), None
+            ),
+            3,
+        )
+        self.assertFalse(old.pixmap().isNull())
+        self.assertIsNot(view._overlay_move_preview_overlay_item, old)
+        self.assertIs(view._overlay_move_preview_overlay_item.scene(), view._scene)
+
+    # ---- the overlay point size comes from the pixel size and any positive render scale
+    def test_overlay_pdf_point_size_divides_the_pixel_size_by_any_positive_render_scale(
+        self,
+    ):
+        for scale, expected in (
+            (0.5, (200.0, 240.0)),
+            (1.0, (100.0, 120.0)),
+            (4.0, (25.0, 30.0)),
+        ):
+            with self.subTest(scale=scale):
+                view, _page = self._view()
+                self._pending(view, scale=scale)
+                view._overlay_pdf_width_pts = 11.0
+                view._overlay_pdf_height_pts = 12.0
+                view._on_overlay_move_overlay_preview_loaded(
+                    RenderResult(
+                        "overlay-1",
+                        True,
+                        QImage(100, 120, QImage.Format.Format_ARGB32),
+                        None,
+                    ),
+                    3,
+                )
+                self.assertEqual(
+                    (view._overlay_pdf_width_pts, view._overlay_pdf_height_pts),
+                    expected,
+                )
+
+    # ---- repainting the moved overlay item
+    def test_preview_rect_repaints_the_moved_item_and_the_viewport(self):
+        view, _page = self._view()
+        item = _UpdateRecordingPixmapItem(QPixmap(40, 30))
+        view._scene.addItem(item)
+        view._overlay_move_preview_overlay_item = item
+        view._overlay_move_preview_rect = (7.0, 8.0, 100.0, 120.0)
+        view._overlay_graphics_transform = lambda *args: QTransform().scale(4.0, 5.0)
+        updates = []
+        view.viewport().update = lambda *a: updates.append(True)
+        item.update_calls = 0
+        view._apply_overlay_move_preview_rect_to_visuals()
+        self.assertEqual(item.transform(), QTransform().scale(4.0, 5.0))
+        self.assertEqual(item.update_calls, 1)
+        self.assertEqual(updates, [True])
+        item.update_calls = 0
+        view._overlay_graphics_transform = lambda *args: None
+        view._apply_overlay_move_preview_rect_to_visuals()
+        self.assertEqual(item.update_calls, 0)
+        self.assertEqual(updates, [True, True])
+
+    # ---- beginning a drag without a stored original rect
+    def _begin_view(self):
+        view, page = self._view()
+        view._activate_overlay_move_preview_visuals = lambda *a, **k: None
+        view._apply_cursor_mode = lambda mode: None
+        view._update_cursor = lambda *a: None
+        view._overlay_move_original_rect = None
+        return view, page
+
+    def test_beginning_a_drag_records_the_page_rect_as_original_not_the_preview_rect(
+        self,
+    ):
+        view, page = self._begin_view()
+        view._overlay_move_preview_rect = (9.0, 9.0, 544.0, 704.0)
+        self.assertIs(view._begin_overlay_move(QtCore.QPoint(1, 1)), True)
+        self.assertEqual(view._overlay_move_original_rect, self.RECT)
+        self.assertEqual(view._overlay_move_preview_rect, (9.0, 9.0, 544.0, 704.0))
+        self.assertEqual(view._overlay_move_drag_start_rect, (9.0, 9.0, 544.0, 704.0))
+
+    def test_beginning_a_drag_falls_back_to_the_preview_rect_when_the_page_rect_is_unreadable(
+        self,
+    ):
+        view, page = self._begin_view()
+        view._overlay_move_preview_rect = (9.0, 9.0, 544.0, 704.0)
+        page.overlay_rect = None
+        self.assertIs(view._begin_overlay_move(QtCore.QPoint(1, 1)), True)
+        self.assertEqual(view._overlay_move_original_rect, (9.0, 9.0, 544.0, 704.0))
+        self.assertEqual(view._overlay_move_drag_start_rect, (9.0, 9.0, 544.0, 704.0))
+
+    # ---- committing without edit access
+    def test_committing_without_edit_access_restores_the_original_rect_and_leaves_move_mode(
+        self,
+    ):
+        view, page = self._view()
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        moved = (9.0, 9.0, 544.0, 704.0)
+        page.overlay_rect = moved
+        view._overlay_move_original_rect = self.RECT
+        view._overlay_move_preview_rect = moved
+        view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY_HANDLE
+        saved = []
+        view.set_overlay_rect_save_handler(lambda rect: saved.append(rect) or True)
+        modes = []
+        view.cursor_mode_change_requested.connect(modes.append)
+        view._editing_enabled = False
+        view._commit_overlay_move()
+        self.assertEqual(saved, [])
+        self.assertEqual(page.overlay_rect, self.RECT)
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        self.assertEqual(modes, [CURSOR_MODE_SELECT])
+
+    # ---- the handle icon geometry
+    def test_the_move_handle_icon_is_a_centred_white_glyph_with_a_one_pixel_black_outline(
+        self,
+    ):
+        view, _page = self._view()
+        image = (
+            view._outlined_icon_pixmap(plan_view_module._MOVE_OVERLAY_ICON, "#ffffff")
+            .toImage()
+            .convertToFormat(QImage.Format.Format_ARGB32)
+        )
+        size = 26
+        self.assertEqual((image.width(), image.height()), (size, size))
+
+        def opaque(x, y):
+            return image.pixelColor(x, y).alpha() > 0
+
+        points = [(x, y) for x in range(size) for y in range(size)]
+        white = [
+            (x, y)
+            for x, y in points
+            if image.pixelColor(x, y).alpha() == 255
+            and image.pixelColor(x, y).rgb() & 0xFFFFFF == 0xFFFFFF
+        ]
+        black = [
+            (x, y)
+            for x, y in points
+            if image.pixelColor(x, y).alpha() == 255
+            and image.pixelColor(x, y).rgb() & 0xFFFFFF == 0
+        ]
+        self.assertGreater(len(white), 50)
+        self.assertGreater(len(black), 50)
+        # The outline is the glyph dilated by exactly one pixel on every side.
+        unsurrounded = [
+            (x, y, dx, dy)
+            for x, y in white
+            for dx in (-1, 0, 1)
+            for dy in (-1, 0, 1)
+            if not (
+                0 <= x + dx < size and 0 <= y + dy < size and opaque(x + dx, y + dy)
+            )
+        ]
+        self.assertEqual(unsurrounded, [])
+        # The 4-way arrow glyph is symmetric, so the icon sits centred in the pixmap.
+        self.assertEqual(
+            [p for p in points if opaque(*p) != opaque(size - 1 - p[0], p[1])], []
+        )
+        self.assertEqual(
+            [p for p in points if opaque(*p) != opaque(p[0], size - 1 - p[1])], []
+        )
+        coloured = [
+            (x, y)
+            for x, y in points
+            if len(
+                {
+                    image.pixelColor(x, y).red(),
+                    image.pixelColor(x, y).green(),
+                    image.pixelColor(x, y).blue(),
+                }
+            )
+            > 1
+            and image.pixelColor(x, y).alpha() > 0
+        ]
+        self.assertEqual(coloured, [])
+        edge = [p for p in points if 0 in p or size - 1 in p]
+        self.assertEqual([p for p in edge if opaque(*p)], [])
+
+
+class TakeoffPlanViewRestoreAndSettingsSweepTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    """Model rebuild, preference setters, edit-mode switches and render-quality refresh."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        return view, page
+
+    # ---- _rebuild_current_overlays_from_model / _force_reload_current_page_visuals
+    def test_rebuilding_overlays_refreshes_with_the_model_then_fits_the_scene_and_repaints(
+        self,
+    ):
+        view, page = self._view()
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[1.0, 2.0])
+        annotation = BidAnnotation(
+            uid="a1", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+        )
+        conditions = {"c1": Condition(uid="c1", condition_type=Condition.TYPE_COUNT)}
+        color_map = {"c1": "#112233"}
+        areas = {"sel": [1]}
+        bid_ref = BidRef("db.mdb", "bid-1")
+        view._current_takeoffs = {"t1": takeoff}
+        view._current_annotations = {"a1": annotation}
+        view._current_conditions = conditions
+        view._current_color_map = color_map
+        view._current_page_area_selections = areas
+        view._current_bid_ref = bid_ref
+        calls = []
+        view._refresh_overlays = lambda *args: calls.append(("refresh", args))
+        view._update_scene_rect = lambda: calls.append("scene_rect")
+        view.viewport = lambda: FakeViewport(calls)
+        view._rebuild_current_overlays_from_model()
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "refresh",
+                    (
+                        page,
+                        [takeoff],
+                        conditions,
+                        color_map,
+                        [annotation],
+                        areas,
+                        bid_ref,
+                    ),
+                ),
+                "scene_rect",
+                "viewport.update",
+            ],
+        )
+        refresh_args = calls[0][1]
+        self.assertIs(refresh_args[1][0], takeoff)
+        self.assertIs(refresh_args[4][0], annotation)
+
+    def test_rebuilding_overlays_without_a_page_does_nothing(self):
+        view, _page = self._view()
+        view._current_page = None
+        calls = []
+        view._refresh_overlays = lambda *args: calls.append("refresh")
+        view._update_scene_rect = lambda: calls.append("scene_rect")
+        view.viewport = lambda: FakeViewport(calls)
+        view._rebuild_current_overlays_from_model()
+        self.assertEqual(calls, [])
+
+    def test_force_reload_replays_the_current_model_with_a_forced_visual_reload(self):
+        view, page = self._view()
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[1.0, 2.0])
+        annotation = BidAnnotation(
+            uid="a1", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+        )
+        view._current_takeoffs = {"t1": takeoff}
+        view._current_annotations = {"a1": annotation}
+        view._current_conditions = {"c1": "condition"}
+        view._current_color_map = {"c1": "#112233"}
+        view._current_page_area_selections = {"sel": [1]}
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        seen = []
+        outcome = {"value": True}
+
+        def load_page_impl(*args, **kwargs):
+            seen.append((args, kwargs))
+            return outcome["value"]
+
+        view._load_page_impl = load_page_impl
+        self.assertIs(view._force_reload_current_page_visuals(), True)
+        outcome["value"] = False
+        self.assertIs(view._force_reload_current_page_visuals(), False)
+        args, kwargs = seen[0]
+        self.assertEqual(
+            args,
+            (
+                page,
+                [takeoff],
+                {"c1": "condition"},
+                {"c1": "#112233"},
+                BidRef("db.mdb", "bid-1"),
+                [annotation],
+                {"sel": [1]},
+            ),
+        )
+        self.assertEqual(kwargs, {"force_visual_reload": True})
+        self.assertEqual(len(seen), 2)
+
+    def test_force_reload_without_a_page_reports_failure_without_loading(self):
+        view, _page = self._view()
+        view._current_page = None
+        view._load_page_impl = lambda *a, **k: self.fail("nothing to reload")
+        self.assertIs(view._force_reload_current_page_visuals(), False)
+
+    # ---- plain setters
+    def test_cursor_and_flag_setters_store_exactly_the_given_values(self):
+        view, _page = self._view()
+        zoom = QtGui.QCursor(QtCore.Qt.CursorShape.CrossCursor)
+        rotate = QtGui.QCursor(QtCore.Qt.CursorShape.SizeAllCursor)
+        move = QtGui.QCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        view.set_zoom_cursor(zoom)
+        view.set_rotate_cursor(rotate)
+        view.set_move_overlay_cursor(move)
+        self.assertIs(view._zoom_cursor, zoom)
+        self.assertIs(view._rotate_cursor, rotate)
+        self.assertIs(view._move_overlay_cursor, move)
+        view.set_annotation_only_selection(True)
+        self.assertIs(view._annotation_only_selection, True)
+        view.set_annotation_only_selection(False)
+        self.assertIs(view._annotation_only_selection, False)
+        view.set_inactive_object_color("#abcdef")
+        self.assertEqual(view._inactive_object_color, "#abcdef")
+        handler = lambda rect: True
+        view.set_overlay_rect_save_handler(handler)
+        self.assertIs(view._overlay_rect_save_handler, handler)
+
+    def test_roping_method_accepts_only_inclusive_and_falls_back_to_touching(self):
+        view, _page = self._view()
+        view.set_roping_selection_method("inclusive")
+        self.assertEqual(view._roping_selection_method, "inclusive")
+        view.set_roping_selection_method("touching")
+        self.assertEqual(view._roping_selection_method, "touching")
+        view.set_roping_selection_method("inclusive")
+        view.set_roping_selection_method("anything else")
+        self.assertEqual(view._roping_selection_method, "touching")
+
+    def test_default_auto_zoom_level_is_clamped_between_zero_and_sixteen_hundred_percent(
+        self,
+    ):
+        view, _page = self._view()
+        for given, stored in (
+            (-5, 0),
+            (0, 0),
+            (1, 1),
+            (75, 75),
+            (1599, 1599),
+            (1600, 1600),
+            (1601, 1600),
+            (99999, 1600),
+            ("250", 250),
+            (42.9, 42),
+        ):
+            with self.subTest(given=given):
+                view.set_default_auto_zoom_level(given)
+                self.assertEqual(view._default_auto_zoom_level, stored)
+                self.assertIs(type(view._default_auto_zoom_level), int)
+
+    def test_mouse_snap_angles_are_stored_as_integers(self):
+        view, _page = self._view()
+        for unpressed, pressed in (("15", 45.0), (30, "90")):
+            with self.subTest(unpressed=unpressed, pressed=pressed):
+                view.set_mouse_snap_angles(unpressed, pressed)
+                self.assertEqual(view._mouse_unpressed_snap_angle, int(unpressed))
+                self.assertIs(type(view._mouse_unpressed_snap_angle), int)
+                self.assertEqual(view._mouse_pressed_snap_angle, int(float(pressed)))
+                self.assertIs(type(view._mouse_pressed_snap_angle), int)
+
+    def test_snap_preferences_store_every_flag_and_threshold_with_its_own_type(self):
+        view, _page = self._view()
+        keys = ("grid", "pdf_lines", "takeoffs", "right_angle")
+        # Two opposite passes so a skipped assignment cannot hide behind a default value.
+        for flags, thresholds in (
+            ((1, 0, True, False), ("11", 12.0, 13, 14)),
+            ((0, 1, False, True), (21, "22", 23.0, 24)),
+        ):
+            with self.subTest(flags=flags):
+                view.set_snap_preferences(
+                    snap_to_grid_enabled=flags[0],
+                    snap_to_grid_threshold_px=thresholds[0],
+                    snap_to_pdf_lines_enabled=flags[1],
+                    snap_to_pdf_lines_threshold_px=thresholds[1],
+                    snap_to_takeoffs_enabled=flags[2],
+                    snap_to_takeoffs_threshold_px=thresholds[2],
+                    snap_to_right_angle_enabled=flags[3],
+                    snap_to_right_angle_threshold_px=thresholds[3],
+                )
+                for key, flag, threshold in zip(keys, flags, thresholds):
+                    stored_flag = getattr(view, "_snap_to_%s_enabled" % key)
+                    stored_threshold = getattr(view, "_snap_to_%s_threshold_px" % key)
+                    self.assertIs(stored_flag, bool(flag))
+                    self.assertEqual(stored_threshold, int(float(threshold)))
+                    self.assertIs(type(stored_threshold), int)
+
+    # ---- set_selection_enabled
+    def test_enabling_selection_only_records_the_flag(self):
+        view, _page = self._view()
+        calls = []
+        view._selection_enabled = False
+        view._clear_text_selection = lambda: calls.append("text")
+        view.clear_selection = lambda: calls.append("selection")
+        view.set_selection_enabled(True)
+        self.assertIs(view._selection_enabled, True)
+        self.assertEqual(calls, [])
+
+    def test_disabling_selection_clears_the_text_selection_then_the_selection(self):
+        view, _page = self._view()
+        calls = []
+        view.is_text_annotation_inline_edit_active = lambda: False
+        view._clear_text_selection = lambda: calls.append("text")
+        view.clear_selection = lambda: calls.append("selection")
+        view.clear_selection_items = lambda: calls.append("items")
+        view._selected_uids = {"t1"}
+        view.set_selection_enabled(False)
+        self.assertIs(view._selection_enabled, False)
+        self.assertEqual(calls, ["text", "selection"])
+        self.assertEqual(view._selected_uids, {"t1"})
+
+    def test_disabling_selection_during_an_inline_edit_drops_the_selection_but_keeps_the_editor(
+        self,
+    ):
+        view, _page = self._view()
+        calls = []
+        emitted = []
+        view.takeoff_selection_changed.connect(lambda uids: emitted.append(list(uids)))
+        view.is_text_annotation_inline_edit_active = lambda: True
+        view._clear_text_selection = lambda: calls.append("text")
+        view.clear_selection = lambda: calls.append("selection")
+        view.clear_selection_items = lambda: calls.append("items")
+        view._selected_uids = {"t1", "a1"}
+        view.set_selection_enabled(False)
+        self.assertEqual(calls, ["items"])
+        self.assertEqual(view._selected_uids, set())
+        self.assertEqual(emitted, [[]])
+        # Without a selection there is nothing to announce.
+        calls.clear()
+        view.set_selection_enabled(False)
+        self.assertEqual(calls, ["items"])
+        self.assertEqual(emitted, [[]])
+
+    # ---- set_editing_enabled
+    def _stub_edit_collaborators(self, view, *, rotation_cancelled=False):
+        calls = []
+        view._finish_active_inline_text_edit = lambda commit=True: calls.append(
+            ("inline", commit)
+        )
+        view.cancel_overlay_move_mode = lambda restore_preview=True: calls.append(
+            ("overlay", restore_preview)
+        )
+        view.finish_intelligent_paste_placement = lambda: calls.append("paste")
+        view.cancel_paste_backout = lambda: calls.append("backout")
+        view.cancel_place_mode = lambda: calls.append("place")
+        view._cancel_active_drag_interaction = (
+            lambda restore_preview=True: calls.append(("drag", restore_preview))
+        )
+        view._cancel_rotation_drag_interaction = (
+            lambda: calls.append("rotation") or rotation_cancelled
+        )
+        view._rebuild_current_overlays_from_model = lambda: calls.append("rebuild")
+        view._remove_rotate_handle = lambda: calls.append("handle")
+        view._discard_unflushed_geometry_edits = lambda: calls.append("discard")
+        return calls
+
+    def test_disabling_editing_cancels_every_interaction_in_order_then_discards_and_rebuilds(
+        self,
+    ):
+        view, _page = self._view()
+        view._editing_enabled = True
+        calls = self._stub_edit_collaborators(view)
+        view.set_editing_enabled(0)
+        self.assertIs(view._editing_enabled, False)
+        self.assertEqual(
+            calls,
+            [
+                ("inline", False),
+                ("overlay", True),
+                "paste",
+                "backout",
+                "place",
+                ("drag", True),
+                "rotation",
+                "handle",
+                "discard",
+                "rebuild",
+            ],
+        )
+
+    def test_disabling_editing_rebuilds_an_extra_time_when_a_rotation_drag_was_cancelled(
+        self,
+    ):
+        view, _page = self._view()
+        view._editing_enabled = True
+        calls = self._stub_edit_collaborators(view, rotation_cancelled=True)
+        view.set_editing_enabled(False)
+        self.assertEqual(
+            calls[calls.index("rotation") :],
+            ["rotation", "rebuild", "handle", "discard", "rebuild"],
+        )
+
+    def test_enabling_editing_or_repeating_the_current_state_cancels_nothing(self):
+        view, _page = self._view()
+        view._editing_enabled = False
+        calls = self._stub_edit_collaborators(view)
+        view.set_editing_enabled(True)
+        self.assertIs(view._editing_enabled, True)
+        self.assertEqual(calls, [])
+        view.set_editing_enabled(1)
+        self.assertEqual(calls, [])
+        view._editing_enabled = False
+        view.set_editing_enabled(False)
+        self.assertEqual(calls, [])
+
+    # ---- _discard_unflushed_geometry_edits
+    def test_discarding_unflushed_edits_restores_positions_and_rotations_and_clears_the_buffers(
+        self,
+    ):
+        view, _page = self._view()
+        takeoff = Takeoff(
+            uid="t1", condition_uid="c1", position=[9.0, 9.0], rotation=0.7
+        )
+        both = Takeoff(uid="both", condition_uid="c1", position=[8.0, 8.0])
+        annotation = BidAnnotation(
+            uid="a1", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+        )
+        shadowed = BidAnnotation(
+            uid="both", annotation_type="rect", position=[5.0, 5.0, 6.0, 6.0]
+        )
+        view._current_takeoffs = {"t1": takeoff, "both": both}
+        view._current_annotations = {"a1": annotation, "both": shadowed}
+        view._position_before_edit = {
+            "t1": [1.0, 2.0],
+            "both": [3.0, 4.0],
+            "a1": [0.0, 0.0, 1.0, 1.0],
+            "gone": [5.0, 5.0],
+        }
+        view._rotation_before_edit = {"t1": 0.25, "unknown": 1.0}
+        view._dirty_positions = {"t1": [9.0, 9.0]}
+        view._dirty_ann_positions = {"a1": ("rect", [7.0, 7.0, 8.0, 8.0])}
+        view._dirty_rotations = {"t1": 0.7}
+        view._keyboard_move_dirty = True
+        view._discard_unflushed_geometry_edits()
+        self.assertEqual(takeoff.position, [1.0, 2.0])
+        self.assertEqual(takeoff.rotation, 0.25)
+        self.assertEqual(both.position, [3.0, 4.0])
+        self.assertEqual(shadowed.position, [5.0, 5.0, 6.0, 6.0])
+        self.assertEqual(annotation.position, [0.0, 0.0, 1.0, 1.0])
+        self.assertEqual(view._position_before_edit, {})
+        self.assertEqual(view._rotation_before_edit, {})
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(view._dirty_ann_positions, {})
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertIs(view._keyboard_move_dirty, False)
+
+    # ---- prepare_for_authoritative_refresh
+    def _stub_refresh_collaborators(self, view):
+        calls = []
+        view._finish_active_inline_text_edit = lambda commit=True: calls.append(
+            ("inline", commit)
+        )
+        view.cancel_overlay_move_mode = lambda restore_preview=True: calls.append(
+            ("overlay", restore_preview)
+        )
+        view._cancel_active_drag_interaction = (
+            lambda restore_preview=True: calls.append(("drag", restore_preview))
+        )
+        view._cancel_rotation_drag_interaction = lambda: calls.append("rotation")
+        view._discard_unflushed_geometry_edits = lambda: calls.append("discard")
+        view.finish_intelligent_paste_placement = lambda: calls.append("paste")
+        view.cancel_paste_backout = lambda: calls.append("backout")
+        view.clear_place_preview = lambda: calls.append("clear_preview")
+        view._reset_place_session_state = lambda: calls.append("reset_place")
+        view._set_area_placement_in_progress = lambda value: calls.append(
+            ("area_in_progress", value)
+        )
+        view._finish_pan_interaction = lambda: calls.append("pan")
+        view.reset_ctrl_held = lambda: calls.append("ctrl")
+        view._update_cursor = lambda: calls.append("cursor")
+        view._rebuild_current_overlays_from_model = lambda: calls.append("rebuild")
+        view._place_session_uid = None
+        view._annotation_place_type = None
+        view._panning = False
+        return calls
+
+    def test_idle_authoritative_refresh_cancels_interactions_resets_the_pointer_and_rebuilds(
+        self,
+    ):
+        view, _page = self._view()
+        calls = self._stub_refresh_collaborators(view)
+        view._last_mouse_vp_pos = QtCore.QPoint(5, 6)
+        view.prepare_for_authoritative_refresh()
+        self.assertEqual(
+            calls,
+            [
+                ("inline", False),
+                ("overlay", True),
+                ("drag", True),
+                "rotation",
+                "discard",
+                "paste",
+                "backout",
+                "ctrl",
+                "cursor",
+                "rebuild",
+            ],
+        )
+        self.assertIsNone(view._last_mouse_vp_pos)
+
+    def test_authoritative_refresh_ends_an_active_place_session(self):
+        view, _page = self._view()
+        calls = self._stub_refresh_collaborators(view)
+        view._place_session_uid = "c1"
+        view.prepare_for_authoritative_refresh()
+        self.assertEqual(
+            calls[calls.index("backout") + 1 : calls.index("ctrl")],
+            ["clear_preview", "reset_place"],
+        )
+
+    def test_authoritative_refresh_ends_an_active_annotation_placement(self):
+        view, _page = self._view()
+        calls = self._stub_refresh_collaborators(view)
+        view._annotation_place_type = "rect"
+        view._annotation_place_points = [(1.0, 2.0)]
+        view._annotation_place_dragging = True
+        view._annotation_area_rect_dragging = True
+        view.prepare_for_authoritative_refresh()
+        self.assertEqual(
+            calls[calls.index("backout") + 1 : calls.index("ctrl")],
+            ["clear_preview", ("area_in_progress", False)],
+        )
+        self.assertEqual(view._annotation_place_points, [])
+        self.assertIs(view._annotation_place_dragging, False)
+        self.assertIs(view._annotation_area_rect_dragging, False)
+
+    def test_authoritative_refresh_finishes_an_active_pan_before_resetting_the_modifier(
+        self,
+    ):
+        view, _page = self._view()
+        calls = self._stub_refresh_collaborators(view)
+        view._panning = True
+        view.prepare_for_authoritative_refresh()
+        self.assertEqual(
+            calls[calls.index("backout") + 1 : calls.index("cursor")], ["pan", "ctrl"]
+        )
+
+    # ---- render quality
+    def _stub_render_quality(self, view, *, dynamic=True, overlay_tiles=False):
+        calls = []
+        view._clear_tiles = lambda: calls.append("clear_tiles")
+        view._cancel_optional_base_correction = lambda: calls.append(
+            "cancel_correction"
+        )
+        view._uses_dynamic_tile_coverage = lambda: dynamic
+        view._uses_overlay_pdf_tiles = lambda: overlay_tiles
+        view._request_optional_base_correction = lambda scale, generation: calls.append(
+            ("correction", scale, generation)
+        )
+        view._advance_render_generation = lambda: 41
+        view._update_tile_coverage = lambda zoom: calls.append(("coverage", zoom))
+        view.viewport = lambda: FakeViewport(calls)
+        return calls
+
+    def test_render_quality_refresh_without_a_page_does_nothing(self):
+        view, _page = self._view()
+        view._current_page = None
+        calls = self._stub_render_quality(view)
+        view.refresh_current_render_quality()
+        self.assertEqual(calls, [])
+
+    def test_render_quality_refresh_without_dynamic_tiles_only_clears_and_repaints(
+        self,
+    ):
+        view, _page = self._view()
+        calls = self._stub_render_quality(view, dynamic=False)
+        view._disable_high_resolution_images = True
+        view.refresh_current_render_quality()
+        self.assertEqual(calls, ["clear_tiles", "cancel_correction", "viewport.update"])
+
+    def test_render_quality_refresh_updates_tile_coverage_at_the_current_zoom(self):
+        view, _page = self._view()
+        view.resetTransform()
+        view.scale(2.5, 2.5)
+        calls = self._stub_render_quality(view)
+        view._disable_high_resolution_images = False
+        view.refresh_current_render_quality()
+        self.assertEqual(
+            calls,
+            ["clear_tiles", "cancel_correction", ("coverage", 2.5), "viewport.update"],
+        )
+
+    def test_render_quality_refresh_with_high_resolution_disabled_requests_a_base_correction(
+        self,
+    ):
+        view, _page = self._view()
+        calls = self._stub_render_quality(view)
+        view._disable_high_resolution_images = True
+        view._background_item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        view._is_composite_mode = False
+        view._base_raster_scale = INTERACTIVE_PDF_RENDER_SCALE + 1.5e-6
+        view.refresh_current_render_quality()
+        self.assertEqual(
+            calls,
+            [
+                "clear_tiles",
+                "cancel_correction",
+                ("correction", INTERACTIVE_PDF_RENDER_SCALE, 41),
+                "viewport.update",
+            ],
+        )
+
+    def test_render_quality_refresh_skips_the_base_correction_when_nothing_would_change(
+        self,
+    ):
+        for label, change in (
+            ("no background", lambda v: setattr(v, "_background_item", None)),
+            ("composite", lambda v: setattr(v, "_is_composite_mode", True)),
+            (
+                "same scale",
+                lambda v: setattr(
+                    v, "_base_raster_scale", INTERACTIVE_PDF_RENDER_SCALE
+                ),
+            ),
+            (
+                "tiny scale drift",
+                lambda v: setattr(
+                    v, "_base_raster_scale", INTERACTIVE_PDF_RENDER_SCALE + 5e-7
+                ),
+            ),
+            (
+                "lower scale drift",
+                lambda v: setattr(
+                    v, "_base_raster_scale", INTERACTIVE_PDF_RENDER_SCALE - 5e-7
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                view, _page = self._view()
+                calls = self._stub_render_quality(view)
+                view._disable_high_resolution_images = True
+                view._background_item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+                view._is_composite_mode = False
+                view._base_raster_scale = INTERACTIVE_PDF_RENDER_SCALE + 1.5e-6
+                change(view)
+                view.refresh_current_render_quality()
+                self.assertEqual(
+                    calls, ["clear_tiles", "cancel_correction", "viewport.update"]
+                )
+
+    def test_render_quality_refresh_with_overlay_pdf_tiles_still_updates_coverage(self):
+        view, _page = self._view()
+        calls = self._stub_render_quality(view, overlay_tiles=True)
+        view._disable_high_resolution_images = True
+        view._background_item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        view._is_composite_mode = False
+        view._base_raster_scale = INTERACTIVE_PDF_RENDER_SCALE + 1.5e-6
+        view.refresh_current_render_quality()
+        self.assertEqual(
+            calls,
+            [
+                "clear_tiles",
+                "cancel_correction",
+                ("coverage", view.transform().m11()),
+                "viewport.update",
+            ],
+        )
+
+    def test_changing_the_high_resolution_preference_refreshes_only_on_a_real_change(
+        self,
+    ):
+        view, _page = self._view()
+        refreshed = []
+        view.refresh_current_render_quality = lambda: refreshed.append(
+            view._disable_high_resolution_images
+        )
+        view._disable_high_resolution_images = False
+        view.set_disable_high_resolution_images(False)
+        self.assertEqual(refreshed, [])
+        view.set_disable_high_resolution_images(1)
+        self.assertEqual(refreshed, [True])
+        self.assertIs(view._disable_high_resolution_images, True)
+        view.set_disable_high_resolution_images(True)
+        self.assertEqual(refreshed, [True])
+        view.set_disable_high_resolution_images(0)
+        self.assertEqual(refreshed, [True, False])
+        self.assertIs(view._disable_high_resolution_images, False)
+
+
+class TakeoffPlanViewRestoreModelEditsSweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Undo restores that write saved values back into the in-memory model and rebuild."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        rebuilds = []
+        view._rebuild_current_overlays_from_model = lambda: rebuilds.append(True)
+        return view, rebuilds
+
+    @staticmethod
+    def _annotation(uid, annotation_type="rect", **kwargs):
+        kwargs.setdefault("position", [1.0, 2.0, 3.0, 4.0])
+        return BidAnnotation(uid=uid, annotation_type=annotation_type, **kwargs)
+
+    # ---- find_annotation_keys_by_uid_type
+    def test_annotation_keys_are_found_by_database_uid_and_type_even_when_renamed(self):
+        view, _rebuilds = self._view()
+        view._current_annotations = {
+            "a": self._annotation("a", "rect"),
+            "a_oval": self._annotation("a", "oval"),
+            "a_oval_1": self._annotation("a", "oval"),
+            "b": self._annotation("b", "rect"),
+        }
+        self.assertEqual(
+            view.find_annotation_keys_by_uid_type({("a", "oval")}),
+            {"a_oval", "a_oval_1"},
+        )
+        self.assertEqual(
+            view.find_annotation_keys_by_uid_type({("a", "rect"), ("b", "rect")}),
+            {"a", "b"},
+        )
+        self.assertEqual(
+            view.find_annotation_keys_by_uid_type({("a", "line"), ("z", "rect")}), set()
+        )
+        self.assertEqual(view.find_annotation_keys_by_uid_type(set()), set())
+
+    # ---- _restore_annotation_positions
+    def test_restoring_annotation_positions_writes_copies_into_every_matching_annotation(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        first = self._annotation("a", "oval", position=[9.0, 9.0, 9.0, 9.0])
+        second = self._annotation("a", "oval", position=[8.0, 8.0, 8.0, 8.0])
+        other_type = self._annotation("a", "rect", position=[7.0, 7.0, 7.0, 7.0])
+        view._current_annotations = {
+            "a_oval": first,
+            "a_oval_1": second,
+            "a": other_type,
+        }
+        old = [1.0, 2.0, 3.0, 4.0]
+        result = view._restore_annotation_positions(
+            [("a", "oval", old, [9.0, 9.0, 9.0, 9.0])]
+        )
+        self.assertIs(result, True)
+        self.assertEqual(first.position, [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(second.position, [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(other_type.position, [7.0, 7.0, 7.0, 7.0])
+        self.assertIsNot(first.position, old)
+        self.assertIsNot(first.position, second.position)
+
+    def test_restoring_annotation_positions_skips_missing_old_values_and_unknown_annotations(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        annotation = self._annotation("a", "rect", position=[7.0, 7.0, 7.0, 7.0])
+        view._current_annotations = {"a": annotation}
+        result = view._restore_annotation_positions(
+            [
+                ("a", "rect", [], [1.0, 1.0, 1.0, 1.0]),
+                ("gone", "rect", [5.0, 5.0], [6.0, 6.0]),
+            ]
+        )
+        self.assertIs(result, False)
+        self.assertEqual(annotation.position, [7.0, 7.0, 7.0, 7.0])
+        self.assertIs(view._restore_annotation_positions([]), False)
+
+    # ---- _restore_annotation_properties
+    def test_restoring_annotation_properties_merges_saved_values_and_derives_the_colour(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        annotation = self._annotation(
+            "t",
+            "text",
+            color="#123456",
+            properties={"Text": "new", "FontSize": 20, "FontColor": 1},
+        )
+        view._current_annotations = {"t": annotation}
+        # 0x336699 as a BGR integer is the RGB colour #996633.
+        old = {"Text": "old", "FontColor": 0x336699}
+        result = view._restore_annotation_properties(
+            [("t", "text", old, {"Text": "new"})]
+        )
+        self.assertIs(result, True)
+        self.assertEqual(
+            annotation.properties,
+            {"Text": "old", "FontSize": 20, "FontColor": 0x336699},
+        )
+        self.assertEqual(annotation.color, "#996633")
+        self.assertIsNot(annotation.properties, old)
+
+    def test_restoring_annotation_properties_without_a_font_colour_keeps_the_colour(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        annotation = self._annotation(
+            "t", "text", color="#123456", properties={"Text": "new"}
+        )
+        view._current_annotations = {"t": annotation}
+        self.assertIs(
+            view._restore_annotation_properties([("t", "text", {"Text": "old"}, {})]),
+            True,
+        )
+        self.assertEqual(annotation.properties, {"Text": "old"})
+        self.assertEqual(annotation.color, "#123456")
+
+    def test_restoring_a_missing_font_colour_value_falls_back_to_black(self):
+        view, _rebuilds = self._view()
+        annotation = self._annotation(
+            "t", "text", color="#123456", properties={"FontColor": 5}
+        )
+        view._current_annotations = {"t": annotation}
+        view._restore_annotation_properties([("t", "text", {"FontColor": None}, {})])
+        self.assertEqual(annotation.color, "#000000")
+
+    def test_restoring_annotation_properties_skips_empty_values_and_unknown_annotations(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        annotation = self._annotation(
+            "t", "text", color="#123456", properties={"Text": "new"}
+        )
+        view._current_annotations = {"t": annotation}
+        result = view._restore_annotation_properties(
+            [("t", "text", {}, {"Text": "x"}), ("gone", "text", {"Text": "old"}, {})]
+        )
+        self.assertIs(result, False)
+        self.assertEqual(annotation.properties, {"Text": "new"})
+        self.assertEqual(annotation.color, "#123456")
+
+    # ---- _restore_annotation_styles
+    def test_restoring_a_text_style_restores_colour_font_colour_and_width(self):
+        view, _rebuilds = self._view()
+        text = self._annotation(
+            "t", "text", color="#000000", width=1.0, properties={"FontColor": 0}
+        )
+        dimension = self._annotation(
+            "d", "dimension", color="#000000", width=1.0, properties={}
+        )
+        view._current_annotations = {"t": text, "d": dimension}
+        result = view._restore_annotation_styles(
+            [
+                ("t", "text", {"Color": "#ff0000", "Width": "3"}, {}),
+                ("d", "dimension", {"Color": "#00ff00"}, {}),
+            ]
+        )
+        self.assertIs(result, True)
+        self.assertEqual(
+            (text.color, text.width, text.properties["FontColor"]),
+            ("#ff0000", 3.0, 255),
+        )
+        self.assertIs(type(text.width), float)
+        self.assertEqual((dimension.color, dimension.width), ("#00ff00", 1.0))
+        self.assertEqual(dimension.properties["FontColor"], 0x00FF00)
+
+    def test_restoring_a_shape_style_leaves_the_font_colour_and_missing_keys_alone(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        rect = self._annotation(
+            "r", "rect", color="#000000", width=1.0, properties={"X": 1}
+        )
+        view._current_annotations = {"r": rect}
+        self.assertIs(
+            view._restore_annotation_styles([("r", "rect", {"Color": "#0000ff"}, {})]),
+            True,
+        )
+        self.assertEqual(
+            (rect.color, rect.width, rect.properties), ("#0000ff", 1.0, {"X": 1})
+        )
+        self.assertIs(
+            view._restore_annotation_styles([("r", "rect", {"Width": 2.5}, {})]), True
+        )
+        self.assertEqual((rect.color, rect.width), ("#0000ff", 2.5))
+
+    def test_restoring_styles_skips_empty_values_and_unknown_annotations(self):
+        view, _rebuilds = self._view()
+        rect = self._annotation("r", "rect", color="#000000", width=1.0)
+        view._current_annotations = {"r": rect}
+        result = view._restore_annotation_styles(
+            [
+                ("r", "rect", {}, {"Color": "#ffffff"}),
+                ("gone", "rect", {"Color": "#ffffff"}, {}),
+            ]
+        )
+        self.assertIs(result, False)
+        self.assertEqual((rect.color, rect.width), ("#000000", 1.0))
+
+    # ---- public restore entry points
+    def test_restoring_flushed_positions_rebuilds_for_takeoff_or_annotation_changes(
+        self,
+    ):
+        view, rebuilds = self._view()
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[9.0, 9.0])
+        annotation = self._annotation("a", "rect", position=[9.0, 9.0, 9.0, 9.0])
+        view._current_takeoffs = {"t1": takeoff}
+        view._current_annotations = {"a": annotation}
+        view.restore_flushed_positions([("t1", [1.0, 2.0], [9.0, 9.0])], [])
+        self.assertEqual(takeoff.position, [1.0, 2.0])
+        self.assertEqual(len(rebuilds), 1)
+        view.restore_flushed_positions(
+            [], [("a", "rect", [4.0, 4.0, 4.0, 4.0], [9.0] * 4)]
+        )
+        self.assertEqual(annotation.position, [4.0, 4.0, 4.0, 4.0])
+        self.assertEqual(len(rebuilds), 2)
+        view.restore_flushed_positions(
+            [("t1", [5.0, 6.0], [1.0, 2.0])], [("a", "rect", [7.0] * 4, [4.0] * 4)]
+        )
+        self.assertEqual(
+            (takeoff.position, annotation.position), ([5.0, 6.0], [7.0] * 4)
+        )
+        self.assertEqual(len(rebuilds), 3)
+
+    def test_restoring_flushed_positions_without_usable_changes_does_not_rebuild(self):
+        view, rebuilds = self._view()
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[9.0, 9.0])
+        view._current_takeoffs = {"t1": takeoff}
+        view.restore_flushed_positions(
+            [("t1", [], [1.0, 2.0]), ("missing", [1.0, 1.0], [2.0, 2.0])],
+            [("gone", "rect", [1.0], [2.0])],
+        )
+        view.restore_flushed_positions([], [])
+        self.assertEqual(takeoff.position, [9.0, 9.0])
+        self.assertEqual(rebuilds, [])
+
+    def test_restoring_flushed_rotations_accepts_a_zero_rotation_and_rebuilds_once(
+        self,
+    ):
+        view, rebuilds = self._view()
+        first = Takeoff(uid="t1", condition_uid="c1", position=[0.0, 0.0], rotation=1.5)
+        second = Takeoff(
+            uid="t2", condition_uid="c1", position=[0.0, 0.0], rotation=2.5
+        )
+        view._current_takeoffs = {"t1": first, "t2": second}
+        view.restore_flushed_rotations(
+            [("t1", 0.0, 1.5), ("t2", 0.75, 2.5), ("missing", 1.0, 2.0)]
+        )
+        self.assertEqual((first.rotation, second.rotation), (0.0, 0.75))
+        self.assertEqual(len(rebuilds), 1)
+
+    def test_restoring_flushed_rotations_without_usable_changes_does_not_rebuild(self):
+        view, rebuilds = self._view()
+        takeoff = Takeoff(
+            uid="t1", condition_uid="c1", position=[0.0, 0.0], rotation=1.5
+        )
+        view._current_takeoffs = {"t1": takeoff}
+        view.restore_flushed_rotations([("t1", None, 1.5), ("missing", 1.0, 2.0)])
+        view.restore_flushed_rotations([])
+        self.assertEqual(takeoff.rotation, 1.5)
+        self.assertEqual(rebuilds, [])
+
+    def test_restoring_condition_text_properties_applies_a_copy_of_the_saved_style(
+        self,
+    ):
+        view, rebuilds = self._view()
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[0.0, 0.0])
+        takeoff.name_font_size = 30
+        takeoff.dimension_font_bold = True
+        view._current_takeoffs = {"t1": takeoff}
+        old = {"name_font_size": 11, "dimension_font_bold": False}
+        view.restore_condition_text_properties(
+            [("t1", "name", old, {}), ("missing", "name", {"name_font_size": 5}, {})]
+        )
+        self.assertEqual(
+            (takeoff.name_font_size, takeoff.dimension_font_bold), (11, False)
+        )
+        self.assertEqual(len(rebuilds), 1)
+
+    def test_restoring_condition_text_properties_skips_empty_values_and_unknown_takeoffs(
+        self,
+    ):
+        view, rebuilds = self._view()
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[0.0, 0.0])
+        takeoff.name_font_size = 30
+        view._current_takeoffs = {"t1": takeoff}
+        view.restore_condition_text_properties(
+            [("t1", "name", {}, {}), ("missing", "name", {"name_font_size": 5}, {})]
+        )
+        view.restore_condition_text_properties([])
+        self.assertEqual(takeoff.name_font_size, 30)
+        self.assertEqual(rebuilds, [])
+
+    def test_restoring_annotation_text_properties_and_styles_rebuild_only_after_a_change(
+        self,
+    ):
+        view, rebuilds = self._view()
+        annotation = self._annotation(
+            "t", "text", color="#000000", width=1.0, properties={"Text": "new"}
+        )
+        view._current_annotations = {"t": annotation}
+        view.restore_annotation_text_properties([("gone", "text", {"Text": "old"}, {})])
+        view.restore_annotation_styles([("gone", "text", {"Width": 2}, {})])
+        self.assertEqual(rebuilds, [])
+        view.restore_annotation_text_properties([("t", "text", {"Text": "old"}, {})])
+        self.assertEqual((annotation.properties["Text"], len(rebuilds)), ("old", 1))
+        view.restore_annotation_styles([("t", "text", {"Width": 2}, {})])
+        self.assertEqual((annotation.width, len(rebuilds)), (2.0, 2))
+
+    # ---- discard and modifier state
+    def test_resetting_a_held_control_key_refreshes_the_cursor_once(self):
+        view, _rebuilds = self._view()
+        updates = []
+        view._update_cursor = lambda: updates.append(True)
+        view._ctrl_held = False
+        view.reset_ctrl_held()
+        self.assertEqual(updates, [])
+        view._ctrl_held = True
+        view.reset_ctrl_held()
+        self.assertIs(view._ctrl_held, False)
+        self.assertEqual(updates, [True])
+        view.reset_ctrl_held()
+        self.assertEqual(updates, [True])
+
+    # ---- intelligent paste and geometry edit lease
+    def test_the_intelligent_paste_preference_is_a_bool_and_disabling_finishes_a_placement(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        finished = []
+        view.finish_intelligent_paste_placement = lambda: finished.append(True)
+        view.set_intelligent_paste_enabled(1)
+        self.assertIs(view.intelligent_paste_enabled, True)
+        self.assertEqual(finished, [])
+        view.set_intelligent_paste_enabled(0)
+        self.assertIs(view.intelligent_paste_enabled, False)
+        self.assertEqual(finished, [True])
+        view.set_intelligent_paste_enabled(True)
+        self.assertIs(view.intelligent_paste_enabled, True)
+        self.assertEqual(finished, [True])
+
+    def test_a_pending_geometry_edit_lease_blocks_every_request_until_granted(self):
+        view, _rebuilds = self._view()
+        self.assertIs(view._geometry_edit_lease_required, False)
+        self.assertIs(view.request_geometry_edit_lease({"a"}), True)
+        view.set_geometry_edit_lease_pending({"a"})
+        self.assertIs(view._geometry_edit_lease_required, True)
+        self.assertEqual(view._geometry_edit_lease_uids, set())
+        self.assertIs(view.request_geometry_edit_lease({"a"}), False)
+
+    def test_geometry_edit_leases_move_from_granted_to_pending_to_disabled(self):
+        view, _rebuilds = self._view()
+        requests = []
+        view.geometry_edit_lease_requested.connect(
+            lambda uids: requests.append(list(uids))
+        )
+        view.set_geometry_edit_lease_granted({"a", 7, "", None})
+        self.assertIs(view._geometry_edit_lease_required, True)
+        self.assertEqual(view._geometry_edit_lease_uids, {"a", "7"})
+        self.assertIs(view.request_geometry_edit_lease({"a"}), True)
+        self.assertIs(view.request_geometry_edit_lease({"a", "b"}), False)
+        self.assertIs(view.request_geometry_edit_lease(set()), True)
+        # A new pending request revokes what was granted.
+        view.set_geometry_edit_lease_pending({"a"})
+        self.assertIs(view._geometry_edit_lease_required, True)
+        self.assertEqual(view._geometry_edit_lease_uids, set())
+        self.assertIs(view.request_geometry_edit_lease({"a"}), False)
+        view.set_geometry_edit_lease_granted({"b"})
+        self.assertEqual(view._geometry_edit_lease_uids, {"b"})
+        view.disable_geometry_edit_leasing()
+        self.assertIs(view._geometry_edit_lease_required, False)
+        self.assertEqual(view._geometry_edit_lease_uids, set())
+        self.assertIs(view.request_geometry_edit_lease({"zzz"}), True)
+        self.assertEqual(requests, [["a"], ["a", "b"], [], ["a"], ["zzz"]])
+
+    def test_geometry_edit_lease_requests_are_announced_as_sorted_unique_text_uids(
+        self,
+    ):
+        view, _rebuilds = self._view()
+        requests = []
+        view.geometry_edit_lease_requested.connect(
+            lambda uids: requests.append(list(uids))
+        )
+        view.request_geometry_edit_lease({"b", "a", 3, "", None})
+        self.assertEqual(requests, [["3", "a", "b"]])
+
+    # ---- render quality threshold
+    def _quality_view(self, base_scale):
+        view, _rebuilds = self._view()
+        corrections = []
+        view._clear_tiles = lambda: None
+        view._cancel_optional_base_correction = lambda: None
+        view._uses_dynamic_tile_coverage = lambda: True
+        view._uses_overlay_pdf_tiles = lambda: False
+        view._request_optional_base_correction = (
+            lambda scale, generation: corrections.append(scale)
+        )
+        view._advance_render_generation = lambda: 1
+        view._disable_high_resolution_images = True
+        view._background_item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        view._is_composite_mode = False
+        view._base_raster_scale = base_scale
+        return view, corrections
+
+    def test_base_correction_threshold_is_a_strict_one_millionth_in_either_direction(
+        self,
+    ):
+        with patch.object(plan_view_module, "INTERACTIVE_PDF_RENDER_SCALE", 0.0):
+            for label, base, expected in (
+                ("exactly the threshold", 1e-6, []),
+                ("exactly the threshold below", -1e-6, []),
+                ("just above", 2e-6, [0.0]),
+                ("just below", -2e-6, [0.0]),
+            ):
+                with self.subTest(label):
+                    view, corrections = self._quality_view(base)
+                    view.refresh_current_render_quality()
+                    self.assertEqual(corrections, expected)
+
+
+class TakeoffPlanViewIntelligentPasteSweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Pending/active intelligent-paste drag state, axis snapping and the dashed guide lines."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view._white_canvas_item.setPen(QPen(Qt.PenStyle.NoPen))
+        view.resetTransform()
+        # One OST unit is two scene units, so snap distances in pixels are easy to derive.
+        view._ost_to_scene_pos = lambda x, y: QtCore.QPointF(2.0 * x, 2.0 * y)
+        return view
+
+    @staticmethod
+    def _guide(scene_view, x1, y1, x2, y2):
+        item = QtWidgets.QGraphicsLineItem(x1, y1, x2, y2)
+        scene_view._scene.addItem(item)
+        scene_view._intelligent_paste_guide_items.append(item)
+        return item
+
+    # ---- mark_intelligent_paste_drag_pending
+    def test_marking_a_paste_pending_replaces_older_state_and_stores_text_uids_and_float_anchor(
+        self,
+    ):
+        view = self._view()
+        guide = self._guide(view, 0, 0, 1, 1)
+        view._intelligent_paste_active = True
+        view._intelligent_paste_source_anchor_ost = (1.0, 1.0)
+        view._intelligent_paste_anchor_start_ost = (2.0, 2.0)
+        view._intelligent_paste_drag_positions_start_ost = {"old": [1.0, 1.0]}
+        view._intelligent_paste_pending_uids = ["older"]
+        self.assertIs(view.mark_intelligent_paste_drag_pending([7, "u2"], (3, 4)), True)
+        self.assertEqual(view._intelligent_paste_pending_uids, ["7", "u2"])
+        self.assertEqual(view._intelligent_paste_pending_source_anchor_ost, (3.0, 4.0))
+        self.assertIs(type(view._intelligent_paste_pending_source_anchor_ost[0]), float)
+        self.assertIs(view._intelligent_paste_active, False)
+        self.assertIsNone(view._intelligent_paste_source_anchor_ost)
+        self.assertIsNone(view._intelligent_paste_anchor_start_ost)
+        self.assertEqual(view._intelligent_paste_drag_positions_start_ost, {})
+        self.assertIsNone(guide.scene())
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+
+    def test_marking_a_paste_pending_needs_editing_the_preference_and_pasted_uids(self):
+        for label, change in (
+            ("editing disabled", lambda v: setattr(v, "_editing_enabled", False)),
+            (
+                "preference off",
+                lambda v: setattr(v, "_intelligent_paste_enabled", False),
+            ),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                view._intelligent_paste_enabled = True
+                view._intelligent_paste_active = True
+                change(view)
+                self.assertIs(
+                    view.mark_intelligent_paste_drag_pending(["u1"], (1.0, 2.0)), False
+                )
+                self.assertEqual(view._intelligent_paste_pending_uids, [])
+                self.assertIs(view._intelligent_paste_active, True)
+        view = self._view()
+        view._intelligent_paste_enabled = True
+        view._intelligent_paste_active = True
+        self.assertIs(view.mark_intelligent_paste_drag_pending([], (1.0, 2.0)), False)
+        self.assertIs(view._intelligent_paste_active, True)
+
+    # ---- begin_intelligent_paste_drag_if_pending
+    def _pending_view(self, uids=("u1", "u2")):
+        view = self._view()
+        view._intelligent_paste_enabled = True
+        view._intelligent_paste_pending_uids = list(uids)
+        view._intelligent_paste_pending_source_anchor_ost = (5.0, 6.0)
+        return view
+
+    def test_a_pending_paste_becomes_an_active_drag_anchored_on_the_first_pasted_item(
+        self,
+    ):
+        view = self._pending_view()
+        guide = self._guide(view, 0, 0, 1, 1)
+        drag = {"u1": [10, 20, 30, 40], "u2": [50, 60], "other": [1.0, 1.0]}
+        self.assertIs(view.begin_intelligent_paste_drag_if_pending(drag), True)
+        self.assertIs(view._intelligent_paste_active, True)
+        self.assertEqual(view._intelligent_paste_source_anchor_ost, (5.0, 6.0))
+        self.assertEqual(view._intelligent_paste_anchor_start_ost, (10.0, 20.0))
+        self.assertIs(type(view._intelligent_paste_anchor_start_ost[0]), float)
+        self.assertEqual(
+            view._intelligent_paste_drag_positions_start_ost,
+            {"u1": [10.0, 20.0, 30.0, 40.0], "u2": [50.0, 60.0]},
+        )
+        self.assertIs(
+            type(view._intelligent_paste_drag_positions_start_ost["u1"][0]), float
+        )
+        self.assertEqual(view._intelligent_paste_pending_uids, [])
+        self.assertIsNone(view._intelligent_paste_pending_source_anchor_ost)
+        self.assertIsNone(guide.scene())
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+
+    def test_the_drag_anchor_skips_pasted_items_without_a_usable_position(self):
+        view = self._pending_view(("u0", "u1", "u2", "u3"))
+        drag = {"u0": None, "u1": [9.0], "u2": [3, 4], "u3": [7.0, 8.0]}
+        self.assertIs(view.begin_intelligent_paste_drag_if_pending(drag), True)
+        self.assertEqual(view._intelligent_paste_anchor_start_ost, (3.0, 4.0))
+        self.assertEqual(
+            view._intelligent_paste_drag_positions_start_ost,
+            {"u2": [3.0, 4.0], "u3": [7.0, 8.0]},
+        )
+
+    def test_a_pending_paste_stays_pending_until_the_preference_uids_and_anchor_are_all_present(
+        self,
+    ):
+        for label, change in (
+            (
+                "preference off",
+                lambda v: setattr(v, "_intelligent_paste_enabled", False),
+            ),
+            (
+                "no pending uids",
+                lambda v: setattr(v, "_intelligent_paste_pending_uids", []),
+            ),
+            (
+                "no anchor",
+                lambda v: setattr(
+                    v, "_intelligent_paste_pending_source_anchor_ost", None
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                view = self._pending_view()
+                view._intelligent_paste_pending_uids = (
+                    ["u1"] if label != "no pending uids" else []
+                )
+                change(view)
+                before = (
+                    list(view._intelligent_paste_pending_uids),
+                    view._intelligent_paste_pending_source_anchor_ost,
+                )
+                self.assertIs(
+                    view.begin_intelligent_paste_drag_if_pending({"u1": [1.0, 2.0]}),
+                    False,
+                )
+                self.assertIs(view._intelligent_paste_active, False)
+                self.assertEqual(
+                    (
+                        list(view._intelligent_paste_pending_uids),
+                        view._intelligent_paste_pending_source_anchor_ost,
+                    ),
+                    before,
+                )
+
+    def test_a_paste_that_does_not_match_the_dragged_items_is_abandoned(self):
+        for label, drag in (
+            ("pasted item not dragged", {"u1": [1.0, 2.0]}),
+            ("no usable positions", {"u1": [], "u2": [3.0]}),
+        ):
+            with self.subTest(label):
+                view = self._pending_view()
+                guide = self._guide(view, 0, 0, 1, 1)
+                self.assertIs(view.begin_intelligent_paste_drag_if_pending(drag), False)
+                self.assertIs(view._intelligent_paste_active, False)
+                self.assertEqual(view._intelligent_paste_pending_uids, [])
+                self.assertIsNone(view._intelligent_paste_pending_source_anchor_ost)
+                self.assertIsNone(guide.scene())
+
+    # ---- finish_intelligent_paste_placement and guide clearing
+    def test_finishing_a_paste_clears_the_active_state_and_optionally_the_pending_state(
+        self,
+    ):
+        for clear_pending in (True, False):
+            with self.subTest(clear_pending=clear_pending):
+                view = self._view()
+                guide = self._guide(view, 0, 0, 1, 1)
+                view._intelligent_paste_pending_uids = ["u1"]
+                view._intelligent_paste_pending_source_anchor_ost = (1.0, 2.0)
+                view._intelligent_paste_active = True
+                view._intelligent_paste_source_anchor_ost = (1.0, 2.0)
+                view._intelligent_paste_anchor_start_ost = (3.0, 4.0)
+                view._intelligent_paste_drag_positions_start_ost = {"u1": [1.0, 2.0]}
+                view.finish_intelligent_paste_placement(clear_pending=clear_pending)
+                self.assertIs(view._intelligent_paste_active, False)
+                self.assertIsNone(view._intelligent_paste_source_anchor_ost)
+                self.assertIsNone(view._intelligent_paste_anchor_start_ost)
+                self.assertEqual(view._intelligent_paste_drag_positions_start_ost, {})
+                self.assertIsNone(guide.scene())
+                self.assertEqual(view._intelligent_paste_guide_items, [])
+                if clear_pending:
+                    self.assertEqual(view._intelligent_paste_pending_uids, [])
+                    self.assertIsNone(view._intelligent_paste_pending_source_anchor_ost)
+                else:
+                    self.assertEqual(view._intelligent_paste_pending_uids, ["u1"])
+                    self.assertEqual(
+                        view._intelligent_paste_pending_source_anchor_ost, (1.0, 2.0)
+                    )
+
+    def test_clearing_guides_only_removes_the_ones_the_scene_still_owns(self):
+        view = self._view()
+        owned = self._guide(view, 0, 0, 1, 1)
+        orphan = QtWidgets.QGraphicsLineItem(0, 0, 2, 2)
+        view._intelligent_paste_guide_items.append(orphan)
+        messages = []
+        previous = QtCore.qInstallMessageHandler(
+            lambda mode, ctx, msg: messages.append(msg)
+        )
+        try:
+            view._clear_intelligent_paste_guides()
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+        self.assertEqual(messages, [])
+        self.assertIsNone(owned.scene())
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+
+    # ---- _snapped_intelligent_paste_delta
+    def test_snapping_the_delta_moves_the_anchor_onto_the_source_axes(self):
+        view = self._view()
+        view._intelligent_paste_source_anchor_ost = (5.0, 7.0)
+        view._intelligent_paste_anchor_start_ost = (10.0, 20.0)
+        # Candidate anchor is (13, 24): the x axis pins y to 7, the y axis pins x to 5.
+        snap = view._snapped_intelligent_paste_delta
+        self.assertEqual(snap(3.0, 4.0, False, False), (3.0, 4.0))
+        self.assertEqual(snap(3.0, 4.0, True, False), (3.0, -13.0))
+        self.assertEqual(snap(3.0, 4.0, False, True), (-5.0, 4.0))
+        self.assertEqual(snap(3.0, 4.0, True, True), (-5.0, -13.0))
+
+    # ---- apply_intelligent_paste_axis_snap
+    def _snap_view(self):
+        view = self._view()
+        view._intelligent_paste_active = True
+        view._intelligent_paste_source_anchor_ost = (10.0, 30.0)
+        view._intelligent_paste_anchor_start_ost = (50.0, 50.0)
+        guides = []
+        view._set_intelligent_paste_guides = lambda *args: guides.append(args)
+        return view, guides
+
+    def test_axis_snap_pulls_a_nearly_aligned_anchor_onto_the_source_axis_within_eight_pixels(
+        self,
+    ):
+        view, guides = self._snap_view()
+        # Source (10, 30), anchor starts at (50, 50); one OST unit is 2 px at this zoom.
+        # dx -36 puts the candidate x at 14: 4 units = 8 px from the source, so it snaps.
+        self.assertEqual(
+            view.apply_intelligent_paste_axis_snap(-36.0, 0.0), (-40.0, 0.0)
+        )
+        self.assertEqual(guides, [(False, True, -40.0, 0.0)])
+        guides.clear()
+        # dy -16 puts the candidate y at 34: the horizontal axis snaps instead.
+        self.assertEqual(
+            view.apply_intelligent_paste_axis_snap(0.0, -16.0), (0.0, -20.0)
+        )
+        self.assertEqual(guides, [(True, False, 0.0, -20.0)])
+        guides.clear()
+        self.assertEqual(
+            view.apply_intelligent_paste_axis_snap(-36.0, -16.0), (-40.0, -20.0)
+        )
+        self.assertEqual(guides, [(True, True, -40.0, -20.0)])
+
+    def test_axis_snap_ignores_an_anchor_more_than_eight_pixels_from_the_source_axes(
+        self,
+    ):
+        view, guides = self._snap_view()
+        # dx -35.5 puts the candidate x at 14.5: 9 px away, so nothing snaps.
+        self.assertEqual(
+            view.apply_intelligent_paste_axis_snap(-35.5, 0.0), (-35.5, 0.0)
+        )
+        self.assertEqual(guides, [(False, False, -35.5, 0.0)])
+        guides.clear()
+        self.assertEqual(
+            view.apply_intelligent_paste_axis_snap(0.0, -15.5), (0.0, -15.5)
+        )
+        self.assertEqual(guides, [(False, False, 0.0, -15.5)])
+        guides.clear()
+        # Just inside the threshold on the other side of the source axes.
+        self.assertEqual(
+            view.apply_intelligent_paste_axis_snap(-44.0, 0.0), (-40.0, 0.0)
+        )
+        self.assertEqual(guides, [(False, True, -40.0, 0.0)])
+        guides.clear()
+        self.assertEqual(
+            view.apply_intelligent_paste_axis_snap(0.0, -24.0), (0.0, -20.0)
+        )
+        self.assertEqual(guides, [(True, False, 0.0, -20.0)])
+
+    def test_axis_snap_does_nothing_unless_a_paste_drag_is_active_with_both_anchors(
+        self,
+    ):
+        for label, change in (
+            ("inactive", lambda v: setattr(v, "_intelligent_paste_active", False)),
+            (
+                "no source",
+                lambda v: setattr(v, "_intelligent_paste_source_anchor_ost", None),
+            ),
+            (
+                "no anchor",
+                lambda v: setattr(v, "_intelligent_paste_anchor_start_ost", None),
+            ),
+        ):
+            with self.subTest(label):
+                view, guides = self._snap_view()
+                change(view)
+                self.assertEqual(
+                    view.apply_intelligent_paste_axis_snap(-36.0, -36.0), (-36.0, -36.0)
+                )
+                self.assertEqual(guides, [])
+
+    # ---- _intelligent_paste_preview_bounds_scene
+    def test_preview_bounds_cover_every_translated_point_in_scene_units(self):
+        view = self._view()
+        view._intelligent_paste_drag_positions_start_ost = {
+            "r": [1.0, 2.0],
+            "i": [0.0, 0.0],
+        }
+        view._current_annotations = {
+            "i": BidAnnotation(uid="i", annotation_type="ink", position=[0.0]),
+            "r": BidAnnotation(uid="r", annotation_type="rect", position=[0.0]),
+            "e": BidAnnotation(uid="e", annotation_type="ink", position=[0.0]),
+            "o": BidAnnotation(uid="o", annotation_type="polygon", position=[0.0]),
+        }
+        calls = []
+
+        def translate(positions, dx, dy):
+            calls.append((positions, dx, dy))
+            return {
+                "r": [10.0, 20.0, 4.0, 30.0],
+                "i": [99.0, 7.0, 2.0, 5.0, 40.0],
+                "t": [30.0, 6.0],
+                # Even ink coordinates have no style prefix; odd non-ink ones are plain points.
+                "e": [1.5, 50.0, 3.0, 8.0],
+                "o": [-4.0, 12.0, 14.0],
+            }
+
+        view._compute_group_translation_positions = translate
+        bounds = view._intelligent_paste_preview_bounds_scene(3.0, 4.0)
+        self.assertEqual(calls, [({"r": [1.0, 2.0], "i": [0.0, 0.0]}, 3.0, 4.0)])
+        # OST x -4..30 and y 2..50 (the odd ink's style prefix 99 is skipped), doubled into scene units.
+        self.assertEqual(bounds, QtCore.QRectF(-8.0, 4.0, 68.0, 96.0))
+
+    def test_preview_bounds_of_a_single_point_and_of_nothing(self):
+        view = self._view()
+        view._compute_group_translation_positions = lambda positions, dx, dy: {
+            "t": [8.0, 6.0]
+        }
+        self.assertEqual(
+            view._intelligent_paste_preview_bounds_scene(0.0, 0.0),
+            QtCore.QRectF(16.0, 12.0, 0.0, 0.0),
+        )
+        view._compute_group_translation_positions = lambda positions, dx, dy: {
+            "t": [8.0],
+            "u": [],
+        }
+        self.assertIsNone(view._intelligent_paste_preview_bounds_scene(0.0, 0.0))
+        view._compute_group_translation_positions = lambda positions, dx, dy: {}
+        self.assertIsNone(view._intelligent_paste_preview_bounds_scene(0.0, 0.0))
+
+    # ---- _set_intelligent_paste_guides
+    def _lines(self, view):
+        return [
+            (item.line().x1(), item.line().y1(), item.line().x2(), item.line().y2())
+            for item in view._intelligent_paste_guide_items
+        ]
+
+    def test_guides_span_the_page_through_the_preview_edges_for_each_snapped_axis(self):
+        view = self._view()
+        view._intelligent_paste_preview_bounds_scene = lambda dx, dy: QtCore.QRectF(
+            100.0, 200.0, 50.0, 30.0
+        )
+        stale = self._guide(view, 0, 0, 5, 5)
+        # The page is 1224 x 1584 scene units.
+        view._set_intelligent_paste_guides(True, False, 1.0, 2.0)
+        self.assertIsNone(stale.scene())
+        self.assertEqual(
+            self._lines(view),
+            [(0.0, 200.0, 1224.0, 200.0), (0.0, 230.0, 1224.0, 230.0)],
+        )
+        view._set_intelligent_paste_guides(False, True, 1.0, 2.0)
+        self.assertEqual(
+            self._lines(view),
+            [(100.0, 0.0, 100.0, 1584.0), (150.0, 0.0, 150.0, 1584.0)],
+        )
+        view._set_intelligent_paste_guides(True, True, 1.0, 2.0)
+        self.assertEqual(
+            self._lines(view),
+            [
+                (0.0, 200.0, 1224.0, 200.0),
+                (0.0, 230.0, 1224.0, 230.0),
+                (100.0, 0.0, 100.0, 1584.0),
+                (150.0, 0.0, 150.0, 1584.0),
+            ],
+        )
+        for item in view._intelligent_paste_guide_items:
+            self.assertIs(item.scene(), view._scene)
+            self.assertEqual(item.zValue(), 1000)
+            self.assertEqual(item.pen().color(), QColor("#1f9d45"))
+            self.assertEqual(item.pen().style(), Qt.PenStyle.DashLine)
+            self.assertEqual(item.pen().widthF(), 1.0)
+            self.assertTrue(item.pen().isCosmetic())
+
+    def test_guides_pass_the_preview_deltas_to_the_bounds_and_clear_when_no_axis_snaps(
+        self,
+    ):
+        view = self._view()
+        seen = []
+        view._intelligent_paste_preview_bounds_scene = lambda dx, dy: seen.append(
+            (dx, dy)
+        ) or QtCore.QRectF(1.0, 2.0, 3.0, 4.0)
+        stale = self._guide(view, 0, 0, 5, 5)
+        view._set_intelligent_paste_guides(False, False, 7.0, 8.0)
+        self.assertIsNone(stale.scene())
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+        self.assertEqual(seen, [])
+        view._set_intelligent_paste_guides(True, False, 7.0, 8.0)
+        self.assertEqual(seen, [(7.0, 8.0)])
+        self.assertEqual(len(view._intelligent_paste_guide_items), 2)
+
+    def test_guides_treat_a_flat_page_or_scene_rect_as_unusable(self):
+        view = self._view()
+        view._intelligent_paste_preview_bounds_scene = lambda dx, dy: QtCore.QRectF(
+            10.0, 20.0, 5.0, 6.0
+        )
+        view._scene.setSceneRect(QtCore.QRectF(-5.0, -6.0, 500.0, 400.0))
+        # A page that is a zero-width line is not null but cannot host guides.
+        view._white_canvas_item.setRect(0.0, 0.0, 0.0, 50.0)
+        view._set_intelligent_paste_guides(True, False, 0.0, 0.0)
+        self.assertEqual(
+            self._lines(view), [(-5.0, 20.0, 495.0, 20.0), (-5.0, 26.0, 495.0, 26.0)]
+        )
+        # With no page at all, a flat scene rect is unusable too.
+        view._white_canvas_item = None
+        view._scene.setSceneRect(QtCore.QRectF(-5.0, -6.0, 0.0, 400.0))
+        view._set_intelligent_paste_guides(True, True, 0.0, 0.0)
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+        view._scene.setSceneRect(QtCore.QRectF(-5.0, -6.0, 500.0, 0.0))
+        view._set_intelligent_paste_guides(True, True, 0.0, 0.0)
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+
+    def test_guides_fall_back_to_the_scene_rect_and_stop_without_a_usable_rect_or_bounds(
+        self,
+    ):
+        view = self._view()
+        view._intelligent_paste_preview_bounds_scene = lambda dx, dy: QtCore.QRectF(
+            10.0, 20.0, 5.0, 6.0
+        )
+        view._white_canvas_item = None
+        view._background_item = None
+        view._scene.setSceneRect(QtCore.QRectF(-5.0, -6.0, 500.0, 400.0))
+        view._set_intelligent_paste_guides(True, True, 0.0, 0.0)
+        self.assertEqual(
+            self._lines(view),
+            [
+                (-5.0, 20.0, 495.0, 20.0),
+                (-5.0, 26.0, 495.0, 26.0),
+                (10.0, -6.0, 10.0, 394.0),
+                (15.0, -6.0, 15.0, 394.0),
+            ],
+        )
+        view._intelligent_paste_preview_bounds_scene = lambda dx, dy: None
+        view._set_intelligent_paste_guides(True, True, 0.0, 0.0)
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+        view._intelligent_paste_preview_bounds_scene = lambda dx, dy: QtCore.QRectF(
+            10.0, 20.0, 5.0, 6.0
+        )
+        for item in list(view._scene.items()):
+            view._scene.removeItem(item)
+        view._scene.setSceneRect(QtCore.QRectF())
+        view._set_intelligent_paste_guides(True, True, 0.0, 0.0)
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+
+
+class TakeoffPlanViewCommandsAndPointerSweepTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    """Edit commands, selection shortcuts, pointer position, snap and mouse-tracking settings."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view._current_conditions = {
+            "c1": Condition(uid="c1", condition_type=Condition.TYPE_COUNT),
+            "c2": Condition(uid="c2", condition_type=Condition.TYPE_COUNT),
+        }
+        view._current_takeoffs = {
+            "t1": Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0]),
+            "t2": Takeoff(uid="t2", condition_uid="c2", position=[2.0, 2.0]),
+            "orphan": Takeoff(uid="orphan", condition_uid="gone", position=[3.0, 3.0]),
+        }
+        view._current_annotations = {}
+        return view
+
+    def _record(self, view):
+        events = []
+        view.elements_deleted.connect(
+            lambda uids: events.append(("deleted", sorted(uids)))
+        )
+        view.copy_requested.connect(lambda uids: events.append(("copy", sorted(uids))))
+        view.paste_requested.connect(lambda: events.append(("paste",)))
+        view.takeoff_selection_command_applied.connect(
+            lambda uids: events.append(("applied", list(uids)))
+        )
+        return events
+
+    # ---- selected_takeoff_condition_uid
+    def test_the_selected_condition_is_known_only_for_one_takeoff_of_a_loaded_condition(
+        self,
+    ):
+        view = self._view()
+        view._selected_uids = {"t1"}
+        self.assertEqual(view.selected_takeoff_condition_uid(), "c1")
+        view._selected_uids = {"t1", "t2"}
+        self.assertIsNone(view.selected_takeoff_condition_uid())
+        view._selected_uids = set()
+        self.assertIsNone(view.selected_takeoff_condition_uid())
+        view._selected_uids = {"a1"}
+        self.assertIsNone(view.selected_takeoff_condition_uid())
+        view._selected_uids = {"orphan"}
+        self.assertIsNone(view.selected_takeoff_condition_uid())
+
+    # ---- delete_selected
+    def test_deleting_the_selection_clears_it_invalidates_snapping_and_announces_the_uids(
+        self,
+    ):
+        view = self._view()
+        order = []
+        view.elements_deleted.connect(
+            lambda uids: order.append(("deleted", sorted(uids)))
+        )
+        view.clear_selection = lambda: (
+            order.append("clear"),
+            view._selected_uids.clear(),
+        )
+        view._invalidate_snap_index = lambda: order.append("invalidate")
+        view._update_cursor = lambda: order.append("cursor")
+        view._selected_uids = {"t1", "t2"}
+        view.delete_selected()
+        self.assertEqual(
+            order, ["clear", "invalidate", ("deleted", ["t1", "t2"]), "cursor"]
+        )
+        self.assertEqual(view._selected_uids, set())
+
+    def test_deleting_does_nothing_without_editing_or_a_selection(self):
+        for label, change in (
+            (
+                "editing disabled",
+                lambda v: (
+                    setattr(v, "_editing_enabled", False),
+                    setattr(v, "_selected_uids", {"t1"}),
+                ),
+            ),
+            ("nothing selected", lambda v: setattr(v, "_selected_uids", set())),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                events = self._record(view)
+                invalidations = []
+                view._invalidate_snap_index = lambda: invalidations.append(True)
+                change(view)
+                selected = set(view._selected_uids)
+                view.delete_selected()
+                self.assertEqual(events, [])
+                self.assertEqual(invalidations, [])
+                self.assertEqual(view._selected_uids, selected)
+
+    def test_deleting_lets_the_text_toolbar_drop_a_target_before_the_selection_is_cleared(
+        self,
+    ):
+        view = self._view()
+        seen = []
+        view._clear_deleted_text_toolbar_target = lambda uids: seen.append(
+            (sorted(uids), sorted(view._selected_uids))
+        )
+        view._selected_uids = {"t1", "t2"}
+        view.delete_selected()
+        self.assertEqual(seen, [(["t1", "t2"], ["t1", "t2"])])
+
+    def test_the_text_toolbar_target_is_dropped_only_when_the_deleted_uids_include_it(
+        self,
+    ):
+        for label, target_uid, label_data, deleted, expected in (
+            ("annotation text deleted", "a1", None, ["a1", "t1"], 1),
+            ("annotation text kept", "a1", None, ["t1"], 0),
+            ("condition label deleted", None, "t1", ["t1"], 1),
+            ("condition label kept", None, "t1", ["t2"], 0),
+            ("no target", None, None, ["t1"], 0),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                cleared = []
+                view._clear_text_selection = lambda: cleared.append(True)
+                item = QGraphicsTextItem("x")
+                if label_data is not None:
+                    item.setData(2, "condition_label")
+                    item.setData(0, label_data)
+                view._selected_text_item = item
+                view._selected_text_annotation_uid = target_uid
+                view._clear_deleted_text_toolbar_target(deleted)
+                self.assertEqual(len(cleared), expected)
+
+    def test_a_plain_text_item_without_a_condition_label_kind_has_no_deletable_target(
+        self,
+    ):
+        view = self._view()
+        cleared = []
+        view._clear_text_selection = lambda: cleared.append(True)
+        item = QGraphicsTextItem("x")
+        item.setData(0, "t1")
+        view._selected_text_item = item
+        view._selected_text_annotation_uid = None
+        view._clear_deleted_text_toolbar_target(["t1"])
+        self.assertEqual(cleared, [])
+        view._selected_text_item = None
+        view._selected_text_annotation_uid = "t1"
+        view._clear_deleted_text_toolbar_target(["t1"])
+        self.assertEqual(cleared, [])
+
+    # ---- duplicate / copy / paste
+    def test_duplicating_copies_then_pastes_the_selection_when_editing(self):
+        view = self._view()
+        events = self._record(view)
+        view._selected_uids = {"t1", "t2"}
+        view.duplicate_selected()
+        self.assertEqual(events, [("copy", ["t1", "t2"]), ("paste",)])
+
+    def test_duplicating_needs_editing_and_a_selection(self):
+        view = self._view()
+        events = self._record(view)
+        view._selected_uids = set()
+        view.duplicate_selected()
+        view._selected_uids = {"t1"}
+        view._editing_enabled = False
+        view.duplicate_selected()
+        self.assertEqual(events, [])
+
+    def test_copying_requests_the_selected_uids_only_when_selection_is_enabled(self):
+        view = self._view()
+        events = self._record(view)
+        view._selected_uids = {"t1"}
+        view._selection_enabled = True
+        view.copy_selected()
+        self.assertEqual(events, [("copy", ["t1"])])
+        view._selection_enabled = False
+        view.copy_selected()
+        view._selection_enabled = True
+        view._selected_uids = set()
+        view.copy_selected()
+        self.assertEqual(events, [("copy", ["t1"])])
+
+    def test_copying_with_selected_pdf_text_puts_the_text_on_the_clipboard_instead(
+        self,
+    ):
+        view = self._view()
+        events = self._record(view)
+        view._selected_uids = {"t1"}
+        view._selection_enabled = True
+        view._selected_pdf_text_selection = SimpleNamespace(
+            is_empty=False, text="copied words"
+        )
+        QApplication.clipboard().setText("before")
+        view.copy_selected()
+        self.assertEqual(QApplication.clipboard().text(), "copied words")
+        self.assertEqual(events, [])
+
+    def test_pasting_follows_the_paste_permission_callback_or_the_editing_state(self):
+        view = self._view()
+        events = self._record(view)
+        view.paste_clipboard()
+        self.assertEqual(events, [("paste",)])
+        view._editing_enabled = False
+        view.paste_clipboard()
+        self.assertEqual(events, [("paste",)])
+        view._paste_allowed_fn = lambda: True
+        view.paste_clipboard()
+        self.assertEqual(events, [("paste",), ("paste",)])
+        view._editing_enabled = True
+        view._paste_allowed_fn = lambda: False
+        view.paste_clipboard()
+        self.assertEqual(events, [("paste",), ("paste",)])
+
+    # ---- select_all
+    def test_select_all_selects_every_selectable_takeoff_and_interactive_annotation(
+        self,
+    ):
+        view = self._view()
+        events = self._record(view)
+        view._current_annotations = {
+            "a1": BidAnnotation(
+                uid="a1", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+            ),
+            "hidden": BidAnnotation(
+                uid="hidden", annotation_type="rect", position=[0.0] * 4, visible=False
+            ),
+            "plain": BidAnnotation(
+                uid="plain", annotation_type="unknown", position=[0.0, 0.0]
+            ),
+        }
+        view._current_conditions["c2"].layer_visible = False
+        view._selection_enabled = True
+        view._cursor_mode = CURSOR_MODE_SELECT
+        view.select_all()
+        self.assertEqual(view.get_selected_uids(), ["a1", "orphan", "t1"])
+        self.assertEqual(events, [("applied", ["orphan", "t1"])])
+
+    def test_select_all_only_works_in_select_mode_with_selection_enabled(self):
+        for label, change in (
+            ("selection disabled", lambda v: setattr(v, "_selection_enabled", False)),
+            ("other mode", lambda v: setattr(v, "_cursor_mode", CURSOR_MODE_PLACE)),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                events = self._record(view)
+                view._selection_enabled = True
+                view._cursor_mode = CURSOR_MODE_SELECT
+                change(view)
+                view.select_all()
+                self.assertEqual(view.get_selected_uids(), [])
+                self.assertEqual(events, [])
+
+    # ---- pointer position
+    def test_the_pointer_position_comes_from_the_last_mouse_position_or_the_viewport_centre(
+        self,
+    ):
+        view = self._view()
+        view.resize(300, 200)
+        view.show()
+        QApplication.processEvents()
+        view._last_mouse_vp_pos = QtCore.QPoint(30, 40)
+        self.assertEqual(
+            view._current_mouse_scene_position(), view.mapToScene(QtCore.QPoint(30, 40))
+        )
+        view._last_mouse_vp_pos = None
+        centre = view.mapToScene(view.viewport().rect().center())
+        self.assertEqual(view._current_mouse_scene_position(), centre)
+        self.assertNotEqual(centre, view.mapToScene(QtCore.QPoint(30, 40)))
+
+    def test_the_pointer_ost_position_converts_the_scene_position_or_is_missing(self):
+        view = self._view()
+        converted = []
+        view._scene_pos_to_ost = lambda point: converted.append(
+            point
+        ) or QtCore.QPointF(point.x() / 4.0, point.y() / 10.0)
+        view._current_mouse_scene_position = lambda: QtCore.QPointF(20.0, 40.0)
+        self.assertEqual(view.current_mouse_ost_position(), (5.0, 4.0))
+        self.assertEqual(converted, [QtCore.QPointF(20.0, 40.0)])
+        view._current_mouse_scene_position = lambda: None
+        self.assertIsNone(view.current_mouse_ost_position())
+        self.assertEqual(len(converted), 1)
+
+    def test_the_viewport_centre_fallback_is_missing_without_a_usable_viewport(self):
+        view = self._view()
+        view._last_mouse_vp_pos = None
+        view._viewport_center_pixel_scene_pos = lambda: None
+        self.assertIsNone(view._current_mouse_scene_position())
+
+    # ---- snap increments
+    def test_snap_increments_convert_millimetres_and_reset_for_non_positive_values(
+        self,
+    ):
+        view = self._view()
+        self.assertEqual(view.snap_increments, 0.0)
+        view.set_snap_settings(5.0, 0)
+        self.assertEqual(view.snap_increments, 5.0)
+        view.set_snap_settings(50.8, 1)
+        self.assertAlmostEqual(view.snap_increments, 2.0, places=12)
+        view.set_snap_settings(2.0, 2)
+        self.assertEqual(view.snap_increments, 2.0)
+        view.set_snap_settings(0.0, 1)
+        self.assertEqual(view.snap_increments, 0.0)
+        view.set_snap_settings(3.0, 0)
+        view.set_snap_settings(-1.0, 0)
+        self.assertEqual(view.snap_increments, 0.0)
+        view.set_snap_settings(0.5, 0)
+        self.assertEqual(view.snap_increments, 0.5)
+
+    # ---- mouse tracking and advanced controls
+    def test_viewport_mouse_tracking_follows_the_crosshair_option_and_passive_cursor_modes(
+        self,
+    ):
+        view = self._view()
+        view.set_full_window_crosshairs(False, "#112233", 4)
+        for mode in (
+            "select",
+            "place",
+            "annotation_place",
+            "paste_backout",
+            "rotate",
+            "slope_rotate",
+            "move_overlay_handle",
+            "move_overlay",
+        ):
+            with self.subTest(mode=mode):
+                view._cursor_mode = mode
+                view._update_viewport_mouse_tracking()
+                self.assertIs(view.viewport().hasMouseTracking(), True)
+        for mode in ("default", "pan", "zoom"):
+            with self.subTest(mode=mode):
+                view._cursor_mode = mode
+                view._update_viewport_mouse_tracking()
+                self.assertIs(view.viewport().hasMouseTracking(), False)
+                view.set_full_window_crosshairs(True, "#112233", 4)
+                self.assertIs(view.viewport().hasMouseTracking(), True)
+                view.set_full_window_crosshairs(False, "#112233", 4)
+                self.assertIs(view.viewport().hasMouseTracking(), False)
+
+    def test_full_window_crosshair_settings_are_stored_with_their_types(self):
+        view = self._view()
+        view.set_full_window_crosshairs(1, 0x112233, "5")
+        self.assertIs(view._use_full_window_crosshairs, True)
+        self.assertEqual(view._crosshair_color, str(0x112233))
+        self.assertEqual(view._crosshair_line_thickness, 5)
+        self.assertIs(type(view._crosshair_line_thickness), int)
+        view.set_full_window_crosshairs(0, "#abcdef", 2)
+        self.assertIs(view._use_full_window_crosshairs, False)
+        self.assertEqual(view._crosshair_color, "#abcdef")
+
+    def test_disabling_advanced_mouse_controls_releases_a_held_control_key(self):
+        view = self._view()
+        view._ctrl_held = True
+        view._zoom_press_ctrl = True
+        view._update_cursor = lambda: None
+        view.set_advanced_mouse_controls_enabled(1)
+        self.assertIs(view._advanced_mouse_controls_enabled, True)
+        self.assertIs(view._ctrl_held, True)
+        self.assertIs(view._zoom_press_ctrl, True)
+        view.set_advanced_mouse_controls_enabled(0)
+        self.assertIs(view._advanced_mouse_controls_enabled, False)
+        self.assertIs(view._ctrl_held, False)
+        self.assertIs(view._zoom_press_ctrl, False)
+
+
+class _ClearableItem(QGraphicsPixmapItem):
+    """Pixmap item that records the image/pixmap resets made on it."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.clear_image_calls = 0
+        self.pixmaps = []
+
+    def clear_image(self):
+        self.clear_image_calls += 1
+
+    def setPixmap(self, pixmap):
+        self.pixmaps.append(pixmap)
+        super().setPixmap(pixmap)
+
+
+class TakeoffPlanViewClearSweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """clear() drops every piece of per-page state and cancels in-flight interactions."""
+
+    # (attribute, poison value set before clear(), value after clear())
+    _RESET = (
+        ("_visible_frame_key", ("k",), None),
+        ("_visible_frame_metadata", {"m": 1}, None),
+        ("_pending_visible_frame_metadata", {"m": 2}, None),
+        ("_visible_frame_kind", "tile", None),
+        ("_visible_frame_scale", 2.5, 0.0),
+        ("_base_raster_scale", 1.5, 0.0),
+        ("_uid_to_items", {"a": [1]}, {}),
+        ("_current_takeoffs", {"t": 1}, {}),
+        ("_current_conditions", {"c": 1}, {}),
+        ("_current_color_map", {"c": "#fff"}, {}),
+        ("_current_page_area_selections", {"p": "a"}, None),
+        ("_current_annotations", {"a": 1}, {}),
+        ("_ann_db_uid_map", {"a_x": "a"}, {}),
+        ("_select_band_origin", QtCore.QPoint(1, 2), None),
+        ("_select_band_active", True, False),
+        ("_select_band_dragged", True, False),
+        ("_press_changed_selection", True, False),
+        ("_zoom_press_ctrl", True, False),
+        ("_rubber_band_origin", QtCore.QPoint(3, 4), None),
+        ("_drag_plan_item_uid", "t1", None),
+        ("_drag_handle_index", 3, -2),
+        ("_drag_orig_position", [1.0], []),
+        ("_drag_handle_corner_count", 4, 0),
+        ("_drag_item_orig_positions", {"t": [1.0]}, {}),
+        ("_drag_item_orig_paths", {"t": 1}, {}),
+        ("_drag_item_orig_text_states", {"t": 1}, {}),
+        ("_drag_uid_orig_items", {"t": 1}, {}),
+        ("_drag_multi_orig_positions", {"t": [1.0]}, {}),
+        ("_drag_last_valid_new_pos", [2.0], []),
+        ("_drag_model_orig_position", [3.0], None),
+        ("_drag_position_before_edit_existed", True, False),
+        ("_rotate_handle_item", "item", None),
+        ("_rotate_line_item", "item", None),
+        ("_rotate_line_outline_item", "item", None),
+        ("_rotate_handle_uid", "t1", None),
+        ("_rotate_center_scene", QtCore.QPointF(5.0, 6.0), QtCore.QPointF()),
+        ("_rotate_handle_radius", 30.0, 0.0),
+        ("_rotation_drag_uid", "t1", None),
+        ("_rotation_drag_active", True, False),
+        ("_rotation_drag_last_angle", 12.0, 0.0),
+        ("_rotation_drag_accumulated_deg", 13.0, 0.0),
+        ("_rotation_drag_snapped_deg", 14.0, 0.0),
+        ("_rotation_drag_preview_items", ["x"], []),
+        ("_rotation_drag_handle_origins", ["x"], []),
+        ("_rotation_drag_orig_positions", {"t": [1.0]}, {}),
+        ("_rotation_drag_orig_rotations", {"t": 1.0}, {}),
+        ("_rotate_ost_center", (7.0, 8.0), (0.0, 0.0)),
+        ("_current_bid_ref", BidRef("db.mdb", "bid-1"), None),
+        ("_current_render_identity", {"k": 1}, None),
+        ("_current_load_token", "token", ""),
+        ("_current_rotation", 90, 0),
+        ("_current_flip_x", True, False),
+        ("_current_flip_y", True, False),
+        ("_overlay_move_preview_base_item", "item", None),
+        ("_overlay_move_preview_overlay_item", "item", None),
+        ("_overlay_move_preview_base_request_id", 4, None),
+        ("_overlay_move_preview_overlay_request_id", 5, None),
+        ("_overlay_move_preview_overlay_request_scale", 2.0, 0.0),
+        ("_overlay_move_normal_visuals_hidden", True, False),
+        ("_can_zoom_rerender", True, False),
+        ("_is_composite_mode", True, False),
+        ("_loaded_visual_kind", "pdf", None),
+        ("_pdf_width_pts", 612.0, 0.0),
+        ("_pdf_height_pts", 792.0, 0.0),
+        ("_overlay_pdf_width_pts", 100.0, 0.0),
+        ("_overlay_pdf_height_pts", 200.0, 0.0),
+        ("_load_geometry_ready", True, False),
+        ("_load_view_applied", True, False),
+        ("_load_user_view_changed", True, False),
+        ("_load_waiting_for_visibility", True, False),
+        ("_load_geometry_notified", True, False),
+        ("_saved_scroll_state", (3, 4), None),
+        ("_pending_page_data", {"p": 1}, None),
+        ("_deferred_page_visual_result", {"r": 1}, None),
+    )
+    _CONTAINERS = (
+        "_selection_items",
+        "_handle_infos",
+        "_takeoff_items",
+        "_hotlink_items",
+        "_hidden_layer_uids",
+        "_selected_uids",
+        "_dirty_rotations",
+        "_rotation_before_edit",
+        "_overlay_move_hidden_visual_visibility",
+    )
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view._current_bid_page_uid = "p1"
+        return view
+
+    def _stub(self, view):
+        """Record the collaborators clear() delegates to, in call order."""
+        calls = []
+        names = (
+            "_reset_render_loading",
+            "_clear_missing_page_file_status",
+            "finish_intelligent_paste_placement",
+            "_exit_place_mode",
+            "clear_place_preview",
+            "_reset_place_session_state",
+            "_clear_backout_state",
+            "_exit_annotation_place_mode",
+            "_flush_dirty_rotations",
+            "_flush_dirty_positions",
+            "_cancel_high_res_frame_requests",
+            "_cancel_optional_base_correction",
+            "_clear_text_selection",
+            "_clear_inline_text_edit_state",
+            "_remove_text_annotation_draft",
+            "_remove_named_view_draft",
+            "_invalidate_snap_index",
+            "clear_paste_backout_preview",
+            "_advance_render_generation",
+            "_clear_pdf_text_cache",
+        )
+        for name in names:
+            setattr(view, name, lambda name=name: calls.append(name))
+        view.cancel_overlay_move_mode = lambda restore_preview=True: calls.append(
+            ("cancel_overlay_move_mode", restore_preview)
+        )
+        view._apply_cursor_mode = lambda mode: calls.append(("apply_cursor_mode", mode))
+        return calls
+
+    def test_clear_resets_every_piece_of_per_page_state(self):
+        view = self._view()
+        self._stub(view)
+        for name, poison, _expected in self._RESET:
+            setattr(view, name, poison)
+        for name in self._CONTAINERS:
+            container = getattr(view, name)
+            if isinstance(container, (list, set)):
+                (
+                    container.add("x")
+                    if isinstance(container, set)
+                    else container.append("x")
+                )
+            else:
+                container["k"] = "v"
+        view._current_page = Page(uid="p1", name="P1")
+        view.clear()
+        for name, _poison, expected in self._RESET:
+            with self.subTest(name):
+                self.assertEqual(getattr(view, name), expected)
+                self.assertIs(type(getattr(view, name)), type(expected))
+        for name in self._CONTAINERS:
+            with self.subTest(name):
+                self.assertEqual(len(getattr(view, name)), 0)
+        self.assertIsNone(view._current_page)
+        self.assertIsNone(view._current_bid_page_uid)
+        self.assertIsNone(view._background_item)
+        self.assertIsNone(view._white_canvas_item)
+        self.assertIsNone(view._visible_frame_item)
+        self.assertEqual(view._overlay_items, [])
+
+    def test_clear_empties_the_scene_and_lets_go_of_page_items(self):
+        view = self._view()
+        self._stub(view)
+        view._scene.addItem(QGraphicsRectItem(0.0, 0.0, 5.0, 5.0))
+        self.assertGreater(len(view._scene.items()), 1)
+        view.clear()
+        self.assertEqual(view._scene.items(), [])
+
+    def test_clear_releases_images_of_live_items_only(self):
+        view = self._view()
+        self._stub(view)
+        background, frame, overlay, dead_overlay = (
+            _ClearableItem(QPixmap(4, 4)),
+            _ClearableItem(QPixmap(4, 4)),
+            _ClearableItem(QPixmap(4, 4)),
+            _ClearableItem(QPixmap(4, 4)),
+        )
+        dead_background = _ClearableItem(QPixmap(4, 4))
+        dead_frame = _ClearableItem(QPixmap(4, 4))
+        for item in (background, frame, overlay):
+            view._scene.addItem(item)
+        for item in (dead_overlay, dead_background, dead_frame):
+            delete(item)
+        view._background_item = background
+        view._visible_frame_item = frame
+        view._overlay_items = [overlay, dead_overlay]
+        view.clear()
+        self.assertEqual(
+            (background.clear_image_calls, frame.clear_image_calls), (1, 1)
+        )
+        self.assertEqual(len(overlay.pixmaps), 1)
+        self.assertTrue(overlay.pixmaps[0].isNull())
+        self.assertEqual(dead_overlay.pixmaps, [])
+        self.assertIsNone(view._background_item)
+        self.assertIsNone(view._visible_frame_item)
+        self.assertEqual(view._overlay_items, [])
+        view._background_item = dead_background
+        view._visible_frame_item = dead_frame
+        view.clear()
+        self.assertEqual(
+            (dead_background.clear_image_calls, dead_frame.clear_image_calls), (0, 0)
+        )
+
+    def test_clear_cancels_and_flushes_before_dropping_state_in_a_fixed_order(self):
+        view = self._view()
+        calls = self._stub(view)
+        view.clear()
+        self.assertEqual(
+            calls,
+            [
+                "_reset_render_loading",
+                "_clear_missing_page_file_status",
+                ("cancel_overlay_move_mode", True),
+                "finish_intelligent_paste_placement",
+                "_clear_backout_state",
+                "_exit_annotation_place_mode",
+                "_flush_dirty_rotations",
+                "_flush_dirty_positions",
+                "_cancel_high_res_frame_requests",
+                "_cancel_optional_base_correction",
+                "_clear_text_selection",
+                "_clear_inline_text_edit_state",
+                "_remove_text_annotation_draft",
+                "_remove_named_view_draft",
+                "_invalidate_snap_index",
+                ("apply_cursor_mode", "select"),
+                "_advance_render_generation",
+                "_clear_pdf_text_cache",
+            ],
+        )
+
+    def test_clear_flushes_pending_rotation_and_position_edits_before_they_are_lost(
+        self,
+    ):
+        view = self._view()
+        view._dirty_rotations = {"t1": 0.5}
+        view._rotation_before_edit = {"t1": 0.25}
+        view._dirty_positions = {"t2": [1.0, 2.0]}
+        view._position_before_edit = {"t2": [0.0, 0.0]}
+        events = []
+        view.rotations_flushed.connect(
+            lambda changes: events.append(("rotations", list(changes)))
+        )
+        view.positions_flushed.connect(
+            lambda t, a: events.append(("positions", list(t), list(a)))
+        )
+        view.clear()
+        self.assertEqual(
+            events,
+            [
+                ("rotations", [("t1", 0.25, 0.5)]),
+                ("positions", [("t2", [0.0, 0.0], [1.0, 2.0])], []),
+            ],
+        )
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertEqual(view._rotation_before_edit, {})
+
+    def test_clear_ends_an_active_place_session_unless_it_is_preserved(self):
+        view = self._view()
+        calls = self._stub(view)
+        view._place_session_uid = "c1"
+        view.clear()
+        self.assertIn("_exit_place_mode", calls)
+        self.assertNotIn("clear_place_preview", calls)
+        calls.clear()
+        view._place_session_uid = None
+        view.clear()
+        self.assertNotIn("_exit_place_mode", calls)
+        self.assertNotIn("clear_place_preview", calls)
+        self.assertNotIn("_reset_place_session_state", calls)
+
+    def test_clear_preserving_the_place_session_resets_only_the_preview_and_keeps_the_tool(
+        self,
+    ):
+        view = self._view()
+        calls = self._stub(view)
+        cursor_requests = []
+        view.cursor_mode_change_requested.connect(cursor_requests.append)
+        view._place_session_uid = "c1"
+        view.clear(preserve_place_session=True)
+        self.assertEqual(
+            calls[
+                calls.index("finish_intelligent_paste_placement")
+                + 1 : calls.index("_flush_dirty_rotations")
+            ],
+            ["clear_place_preview", "_reset_place_session_state"],
+        )
+        self.assertNotIn("_exit_place_mode", calls)
+        self.assertNotIn("_clear_backout_state", calls)
+        self.assertNotIn("_exit_annotation_place_mode", calls)
+        self.assertNotIn(("apply_cursor_mode", "select"), calls)
+        self.assertEqual(cursor_requests, [])
+        calls.clear()
+        view._place_session_uid = None
+        view.clear(preserve_place_session=True)
+        self.assertNotIn("clear_place_preview", calls)
+        self.assertNotIn("_reset_place_session_state", calls)
+        self.assertNotIn("_exit_place_mode", calls)
+
+    def test_clear_requests_the_select_tool_and_announces_an_empty_selection(self):
+        view = self._view()
+        self._stub(view)
+        cursor_requests = []
+        selections = []
+        view.cursor_mode_change_requested.connect(cursor_requests.append)
+        view.takeoff_selection_changed.connect(
+            lambda uids: selections.append(list(uids))
+        )
+        view._selected_uids = {"t1"}
+        view.clear()
+        self.assertEqual(cursor_requests, ["select"])
+        self.assertEqual(selections, [[]])
+
+    def test_clear_announces_a_cleared_page_only_when_there_was_one_and_it_is_wanted(
+        self,
+    ):
+        for label, had_page, notify, expected in (
+            ("page and notify", True, True, 1),
+            ("no notify", True, False, 0),
+            ("no page", False, True, 0),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                self._stub(view)
+                cleared = []
+                view.page_cleared.connect(lambda: cleared.append(True))
+                view._current_bid_page_uid = "p1" if had_page else None
+                if notify:
+                    view.clear()
+                else:
+                    view.clear(notify_page_cleared=False)
+                self.assertEqual(len(cleared), expected)
+
+    def test_clear_advances_the_selection_revision_unless_the_deferred_selection_is_preserved(
+        self,
+    ):
+        view = self._view()
+        self._stub(view)
+        start = view.selection_revision
+        view.clear()
+        self.assertEqual(view.selection_revision, start + 1)
+        view.clear(preserve_deferred_selection=True)
+        self.assertEqual(view.selection_revision, start + 1)
+
+    def test_clear_cancels_pending_prefetches(self):
+        view = self._view()
+        self._stub(view)
+        cancelled = []
+        view._prefetch_coordinator = SimpleNamespace(
+            cancel_pending=lambda: cancelled.append(True)
+        )
+        view.clear()
+        self.assertEqual(cancelled, [True])
+        view._prefetch_coordinator = None
+        view.clear()
+        self.assertEqual(cancelled, [True])
+
+    def test_clear_resets_an_active_paste_backout_and_leaves_an_idle_one_alone(self):
+        view = self._view()
+        calls = self._stub(view)
+        view._paste_backout_active = True
+        view._paste_backout_sources = [("t1", [1.0])]
+        view._paste_backout_source_bid_uid = "bid"
+        view._paste_backout_group_centroid = (3.0, 4.0)
+        view.clear()
+        self.assertIs(view._paste_backout_active, False)
+        self.assertEqual(view._paste_backout_sources, [])
+        self.assertIsNone(view._paste_backout_source_bid_uid)
+        self.assertEqual(view._paste_backout_group_centroid, (0.0, 0.0))
+        self.assertEqual(calls.count("clear_paste_backout_preview"), 1)
+        calls.clear()
+        view._paste_backout_active = False
+        view._paste_backout_sources = [("t1", [1.0])]
+        view.clear()
+        self.assertEqual(view._paste_backout_sources, [("t1", [1.0])])
+        self.assertNotIn("clear_paste_backout_preview", calls)
+
+
+import tempfile
+from PySide6.QtGui import QResizeEvent
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_HIGHLIGHT,
+    hex_color_to_int,
+    int_color_to_hex,
+)
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.plan_view.components.page_render_loading_bar import (
+    PageMissingFileBar,
+    PageRenderLoadingBar,
+)
+from ost_visualizer.presentation.components.plan_view.components.pdf_text import (
+    PdfTextChar,
+    PdfTextRect,
+    PdfTextRun,
+    PdfTextSelection,
+)
+from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
+    PDF_INTELLIGENCE_SOURCE_MAIN,
+    PDF_INTELLIGENCE_SOURCE_OVERLAY,
+)
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    ANNOTATION_BODY_Z,
+    NAMED_VIEW_LABEL_BACKGROUND_Z,
+    NAMED_VIEW_LABEL_Z,
+    PDF_TEXT_SELECTION_Z,
+)
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    annotation_default_style,
+)
+from ost_visualizer.presentation.utils.annotation_style_controls import TEXT_FONT_SIZES
+from ost_visualizer.presentation.utils.zoom_debouncer import ZoomDebouncer
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+    create_named_view_label_font,
+)
+
+
+class TakeoffPlanViewConstructionTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Initial state, collaborator wiring and Qt configuration of a freshly built view."""
+
+    NONE_ATTRIBUTES = (
+        "_pending_page_data",
+        "_deferred_page_visual_result",
+        "_current_page_loading_token",
+        "_visible_frame_loading_token",
+        "_background_item",
+        "_loaded_visual_kind",
+        "_visible_frame_item",
+        "_visible_frame_request_id",
+        "_visible_frame_key",
+        "_visible_frame_metadata",
+        "_pending_visible_frame_metadata",
+        "_visible_frame_kind",
+        "_base_raster_request_id",
+        "_white_canvas_item",
+        "_current_bid_ref",
+        "_current_bid_page_uid",
+        "_current_page",
+        "_current_render_identity",
+        "_last_pan_point",
+        "_right_pan_press_pos",
+        "_pre_zoom_persistent_mode",
+        "_pre_pan_persistent_mode",
+        "_overlay_rect_save_handler",
+        "_overlay_move_handle_item",
+        "_overlay_move_original_rect",
+        "_overlay_move_preview_rect",
+        "_overlay_move_anchor_scene",
+        "_overlay_move_drag_start_rect",
+        "_overlay_move_preview_base_item",
+        "_overlay_move_preview_overlay_item",
+        "_overlay_move_preview_base_request_id",
+        "_overlay_move_preview_overlay_request_id",
+        "_rotate_handle_item",
+        "_rotate_line_item",
+        "_rotate_line_outline_item",
+        "_rotate_handle_uid",
+        "_rotation_drag_uid",
+        "_rubber_band",
+        "_rubber_band_origin",
+        "_saved_scroll_state",
+        "_paste_allowed_fn",
+        "_current_page_area_selections",
+        "_select_band_origin",
+        "_intelligent_paste_pending_source_anchor_ost",
+        "_intelligent_paste_source_anchor_ost",
+        "_intelligent_paste_anchor_start_ost",
+        "_drag_plan_item_uid",
+        "_drag_model_orig_position",
+        "_last_mouse_vp_pos",
+        "_place_session_uid",
+        "_annotation_place_type",
+        "_draft_text_annotation_uid",
+        "_draft_named_view_uid",
+        "_named_view_name_validator",
+        "_takeoff_snap_index",
+        "_pdf_snap_index",
+        "_pdf_snap_segments_cache_key",
+        "_pdf_text_cache_key",
+        "_pdf_text_request_id",
+        "_pdf_text_request_source",
+        "_selected_pdf_text_selection",
+        "_pdf_text_drag_anchor",
+        "_pdf_text_drag_focus",
+        "_backout_parent_uid",
+        "_backout_active_uid",
+        "_backout_orig_parent_path",
+        "_backout_last_valid_ost",
+        "_paste_backout_source_bid_uid",
+        "_context_menu_command_trigger",
+        "_context_menu_action_state",
+        "_selected_text_item",
+        "_selected_text_annotation_uid",
+        "_selected_text_model_font_size",
+        "_editing_text_annotation_uid",
+        "_editing_named_view_uid",
+        "_editing_named_view_item",
+        "_editing_text_document",
+        "_inline_text_lifetime_item",
+        "_text_annotation_inline_edit_allowed_fn",
+        "_annotation_placement_allowed_fn",
+    )
+    VALUE_ATTRIBUTES = {
+        "_is_cleaning_up": False,
+        "_current_render_requests": [],
+        "_defer_page_visual_reveal": False,
+        "_overlay_items": [],
+        "_scene_scale": 3.0,
+        "_can_zoom_rerender": False,
+        "_is_composite_mode": False,
+        "_pdf_width_pts": 0.0,
+        "_pdf_height_pts": 0.0,
+        "_overlay_pdf_width_pts": 0.0,
+        "_overlay_pdf_height_pts": 0.0,
+        "_visible_frame_scale": 0.0,
+        "_base_raster_scale": 0.0,
+        "_base_raster_request_scale": 0.0,
+        "_base_correction_request_generation_id": 0,
+        "_page_render_generation_id": 0,
+        "_takeoff_items": [],
+        "_hotlink_items": [],
+        "_current_load_token": "",
+        "_current_rotation": 0,
+        "_current_flip_x": False,
+        "_current_flip_y": False,
+        "_panning": False,
+        "_pan_view_changed": False,
+        "_cursor_mode": "select",
+        "_right_pan_active": False,
+        "_right_pan_dragged": False,
+        "_suppress_next_context_menu": False,
+        "_point_annotation_release_pending": False,
+        "_ctrl_held": False,
+        "_persistent_cursor_mode": "select",
+        "_overlay_move_dragging": False,
+        "_overlay_move_preview_overlay_request_scale": 0.0,
+        "_overlay_move_preview_generation_id": 0,
+        "_overlay_move_hidden_visual_visibility": {},
+        "_overlay_move_normal_visuals_hidden": False,
+        "_rotate_handle_radius": 0.0,
+        "_rotate_handle_start_angle_deg": -90.0,
+        "_rotation_drag_active": False,
+        "_rotation_drag_last_angle": 0.0,
+        "_rotation_drag_accumulated_deg": 0.0,
+        "_rotation_drag_snapped_deg": 0.0,
+        "_rotation_drag_preview_items": [],
+        "_rotation_drag_handle_origins": [],
+        "_rotation_drag_orig_positions": {},
+        "_rotation_drag_orig_rotations": {},
+        "_rotate_ost_center": (0.0, 0.0),
+        "_dirty_rotations": {},
+        "_rotation_before_edit": {},
+        "_load_initial_view_mode": "fit",
+        "_default_auto_zoom_level": 0,
+        "_load_geometry_ready": False,
+        "_load_view_applied": False,
+        "_load_user_view_changed": False,
+        "_load_waiting_for_visibility": False,
+        "_load_geometry_notified": False,
+        "_applying_pending_visible_view_state": False,
+        "_zoom_press_ctrl": False,
+        "_selection_enabled": False,
+        "_editing_enabled": False,
+        "_annotation_only_selection": False,
+        "_selected_uids": set(),
+        "_pending_mutation_uids": set(),
+        "_geometry_edit_lease_required": False,
+        "_geometry_edit_lease_uids": set(),
+        "_selection_items": [],
+        "_handle_infos": [],
+        "_current_takeoffs": {},
+        "_current_conditions": {},
+        "_current_color_map": {},
+        "_inactive_object_color": "#d0d0d0",
+        "_current_annotations": {},
+        "_uid_to_items": {},
+        "_hidden_layer_uids": set(),
+        "_select_band_active": False,
+        "_select_band_dragged": False,
+        "_disable_high_resolution_images": False,
+        "_intelligent_paste_enabled": True,
+        "_selection_revision": 0,
+        "_tool_revision": 0,
+        "_tool_state": ("select", None, None),
+        "_use_full_window_crosshairs": False,
+        "_crosshair_color": "#00ff00",
+        "_crosshair_line_thickness": 1,
+        "_mouse_unpressed_snap_angle": 15,
+        "_mouse_pressed_snap_angle": 0,
+        "_snap_to_grid_enabled": True,
+        "_snap_to_grid_threshold_px": 8,
+        "_snap_to_pdf_lines_enabled": True,
+        "_snap_to_pdf_lines_threshold_px": 8,
+        "_snap_to_takeoffs_enabled": True,
+        "_snap_to_takeoffs_threshold_px": 8,
+        "_snap_to_right_angle_enabled": False,
+        "_snap_to_right_angle_threshold_px": 8,
+        "_intelligent_paste_pending_uids": [],
+        "_intelligent_paste_active": False,
+        "_intelligent_paste_drag_positions_start_ost": {},
+        "_intelligent_paste_guide_items": [],
+        "_advanced_mouse_controls_enabled": True,
+        "_press_changed_selection": False,
+        "_snap_increments": 0.0,
+        "_dirty_positions": {},
+        "_dirty_ann_positions": {},
+        "_refreshing_overlays": False,
+        "_position_before_edit": {},
+        "_keyboard_move_dirty": False,
+        "_ann_db_uid_map": {},
+        "_drag_handle_index": -2,
+        "_drag_handle_corner_count": 0,
+        "_drag_orig_position": [],
+        "_drag_item_orig_positions": {},
+        "_drag_item_orig_paths": {},
+        "_drag_item_orig_text_states": {},
+        "_drag_uid_orig_items": {},
+        "_drag_multi_orig_positions": {},
+        "_drag_last_valid_new_pos": [],
+        "_drag_position_before_edit_existed": False,
+        "_place_all_condition_uids": [],
+        "_place_points": [],
+        "_annotation_place_points": [],
+        "_annotation_place_dragging": False,
+        "_annotation_area_rect_dragging": False,
+        "_place_preview_items": [],
+        "_takeoff_snap_index_dirty": True,
+        "_pdf_snap_index_dirty": True,
+        "_pdf_snap_segments_cache": [],
+        "_pdf_text_runs": [],
+        "_pdf_text_highlight_items": [],
+        "_backout_mode_active": False,
+        "_area_in_progress": False,
+        "_place_linear_dragging": False,
+        "_place_area_rect_dragging": False,
+        "_place_flashing": False,
+        "_paste_backout_active": False,
+        "_paste_backout_sources": [],
+        "_paste_backout_group_centroid": (0.0, 0.0),
+        "_paste_backout_preview_items": [],
+        "_selected_text_annotation_font_scale": 1.0,
+        "_editing_text_original": "",
+        "_finishing_text_annotation_edit": False,
+        "_finishing_named_view_rename": False,
+        "_text_annotation_inline_edit_enabled": True,
+    }
+
+    def _construct(self, prefetch_coordinator=None):
+        services = SimpleNamespace(
+            color=FakeColorService(),
+            rendering=FakeRenderingService(),
+            load=FakeLoadCoordinator(),
+            takeoff=FakeTakeoffRenderer(),
+            annotation=FakeAnnotationRenderer(),
+            linear=FakeLinearGeometry(),
+        )
+        view = TakeoffPlanView(
+            color_service=services.color,
+            rendering_service=services.rendering,
+            load_coordinator=services.load,
+            takeoff_renderer=services.takeoff,
+            annotation_renderer=services.annotation,
+            linear_geometry=services.linear,
+            prefetch_coordinator=prefetch_coordinator,
+        )
+        owned = [view]
+        view.destroyed.connect(lambda: owned.clear())
+
+        def release_view():
+            if owned:
+                delete(owned[0])
+
+        self.addCleanup(release_view)
+        return view, services
+
+    def test_a_new_view_starts_from_the_documented_idle_state(self):
+        view, _services = self._construct()
+        missing = object()
+        wrong = []
+        for name in self.NONE_ATTRIBUTES:
+            if getattr(view, name, missing) is not None:
+                wrong.append((name, getattr(view, name, missing)))
+        for name, expected in self.VALUE_ATTRIBUTES.items():
+            actual = getattr(view, name, missing)
+            if type(actual) is not type(expected) or actual != expected:
+                wrong.append((name, actual))
+        self.assertEqual(wrong, [])
+        self.assertEqual(view._rotate_center_scene, QtCore.QPointF(0.0, 0.0))
+        self.assertEqual(view._zoom_cursor.shape(), QtCore.Qt.CursorShape.CrossCursor)
+        self.assertEqual(view._rotate_cursor.shape(), QtCore.Qt.CursorShape.CrossCursor)
+        self.assertEqual(
+            view._move_overlay_cursor.shape(), QtCore.Qt.CursorShape.SizeAllCursor
+        )
+        self.assertEqual(
+            view._roping_selection_method, Config.DEFAULT_ROPING_SELECTION_METHOD
+        )
+        self.assertFalse(view._right_pan_press_timer.isValid())
+
+    def test_the_class_level_zoom_and_frame_constants(self):
+        self.assertEqual(TakeoffPlanView.MIN_ZOOM, 0.05)
+        self.assertEqual(TakeoffPlanView.MAX_ZOOM, 16.0)
+        self.assertEqual(TakeoffPlanView.ZOOM_FACTOR, 1.15)
+        self.assertEqual(TakeoffPlanView._FRAME_ACTIVATE_RATIO, 1.1)
+
+    def test_signal_payload_signatures_are_typed_as_documented(self):
+        view, _services = self._construct()
+        meta = view.metaObject()
+        expected = {
+            "reassign_condition_requested": "reassign_condition_requested(QVariantList,QString)",
+            "set_negative_requested": "set_negative_requested(QVariantList,bool)",
+            "set_curved_requested": "set_curved_requested(QVariantList,bool)",
+            "hotlink_placement_requested": "hotlink_placement_requested(QVariantList,QString)",
+            "paste_backouts_placed": "paste_backouts_placed(QVariantList,PyObject)",
+            "page_view_state_changed": "page_view_state_changed(QString,double,double,double)",
+        }
+        signatures = {
+            bytes(meta.method(index).methodSignature()).decode()
+            for index in range(meta.methodCount())
+            if meta.method(index).methodType() == QtCore.QMetaMethod.MethodType.Signal
+        }
+        for name, signature in expected.items():
+            with self.subTest(name):
+                self.assertIn(signature, signatures)
+
+    def test_a_new_view_keeps_the_injected_collaborators(self):
+        prefetch = SimpleNamespace(name="prefetch")
+        view, services = self._construct(prefetch_coordinator=prefetch)
+        self.assertIs(view._load_coordinator, services.load)
+        self.assertIs(view._color_service, services.color)
+        self.assertIs(view._linear_geom, services.linear)
+        self.assertIs(view._rendering_service, services.rendering)
+        self.assertIs(view._prefetch_coordinator, prefetch)
+        self.assertIs(view._scene_builder._takeoff_renderer, services.takeoff)
+        self.assertIs(view._scene_builder._annotation_renderer, services.annotation)
+        self.assertIs(self._construct()[0]._prefetch_coordinator, None)
+
+    def test_a_new_view_owns_its_scene_bars_and_debouncer(self):
+        view, _services = self._construct()
+        self.assertIs(view.scene(), view._scene)
+        self.assertIs(view._scene.parent(), view)
+        self.assertIsInstance(view._render_loading_bar, PageRenderLoadingBar)
+        self.assertIs(view._render_loading_bar.parent(), view)
+        self.assertIsInstance(view._missing_file_bar, PageMissingFileBar)
+        self.assertIs(view._missing_file_bar.parent(), view)
+        self.assertIsInstance(view._zoom_debouncer, ZoomDebouncer)
+        self.assertIs(view._zoom_debouncer.parent(), view)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        self.assertIs(view._condition_text_toolbar.parent(), view)
+        children = view.children()
+        toolbar_index = children.index(view._condition_text_toolbar)
+        self.assertGreater(children.index(view._render_loading_bar), toolbar_index)
+        self.assertGreater(children.index(view._missing_file_bar), toolbar_index)
+        brush = view.backgroundBrush()
+        self.assertEqual(brush.style(), QtCore.Qt.BrushStyle.SolidPattern)
+        self.assertEqual(
+            brush.color(), view.palette().color(QtGui.QPalette.ColorRole.Window)
+        )
+
+    def test_a_new_view_is_configured_for_smooth_anchored_plan_viewing(self):
+        view, _services = self._construct()
+        self.assertEqual(view.focusPolicy(), QtCore.Qt.FocusPolicy.StrongFocus)
+        self.assertTrue(view.renderHints() & QPainter.RenderHint.Antialiasing)
+        self.assertTrue(view.renderHints() & QPainter.RenderHint.SmoothPixmapTransform)
+        self.assertEqual(
+            view.viewportUpdateMode(),
+            QtWidgets.QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate,
+        )
+        self.assertEqual(view.dragMode(), QtWidgets.QGraphicsView.DragMode.NoDrag)
+        self.assertEqual(
+            view.transformationAnchor(),
+            QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse,
+        )
+        self.assertEqual(
+            view.resizeAnchor(), QtWidgets.QGraphicsView.ViewportAnchor.AnchorViewCenter
+        )
+        self.assertEqual(
+            view.verticalScrollBarPolicy(), QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.assertEqual(
+            view.horizontalScrollBarPolicy(),
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+        )
+        self.assertEqual(view.frameShape(), QtWidgets.QFrame.Shape.NoFrame)
+
+    def test_construction_connects_the_view_level_signals(self):
+        calls = []
+        with patch.object(
+            TakeoffPlanView,
+            "_update_tile_coverage",
+            lambda self, zoom: calls.append(("tiles", zoom)),
+        ), patch.object(
+            TakeoffPlanView,
+            "_on_scene_focus_item_changed",
+            lambda self, new, old, reason: calls.append(("focus", new, old, reason)),
+        ), patch.object(
+            TakeoffPlanView,
+            "_update_overlay_move_handle_position",
+            lambda self, *args: calls.append(("handle", args)),
+        ):
+            view, _services = self._construct()
+            view._zoom_debouncer.zoom_settled.emit(2.5)
+            view._scene.focusItemChanged.emit(
+                None, None, QtCore.Qt.FocusReason.OtherFocusReason
+            )
+            view.zoom_changed.emit(1.5)
+            calls.clear()
+            view.zoom_changed.emit(1.5)
+            view._zoom_debouncer.zoom_settled.emit(2.5)
+            view._scene.focusItemChanged.emit(
+                None, None, QtCore.Qt.FocusReason.OtherFocusReason
+            )
+        self.assertEqual(
+            calls,
+            [
+                ("handle", (1.5,)),
+                ("tiles", 2.5),
+                ("focus", None, None, QtCore.Qt.FocusReason.OtherFocusReason),
+            ],
+        )
+
+    def test_the_viewport_filter_repositions_overlays_on_move_resize_and_show(self):
+        view, _services = self._construct()
+        view.resize(300, 200)
+        view.show()
+        QApplication.processEvents()
+        view.setViewportMargins(5, 7, 0, 0)
+        QApplication.processEvents()
+        viewport = view.viewport()
+        for event_type in (
+            QtCore.QEvent.Type.Move,
+            QtCore.QEvent.Type.Resize,
+            QtCore.QEvent.Type.Show,
+        ):
+            with self.subTest(event_type):
+                view._render_loading_bar.setGeometry(0, 0, 1, 3)
+                view._missing_file_bar.setGeometry(0, 0, 1, 24)
+                handle_calls = []
+                view._update_overlay_move_handle_position = (
+                    lambda *a: handle_calls.append(a)
+                )
+                self.assertIs(
+                    view.eventFilter(viewport, QtCore.QEvent(event_type)), False
+                )
+                expected = viewport.geometry()
+                self.assertEqual(
+                    view._render_loading_bar.geometry(),
+                    QtCore.QRect(expected.x(), expected.y(), expected.width(), 3),
+                )
+                self.assertEqual(
+                    view._missing_file_bar.geometry(),
+                    QtCore.QRect(expected.x(), expected.y(), expected.width(), 24),
+                )
+                self.assertEqual(handle_calls, [()])
+        view._render_loading_bar.setGeometry(0, 0, 1, 3)
+        handle_calls.clear()
+        self.assertIs(
+            view.eventFilter(viewport, QtCore.QEvent(QtCore.QEvent.Type.Enter)), False
+        )
+        self.assertIs(
+            view.eventFilter(view, QtCore.QEvent(QtCore.QEvent.Type.Move)), False
+        )
+        self.assertEqual(view._render_loading_bar.geometry(), QtCore.QRect(0, 0, 1, 3))
+        self.assertEqual(handle_calls, [])
+
+    def test_a_real_viewport_move_reaches_the_installed_filter(self):
+        view, _services = self._construct()
+        view.resize(300, 200)
+        view.show()
+        QApplication.processEvents()
+        view.setViewportMargins(5, 7, 0, 0)
+        QApplication.processEvents()
+        view._render_loading_bar.setGeometry(0, 0, 1, 3)
+        QApplication.sendEvent(
+            view.viewport(), QtGui.QMoveEvent(QtCore.QPoint(1, 1), QtCore.QPoint(0, 0))
+        )
+        geometry = view.viewport().geometry()
+        self.assertEqual(
+            view._render_loading_bar.geometry(),
+            QtCore.QRect(geometry.x(), geometry.y(), geometry.width(), 3),
+        )
+
+    def test_destroying_the_view_clears_inline_edit_ownership(self):
+        view, _services = self._construct()
+        view._inline_text_lifetime_item = object()
+        view._editing_text_document = object()
+        view._editing_text_original = "typed"
+        owner = view
+        delete(view)
+        self.assertIsNone(owner._inline_text_lifetime_item)
+        self.assertIsNone(owner._editing_text_document)
+        self.assertEqual(owner._editing_text_original, "")
+
+
+class TakeoffPlanViewTextToolbarBuildTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """The condition text toolbar is assembled once at construction and wired to its handlers."""
+
+    def _toolbar_view(self, **patches):
+        stack = []
+        for name, fn in patches.items():
+            stack.append(patch.object(TakeoffPlanView, name, fn))
+        for entered in stack:
+            entered.start()
+            self.addCleanup(entered.stop)
+        return self._make_plan_view()
+
+    def test_toolbar_layout_holds_the_controls_in_order_with_tight_spacing(self):
+        view = self._make_plan_view()
+        toolbar = view._condition_text_toolbar
+        layout = toolbar.layout()
+        self.assertEqual(toolbar.frameShape(), QtWidgets.QFrame.Shape.StyledPanel)
+        self.assertEqual(layout.contentsMargins(), QtCore.QMargins(4, 2, 4, 2))
+        self.assertEqual(layout.spacing(), 3)
+        widgets = [layout.itemAt(index).widget() for index in range(layout.count())]
+        self.assertEqual(
+            widgets,
+            [
+                view._condition_text_font_combo,
+                view._condition_text_size_combo,
+                view._condition_text_color_btn,
+                view._condition_text_bold_btn,
+                view._condition_text_italic_btn,
+                view._condition_text_underline_btn,
+                view._condition_text_align_left_btn,
+                view._condition_text_align_center_btn,
+                view._condition_text_align_right_btn,
+            ],
+        )
+        for widget in widgets:
+            self.assertIs(widget.parent(), toolbar)
+        self.assertEqual(toolbar.pos(), QtCore.QPoint(8, 8))
+        self.assertEqual(toolbar.size(), toolbar.sizeHint())
+
+    def test_toolbar_size_combo_offers_the_standard_sizes_and_starts_at_nine(self):
+        view = self._make_plan_view()
+        combo = view._condition_text_size_combo
+        self.assertEqual(combo.count(), len(TEXT_FONT_SIZES))
+        for index, size in enumerate(TEXT_FONT_SIZES):
+            self.assertEqual(combo.itemText(index), str(size))
+            self.assertEqual(combo.itemData(index), size)
+        self.assertEqual(combo.currentText(), "9")
+
+    def test_toolbar_color_button_is_a_square_swatch_with_a_tooltip(self):
+        view = self._make_plan_view()
+        button = view._condition_text_color_btn
+        self.assertEqual(button.size(), QtCore.QSize(26, 26))
+        self.assertEqual(button.toolTip(), "Text color (#000000)")
+        self.assertEqual(button.iconSize(), QtCore.QSize(20, 20))
+        self.assertFalse(button.icon().isNull())
+
+    def test_toolbar_style_buttons_are_checkable_icon_buttons(self):
+        view = self._make_plan_view()
+        for button, tip in (
+            (view._condition_text_bold_btn, "Bold"),
+            (view._condition_text_italic_btn, "Italic"),
+            (view._condition_text_underline_btn, "Underline"),
+            (view._condition_text_align_left_btn, "Align left"),
+            (view._condition_text_align_center_btn, "Align center"),
+            (view._condition_text_align_right_btn, "Align right"),
+        ):
+            with self.subTest(tip):
+                self.assertTrue(button.isCheckable())
+                self.assertEqual(button.size(), QtCore.QSize(26, 26))
+                self.assertEqual(button.iconSize(), QtCore.QSize(20, 20))
+                self.assertEqual(button.toolTip(), tip)
+                self.assertFalse(button.icon().isNull())
+
+    def test_toolbar_controls_trigger_the_format_handlers(self):
+        calls = []
+        view = self._toolbar_view(
+            _apply_condition_text_format_from_signal=lambda self, *args: calls.append(
+                ("format", len(args))
+            ),
+            _pick_condition_text_color=lambda self: calls.append(("pick",)),
+            _set_condition_text_alignment=lambda self, alignment: calls.append(
+                ("align", alignment)
+            ),
+        )
+        view._condition_text_font_combo.currentFontChanged.emit(QFont("Arial"))
+        view._condition_text_size_combo.setCurrentIndex(
+            view._condition_text_size_combo.currentIndex() + 1
+        )
+        for button in (
+            view._condition_text_bold_btn,
+            view._condition_text_italic_btn,
+            view._condition_text_underline_btn,
+        ):
+            button.toggle()
+        view._condition_text_color_btn.click()
+        view._condition_text_align_left_btn.click()
+        view._condition_text_align_center_btn.click()
+        view._condition_text_align_right_btn.click()
+        self.assertEqual(
+            calls,
+            [
+                ("format", 1),
+                ("format", 1),
+                ("format", 1),
+                ("format", 1),
+                ("format", 1),
+                ("pick",),
+                ("align", QtCore.Qt.AlignmentFlag.AlignLeft),
+                ("align", QtCore.Qt.AlignmentFlag.AlignHCenter),
+                ("align", QtCore.Qt.AlignmentFlag.AlignRight),
+            ],
+        )
+
+    def test_alignment_buttons_and_color_button_are_not_format_toggles(self):
+        calls = []
+        view = self._toolbar_view(
+            _apply_condition_text_format_from_signal=lambda self, *args: calls.append(
+                args
+            ),
+            _pick_condition_text_color=lambda self: None,
+            _set_condition_text_alignment=lambda self, alignment: None,
+        )
+        view._condition_text_align_left_btn.toggle()
+        view._condition_text_color_btn.click()
+        self.assertEqual(calls, [])
+
+    def test_the_toolbar_follows_the_top_left_corner_after_a_resize(self):
+        view = self._make_plan_view()
+        view._condition_text_toolbar.move(100, 100)
+        view.resize(320, 240)
+        view.show()
+        QApplication.processEvents()
+        self.assertEqual(view._condition_text_toolbar.pos(), QtCore.QPoint(8, 8))
+        view._condition_text_toolbar.move(50, 60)
+        view._position_condition_text_toolbar()
+        self.assertEqual(view._condition_text_toolbar.pos(), QtCore.QPoint(8, 8))
+        view._condition_text_toolbar = None
+        view._position_condition_text_toolbar()
+
+
+class TakeoffPlanViewOverlayBarAndLoadingTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Viewport overlay bars: placement, missing-file status text and loading tokens."""
+
+    def _shown_view(self):
+        view = self._make_plan_view()
+        view.resize(300, 200)
+        view.show()
+        QApplication.processEvents()
+        view.setViewportMargins(5, 7, 0, 0)
+        QApplication.processEvents()
+        return view
+
+    def test_a_bar_is_stretched_across_the_viewport_and_raised(self):
+        view = self._shown_view()
+        bar = QtWidgets.QWidget(view)
+        bar.resize(40, 11)
+        sibling = QtWidgets.QWidget(view)
+        self.assertIs(view.children()[-1], sibling)
+        view._position_viewport_overlay_bar(bar)
+        geometry = view.viewport().geometry()
+        self.assertEqual((geometry.x(), geometry.y()), (5, 7))
+        self.assertEqual(bar.geometry(), QtCore.QRect(5, 7, geometry.width(), 11))
+        self.assertIs(view.children()[-1], bar)
+        view._position_viewport_overlay_bar(None)
+
+    def test_both_overlay_bars_are_positioned_together(self):
+        view = self._shown_view()
+        view._missing_file_bar.setGeometry(0, 0, 1, 24)
+        view._render_loading_bar.setGeometry(0, 0, 1, 3)
+        view._position_viewport_overlay_bars()
+        geometry = view.viewport().geometry()
+        self.assertEqual(
+            view._missing_file_bar.geometry(),
+            QtCore.QRect(geometry.x(), geometry.y(), geometry.width(), 24),
+        )
+        self.assertEqual(
+            view._render_loading_bar.geometry(),
+            QtCore.QRect(geometry.x(), geometry.y(), geometry.width(), 3),
+        )
+
+    def test_missing_page_file_status_is_shown_unless_a_load_is_in_flight(self):
+        view = self._shown_view()
+        view._missing_file_bar.setGeometry(0, 0, 1, 24)
+        view._current_page_loading_token = "loading"
+        view._show_missing_page_file_status("Page missing", "tip")
+        self.assertFalse(view._missing_file_bar.is_active)
+        view._current_page_loading_token = None
+        view._show_missing_page_file_status("Page missing", "tip")
+        self.assertTrue(view._missing_file_bar.is_active)
+        self.assertEqual(view._missing_file_bar.toolTip(), "tip")
+        self.assertEqual(
+            view._missing_file_bar.width(), view.viewport().geometry().width()
+        )
+        view._clear_missing_page_file_status()
+        self.assertFalse(view._missing_file_bar.is_active)
+        view._missing_file_bar = None
+        view._show_missing_page_file_status("ignored")
+        view._clear_missing_page_file_status()
+
+    def test_failure_paths_follow_the_render_kind(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p", name="P", image_path="base.pdf", overlay_image_path="over.png"
+        )
+        data = {"page": page}
+        self.assertEqual(
+            view._page_render_failure_paths(data, VISUAL_KIND_PAGE), ["base.pdf"]
+        )
+        self.assertEqual(
+            view._page_render_failure_paths(data, VISUAL_KIND_OVERLAY), ["over.png"]
+        )
+        self.assertEqual(
+            view._page_render_failure_paths(data, VISUAL_KIND_COMPOSITE),
+            ["base.pdf", "over.png"],
+        )
+        self.assertEqual(view._page_render_failure_paths(data, "unknown"), [])
+        self.assertEqual(view._page_render_failure_paths({}, VISUAL_KIND_PAGE), [])
+        self.assertEqual(
+            view._page_render_failure_paths({"page": object()}, VISUAL_KIND_PAGE), []
+        )
+        blank = {"page": Page(uid="b", name="B")}
+        self.assertEqual(view._page_render_failure_paths(blank, VISUAL_KIND_PAGE), [""])
+        self.assertEqual(
+            view._page_render_failure_paths(blank, VISUAL_KIND_OVERLAY), [""]
+        )
+        self.assertEqual(
+            view._page_render_failure_paths(blank, VISUAL_KIND_COMPOSITE), ["", ""]
+        )
+
+    def test_starting_a_current_page_load_arms_the_bar_with_a_fresh_token(self):
+        view = self._shown_view()
+        view._render_loading_bar.setGeometry(0, 0, 1, 3)
+        token = view._start_current_page_render_loading()
+        self.assertEqual(len(token), 32)
+        self.assertEqual(view._current_page_loading_token, token)
+        self.assertEqual(view._render_loading_bar._active_token, token)
+        self.assertEqual(
+            view._render_loading_bar.width(), view.viewport().geometry().width()
+        )
+        self.assertNotEqual(view._start_current_page_render_loading(), token)
+        view._render_loading_bar = None
+        self.assertEqual(len(view._start_current_page_render_loading()), 32)
+
+    def test_completing_a_current_page_load_only_ends_its_own_token(self):
+        view = self._shown_view()
+        view._complete_current_page_render_loading()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view._render_loading_bar.start("other")
+        view._complete_current_page_render_loading()
+        self.assertEqual(view._render_loading_bar._active_token, "other")
+        token = view._start_current_page_render_loading()
+        view._complete_current_page_render_loading()
+        self.assertIsNone(view._current_page_loading_token)
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertNotEqual(token, "other")
+        view._render_loading_bar = None
+        view._current_page_loading_token = "x"
+        view._complete_current_page_render_loading()
+        self.assertIsNone(view._current_page_loading_token)
+
+    def test_resetting_a_current_page_load_leaves_other_loads_running(self):
+        view = self._shown_view()
+        view._render_loading_bar.start("frame-token")
+        view._current_page_loading_token = None
+        view._reset_current_page_render_loading()
+        self.assertEqual(view._render_loading_bar._active_token, "frame-token")
+        view._current_page_loading_token = "page-token"
+        view._render_loading_bar.start("page-token")
+        view._reset_current_page_render_loading()
+        self.assertIsNone(view._current_page_loading_token)
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view._render_loading_bar = None
+        view._current_page_loading_token = "x"
+        view._reset_current_page_render_loading()
+        self.assertIsNone(view._current_page_loading_token)
+
+    def test_starting_a_visible_frame_load_arms_the_bar_with_a_fresh_token(self):
+        view = self._shown_view()
+        view._render_loading_bar.setGeometry(0, 0, 1, 3)
+        token = view._start_visible_frame_render_loading()
+        self.assertEqual(len(token), 32)
+        self.assertEqual(view._visible_frame_loading_token, token)
+        self.assertEqual(view._render_loading_bar._active_token, token)
+        self.assertEqual(
+            view._render_loading_bar.width(), view.viewport().geometry().width()
+        )
+        self.assertNotEqual(view._start_visible_frame_render_loading(), token)
+        view._render_loading_bar = None
+        self.assertEqual(len(view._start_visible_frame_render_loading()), 32)
+
+    def test_completing_a_visible_frame_load_checks_the_token(self):
+        view = self._shown_view()
+        view._render_loading_bar.start("keep")
+        view._visible_frame_loading_token = "keep"
+        view._complete_visible_frame_render_loading(None)
+        self.assertEqual(view._visible_frame_loading_token, "keep")
+        self.assertTrue(view._render_loading_bar.is_loading)
+        view._complete_visible_frame_render_loading("stale")
+        self.assertEqual(view._visible_frame_loading_token, "keep")
+        self.assertEqual(view._render_loading_bar._active_token, "keep")
+        view._complete_visible_frame_render_loading("keep")
+        self.assertIsNone(view._visible_frame_loading_token)
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view._render_loading_bar = None
+        view._visible_frame_loading_token = "x"
+        view._complete_visible_frame_render_loading("x")
+        self.assertIsNone(view._visible_frame_loading_token)
+
+    def test_resetting_a_visible_frame_load_leaves_other_loads_running(self):
+        view = self._shown_view()
+        view._render_loading_bar.start("page-token")
+        view._visible_frame_loading_token = None
+        view._reset_visible_frame_render_loading()
+        self.assertEqual(view._render_loading_bar._active_token, "page-token")
+        view._visible_frame_loading_token = "frame-token"
+        view._render_loading_bar.start("frame-token")
+        view._reset_visible_frame_render_loading()
+        self.assertIsNone(view._visible_frame_loading_token)
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view._render_loading_bar = None
+        view._visible_frame_loading_token = "x"
+        view._reset_visible_frame_render_loading()
+        self.assertIsNone(view._visible_frame_loading_token)
+
+    def test_resetting_all_loading_clears_both_tokens_and_the_bar(self):
+        view = self._shown_view()
+        view._current_page_loading_token = "a"
+        view._visible_frame_loading_token = "b"
+        view._render_loading_bar.start("c")
+        view._reset_render_loading()
+        self.assertIsNone(view._current_page_loading_token)
+        self.assertIsNone(view._visible_frame_loading_token)
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view._render_loading_bar = None
+        view._current_page_loading_token = "a"
+        view._visible_frame_loading_token = "b"
+        view._reset_render_loading()
+        self.assertIsNone(view._current_page_loading_token)
+        self.assertIsNone(view._visible_frame_loading_token)
+
+    def test_resizing_repositions_the_toolbar_bars_and_move_handle(self):
+        view = self._make_plan_view()
+        calls = []
+        view._position_condition_text_toolbar = lambda: calls.append("toolbar")
+        view._position_viewport_overlay_bars = lambda: calls.append("bars")
+        view._update_overlay_move_handle_position = lambda *a: calls.append("handle")
+        view.resizeEvent(QResizeEvent(QtCore.QSize(10, 10), QtCore.QSize(5, 5)))
+        self.assertEqual(calls, ["toolbar", "bars", "handle"])
+
+    def test_scrolling_moves_the_handle_only_when_something_scrolled(self):
+        view = self._make_plan_view()
+        seen = []
+        handle_calls = []
+        view._update_overlay_move_handle_position = lambda *a: handle_calls.append(a)
+        with patch.object(
+            QtWidgets.QGraphicsView,
+            "scrollContentsBy",
+            lambda self, dx, dy: seen.append((dx, dy)),
+        ):
+            view.scrollContentsBy(3, 0)
+            view.scrollContentsBy(0, -4)
+            view.scrollContentsBy(0, 0)
+        self.assertEqual(seen, [(3, 0), (0, -4), (0, 0)])
+        self.assertEqual(handle_calls, [(), ()])
+
+
+class PlanViewModuleHelperSweepTests(unittest.TestCase):
+    """Key numbering of the annotation dictionary builder."""
+
+    def _annotation(self, uid, annotation_type="rect"):
+        return BidAnnotation(
+            uid=uid, annotation_type=annotation_type, position=[0.0, 0.0]
+        )
+
+    def test_repeated_uid_and_type_pairs_are_numbered_without_gaps(self):
+        annotations = [self._annotation("u") for _ in range(5)]
+        result, db_map = plan_view_module._build_annotation_dict(annotations)
+        self.assertEqual(
+            list(result), ["u", "u_rect", "u_rect_1", "u_rect_2", "u_rect_3"]
+        )
+        self.assertEqual([result[key] for key in result], annotations)
+        self.assertEqual(
+            db_map,
+            {"u_rect": "u", "u_rect_1": "u", "u_rect_2": "u", "u_rect_3": "u"},
+        )
+
+    def test_takeoff_uids_are_reserved_before_the_first_annotation_is_keyed(self):
+        annotations = [
+            self._annotation("t1"),
+            self._annotation("t1"),
+            self._annotation("a2"),
+        ]
+        result, db_map = plan_view_module._build_annotation_dict(
+            annotations, takeoff_uids={"t1"}
+        )
+        self.assertEqual(list(result), ["t1_rect", "t1_rect_1", "a2"])
+        self.assertEqual(db_map, {"t1_rect": "t1", "t1_rect_1": "t1"})
+        self.assertEqual(plan_view_module._build_annotation_dict([]), ({}, {}))
+
+
+class TakeoffPlanViewTextLabelToolbarTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Hit-testing and toolbar targeting of condition, dimension, named-view and text labels."""
+
+    def _text_item(
+        self,
+        view,
+        *,
+        uid="a1",
+        kind=None,
+        label_kind=None,
+        text="Text",
+        font_size=12,
+        pos=(0.0, 0.0),
+        in_scene=True,
+    ):
+        item = QGraphicsTextItem(text)
+        item.setFont(QFont("Arial", font_size))
+        if uid is not None:
+            item.setData(0, uid)
+        if kind is not None:
+            item.setData(2, kind)
+        if label_kind is not None:
+            item.setData(3, label_kind)
+        item.setPos(*pos)
+        if in_scene:
+            view._scene.addItem(item)
+        return item
+
+    def _annotation(self, uid, annotation_type=ANNOTATION_TYPE_TEXT, **properties):
+        return BidAnnotation(
+            uid=uid,
+            annotation_type=annotation_type,
+            page_uid="p1",
+            position=[10.0, 10.0, 80.0, 24.0],
+            properties=dict(properties),
+        )
+
+    def _shown_view(self):
+        view = self._make_plan_view()
+        view.resize(450, 450)
+        view._scene.setSceneRect(0.0, 0.0, 400.0, 400.0)
+        view.show()
+        QApplication.processEvents()
+        return view
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    # ---- hit testing
+    def test_label_hit_tests_only_return_text_items_of_their_own_kind(self):
+        view = self._shown_view()
+        condition = self._text_item(view, kind="condition_label", pos=(20.0, 20.0))
+        dimension = self._text_item(
+            view, kind=DIMENSION_LABEL_ITEM_KIND, pos=(120.0, 20.0)
+        )
+        named_view = self._text_item(
+            view, kind=NAMED_VIEW_LABEL_ITEM_KIND, pos=(220.0, 20.0)
+        )
+        plain = self._text_item(view, kind=None, pos=(320.0, 20.0))
+        impostor = QGraphicsRectItem(0.0, 0.0, 40.0, 20.0)
+        impostor.setData(2, "condition_label")
+        impostor.setPos(20.0, 200.0)
+        view._scene.addItem(impostor)
+
+        def point(item):
+            return view.mapFromScene(item.sceneBoundingRect().center())
+
+        expected = {
+            "condition": (view._condition_text_label_at, condition),
+            "dimension": (view._dimension_text_label_at, dimension),
+            "named_view": (view._named_view_label_at, named_view),
+        }
+        targets = {
+            "condition": condition,
+            "dimension": dimension,
+            "named_view": named_view,
+            "plain": plain,
+            "impostor": impostor,
+            "empty": None,
+        }
+        for finder_name, (finder, own) in expected.items():
+            for target_name, target in targets.items():
+                with self.subTest(finder=finder_name, target=target_name):
+                    position = (
+                        point(target)
+                        if target is not None
+                        else view.mapFromScene(QtCore.QPointF(380.0, 380.0))
+                    )
+                    self.assertIs(finder(position), own if target is own else None)
+
+    def test_dimension_label_check_needs_a_text_item_of_the_dimension_kind(self):
+        view = self._make_plan_view()
+        label = self._text_item(view, kind=DIMENSION_LABEL_ITEM_KIND)
+        other = self._text_item(view, kind="condition_label")
+        rect = QGraphicsRectItem()
+        rect.setData(2, DIMENSION_LABEL_ITEM_KIND)
+        self.assertIs(view._is_dimension_text_label_item(label), True)
+        self.assertIs(view._is_dimension_text_label_item(other), False)
+        self.assertIs(view._is_dimension_text_label_item(rect), False)
+        self.assertIs(view._is_dimension_text_label_item(None), False)
+
+    # ---- selecting labels
+    def test_selecting_a_condition_label_commits_inline_edits_then_shows_the_toolbar(
+        self,
+    ):
+        view = self._make_plan_view()
+        item = self._text_item(view, kind="condition_label")
+        calls = self._record(
+            view, "_finish_active_inline_text_edit", "_show_text_toolbar_for_item"
+        )
+        view._select_condition_text_label(item)
+        self.assertEqual(
+            calls,
+            [
+                ("_finish_active_inline_text_edit", (), {"commit": True}),
+                ("_show_text_toolbar_for_item", (item,), {"annotation_uid": None}),
+            ],
+        )
+
+    def test_selecting_a_dimension_label_needs_a_dimension_annotation(self):
+        view = self._make_plan_view()
+        item = self._text_item(view, uid="d1", kind=DIMENSION_LABEL_ITEM_KIND)
+        calls = self._record(
+            view, "_finish_active_inline_text_edit", "_show_text_toolbar_for_item"
+        )
+        view._current_annotations = {
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION)
+        }
+        self.assertIs(view._select_dimension_text_label(item), True)
+        self.assertEqual(
+            calls,
+            [
+                ("_finish_active_inline_text_edit", (), {"commit": True}),
+                ("_show_text_toolbar_for_item", (item,), {"annotation_uid": "d1"}),
+            ],
+        )
+        calls.clear()
+        for label, uid, annotations in (
+            (
+                "no uid",
+                None,
+                {"None": self._annotation("None", ANNOTATION_TYPE_DIMENSION)},
+            ),
+            (
+                "unknown annotation",
+                "d2",
+                {"d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION)},
+            ),
+            (
+                "not a dimension",
+                "t1",
+                {"t1": self._annotation("t1", ANNOTATION_TYPE_TEXT)},
+            ),
+        ):
+            with self.subTest(label):
+                other = self._text_item(view, uid=uid, kind=DIMENSION_LABEL_ITEM_KIND)
+                view._current_annotations = annotations
+                self.assertIs(view._select_dimension_text_label(other), False)
+                self.assertEqual(calls, [])
+
+    def test_selecting_a_dimension_label_looks_the_annotation_up_by_string_uid(self):
+        view = self._make_plan_view()
+        item = self._text_item(view, uid=5, kind=DIMENSION_LABEL_ITEM_KIND)
+        calls = self._record(
+            view, "_finish_active_inline_text_edit", "_show_text_toolbar_for_item"
+        )
+        view._current_annotations = {
+            "5": self._annotation("5", ANNOTATION_TYPE_DIMENSION)
+        }
+        self.assertIs(view._select_dimension_text_label(item), True)
+        self.assertEqual(
+            calls[1], ("_show_text_toolbar_for_item", (item,), {"annotation_uid": "5"})
+        )
+
+    def test_showing_the_toolbar_tracks_the_target_font_scale_and_selection(self):
+        view = self._shown_view()
+        view._current_annotations = {
+            "t1": self._annotation("t1", FontSize=12),
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION, FontSize=10),
+        }
+        previous = self._text_item(view, uid="prev", kind="condition_label")
+        previous.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        previous.setSelected(True)
+        view._selected_text_item = previous
+        text_item = self._text_item(view, uid="t1", font_size=24)
+        text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        view._show_text_toolbar_for_item(text_item, annotation_uid="t1")
+        self.assertFalse(previous.isSelected())
+        self.assertIs(view._selected_text_item, text_item)
+        self.assertEqual(view._selected_text_annotation_uid, "t1")
+        self.assertEqual(view._selected_text_model_font_size, 12)
+        self.assertEqual(view._selected_text_annotation_font_scale, 2.0)
+        self.assertFalse(text_item.isSelected())
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertIs(view.children()[-1], view._condition_text_toolbar)
+
+    def test_showing_the_toolbar_for_labels_selects_them_and_keeps_the_same_item(self):
+        view = self._shown_view()
+        view._current_annotations = {
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION, FontSize=10)
+        }
+        condition = self._text_item(
+            view, uid="c1", kind="condition_label", font_size=20
+        )
+        condition.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        view._selected_text_annotation_font_scale = 7.0
+        view._show_text_toolbar_for_item(condition, annotation_uid=None)
+        self.assertTrue(condition.isSelected())
+        self.assertEqual(view._selected_text_annotation_font_scale, 1.0)
+        self.assertEqual(view._selected_text_model_font_size, 20)
+        selection_changes = []
+        view._scene.selectionChanged.connect(lambda: selection_changes.append(1))
+        view._show_text_toolbar_for_item(condition, annotation_uid=None)
+        self.assertTrue(condition.isSelected())
+        self.assertEqual(selection_changes, [])
+        dimension = self._text_item(
+            view, uid="d1", kind=DIMENSION_LABEL_ITEM_KIND, font_size=20
+        )
+        dimension.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        view._show_text_toolbar_for_item(dimension, annotation_uid="d1")
+        self.assertFalse(condition.isSelected())
+        self.assertTrue(dimension.isSelected())
+        self.assertEqual(view._selected_text_model_font_size, 10)
+        self.assertEqual(view._selected_text_annotation_font_scale, 2.0)
+
+    def test_clearing_the_toolbar_target_resets_selection_font_state_and_hides_it(self):
+        view = self._shown_view()
+        item = self._text_item(view, uid="c1", kind="condition_label")
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        item.setSelected(True)
+        view._selected_text_item = item
+        view._selected_text_annotation_uid = "t1"
+        view._selected_text_model_font_size = 14
+        view._selected_text_annotation_font_scale = 2.0
+        view._condition_text_toolbar.show()
+        view._clear_text_toolbar_target()
+        self.assertFalse(item.isSelected())
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertIsNone(view._selected_text_model_font_size)
+        self.assertEqual(view._selected_text_annotation_font_scale, 1.0)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view._clear_text_toolbar_target()
+
+    def test_clearing_the_text_selection_commits_the_inline_edit_first(self):
+        view = self._make_plan_view()
+        calls = self._record(
+            view, "_finish_active_inline_text_edit", "_clear_text_toolbar_target"
+        )
+        view._clear_text_selection()
+        self.assertEqual(
+            calls,
+            [
+                ("_finish_active_inline_text_edit", (), {"commit": True}),
+                ("_clear_text_toolbar_target", (), {}),
+            ],
+        )
+
+    def test_deleting_the_targeted_element_clears_the_toolbar_selection(self):
+        view = self._make_plan_view()
+        calls = self._record(view, "_clear_text_selection")
+        view._clear_deleted_text_toolbar_target({"t1"})
+        self.assertEqual(calls, [])
+        annotation_item = self._text_item(view, uid="t1")
+        label = self._text_item(view, uid="c1", kind="condition_label")
+        unkeyed_label = self._text_item(view, uid=None, kind="condition_label")
+        plain = self._text_item(view, uid="c1")
+        cases = (
+            ("annotation target deleted", annotation_item, "t1", {"t1"}, 1),
+            ("annotation target kept", annotation_item, "t1", {"other"}, 0),
+            ("condition label deleted", label, None, {"c1"}, 1),
+            ("condition label kept", label, None, {"other"}, 0),
+            ("condition label without uid", unkeyed_label, None, {"c1", "None"}, 0),
+            ("plain item without target uid", plain, None, {"c1"}, 0),
+            ("label item under another annotation target", label, "t1", {"c1"}, 0),
+        )
+        for name, item, uid, deleted, clears in cases:
+            with self.subTest(name):
+                calls.clear()
+                view._selected_text_item = item
+                view._selected_text_annotation_uid = uid
+                view._clear_deleted_text_toolbar_target(deleted)
+                self.assertEqual(len(calls), clears)
+
+    # ---- syncing the toolbar controls
+    def test_control_signals_are_blocked_on_every_editing_control_but_the_color_button(
+        self,
+    ):
+        view = self._make_plan_view()
+        editing = (
+            view._condition_text_font_combo,
+            view._condition_text_size_combo,
+            view._condition_text_bold_btn,
+            view._condition_text_italic_btn,
+            view._condition_text_underline_btn,
+            view._condition_text_align_left_btn,
+            view._condition_text_align_center_btn,
+            view._condition_text_align_right_btn,
+        )
+        view._set_condition_text_control_signals_blocked(True)
+        self.assertTrue(all(widget.signalsBlocked() for widget in editing))
+        self.assertFalse(view._condition_text_color_btn.signalsBlocked())
+        view._set_condition_text_control_signals_blocked(False)
+        self.assertFalse(any(widget.signalsBlocked() for widget in editing))
+
+    def test_syncing_the_controls_mirrors_the_item_without_emitting_changes(self):
+        view = self._shown_view()
+        item = self._text_item(view, uid="t1", font_size=14)
+        font = QFont("Arial", 14)
+        font.setBold(True)
+        font.setItalic(True)
+        font.setUnderline(True)
+        item.setFont(font)
+        item.setDefaultTextColor(QColor("#336699"))
+        option = item.document().defaultTextOption()
+        option.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        item.document().setDefaultTextOption(option)
+        view._current_annotations = {"t1": self._annotation("t1")}
+        view._selected_text_annotation_uid = "t1"
+        view._selected_text_model_font_size = None
+        emitted = []
+        for button in (
+            view._condition_text_bold_btn,
+            view._condition_text_italic_btn,
+            view._condition_text_underline_btn,
+            view._condition_text_align_left_btn,
+            view._condition_text_align_center_btn,
+            view._condition_text_align_right_btn,
+        ):
+            button.toggled.connect(lambda checked, b=button: emitted.append(b))
+        view._condition_text_size_combo.currentIndexChanged.connect(
+            lambda _i: emitted.append("size")
+        )
+        view._sync_condition_text_controls(item)
+        self.assertEqual(emitted, [])
+        self.assertEqual(view._condition_text_size_combo.currentText(), "14")
+        self.assertTrue(view._condition_text_bold_btn.isChecked())
+        self.assertTrue(view._condition_text_italic_btn.isChecked())
+        self.assertTrue(view._condition_text_underline_btn.isChecked())
+        self.assertEqual(
+            [
+                view._condition_text_align_left_btn.isChecked(),
+                view._condition_text_align_center_btn.isChecked(),
+                view._condition_text_align_right_btn.isChecked(),
+            ],
+            [False, False, True],
+        )
+        self.assertTrue(view._condition_text_align_right_btn.isEnabled())
+        self.assertEqual(
+            view._condition_text_color_btn.toolTip(), "Text color (#336699)"
+        )
+        self.assertFalse(view._condition_text_bold_btn.signalsBlocked())
+        view._condition_text_bold_btn.toggle()
+        self.assertEqual(emitted, [view._condition_text_bold_btn])
+
+    def test_syncing_clears_flags_that_the_item_font_does_not_have(self):
+        view = self._shown_view()
+        for button in (
+            view._condition_text_bold_btn,
+            view._condition_text_italic_btn,
+            view._condition_text_underline_btn,
+        ):
+            button.setChecked(True)
+        item = self._text_item(view, uid="c1", kind="condition_label", font_size=11)
+        view._selected_text_annotation_uid = None
+        view._selected_text_model_font_size = None
+        view._sync_condition_text_controls(item)
+        self.assertFalse(view._condition_text_bold_btn.isChecked())
+        self.assertFalse(view._condition_text_italic_btn.isChecked())
+        self.assertFalse(view._condition_text_underline_btn.isChecked())
+        self.assertEqual(
+            [
+                view._condition_text_align_left_btn.isChecked(),
+                view._condition_text_align_center_btn.isChecked(),
+                view._condition_text_align_right_btn.isChecked(),
+            ],
+            [True, False, False],
+        )
+        self.assertFalse(view._condition_text_align_left_btn.isEnabled())
+
+    def test_syncing_adds_unlisted_sizes_once_and_falls_back_to_one_point(self):
+        view = self._shown_view()
+        combo = view._condition_text_size_combo
+        unlisted = next(size for size in range(40, 200) if combo.findData(size) < 0)
+        count = combo.count()
+        item = self._text_item(view, uid="c1", kind="condition_label", font_size=11)
+        view._selected_text_model_font_size = unlisted
+        view._sync_condition_text_controls(item)
+        self.assertEqual(combo.count(), count + 1)
+        self.assertEqual(combo.currentText(), str(unlisted))
+        self.assertEqual(combo.currentData(), unlisted)
+        self.assertEqual(combo.itemText(count), str(unlisted))
+        view._sync_condition_text_controls(item)
+        self.assertEqual(combo.count(), count + 1)
+        listed = TEXT_FONT_SIZES[0]
+        view._selected_text_model_font_size = listed
+        view._sync_condition_text_controls(item)
+        self.assertEqual(combo.count(), count + 1)
+        self.assertEqual(combo.currentText(), str(listed))
+        pixel_font = QFont("Arial")
+        pixel_font.setPixelSize(13)
+        item.setFont(pixel_font)
+        view._selected_text_model_font_size = None
+        view._sync_condition_text_controls(item)
+        self.assertEqual(combo.currentText(), "1")
+        self.assertEqual(combo.currentData(), 1)
+        item.setFont(QFont("Arial", 20))
+        view._sync_condition_text_controls(item)
+        self.assertEqual(combo.currentText(), "20")
+
+    def test_alignment_is_only_editable_for_text_annotation_targets(self):
+        view = self._make_plan_view()
+        view._current_annotations = {
+            None: self._annotation("none", ANNOTATION_TYPE_TEXT),
+            "t1": self._annotation("t1", ANNOTATION_TYPE_TEXT),
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION),
+        }
+        for uid, expected in (
+            (None, False),
+            ("t1", True),
+            ("d1", False),
+            ("missing", False),
+        ):
+            with self.subTest(uid):
+                view._selected_text_annotation_uid = uid
+                self.assertIs(view._selected_text_target_allows_alignment(), expected)
+
+    def test_alignment_buttons_follow_horizontal_alignment_flags(self):
+        view = self._make_plan_view()
+        flags = QtCore.Qt.AlignmentFlag
+        cases = (
+            (flags.AlignLeft, (True, False, False)),
+            (flags.AlignLeft | flags.AlignVCenter, (True, False, False)),
+            (flags.AlignHCenter, (False, True, False)),
+            (flags.AlignHCenter | flags.AlignVCenter, (False, True, False)),
+            (flags.AlignRight, (False, False, True)),
+            (flags.AlignRight | flags.AlignTop, (False, False, True)),
+        )
+        for alignment, expected in cases:
+            with self.subTest(alignment=alignment):
+                view._sync_condition_text_alignment_buttons(alignment)
+                self.assertEqual(
+                    (
+                        view._condition_text_align_left_btn.isChecked(),
+                        view._condition_text_align_center_btn.isChecked(),
+                        view._condition_text_align_right_btn.isChecked(),
+                    ),
+                    expected,
+                )
+
+    def test_alignment_buttons_can_be_enabled_and_disabled_together(self):
+        view = self._make_plan_view()
+        buttons = (
+            view._condition_text_align_left_btn,
+            view._condition_text_align_center_btn,
+            view._condition_text_align_right_btn,
+        )
+        view._set_condition_text_alignment_buttons_enabled(False)
+        self.assertEqual([b.isEnabled() for b in buttons], [False, False, False])
+        view._set_condition_text_alignment_buttons_enabled(True)
+        self.assertEqual([b.isEnabled() for b in buttons], [True, True, True])
+
+    def test_color_swatch_shows_the_color_name_and_a_square_icon(self):
+        view = self._make_plan_view()
+        view._update_condition_text_color_swatch(QColor("#112233"))
+        button = view._condition_text_color_btn
+        self.assertEqual(button.toolTip(), "Text color (#112233)")
+        self.assertEqual(button.iconSize(), QtCore.QSize(20, 20))
+        self.assertFalse(button.icon().isNull())
+        self.assertEqual(
+            button.icon().actualSize(QtCore.QSize(64, 64)), QtCore.QSize(20, 20)
+        )
+
+    # ---- which item the toolbar edits
+    def test_the_active_toolbar_item_is_the_selected_target_only_while_it_is_valid(
+        self,
+    ):
+        view = self._make_plan_view()
+        self.assertIsNone(view._active_text_toolbar_item())
+        label = self._text_item(view, uid="c1", kind="condition_label")
+        view._selected_text_item = label
+        view._selected_text_annotation_uid = None
+        self.assertIs(view._active_text_toolbar_item(), label)
+        self.assertIs(view._selected_text_item, label)
+        plain = self._text_item(view, uid="x")
+        view._selected_text_item = plain
+        self.assertIsNone(view._active_text_toolbar_item())
+        self.assertIsNone(view._selected_text_item)
+
+    def test_the_active_toolbar_item_for_annotations_must_match_the_model(self):
+        view = self._make_plan_view()
+        text_annotation = self._annotation("t1", ANNOTATION_TYPE_TEXT)
+        dimension_annotation = self._annotation("d1", ANNOTATION_TYPE_DIMENSION)
+        rect_annotation = self._annotation("r1", "rect")
+        view._current_annotations = {
+            "t1": text_annotation,
+            "d1": dimension_annotation,
+            "r1": rect_annotation,
+        }
+        text_item = self._text_item(view, uid="t1")
+        dimension_item = self._text_item(view, uid="d1", kind=DIMENSION_LABEL_ITEM_KIND)
+        rect_item = self._text_item(view, uid="r1")
+        wrong_dimension_item = self._text_item(view, uid="d1", kind="condition_label")
+        detached = self._text_item(view, uid="t1", in_scene=False)
+        view._uid_to_items = {
+            "t1": [text_item],
+            "d1": [dimension_item],
+            "r1": [rect_item],
+        }
+
+        def select(item, uid):
+            view._selected_text_item = item
+            view._selected_text_annotation_uid = uid
+
+        select(text_item, "t1")
+        self.assertIs(view._active_text_toolbar_item(), text_item)
+        select(dimension_item, "d1")
+        self.assertIs(view._active_text_toolbar_item(), dimension_item)
+        for name, item, uid in (
+            ("detached item", detached, "t1"),
+            ("unknown annotation", text_item, "gone"),
+            (
+                "text annotation with another item",
+                self._text_item(view, uid="t1"),
+                "t1",
+            ),
+            (
+                "dimension annotation with a non-dimension item",
+                wrong_dimension_item,
+                "d1",
+            ),
+            ("annotation type without a text toolbar", rect_item, "r1"),
+        ):
+            with self.subTest(name):
+                select(item, uid)
+                self.assertIsNone(view._active_text_toolbar_item())
+                self.assertIsNone(view._selected_text_item)
+                self.assertIsNone(view._selected_text_annotation_uid)
+        with self.subTest("detached item registered for its annotation"):
+            view._uid_to_items["t1"] = [detached]
+            select(detached, "t1")
+            self.assertIsNone(view._active_text_toolbar_item())
+            self.assertIsNone(view._selected_text_item)
+
+    # ---- applying toolbar edits
+    def _condition_label_view(self, scale=1.0):
+        view = self._shown_view()
+        item = self._text_item(view, uid="c1", kind="condition_label", font_size=11)
+        view._selected_text_item = item
+        view._selected_text_annotation_uid = None
+        view._selected_text_annotation_font_scale = scale
+        calls = self._record(
+            view,
+            "_refresh_condition_text_label_layout",
+            "_persist_selected_text_annotation",
+            "_refresh_dimension_text_label_layout",
+            "_refresh_selected_text_annotation_selection_visuals",
+        )
+        return view, item, calls
+
+    def test_applying_the_format_updates_the_condition_label_font_and_layout(self):
+        view, item, calls = self._condition_label_view()
+        combo = view._condition_text_size_combo
+        combo.blockSignals(True)
+        combo.setCurrentIndex(combo.findData(TEXT_FONT_SIZES[3]))
+        combo.blockSignals(False)
+        for button in (
+            view._condition_text_bold_btn,
+            view._condition_text_italic_btn,
+            view._condition_text_underline_btn,
+        ):
+            button.blockSignals(True)
+            button.setChecked(True)
+            button.blockSignals(False)
+        view._apply_condition_text_format()
+        self.assertEqual(item.font().pointSize(), TEXT_FONT_SIZES[3])
+        self.assertTrue(item.font().bold())
+        self.assertTrue(item.font().italic())
+        self.assertTrue(item.font().underline())
+        self.assertEqual(view._selected_text_model_font_size, TEXT_FONT_SIZES[3])
+        self.assertEqual(
+            [name for name, _args, _kwargs in calls],
+            [
+                "_refresh_condition_text_label_layout",
+                "_persist_selected_text_annotation",
+                "_refresh_selected_text_annotation_selection_visuals",
+            ],
+        )
+        self.assertEqual(calls[0][1], (item,))
+
+    def test_applying_the_format_clears_flags_and_defaults_to_nine_points(self):
+        view, item, calls = self._condition_label_view()
+        bold_font = QFont("Arial", 11)
+        bold_font.setBold(True)
+        item.setFont(bold_font)
+        view._condition_text_size_combo.clear()
+        view._apply_condition_text_format()
+        self.assertEqual(item.font().pointSize(), 9)
+        self.assertFalse(item.font().bold())
+        self.assertFalse(item.font().italic())
+        self.assertFalse(item.font().underline())
+        self.assertEqual(view._selected_text_model_font_size, 9)
+
+    def test_applying_the_format_scales_the_rendered_size_but_never_below_one_point(
+        self,
+    ):
+        view, item, _calls = self._condition_label_view(scale=2.0)
+        combo = view._condition_text_size_combo
+        combo.blockSignals(True)
+        combo.setCurrentIndex(combo.findData(TEXT_FONT_SIZES[2]))
+        combo.blockSignals(False)
+        view._apply_condition_text_format()
+        self.assertEqual(item.font().pointSize(), TEXT_FONT_SIZES[2] * 2)
+        self.assertEqual(view._selected_text_model_font_size, TEXT_FONT_SIZES[2])
+        view._selected_text_annotation_font_scale = 0.01
+        view._apply_condition_text_format()
+        self.assertEqual(item.font().pointSize(), 1)
+
+    def test_applying_the_format_for_an_annotation_persists_before_refreshing_its_layout(
+        self,
+    ):
+        view = self._shown_view()
+        item = self._text_item(
+            view, uid="d1", kind=DIMENSION_LABEL_ITEM_KIND, font_size=11
+        )
+        view._current_annotations = {
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION)
+        }
+        view._uid_to_items = {"d1": [item]}
+        view._selected_text_item = item
+        view._selected_text_annotation_uid = "d1"
+        calls = self._record(
+            view,
+            "_refresh_condition_text_label_layout",
+            "_persist_selected_text_annotation",
+            "_refresh_dimension_text_label_layout",
+            "_refresh_selected_text_annotation_selection_visuals",
+        )
+        view._apply_condition_text_format()
+        self.assertEqual(
+            calls,
+            [
+                ("_persist_selected_text_annotation", (), {}),
+                ("_refresh_dimension_text_label_layout", ("d1", item), {}),
+                ("_refresh_selected_text_annotation_selection_visuals", (), {}),
+            ],
+        )
+
+    def test_applying_the_format_without_an_active_item_changes_nothing(self):
+        view = self._make_plan_view()
+        calls = self._record(view, "_persist_selected_text_annotation")
+        view._selected_text_model_font_size = 33
+        view._apply_condition_text_format()
+        self.assertEqual(calls, [])
+        self.assertEqual(view._selected_text_model_font_size, 33)
+
+    def test_signal_wrapper_applies_the_format_for_any_signal_arguments(self):
+        view = self._make_plan_view()
+        calls = self._record(view, "_apply_condition_text_format")
+        view._apply_condition_text_format_from_signal()
+        view._apply_condition_text_format_from_signal(1, "x")
+        self.assertEqual(len(calls), 2)
+
+    # ---- picking a text color
+    def _pick_view(self, uid=None):
+        view = self._shown_view()
+        if uid is None:
+            item = self._text_item(view, uid="c1", kind="condition_label")
+            view._selected_text_annotation_uid = None
+        else:
+            item = self._text_item(view, uid=uid, kind=DIMENSION_LABEL_ITEM_KIND)
+            view._current_annotations = {
+                uid: self._annotation(uid, ANNOTATION_TYPE_DIMENSION)
+            }
+            view._uid_to_items = {uid: [item]}
+            view._selected_text_annotation_uid = uid
+        view._selected_text_item = item
+        item.setDefaultTextColor(QColor("#0000ff"))
+        calls = self._record(
+            view,
+            "_refresh_condition_text_label_layout",
+            "_persist_selected_text_annotation",
+            "_refresh_dimension_text_label_layout",
+        )
+        return view, item, calls
+
+    def test_picking_a_color_for_a_condition_label_applies_and_persists_it(self):
+        view, item, calls = self._pick_view()
+        seen = []
+
+        def get_color(initial, parent):
+            seen.append((initial, parent))
+            return QColor("#ff0000")
+
+        with patch.object(QColorDialog, "getColor", get_color):
+            view._pick_condition_text_color()
+        self.assertEqual(seen, [(QColor("#0000ff"), view)])
+        self.assertEqual(item.defaultTextColor(), QColor("#ff0000"))
+        self.assertEqual(
+            view._condition_text_color_btn.toolTip(), "Text color (#ff0000)"
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("_refresh_condition_text_label_layout", (item,), {}),
+                ("_persist_selected_text_annotation", (), {}),
+            ],
+        )
+
+    def test_picking_a_color_for_an_annotation_refreshes_its_own_layout(self):
+        view, item, calls = self._pick_view(uid="d1")
+        with patch.object(
+            QColorDialog, "getColor", lambda initial, parent: QColor("#00ff00")
+        ):
+            view._pick_condition_text_color()
+        self.assertEqual(item.defaultTextColor(), QColor("#00ff00"))
+        self.assertEqual(
+            view._condition_text_color_btn.toolTip(), "Text color (#00ff00)"
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("_persist_selected_text_annotation", (), {}),
+                ("_refresh_dimension_text_label_layout", ("d1", item), {}),
+            ],
+        )
+
+    def test_cancelling_the_color_dialog_or_having_no_target_changes_nothing(self):
+        view, item, calls = self._pick_view()
+        with patch.object(QColorDialog, "getColor", lambda initial, parent: QColor()):
+            view._pick_condition_text_color()
+        self.assertEqual(item.defaultTextColor(), QColor("#0000ff"))
+        self.assertEqual(calls, [])
+        opened = []
+        view._selected_text_item = None
+        with patch.object(
+            QColorDialog,
+            "getColor",
+            lambda initial, parent: opened.append(1) or QColor("#ff0000"),
+        ):
+            view._pick_condition_text_color()
+        self.assertEqual(opened, [])
+
+    def test_a_color_chosen_after_the_target_changed_is_discarded(self):
+        def change_selection_uid(view, item):
+            view._selected_text_annotation_uid = "other"
+
+        def swap_selected_item(view, item):
+            view._selected_text_item = self._text_item(
+                view, uid="c2", kind="condition_label"
+            )
+
+        def delete_item(view, item):
+            delete(item)
+
+        def switch_to_another_dimension(view, item):
+            view._current_annotations["d2"] = self._annotation(
+                "d2", ANNOTATION_TYPE_DIMENSION
+            )
+            view._selected_text_annotation_uid = "d2"
+
+        def replace_annotation(view, item):
+            view._current_annotations["d1"] = self._annotation(
+                "d1", ANNOTATION_TYPE_DIMENSION
+            )
+
+        for name, uid, disturb in (
+            ("selection uid changed", None, change_selection_uid),
+            ("selected item replaced", None, swap_selected_item),
+            ("item deleted", None, delete_item),
+            ("annotation replaced", "d1", replace_annotation),
+            ("selection moved to another dimension", "d1", switch_to_another_dimension),
+        ):
+            with self.subTest(name):
+                view, item, calls = self._pick_view(uid=uid)
+
+                def get_color(initial, parent, view=view, item=item, disturb=disturb):
+                    disturb(view, item)
+                    return QColor("#ff0000")
+
+                with patch.object(QColorDialog, "getColor", get_color):
+                    view._pick_condition_text_color()
+                self.assertEqual(calls, [])
+                if name != "item deleted":
+                    self.assertEqual(item.defaultTextColor(), QColor("#0000ff"))
+
+    def test_a_color_chosen_after_the_view_was_deleted_is_discarded(self):
+        view = self._shown_view()
+        item = self._text_item(view, uid="c1", kind="condition_label", in_scene=False)
+        view._selected_text_item = item
+        view._selected_text_annotation_uid = None
+        item.setDefaultTextColor(QColor("#0000ff"))
+
+        def get_color(initial, parent):
+            delete(view)
+            return QColor("#ff0000")
+
+        with patch.object(QColorDialog, "getColor", get_color):
+            view._pick_condition_text_color()
+        self.assertEqual(item.defaultTextColor(), QColor("#0000ff"))
+
+    # ---- alignment edits
+    def _alignment_view(self):
+        view = self._shown_view()
+        item = self._text_item(view, uid="t1", font_size=12)
+        view._current_annotations = {"t1": self._annotation("t1")}
+        view._uid_to_items = {"t1": [item]}
+        view._selected_text_item = item
+        view._selected_text_annotation_uid = "t1"
+        calls = self._record(
+            view,
+            "_persist_selected_text_annotation",
+            "_refresh_selected_text_annotation_selection_visuals",
+        )
+        return view, item, calls
+
+    def test_setting_the_alignment_updates_the_document_buttons_and_model(self):
+        view, item, calls = self._alignment_view()
+        toggles = []
+        for button in (
+            view._condition_text_align_left_btn,
+            view._condition_text_align_center_btn,
+            view._condition_text_align_right_btn,
+        ):
+            button.toggled.connect(lambda checked, b=button: toggles.append(b))
+        view._set_condition_text_alignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.assertEqual(
+            item.document().defaultTextOption().alignment(),
+            QtCore.Qt.AlignmentFlag.AlignRight,
+        )
+        self.assertEqual(
+            [
+                view._condition_text_align_left_btn.isChecked(),
+                view._condition_text_align_center_btn.isChecked(),
+                view._condition_text_align_right_btn.isChecked(),
+            ],
+            [False, False, True],
+        )
+        self.assertEqual(toggles, [])
+        self.assertFalse(view._condition_text_align_right_btn.signalsBlocked())
+        self.assertFalse(view._condition_text_bold_btn.signalsBlocked())
+        self.assertEqual(
+            calls,
+            [
+                ("_persist_selected_text_annotation", (), {}),
+                ("_refresh_selected_text_annotation_selection_visuals", (), {}),
+            ],
+        )
+
+    def test_setting_the_alignment_is_ignored_without_an_alignable_target(self):
+        view, item, calls = self._alignment_view()
+        view._current_annotations = {
+            "t1": self._annotation("t1", ANNOTATION_TYPE_DIMENSION)
+        }
+        view._set_condition_text_alignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.assertEqual(calls, [])
+        self.assertNotEqual(
+            item.document().defaultTextOption().alignment(),
+            QtCore.Qt.AlignmentFlag.AlignRight,
+        )
+        view._current_annotations = {"t1": self._annotation("t1")}
+        view._selected_text_annotation_uid = "t1"
+        view._selected_text_item = None
+        view._set_condition_text_alignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.assertEqual(calls, [])
+
+    def test_selection_visuals_refresh_only_for_a_selected_annotation_target(self):
+        view = self._make_plan_view()
+        calls = self._record(view, "update_selection_visuals")
+        view._selected_text_annotation_uid = None
+        view._selected_uids = {"t1"}
+        view._refresh_selected_text_annotation_selection_visuals()
+        view._selected_text_annotation_uid = "t1"
+        view._selected_uids = {"other"}
+        view._refresh_selected_text_annotation_selection_visuals()
+        self.assertEqual(calls, [])
+        view._selected_uids = {"t1"}
+        view._refresh_selected_text_annotation_selection_visuals()
+        self.assertEqual(calls, [("update_selection_visuals", (), {"emit": False})])
+
+    # ---- text box geometry and font bookkeeping
+    def test_text_box_geometry_is_applied_in_scene_pixels(self):
+        view = self._make_plan_view()
+        view._scene_scale = 1.0
+        # A private coordinate system: the shared fake one is mutated by other tests.
+        view._scene_builder.get_coordinate_system = lambda: FakeCoordinateSystem()
+        item = ClippedTextGraphicsItem("Boxed", QtCore.QRectF(0.0, 0.0, 1.0, 1.0))
+        view._scene.addItem(item)
+        annotation = BidAnnotation(
+            uid="t1",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            position=[100.0, 60.0, 80.0, 24.0, 999.0],
+        )
+        view._apply_text_annotation_box_to_item(annotation, item)
+        self.assertEqual(item.pos(), QtCore.QPointF(60.0, 48.0))
+        self.assertEqual(item.textWidth(), 80.0)
+        self.assertEqual(item.transformOriginPoint(), QtCore.QPointF(40.0, 12.0))
+        self.assertEqual(item.clip_rect(), QtCore.QRectF(0.0, 0.0, 80.0, 24.0))
+
+    def test_text_box_geometry_needs_at_least_four_coordinates(self):
+        view = self._make_plan_view()
+        item = QGraphicsTextItem("Boxed")
+        item.setPos(5.0, 6.0)
+        short = BidAnnotation(
+            uid="t1", annotation_type=ANNOTATION_TYPE_TEXT, position=[100.0, 60.0, 80.0]
+        )
+        view._apply_text_annotation_box_to_item(short, item)
+        self.assertEqual(item.pos(), QtCore.QPointF(5.0, 6.0))
+        exact = BidAnnotation(
+            uid="t2",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            position=[100.0, 60.0, 80.0, 24.0],
+        )
+        view._apply_text_annotation_box_to_item(exact, item)
+        self.assertEqual(item.textWidth(), 80.0)
+
+    def test_model_font_size_prefers_the_annotation_and_falls_back_to_the_item(self):
+        view = self._make_plan_view()
+        item = self._text_item(view, font_size=8)
+        view._current_annotations = {
+            "sized": self._annotation("sized", FontSize=18),
+            "text_sized": self._annotation("text_sized", FontSize="20"),
+            "unsized": self._annotation("unsized"),
+            "zero": self._annotation("zero", FontSize=0),
+            "none": self._annotation("none", FontSize=None),
+            "negative": self._annotation("negative", FontSize=-5),
+        }
+        self.assertEqual(view._model_font_size_for_text_item(item, "sized"), 18)
+        self.assertEqual(view._model_font_size_for_text_item(item, "text_sized"), 20)
+        self.assertEqual(view._model_font_size_for_text_item(item, "unsized"), 12)
+        self.assertEqual(view._model_font_size_for_text_item(item, "zero"), 12)
+        self.assertEqual(view._model_font_size_for_text_item(item, "none"), 12)
+        self.assertEqual(view._model_font_size_for_text_item(item, "negative"), 1)
+        self.assertEqual(view._model_font_size_for_text_item(item, "missing"), 8)
+        self.assertEqual(view._model_font_size_for_text_item(item, None), 8)
+        pixel_font = QFont("Arial")
+        pixel_font.setPixelSize(13)
+        item.setFont(pixel_font)
+        self.assertEqual(view._model_font_size_for_text_item(item, None), 1)
+
+    def test_rendered_to_model_font_scale_is_a_ratio_with_a_safe_default(self):
+        view = self._make_plan_view()
+
+        def stub(point_size):
+            return SimpleNamespace(
+                font=lambda: SimpleNamespace(pointSize=lambda: point_size)
+            )
+
+        self.assertEqual(view._rendered_to_model_font_scale(stub(24), 12), 2.0)
+        self.assertEqual(view._rendered_to_model_font_scale(stub(6), 12), 0.5)
+        self.assertEqual(view._rendered_to_model_font_scale(stub(1), 4), 0.25)
+        self.assertEqual(view._rendered_to_model_font_scale(stub(3), 1), 3.0)
+        for rendered, model in (
+            (0, 12),
+            (-1, 12),
+            (24, None),
+            (24, 0),
+            (24, -3),
+            (0, 0),
+        ):
+            with self.subTest(rendered=rendered, model=model):
+                self.assertEqual(
+                    view._rendered_to_model_font_scale(stub(rendered), model), 1.0
+                )
+
+    # ---- pointer and focus checks
+    def test_toolbar_membership_covers_the_toolbar_and_its_descendants_only(self):
+        view = self._make_plan_view()
+        toolbar = view._condition_text_toolbar
+        outsider = QtWidgets.QWidget()
+        self.addCleanup(outsider.deleteLater)
+        self.assertIs(view._text_toolbar_contains_widget(toolbar), True)
+        self.assertIs(
+            view._text_toolbar_contains_widget(view._condition_text_bold_btn), True
+        )
+        self.assertIs(view._text_toolbar_contains_widget(outsider), False)
+        self.assertIs(view._text_toolbar_contains_widget(None), False)
+        view._condition_text_toolbar = None
+        self.assertIs(view._text_toolbar_contains_widget(toolbar), False)
+        self.assertIs(view._text_toolbar_contains_widget(None), False)
+
+    def test_combo_popups_count_as_open_when_either_list_is_visible(self):
+        view = self._make_plan_view()
+
+        def combo(visible):
+            return SimpleNamespace(
+                view=lambda: SimpleNamespace(isVisible=lambda: visible)
+            )
+
+        for font_open, size_open, expected in (
+            (False, False, False),
+            (True, False, True),
+            (False, True, True),
+            (True, True, True),
+        ):
+            with self.subTest(font=font_open, size=size_open):
+                view._condition_text_font_combo = combo(font_open)
+                view._condition_text_size_combo = combo(size_open)
+                self.assertIs(view._text_toolbar_combo_popup_open(), expected)
+
+    def test_a_global_point_is_in_the_toolbar_only_while_it_is_shown(self):
+        view = self._shown_view()
+        toolbar = view._condition_text_toolbar
+        toolbar.show()
+        QApplication.processEvents()
+        inside = toolbar.mapToGlobal(toolbar.rect().center())
+        outside = toolbar.mapToGlobal(
+            QtCore.QPoint(toolbar.width() + 40, toolbar.height() + 40)
+        )
+        self.assertIs(view._text_toolbar_contains_global_point(inside), True)
+        self.assertIs(view._text_toolbar_contains_global_point(outside), False)
+        toolbar.hide()
+        self.assertIs(view._text_toolbar_contains_global_point(inside), False)
+        view._condition_text_toolbar = None
+        self.assertIs(view._text_toolbar_contains_global_point(inside), False)
+
+    def test_the_toolbar_has_focus_when_focus_popup_or_pointer_is_in_it(self):
+        view = self._shown_view()
+        toolbar = view._condition_text_toolbar
+        toolbar.show()
+        QApplication.processEvents()
+        outside = QtCore.QPoint(-5000, -5000)
+        inside = toolbar.mapToGlobal(toolbar.rect().center())
+        popup = {"open": False}
+        view._text_toolbar_combo_popup_open = lambda: popup["open"]
+
+        def check(focus_widget, pointer):
+            with patch.object(
+                QApplication, "focusWidget", staticmethod(lambda: focus_widget)
+            ), patch.object(QtGui.QCursor, "pos", staticmethod(lambda: pointer)):
+                return view._text_toolbar_has_focus_or_pointer()
+
+        self.assertIs(check(None, outside), False)
+        self.assertIs(check(view._condition_text_bold_btn, outside), True)
+        self.assertIs(check(None, inside), True)
+        popup["open"] = True
+        self.assertIs(check(None, outside), True)
+
+    # ---- locating label items by uid
+    def test_uid_item_lookups_apply_their_own_kind_filters(self):
+        view = self._make_plan_view()
+        condition = self._text_item(view, uid="u", kind="condition_label")
+        named_label = self._text_item(view, uid="u", kind=NAMED_VIEW_LABEL_ITEM_KIND)
+        dimension = self._text_item(view, uid="u", kind=DIMENSION_LABEL_ITEM_KIND)
+        plain = self._text_item(view, uid="u")
+        background = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        background.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
+        wrong_rect = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        wrong_rect.setData(2, "other")
+        text_as_background = self._text_item(
+            view, uid="u", kind=NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND
+        )
+        rect_without_kind = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        rect_as_named_label = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        rect_as_named_label.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
+        view._uid_to_items = {
+            "u": [
+                condition,
+                named_label,
+                dimension,
+                plain,
+                wrong_rect,
+                text_as_background,
+                background,
+            ],
+            "empty": [],
+            "rects": [rect_without_kind, rect_as_named_label],
+        }
+        self.assertIsNone(view._text_annotation_item("rects"))
+        self.assertIsNone(view._named_view_label_item("rects"))
+        self.assertIs(view._text_annotation_item("u"), dimension)
+        self.assertIs(view._named_view_label_item("u"), named_label)
+        self.assertIs(view._named_view_label_background_item("u"), background)
+        self.assertIs(view._dimension_label_text_item("u"), dimension)
+        for lookup in (
+            view._text_annotation_item,
+            view._named_view_label_item,
+            view._named_view_label_background_item,
+            view._dimension_label_text_item,
+        ):
+            self.assertIsNone(lookup("missing"))
+            self.assertIsNone(lookup("empty"))
+        view._uid_to_items = {"u": [condition, named_label]}
+        self.assertIsNone(view._text_annotation_item("u"))
+        view._uid_to_items = {"u": [plain, dimension]}
+        self.assertIs(view._text_annotation_item("u"), plain)
+
+    def test_a_scene_point_is_in_a_named_view_label_when_inside_its_bounds(self):
+        view = self._make_plan_view()
+        label = self._text_item(
+            view, uid="n1", kind=NAMED_VIEW_LABEL_ITEM_KIND, pos=(100.0, 50.0)
+        )
+        view._uid_to_items = {"n1": [label]}
+        inside = label.sceneBoundingRect().center()
+        outside = QtCore.QPointF(label.sceneBoundingRect().right() + 30.0, inside.y())
+        self.assertIs(view._named_view_label_contains_scene_point("n1", inside), True)
+        self.assertIs(view._named_view_label_contains_scene_point("n1", outside), False)
+        self.assertIs(
+            view._named_view_label_contains_scene_point("none", inside), False
+        )
+
+    # ---- selecting and restoring toolbar targets
+    def test_selecting_a_text_annotation_label_needs_its_item_and_a_text_annotation(
+        self,
+    ):
+        view = self._make_plan_view()
+        item = self._text_item(view, uid="t1")
+        calls = self._record(view, "_show_text_toolbar_for_item")
+        view._uid_to_items = {"t1": [item], "d1": [self._text_item(view, uid="d1")]}
+        view._current_annotations = {
+            "t1": self._annotation("t1"),
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION),
+            "orphan": self._annotation("orphan"),
+        }
+        self.assertIs(view._select_text_annotation_label("t1"), True)
+        self.assertEqual(
+            calls, [("_show_text_toolbar_for_item", (item,), {"annotation_uid": "t1"})]
+        )
+        calls.clear()
+        for uid in ("d1", "orphan", "missing"):
+            with self.subTest(uid):
+                self.assertIs(view._select_text_annotation_label(uid), False)
+        view._uid_to_items["t1"] = [item]
+        view._current_annotations.pop("t1")
+        self.assertIs(view._select_text_annotation_label("t1"), False)
+        self.assertEqual(calls, [])
+
+    def test_restoring_the_text_annotation_toolbar_needs_a_selected_text_annotation(
+        self,
+    ):
+        view = self._make_plan_view()
+        calls = self._record(view, "_select_text_annotation_label")
+        view._current_annotations = {
+            "t1": self._annotation("t1"),
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION),
+        }
+        view._selected_uids = {"t1", "d1", "missing"}
+        for uid in (None, "missing", "d1"):
+            view._restore_selected_text_annotation_toolbar(uid)
+        view._selected_uids = {"d1"}
+        view._restore_selected_text_annotation_toolbar("t1")
+        self.assertEqual(calls, [])
+        view._selected_uids = {"t1"}
+        view._restore_selected_text_annotation_toolbar("t1")
+        self.assertEqual(calls, [("_select_text_annotation_label", ("t1",), {})])
+
+    def test_the_selected_dimension_target_is_its_uid_only_for_a_dimension_label(self):
+        view = self._make_plan_view()
+        label = self._text_item(view, uid="d1", kind=DIMENSION_LABEL_ITEM_KIND)
+        other = self._text_item(view, uid="d1", kind="condition_label")
+        view._current_annotations = {
+            "d1": self._annotation("d1", ANNOTATION_TYPE_DIMENSION),
+            "t1": self._annotation("t1"),
+        }
+        view._selected_text_item = label
+        view._selected_text_annotation_uid = "d1"
+        self.assertEqual(view._selected_dimension_text_label_target(), "d1")
+        view._selected_text_item = None
+        self.assertIsNone(view._selected_dimension_text_label_target())
+        view._selected_text_item = label
+        view._selected_text_annotation_uid = None
+        self.assertIsNone(view._selected_dimension_text_label_target())
+        view._selected_text_annotation_uid = "d1"
+        view._selected_text_item = other
+        self.assertIsNone(view._selected_dimension_text_label_target())
+        view._selected_text_item = label
+        view._selected_text_annotation_uid = "t1"
+        self.assertIsNone(view._selected_dimension_text_label_target())
+        view._selected_text_annotation_uid = "gone"
+        self.assertIsNone(view._selected_dimension_text_label_target())
+
+    def test_restoring_the_dimension_toolbar_needs_a_uid_and_a_label_item(self):
+        view = self._make_plan_view()
+        item = self._text_item(view, uid="d1", kind=DIMENSION_LABEL_ITEM_KIND)
+        calls = self._record(view, "_show_text_toolbar_for_item")
+        view._uid_to_items = {"d1": [item], None: [item]}
+        view._restore_selected_dimension_text_label_toolbar(None)
+        view._restore_selected_dimension_text_label_toolbar("missing")
+        self.assertEqual(calls, [])
+        view._restore_selected_dimension_text_label_toolbar("d1")
+        self.assertEqual(
+            calls, [("_show_text_toolbar_for_item", (item,), {"annotation_uid": "d1"})]
+        )
+
+    def test_the_selected_condition_label_target_is_its_takeoff_uid_and_label_kind(
+        self,
+    ):
+        view = self._make_plan_view()
+        label = self._text_item(view, uid=12, kind="condition_label", label_kind="name")
+        view._selected_text_item = label
+        view._selected_text_annotation_uid = None
+        self.assertEqual(view._selected_condition_text_label_target(), ("12", "name"))
+        view._selected_text_annotation_uid = "t1"
+        self.assertIsNone(view._selected_condition_text_label_target())
+        view._selected_text_annotation_uid = None
+        view._selected_text_item = None
+        self.assertIsNone(view._selected_condition_text_label_target())
+        view._selected_text_item = self._text_item(
+            view, uid=12, kind="other", label_kind="name"
+        )
+        self.assertIsNone(view._selected_condition_text_label_target())
+        view._selected_text_item = self._text_item(
+            view, uid=None, kind="condition_label", label_kind="name"
+        )
+        self.assertIsNone(view._selected_condition_text_label_target())
+        view._selected_text_item = self._text_item(view, uid=12, kind="condition_label")
+        self.assertIsNone(view._selected_condition_text_label_target())
+
+    def test_restoring_the_condition_toolbar_needs_a_target_and_a_label_item(self):
+        view = self._make_plan_view()
+        item = self._text_item(
+            view, uid="12", kind="condition_label", label_kind="name"
+        )
+        calls = self._record(
+            view,
+            "_show_text_toolbar_for_item",
+            "_condition_label_text_item",
+            results={"_condition_label_text_item": item},
+        )
+        view._restore_selected_condition_text_label_toolbar(None)
+        self.assertEqual(calls, [])
+        view._restore_selected_condition_text_label_toolbar(("12", "name"))
+        self.assertEqual(
+            calls,
+            [
+                ("_condition_label_text_item", ("12", "name"), {}),
+                ("_show_text_toolbar_for_item", (item,), {"annotation_uid": None}),
+            ],
+        )
+        calls.clear()
+        view._condition_label_text_item = lambda uid, kind: None
+        view._restore_selected_condition_text_label_toolbar(("12", "name"))
+        self.assertEqual(calls, [])
+
+
+class TakeoffPlanViewInlineEditTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Inline text and named-view editing: starting, ownership, drafts and teardown."""
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    def _editable_view(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        return view
+
+    def _named_view_setup(self, view, uid="n1", text="Lobby"):
+        annotation = BidAnnotation(
+            uid=uid,
+            annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            page_uid="p1",
+            position=[30.0, 40.0, 10.0, 15.0, 30.0, 15.0, 10.0, 40.0],
+            color="#008000",
+            width=2.0,
+            properties={"Text": text},
+            visible=True,
+        )
+        items = view._named_view_draft_items(annotation)
+        for item in items:
+            view._scene.addItem(item)
+        view._current_annotations[uid] = annotation
+        view._uid_to_items[uid] = items
+        return annotation, items
+
+    # ---- starting an inline edit on an item
+    def test_beginning_an_inline_edit_prepares_the_item_for_typing(self):
+        view = self._editable_view()
+        view.show()
+        QApplication.processEvents()
+        item = QGraphicsTextItem("old")
+        view._scene.addItem(item)
+        cursor_calls = []
+        view._update_cursor = lambda *args: cursor_calls.append(args)
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        view._begin_inline_text_edit_for_item(
+            item, "new text", cursor_pos=QtCore.QPoint(3, 4), emit_mode_changed=True
+        )
+        self.assertEqual(view._editing_text_original, "new text")
+        self.assertEqual(item.toPlainText(), "new text")
+        self.assertIs(view._inline_text_lifetime_item, item)
+        self.assertIs(view._editing_text_document, item.document())
+        self.assertEqual(
+            item.textInteractionFlags(),
+            QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+        self.assertTrue(item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsFocusable)
+        self.assertIs(view._scene.focusItem(), item)
+        self.assertEqual(cursor_calls, [(QtCore.QPoint(3, 4),)])
+        self.assertEqual(modes, [True])
+
+    def test_beginning_an_inline_edit_without_a_cursor_position_or_mode_signal(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("old")
+        view._scene.addItem(item)
+        cursor_calls = []
+        view._update_cursor = lambda *args: cursor_calls.append(args)
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        view._begin_inline_text_edit_for_item(item, "", emit_mode_changed=False)
+        self.assertEqual(item.toPlainText(), "")
+        self.assertEqual(cursor_calls, [])
+        self.assertEqual(modes, [])
+
+    def test_the_inline_edit_follows_the_item_lifetime(self):
+        view = self._editable_view()
+        first = QGraphicsTextItem("one")
+        second = QGraphicsTextItem("two")
+        view._scene.addItem(first)
+        view._scene.addItem(second)
+        view._begin_inline_text_edit_for_item(first, "one", emit_mode_changed=False)
+        view._begin_inline_text_edit_for_item(
+            first, "one again", emit_mode_changed=False
+        )
+        self.assertIs(view._inline_text_lifetime_item, first)
+        view._begin_inline_text_edit_for_item(second, "two", emit_mode_changed=False)
+        self.assertIs(view._inline_text_lifetime_item, second)
+        delete(first)
+        self.assertIs(view._inline_text_lifetime_item, second)
+        delete(second)
+        self.assertIsNone(view._inline_text_lifetime_item)
+
+    def test_switching_items_releases_the_previous_item_lifetime_once(self):
+        view = self._editable_view()
+        first = QGraphicsTextItem("one")
+        second = QGraphicsTextItem("two")
+        view._scene.addItem(first)
+        view._scene.addItem(second)
+        released = []
+        original = view._clear_inline_text_item_lifetime
+        view._clear_inline_text_item_lifetime = lambda: (
+            released.append(1),
+            original(),
+        )[1]
+        view._begin_inline_text_edit_for_item(first, "one", emit_mode_changed=False)
+        self.assertEqual(len(released), 1)
+        view._begin_inline_text_edit_for_item(first, "one", emit_mode_changed=False)
+        self.assertEqual(len(released), 1)
+        view._begin_inline_text_edit_for_item(second, "two", emit_mode_changed=False)
+        self.assertEqual(len(released), 2)
+
+    def test_the_edit_target_is_set_and_reset_together(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("x")
+        view._set_inline_text_edit_target(
+            text_annotation_uid="t1", named_view_uid="n1", named_view_item=item
+        )
+        self.assertEqual(view._editing_text_annotation_uid, "t1")
+        self.assertEqual(view._editing_named_view_uid, "n1")
+        self.assertIs(view._editing_named_view_item, item)
+        view._set_inline_text_edit_target()
+        self.assertIsNone(view._editing_text_annotation_uid)
+        self.assertIsNone(view._editing_named_view_uid)
+        self.assertIsNone(view._editing_named_view_item)
+
+    def test_entering_inline_edit_only_leaves_annotation_placement_mode(self):
+        view = self._editable_view()
+        modes = []
+        view.cursor_mode_change_requested.connect(modes.append)
+        applied = self._record(view, "_apply_cursor_mode")
+        view._cursor_mode = CURSOR_MODE_SELECT
+        view._enter_inline_text_edit_cursor_mode()
+        view._cursor_mode = CURSOR_MODE_PLACE
+        view._enter_inline_text_edit_cursor_mode()
+        self.assertEqual((applied, modes), ([], []))
+        view._cursor_mode = CURSOR_MODE_ANNOTATION_PLACE
+        view._enter_inline_text_edit_cursor_mode()
+        self.assertEqual(applied, [("_apply_cursor_mode", (CURSOR_MODE_SELECT,), {})])
+        self.assertEqual(modes, [CURSOR_MODE_SELECT])
+
+    # ---- editing an existing text annotation
+    def _text_edit_view(self):
+        view = self._editable_view()
+        annotation, item = self._add_text_annotation(view, uid="a1", text="Before")
+        annotation.properties["Text"] = "Before"
+        return view, annotation, item
+
+    def test_beginning_a_text_annotation_edit_hands_the_model_text_to_the_item(self):
+        view, annotation, item = self._text_edit_view()
+        view._last_mouse_vp_pos = QtCore.QPoint(7, 8)
+        calls = self._record(
+            view,
+            "_finish_named_view_rename",
+            "_finish_text_annotation_edit",
+            "_enter_inline_text_edit_cursor_mode",
+            "_begin_inline_text_edit_for_item",
+        )
+        annotation.properties["Text"] = 123
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        self.assertEqual(
+            calls,
+            [
+                ("_finish_named_view_rename", (), {"commit": True}),
+                ("_enter_inline_text_edit_cursor_mode", (), {}),
+                (
+                    "_begin_inline_text_edit_for_item",
+                    (item, "123"),
+                    {"cursor_pos": QtCore.QPoint(7, 8), "emit_mode_changed": True},
+                ),
+            ],
+        )
+        self.assertEqual(view._editing_text_annotation_uid, "a1")
+        self.assertIs(view._selected_text_item, item)
+
+    def test_beginning_a_text_annotation_edit_commits_a_different_edit_first(self):
+        view, annotation, item = self._text_edit_view()
+        other_annotation, other_item = self._add_text_annotation(
+            view, uid="a2", text="Other"
+        )
+        view._uid_to_items = {"a1": [item], "a2": [other_item]}
+        view._current_annotations = {"a1": annotation, "a2": other_annotation}
+        calls = self._record(
+            view,
+            "_finish_named_view_rename",
+            "_finish_text_annotation_edit",
+            "_begin_inline_text_edit_for_item",
+        )
+        view._editing_text_annotation_uid = "a2"
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        self.assertEqual(
+            [name for name, _a, _k in calls],
+            [
+                "_finish_named_view_rename",
+                "_finish_text_annotation_edit",
+                "_begin_inline_text_edit_for_item",
+            ],
+        )
+        self.assertEqual(calls[1][2], {"commit": True})
+        self.assertEqual(calls[2][2]["emit_mode_changed"], False)
+        calls.clear()
+        view._editing_text_annotation_uid = "a1"
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        self.assertNotIn(
+            "_finish_text_annotation_edit", [name for name, _a, _k in calls]
+        )
+        self.assertEqual(calls[-1][2]["emit_mode_changed"], False)
+
+    def test_beginning_a_text_annotation_edit_needs_permission_and_a_text_target(self):
+        view, annotation, item = self._text_edit_view()
+        calls = self._record(
+            view, "_finish_named_view_rename", "_begin_inline_text_edit_for_item"
+        )
+        view._text_annotation_inline_edit_enabled = False
+        self.assertIs(view._begin_text_annotation_edit("a1"), False)
+        view._text_annotation_inline_edit_enabled = True
+        self.assertEqual(calls, [])
+        self.assertIs(view._begin_text_annotation_edit("missing"), False)
+        self.assertEqual(
+            [name for name, _a, _k in calls], ["_finish_named_view_rename"]
+        )
+        calls.clear()
+        view._select_text_annotation_label = lambda uid: True
+        view._selected_text_item = None
+        self.assertIs(view._begin_text_annotation_edit("a1"), False)
+        view._selected_text_item = item
+        view._current_annotations = {}
+        self.assertIs(view._begin_text_annotation_edit("a1"), False)
+        self.assertNotIn(
+            "_begin_inline_text_edit_for_item", [name for name, _a, _k in calls]
+        )
+        self.assertIsNone(view._editing_text_annotation_uid)
+
+    def test_beginning_an_edit_does_not_reuse_a_stale_toolbar_selection(self):
+        view, annotation, item = self._text_edit_view()
+        view._current_annotations["d1"] = BidAnnotation(
+            uid="d1",
+            annotation_type=ANNOTATION_TYPE_DIMENSION,
+            position=[0.0, 0.0, 255.0, 0.0],
+        )
+        view._selected_text_item = item
+        calls = self._record(view, "_begin_inline_text_edit_for_item")
+        self.assertIs(view._begin_text_annotation_edit("d1"), False)
+        self.assertEqual(calls, [])
+        self.assertIsNone(view._editing_text_annotation_uid)
+
+    def test_finishing_a_draft_whose_annotation_vanished_does_not_fail(self):
+        view = self._editable_view()
+        self.assertIs(
+            view.begin_text_annotation_draft([1.0, 2.0, 30.0, 40.0], "p1"), True
+        )
+        uid = view._draft_text_annotation_uid
+        item = view._uid_to_items[uid][0]
+        item.setPlainText("typed")
+        view._current_annotations.pop(uid)
+        created = []
+        view.text_annotation_created.connect(lambda *args: created.append(args))
+        view._finish_text_annotation_edit(commit=True)
+        self.assertEqual(created, [])
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    # ---- building a text item from model properties
+    def test_a_text_item_is_built_from_the_annotation_properties(self):
+        view = self._editable_view()
+        view._scene_builder.get_coordinate_system = lambda: FakeCoordinateSystem()
+        annotation = BidAnnotation(
+            uid="t7",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            position=[100.0, 60.0, 80.0, 24.0],
+            color="#336699",
+            properties={
+                "FontName": "Courier New",
+                "FontSize": 16,
+                "FontBold": True,
+                "FontItalic": True,
+                "FontUnderline": True,
+                "TextAlign": 2,
+            },
+        )
+        item = view._text_annotation_item_from_properties(annotation)
+        self.assertIsInstance(item, ClippedTextGraphicsItem)
+        self.assertEqual(item.data(0), "t7")
+        self.assertEqual(item.toPlainText(), "")
+        self.assertEqual(item.font().family(), "Courier New")
+        self.assertEqual(item.font().pointSize(), 12)
+        self.assertTrue(item.font().bold())
+        self.assertTrue(item.font().italic())
+        self.assertTrue(item.font().underline())
+        self.assertEqual(item.defaultTextColor(), QColor("#336699"))
+        option = item.document().defaultTextOption()
+        self.assertEqual(option.alignment(), QtCore.Qt.AlignmentFlag.AlignRight)
+        self.assertEqual(
+            option.wrapMode(), QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+        )
+        self.assertEqual(item.zValue(), ANNOTATION_BODY_Z)
+        self.assertEqual(item.pos(), QtCore.QPointF(60.0, 48.0))
+        self.assertEqual(item.textWidth(), 80.0)
+        self.assertEqual(item.clip_rect(), QtCore.QRectF(0.0, 0.0, 80.0, 24.0))
+
+    def test_a_text_item_uses_documented_defaults_for_missing_properties(self):
+        view = self._editable_view()
+        annotation = BidAnnotation(
+            uid="t8",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            position=[100.0, 60.0, 80.0, 24.0],
+            color="#000000",
+            properties={},
+        )
+        item = view._text_annotation_item_from_properties(annotation)
+        self.assertEqual(item.font().family(), "Arial")
+        self.assertEqual(item.font().pointSize(), 9)
+        self.assertFalse(item.font().bold())
+        self.assertFalse(item.font().italic())
+        self.assertFalse(item.font().underline())
+        self.assertEqual(
+            item.document().defaultTextOption().alignment(),
+            QtCore.Qt.AlignmentFlag.AlignLeft,
+        )
+
+    def test_a_text_item_maps_alignment_codes_and_empty_sizes(self):
+        view = self._editable_view()
+        flags = QtCore.Qt.AlignmentFlag
+        cases = (
+            ({"TextAlign": 0}, flags.AlignLeft),
+            ({"TextAlign": 1}, flags.AlignCenter),
+            ({"TextAlign": 2}, flags.AlignRight),
+            ({"TextAlign": 3}, flags.AlignLeft),
+            ({"TextAlign": None}, flags.AlignLeft),
+            ({"TextAlign": "1"}, flags.AlignCenter),
+        )
+        for properties, expected in cases:
+            with self.subTest(properties):
+                annotation = BidAnnotation(
+                    uid="t9",
+                    annotation_type=ANNOTATION_TYPE_TEXT,
+                    position=[100.0, 60.0, 80.0, 24.0],
+                    properties=dict(properties),
+                )
+                item = view._text_annotation_item_from_properties(annotation)
+                self.assertEqual(
+                    item.document().defaultTextOption().alignment(), expected
+                )
+        for size, expected_points in (
+            (0, 9),
+            (None, 9),
+            (1, 1),
+            (2, 1),
+            (4, 3),
+            (40, 30),
+        ):
+            with self.subTest(size=size):
+                annotation = BidAnnotation(
+                    uid="t9",
+                    annotation_type=ANNOTATION_TYPE_TEXT,
+                    position=[100.0, 60.0, 80.0, 24.0],
+                    properties={"FontSize": size},
+                )
+                item = view._text_annotation_item_from_properties(annotation)
+                self.assertEqual(item.font().pointSize(), expected_points)
+
+    # ---- text annotation drafts
+    def test_a_text_draft_needs_a_page_a_full_box_and_permission(self):
+        view = self._editable_view()
+        self.assertIs(view.begin_text_annotation_draft([1.0, 2.0, 3.0, 4.0], ""), False)
+        self.assertIs(view.begin_text_annotation_draft([1.0, 2.0, 3.0], "p1"), False)
+        self.assertIsNone(view._draft_text_annotation_uid)
+        view._text_annotation_inline_edit_enabled = False
+        self.assertIs(
+            view.begin_text_annotation_draft([1.0, 2.0, 3.0, 4.0], "p1"), False
+        )
+        self.assertIsNone(view._draft_text_annotation_uid)
+        view._text_annotation_inline_edit_enabled = True
+        self.assertIs(
+            view.begin_text_annotation_draft([1.0, 2.0, 3.0, 4.0], "p1"), True
+        )
+
+    def test_a_text_draft_is_registered_selected_and_opened_for_editing(self):
+        view = self._editable_view()
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        revision = view.selection_revision
+        view._last_mouse_vp_pos = QtCore.QPoint(5, 6)
+        cursor_calls = []
+        original_update_cursor = view._update_cursor
+        view._update_cursor = lambda *args: (
+            cursor_calls.append(args),
+            original_update_cursor(*args),
+        )[1]
+        position = [100.0, 60.0, 80.0, 24.0, 555.0]
+        self.assertIs(view.begin_text_annotation_draft(position, "p1"), True)
+        uid = view._draft_text_annotation_uid
+        self.assertTrue(uid.startswith("__text_draft__"))
+        annotation = view._current_annotations[uid]
+        self.assertEqual(annotation.annotation_type, "text")
+        self.assertEqual(annotation.page_uid, "p1")
+        self.assertEqual(annotation.position, [100.0, 60.0, 80.0, 24.0])
+        self.assertEqual(annotation.width, 0.0)
+        self.assertTrue(annotation.visible)
+        self.assertEqual(annotation.properties["Text"], "")
+        self.assertEqual(
+            annotation.color,
+            plan_view_module.int_color_to_hex(int(annotation.properties["FontColor"])),
+        )
+        item = view._uid_to_items[uid][0]
+        self.assertIs(item.scene(), view._scene)
+        self.assertEqual(view._selected_uids, {uid})
+        self.assertGreater(view.selection_revision, revision)
+        self.assertTrue(view._selection_items)
+        self.assertIs(view._selected_text_item, item)
+        self.assertEqual(view._selected_text_annotation_uid, uid)
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertEqual(view._editing_text_annotation_uid, uid)
+        self.assertIs(view._inline_text_lifetime_item, item)
+        self.assertEqual(modes, [True])
+        self.assertEqual(cursor_calls[-1], (QtCore.QPoint(5, 6),))
+
+    def test_a_text_draft_leaves_annotation_placement_mode_for_editing(self):
+        view = self._editable_view()
+        view._cursor_mode = CURSOR_MODE_ANNOTATION_PLACE
+        modes = []
+        view.cursor_mode_change_requested.connect(modes.append)
+        self.assertIs(
+            view.begin_text_annotation_draft([1.0, 2.0, 30.0, 40.0], "p1"), True
+        )
+        self.assertEqual(modes, [CURSOR_MODE_SELECT])
+
+    def test_a_new_text_draft_commits_other_edits_and_replaces_the_old_draft(self):
+        view = self._editable_view()
+        calls = self._record(
+            view, "_finish_named_view_rename", "_finish_text_annotation_edit"
+        )
+        self.assertIs(
+            view.begin_text_annotation_draft([1.0, 2.0, 30.0, 40.0], "p1"), True
+        )
+        self.assertEqual(calls, [("_finish_named_view_rename", (), {"commit": True})])
+        first = view._draft_text_annotation_uid
+        first_item = view._uid_to_items[first][0]
+        calls.clear()
+        view._editing_text_annotation_uid = None
+        self.assertIs(
+            view.begin_text_annotation_draft([5.0, 6.0, 30.0, 40.0], "p1"), True
+        )
+        second = view._draft_text_annotation_uid
+        self.assertNotEqual(first, second)
+        self.assertNotIn(first, view._current_annotations)
+        self.assertNotIn(first, view._uid_to_items)
+        self.assertIsNone(first_item.scene())
+        self.assertEqual(view._selected_uids, {second})
+        self.assertEqual(calls, [("_finish_named_view_rename", (), {"commit": True})])
+        calls.clear()
+        view._editing_text_annotation_uid = "other"
+        self.assertIs(
+            view.begin_text_annotation_draft([5.0, 6.0, 30.0, 40.0], "p1"), True
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("_finish_named_view_rename", (), {"commit": True}),
+                ("_finish_text_annotation_edit", (), {"commit": True}),
+            ],
+        )
+
+    def test_draft_uid_checks_need_a_non_empty_matching_uid(self):
+        view = self._editable_view()
+        self.assertIs(view._is_text_annotation_draft_uid(""), False)
+        self.assertIs(view._is_text_annotation_draft_uid(None), False)
+        view._draft_text_annotation_uid = ""
+        self.assertIs(view._is_text_annotation_draft_uid(""), False)
+        view._draft_text_annotation_uid = "d1"
+        self.assertIs(view._is_text_annotation_draft_uid("d1"), True)
+        self.assertIs(view._is_text_annotation_draft_uid("d2"), False)
+        self.assertIs(view._is_named_view_draft_uid(""), False)
+        view._draft_named_view_uid = ""
+        self.assertIs(view._is_named_view_draft_uid(""), False)
+        view._draft_named_view_uid = "n1"
+        self.assertIs(view._is_named_view_draft_uid("n1"), True)
+        self.assertIs(view._is_named_view_draft_uid("n2"), False)
+
+    def test_removing_a_text_draft_clears_its_traces(self):
+        view = self._editable_view()
+        view._remove_text_annotation_draft()
+        self.assertIs(
+            view.begin_text_annotation_draft([1.0, 2.0, 30.0, 40.0], "p1"), True
+        )
+        uid = view._draft_text_annotation_uid
+        item = view._uid_to_items[uid][0]
+        view._remove_text_annotation_draft()
+        self.assertIsNone(view._draft_text_annotation_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertNotIn(uid, view._uid_to_items)
+        self.assertNotIn(uid, view._selected_uids)
+        self.assertIsNone(item.scene())
+        self.assertIsNone(view._editing_text_annotation_uid)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        self.assertEqual(view._selection_items, [])
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_removing_a_text_draft_keeps_other_selection_and_edit_state(self):
+        view = self._editable_view()
+        self.assertIs(
+            view.begin_text_annotation_draft([1.0, 2.0, 30.0, 40.0], "p1"), True
+        )
+        uid = view._draft_text_annotation_uid
+        view._editing_text_annotation_uid = "other"
+        view._selected_text_annotation_uid = "other"
+        view._selected_text_item = QGraphicsTextItem("keep")
+        view._selected_uids = {uid, "keep"}
+        detached = QGraphicsTextItem("detached")
+        view._uid_to_items[uid] = [detached] + view._uid_to_items[uid]
+        view._remove_text_annotation_draft()
+        self.assertEqual(view._editing_text_annotation_uid, "other")
+        self.assertEqual(view._selected_text_annotation_uid, "other")
+        self.assertIsNotNone(view._selected_text_item)
+        self.assertEqual(view._selected_uids, {"keep"})
+
+    # ---- clearing and releasing the edit
+    def test_clearing_the_edit_state_returns_the_item_to_read_only_use(self):
+        view, annotation, item = self._text_edit_view()
+        view._selected_uids = {"a1"}
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        self._select_document_text(item)
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        cursor_calls = []
+        view._update_cursor = lambda *args: cursor_calls.append(args)
+        view._clear_inline_text_edit_state(item=item, text_annotation_uid="a1")
+        self.assertFalse(item.textCursor().hasSelection())
+        self.assertEqual(
+            item.textInteractionFlags(), QtCore.Qt.TextInteractionFlag.NoTextInteraction
+        )
+        self.assertFalse(item.hasFocus())
+        self.assertIsNone(view._selected_text_item)
+        self.assertEqual(view._editing_text_original, "")
+        self.assertIsNone(view._editing_text_annotation_uid)
+        self.assertIsNone(view._inline_text_lifetime_item)
+        self.assertIsNone(view._editing_text_document)
+        self.assertEqual(cursor_calls, [()])
+        self.assertEqual(modes, [False])
+
+    def test_clearing_the_edit_state_uses_the_active_item_when_none_is_given(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        view._clear_inline_text_edit_state()
+        self.assertEqual(
+            item.textInteractionFlags(), QtCore.Qt.TextInteractionFlag.NoTextInteraction
+        )
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_clearing_the_edit_state_keeps_the_toolbar_for_another_annotation(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        view._clear_inline_text_edit_state(item=item, text_annotation_uid="other")
+        self.assertIs(view._selected_text_item, item)
+        view._clear_inline_text_edit_state(item=item)
+        self.assertIs(view._selected_text_item, item)
+        view._clear_inline_text_edit_state(item=item, text_annotation_uid="a1")
+        self.assertIsNone(view._selected_text_item)
+
+    def test_clearing_the_edit_state_after_the_owner_was_destroyed_touches_nothing_live(
+        self,
+    ):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        cursor_calls = []
+        view._update_cursor = lambda *args: cursor_calls.append(args)
+        view._clear_inline_text_edit_state(item=item, owner_destroyed=True)
+        self.assertEqual(
+            item.textInteractionFlags(),
+            QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+        self.assertEqual(cursor_calls, [])
+        self.assertEqual(modes, [False])
+        quiet = self._editable_view()
+        quiet_modes = []
+        quiet.text_annotation_edit_mode_changed.connect(quiet_modes.append)
+        quiet._clear_inline_text_edit_state()
+        self.assertEqual(quiet_modes, [])
+
+    def test_releasing_the_ownership_forgets_the_item_document_and_target(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("x")
+        view._scene.addItem(item)
+        view._begin_inline_text_edit_for_item(item, "x", emit_mode_changed=False)
+        view._set_inline_text_edit_target(text_annotation_uid="t1")
+        released = []
+        original = view._clear_inline_text_item_lifetime
+        view._clear_inline_text_item_lifetime = lambda: (
+            released.append(1),
+            original(),
+        )[1]
+        view._release_inline_text_edit_ownership()
+        self.assertEqual(released, [1])
+        self.assertIsNone(view._inline_text_lifetime_item)
+        self.assertIsNone(view._editing_text_document)
+        self.assertIsNone(view._editing_text_annotation_uid)
+        self.assertEqual(view._editing_text_original, "")
+
+    def test_the_item_lifetime_hook_is_disconnected_when_released(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("x")
+        view._scene.addItem(item)
+        view._begin_inline_text_edit_for_item(item, "x", emit_mode_changed=False)
+        view._clear_inline_text_item_lifetime()
+        view._clear_inline_text_document()
+        self.assertIsNone(view._inline_text_lifetime_item)
+        destroyed = []
+        view._on_inline_text_owner_destroyed = lambda owner: destroyed.append(owner)
+        delete(item)
+        self.assertEqual(destroyed, [])
+        view._clear_inline_text_item_lifetime()
+
+    def test_destroying_the_edited_item_clears_the_toolbar_target_and_edit_state(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        view._selected_text_model_font_size = 14
+        view._selected_text_annotation_font_scale = 2.0
+        pruned = self._record(view, "_prune_deleted_page_overlay_items")
+        view._on_inline_text_item_destroyed()
+        self.assertIsNone(view._inline_text_lifetime_item)
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertIsNone(view._selected_text_model_font_size)
+        self.assertEqual(view._selected_text_annotation_font_scale, 1.0)
+        self.assertEqual(len(pruned), 1)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_destroying_another_item_keeps_the_toolbar_target(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        view._selected_text_model_font_size = 14
+        view._selected_text_annotation_font_scale = 2.0
+        view._on_inline_text_owner_destroyed(QGraphicsTextItem("someone else"))
+        self.assertIs(view._selected_text_item, item)
+        self.assertEqual(view._selected_text_annotation_uid, "a1")
+        self.assertEqual(view._selected_text_model_font_size, 14)
+        self.assertEqual(view._selected_text_annotation_font_scale, 2.0)
+
+    def test_destroying_the_edited_document_releases_the_edit(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        owners = []
+        view._on_inline_text_owner_destroyed = lambda owner: owners.append(owner)
+        view._on_inline_text_document_destroyed()
+        self.assertIsNone(view._editing_text_document)
+        self.assertEqual(owners, [item])
+
+    def test_the_owner_destroyed_path_does_not_touch_the_cursor_or_item(self):
+        view = self._editable_view()
+        updates = []
+        view._update_cursor = lambda *args: updates.append(args)
+        calls = self._record(view, "_clear_inline_text_edit_state")
+        view._on_inline_text_owner_destroyed(None)
+        self.assertEqual(
+            calls, [("_clear_inline_text_edit_state", (), {"owner_destroyed": True})]
+        )
+
+    # ---- the inline document
+    def test_the_inline_document_is_tracked_and_released_once(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("x")
+        document = item.document()
+        refreshes = []
+        view._refresh_active_inline_text_visuals = lambda: refreshes.append(1)
+        view._set_inline_text_document(document)
+        self.assertIs(view._editing_text_document, document)
+        view._set_inline_text_document(document)
+        self.assertIs(view._editing_text_document, document)
+        view._clear_inline_text_document()
+        self.assertIsNone(view._editing_text_document)
+        view._clear_inline_text_document()
+
+    def test_the_inline_document_connections_refresh_visuals_until_cleared(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("x")
+        view._scene.addItem(item)
+        refreshed = []
+        original = TakeoffPlanView._refresh_active_inline_text_visuals
+        with patch.object(
+            TakeoffPlanView,
+            "_refresh_active_inline_text_visuals",
+            lambda self: refreshed.append(1),
+        ):
+            view._set_inline_text_document(item.document())
+            item.setPlainText("typed")
+            self.assertEqual(len(refreshed), 1)
+            view._clear_inline_text_document()
+            item.setPlainText("typed more")
+            self.assertEqual(len(refreshed), 1)
+        self.assertIsNotNone(original)
+
+    def test_swapping_the_inline_document_disconnects_the_previous_one(self):
+        view = self._editable_view()
+        first = QGraphicsTextItem("one")
+        second = QGraphicsTextItem("two")
+        destroyed = []
+        view._on_inline_text_document_destroyed = lambda: destroyed.append(1)
+        view._set_inline_text_document(first.document())
+        view._set_inline_text_document(second.document())
+        self.assertIs(view._editing_text_document, second.document())
+        delete(first)
+        self.assertEqual(destroyed, [])
+        view._clear_inline_text_document()
+
+    def test_clearing_a_deleted_document_does_not_fail(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("x")
+        view._editing_text_document = item.document()
+        item_document = item.document()
+        delete(item)
+        self.assertFalse(isValid(item_document))
+        view._clear_inline_text_document()
+        self.assertIsNone(view._editing_text_document)
+
+    def test_active_inline_edits_refresh_selection_and_named_view_background(self):
+        view = self._editable_view()
+        calls = self._record(
+            view,
+            "_refresh_selected_text_annotation_selection_visuals",
+            "_refresh_named_view_label_background",
+        )
+        view._refresh_active_inline_text_visuals()
+        self.assertEqual(
+            calls, [("_refresh_selected_text_annotation_selection_visuals", (), {})]
+        )
+        calls.clear()
+        view._editing_named_view_uid = "n1"
+        view._refresh_active_inline_text_visuals()
+        self.assertEqual(
+            calls,
+            [
+                ("_refresh_selected_text_annotation_selection_visuals", (), {}),
+                ("_refresh_named_view_label_background", ("n1",), {}),
+            ],
+        )
+
+    # ---- focus changes
+    def test_losing_focus_to_something_else_commits_the_inline_edit(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        calls = self._record(
+            view,
+            "_finish_active_inline_text_edit",
+            "_text_toolbar_has_focus_or_pointer",
+            results={"_text_toolbar_has_focus_or_pointer": False},
+        )
+        other = QGraphicsTextItem("other")
+        reason = QtCore.Qt.FocusReason.MouseFocusReason
+        view._on_scene_focus_item_changed(other, item, reason)
+        self.assertEqual(
+            [name for name, _a, _k in calls],
+            ["_text_toolbar_has_focus_or_pointer", "_finish_active_inline_text_edit"],
+        )
+        self.assertEqual(calls[-1][2], {"commit": True})
+        calls.clear()
+        view._on_scene_focus_item_changed(None, item, reason)
+        self.assertEqual(calls[-1][0], "_finish_active_inline_text_edit")
+
+    def test_focus_changes_that_keep_the_edit_alive_do_not_commit(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        calls = self._record(
+            view,
+            "_finish_active_inline_text_edit",
+            "_text_toolbar_has_focus_or_pointer",
+            results={"_text_toolbar_has_focus_or_pointer": False},
+        )
+        reason = QtCore.Qt.FocusReason.MouseFocusReason
+        other = QGraphicsTextItem("other")
+        view._on_scene_focus_item_changed(item, other, reason)
+        view._on_scene_focus_item_changed(other, other, reason)
+        view._on_scene_focus_item_changed(item, item, reason)
+        view._text_toolbar_has_focus_or_pointer = lambda: True
+        view._on_scene_focus_item_changed(None, item, reason)
+        idle = self._editable_view()
+        idle_calls = self._record(idle, "_finish_active_inline_text_edit")
+        idle._on_scene_focus_item_changed(None, item, reason)
+        self.assertEqual(calls, [])
+        self.assertEqual(idle_calls, [])
+
+    # ---- where the active editor is
+    def test_the_inline_editor_contains_a_point_only_for_the_edited_annotation(self):
+        view = self._editable_view()
+        calls = []
+        view._text_annotation_contains_scene_point = lambda uid, pos: (
+            calls.append((uid, pos)) or True
+        )
+        point = QtCore.QPointF(3.0, 4.0)
+        self.assertIs(
+            view._inline_text_annotation_editor_contains_scene_point(point), False
+        )
+        self.assertEqual(calls, [])
+        view._editing_text_annotation_uid = "t1"
+        self.assertIs(
+            view._inline_text_annotation_editor_contains_scene_point(point), True
+        )
+        self.assertEqual(calls, [("t1", point)])
+
+    def test_the_inline_box_contains_a_point_when_inside_the_text_item(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("Hello")
+        item.setData(0, "t1")
+        item.setPos(100.0, 50.0)
+        view._scene.addItem(item)
+        view._uid_to_items = {"t1": [item]}
+        inside = item.sceneBoundingRect().center()
+        outside = QtCore.QPointF(item.sceneBoundingRect().right() + 20.0, inside.y())
+        self.assertIs(
+            view._inline_text_annotation_box_contains_scene_point(inside), False
+        )
+        view._editing_text_annotation_uid = "t1"
+        self.assertIs(
+            view._inline_text_annotation_box_contains_scene_point(inside), True
+        )
+        self.assertIs(
+            view._inline_text_annotation_box_contains_scene_point(outside), False
+        )
+        view._editing_text_annotation_uid = "missing"
+        self.assertIs(
+            view._inline_text_annotation_box_contains_scene_point(inside), False
+        )
+
+    def test_the_active_editor_contains_a_point_through_its_own_check(self):
+        view = self._editable_view()
+        point = QtCore.QPointF(1.0, 2.0)
+        view._inline_text_annotation_editor_contains_scene_point = (
+            lambda pos: pos == point
+        )
+        calls = []
+        view._named_view_label_contains_scene_point = lambda uid, pos: (
+            calls.append((uid, pos)) or True
+        )
+        self.assertIs(
+            view._active_inline_text_editor_contains_scene_point(point), False
+        )
+        view._editing_text_annotation_uid = "t1"
+        self.assertIs(view._active_inline_text_editor_contains_scene_point(point), True)
+        self.assertIs(
+            view._active_inline_text_editor_contains_scene_point(
+                QtCore.QPointF(9.0, 9.0)
+            ),
+            False,
+        )
+        view._editing_text_annotation_uid = None
+        view._editing_named_view_uid = "n1"
+        self.assertIs(view._active_inline_text_editor_contains_scene_point(point), True)
+        self.assertEqual(calls, [("n1", point)])
+
+    def test_the_active_inline_item_depends_on_what_is_being_edited(self):
+        view = self._editable_view()
+        text_item = QGraphicsTextItem("t")
+        text_item.setData(0, "t1")
+        named_item = QGraphicsTextItem("n")
+        view._uid_to_items = {"t1": [text_item]}
+        self.assertIsNone(view._active_inline_text_item())
+        view._editing_named_view_uid = "n1"
+        view._editing_named_view_item = named_item
+        self.assertIs(view._active_inline_text_item(), named_item)
+        view._editing_text_annotation_uid = "t1"
+        self.assertIs(view._active_inline_text_item(), text_item)
+
+    def test_clearing_the_text_cursor_selection_only_acts_on_selected_text(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("Hello world")
+        view._clear_inline_text_item_selection(None)
+        view._clear_inline_text_item_selection(item)
+        self.assertFalse(item.textCursor().hasSelection())
+        self._select_document_text(item)
+        self.assertTrue(item.textCursor().hasSelection())
+        view._clear_inline_text_item_selection(item)
+        self.assertFalse(item.textCursor().hasSelection())
+
+    def test_finishing_the_active_edit_routes_to_the_matching_finisher(self):
+        view = self._editable_view()
+        calls = self._record(
+            view, "_finish_named_view_rename", "_finish_text_annotation_edit"
+        )
+        view._finish_active_inline_text_edit(False)
+        self.assertEqual(calls, [("_finish_text_annotation_edit", (False,), {})])
+        calls.clear()
+        view._editing_named_view_uid = "n1"
+        view._finish_active_inline_text_edit(True)
+        self.assertEqual(calls, [("_finish_named_view_rename", (True,), {})])
+
+    # ---- named view drafts
+    def test_named_view_draft_items_cover_the_corner_bounds(self):
+        view = self._editable_view()
+        annotation = BidAnnotation(
+            uid="n9",
+            annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            position=[20.0, 20.0, 30.0, 20.0, 30.0, 30.0, 10.0, 50.0],
+            color="#336699",
+            width=2.0,
+            properties={"Text": ""},
+        )
+        rect_item, background, label = view._named_view_draft_items(annotation)
+        self.assertEqual(rect_item.rect(), QtCore.QRectF(10.0, 20.0, 20.0, 30.0))
+        self.assertEqual(rect_item.brush().color().alpha(), 0)
+        self.assertEqual(rect_item.pen().color(), QColor("#336699"))
+        self.assertEqual(rect_item.pen().widthF(), 2.0)
+        self.assertTrue(rect_item.pen().isCosmetic())
+        self.assertEqual(rect_item.zValue(), ANNOTATION_BODY_Z)
+        self.assertEqual(rect_item.data(0), "n9")
+        self.assertEqual(background.rect(), QtCore.QRectF(10.0, 20.0, 1.0, 1.0))
+        self.assertEqual(background.brush().color(), QColor("#336699"))
+        self.assertEqual(background.pen().style(), QtCore.Qt.PenStyle.NoPen)
+        self.assertEqual(background.zValue(), NAMED_VIEW_LABEL_BACKGROUND_Z)
+        self.assertEqual(background.data(0), "n9")
+        self.assertEqual(background.data(2), NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
+        self.assertEqual(label.toPlainText(), "")
+        self.assertEqual(
+            label.font(),
+            create_named_view_label_font(view._scene_builder.get_coordinate_system()),
+        )
+        self.assertEqual(label.defaultTextColor(), QColor("white"))
+        self.assertEqual(label.pos(), QtCore.QPointF(9.0, 19.0))
+        self.assertEqual(label.zValue(), NAMED_VIEW_LABEL_Z)
+        self.assertEqual(label.data(0), "n9")
+        self.assertEqual(label.data(2), NAMED_VIEW_LABEL_ITEM_KIND)
+
+    def test_named_view_draft_bounds_use_every_corner(self):
+        view = self._editable_view()
+        corners = {
+            "last corner is the minimum x": [
+                30.0,
+                20.0,
+                40.0,
+                20.0,
+                40.0,
+                50.0,
+                10.0,
+                30.0,
+            ],
+            "first corner is the maximum y": [
+                30.0,
+                80.0,
+                40.0,
+                20.0,
+                40.0,
+                50.0,
+                35.0,
+                30.0,
+            ],
+            "third corner is the minimum y": [
+                30.0,
+                40.0,
+                40.0,
+                30.0,
+                45.0,
+                5.0,
+                35.0,
+                30.0,
+            ],
+        }
+        expected = {
+            "last corner is the minimum x": QtCore.QRectF(10.0, 20.0, 30.0, 30.0),
+            "first corner is the maximum y": QtCore.QRectF(30.0, 20.0, 10.0, 60.0),
+            "third corner is the minimum y": QtCore.QRectF(30.0, 5.0, 15.0, 35.0),
+        }
+        for name, position in corners.items():
+            with self.subTest(name):
+                annotation = BidAnnotation(
+                    uid="n9",
+                    annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+                    position=position,
+                    color="#336699",
+                    properties={"Text": ""},
+                )
+                self.assertEqual(
+                    view._named_view_draft_items(annotation)[0].rect(), expected[name]
+                )
+
+    def test_a_named_view_draft_needs_a_page_two_points_of_corners_and_permission(self):
+        view = self._editable_view()
+        position = [30.0, 40.0, 10.0, 15.0, 30.0, 15.0, 10.0, 40.0]
+        self.assertIs(view.begin_named_view_draft(position, ""), False)
+        self.assertIs(view.begin_named_view_draft(position[:7], "p1"), False)
+        self.assertIsNone(view._draft_named_view_uid)
+        view._text_annotation_inline_edit_enabled = False
+        self.assertIs(view.begin_named_view_draft(position, "p1"), False)
+        self.assertIsNone(view._draft_named_view_uid)
+        view._text_annotation_inline_edit_enabled = True
+        self.assertIs(view.begin_named_view_draft(position, "p1"), True)
+
+    def test_a_named_view_draft_is_registered_selected_and_opened_for_naming(self):
+        view = self._editable_view()
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        revision = view.selection_revision
+        position = [30.0, 40.0, 10.0, 15.0, 30.0, 15.0, 10.0, 40.0, 777.0]
+        self.assertIs(view.begin_named_view_draft(position, "p1"), True)
+        uid = view._draft_named_view_uid
+        self.assertTrue(uid.startswith("__named_view_draft__"))
+        annotation = view._current_annotations[uid]
+        color, _width = annotation_default_style("namedview")
+        self.assertEqual(annotation.annotation_type, "namedview")
+        self.assertEqual(annotation.page_uid, "p1")
+        self.assertEqual(annotation.position, position[:8])
+        self.assertEqual(annotation.color, color)
+        self.assertEqual(annotation.width, 2.0)
+        self.assertEqual(annotation.properties, {"Text": ""})
+        self.assertTrue(annotation.visible)
+        items = view._uid_to_items[uid]
+        self.assertEqual(len(items), 3)
+        for item in items:
+            self.assertIs(item.scene(), view._scene)
+        self.assertEqual(view._selected_uids, {uid})
+        self.assertGreater(view.selection_revision, revision)
+        self.assertTrue(view._selection_items)
+        self.assertEqual(view._editing_named_view_uid, uid)
+        self.assertEqual(modes, [True])
+
+    def test_a_new_named_view_draft_finishes_other_edits_and_replaces_the_old_draft(
+        self,
+    ):
+        view = self._editable_view()
+        position = [30.0, 40.0, 10.0, 15.0, 30.0, 15.0, 10.0, 40.0]
+        calls = self._record(
+            view, "_finish_text_annotation_edit", "_finish_named_view_rename"
+        )
+        self.assertIs(view.begin_named_view_draft(position, "p1"), True)
+        self.assertEqual(
+            calls, [("_finish_text_annotation_edit", (), {"commit": True})] * 2
+        )
+        first = view._draft_named_view_uid
+        first_items = list(view._uid_to_items[first])
+        calls.clear()
+        view._editing_named_view_uid = None
+        self.assertIs(view.begin_named_view_draft(position, "p1"), True)
+        self.assertNotIn(first, view._current_annotations)
+        self.assertNotIn(first, view._uid_to_items)
+        self.assertTrue(all(item.scene() is None for item in first_items))
+        calls.clear()
+        view._editing_named_view_uid = "other"
+        self.assertIs(view.begin_named_view_draft(position, "p1"), True)
+        self.assertEqual(
+            calls,
+            [
+                ("_finish_text_annotation_edit", (), {"commit": True}),
+                ("_finish_named_view_rename", (), {"commit": True}),
+                ("_finish_text_annotation_edit", (), {"commit": True}),
+                ("_finish_named_view_rename", (), {"commit": True}),
+            ],
+        )
+
+    def test_removing_a_named_view_draft_clears_its_items_and_edit(self):
+        view = self._editable_view()
+        view._remove_named_view_draft()
+        position = [30.0, 40.0, 10.0, 15.0, 30.0, 15.0, 10.0, 40.0]
+        self.assertIs(view.begin_named_view_draft(position, "p1"), True)
+        uid = view._draft_named_view_uid
+        items = list(view._uid_to_items[uid])
+        view._selected_uids.add("keep")
+        view._remove_named_view_draft()
+        self.assertIsNone(view._draft_named_view_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertNotIn(uid, view._uid_to_items)
+        self.assertEqual(view._selected_uids, {"keep"})
+        self.assertTrue(all(item.scene() is None for item in items))
+        self.assertEqual(view._selection_items, [])
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_removing_a_named_view_draft_leaves_other_edits_and_foreign_items_alone(
+        self,
+    ):
+        view = self._editable_view()
+        position = [30.0, 40.0, 10.0, 15.0, 30.0, 15.0, 10.0, 40.0]
+        self.assertIs(view.begin_named_view_draft(position, "p1"), True)
+        uid = view._draft_named_view_uid
+        view._editing_named_view_uid = "other"
+        released = self._record(view, "_clear_inline_text_edit_state")
+        foreign = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        view._uid_to_items[uid].append(foreign)
+        view._remove_named_view_draft()
+        self.assertEqual(released, [])
+        self.assertIsNone(foreign.scene())
+
+    def test_renaming_a_named_view_opens_its_label_for_typing(self):
+        view = self._editable_view()
+        annotation, items = self._named_view_setup(view, text="Lobby")
+        label = items[2]
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        view._selected_text_item = QGraphicsTextItem("toolbar target")
+        view._selected_text_annotation_uid = "x"
+        calls = self._record(
+            view, "_finish_text_annotation_edit", "_finish_named_view_rename"
+        )
+        self.assertIs(view._begin_named_view_rename("n1"), True)
+        self.assertEqual(
+            calls, [("_finish_text_annotation_edit", (), {"commit": True})]
+        )
+        self.assertEqual(label.toPlainText(), "Lobby")
+        self.assertEqual(view._editing_named_view_uid, "n1")
+        self.assertIs(view._editing_named_view_item, label)
+        self.assertIsNone(view._selected_text_item)
+        self.assertEqual(modes, [True])
+        self.assertTrue(items[1].rect().width() > 1.0)
+        self.assertEqual(
+            label.textInteractionFlags(),
+            QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+
+    def test_renaming_while_another_name_is_edited_commits_that_name_first(self):
+        view = self._editable_view()
+        annotation, items = self._named_view_setup(view)
+        calls = self._record(
+            view, "_finish_text_annotation_edit", "_finish_named_view_rename"
+        )
+        view._editing_named_view_uid = "other"
+        self.assertIs(view._begin_named_view_rename("n1"), True)
+        self.assertEqual(
+            calls,
+            [
+                ("_finish_text_annotation_edit", (), {"commit": True}),
+                ("_finish_named_view_rename", (), {"commit": True}),
+            ],
+        )
+        calls.clear()
+        view._editing_named_view_uid = "n1"
+        self.assertIs(view._begin_named_view_rename("n1"), True)
+        self.assertEqual(
+            calls, [("_finish_text_annotation_edit", (), {"commit": True})]
+        )
+
+    def test_renaming_an_already_edited_name_does_not_signal_a_new_edit_mode(self):
+        view = self._editable_view()
+        self._named_view_setup(view)
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        view._editing_named_view_uid = "n1"
+        self.assertIs(view._begin_named_view_rename("n1"), True)
+        self.assertEqual(modes, [])
+
+    def test_renaming_leaves_annotation_placement_mode(self):
+        view = self._editable_view()
+        self._named_view_setup(view)
+        view._cursor_mode = CURSOR_MODE_ANNOTATION_PLACE
+        modes = []
+        view.cursor_mode_change_requested.connect(modes.append)
+        self.assertIs(view._begin_named_view_rename("n1"), True)
+        self.assertEqual(modes, [CURSOR_MODE_SELECT])
+
+    def test_renaming_needs_permission_a_label_and_a_named_view_annotation(self):
+        view = self._editable_view()
+        annotation, items = self._named_view_setup(view)
+        calls = self._record(view, "_finish_text_annotation_edit")
+        view._text_annotation_inline_edit_enabled = False
+        self.assertIs(view._begin_named_view_rename("n1"), False)
+        self.assertEqual(calls, [])
+        view._text_annotation_inline_edit_enabled = True
+        self.assertIs(view._begin_named_view_rename("missing"), False)
+        view._uid_to_items["n2"] = [QGraphicsRectItem()]
+        view._current_annotations["n2"] = BidAnnotation(
+            uid="n2", annotation_type=ANNOTATION_TYPE_NAMED_VIEW, position=[0.0] * 8
+        )
+        self.assertIs(view._begin_named_view_rename("n2"), False)
+        label = QGraphicsTextItem("x")
+        label.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
+        view._uid_to_items["n3"] = [label]
+        self.assertIs(view._begin_named_view_rename("n3"), False)
+        view._current_annotations["n3"] = self._annotation_of_type(
+            "n3", ANNOTATION_TYPE_TEXT
+        )
+        self.assertIs(view._begin_named_view_rename("n3"), False)
+        self.assertIsNone(view._editing_named_view_uid)
+
+    def _annotation_of_type(self, uid, annotation_type):
+        return BidAnnotation(
+            uid=uid, annotation_type=annotation_type, position=[0.0] * 8
+        )
+
+    def test_the_item_destroyed_hook_alone_releases_the_edit(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        view._clear_inline_text_document()
+        view._editing_text_original = "typed"
+        delete(item)
+        self.assertIsNone(view._inline_text_lifetime_item)
+        self.assertIsNone(view._editing_text_annotation_uid)
+        self.assertEqual(view._editing_text_original, "")
+        self.assertIsNone(view._selected_text_item)
+
+    def test_a_text_item_without_a_box_keeps_its_one_pixel_clip_rect(self):
+        view = self._editable_view()
+        annotation = BidAnnotation(
+            uid="t5",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            position=[1.0, 2.0],
+            properties={},
+        )
+        item = view._text_annotation_item_from_properties(annotation)
+        self.assertEqual(item.clip_rect(), QtCore.QRectF(0.0, 0.0, 1.0, 1.0))
+
+    def test_clearing_the_edit_state_without_an_annotation_uid_keeps_a_label_target(
+        self,
+    ):
+        view = self._editable_view()
+        label = QGraphicsTextItem("label")
+        label.setData(2, "condition_label")
+        view._selected_text_item = label
+        view._selected_text_annotation_uid = None
+        view._clear_inline_text_edit_state()
+        self.assertIs(view._selected_text_item, label)
+
+    def test_removing_drafts_that_do_not_exist_changes_nothing(self):
+        view = self._editable_view()
+        marker = QGraphicsRectItem(0.0, 0.0, 4.0, 4.0)
+        view._scene.addItem(marker)
+        view._selection_items.append(marker)
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        view._remove_text_annotation_draft()
+        view._remove_named_view_draft()
+        self.assertEqual(view._selection_items, [marker])
+        self.assertIs(marker.scene(), view._scene)
+        self.assertEqual(modes, [])
+
+    def test_a_focus_change_without_an_inline_edit_never_commits(self):
+        view = self._editable_view()
+        calls = self._record(
+            view,
+            "_finish_active_inline_text_edit",
+            "_text_toolbar_has_focus_or_pointer",
+            results={"_text_toolbar_has_focus_or_pointer": False},
+        )
+        view._on_scene_focus_item_changed(
+            QGraphicsTextItem("new"), None, QtCore.Qt.FocusReason.MouseFocusReason
+        )
+        self.assertEqual(calls, [])
+
+    def test_the_inline_box_check_ignores_items_registered_under_no_uid(self):
+        view = self._editable_view()
+        item = QGraphicsTextItem("Hello")
+        view._scene.addItem(item)
+        view._uid_to_items = {None: [item]}
+        self.assertIs(
+            view._inline_text_annotation_box_contains_scene_point(
+                item.sceneBoundingRect().center()
+            ),
+            False,
+        )
+
+    def test_finishing_a_text_edit_ignores_re_entrant_calls(self):
+        view, annotation, item = self._text_edit_view()
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        item.setPlainText("After")
+        persisted = []
+
+        def persist(uid, edited_item, text_override=None):
+            persisted.append(text_override)
+            view._finish_text_annotation_edit(commit=True)
+
+        view._persist_text_annotation = persist
+        view._finish_text_annotation_edit(commit=True)
+        self.assertEqual(persisted, ["After"])
+        self.assertFalse(view._finishing_text_annotation_edit)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+
+class _UpdateRecordingTextItem(QGraphicsTextItem):
+    """Text item that counts the repaint requests made on it."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.update_calls = 0
+
+    def update(self, *args):
+        self.update_calls += 1
+        super().update(*args)
+
+
+class TakeoffPlanViewConditionLabelLayoutTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Placement of condition dimension/name labels around their takeoff path."""
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    def _triangle_path(self):
+        path = QPainterPath()
+        path.moveTo(0.0, 0.0)
+        path.lineTo(90.0, 0.0)
+        path.lineTo(0.0, 90.0)
+        path.closeSubpath()
+        return path
+
+    def _label(self, kind, uid="t1", text="Label 12"):
+        item = _UpdateRecordingTextItem(text)
+        item.setData(0, uid)
+        item.setData(2, "condition_label")
+        item.setData(3, kind)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        return item
+
+    def _layout_view(
+        self, condition_type=Condition.TYPE_LINEAR, with_dimension=True, with_name=True
+    ):
+        view = self._make_plan_view()
+        path_item = QGraphicsPathItem(self._triangle_path())
+        path_item.setData(0, "t1")
+        view._scene.addItem(path_item)
+        items = [path_item]
+        dimension = name = None
+        if with_dimension:
+            dimension = self._label("display_dimension", text="12' - 3\"")
+            view._scene.addItem(dimension)
+            items.append(dimension)
+        if with_name:
+            name = self._label("display_name", text="Wall type A")
+            view._scene.addItem(name)
+            items.append(name)
+        view._uid_to_items = {"t1": items}
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+            )
+        }
+        view._current_conditions = {
+            "c1": Condition(uid="c1", condition_type=condition_type)
+        }
+        return view, path_item, dimension, name
+
+    # ---- item and path lookups
+    def test_a_takeoffs_condition_comes_from_its_condition_uid(self):
+        view, _path, _dimension, _name = self._layout_view(Condition.TYPE_AREA)
+        self.assertIs(
+            view._condition_label_condition("t1"), view._current_conditions["c1"]
+        )
+        self.assertIsNone(view._condition_label_condition("missing"))
+        view._current_conditions = {}
+        self.assertIsNone(view._condition_label_condition("t1"))
+
+    def test_condition_label_lookup_filters_by_kind_and_exclusion(self):
+        view, _path, dimension, name = self._layout_view()
+        other_dimension = self._label("display_dimension")
+        plain_text = QGraphicsTextItem("plain")
+        plain_text.setData(3, "display_dimension")
+        wrong_kind_rect = QGraphicsRectItem()
+        wrong_kind_rect.setData(2, "condition_label")
+        wrong_kind_rect.setData(3, "display_dimension")
+        view._uid_to_items["t1"] += [other_dimension]
+        view._uid_to_items["t2"] = [plain_text, wrong_kind_rect]
+        self.assertIs(
+            view._condition_label_text_item("t1", "display_dimension"), dimension
+        )
+        self.assertIs(view._condition_label_text_item("t1", "display_name"), name)
+        self.assertIs(
+            view._condition_label_text_item(
+                "t1", "display_dimension", exclude=dimension
+            ),
+            other_dimension,
+        )
+        self.assertIsNone(view._condition_label_text_item("t1", "display_other"))
+        self.assertIsNone(view._condition_label_text_item("t2", "display_dimension"))
+        self.assertIsNone(
+            view._condition_label_text_item("missing", "display_dimension")
+        )
+
+    def test_the_takeoff_path_item_is_the_first_path_that_is_not_a_label(self):
+        view, path_item, dimension, name = self._layout_view()
+        label_path = QGraphicsPathItem(self._triangle_path())
+        label_path.setData(2, "condition_label")
+        view._uid_to_items["t1"] = [dimension, label_path, name, path_item]
+        self.assertIs(view._condition_label_takeoff_path_item("t1"), path_item)
+        self.assertIsNone(view._condition_label_takeoff_path_item("missing"))
+        view._uid_to_items["t1"] = [dimension, label_path]
+        self.assertIsNone(view._condition_label_takeoff_path_item("t1"))
+        rect = QGraphicsRectItem()
+        view._uid_to_items["t1"] = [rect]
+        self.assertIsNone(view._condition_label_takeoff_path_item("t1"))
+
+    def test_the_path_centroid_uses_move_and_line_points_only(self):
+        view = self._make_plan_view()
+        centroid = view._condition_label_path_centroid(self._triangle_path())
+        self.assertAlmostEqual(centroid[0], 30.0)
+        self.assertAlmostEqual(centroid[1], 30.0)
+        curved = QPainterPath()
+        curved.moveTo(0.0, 0.0)
+        curved.lineTo(60.0, 0.0)
+        curved.cubicTo(70.0, 10.0, 80.0, 20.0, 60.0, 600.0)
+        curved.lineTo(0.0, 60.0)
+        centroid = view._condition_label_path_centroid(curved)
+        self.assertAlmostEqual(centroid[0], 20.0)
+        self.assertAlmostEqual(centroid[1], 20.0)
+
+    def test_a_path_with_fewer_than_three_points_has_no_centroid(self):
+        view = self._make_plan_view()
+        two_points = QPainterPath()
+        two_points.moveTo(0.0, 0.0)
+        two_points.lineTo(10.0, 20.0)
+        self.assertIsNone(view._condition_label_path_centroid(two_points))
+        three_points = QPainterPath()
+        three_points.moveTo(0.0, 0.0)
+        three_points.lineTo(30.0, 0.0)
+        three_points.lineTo(0.0, 30.0)
+        self.assertEqual(
+            tuple(
+                round(value, 6)
+                for value in view._condition_label_path_centroid(three_points)
+            ),
+            (10.0, 10.0),
+        )
+        self.assertIsNone(view._condition_label_path_centroid(QPainterPath()))
+
+    # ---- placing the labels
+    def test_the_dimension_label_is_centred_on_the_path_centroid(self):
+        view, path_item, dimension, _name = self._layout_view()
+        bounds = dimension.boundingRect()
+        view._position_condition_text_label(dimension, path_item.path(), None)
+        self.assertAlmostEqual(dimension.pos().x(), 30.0 - bounds.width() / 2.0)
+        self.assertAlmostEqual(dimension.pos().y(), 30.0 - bounds.height() / 2.0)
+
+    def test_the_dimension_label_falls_back_to_the_bounding_box_centre(self):
+        view, _path_item, dimension, _name = self._layout_view()
+        line = QPainterPath()
+        line.moveTo(0.0, 0.0)
+        line.lineTo(10.0, 20.0)
+        bounds = dimension.boundingRect()
+        view._position_condition_text_label(dimension, line, None)
+        self.assertAlmostEqual(dimension.pos().x(), 5.0 - bounds.width() / 2.0)
+        self.assertAlmostEqual(dimension.pos().y(), 10.0 - bounds.height() / 2.0)
+
+    def test_an_area_name_label_sits_below_its_dimension_label(self):
+        view, path_item, dimension, name = self._layout_view(Condition.TYPE_AREA)
+        dimension.setPos(40.0, 10.0)
+        dim_bounds = dimension.boundingRect()
+        name_bounds = name.boundingRect()
+        view._position_condition_text_label(
+            name, path_item.path(), view._current_conditions["c1"]
+        )
+        self.assertAlmostEqual(
+            name.pos().x(), 40.0 + dim_bounds.width() / 2.0 - name_bounds.width() / 2.0
+        )
+        self.assertAlmostEqual(name.pos().y(), 10.0 + dim_bounds.height() + 4.0)
+
+    def test_an_area_name_label_without_a_dimension_label_uses_the_centroid(self):
+        view, path_item, _dimension, name = self._layout_view(
+            Condition.TYPE_AREA, with_dimension=False
+        )
+        bounds = name.boundingRect()
+        view._position_condition_text_label(
+            name, path_item.path(), view._current_conditions["c1"]
+        )
+        self.assertAlmostEqual(name.pos().x(), 30.0 - bounds.width() / 2.0)
+        self.assertAlmostEqual(name.pos().y(), 30.0 - bounds.height() / 2.0)
+        line = QPainterPath()
+        line.moveTo(0.0, 0.0)
+        line.lineTo(10.0, 20.0)
+        view._position_condition_text_label(name, line, view._current_conditions["c1"])
+        self.assertAlmostEqual(name.pos().x(), 5.0 - bounds.width() / 2.0)
+        self.assertAlmostEqual(name.pos().y(), 10.0 - bounds.height() / 2.0)
+
+    def test_other_name_labels_hang_below_the_path_bounds(self):
+        view, _path_item, _dimension, name = self._layout_view(Condition.TYPE_LINEAR)
+        wide = QPainterPath()
+        wide.moveTo(0.0, 0.0)
+        wide.lineTo(100.0, 0.0)
+        wide.lineTo(100.0, 50.0)
+        wide.lineTo(0.0, 50.0)
+        wide.closeSubpath()
+        bounds = name.boundingRect()
+        for condition in (view._current_conditions["c1"], None):
+            with self.subTest(condition=condition):
+                view._position_condition_text_label(name, wide, condition)
+                self.assertAlmostEqual(name.pos().x(), 50.0 - bounds.width() / 2.0)
+                self.assertAlmostEqual(name.pos().y(), 54.0)
+
+    # ---- refreshing the labels of one takeoff
+    def test_refreshing_a_takeoff_repositions_and_repaints_both_labels(self):
+        view, path_item, dimension, name = self._layout_view(Condition.TYPE_AREA)
+        viewport_updates = []
+        view.viewport().update = lambda *a: viewport_updates.append(a)
+        dimension.update_calls = 0
+        name.update_calls = 0
+        view._refresh_condition_text_labels_for_takeoff("t1")
+        dim_bounds = dimension.boundingRect()
+        name_bounds = name.boundingRect()
+        self.assertAlmostEqual(dimension.pos().x(), 30.0 - dim_bounds.width() / 2.0)
+        self.assertAlmostEqual(dimension.pos().y(), 30.0 - dim_bounds.height() / 2.0)
+        self.assertAlmostEqual(
+            name.pos().x(),
+            dimension.pos().x() + dim_bounds.width() / 2.0 - name_bounds.width() / 2.0,
+        )
+        self.assertAlmostEqual(
+            name.pos().y(), dimension.pos().y() + dim_bounds.height() + 4.0
+        )
+        self.assertEqual((dimension.update_calls, name.update_calls), (1, 1))
+        self.assertEqual(len(viewport_updates), 1)
+
+    def test_refreshing_a_takeoff_with_one_label_only_repaints_that_label(self):
+        for with_dimension, with_name in ((True, False), (False, True)):
+            with self.subTest(dimension=with_dimension, name=with_name):
+                view, _path, dimension, name = self._layout_view(
+                    with_dimension=with_dimension, with_name=with_name
+                )
+                viewport_updates = []
+                view.viewport().update = lambda *a: viewport_updates.append(a)
+                label = dimension or name
+                label.update_calls = 0
+                view._refresh_condition_text_labels_for_takeoff("t1")
+                self.assertEqual(label.update_calls, 1)
+                self.assertEqual(len(viewport_updates), 1)
+
+    def test_refreshing_a_takeoff_without_labels_or_path_does_nothing(self):
+        view, path_item, dimension, name = self._layout_view(
+            with_dimension=False, with_name=False
+        )
+        viewport_updates = []
+        view.viewport().update = lambda *a: viewport_updates.append(a)
+        view._refresh_condition_text_labels_for_takeoff("t1")
+        self.assertEqual(viewport_updates, [])
+        view, path_item, dimension, name = self._layout_view()
+        viewport_updates = []
+        view.viewport().update = lambda *a: viewport_updates.append(a)
+        dimension.setPos(500.0, 500.0)
+        view._uid_to_items["t1"] = [dimension, name]
+        view._refresh_condition_text_labels_for_takeoff("t1")
+        self.assertEqual(dimension.pos(), QtCore.QPointF(500.0, 500.0))
+        self.assertEqual(viewport_updates, [])
+
+    def test_refreshing_one_label_refreshes_its_takeoff_and_selects_it(self):
+        view, path_item, dimension, name = self._layout_view()
+        calls = self._record(view, "_refresh_condition_text_labels_for_takeoff")
+        viewport_updates = []
+        view.viewport().update = lambda *a: viewport_updates.append(a)
+        name.update_calls = 0
+        view._refresh_condition_text_label_layout(name)
+        self.assertEqual(
+            calls, [("_refresh_condition_text_labels_for_takeoff", ("t1",), {})]
+        )
+        self.assertTrue(name.isSelected())
+        self.assertEqual(name.update_calls, 1)
+        self.assertEqual(len(viewport_updates), 1)
+
+    def test_refreshing_something_that_is_not_a_condition_label_does_nothing(self):
+        view, path_item, dimension, name = self._layout_view()
+        calls = self._record(view, "_refresh_condition_text_labels_for_takeoff")
+        plain = _UpdateRecordingTextItem("plain")
+        plain.setData(0, "t1")
+        plain.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        view._refresh_condition_text_label_layout(plain)
+        self.assertEqual(calls, [])
+        self.assertFalse(plain.isSelected())
+        self.assertEqual(plain.update_calls, 0)
+
+
+class TakeoffPlanViewTextStylePersistenceTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Persisting text styling from the toolbar into takeoffs and annotations."""
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    def _styled_takeoff(self):
+        return Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            dimension_font_name="DimFont",
+            dimension_font_color=11,
+            dimension_font_size=12,
+            dimension_font_bold=True,
+            dimension_font_italic=False,
+            dimension_font_underline=True,
+            name_font_name="NameFont",
+            name_font_color=21,
+            name_font_size=22,
+            name_font_bold=False,
+            name_font_italic=True,
+            name_font_underline=False,
+        )
+
+    def test_takeoff_text_style_values_are_read_by_key(self):
+        view = self._make_plan_view()
+        takeoff = self._styled_takeoff()
+        expected = {
+            "dimension_font_name": "DimFont",
+            "dimension_font_color": 11,
+            "dimension_font_size": 12,
+            "dimension_font_bold": True,
+            "dimension_font_italic": False,
+            "dimension_font_underline": True,
+            "name_font_name": "NameFont",
+            "name_font_color": 21,
+            "name_font_size": 22,
+            "name_font_bold": False,
+            "name_font_italic": True,
+            "name_font_underline": False,
+        }
+        for key, value in expected.items():
+            with self.subTest(key):
+                actual = view._takeoff_text_style_value(takeoff, key)
+                self.assertEqual(actual, value)
+                self.assertIs(type(actual), type(value))
+        with self.assertRaises(KeyError):
+            view._takeoff_text_style_value(takeoff, "unknown_font_key")
+
+    def test_takeoff_text_style_values_are_written_with_the_right_types(self):
+        view = self._make_plan_view()
+        values = {
+            "dimension_font_name": 5,
+            "dimension_font_color": "7",
+            "dimension_font_size": "9",
+            "dimension_font_bold": 0,
+            "dimension_font_italic": 1,
+            "dimension_font_underline": 0,
+            "name_font_name": 6,
+            "name_font_color": "8",
+            "name_font_size": "10",
+            "name_font_bold": 1,
+            "name_font_italic": 0,
+            "name_font_underline": 1,
+        }
+        expected = {
+            "dimension_font_name": "5",
+            "dimension_font_color": 7,
+            "dimension_font_size": 9,
+            "dimension_font_bold": False,
+            "dimension_font_italic": True,
+            "dimension_font_underline": False,
+            "name_font_name": "6",
+            "name_font_color": 8,
+            "name_font_size": 10,
+            "name_font_bold": True,
+            "name_font_italic": False,
+            "name_font_underline": True,
+        }
+        for key in values:
+            with self.subTest(key):
+                takeoff = self._styled_takeoff()
+                before = {k: view._takeoff_text_style_value(takeoff, k) for k in values}
+                view._apply_takeoff_text_style_values(takeoff, {key: values[key]})
+                for other, original in before.items():
+                    actual = view._takeoff_text_style_value(takeoff, other)
+                    if other == key:
+                        self.assertEqual(actual, expected[key])
+                        self.assertIs(type(actual), type(expected[key]))
+                    else:
+                        self.assertEqual(actual, original)
+        takeoff = self._styled_takeoff()
+        view._apply_takeoff_text_style_values(takeoff, {})
+        self.assertEqual(takeoff, self._styled_takeoff())
+
+    def _condition_label(self, view, kind, font=None, color="#336699"):
+        item = QGraphicsTextItem("12")
+        item.setData(0, "t1")
+        item.setData(2, "condition_label")
+        item.setData(3, kind)
+        item.setFont(font or QFont("Courier New", 14))
+        item.setDefaultTextColor(QColor(color))
+        view._current_takeoffs = {"t1": self._styled_takeoff()}
+        return item
+
+    def test_persisting_a_condition_dimension_label_updates_the_takeoff_and_reports_it(
+        self,
+    ):
+        view = self._make_plan_view()
+        font = QFont("Courier New", 14)
+        font.setBold(True)
+        font.setUnderline(True)
+        item = self._condition_label(view, "display_dimension", font)
+        view._selected_text_model_font_size = 16
+        flushed = []
+        view.condition_text_properties_flushed.connect(flushed.extend)
+        view._persist_selected_condition_text_label(item)
+        takeoff = view._current_takeoffs["t1"]
+        color = hex_color_to_int("#336699")
+        self.assertEqual(takeoff.dimension_font_name, "Courier New")
+        self.assertEqual(takeoff.dimension_font_color, color)
+        self.assertEqual(takeoff.dimension_font_size, 16)
+        self.assertTrue(takeoff.dimension_font_bold)
+        self.assertFalse(takeoff.dimension_font_italic)
+        self.assertTrue(takeoff.dimension_font_underline)
+        self.assertEqual(takeoff.name_font_name, "NameFont")
+        self.assertEqual(len(flushed), 1)
+        uid, kind, old, new = flushed[0]
+        self.assertEqual((uid, kind), ("t1", "display_dimension"))
+        self.assertEqual(
+            old,
+            {
+                "dimension_font_name": "DimFont",
+                "dimension_font_color": 11,
+                "dimension_font_size": 12,
+                "dimension_font_bold": True,
+                "dimension_font_italic": False,
+                "dimension_font_underline": True,
+            },
+        )
+        self.assertEqual(
+            new,
+            {
+                "dimension_font_name": "Courier New",
+                "dimension_font_color": color,
+                "dimension_font_size": 16,
+                "dimension_font_bold": True,
+                "dimension_font_italic": False,
+                "dimension_font_underline": True,
+            },
+        )
+
+    def test_persisting_a_condition_name_label_uses_the_name_font_fields(self):
+        view = self._make_plan_view()
+        font = QFont("Courier New", 14)
+        font.setItalic(True)
+        item = self._condition_label(view, "display_name", font)
+        view._selected_text_model_font_size = None
+        flushed = []
+        view.condition_text_properties_flushed.connect(flushed.extend)
+        view._persist_selected_condition_text_label(item)
+        takeoff = view._current_takeoffs["t1"]
+        self.assertEqual(takeoff.name_font_name, "Courier New")
+        self.assertEqual(takeoff.name_font_size, 9)
+        self.assertTrue(takeoff.name_font_italic)
+        self.assertFalse(takeoff.name_font_bold)
+        self.assertEqual(takeoff.dimension_font_name, "DimFont")
+        self.assertEqual(flushed[0][1], "display_name")
+        self.assertEqual(
+            set(flushed[0][3]),
+            {
+                "name_font_name",
+                "name_font_color",
+                "name_font_size",
+                "name_font_bold",
+                "name_font_italic",
+                "name_font_underline",
+            },
+        )
+
+    def test_persisting_an_unchanged_condition_label_reports_nothing(self):
+        view = self._make_plan_view()
+        takeoff = self._styled_takeoff()
+        font = QFont("NameFont")
+        font.setItalic(True)
+        item = self._condition_label(view, "display_name", font, color="#000000")
+        takeoff.name_font_color = hex_color_to_int("#000000")
+        takeoff.name_font_size = 9
+        view._current_takeoffs = {"t1": takeoff}
+        view._selected_text_model_font_size = 9
+        flushed = []
+        view.condition_text_properties_flushed.connect(flushed.extend)
+        view._persist_selected_condition_text_label(item)
+        self.assertEqual(flushed, [])
+
+    def test_persisting_a_condition_label_needs_a_takeoff_uid_and_a_known_takeoff(self):
+        view = self._make_plan_view()
+        item = self._condition_label(view, "display_name")
+        flushed = []
+        view.condition_text_properties_flushed.connect(flushed.extend)
+        item.setData(0, None)
+        view._persist_selected_condition_text_label(item)
+        item.setData(0, "missing")
+        view._persist_selected_condition_text_label(item)
+        self.assertEqual(flushed, [])
+        self.assertEqual(view._current_takeoffs["t1"], self._styled_takeoff())
+
+    def test_persisting_a_condition_label_without_a_uid_ignores_a_takeoff_named_none(
+        self,
+    ):
+        view = self._make_plan_view()
+        item = self._condition_label(view, "display_name")
+        item.setData(0, None)
+        view._current_takeoffs = {"None": self._styled_takeoff()}
+        flushed = []
+        view.condition_text_properties_flushed.connect(flushed.extend)
+        view._persist_selected_condition_text_label(item)
+        self.assertEqual(flushed, [])
+        self.assertEqual(view._current_takeoffs["None"], self._styled_takeoff())
+
+    def _dimension_annotation(self, **properties):
+        props = {
+            "FontName": "Arial",
+            "FontColor": 0,
+            "FontSize": 10,
+            "FontBold": False,
+            "FontItalic": False,
+            "FontUnderline": False,
+        }
+        props.update(properties)
+        return BidAnnotation(
+            uid="d1",
+            annotation_type=ANNOTATION_TYPE_DIMENSION,
+            position=[0.0, 0.0, 255.0, 0.0],
+            color="#000000",
+            properties=props,
+        )
+
+    def test_persisting_a_dimension_label_updates_the_annotation_and_reports_it(self):
+        view = self._make_plan_view()
+        annotation = self._dimension_annotation()
+        view._current_annotations = {"d1": annotation}
+        view._ann_db_uid_map = {"d1": "db-d1"}
+        font = QFont("Courier New", 14)
+        font.setBold(True)
+        font.setItalic(True)
+        font.setUnderline(True)
+        item = QGraphicsTextItem("21'")
+        item.setFont(font)
+        item.setDefaultTextColor(QColor("#336699"))
+        view._selected_text_model_font_size = 18
+        flushed = []
+        view.annotation_text_properties_flushed.connect(flushed.extend)
+        view._persist_selected_dimension_text_label("d1", item)
+        color = hex_color_to_int("#336699")
+        new = {
+            "FontName": "Courier New",
+            "FontColor": color,
+            "FontSize": 18,
+            "FontBold": True,
+            "FontItalic": True,
+            "FontUnderline": True,
+        }
+        self.assertEqual(annotation.properties, new)
+        self.assertEqual(annotation.color, int_color_to_hex(color))
+        self.assertEqual(len(flushed), 1)
+        uid, annotation_type, old, reported = flushed[0]
+        self.assertEqual((uid, annotation_type), ("db-d1", "dimension"))
+        self.assertEqual(
+            old,
+            {
+                "FontName": "Arial",
+                "FontColor": 0,
+                "FontSize": 10,
+                "FontBold": False,
+                "FontItalic": False,
+                "FontUnderline": False,
+            },
+        )
+        self.assertEqual(reported, new)
+
+    def test_persisting_a_dimension_label_defaults_to_ten_points_and_ignores_no_change(
+        self,
+    ):
+        view = self._make_plan_view()
+        annotation = self._dimension_annotation(FontName="Courier New")
+        view._current_annotations = {"d1": annotation}
+        item = QGraphicsTextItem("21'")
+        item.setFont(QFont("Courier New", 14))
+        item.setDefaultTextColor(QColor("#000000"))
+        view._selected_text_model_font_size = None
+        flushed = []
+        view.annotation_text_properties_flushed.connect(flushed.extend)
+        view._persist_selected_dimension_text_label("d1", item)
+        self.assertEqual(flushed, [])
+        self.assertEqual(annotation.properties["FontSize"], 10)
+        view._persist_selected_dimension_text_label("missing", item)
+        view._current_annotations["t1"] = BidAnnotation(
+            uid="t1", annotation_type=ANNOTATION_TYPE_TEXT, properties={"FontSize": 4}
+        )
+        view._persist_selected_dimension_text_label("t1", item)
+        self.assertEqual(len(flushed), 0)
+        self.assertEqual(view._current_annotations["t1"].properties, {"FontSize": 4})
+
+    def test_a_dimension_label_color_only_change_is_reported(self):
+        view = self._make_plan_view()
+        annotation = self._dimension_annotation(FontName="Courier New", FontSize=14)
+        view._current_annotations = {"d1": annotation}
+        item = QGraphicsTextItem("21'")
+        item.setFont(QFont("Courier New", 14))
+        item.setDefaultTextColor(QColor("#ff0000"))
+        view._selected_text_model_font_size = 14
+        flushed = []
+        view.annotation_text_properties_flushed.connect(flushed.extend)
+        view._persist_selected_dimension_text_label("d1", item)
+        self.assertEqual(len(flushed), 1)
+        self.assertEqual(
+            annotation.color, int_color_to_hex(hex_color_to_int("#ff0000"))
+        )
+
+    # ---- text annotation properties
+    def _text_annotation(self, **properties):
+        props = {
+            "Text": "Hello",
+            "FontName": "Arial",
+            "FontColor": 0,
+            "FontSize": 12,
+            "FontBold": False,
+            "FontItalic": False,
+            "FontUnderline": False,
+            "TextAlign": 0,
+        }
+        props.update(properties)
+        return BidAnnotation(
+            uid="t1",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            position=[100.0, 60.0, 80.0, 24.0],
+            color="#000000",
+            properties=props,
+        )
+
+    def _text_item(self, view, font=None, color="#336699", alignment=None):
+        item = QGraphicsTextItem("Hello")
+        item.setFont(font or QFont("Courier New", 14))
+        item.setDefaultTextColor(QColor(color))
+        if alignment is not None:
+            option = item.document().defaultTextOption()
+            option.setAlignment(alignment)
+            item.document().setDefaultTextOption(option)
+        return item
+
+    def test_text_annotation_properties_describe_the_item(self):
+        view = self._make_plan_view()
+        view._current_annotations = {"t1": self._text_annotation()}
+        font = QFont("Courier New", 14)
+        font.setBold(True)
+        font.setItalic(True)
+        font.setUnderline(True)
+        item = self._text_item(view, font, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
+        view._selected_text_annotation_uid = "t1"
+        view._selected_text_model_font_size = 18
+        properties = view._text_annotation_properties("t1", item, "Typed")
+        self.assertEqual(
+            properties,
+            {
+                "Text": "Typed",
+                "FontName": "Courier New",
+                "FontColor": hex_color_to_int("#336699"),
+                "FontSize": 18,
+                "FontBold": True,
+                "FontItalic": True,
+                "FontUnderline": True,
+                "TextAlign": 2,
+            },
+        )
+        self.assertEqual(view._text_annotation_properties("t1", item)["Text"], "Hello")
+        self.assertIsNone(view._text_annotation_properties("missing", item))
+
+    def test_text_annotation_alignment_codes(self):
+        view = self._make_plan_view()
+        view._current_annotations = {"t1": self._text_annotation()}
+        flags = QtCore.Qt.AlignmentFlag
+        for alignment, code in (
+            (flags.AlignLeft, 0),
+            (flags.AlignHCenter, 1),
+            (flags.AlignCenter, 1),
+            (flags.AlignRight, 2),
+            (flags.AlignRight | flags.AlignVCenter, 2),
+        ):
+            with self.subTest(alignment=alignment):
+                item = self._text_item(view, alignment=alignment)
+                self.assertEqual(
+                    view._text_annotation_properties("t1", item)["TextAlign"], code
+                )
+
+    def test_text_annotation_font_size_source_depends_on_the_selected_target(self):
+        view = self._make_plan_view()
+        view._current_annotations = {"t1": self._text_annotation(FontSize=33)}
+        item = self._text_item(view, QFont("Courier New", 14))
+        view._selected_text_annotation_uid = "other"
+        view._selected_text_model_font_size = 18
+        self.assertEqual(view._text_annotation_properties("t1", item)["FontSize"], 14)
+        view._selected_text_annotation_uid = "t1"
+        self.assertEqual(view._text_annotation_properties("t1", item)["FontSize"], 18)
+        for model_size in (None, 0, -4):
+            view._selected_text_model_font_size = model_size
+            self.assertEqual(
+                view._text_annotation_properties("t1", item)["FontSize"], 14
+            )
+        pixel_font = QFont("Courier New")
+        pixel_font.setPixelSize(13)
+        pixel_item = self._text_item(view, pixel_font)
+        view._selected_text_model_font_size = None
+        self.assertEqual(
+            view._text_annotation_properties("t1", pixel_item)["FontSize"], 33
+        )
+        for stored in (0, None):
+            view._current_annotations = {"t1": self._text_annotation(FontSize=stored)}
+            self.assertEqual(
+                view._text_annotation_properties("t1", pixel_item)["FontSize"], 12
+            )
+
+    def test_text_annotation_font_size_falls_back_through_the_model_font_and_default(
+        self,
+    ):
+        view = self._make_plan_view()
+
+        def stub_item(point_size):
+            font = SimpleNamespace(
+                pointSize=lambda: point_size,
+                family=lambda: "Arial",
+                bold=lambda: False,
+                italic=lambda: False,
+                underline=lambda: False,
+            )
+            option = SimpleNamespace(
+                alignment=lambda: QtCore.Qt.AlignmentFlag.AlignLeft
+            )
+            return SimpleNamespace(
+                font=lambda: font,
+                defaultTextColor=lambda: QColor("#000000"),
+                document=lambda: SimpleNamespace(defaultTextOption=lambda: option),
+            )
+
+        view._selected_text_annotation_uid = "t1"
+        view._current_annotations = {"t1": self._text_annotation(FontSize=33)}
+        view._selected_text_model_font_size = 1
+        self.assertEqual(
+            view._text_annotation_properties("t1", stub_item(14))["FontSize"], 1
+        )
+        view._selected_text_model_font_size = None
+        self.assertEqual(
+            view._text_annotation_properties("t1", stub_item(1))["FontSize"], 1
+        )
+        self.assertEqual(
+            view._text_annotation_properties("t1", stub_item(0))["FontSize"], 33
+        )
+        self.assertEqual(
+            view._text_annotation_properties("t1", stub_item(-1))["FontSize"], 33
+        )
+        bare = BidAnnotation(
+            uid="t1",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            position=[1.0, 2.0, 3.0, 4.0],
+            properties={},
+        )
+        view._current_annotations = {"t1": bare}
+        self.assertEqual(
+            view._text_annotation_properties("t1", stub_item(0))["FontSize"], 12
+        )
+        bare.properties["FontSize"] = 0
+        self.assertEqual(
+            view._text_annotation_properties("t1", stub_item(0))["FontSize"], 12
+        )
+
+    def test_the_font_color_of_an_annotation_comes_from_its_property_or_color(self):
+        view = self._make_plan_view()
+        cases = (
+            ({"FontColor": 255}, "#000000", 255),
+            ({"FontColor": 0}, "#336699", 0),
+            ({"FontColor": "#112233"}, "#000000", hex_color_to_int("#112233")),
+            ({}, "#336699", hex_color_to_int("#336699")),
+            ({"FontColor": ""}, "#336699", hex_color_to_int("#336699")),
+            ({"FontColor": "not a color"}, "#336699", 0),
+        )
+        for properties, color, expected in cases:
+            with self.subTest(properties=properties, color=color):
+                annotation = BidAnnotation(
+                    uid="t1",
+                    annotation_type=ANNOTATION_TYPE_TEXT,
+                    color=color,
+                    properties=dict(properties),
+                )
+                self.assertEqual(view._annotation_font_color_int(annotation), expected)
+
+    # ---- persisting text annotations
+    def _persist_view(self, **properties):
+        view = self._make_plan_view()
+        annotation = self._text_annotation(**properties)
+        view._current_annotations = {"t1": annotation}
+        item = self._text_item(view, QFont("Courier New", 14))
+        view._scene.addItem(item)
+        view._selected_text_annotation_uid = "t1"
+        view._selected_text_model_font_size = 14
+        flushed = []
+        view.annotation_text_properties_flushed.connect(flushed.extend)
+        return view, annotation, item, flushed
+
+    def test_persisting_a_text_annotation_reports_changed_properties(self):
+        view, annotation, item, flushed = self._persist_view()
+        view._ann_db_uid_map = {"t1": "db-t1"}
+        view._persist_text_annotation("t1", item, "New text")
+        color = hex_color_to_int("#336699")
+        self.assertEqual(annotation.properties["Text"], "New text")
+        self.assertEqual(annotation.properties["FontName"], "Courier New")
+        self.assertEqual(annotation.properties["FontSize"], 14)
+        self.assertEqual(annotation.properties["FontColor"], color)
+        self.assertEqual(annotation.color, int_color_to_hex(color))
+        self.assertEqual(len(flushed), 1)
+        uid, annotation_type, old, new = flushed[0]
+        self.assertEqual((uid, annotation_type), ("db-t1", "text"))
+        self.assertEqual(old["Text"], "Hello")
+        self.assertEqual(old["FontName"], "Arial")
+        self.assertEqual(old["FontColor"], 0)
+        self.assertEqual(new["Text"], "New text")
+        self.assertEqual(new["FontColor"], color)
+        self.assertEqual(set(new), set(old))
+
+    def test_persisting_a_text_annotation_applies_the_box_before_comparing(self):
+        view, annotation, item, flushed = self._persist_view()
+        calls = self._record(view, "_apply_text_annotation_box_to_item")
+        view._persist_text_annotation("t1", item, "New text")
+        self.assertEqual(
+            calls, [("_apply_text_annotation_box_to_item", (annotation, item), {})]
+        )
+
+    def test_persisting_unchanged_text_annotation_properties_reports_nothing(self):
+        view, annotation, item, flushed = self._persist_view(
+            Text="Hello",
+            FontName="Courier New",
+            FontColor=hex_color_to_int("#336699"),
+            FontSize=14,
+        )
+        view._persist_text_annotation("t1", item)
+        self.assertEqual(flushed, [])
+        self.assertEqual(annotation.properties["Text"], "Hello")
+
+    def test_persisting_a_single_changed_property_is_enough_to_report(self):
+        for key, value in (("FontBold", True), ("TextAlign", 2), ("Text", "Other")):
+            with self.subTest(key):
+                view, annotation, item, flushed = self._persist_view(
+                    Text="Hello",
+                    FontName="Courier New",
+                    FontColor=hex_color_to_int("#336699"),
+                    FontSize=14,
+                )
+                annotation.properties[key] = value
+                view._persist_text_annotation("t1", item, "Hello")
+                self.assertEqual(len(flushed), 1)
+                self.assertEqual(flushed[0][2][key], value)
+
+    def test_persisting_a_draft_updates_the_model_without_reporting(self):
+        view, annotation, item, flushed = self._persist_view()
+        view._draft_text_annotation_uid = "t1"
+        view._persist_text_annotation("t1", item, "Draft text")
+        self.assertEqual(flushed, [])
+        self.assertEqual(annotation.properties["Text"], "Draft text")
+        color = hex_color_to_int("#336699")
+        self.assertEqual(annotation.color, int_color_to_hex(color))
+
+    def test_persisting_without_an_annotation_changes_nothing(self):
+        view, annotation, item, flushed = self._persist_view()
+        calls = self._record(view, "_apply_text_annotation_box_to_item")
+        view._persist_text_annotation("missing", item, "x")
+        self.assertEqual((calls, flushed), ([], []))
+
+    def test_persisting_the_selected_target_routes_by_what_is_selected(self):
+        view = self._make_plan_view()
+        calls = self._record(
+            view,
+            "_persist_selected_condition_text_label",
+            "_persist_selected_dimension_text_label",
+            "_persist_text_annotation",
+        )
+        item = QGraphicsTextItem("x")
+        view._selected_text_item = None
+        view._selected_text_annotation_uid = "t1"
+        view._persist_selected_text_annotation("override")
+        self.assertEqual(calls, [])
+        view._selected_text_item = item
+        view._selected_text_annotation_uid = None
+        view._persist_selected_text_annotation()
+        self.assertEqual(
+            calls, [("_persist_selected_condition_text_label", (item,), {})]
+        )
+        calls.clear()
+        view._selected_text_annotation_uid = "d1"
+        view._current_annotations = {"d1": self._dimension_annotation()}
+        view._persist_selected_text_annotation()
+        self.assertEqual(
+            calls, [("_persist_selected_dimension_text_label", ("d1", item), {})]
+        )
+        calls.clear()
+        view._selected_text_annotation_uid = "t1"
+        view._current_annotations = {"t1": self._text_annotation()}
+        view._persist_selected_text_annotation("typed")
+        self.assertEqual(
+            calls, [("_persist_text_annotation", ("t1", item, "typed"), {})]
+        )
+        calls.clear()
+        view._current_annotations = {}
+        view._persist_selected_text_annotation()
+        self.assertEqual(calls, [("_persist_text_annotation", ("t1", item, None), {})])
+
+    # ---- dimension label layout
+    def test_refreshing_a_dimension_label_layout_selects_and_repaints_when_updated(
+        self,
+    ):
+        view = self._make_plan_view()
+        annotation = self._dimension_annotation()
+        view._current_annotations = {"d1": annotation}
+        item = _UpdateRecordingTextItem("21'")
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        view._scene.addItem(item)
+        geometry = {"label": "21'"}
+        seen = {}
+
+        def fake_geometry(ann, position, transform):
+            seen["geometry"] = (ann, position, transform)
+            return geometry
+
+        def fake_update(text_item, dimension, color, coord_system, adjustment):
+            seen["update"] = (text_item, dimension, color, coord_system, adjustment)
+            return seen.get("result", True)
+
+        viewport_updates = []
+        view.viewport().update = lambda *a: viewport_updates.append(a)
+        with patch.object(
+            plan_view_module, "calculate_dimension_geometry", fake_geometry
+        ), patch.object(plan_view_module, "update_dimension_text_item", fake_update):
+            item.update_calls = 0
+            view._refresh_dimension_text_label_layout("d1", item)
+            coordinate_system = view._scene_builder.get_coordinate_system()
+            self.assertIs(seen["geometry"][0], annotation)
+            self.assertEqual(seen["geometry"][1], annotation.position)
+            self.assertEqual(
+                seen["geometry"][2].__func__,
+                coordinate_system.transform_vertices_to_2d.__func__,
+            )
+            self.assertEqual(
+                seen["update"],
+                (item, geometry, "#000000", coordinate_system, 0.75),
+            )
+            self.assertTrue(item.isSelected())
+            self.assertEqual(item.update_calls, 1)
+            self.assertEqual(len(viewport_updates), 1)
+            item.setSelected(False)
+            item.update_calls = 0
+            seen["result"] = False
+            view._refresh_dimension_text_label_layout("d1", item)
+            self.assertFalse(item.isSelected())
+            self.assertEqual(item.update_calls, 0)
+            self.assertEqual(len(viewport_updates), 1)
+
+    def test_refreshing_a_dimension_label_layout_needs_a_dimension_with_geometry(self):
+        view = self._make_plan_view()
+        item = _UpdateRecordingTextItem("21'")
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        updates = []
+        with patch.object(
+            plan_view_module, "calculate_dimension_geometry", lambda *a: {}
+        ), patch.object(
+            plan_view_module,
+            "update_dimension_text_item",
+            lambda *a: updates.append(a) or True,
+        ):
+            view._current_annotations = {"d1": self._dimension_annotation()}
+            view._refresh_dimension_text_label_layout("d1", item)
+            view._refresh_dimension_text_label_layout("missing", item)
+            view._current_annotations["t1"] = self._text_annotation()
+            view._refresh_dimension_text_label_layout("t1", item)
+        self.assertEqual(updates, [])
+        self.assertFalse(item.isSelected())
+
+    # ---- style changes of the selection
+    def _style_view(self):
+        view = self._make_plan_view()
+        rect = BidAnnotation(
+            uid="r1",
+            annotation_type="rect",
+            position=[0.0, 0.0, 5.0, 5.0],
+            color="#000000",
+            width=1.0,
+        )
+        text = self._text_annotation()
+        dimension = self._dimension_annotation()
+        highlight = BidAnnotation(
+            uid="h1",
+            annotation_type=ANNOTATION_TYPE_HIGHLIGHT,
+            position=[0.0, 0.0, 5.0, 5.0],
+            color="#ffff00",
+            width=3.0,
+        )
+        view._current_annotations = {
+            "r1": rect,
+            "t1": text,
+            "d1": dimension,
+            "h1": highlight,
+        }
+        view._selected_uids = {"t1", "r1", "h1", "d1", "ghost"}
+        view._ann_db_uid_map = {"r1": "db-r1"}
+        rebuilds = self._record(view, "_rebuild_current_overlays_from_model")
+        flushed = []
+        view.annotation_styles_flushed.connect(flushed.extend)
+        return view, rect, text, dimension, highlight, rebuilds, flushed
+
+    def test_applying_a_color_restyles_every_selected_annotation(self):
+        view, rect, text, dimension, highlight, rebuilds, flushed = self._style_view()
+        view.apply_annotation_style_to_selection(color="#00ff00")
+        self.assertEqual(
+            [rect.color, text.color, dimension.color, highlight.color], ["#00ff00"] * 4
+        )
+        self.assertEqual(text.properties["FontColor"], hex_color_to_int("#00ff00"))
+        self.assertEqual(dimension.properties["FontColor"], hex_color_to_int("#00ff00"))
+        self.assertNotIn("FontColor", rect.properties)
+        self.assertNotIn("FontColor", highlight.properties)
+        self.assertEqual(
+            flushed,
+            [
+                ("d1", "dimension", {"Color": "#000000"}, {"Color": "#00ff00"}),
+                ("h1", "highlight", {"Color": "#ffff00"}, {"Color": "#00ff00"}),
+                ("db-r1", "rect", {"Color": "#000000"}, {"Color": "#00ff00"}),
+                ("t1", "text", {"Color": "#000000"}, {"Color": "#00ff00"}),
+            ],
+        )
+        self.assertEqual(len(rebuilds), 1)
+        self.assertEqual(rect.width, 1.0)
+
+    def test_applying_a_width_skips_text_dimension_and_highlight_annotations(self):
+        view, rect, text, dimension, highlight, rebuilds, flushed = self._style_view()
+        view.apply_annotation_style_to_selection(width=4)
+        self.assertEqual(rect.width, 4.0)
+        self.assertIs(type(rect.width), float)
+        self.assertEqual(highlight.width, 3.0)
+        self.assertEqual(flushed, [("db-r1", "rect", {"Width": 1.0}, {"Width": 4.0})])
+        self.assertEqual(len(rebuilds), 1)
+
+    def test_applying_a_color_and_a_width_reports_both_in_one_change(self):
+        view, rect, text, dimension, highlight, rebuilds, flushed = self._style_view()
+        view._selected_uids = {"r1"}
+        view.apply_annotation_style_to_selection(color="#00ff00", width=2.5)
+        self.assertEqual(
+            flushed,
+            [
+                (
+                    "db-r1",
+                    "rect",
+                    {"Color": "#000000", "Width": 1.0},
+                    {"Color": "#00ff00", "Width": 2.5},
+                )
+            ],
+        )
+
+    def test_applying_an_unchanged_style_changes_and_reports_nothing(self):
+        view, rect, text, dimension, highlight, rebuilds, flushed = self._style_view()
+        view._selected_uids = {"r1", "ghost"}
+        view.apply_annotation_style_to_selection(color="#000000", width=1.0)
+        view.apply_annotation_style_to_selection(color="#000000", width=1.0 + 5e-7)
+        self.assertEqual((flushed, rebuilds), ([], []))
+        view.apply_annotation_style_to_selection(width=1.0 + 1.5e-6)
+        self.assertEqual(len(flushed), 1)
+        view._selected_uids = {"r1"}
+        view.apply_annotation_style_to_selection(color="#000000")
+        view.apply_annotation_style_to_selection()
+        self.assertEqual(len(flushed), 1)
+
+    def test_a_color_matches_an_annotation_color_without_regard_to_case(self):
+        view, rect, text, dimension, highlight, rebuilds, flushed = self._style_view()
+        rect.color = "#00FF00"
+        view._selected_uids = {"r1"}
+        view.apply_annotation_style_to_selection(color="#00ff00")
+        self.assertEqual(flushed, [])
+
+    def test_styles_are_not_applied_without_edit_access(self):
+        view, rect, text, dimension, highlight, rebuilds, flushed = self._style_view()
+        view._editing_enabled = False
+        view.apply_annotation_style_to_selection(color="#00ff00", width=9.0)
+        self.assertEqual(
+            (rect.color, rect.width, flushed, rebuilds), ("#000000", 1.0, [], [])
+        )
+
+    def test_context_menu_handlers_and_overlay_mode_are_stored(self):
+        view = self._make_plan_view()
+        trigger = lambda key: key
+        state = lambda key: True
+        view.set_context_menu_command_handlers(trigger, state)
+        self.assertIs(view._context_menu_command_trigger, trigger)
+        self.assertIs(view._context_menu_action_state, state)
+        view.set_overlay_display_mode(2)
+        page = Page(uid="p1", name="P1", image_show_mode=0)
+        view._current_page = page
+        view.set_overlay_display_mode("2")
+        self.assertEqual(page.image_show_mode, 2)
+        self.assertIs(type(page.image_show_mode), int)
+        view._current_page = None
+        view.set_overlay_display_mode(1)
+        self.assertEqual(page.image_show_mode, 2)
+
+
+class TakeoffPlanViewNamedViewRenameFinishTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Committing, rejecting and cancelling named-view renames and their drafts."""
+
+    POSITION = [30.0, 40.0, 10.0, 15.0, 30.0, 15.0, 10.0, 40.0]
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    def _rename_view(self, text="Lobby"):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        annotation = BidAnnotation(
+            uid="n1",
+            annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            page_uid="p1",
+            position=list(self.POSITION),
+            color="#008000",
+            width=2.0,
+            properties={"Text": text},
+            visible=True,
+        )
+        items = view._named_view_draft_items(annotation)
+        for item in items:
+            view._scene.addItem(item)
+        view._current_annotations["n1"] = annotation
+        view._uid_to_items["n1"] = items
+        self.assertIs(view._begin_named_view_rename("n1"), True)
+        flushed = []
+        view.annotation_text_properties_flushed.connect(flushed.extend)
+        return view, annotation, items, flushed
+
+    def _draft_view(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        self.assertIs(view.begin_named_view_draft(list(self.POSITION), "p1"), True)
+        created = []
+        view.named_view_created.connect(
+            lambda position, page_uid, properties: created.append(
+                (list(position), page_uid, dict(properties))
+            )
+        )
+        uid = view._draft_named_view_uid
+        return (
+            view,
+            uid,
+            view._current_annotations[uid],
+            view._uid_to_items[uid],
+            created,
+        )
+
+    # ---- committing a rename
+    def test_committing_a_rename_persists_the_stripped_name_and_closes_the_editor(self):
+        view, annotation, items, flushed = self._rename_view()
+        label = items[2]
+        background = items[1]
+        label.setPlainText("  New name  ")
+        background.setRect(QtCore.QRectF(0.0, 0.0, 0.0, 0.0))
+        modes = []
+        view.text_annotation_edit_mode_changed.connect(modes.append)
+        view._finish_named_view_rename(True)
+        self.assertEqual(annotation.properties["Text"], "New name")
+        self.assertEqual(
+            flushed, [("n1", "namedview", {"Text": "Lobby"}, {"Text": "New name"})]
+        )
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(
+            label.textInteractionFlags(),
+            QtCore.Qt.TextInteractionFlag.NoTextInteraction,
+        )
+        self.assertFalse(view._finishing_named_view_rename)
+        self.assertGreater(background.rect().width(), 0.0)
+        self.assertEqual(modes, [False])
+
+    def test_committing_an_unchanged_name_reports_nothing(self):
+        view, annotation, items, flushed = self._rename_view("Lobby")
+        items[2].setPlainText(" Lobby ")
+        view._finish_named_view_rename(True)
+        self.assertEqual(flushed, [])
+        self.assertEqual(annotation.properties["Text"], "Lobby")
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_cancelling_a_rename_restores_the_original_name(self):
+        view, annotation, items, flushed = self._rename_view("Lobby")
+        items[2].setPlainText("Something else")
+        view._finish_named_view_rename(False)
+        self.assertEqual(items[2].toPlainText(), "Lobby")
+        self.assertEqual(annotation.properties["Text"], "Lobby")
+        self.assertEqual(flushed, [])
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_cancelling_a_rename_without_a_label_item_does_not_fail(self):
+        view, annotation, items, flushed = self._rename_view("Lobby")
+        view._editing_named_view_item = None
+        view._finish_named_view_rename(False)
+        self.assertEqual(flushed, [])
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_finishing_without_a_rename_or_while_finishing_does_nothing(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        calls = self._record(
+            view,
+            "_clear_inline_text_edit_state",
+            "_refresh_named_view_label_background",
+        )
+        view._finish_named_view_rename(True)
+        self.assertEqual(calls, [])
+        view._editing_named_view_uid = "n1"
+        view._finishing_named_view_rename = True
+        view._finish_named_view_rename(True)
+        self.assertEqual(calls, [])
+
+    # ---- the name validator
+    def test_the_validator_sees_the_stripped_name_and_the_view_uid(self):
+        view, annotation, items, flushed = self._rename_view()
+        items[2].setPlainText("  New name  ")
+        seen = []
+
+        def validator(name, uid):
+            seen.append((name, uid, view._finishing_named_view_rename))
+            return True
+
+        view.set_named_view_name_validator(validator)
+        view._finish_named_view_rename(True)
+        self.assertEqual(seen, [("New name", "n1", True)])
+        self.assertFalse(view._finishing_named_view_rename)
+        self.assertEqual(annotation.properties["Text"], "New name")
+
+    def test_a_rejected_name_keeps_the_editor_open_and_refreshes_the_label_background(
+        self,
+    ):
+        view, annotation, items, flushed = self._rename_view()
+        items[2].setPlainText("Taken")
+        items[1].setRect(QtCore.QRectF(0.0, 0.0, 0.0, 0.0))
+        view.set_named_view_name_validator(lambda name, uid: False)
+        view._finish_named_view_rename(True)
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(view._editing_named_view_uid, "n1")
+        self.assertEqual(annotation.properties["Text"], "Lobby")
+        self.assertEqual(flushed, [])
+        self.assertGreater(items[1].rect().width(), 0.0)
+        self.assertEqual(items[2].toPlainText(), "Taken")
+
+    def test_the_validator_is_skipped_unless_a_non_empty_name_is_committed(self):
+        calls = []
+
+        def validator(name, uid):
+            calls.append((name, uid))
+            return False
+
+        def cancel(view, annotation, items):
+            return False
+
+        def empty(view, annotation, items):
+            items[2].setPlainText("   ")
+            return True
+
+        def no_annotation(view, annotation, items):
+            view._current_annotations.pop("n1")
+            return True
+
+        for name, commit, prepare in (
+            ("cancel", False, lambda v, a, i: i[2].setPlainText("Other")),
+            ("empty name", True, empty),
+            ("annotation missing", True, no_annotation),
+        ):
+            with self.subTest(name):
+                calls.clear()
+                view, annotation, items, flushed = self._rename_view()
+                items[2].setPlainText("Other")
+                prepare(view, annotation, items)
+                view.set_named_view_name_validator(validator)
+                view._finish_named_view_rename(commit)
+                self.assertEqual(calls, [])
+                self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_a_validator_that_changes_the_target_aborts_the_commit(self):
+        def swap_item(view, annotation, items):
+            view._editing_named_view_item = QGraphicsTextItem("other")
+
+        def replace_annotation(view, annotation, items):
+            view._current_annotations["n1"] = BidAnnotation(
+                uid="n1",
+                annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+                position=list(self.POSITION),
+                properties={"Text": "Replaced"},
+            )
+
+        for name, disturb in (
+            ("item swapped", swap_item),
+            ("annotation replaced", replace_annotation),
+        ):
+            with self.subTest(name):
+                view, annotation, items, flushed = self._rename_view()
+                items[2].setPlainText("Other")
+                view.set_named_view_name_validator(
+                    lambda text, uid, view=view, annotation=annotation, items=items, disturb=disturb: (
+                        disturb(view, annotation, items) or True
+                    )
+                )
+                view._finish_named_view_rename(True)
+                self.assertTrue(view.is_text_annotation_inline_edit_active())
+                self.assertEqual(flushed, [])
+                self.assertEqual(annotation.properties["Text"], "Lobby")
+
+    def test_a_re_entrant_finish_from_the_validator_is_ignored(self):
+        view, annotation, items, flushed = self._rename_view()
+        items[2].setPlainText("Other")
+        entered = []
+
+        def validator(name, uid):
+            entered.append(1)
+            view._finish_named_view_rename(True)
+            return True
+
+        view.set_named_view_name_validator(validator)
+        view._finish_named_view_rename(True)
+        self.assertEqual(entered, [1])
+        self.assertEqual(len(flushed), 1)
+
+    # ---- named view drafts
+    def test_committing_a_draft_name_creates_the_named_view_and_removes_the_draft(self):
+        view, uid, annotation, items, created = self._draft_view()
+        items[2].setPlainText("  Atrium  ")
+        view._finish_named_view_rename(True)
+        self.assertEqual(
+            created,
+            [
+                (
+                    list(self.POSITION),
+                    "p1",
+                    {"Text": "Atrium", "Color": annotation.color},
+                )
+            ],
+        )
+        self.assertIsNone(view._draft_named_view_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_a_blank_draft_name_keeps_the_draft_open(self):
+        view, uid, annotation, items, created = self._draft_view()
+        items[2].setPlainText("   ")
+        items[1].setRect(QtCore.QRectF(0.0, 0.0, 0.0, 0.0))
+        view._finish_named_view_rename(True)
+        self.assertEqual(created, [])
+        self.assertEqual(view._draft_named_view_uid, uid)
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        self.assertGreater(items[1].rect().width(), 0.0)
+
+    def test_cancelling_a_draft_discards_it_without_creating_a_view(self):
+        view, uid, annotation, items, created = self._draft_view()
+        items[2].setPlainText("Atrium")
+        view._finish_named_view_rename(False)
+        self.assertEqual(created, [])
+        self.assertIsNone(view._draft_named_view_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertNotIn(uid, view._uid_to_items)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+
+    def test_a_blank_draft_without_a_label_or_annotation_is_discarded(self):
+        view, uid, annotation, items, created = self._draft_view()
+        view._editing_named_view_item = None
+        view._finish_named_view_rename(True)
+        self.assertEqual(created, [])
+        self.assertIsNone(view._draft_named_view_uid)
+        view, uid, annotation, items, created = self._draft_view()
+        items[2].setPlainText("   ")
+        view._current_annotations.pop(uid)
+        view._finish_named_view_rename(True)
+        self.assertEqual(created, [])
+        self.assertIsNone(view._draft_named_view_uid)
+
+    def test_committing_a_draft_whose_annotation_vanished_creates_nothing(self):
+        view, uid, annotation, items, created = self._draft_view()
+        items[2].setPlainText("Atrium")
+        view._current_annotations.pop(uid)
+        view._finish_named_view_rename(True)
+        self.assertEqual(created, [])
+        self.assertIsNone(view._draft_named_view_uid)
+
+    def test_a_rename_ends_quietly_when_the_annotation_changes_while_closing(self):
+        view, annotation, items, flushed = self._rename_view()
+        items[2].setPlainText("Other")
+        original = view._clear_inline_text_edit_state
+
+        def clear_and_replace(*args, **kwargs):
+            original(*args, **kwargs)
+            view._current_annotations["n1"] = BidAnnotation(
+                uid="n1",
+                annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+                position=list(self.POSITION),
+            )
+
+        view._clear_inline_text_edit_state = clear_and_replace
+        refreshed = self._record(view, "_refresh_named_view_label_background")
+        view._finish_named_view_rename(True)
+        self.assertEqual(flushed, [])
+        self.assertEqual(refreshed, [])
+        self.assertFalse(view._finishing_named_view_rename)
+
+    # ---- persisting a name
+    def test_persisting_a_name_updates_the_annotation_and_reports_the_database_uid(
+        self,
+    ):
+        view, annotation, items, flushed = self._rename_view()
+        view._ann_db_uid_map = {"n1": "db-n1"}
+        view._persist_named_view_name("n1", "Atrium")
+        self.assertEqual(annotation.properties["Text"], "Atrium")
+        self.assertEqual(
+            flushed, [("db-n1", "namedview", {"Text": "Lobby"}, {"Text": "Atrium"})]
+        )
+
+    def test_persisting_a_name_needs_a_named_view_and_a_different_text(self):
+        view, annotation, items, flushed = self._rename_view()
+        view._persist_named_view_name("n1", "Lobby")
+        view._persist_named_view_name("missing", "Atrium")
+        text_annotation = BidAnnotation(
+            uid="t1", annotation_type=ANNOTATION_TYPE_TEXT, properties={"Text": "Old"}
+        )
+        view._current_annotations["t1"] = text_annotation
+        view._persist_named_view_name("t1", "New")
+        self.assertEqual(flushed, [])
+        self.assertEqual(text_annotation.properties["Text"], "Old")
+        self.assertEqual(annotation.properties["Text"], "Lobby")
+
+    # ---- the label background
+    def test_the_label_background_wraps_the_label_with_padding(self):
+        view, annotation, items, flushed = self._rename_view()
+        background, label = items[1], items[2]
+        label.setPlainText("A reasonably long view name")
+        label.setPos(13.5, 7.25)
+        view._refresh_named_view_label_background("n1")
+        bounds = label.boundingRect()
+        self.assertEqual(
+            background.rect(),
+            QtCore.QRectF(
+                13.5 + bounds.left() + 1.0,
+                7.25 + bounds.top() + 1.0,
+                bounds.width() - 2.0 + 6.0,
+                bounds.height() - 2.0 + 6.0,
+            ),
+        )
+
+    def test_the_label_background_is_never_smaller_than_one_pixel_plus_padding(self):
+        view = self._make_plan_view()
+        background = QGraphicsRectItem(0.0, 0.0, 99.0, 99.0)
+        view._named_view_label_background_item = lambda uid: background
+        for bounds, expected in (
+            (QtCore.QRectF(2.0, 3.0, 1.5, 0.5), QtCore.QRectF(13.0, 24.0, 7.0, 7.0)),
+            (
+                QtCore.QRectF(2.0, 3.0, 30.0, 40.0),
+                QtCore.QRectF(13.0, 24.0, 34.0, 44.0),
+            ),
+            (QtCore.QRectF(2.0, 3.0, 3.0, 3.0), QtCore.QRectF(13.0, 24.0, 7.0, 7.0)),
+        ):
+            with self.subTest(bounds=bounds):
+                label = SimpleNamespace(
+                    boundingRect=lambda bounds=bounds: bounds,
+                    pos=lambda: QtCore.QPointF(10.0, 20.0),
+                )
+                view._named_view_label_item = lambda uid, label=label: label
+                view._refresh_named_view_label_background("n1")
+                self.assertEqual(background.rect(), expected)
+
+    def test_the_label_background_needs_both_a_label_and_a_background(self):
+        view = self._make_plan_view()
+        background = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        label = SimpleNamespace(
+            boundingRect=lambda: QtCore.QRectF(0.0, 0.0, 30.0, 40.0),
+            pos=lambda: QtCore.QPointF(10.0, 20.0),
+        )
+        view._named_view_label_item = lambda uid: None
+        view._named_view_label_background_item = lambda uid: background
+        view._refresh_named_view_label_background("n1")
+        view._named_view_label_item = lambda uid: label
+        view._named_view_label_background_item = lambda uid: None
+        view._refresh_named_view_label_background("n1")
+        self.assertEqual(background.rect(), QtCore.QRectF(0.0, 0.0, 5.0, 5.0))
+
+
+class TakeoffPlanViewInlineEditPermissionAndShortcutTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    """Inline edit permissions, tool-change hand-off and clipboard shortcuts."""
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    def test_inline_edits_need_the_feature_selection_and_the_allowed_callback(self):
+        view = self._make_plan_view()
+        for enabled, selection, allowed, expected in (
+            (True, True, None, True),
+            (False, True, None, False),
+            (True, False, None, False),
+            (False, False, None, False),
+            (True, True, lambda: True, True),
+            (True, True, lambda: False, False),
+            (True, True, lambda: 1, True),
+            (True, True, lambda: 0, False),
+            (False, True, lambda: True, False),
+            (True, False, lambda: True, False),
+        ):
+            with self.subTest(enabled=enabled, selection=selection, expected=expected):
+                view._text_annotation_inline_edit_enabled = enabled
+                view._selection_enabled = selection
+                view.set_text_annotation_inline_edit_allowed_fn(allowed)
+                self.assertIs(view._can_begin_text_annotation_inline_edit(), expected)
+
+    def test_annotation_placement_and_paste_permissions_default_to_the_view_state(self):
+        view = self._make_plan_view()
+        for selection in (True, False):
+            view._selection_enabled = selection
+            view.set_annotation_placement_allowed_fn(None)
+            self.assertIs(view._can_begin_annotation_placement(), selection)
+        view.set_annotation_placement_allowed_fn(lambda: 1)
+        view._selection_enabled = False
+        self.assertIs(view._can_begin_annotation_placement(), True)
+        view.set_annotation_placement_allowed_fn(lambda: 0)
+        view._selection_enabled = True
+        self.assertIs(view._can_begin_annotation_placement(), False)
+        for editing in (True, False):
+            view._editing_enabled = editing
+            view.set_paste_allowed_fn(None)
+            self.assertIs(view._paste_allowed(), editing)
+        view.set_paste_allowed_fn(lambda: 1)
+        view._editing_enabled = False
+        self.assertIs(view._paste_allowed(), True)
+        view.set_paste_allowed_fn(lambda: 0)
+        view._editing_enabled = True
+        self.assertIs(view._paste_allowed(), False)
+
+    def test_editing_cursor_modes_follow_the_placement_type_or_edit_access(self):
+        view = self._make_plan_view()
+        view._cursor_mode = CURSOR_MODE_ANNOTATION_PLACE
+        view._annotation_place_type = "rect"
+        view._editing_enabled = False
+        self.assertIs(view._editing_cursor_mode_allowed(), True)
+        view._annotation_place_type = None
+        view._editing_enabled = True
+        self.assertIs(view._editing_cursor_mode_allowed(), False)
+        view._cursor_mode = CURSOR_MODE_SELECT
+        for editing in (True, False):
+            view._editing_enabled = editing
+            self.assertIs(view._editing_cursor_mode_allowed(), editing)
+
+    def test_the_inline_edit_switch_cancels_the_current_edit_when_turned_off(self):
+        view = self._make_plan_view()
+        calls = self._record(view, "_finish_active_inline_text_edit")
+        view.set_text_annotation_inline_edit_enabled(1)
+        self.assertIs(view._text_annotation_inline_edit_enabled, True)
+        self.assertEqual(calls, [])
+        view.set_text_annotation_inline_edit_enabled(0)
+        self.assertIs(view._text_annotation_inline_edit_enabled, False)
+        self.assertEqual(
+            calls, [("_finish_active_inline_text_edit", (), {"commit": False})]
+        )
+
+    def test_changing_tools_commits_an_active_edit_first(self):
+        view = self._make_plan_view()
+        calls = self._record(view, "_finish_active_inline_text_edit")
+        self.assertIs(view._finish_inline_text_edit_before_tool_change(), True)
+        self.assertEqual(calls, [])
+        view._editing_text_annotation_uid = "t1"
+        self.assertIs(view._finish_inline_text_edit_before_tool_change(), False)
+        self.assertEqual(
+            calls, [("_finish_active_inline_text_edit", (), {"commit": True})]
+        )
+        view._finish_active_inline_text_edit = lambda commit: setattr(
+            view, "_editing_text_annotation_uid", None
+        )
+        self.assertIs(view._finish_inline_text_edit_before_tool_change(), True)
+
+    # ---- clipboard shortcuts while editing
+    def _editing_view(self, text="Hello world"):
+        view = self._make_plan_view()
+        annotation, item = self._add_text_annotation(view, text=text)
+        annotation.properties["Text"] = text
+        self.assertIs(view._begin_text_annotation_edit("a1"), True)
+        return view, item
+
+    def _select(self, item, start, end):
+        cursor = item.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        item.setTextCursor(cursor)
+
+    def test_shortcuts_need_an_active_inline_edit(self):
+        view = self._make_plan_view()
+        for key in ("select_all", "copy", "cut", "paste", "delete", "other"):
+            self.assertIs(view.handle_inline_text_shortcut(key), False)
+        view, item = self._editing_view()
+        view._editing_text_annotation_uid = None
+        view._editing_named_view_uid = None
+        self.assertIs(view.handle_inline_text_shortcut("select_all"), False)
+        view._editing_text_annotation_uid = "a1"
+        self.assertIs(view.handle_inline_text_shortcut("select_all"), True)
+        item.setPlainText("Hello world")
+        view._editing_named_view_item = None
+        view._uid_to_items = {}
+        self.assertIs(view.handle_inline_text_shortcut("select_all"), False)
+
+    def test_unknown_shortcuts_are_not_handled(self):
+        view, item = self._editing_view()
+        self.assertIs(view.handle_inline_text_shortcut("undo"), False)
+        self.assertEqual(item.toPlainText(), "Hello world")
+
+    def test_select_all_selects_the_whole_document(self):
+        view, item = self._editing_view()
+        self.assertIs(view.handle_inline_text_shortcut("select_all"), True)
+        self.assertEqual(item.textCursor().selectedText(), "Hello world")
+
+    def test_copy_places_the_selection_on_the_clipboard(self):
+        view, item = self._editing_view()
+        clipboard = QApplication.clipboard()
+        clipboard.setText("sentinel")
+        self._select(item, 0, 5)
+        self.assertIs(view.handle_inline_text_shortcut("copy"), True)
+        self.assertEqual(clipboard.text(), "Hello")
+        self.assertEqual(item.toPlainText(), "Hello world")
+        self._select(item, 3, 3)
+        clipboard.setText("sentinel")
+        self.assertIs(view.handle_inline_text_shortcut("copy"), True)
+        self.assertEqual(clipboard.text(), "sentinel")
+
+    def test_cut_removes_the_selection_and_places_it_on_the_clipboard(self):
+        view, item = self._editing_view()
+        clipboard = QApplication.clipboard()
+        clipboard.setText("sentinel")
+        self._select(item, 0, 6)
+        self.assertIs(view.handle_inline_text_shortcut("cut"), True)
+        self.assertEqual(clipboard.text(), "Hello ")
+        self.assertEqual(item.toPlainText(), "world")
+        self.assertFalse(item.textCursor().hasSelection())
+        clipboard.setText("sentinel")
+        self.assertIs(view.handle_inline_text_shortcut("cut"), True)
+        self.assertEqual(clipboard.text(), "sentinel")
+        self.assertEqual(item.toPlainText(), "world")
+
+    def test_paste_inserts_the_clipboard_text_at_the_cursor(self):
+        view, item = self._editing_view()
+        QApplication.clipboard().setText("XYZ")
+        cursor = item.textCursor()
+        cursor.setPosition(5)
+        item.setTextCursor(cursor)
+        self.assertIs(view.handle_inline_text_shortcut("paste"), True)
+        self.assertEqual(item.toPlainText(), "HelloXYZ world")
+        self.assertEqual(item.textCursor().position(), 8)
+
+    def test_delete_removes_the_selection_or_the_next_character(self):
+        view, item = self._editing_view()
+        self._select(item, 0, 6)
+        self.assertIs(view.handle_inline_text_shortcut("delete"), True)
+        self.assertEqual(item.toPlainText(), "world")
+        cursor = item.textCursor()
+        cursor.setPosition(0)
+        item.setTextCursor(cursor)
+        self.assertIs(view.handle_inline_text_shortcut("delete"), True)
+        self.assertEqual(item.toPlainText(), "orld")
+
+
+class TakeoffPlanViewLayerVisibilityTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Layer and page-image visibility applied to the scene items of a loaded page."""
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    def _layered_view(self):
+        view = self._make_plan_view()
+        view._current_bid_page_uid = "p1"
+        view._current_conditions = {
+            "c1": Condition(uid="c1", layer_uid="L1"),
+            "c2": Condition(uid="c2", layer_uid="L2"),
+            "c3": Condition(uid="c3", layer_uid=None),
+        }
+        view._current_takeoffs = {
+            uid: Takeoff(
+                uid=uid, condition_uid=condition_uid, page_uid="p1", position=[0.0, 0.0]
+            )
+            for uid, condition_uid in (
+                ("t1", "c1"),
+                ("t2", "c2"),
+                ("t3", "gone"),
+                ("t4", "c3"),
+            )
+        }
+        view._current_annotations = {
+            "a1": BidAnnotation(
+                uid="a1", annotation_type="rect", layer_uid="L1", position=[0.0, 0.0]
+            ),
+            "a2": BidAnnotation(
+                uid="a2", annotation_type="rect", layer_uid="L2", position=[0.0, 0.0]
+            ),
+            "a3": BidAnnotation(
+                uid="a3", annotation_type="rect", layer_uid=None, position=[0.0, 0.0]
+            ),
+        }
+        view._uid_to_items = {}
+        for uid in ("t1", "t2", "t3", "t4", "a1", "a2", "a3"):
+            item = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+            view._scene.addItem(item)
+            item.setVisible(False)
+            view._uid_to_items[uid] = [item]
+        return view
+
+    def _visible(self, view):
+        return {uid: items[0].isVisible() for uid, items in view._uid_to_items.items()}
+
+    def test_a_layer_change_only_touches_items_of_that_layer(self):
+        view = self._layered_view()
+        calls = self._record(view, "update_selection_visuals", "_update_scene_rect")
+        updates = []
+        view.viewport().update = lambda *a: updates.append(a)
+        conditions = dict(view._current_conditions)
+        conditions["c1"] = Condition(uid="c1", layer_uid="L1", layer_visible=False)
+        self.assertIs(view.apply_layer_visibility("L1", False, conditions), True)
+        self.assertIs(view._current_conditions, conditions)
+        self.assertEqual(view._hidden_layer_uids, {"L1"})
+        self.assertEqual(
+            self._visible(view),
+            {
+                "t1": False,
+                "t2": False,
+                "t3": False,
+                "t4": False,
+                "a1": False,
+                "a2": False,
+                "a3": True,
+            },
+        )
+        self.assertFalse(view._current_annotations["a1"].visible is True)
+        self.assertTrue(view._current_annotations["a2"].visible)
+        self.assertEqual(
+            [name for name, _a, _k in calls],
+            ["update_selection_visuals", "_update_scene_rect"],
+        )
+        self.assertEqual(len(updates), 1)
+
+    def test_showing_a_layer_makes_its_items_visible_again(self):
+        view = self._layered_view()
+        view._hidden_layer_uids = {"L1", "L2"}
+        view._current_annotations["a1"].visible = False
+        self.assertIs(view.apply_layer_visibility("L1", True), True)
+        self.assertEqual(view._hidden_layer_uids, {"L2"})
+        self.assertTrue(view._current_annotations["a1"].visible)
+        visible = self._visible(view)
+        self.assertTrue(visible["t1"])
+        self.assertTrue(visible["a1"])
+        self.assertTrue(visible["a3"])
+        self.assertFalse(visible["t2"])
+        self.assertFalse(visible["a2"])
+        self.assertFalse(visible["t3"])
+
+    def test_the_conditions_argument_is_optional_for_a_layer_change(self):
+        view = self._layered_view()
+        original = view._current_conditions
+        view.apply_layer_visibility("L1", True)
+        self.assertIs(view._current_conditions, original)
+
+    def test_the_empty_layer_matches_unlayered_conditions_and_annotations(self):
+        view = self._layered_view()
+        view._current_annotations["a3"].visible = True
+        view.apply_layer_visibility("", False)
+        self.assertEqual(view._hidden_layer_uids, {""})
+        self.assertTrue(view._current_annotations["a3"].visible)
+        visible = self._visible(view)
+        self.assertTrue(visible["t4"])
+        self.assertFalse(visible["t1"])
+        self.assertFalse(visible["t2"])
+        self.assertFalse(visible["a1"])
+        self.assertFalse(visible["a2"])
+        self.assertTrue(visible["a3"])
+
+    def test_layer_changes_need_a_loaded_page(self):
+        view = self._layered_view()
+        view._current_bid_page_uid = None
+        calls = self._record(view, "update_selection_visuals")
+        self.assertIs(view.apply_layer_visibility("L1", False, {}), False)
+        self.assertIs(view.apply_all_layer_visibility(False, {}), False)
+        self.assertEqual(calls, [])
+        self.assertEqual(view._hidden_layer_uids, set())
+        self.assertNotEqual(view._current_conditions, {})
+
+    def test_changing_every_layer_hides_all_known_layers_and_annotations(self):
+        view = self._layered_view()
+        calls = self._record(view, "update_selection_visuals", "_update_scene_rect")
+        updates = []
+        view.viewport().update = lambda *a: updates.append(a)
+        for item in (items[0] for items in view._uid_to_items.values()):
+            item.setVisible(True)
+        conditions = {
+            "c1": Condition(uid="c1", layer_uid="L1", layer_visible=False),
+            "c2": Condition(uid="c2", layer_uid="L2", layer_visible=False),
+        }
+        view._current_annotations["a2"].layer_uid = "L9"
+        self.assertIs(view.apply_all_layer_visibility(False, conditions), True)
+        self.assertIs(view._current_conditions, conditions)
+        self.assertEqual(view._hidden_layer_uids, {"L1", "L2", "L9"})
+        self.assertFalse(
+            any(annotation.visible for annotation in view._current_annotations.values())
+        )
+        visible = self._visible(view)
+        self.assertEqual(
+            visible,
+            {
+                "t1": False,
+                "t2": False,
+                "t3": True,
+                "t4": True,
+                "a1": False,
+                "a2": False,
+                "a3": False,
+            },
+        )
+        self.assertEqual(
+            [name for name, _a, _k in calls],
+            ["update_selection_visuals", "_update_scene_rect"],
+        )
+        self.assertEqual(len(updates), 1)
+
+    def test_changing_every_layer_with_only_annotation_layers_hides_those(self):
+        view = self._layered_view()
+        view._current_conditions = {}
+        view.apply_all_layer_visibility(False)
+        self.assertEqual(view._hidden_layer_uids, {"L1", "L2"})
+
+    def test_showing_every_layer_clears_the_hidden_layers(self):
+        view = self._layered_view()
+        view._hidden_layer_uids = {"L1", "L2", "L9"}
+        for annotation in view._current_annotations.values():
+            annotation.visible = False
+        self.assertIs(view.apply_all_layer_visibility(True), True)
+        self.assertEqual(view._hidden_layer_uids, set())
+        self.assertTrue(
+            all(annotation.visible for annotation in view._current_annotations.values())
+        )
+        visible = self._visible(view)
+        self.assertTrue(visible["t1"] and visible["t2"] and visible["t4"])
+        self.assertFalse(visible["t3"])
+        self.assertTrue(visible["a1"] and visible["a2"] and visible["a3"])
+
+    # ---- uid items
+    def test_uid_items_are_visible_by_condition_layer_or_annotation_layer(self):
+        view = self._layered_view()
+        view._current_conditions["c1"].layer_visible = False
+        view._hidden_layer_uids = {"L2"}
+        self.assertIs(view._uid_items_visible("t1"), False)
+        self.assertIs(view._uid_items_visible("t2"), True)
+        self.assertIs(view._uid_items_visible("t3"), True)
+        self.assertIs(view._uid_items_visible("a1"), True)
+        self.assertIs(view._uid_items_visible("a2"), False)
+        self.assertIs(view._uid_items_visible("unknown"), True)
+
+    def test_registering_uid_items_copies_the_list_and_applies_visibility_and_pending_state(
+        self,
+    ):
+        view = self._layered_view()
+        item = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        view._scene.addItem(item)
+        view._current_conditions["c1"].layer_visible = False
+        view._pending_mutation_uids = {"t1"}
+        items = [item]
+        view._register_uid_items("t1", items)
+        items.append(QGraphicsRectItem())
+        self.assertEqual(view._uid_to_items["t1"], [item])
+        self.assertFalse(item.isVisible())
+        self.assertEqual(item.opacity(), 0.35)
+        view._register_uid_items(7, [item])
+        self.assertEqual(view._uid_to_items["7"], [item])
+        self.assertNotIn(7, view._uid_to_items)
+
+    # ---- page image layer
+    def _image_layer_view(self, loaded):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", image_path="base.pdf", layer_visible=True)
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._has_loaded_page_visual_items = lambda: loaded
+        calls = self._record(
+            view, "_sync_page_image_layer_visibility", "_update_scene_rect"
+        )
+        updates = []
+        view.viewport().update = lambda *a: updates.append(a)
+        return view, page, calls, updates
+
+    def test_page_image_visibility_is_applied_to_the_current_page(self):
+        for visible, loaded in ((True, True), (False, True), (False, False)):
+            with self.subTest(visible=visible, loaded=loaded):
+                view, page, calls, updates = self._image_layer_view(loaded)
+                incoming = Page(
+                    uid="p1", name="P1", image_path="base.pdf", layer_visible=visible
+                )
+                self.assertIs(view.apply_page_image_layer_visibility(incoming), True)
+                self.assertIs(page.layer_visible, visible)
+                self.assertEqual(
+                    [name for name, _a, _k in calls],
+                    ["_sync_page_image_layer_visibility", "_update_scene_rect"],
+                )
+                self.assertEqual(len(updates), 1)
+
+    def test_page_image_visibility_without_an_image_does_not_wait_for_visuals(self):
+        view, page, calls, updates = self._image_layer_view(False)
+        incoming = Page(uid="p1", name="P1", layer_visible=True)
+        self.assertIs(view.apply_page_image_layer_visibility(incoming), True)
+        self.assertEqual(len(calls), 2)
+
+    def test_page_image_visibility_waits_until_the_visuals_exist(self):
+        view, page, calls, updates = self._image_layer_view(False)
+        page.layer_visible = False
+        incoming = Page(uid="p1", name="P1", image_path="base.pdf", layer_visible=True)
+        self.assertIs(view.apply_page_image_layer_visibility(incoming), False)
+        self.assertFalse(page.layer_visible)
+        self.assertEqual((calls, updates), ([], []))
+
+    def test_page_image_visibility_ignores_other_pages_and_unloaded_views(self):
+        view, page, calls, updates = self._image_layer_view(True)
+        other = Page(uid="other", name="O", layer_visible=False)
+        self.assertIs(view.apply_page_image_layer_visibility(other), False)
+        view._current_page = None
+        self.assertIs(
+            view.apply_page_image_layer_visibility(
+                Page(uid="p1", name="P1", layer_visible=False)
+            ),
+            False,
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "other"
+        self.assertIs(
+            view.apply_page_image_layer_visibility(
+                Page(uid="p1", name="P1", layer_visible=False)
+            ),
+            False,
+        )
+        self.assertTrue(page.layer_visible)
+        self.assertEqual((calls, updates), ([], []))
+
+
+def _plain_rect(x, y, width, height):
+    item = QGraphicsRectItem(x, y, width, height)
+    item.setPen(QtGui.QPen(QtCore.Qt.PenStyle.NoPen))
+    return item
+
+
+class TakeoffPlanViewSceneGeometryTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Scene rectangle, coordinate conversion and canvas colour helpers."""
+
+    def test_the_coordinate_system_comes_from_the_scene_builder(self):
+        view = self._make_plan_view()
+        self.assertIs(
+            view.get_coordinate_system(), view._scene_builder.get_coordinate_system()
+        )
+        self.assertIsNotNone(view.get_coordinate_system())
+
+    def test_the_canvas_colour_follows_the_page_effects(self):
+        view = self._make_plan_view()
+        self.assertEqual(view._page_canvas_color(), QColor(255, 255, 255))
+        self.assertEqual(view._current_handle_background_color(), QColor(255, 255, 255))
+        for invert, bitonal, expected in (
+            (True, False, QColor(0, 0, 0)),
+            (False, True, QColor(220, 220, 220)),
+            (True, True, QColor(35, 35, 35)),
+            (False, False, QColor(255, 255, 255)),
+        ):
+            with self.subTest(invert=invert, bitonal=bitonal):
+                view._current_page = Page(
+                    uid="p", name="P", invert=invert, bitonal=bitonal
+                )
+                self.assertEqual(view._page_canvas_color(), expected)
+                self.assertEqual(view._current_handle_background_color(), expected)
+
+    def test_ost_positions_are_scaled_by_view_scale_over_scale_ratio(self):
+        view = self._make_plan_view()
+        view._scene_builder.get_coordinate_system = lambda: SimpleNamespace(
+            view_scale=2.0, scale_ratio=4.0
+        )
+        self.assertEqual(view._ost_to_scene_pos(3.0, 5.0), QtCore.QPointF(108.0, 180.0))
+        view._scene_builder.get_coordinate_system = lambda: SimpleNamespace(
+            view_scale=1.0, scale_ratio=72.0
+        )
+        self.assertEqual(view._ost_to_scene_pos(3.0, 5.0), QtCore.QPointF(3.0, 5.0))
+
+    def test_the_page_scene_rect_comes_from_the_first_item_in_the_scene(self):
+        view = self._make_plan_view()
+        background = _plain_rect(0.0, 0.0, 200.0, 100.0)
+        canvas = _plain_rect(0.0, 0.0, 50.0, 40.0)
+        empty = QGraphicsPathItem()
+        self.assertEqual(view._page_scene_rect(), QtCore.QRectF())
+        view._background_item = background
+        view._white_canvas_item = canvas
+        self.assertEqual(view._page_scene_rect(), QtCore.QRectF())
+        view._scene.addItem(canvas)
+        self.assertEqual(view._page_scene_rect(), QtCore.QRectF(0.0, 0.0, 50.0, 40.0))
+        view._scene.addItem(background)
+        self.assertEqual(view._page_scene_rect(), QtCore.QRectF(0.0, 0.0, 200.0, 100.0))
+        view._scene.addItem(empty)
+        view._background_item = empty
+        self.assertEqual(view._page_scene_rect(), QtCore.QRectF(0.0, 0.0, 50.0, 40.0))
+
+    def test_the_reset_scene_rect_adds_a_margin_around_a_valid_page(self):
+        view = self._make_plan_view()
+        view._page_scene_rect = lambda: QtCore.QRectF(0.0, 0.0, 200.0, 100.0)
+        self.assertEqual(
+            view._page_reset_scene_rect(), QtCore.QRectF(-50.0, -50.0, 300.0, 200.0)
+        )
+        for rect in (
+            QtCore.QRectF(),
+            QtCore.QRectF(0.0, 0.0, 0.0, 10.0),
+            QtCore.QRectF(0.0, 0.0, -5.0, 10.0),
+            QtCore.QRectF(0.0, 0.0, 10.0, 0.0),
+        ):
+            with self.subTest(rect=rect):
+                view._page_scene_rect = lambda rect=rect: rect
+                self.assertEqual(view._page_reset_scene_rect(), rect)
+
+    def test_setting_the_scene_rect_keeps_the_view_centred_once_loaded(self):
+        view = self._make_plan_view()
+        view._scene.setSceneRect(0.0, 0.0, 100.0, 100.0)
+        centered = []
+        handle_updates = []
+        view.centerOn = lambda point: centered.append(point)
+        view._update_overlay_move_handle_position = lambda *a: handle_updates.append(a)
+        view._load_view_applied = True
+        view.get_precise_viewport_scene_center = lambda: QtCore.QPointF(12.0, 34.0)
+        view._set_scene_rect_preserving_view_center(
+            QtCore.QRectF(0.0, 0.0, 300.0, 200.0)
+        )
+        self.assertEqual(view._scene.sceneRect(), QtCore.QRectF(0.0, 0.0, 300.0, 200.0))
+        self.assertEqual(centered, [QtCore.QPointF(12.0, 34.0)])
+        self.assertEqual(handle_updates, [()])
+        centered.clear()
+        view.get_precise_viewport_scene_center = lambda: None
+        view._set_scene_rect_preserving_view_center(
+            QtCore.QRectF(0.0, 0.0, 400.0, 200.0)
+        )
+        self.assertEqual(centered, [])
+        view._load_view_applied = False
+        view.get_precise_viewport_scene_center = lambda: self.fail(
+            "centre is not needed yet"
+        )
+        view._set_scene_rect_preserving_view_center(
+            QtCore.QRectF(0.0, 0.0, 500.0, 200.0)
+        )
+        self.assertEqual(view._scene.sceneRect(), QtCore.QRectF(0.0, 0.0, 500.0, 200.0))
+        self.assertEqual(centered, [])
+
+    def test_setting_a_nearly_equal_scene_rect_changes_nothing(self):
+        view = self._make_plan_view()
+        view._scene.setSceneRect(0.0, 0.0, 100.0, 100.0)
+        handle_updates = []
+        view._update_overlay_move_handle_position = lambda *a: handle_updates.append(a)
+        view._set_scene_rect_preserving_view_center(
+            QtCore.QRectF(0.0004, 0.0, 100.0, 100.0)
+        )
+        self.assertEqual(view._scene.sceneRect(), QtCore.QRectF(0.0, 0.0, 100.0, 100.0))
+        self.assertEqual(handle_updates, [])
+
+    def test_an_invalid_current_scene_rect_is_always_replaced(self):
+        view = self._make_plan_view()
+        handle_updates = []
+        view._update_overlay_move_handle_position = lambda *a: handle_updates.append(a)
+        self.assertFalse(view._scene.sceneRect().isValid())
+        view._set_scene_rect_preserving_view_center(QtCore.QRectF())
+        self.assertEqual(handle_updates, [()])
+
+    def test_the_scene_rect_wraps_every_visible_page_item_with_a_margin(self):
+        view = self._make_plan_view()
+        background = _plain_rect(0.0, 0.0, 200.0, 100.0)
+        canvas = _plain_rect(10.0, 10.0, 20.0, 20.0)
+        takeoff = _plain_rect(-30.0, 40.0, 10.0, 10.0)
+        hotlink = _plain_rect(150.0, 90.0, 100.0, 40.0)
+        empty = QGraphicsPathItem()
+        detached = _plain_rect(1000.0, 1000.0, 5.0, 5.0)
+        for item in (background, canvas, takeoff, hotlink, empty):
+            view._scene.addItem(item)
+        view._background_item = background
+        view._white_canvas_item = canvas
+        view._takeoff_items = [takeoff, None, empty, detached]
+        view._hotlink_items = [(hotlink, None), (None, None)]
+        applied = []
+        view._set_scene_rect_preserving_view_center = lambda rect: applied.append(rect)
+        view._update_scene_rect()
+        self.assertEqual(applied, [QtCore.QRectF(-80.0, -50.0, 380.0, 230.0)])
+
+    def test_an_empty_page_asks_the_scene_builder_for_the_scene_rect(self):
+        view = self._make_plan_view()
+        applied = []
+        view._set_scene_rect_preserving_view_center = lambda rect: applied.append(rect)
+        updates = []
+        view._scene_builder.update_scene_rect = lambda scene: updates.append(scene)
+        view._takeoff_items = [QGraphicsPathItem()]
+        view._update_scene_rect()
+        self.assertEqual(applied, [])
+        self.assertEqual(updates, [view._scene])
+        view._scene_builder.update_scene_rect = lambda scene: self.fail("unexpected")
+        canvas = _plain_rect(0.0, 0.0, 10.0, 10.0)
+        view._scene.addItem(canvas)
+        view._white_canvas_item = canvas
+        view._update_scene_rect()
+        self.assertEqual(applied, [QtCore.QRectF(-50.0, -50.0, 110.0, 110.0)])
+
+
+class TakeoffPlanViewViewStateAndLoadCycleTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Capturing, publishing and restoring the view state across page loads."""
+
+    def _record(self, view, *names, results=None):
+        calls = []
+        results = results or {}
+        for name in names:
+            setattr(
+                view,
+                name,
+                lambda *args, name=name, **kwargs: (
+                    calls.append((name, args, kwargs)) or results.get(name)
+                ),
+            )
+        return calls
+
+    def _state_view(self, applied=True):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", zoom_fac=0.5, current_x=1.0, current_y=2.0)
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene.setSceneRect(0.0, 0.0, 100.0, 100.0)
+        view._load_view_applied = applied
+        view.get_view_state = lambda: (2.5, 30.0, 40.0)
+        return view, page
+
+    # ---- capturing and publishing
+    def test_capturing_stores_the_live_view_state_on_the_page(self):
+        view, page = self._state_view()
+        view._capture_view_state_to_page(page)
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y), (2.5, 30.0, 40.0)
+        )
+
+    def test_capturing_needs_a_matching_page_and_an_applied_view(self):
+        view, page = self._state_view(applied=False)
+        view._capture_view_state_to_page(page)
+        self.assertEqual(page.zoom_fac, 0.5)
+        view._capture_view_state_to_page(page, allow_pending_load=True)
+        self.assertEqual(page.zoom_fac, 2.5)
+        view, page = self._state_view()
+        view._capture_view_state_to_page(None)
+        view._current_bid_page_uid = "other"
+        view._capture_view_state_to_page(page)
+        self.assertEqual(page.zoom_fac, 0.5)
+        view, page = self._state_view()
+        view._scene.setSceneRect(QtCore.QRectF())
+        self.assertFalse(view._scene.sceneRect().isValid())
+        view._capture_view_state_to_page(page)
+        self.assertEqual(page.zoom_fac, 0.5)
+        view._load_view_applied = False
+        view._capture_view_state_to_page(page, allow_pending_load=True)
+        self.assertEqual(page.zoom_fac, 0.5)
+
+    def test_capturing_ignores_a_non_positive_zoom(self):
+        for zoom in (0.0, -1.0):
+            view, page = self._state_view()
+            view.get_view_state = lambda zoom=zoom: (zoom, 30.0, 40.0)
+            view._capture_view_state_to_page(page)
+            self.assertEqual(
+                (page.zoom_fac, page.current_x, page.current_y), (0.5, 1.0, 2.0)
+            )
+        view, page = self._state_view()
+        view.get_view_state = lambda: (1.0, 30.0, 40.0)
+        view._capture_view_state_to_page(page)
+        self.assertEqual(page.zoom_fac, 1.0)
+
+    def test_publishing_captures_then_announces_the_page_view_state(self):
+        view, page = self._state_view()
+        published = []
+        view.page_view_state_changed.connect(lambda *args: published.append(args))
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [("p1", 2.5, 30.0, 40.0)])
+        self.assertEqual(page.zoom_fac, 2.5)
+
+    def test_publishing_follows_the_load_gating(self):
+        view, page = self._state_view(applied=False)
+        published = []
+        view.page_view_state_changed.connect(lambda *args: published.append(args))
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [])
+        view._publish_current_page_view_state(allow_pending_load=True)
+        self.assertEqual(published, [("p1", 2.5, 30.0, 40.0)])
+        view, page = self._state_view()
+        published = []
+        view.page_view_state_changed.connect(lambda *args: published.append(args))
+        view._scene.setSceneRect(QtCore.QRectF())
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [])
+
+    def test_publishing_needs_the_current_page_and_a_positive_zoom(self):
+        view, page = self._state_view()
+        published = []
+        view.page_view_state_changed.connect(lambda *args: published.append(args))
+        view._current_page = None
+        view._publish_current_page_view_state()
+        view._current_page = page
+        view._current_bid_page_uid = "other"
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [])
+        view._current_bid_page_uid = "p1"
+        view.get_view_state = lambda: (0.0, 3.0, 4.0)
+        page.zoom_fac = 0.0
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [])
+        view.get_view_state = lambda: (1.0, 3.0, 4.0)
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [("p1", 1.0, 3.0, 4.0)])
+
+    def test_publishing_a_view_without_capture_rights_checks_the_page_zoom(self):
+        view, page = self._state_view()
+        published = []
+        view.page_view_state_changed.connect(lambda *args: published.append(args))
+        view._capture_view_state_to_page = lambda page, allow_pending_load=False: None
+        page.zoom_fac = 0.0
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [])
+        page.zoom_fac = 1.0
+        view._publish_current_page_view_state()
+        self.assertEqual(published, [("p1", 1.0, 1.0, 2.0)])
+
+    # ---- scroll state
+    def _scrollable_view(self):
+        view = self._make_plan_view()
+        view._load_view_applied = True
+        view.resize(200, 200)
+        view._scene.setSceneRect(0.0, 0.0, 2000.0, 2000.0)
+        view.show()
+        QApplication.processEvents()
+        return view
+
+    def test_the_scroll_state_is_captured_and_restored_once(self):
+        view = self._scrollable_view()
+        view.horizontalScrollBar().setValue(120)
+        view.verticalScrollBar().setValue(75)
+        view._capture_scroll_state()
+        self.assertEqual(view._saved_scroll_state, (120, 75))
+        view.horizontalScrollBar().setValue(0)
+        view.verticalScrollBar().setValue(0)
+        view._restore_scroll_state()
+        self.assertEqual(
+            (view.horizontalScrollBar().value(), view.verticalScrollBar().value()),
+            (120, 75),
+        )
+        self.assertIsNone(view._saved_scroll_state)
+        view.horizontalScrollBar().setValue(3)
+        view._restore_scroll_state()
+        self.assertEqual(view.horizontalScrollBar().value(), 3)
+
+    def test_the_scroll_state_tolerates_missing_scroll_bars(self):
+        view = self._scrollable_view()
+        view.horizontalScrollBar = lambda: None
+        view.verticalScrollBar = lambda: None
+        view._capture_scroll_state()
+        self.assertEqual(view._saved_scroll_state, (0, 0))
+        view._saved_scroll_state = (5, 6)
+        view._restore_scroll_state()
+        self.assertIsNone(view._saved_scroll_state)
+
+    # ---- the load cycle
+    def test_beginning_a_load_cycle_resets_the_load_flags_and_picks_the_view_mode(self):
+        view = self._make_plan_view()
+        for zoom, auto_level, expected in (
+            (2.0, 0, "restore"),
+            (2.0, 300, "restore"),
+            (0.0, 300, "auto_zoom"),
+            (0.0, 1, "auto_zoom"),
+            (0.0, 0, "fit"),
+            (-1.0, 0, "fit"),
+        ):
+            with self.subTest(zoom=zoom, auto=auto_level):
+                page = Page(uid="p1", name="P1", zoom_fac=zoom)
+                view._saved_scroll_state = (1, 2)
+                view._current_load_token = "old"
+                view._default_auto_zoom_level = auto_level
+                view._load_geometry_ready = True
+                view._load_view_applied = True
+                view._load_user_view_changed = True
+                view._load_waiting_for_visibility = True
+                view._load_geometry_notified = True
+                view._missing_file_bar.show_message("missing")
+                view._begin_load_cycle(page, False)
+                self.assertEqual(view._load_initial_view_mode, expected)
+                self.assertIsNone(view._saved_scroll_state)
+                self.assertNotEqual(view._current_load_token, "old")
+                self.assertEqual(len(view._current_load_token), 32)
+                self.assertFalse(view._missing_file_bar.is_active)
+                self.assertEqual(
+                    [
+                        view._load_geometry_ready,
+                        view._load_view_applied,
+                        view._load_user_view_changed,
+                        view._load_waiting_for_visibility,
+                        view._load_geometry_notified,
+                    ],
+                    [False] * 5,
+                )
+
+    def test_beginning_a_load_cycle_can_keep_the_current_view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1")
+        calls = self._record(
+            view, "_capture_view_state_to_page", "_capture_scroll_state"
+        )
+        view._begin_load_cycle(page, False)
+        self.assertEqual(calls, [])
+        view._begin_load_cycle(page, True)
+        self.assertEqual(
+            calls,
+            [
+                ("_capture_view_state_to_page", (page,), {}),
+                ("_capture_scroll_state", (), {}),
+            ],
+        )
+
+    def test_a_user_view_change_only_counts_before_the_view_is_applied(self):
+        view = self._make_plan_view()
+        view._load_view_applied = True
+        view._mark_user_view_changed_during_load()
+        self.assertFalse(view._load_user_view_changed)
+        view._load_view_applied = False
+        view._mark_user_view_changed_during_load()
+        self.assertTrue(view._load_user_view_changed)
+
+    def test_geometry_ready_announces_once_and_tries_to_finish_the_load(self):
+        view = self._make_plan_view()
+        calls = self._record(
+            view,
+            "_update_scene_rect",
+            "_complete_current_page_render_loading",
+            "_finalize_page_load_if_ready",
+        )
+        announced = []
+        view.page_geometry_ready.connect(lambda: announced.append(1))
+        view._mark_load_geometry_ready()
+        self.assertTrue(view._load_geometry_ready)
+        self.assertTrue(view._load_geometry_notified)
+        self.assertEqual(announced, [1])
+        self.assertEqual(
+            [name for name, _a, _k in calls],
+            [
+                "_update_scene_rect",
+                "_complete_current_page_render_loading",
+                "_finalize_page_load_if_ready",
+            ],
+        )
+        view._mark_load_geometry_ready()
+        self.assertEqual(announced, [1])
+        self.assertEqual(len(calls), 6)
+
+    # ---- applying the view contract
+    def _contract_view(self, mode, page=True, zoom=2.0, restore_ok=True):
+        view = self._make_plan_view()
+        view._load_initial_view_mode = mode
+        view._current_page = (
+            Page(uid="p1", name="P1", zoom_fac=zoom, current_x=3.0, current_y=4.0)
+            if page
+            else None
+        )
+        view._default_auto_zoom_level = 250
+        calls = self._record(
+            view,
+            "restore_view_state",
+            "fit_to_page",
+            "set_zoom_percent",
+            "_restore_scroll_state",
+            results={"restore_view_state": restore_ok},
+        )
+        return view, calls
+
+    def test_restoring_the_saved_view_consumes_the_scroll_state_on_request(self):
+        view, calls = self._contract_view("restore")
+        view._apply_current_view_contract(consume_scroll_state=True)
+        self.assertEqual(
+            calls,
+            [
+                ("restore_view_state", (2.0, 3.0, 4.0), {}),
+                ("_restore_scroll_state", (), {}),
+            ],
+        )
+        calls.clear()
+        view._apply_current_view_contract(consume_scroll_state=False)
+        self.assertEqual(calls, [("restore_view_state", (2.0, 3.0, 4.0), {})])
+
+    def test_a_failed_restore_falls_back_to_fitting_the_page(self):
+        view, calls = self._contract_view("restore", restore_ok=False)
+        view._apply_current_view_contract(consume_scroll_state=True)
+        self.assertEqual(
+            calls,
+            [("restore_view_state", (2.0, 3.0, 4.0), {}), ("fit_to_page", (), {})],
+        )
+
+    def test_the_auto_zoom_and_fit_modes_ignore_the_saved_state(self):
+        view, calls = self._contract_view("auto_zoom")
+        view._apply_current_view_contract(consume_scroll_state=True)
+        self.assertEqual(calls, [("set_zoom_percent", (250,), {})])
+        for mode, page, zoom in (
+            ("fit", True, 2.0),
+            ("restore", False, 2.0),
+            ("restore", True, 0.0),
+        ):
+            with self.subTest(mode=mode, page=page, zoom=zoom):
+                view, calls = self._contract_view(mode, page=page, zoom=zoom)
+                view._apply_current_view_contract(consume_scroll_state=True)
+                self.assertEqual(calls, [("fit_to_page", (), {})])
+
+    def test_the_loading_view_contract_needs_a_visible_view_with_a_scene_rect(self):
+        view = self._make_plan_view()
+        view._scene.setSceneRect(0.0, 0.0, 100.0, 100.0)
+        calls = self._record(view, "_apply_current_view_contract")
+        view._apply_loading_view_contract()
+        self.assertEqual(calls, [])
+        view.show()
+        QApplication.processEvents()
+        calls.clear()
+        view._load_view_applied = True
+        view._apply_loading_view_contract()
+        self.assertEqual(calls, [])
+        view._load_view_applied = False
+        view._scene.setSceneRect(QtCore.QRectF())
+        view._apply_loading_view_contract()
+        self.assertEqual(calls, [])
+        view._scene.setSceneRect(0.0, 0.0, 100.0, 100.0)
+        view._apply_loading_view_contract()
+        self.assertEqual(
+            calls,
+            [("_apply_current_view_contract", (), {"consume_scroll_state": False})],
+        )
+
+    def test_the_pending_visible_view_state_is_applied_once_at_a_time(self):
+        view = self._make_plan_view()
+        view.show()
+        QApplication.processEvents()
+        order = []
+        view._apply_loading_view_contract = lambda: order.append(
+            ("contract", view._applying_pending_visible_view_state)
+        )
+        view._finalize_page_load_if_ready = lambda: order.append(
+            ("finalize", view._applying_pending_visible_view_state)
+        )
+        order.clear()
+        view._apply_pending_visible_view_state()
+        self.assertEqual(order, [("contract", True), ("finalize", True)])
+        self.assertFalse(view._applying_pending_visible_view_state)
+        for attribute, value in (
+            ("_applying_pending_visible_view_state", True),
+            ("_load_view_applied", True),
+        ):
+            order.clear()
+            setattr(view, attribute, value)
+            view._apply_pending_visible_view_state()
+            self.assertEqual(order, [])
+            setattr(view, attribute, False)
+        view.hide()
+        view._apply_pending_visible_view_state()
+        self.assertEqual(order, [])
+        view.show()
+        QApplication.processEvents()
+        order.clear()
+        view.viewport().size = lambda: QtCore.QSize(-1, -1)
+        view._apply_pending_visible_view_state()
+        self.assertEqual(order, [])
+
+    def test_the_pending_visible_view_state_flag_is_reset_after_a_failure(self):
+        view = self._make_plan_view()
+        view.show()
+        QApplication.processEvents()
+
+        def explode():
+            raise RuntimeError("boom")
+
+        view._apply_loading_view_contract = explode
+        with self.assertRaises(RuntimeError):
+            view._apply_pending_visible_view_state()
+        self.assertFalse(view._applying_pending_visible_view_state)
+
+    # ---- finishing a page load
+    def _finalize_view(self, visible=True):
+        view = self._make_plan_view()
+        if visible:
+            view.show()
+            QApplication.processEvents()
+        calls = self._record(
+            view, "_apply_current_view_contract", "_update_tile_coverage"
+        )
+        view._uses_dynamic_tile_coverage = lambda: False
+        loaded = []
+        view.page_fully_loaded.connect(lambda: loaded.append(1))
+        view._load_geometry_ready = True
+        view._load_view_applied = False
+        return view, calls, loaded
+
+    def test_a_ready_load_applies_the_view_and_announces_completion(self):
+        view, calls, loaded = self._finalize_view()
+        view._saved_scroll_state = (1, 2)
+        view._load_waiting_for_visibility = True
+        self.assertIs(view._finalize_page_load_if_ready(), True)
+        self.assertEqual(
+            calls,
+            [("_apply_current_view_contract", (), {"consume_scroll_state": True})],
+        )
+        self.assertTrue(view._load_view_applied)
+        self.assertFalse(view._load_waiting_for_visibility)
+        self.assertIsNone(view._saved_scroll_state)
+        self.assertEqual(loaded, [1])
+
+    def test_a_load_with_a_user_view_change_keeps_that_view(self):
+        view, calls, loaded = self._finalize_view()
+        view._saved_scroll_state = (1, 2)
+        view._load_user_view_changed = True
+        self.assertIs(view._finalize_page_load_if_ready(), True)
+        self.assertEqual(calls, [])
+        self.assertIsNone(view._saved_scroll_state)
+        self.assertTrue(view._load_view_applied)
+        self.assertEqual(loaded, [1])
+
+    def test_a_dynamic_tile_view_refreshes_its_tiles_at_the_current_zoom(self):
+        view, calls, loaded = self._finalize_view()
+        view._uses_dynamic_tile_coverage = lambda: True
+        view.scale(2.0, 2.0)
+        view._finalize_page_load_if_ready()
+        self.assertEqual(
+            calls[-1], ("_update_tile_coverage", (view.transform().m11(),), {})
+        )
+        self.assertEqual(view.transform().m11(), 2.0)
+
+    def test_a_load_waits_for_the_view_to_become_visible(self):
+        view, calls, loaded = self._finalize_view(visible=False)
+        self.assertIs(view._finalize_page_load_if_ready(), False)
+        self.assertTrue(view._load_waiting_for_visibility)
+        self.assertFalse(view._load_view_applied)
+        self.assertEqual((calls, loaded), ([], []))
+
+    def test_a_load_that_is_not_ready_or_already_applied_is_left_alone(self):
+        view, calls, loaded = self._finalize_view()
+        view._load_geometry_ready = False
+        self.assertIs(view._finalize_page_load_if_ready(), False)
+        view._load_geometry_ready = True
+        view._load_view_applied = True
+        self.assertIs(view._finalize_page_load_if_ready(), False)
+        self.assertFalse(view._load_waiting_for_visibility)
+        self.assertEqual((calls, loaded), ([], []))
+
+    def test_a_queued_finalize_only_runs_for_a_live_view(self):
+        view, calls, loaded = self._finalize_view()
+        view._finalize_queued_page_load_if_valid()
+        self.assertEqual(loaded, [1])
+
+    # ---- selection and mode queries
+    def test_selected_takeoffs_need_selection_support_and_a_takeoff_in_the_selection(
+        self,
+    ):
+        view = self._make_plan_view()
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="c", page_uid="p", position=[0.0, 0.0]
+            )
+        }
+        for enabled, selected, expected in (
+            (True, {"t1"}, True),
+            (True, {"t1", "a1"}, True),
+            (True, {"a1"}, False),
+            (True, set(), False),
+            (False, {"t1"}, False),
+        ):
+            with self.subTest(enabled=enabled, selected=selected):
+                view._selection_enabled = enabled
+                view._selected_uids = set(selected)
+                self.assertIs(view.has_selected_takeoffs, expected)
+
+    def test_selection_and_takeoff_presence_flags(self):
+        view = self._make_plan_view()
+        self.assertIs(view.has_selection, False)
+        self.assertIs(view.has_takeoff_objects, False)
+        view._selected_uids = {"x"}
+        view._current_takeoffs = {"t1": object()}
+        self.assertIs(view.has_selection, True)
+        self.assertIs(view.has_takeoff_objects, True)
+
+    def test_rotate_mode_is_active_for_rotate_modes_or_an_active_rotation_drag(self):
+        view = self._make_plan_view()
+        for mode, dragging, expected in (
+            (CURSOR_MODE_SELECT, False, False),
+            (plan_view_module.CURSOR_MODE_ROTATE, False, True),
+            (plan_view_module.CURSOR_MODE_SLOPE_ROTATE, False, True),
+            (CURSOR_MODE_SELECT, True, True),
+            (CURSOR_MODE_PLACE, False, False),
+        ):
+            with self.subTest(mode=mode, dragging=dragging):
+                view._cursor_mode = mode
+                view._rotation_drag_active = dragging
+                self.assertIs(view.is_rotate_mode_active, expected)
+
+    def test_the_view_state_is_stable_once_applied_with_a_valid_scene_rect(self):
+        view = self._make_plan_view()
+        view._scene.setSceneRect(0.0, 0.0, 10.0, 10.0)
+        view._load_view_applied = True
+        self.assertIs(view.is_view_state_stable, True)
+        view._load_view_applied = False
+        self.assertIs(view.is_view_state_stable, False)
+        view._load_view_applied = True
+        view._scene.setSceneRect(QtCore.QRectF())
+        self.assertIs(view.is_view_state_stable, False)
+
+
+def _chars_run(text_chars, top=0.0, bottom=10.0, start=0.0, step=5.0):
+    """A mapped run whose characters are laid out left to right."""
+    chars = []
+    for index, text in enumerate(text_chars):
+        left = start + index * step
+        chars.append(
+            PdfTextChar(left=left, top=top, right=left + step, bottom=bottom, text=text)
+        )
+    return PdfTextRun(
+        left=start,
+        top=top,
+        right=start + step * len(chars),
+        bottom=bottom,
+        text="".join(text_chars),
+        chars=tuple(chars),
+    )
+
+
+class TakeoffPlanViewPdfTextSweepTests(unittest.TestCase):
+    """PDF text extraction, mapping, hit testing and selection without a full view."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    _make_view = PdfTextSelectionTests._make_view
+
+    def setUp(self):
+        QtWidgets.QApplication.clipboard().setText("")
+        self.viewport = _pdf_text_support_FakeTrackingViewport()
+
+    def _view(self):
+        view = self._make_view()
+        view.viewport = lambda: self.viewport
+        view._cursor_mode_needs_passive_mouse_tracking = lambda: False
+        return view
+
+    # ---- extraction requests
+    def test_cancelling_an_extraction_needs_a_pending_request(self):
+        view = self._view()
+        view._cancel_pdf_text_extraction()
+        self.assertEqual(view._rendering_service.cancelled, [])
+        view._pdf_text_request_id = "text-9"
+        view._pdf_text_request_source = ("main", "a.pdf", 0)
+        view._cancel_pdf_text_extraction()
+        self.assertEqual(view._rendering_service.cancelled, ["text-9"])
+        self.assertIsNone(view._pdf_text_request_id)
+        self.assertIsNone(view._pdf_text_request_source)
+
+    def test_clearing_selection_state_removes_the_highlights_from_the_scene(self):
+        view = self._view()
+        live = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        detached = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        deleted = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        view._scene.addItem(live)
+        view._scene.addItem(deleted)
+        view._pdf_text_highlight_items = [live, detached, deleted]
+        delete(deleted)
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "x", (PdfTextRect(0, 0, 1, 1),)
+        )
+        view._pdf_text_drag_anchor = (0, 0)
+        view._pdf_text_drag_focus = (0, 1)
+        view._clear_pdf_text_selection()
+        self.assertIsNone(view._selected_pdf_text_selection)
+        self.assertIsNone(view._pdf_text_drag_anchor)
+        self.assertIsNone(view._pdf_text_drag_focus)
+        self.assertIsNone(live.scene())
+        self.assertEqual(view._pdf_text_highlight_items, [])
+
+    def test_clearing_the_text_cache_resets_every_extraction_trace(self):
+        view = self._view()
+        view._pdf_text_request_id = "text-9"
+        view._pdf_text_request_source = ("main", "a.pdf", 0)
+        view._pdf_text_runs = [_chars_run("ab")]
+        view._pdf_text_cache_key = ("key",)
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "x", (PdfTextRect(0, 0, 1, 1),)
+        )
+        view._clear_pdf_text_cache()
+        self.assertEqual(view._rendering_service.cancelled, ["text-9"])
+        self.assertEqual(view._pdf_text_runs, [])
+        self.assertIsNone(view._pdf_text_cache_key)
+        self.assertIsNone(view._pdf_text_request_source)
+        self.assertIsNone(view._pdf_text_request_id)
+        self.assertIsNone(view._selected_pdf_text_selection)
+        self.assertEqual(self.viewport.tracking, [False])
+        self.assertEqual(self.viewport.updates, 1)
+
+    def test_the_cache_key_describes_the_text_source(self):
+        view = self._view()
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "base.pdf")
+            with open(path, "wb") as handle:
+                handle.write(b"%PDF")
+            view._current_page = Page(
+                uid="page-1",
+                name="P",
+                image_path=path,
+                width_pts=200.0,
+                height_pts=100.0,
+                page_index=3,
+                overlay_rotation=1.5,
+                deskew_rotation_overlay=0.25,
+                scale_factor1=0.1875,
+                scale_factor2=12.0,
+            )
+            view._pdf_width_pts = 0.0
+            view._pdf_height_pts = 0.0
+            view._scene_scale = 2.0
+            key = view._pdf_text_extraction_cache_key()
+            self.assertEqual(
+                key,
+                (
+                    "page-1",
+                    PDF_INTELLIGENCE_SOURCE_MAIN,
+                    path,
+                    os.path.getmtime(path),
+                    3,
+                    200.0,
+                    100.0,
+                    view._current_page.overlay_rect,
+                    1.5,
+                    0.25,
+                    None,
+                    2.0,
+                ),
+            )
+            self.assertIs(type(key[5]), float)
+            view._pdf_width_pts = 321.0
+            view._pdf_height_pts = 123.0
+            key = view._pdf_text_extraction_cache_key()
+            self.assertEqual((key[5], key[6]), (321.0, 123.0))
+            missing = Page(
+                uid="page-1", name="P", image_path=os.path.join(folder, "none.pdf")
+            )
+            view._current_page = missing
+            view._pdf_width_pts = 0.0
+            view._pdf_height_pts = 0.0
+            key = view._pdf_text_extraction_cache_key()
+            self.assertIsNone(key[3])
+            self.assertEqual((key[5], key[6]), (0.0, 0.0))
+            self.assertIs(type(key[5]), float)
+
+    def test_the_cache_key_of_an_overlay_source_carries_the_overlay_units(self):
+        view = self._view()
+        view._current_page = Page(
+            uid="page-1",
+            name="P",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=SHOW_OVERLAY,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
+        )
+        key = view._pdf_text_extraction_cache_key()
+        self.assertEqual(key[1], PDF_INTELLIGENCE_SOURCE_OVERLAY)
+        self.assertEqual(key[2], "overlay.pdf")
+        self.assertIsNotNone(view._current_page.overlay_units_per_sheet_inch)
+        self.assertEqual(key[10], view._current_page.overlay_units_per_sheet_inch)
+        view._current_page.layer_visible = False
+        self.assertIsNone(view._pdf_text_extraction_cache_key())
+
+    def test_requesting_extraction_asks_the_service_once_per_cache_key(self):
+        view = self._view()
+        view._pdf_text_runs = [_chars_run("ab")]
+        view._request_pdf_text_extraction()
+        self.assertEqual(len(view._rendering_service.requests), 1)
+        file_path, page_index, callback, priority = view._rendering_service.requests[0]
+        self.assertEqual((file_path, page_index), ("drawing.pdf", 0))
+        self.assertEqual(callback.__func__, TakeoffPlanView._on_pdf_text_extracted)
+        self.assertEqual(priority, RenderPriority.PDF_TEXT)
+        self.assertEqual(view._pdf_text_request_id, "text-request-1")
+        self.assertEqual(
+            view._pdf_text_request_source,
+            (PDF_INTELLIGENCE_SOURCE_MAIN, "drawing.pdf", 0),
+        )
+        self.assertEqual(
+            view._pdf_text_cache_key, view._pdf_text_extraction_cache_key()
+        )
+        self.assertEqual(view._pdf_text_runs, [])
+        view._request_pdf_text_extraction()
+        self.assertEqual(len(view._rendering_service.requests), 1)
+
+    def test_a_page_without_a_text_source_keeps_the_cached_text(self):
+        view = self._view()
+        run = _chars_run("ab")
+        view._pdf_text_runs = [run]
+        view._pdf_text_cache_key = ("old",)
+        view._current_page.layer_visible = False
+        view._request_pdf_text_extraction()
+        self.assertEqual(view._pdf_text_runs, [run])
+        self.assertEqual(view._pdf_text_cache_key, ("old",))
+        self.assertEqual(view._rendering_service.requests, [])
+
+    def test_a_cache_key_without_a_pdf_source_clears_the_cache_without_a_request(self):
+        view = self._view()
+        view._pdf_intelligence_source = lambda: None
+        view._pdf_text_extraction_cache_key = lambda: ("fresh",)
+        view._pdf_text_runs = [_chars_run("ab")]
+        view._pdf_text_request_source = ("main", "x", 0)
+        view._request_pdf_text_extraction()
+        self.assertEqual(view._pdf_text_cache_key, ("fresh",))
+        self.assertEqual(view._pdf_text_runs, [])
+        self.assertIsNone(view._pdf_text_request_source)
+        self.assertEqual(view._rendering_service.requests, [])
+
+    # ---- receiving extracted text
+    def _extracted(self, view, success=True, image="payload", request_id="req-1"):
+        view._pdf_text_request_id = "req-1"
+        view._pdf_text_request_source = (PDF_INTELLIGENCE_SOURCE_MAIN, "drawing.pdf", 0)
+        return RenderResult(request_id, success, image, None)
+
+    def test_extracted_text_is_mapped_into_runs_and_tracked(self):
+        view = self._view()
+        payload = {
+            "text_runs": [
+                _pdf_text_support__raw_run(
+                    "Beam",
+                    10.0,
+                    20.0,
+                    70.0,
+                    80.0,
+                    [_pdf_text_support__raw_char("B", 10.0, 12.0, 70.0, 80.0)],
+                )
+            ],
+            "page_info": _pdf_text_support__page_info(),
+        }
+        view._on_pdf_text_extracted(self._extracted(view, image=payload))
+        self.assertEqual(len(view._pdf_text_runs), 1)
+        self.assertEqual(view._pdf_text_runs[0].text, "Beam")
+        self.assertIsNone(view._pdf_text_request_id)
+        self.assertIsNone(view._pdf_text_request_source)
+        self.assertEqual(self.viewport.updates, 1)
+
+    def test_stale_failed_or_empty_extractions_leave_no_text(self):
+        view = self._view()
+        view._pdf_text_runs = ["old"]
+        view._on_pdf_text_extracted(self._extracted(view, request_id="other"))
+        self.assertEqual(view._pdf_text_runs, ["old"])
+        self.assertEqual(view._pdf_text_request_id, "req-1")
+        for label, success, image in (
+            ("failed", False, {"text_runs": []}),
+            ("no payload", True, None),
+        ):
+            with self.subTest(label):
+                view._pdf_text_runs = ["old"]
+                view._on_pdf_text_extracted(
+                    self._extracted(view, success=success, image=image)
+                )
+                self.assertEqual(view._pdf_text_runs, [])
+                self.assertIsNone(view._pdf_text_request_id)
+                self.assertIsNone(view._pdf_text_request_source)
+        self.assertEqual(self.viewport.updates, 0)
+
+    # ---- mapping extracted text
+    def _raw(self, left=10.0, right=20.0, bottom=10.0, top=30.0, text="Hi", chars=None):
+        chars = (
+            chars
+            if chars is not None
+            else [_pdf_text_support__raw_char("H", left, right, bottom, top)]
+        )
+        return _pdf_text_support__raw_run(text, left, right, bottom, top, chars)
+
+    def _mapped_rect(self, runs):
+        run = runs[0]
+        return (run.left, run.top, run.right, run.bottom)
+
+    def test_a_page_without_dimensions_maps_no_text(self):
+        view = self._view()
+        view._current_page = None
+        self.assertEqual(
+            view._map_pdf_text_runs([self._raw()], _pdf_text_support__page_info()), []
+        )
+        view._current_page = Page(uid="p", name="P", image_path="a.pdf")
+        for width, height, pdf_width, pdf_height in (
+            (0.0, 100.0, 0, 0),
+            (200.0, 0.0, 0, 0),
+        ):
+            view._pdf_width_pts = width
+            view._pdf_height_pts = height
+            self.assertEqual(
+                view._map_pdf_text_runs([self._raw()], _pdf_text_support__page_info()),
+                [],
+            )
+        view._pdf_width_pts = 0.0
+        view._pdf_height_pts = 0.0
+        self.assertEqual(
+            view._map_pdf_text_runs([self._raw()], _pdf_text_support__page_info()), []
+        )
+
+    def test_the_page_dimensions_fall_back_from_the_view_to_the_page(self):
+        view = self._view()
+        view._current_page = Page(
+            uid="p", name="P", image_path="a.pdf", width_pts=300.0, height_pts=150.0
+        )
+        view._pdf_width_pts = 0.0
+        view._pdf_height_pts = 0.0
+        info = _pdf_text_support__page_info(media_width=0.0, media_height=0.0)
+        runs = view._map_pdf_text_runs([self._raw()], info)
+        self.assertEqual(self._mapped_rect(runs), (20.0, 240.0, 40.0, 280.0))
+        view._pdf_width_pts = 200.0
+        view._pdf_height_pts = 100.0
+        runs = view._map_pdf_text_runs([self._raw()], info)
+        self.assertEqual(self._mapped_rect(runs), (20.0, 140.0, 40.0, 180.0))
+        view._pdf_height_pts = 0.0
+        runs = view._map_pdf_text_runs([self._raw()], info)
+        self.assertEqual(self._mapped_rect(runs), (20.0, 240.0, 40.0, 280.0))
+
+    def test_the_raw_box_dimensions_prefer_the_crop_box_then_the_media_box(self):
+        view = self._view()
+        cases = (
+            (
+                "crop",
+                dict(
+                    crop_width=150.0,
+                    crop_height=60.0,
+                    media_width=200.0,
+                    media_height=120.0,
+                ),
+                (20.0, 60.0, 40.0, 100.0),
+            ),
+            (
+                "crop width only",
+                dict(
+                    crop_width=150.0,
+                    crop_height=0.0,
+                    media_width=200.0,
+                    media_height=120.0,
+                ),
+                (20.0, 180.0, 40.0, 220.0),
+            ),
+            (
+                "crop height only",
+                dict(
+                    crop_width=0.0,
+                    crop_height=60.0,
+                    media_width=200.0,
+                    media_height=120.0,
+                ),
+                (20.0, 180.0, 40.0, 220.0),
+            ),
+            (
+                "media",
+                dict(media_width=200.0, media_height=120.0),
+                (20.0, 180.0, 40.0, 220.0),
+            ),
+            (
+                "media width only",
+                dict(media_width=200.0, media_height=0.0),
+                (20.0, 140.0, 40.0, 180.0),
+            ),
+            (
+                "media height only",
+                dict(media_width=0.0, media_height=120.0),
+                (20.0, 140.0, 40.0, 180.0),
+            ),
+            (
+                "page",
+                dict(media_width=0.0, media_height=0.0),
+                (20.0, 140.0, 40.0, 180.0),
+            ),
+        )
+        for label, info, expected in cases:
+            with self.subTest(label):
+                runs = view._map_pdf_text_runs(
+                    [self._raw()], _pdf_text_support__page_info(**info)
+                )
+                self.assertEqual(self._mapped_rect(runs), expected)
+
+    def test_the_intrinsic_rotation_turns_the_text_boxes(self):
+        view = self._view()
+        expected = {
+            0: (20.0, 140.0, 40.0, 180.0),
+            90: (20.0, 20.0, 60.0, 40.0),
+            180: (360.0, 20.0, 380.0, 60.0),
+            270: (140.0, 360.0, 180.0, 380.0),
+        }
+        for rotation, rect in expected.items():
+            with self.subTest(rotation):
+                runs = view._map_pdf_text_runs(
+                    [self._raw()], _pdf_text_support__page_info(rotation=rotation)
+                )
+                self.assertEqual(self._mapped_rect(runs), rect)
+        info = _pdf_text_support__page_info()
+        info["intrinsic_rotation"] = None
+        self.assertEqual(
+            self._mapped_rect(view._map_pdf_text_runs([self._raw()], info)), expected[0]
+        )
+
+    def test_overlay_text_uses_the_overlay_pdf_size_and_overlay_placement(self):
+        view = self._view()
+        calls = []
+        view._pdf_intelligence_point_to_page_point = (
+            lambda layer, x, y, width, height: (
+                calls.append((layer, width, height)) or (x + 1000.0, y + 2000.0)
+            )
+        )
+        source = (PDF_INTELLIGENCE_SOURCE_OVERLAY, "overlay.pdf", 0)
+        info = _pdf_text_support__page_info(
+            pdf_width=400.0, pdf_height=300.0, media_width=0.0, media_height=0.0
+        )
+        runs = view._map_pdf_text_runs([self._raw()], info, source)
+        self.assertEqual(self._mapped_rect(runs), (2020.0, 4540.0, 2040.0, 4580.0))
+        self.assertEqual(set(calls), {(PDF_INTELLIGENCE_SOURCE_OVERLAY, 400.0, 300.0)})
+        for width, height in ((0.0, 300.0), (400.0, 0.0), (0.0, 0.0)):
+            info = _pdf_text_support__page_info(pdf_width=width, pdf_height=height)
+            self.assertEqual(view._map_pdf_text_runs([self._raw()], info, source), [])
+
+    def test_unusable_text_boxes_runs_and_characters_are_skipped(self):
+        view = self._view()
+        good_char = _pdf_text_support__raw_char("H", 10.0, 12.0, 10.0, 30.0)
+        runs = view._map_pdf_text_runs(
+            [
+                self._raw(right=10.0, chars=[good_char]),
+                self._raw(top=10.0, chars=[good_char]),
+                self._raw(text="", chars=[good_char]),
+                self._raw(chars=[]),
+                self._raw(
+                    chars=[
+                        _pdf_text_support__raw_char("", 10.0, 12.0, 10.0, 30.0),
+                        _pdf_text_support__raw_char("x", 14.0, 14.0, 10.0, 30.0),
+                    ]
+                ),
+                self._raw(
+                    text="Keep",
+                    chars=[
+                        good_char,
+                        _pdf_text_support__raw_char("", 13.0, 14.0, 10.0, 30.0),
+                    ],
+                ),
+            ],
+            _pdf_text_support__page_info(),
+        )
+        self.assertEqual([run.text for run in runs], ["Keep"])
+        self.assertEqual([char.text for char in runs[0].chars], ["H"])
+
+    def test_text_boxes_need_a_positive_width_and_height(self):
+        view = self._view()
+        self.assertIsNone(
+            view._pdf_text_raw_box_to_page_rect(
+                10.0, 10.0, 10.0, 30.0, 200.0, 100.0, 0, 2.0
+            )
+        )
+        self.assertIsNone(
+            view._pdf_text_raw_box_to_page_rect(
+                10.0, 5.0, 10.0, 30.0, 200.0, 100.0, 0, 2.0
+            )
+        )
+        self.assertIsNone(
+            view._pdf_text_raw_box_to_page_rect(
+                10.0, 20.0, 30.0, 30.0, 200.0, 100.0, 0, 2.0
+            )
+        )
+        self.assertIsNone(
+            view._pdf_text_raw_box_to_page_rect(
+                10.0, 20.0, 40.0, 30.0, 200.0, 100.0, 0, 2.0
+            )
+        )
+        self.assertEqual(
+            view._pdf_text_raw_box_to_page_rect(
+                10.0, 20.0, 10.0, 30.0, 200.0, 100.0, 0, 2.0
+            ),
+            (20.0, 140.0, 40.0, 180.0),
+        )
+
+    def test_overlay_text_boxes_without_source_dimensions_are_not_remapped(self):
+        view = self._view()
+        view._current_page = Page(
+            uid="p",
+            name="P",
+            image_path="a.pdf",
+            overlay_image_path="o.pdf",
+            overlay_rect=(5.0, 5.0, 100.0, 100.0),
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
+        )
+        rect = view._pdf_text_raw_box_to_page_rect(
+            10.0,
+            20.0,
+            10.0,
+            30.0,
+            200.0,
+            100.0,
+            0,
+            2.0,
+            PDF_INTELLIGENCE_SOURCE_OVERLAY,
+        )
+        self.assertEqual(rect, (20.0, 140.0, 40.0, 180.0))
+
+    def test_page_dimensions_that_are_unset_count_as_zero(self):
+        view = self._view()
+        view._current_page = Page(uid="p", name="P", image_path="a.pdf")
+        view._current_page.width_pts = None
+        view._current_page.height_pts = None
+        view._pdf_width_pts = 0.0
+        view._pdf_height_pts = 0.0
+        key = view._pdf_text_extraction_cache_key()
+        self.assertEqual((key[5], key[6]), (0.0, 0.0))
+        self.assertEqual(
+            view._map_pdf_text_runs([self._raw()], _pdf_text_support__page_info()), []
+        )
+
+    def test_the_view_page_width_wins_over_the_page_model_width(self):
+        view = self._view()
+        view._current_page = Page(
+            uid="p", name="P", image_path="a.pdf", width_pts=300.0, height_pts=100.0
+        )
+        info = _pdf_text_support__page_info(
+            media_width=0.0, media_height=0.0, rotation=180
+        )
+        view._pdf_width_pts = 200.0
+        self.assertEqual(
+            self._mapped_rect(view._map_pdf_text_runs([self._raw()], info)),
+            (360.0, 20.0, 380.0, 60.0),
+        )
+        view._pdf_width_pts = 0.0
+        self.assertEqual(
+            self._mapped_rect(view._map_pdf_text_runs([self._raw()], info)),
+            (560.0, 20.0, 580.0, 60.0),
+        )
+
+    def test_a_page_one_point_wide_still_maps_text(self):
+        view = self._view()
+        view._pdf_width_pts = 1.0
+        view._pdf_height_pts = 100.0
+        runs = view._map_pdf_text_runs(
+            [self._raw()],
+            _pdf_text_support__page_info(media_width=0.0, media_height=0.0),
+        )
+        self.assertEqual(len(runs), 1)
+
+    def test_a_page_one_point_high_still_maps_text(self):
+        view = self._view()
+        view._pdf_width_pts = 200.0
+        view._pdf_height_pts = 1.0
+        runs = view._map_pdf_text_runs(
+            [self._raw()],
+            _pdf_text_support__page_info(media_width=0.0, media_height=0.0),
+        )
+        self.assertEqual(len(runs), 1)
+
+    def test_overlay_boxes_without_explicit_source_dimensions_pass_zero_sizes(self):
+        view = self._view()
+        seen = []
+        view._pdf_intelligence_point_to_page_point = (
+            lambda layer, x, y, width, height: (seen.append((width, height)) or (x, y))
+        )
+        view._pdf_text_raw_box_to_page_rect(
+            10.0,
+            20.0,
+            10.0,
+            30.0,
+            200.0,
+            100.0,
+            0,
+            2.0,
+            PDF_INTELLIGENCE_SOURCE_OVERLAY,
+        )
+        self.assertEqual(set(seen), {(0.0, 0.0)})
+
+    # ---- converting a scene point
+    def test_a_scene_point_is_mapped_back_through_the_page_transform(self):
+        view = self._view()
+        point = QtCore.QPointF(30.0, 40.0)
+        self.assertEqual(view._pdf_text_page_local_point(point), point)
+        view._current_page_transform = lambda: QTransform().translate(10.0, 5.0)
+        self.assertEqual(
+            view._pdf_text_page_local_point(point), QtCore.QPointF(20.0, 35.0)
+        )
+        view._current_page_transform = lambda: QTransform().scale(0.0, 0.0)
+        self.assertEqual(view._pdf_text_page_local_point(point), point)
+
+    # ---- hit testing
+    def _hit_view(self):
+        view = self._view()
+        view._pdf_text_runs = [
+            _chars_run("ab", top=0.0, bottom=10.0, start=0.0),
+            _chars_run("cd", top=20.0, bottom=30.0, start=0.0),
+            _chars_run("ef", top=20.0, bottom=30.0, start=0.0),
+        ]
+        return view
+
+    def test_text_hits_return_the_topmost_run_and_character(self):
+        view = self._hit_view()
+        self.assertIs(
+            view._pdf_text_run_at(QtCore.QPointF(3.0, 5.0)), view._pdf_text_runs[0]
+        )
+        self.assertIs(
+            view._pdf_text_run_at(QtCore.QPointF(3.0, 25.0)), view._pdf_text_runs[2]
+        )
+        self.assertIsNone(view._pdf_text_run_at(QtCore.QPointF(3.0, 15.0)))
+        self.assertIsNone(view._pdf_text_run_at(QtCore.QPointF(25.0, 3.0)))
+        self.assertEqual(view._pdf_text_char_at(QtCore.QPointF(3.0, 5.0)), (0, 0))
+        self.assertEqual(view._pdf_text_char_at(QtCore.QPointF(7.0, 5.0)), (0, 1))
+        self.assertEqual(view._pdf_text_char_at(QtCore.QPointF(7.0, 25.0)), (2, 1))
+        self.assertIsNone(view._pdf_text_char_at(QtCore.QPointF(3.0, 15.0)))
+        self.assertEqual(view._pdf_text_char_at(QtCore.QPointF(3.0, 25.0)), (2, 0))
+        self.assertIsNone(view._pdf_text_char_at(QtCore.QPointF(25.0, 3.0)))
+
+    def test_text_hits_need_selection_text_and_the_select_tool(self):
+        for hit in ("_pdf_text_run_at", "_pdf_text_char_at"):
+            with self.subTest(hit):
+                view = self._hit_view()
+                point = QtCore.QPointF(3.0, 5.0)
+                self.assertIsNotNone(getattr(view, hit)(point))
+                view._selection_enabled = False
+                self.assertIsNone(getattr(view, hit)(point))
+                view._selection_enabled = True
+                view._pdf_text_runs = []
+                self.assertIsNone(getattr(view, hit)(point))
+                view = self._hit_view()
+                view._cursor_mode = CURSOR_MODE_PLACE
+                self.assertIsNone(getattr(view, hit)(point))
+
+    def test_every_run_and_character_can_be_hit(self):
+        view = self._view()
+        view._pdf_text_runs = [
+            _chars_run("abc", top=0.0, bottom=10.0, start=0.0),
+            _chars_run("def", top=20.0, bottom=30.0, start=0.0),
+            _chars_run("ghi", top=40.0, bottom=50.0, start=0.0),
+            _chars_run("jkl", top=60.0, bottom=70.0, start=0.0),
+        ]
+        for run_index, top in enumerate((5.0, 25.0, 45.0, 65.0)):
+            for char_index in range(3):
+                point = QtCore.QPointF(2.0 + 5.0 * char_index, top)
+                with self.subTest(run=run_index, char=char_index):
+                    self.assertEqual(
+                        view._pdf_text_char_at(point), (run_index, char_index)
+                    )
+                    self.assertIs(
+                        view._pdf_text_run_at(point), view._pdf_text_runs[run_index]
+                    )
+
+    def test_a_character_outside_its_run_box_is_not_hit(self):
+        view = self._view()
+        run = PdfTextRun(
+            left=0.0,
+            top=0.0,
+            right=5.0,
+            bottom=10.0,
+            text="ab",
+            chars=(
+                PdfTextChar(left=0.0, top=0.0, right=5.0, bottom=10.0, text="a"),
+                PdfTextChar(left=20.0, top=0.0, right=25.0, bottom=10.0, text="b"),
+            ),
+        )
+        view._pdf_text_runs = [run]
+        self.assertEqual(view._pdf_text_char_at(QtCore.QPointF(2.0, 5.0)), (0, 0))
+        self.assertIsNone(view._pdf_text_char_at(QtCore.QPointF(22.0, 5.0)))
+
+    def test_a_character_hit_needs_the_character_not_just_the_run(self):
+        view = self._view()
+        run = _chars_run("ab", top=0.0, bottom=10.0, start=0.0)
+        gap_run = PdfTextRun(
+            left=0.0, top=0.0, right=30.0, bottom=10.0, text="ab", chars=run.chars
+        )
+        view._pdf_text_runs = [gap_run]
+        self.assertIs(view._pdf_text_run_at(QtCore.QPointF(20.0, 5.0)), gap_run)
+        self.assertIsNone(view._pdf_text_char_at(QtCore.QPointF(20.0, 5.0)))
+
+    def test_selecting_text_at_a_point_replaces_or_clears_the_selection(self):
+        view = self._hit_view()
+        self.assertIs(view.select_pdf_text_at(QtCore.QPointF(3.0, 5.0)), True)
+        self.assertEqual(view._selected_pdf_text_selection.text, "a")
+        self.assertIs(view.select_pdf_text_at(QtCore.QPointF(3.0, 15.0)), False)
+        self.assertIsNone(view._selected_pdf_text_selection)
+        self.assertEqual(view._pdf_text_highlight_items, [])
+
+    # ---- ranges
+    def _range_view(self):
+        view = self._view()
+        view._pdf_text_runs = [
+            _chars_run("abc", top=0.0, bottom=10.0, start=0.0),
+            _chars_run("de", top=20.0, bottom=30.0, start=2.0),
+            _chars_run("fgh", top=40.0, bottom=50.0, start=4.0),
+        ]
+        return view
+
+    def test_a_selection_range_collects_text_and_the_covering_rectangles(self):
+        view = self._range_view()
+        single = view._pdf_text_selection_between((0, 1), (0, 1))
+        self.assertEqual(single.text, "b")
+        self.assertEqual(single.rects, (PdfTextRect(5.0, 0.0, 10.0, 10.0),))
+        multi = view._pdf_text_selection_between((0, 1), (2, 1))
+        self.assertEqual(multi.text, "bc de fg")
+        self.assertEqual(
+            multi.rects,
+            (
+                PdfTextRect(5.0, 0.0, 15.0, 10.0),
+                PdfTextRect(2.0, 20.0, 12.0, 30.0),
+                PdfTextRect(4.0, 40.0, 14.0, 50.0),
+            ),
+        )
+
+    def test_a_selection_range_may_run_backwards(self):
+        view = self._range_view()
+        forward = view._pdf_text_selection_between((0, 1), (2, 1))
+        backward = view._pdf_text_selection_between((2, 1), (0, 1))
+        self.assertEqual(backward, forward)
+        within = view._pdf_text_selection_between((0, 2), (0, 0))
+        self.assertEqual(within.text, "abc")
+
+    def test_a_selection_range_must_lie_within_the_extracted_runs(self):
+        view = self._range_view()
+        self.assertIsNone(view._pdf_text_selection_between((-1, 0), (0, 1)))
+        self.assertIsNone(view._pdf_text_selection_between((0, 0), (3, 0)))
+        self.assertIsNotNone(view._pdf_text_selection_between((0, 0), (2, 0)))
+        self.assertIsNotNone(view._pdf_text_selection_between((0, 0), (0, 2)))
+        self.assertIsNone(view._pdf_text_selection_between((0, 0), (0, 3)))
+        self.assertIsNone(view._pdf_text_selection_between((0, 5), (0, 6)))
+
+    def test_a_range_ending_past_the_last_character_of_a_run_skips_that_run(self):
+        view = self._range_view()
+        selection = view._pdf_text_selection_between((0, 1), (1, 5))
+        self.assertEqual(selection.text, "bc")
+        self.assertEqual(len(selection.rects), 1)
+
+    def test_a_range_starting_outside_a_run_skips_that_run(self):
+        view = self._range_view()
+        selection = view._pdf_text_selection_between((0, 5), (1, 1))
+        self.assertEqual(selection.text, "de")
+        self.assertEqual(len(selection.rects), 1)
+        self.assertIsNone(view._pdf_text_selection_between((0, -1), (0, -1)))
+        selection = view._pdf_text_selection_between((0, -1), (1, 1))
+        self.assertEqual(selection.text, "de")
+
+    def test_a_range_without_text_selects_nothing(self):
+        view = self._view()
+        blank = PdfTextRun(
+            left=0.0,
+            top=0.0,
+            right=5.0,
+            bottom=10.0,
+            text="",
+            chars=(PdfTextChar(left=0.0, top=0.0, right=5.0, bottom=10.0, text=""),),
+        )
+        view._pdf_text_runs = [blank]
+        self.assertIsNone(view._pdf_text_selection_between((0, 0), (0, 0)))
+
+    def test_the_rectangle_of_a_range_spans_all_selected_characters(self):
+        view = self._view()
+        chars = (
+            PdfTextChar(left=4.0, top=6.0, right=9.0, bottom=12.0, text="a"),
+            PdfTextChar(left=1.0, top=2.0, right=5.0, bottom=20.0, text="b"),
+            PdfTextChar(left=7.0, top=3.0, right=15.0, bottom=11.0, text="c"),
+        )
+        view._pdf_text_runs = [
+            PdfTextRun(
+                left=1.0, top=2.0, right=15.0, bottom=20.0, text="abc", chars=chars
+            )
+        ]
+        selection = view._pdf_text_selection_between((0, 0), (0, 2))
+        self.assertEqual(selection.rects, (PdfTextRect(1.0, 2.0, 15.0, 20.0),))
+
+    def test_showing_a_character_selection_clears_when_it_cannot_be_built(self):
+        view = self._range_view()
+        shown = []
+        view._show_pdf_text_selection = shown.append
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "old", (PdfTextRect(0, 0, 1, 1),)
+        )
+        self.assertIs(view._show_pdf_text_char_selection((9, 0)), False)
+        self.assertIsNone(view._selected_pdf_text_selection)
+        self.assertEqual(shown, [])
+        self.assertIs(view._show_pdf_text_char_selection((0, 0)), True)
+        self.assertEqual(shown[0].text, "a")
+
+    # ---- dragging a selection
+    def test_a_drag_selection_follows_the_pointer_from_its_anchor(self):
+        view = self._range_view()
+        self.assertIs(
+            view._begin_pdf_text_selection(QtCore.QPointF(100.0, 100.0)), False
+        )
+        self.assertIsNone(view._pdf_text_drag_anchor)
+        self.assertIs(view._begin_pdf_text_selection(QtCore.QPointF(7.0, 5.0)), True)
+        self.assertEqual(
+            (view._pdf_text_drag_anchor, view._pdf_text_drag_focus), ((0, 1), (0, 1))
+        )
+        self.assertEqual(view._selected_pdf_text_selection.text, "b")
+        self.assertIs(
+            view._update_pdf_text_selection_drag(QtCore.QPointF(7.0, 45.0)), True
+        )
+        self.assertEqual(view._pdf_text_drag_focus, (2, 0))
+        self.assertEqual(view._selected_pdf_text_selection.text, "bc de f")
+        self.assertIs(
+            view._update_pdf_text_selection_drag(QtCore.QPointF(100.0, 100.0)), True
+        )
+        self.assertEqual(view._pdf_text_drag_focus, (2, 0))
+        self.assertEqual(view._selected_pdf_text_selection.text, "bc de f")
+
+    def test_dragging_without_an_anchor_does_nothing(self):
+        view = self._range_view()
+        self.assertIs(
+            view._update_pdf_text_selection_drag(QtCore.QPointF(7.0, 5.0)), False
+        )
+        self.assertIsNone(view._selected_pdf_text_selection)
+        self.assertIsNone(view._pdf_text_drag_focus)
+
+    def test_finishing_a_text_drag_reports_whether_text_is_selected(self):
+        view = self._range_view()
+        self.assertIs(view._finish_pdf_text_selection_drag(), False)
+        view._pdf_text_drag_anchor = (0, 0)
+        view._pdf_text_drag_focus = (0, 1)
+        self.assertIs(view._finish_pdf_text_selection_drag(), False)
+        self.assertIsNone(view._pdf_text_drag_anchor)
+        self.assertIsNone(view._pdf_text_drag_focus)
+        view._pdf_text_drag_anchor = (0, 0)
+        view._pdf_text_drag_focus = (0, 1)
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "a", (PdfTextRect(0, 0, 1, 1),)
+        )
+        self.assertIs(view._finish_pdf_text_selection_drag(), True)
+        self.assertIsNone(view._pdf_text_drag_focus)
+
+    def test_finishing_a_text_drag_without_an_anchor_ignores_an_existing_selection(
+        self,
+    ):
+        view = self._range_view()
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "a", (PdfTextRect(0, 0, 1, 1),)
+        )
+        self.assertIs(view._finish_pdf_text_selection_drag(), False)
+        self.assertIsNotNone(view._selected_pdf_text_selection)
+
+    def test_selected_text_needs_text_and_rectangles(self):
+        view = self._view()
+        self.assertIs(view.has_selected_pdf_text(), False)
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "", (PdfTextRect(0, 0, 1, 1),)
+        )
+        self.assertIs(view.has_selected_pdf_text(), False)
+        view._selected_pdf_text_selection = PdfTextSelection("a", ())
+        self.assertIs(view.has_selected_pdf_text(), False)
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "a", (PdfTextRect(0, 0, 1, 1),)
+        )
+        self.assertIs(view.has_selected_pdf_text(), True)
+
+    def test_showing_a_selection_draws_one_translucent_box_per_rectangle(self):
+        view = self._view()
+        stale = QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+        view._scene.addItem(stale)
+        view._pdf_text_highlight_items = [stale]
+        view._current_page_transform = lambda: QTransform().translate(7.0, 9.0)
+        selection = PdfTextSelection(
+            "ab",
+            (
+                PdfTextRect(left=10.0, top=20.0, right=40.0, bottom=35.0),
+                PdfTextRect(5.0, 6.0, 4.0, 3.0),
+            ),
+        )
+        view._show_pdf_text_selection(selection)
+        self.assertIsNone(stale.scene())
+        self.assertIs(view._selected_pdf_text_selection, selection)
+        self.assertEqual(len(view._pdf_text_highlight_items), 2)
+        first, second = view._pdf_text_highlight_items
+        self.assertEqual(first.rect(), QtCore.QRectF(10.0, 20.0, 30.0, 15.0))
+        self.assertEqual(second.rect(), QtCore.QRectF(5.0, 6.0, 0.0, 0.0))
+        for item in (first, second):
+            self.assertIs(item.scene(), view._scene)
+            self.assertEqual(item.pen().style(), QtCore.Qt.PenStyle.NoPen)
+            self.assertEqual(item.brush().color(), QColor(80, 140, 255, 80))
+            self.assertEqual(item.zValue(), PDF_TEXT_SELECTION_Z)
+            self.assertEqual(item.transform(), QTransform().translate(7.0, 9.0))
+
+    def test_showing_a_selection_without_a_page_transform_leaves_boxes_untransformed(
+        self,
+    ):
+        view = self._view()
+        view._show_pdf_text_selection(
+            PdfTextSelection("a", (PdfTextRect(1.0, 2.0, 3.0, 4.0),))
+        )
+        self.assertTrue(view._pdf_text_highlight_items[0].transform().isIdentity())
+
+    def test_copying_selected_text_needs_a_non_empty_selection(self):
+        view = self._view()
+        QApplication.clipboard().setText("sentinel")
+        self.assertIs(view.copy_selected_pdf_text(), False)
+        view._selected_pdf_text_selection = PdfTextSelection("", ())
+        self.assertIs(view.copy_selected_pdf_text(), False)
+        view._selected_pdf_text_selection = PdfTextSelection("a", ())
+        self.assertIs(view.copy_selected_pdf_text(), False)
+        self.assertEqual(QApplication.clipboard().text(), "sentinel")
+        view._selected_pdf_text_selection = PdfTextSelection(
+            "abc", (PdfTextRect(0, 0, 1, 1),)
+        )
+        self.assertIs(view.copy_selected_pdf_text(), True)
+        self.assertEqual(QApplication.clipboard().text(), "abc")
+
+
+class TakeoffPlanViewBackoutContextTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Which takeoffs may parent a backout, and when a backout context is still valid."""
+
+    def _backout_view(self):
+        view = self._make_plan_view()
+        view._current_conditions = {
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+            "line": Condition(uid="line", condition_type=Condition.TYPE_LINEAR),
+            "hidden": Condition(
+                uid="hidden", condition_type=Condition.TYPE_AREA, layer_visible=False
+            ),
+        }
+
+        def takeoff(uid, condition_uid, position=None, parent_uid=None):
+            return Takeoff(
+                uid=uid,
+                condition_uid=condition_uid,
+                page_uid="p1",
+                position=(
+                    position
+                    if position is not None
+                    else [0.0, 0.0, 10.0, 0.0, 10.0, 10.0]
+                ),
+                **({"parent_uid": parent_uid} if parent_uid is not None else {}),
+            )
+
+        view._current_takeoffs = {
+            "a1": takeoff("a1", "area"),
+            "a2": takeoff("a2", "area"),
+            "hole": takeoff("hole", "area", parent_uid="a1"),
+            "line1": takeoff("line1", "line"),
+            "hid": takeoff("hid", "hidden"),
+            "short": takeoff("short", "area", position=[0.0, 0.0, 10.0, 0.0]),
+            "five": takeoff("five", "area", position=[0.0, 0.0, 10.0, 0.0, 10.0]),
+            "empty": takeoff("empty", "area", position=[]),
+            "orphan": takeoff("orphan", "missing"),
+        }
+        return view
+
+    def test_a_backout_parent_must_be_a_visible_area_takeoff_with_a_polygon(self):
+        view = self._backout_view()
+        self.assertEqual(view._valid_backout_parent_uid("a1"), "a1")
+        for uid in (
+            None,
+            "",
+            "missing",
+            "hole",
+            "line1",
+            "hid",
+            "short",
+            "five",
+            "empty",
+            "orphan",
+        ):
+            with self.subTest(uid):
+                self.assertIsNone(view._valid_backout_parent_uid(uid))
+        view._current_takeoffs["three"] = Takeoff(
+            uid="three",
+            condition_uid="area",
+            page_uid="p1",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],
+        )
+        self.assertEqual(view._valid_backout_parent_uid("three"), "three")
+
+    def test_the_backout_parent_candidate_is_the_single_selected_valid_takeoff(self):
+        view = self._backout_view()
+        view._selected_uids = {"a1"}
+        self.assertEqual(view.backout_parent_candidate_uid(), "a1")
+        view._selected_uids = {"line1"}
+        self.assertIsNone(view.backout_parent_candidate_uid())
+        view._selected_uids = {"a1", "a2"}
+        self.assertIsNone(view.backout_parent_candidate_uid())
+        view._selected_uids = set()
+        self.assertIsNone(view.backout_parent_candidate_uid())
+
+    def test_a_backout_context_needs_mode_parent_and_matching_condition(self):
+        view = self._backout_view()
+        view._backout_mode_active = True
+        view._backout_parent_uid = "a1"
+        view._backout_active_uid = "area"
+        self.assertIs(view.is_backout_context_valid(), True)
+        for label, change in (
+            ("mode off", lambda: setattr(view, "_backout_mode_active", False)),
+            ("no parent", lambda: setattr(view, "_backout_parent_uid", None)),
+            ("no active condition", lambda: setattr(view, "_backout_active_uid", None)),
+            ("invalid parent", lambda: setattr(view, "_backout_parent_uid", "line1")),
+            ("other condition", lambda: setattr(view, "_backout_active_uid", "line")),
+            ("unknown parent", lambda: setattr(view, "_backout_parent_uid", "missing")),
+        ):
+            with self.subTest(label):
+                view._backout_mode_active = True
+                view._backout_parent_uid = "a1"
+                view._backout_active_uid = "area"
+                change()
+                self.assertIs(view.is_backout_context_valid(), False)
+
+    def test_an_invalid_backout_context_is_cancelled_and_a_valid_one_kept(self):
+        view = self._backout_view()
+        cleared = []
+        original_clear = view._clear_backout_state
+        view._clear_backout_state = lambda: (cleared.append(1), original_clear())[1]
+        view._cancel_backout_if_invalid()
+        self.assertEqual(cleared, [])
+        view._backout_mode_active = True
+        view._backout_parent_uid = "a1"
+        view._backout_active_uid = "area"
+        view._cancel_backout_if_invalid()
+        self.assertEqual(cleared, [])
+        for attribute, value in (
+            ("_backout_mode_active", True),
+            ("_backout_parent_uid", "line1"),
+            ("_backout_active_uid", "line"),
+        ):
+            with self.subTest(attribute):
+                cleared.clear()
+                view._backout_mode_active = False
+                view._backout_parent_uid = None
+                view._backout_active_uid = None
+                setattr(view, attribute, value)
+                view._cancel_backout_if_invalid()
+                self.assertEqual(cleared, [1])
+
+    def test_simple_state_accessors_return_the_underlying_values(self):
+        view = self._backout_view()
+        annotation = BidAnnotation(uid="x", annotation_type="rect", position=[0.0, 0.0])
+        view._current_annotations = {"x": annotation}
+        view._snap_increments = 2.5
+        view._place_session_uid = "c9"
+        view._backout_mode_active = True
+        self.assertIs(view.get_annotation("x"), annotation)
+        self.assertIsNone(view.get_annotation("missing"))
+        self.assertEqual(view.snap_increments, 2.5)
+        self.assertEqual(view.place_condition_uid, "c9")
+        self.assertIs(view.backout_mode_active, True)
+        self.assertIs(view.get_takeoff("a1"), view._current_takeoffs["a1"])
+        self.assertIsNone(view.get_takeoff("missing"))
+
+
+class TakeoffPlanViewPlacementAndBackoutSweepTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    """Tool activation, backout parents, paste-backout sessions, cursor-mode bookkeeping and cleanup."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view._scene_builder = _interaction_support_FakeSceneBuilder()
+        view._scene_builder.cs = _ScalingCoordinateSystem()
+        view._current_conditions = {
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+            "area2": Condition(uid="area2", condition_type=Condition.TYPE_AREA),
+            "line": Condition(uid="line", condition_type=Condition.TYPE_LINEAR),
+            "count": Condition(uid="count", condition_type=Condition.TYPE_COUNT),
+        }
+        view._current_takeoffs = {}
+        return view
+
+    @staticmethod
+    def _takeoff(uid, condition_uid, position, **kwargs):
+        return Takeoff(
+            uid=uid, condition_uid=condition_uid, position=list(position), **kwargs
+        )
+
+    def _record_signals(self, view):
+        events = []
+        view.cursor_mode_change_requested.connect(
+            lambda mode: events.append(("cursor", mode))
+        )
+        view.backout_mode_changed.connect(
+            lambda active: events.append(("backout", active))
+        )
+        return events
+
+    # ---- backout state
+    def test_setting_the_backout_state_announces_only_a_real_change(self):
+        view = self._view()
+        events = self._record_signals(view)
+        view._backout_last_valid_ost = (1.0, 2.0)
+        view._set_backout_state("p1", "c1")
+        self.assertEqual(
+            (
+                view._backout_mode_active,
+                view._backout_parent_uid,
+                view._backout_active_uid,
+            ),
+            (True, "p1", "c1"),
+        )
+        self.assertIsNone(view._backout_last_valid_ost)
+        self.assertEqual(events, [("backout", True)])
+        view._backout_last_valid_ost = (1.0, 2.0)
+        view._set_backout_state("p1", "c1")
+        self.assertEqual(events, [("backout", True)])
+        self.assertIsNone(view._backout_last_valid_ost)
+        view._set_backout_state("p2", "c1")
+        view._set_backout_state("p2", "c2")
+        self.assertEqual(events, [("backout", True)] * 3)
+        self.assertEqual(
+            (view._backout_parent_uid, view._backout_active_uid), ("p2", "c2")
+        )
+        view._backout_mode_active = False
+        view._set_backout_state("p2", "c2")
+        self.assertEqual(events, [("backout", True)] * 4)
+
+    def test_clearing_the_backout_state_announces_only_when_something_was_set(self):
+        for label, setup in (
+            ("mode only", lambda v: setattr(v, "_backout_mode_active", True)),
+            ("parent only", lambda v: setattr(v, "_backout_parent_uid", "p1")),
+            (
+                "active condition only",
+                lambda v: setattr(v, "_backout_active_uid", "c1"),
+            ),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                events = self._record_signals(view)
+                setup(view)
+                view._backout_last_valid_ost = (1.0, 2.0)
+                view._clear_backout_state()
+                self.assertEqual(
+                    (
+                        view._backout_mode_active,
+                        view._backout_parent_uid,
+                        view._backout_active_uid,
+                    ),
+                    (False, None, None),
+                )
+                self.assertIsNone(view._backout_last_valid_ost)
+                self.assertEqual(events, [("backout", False)])
+        view = self._view()
+        events = self._record_signals(view)
+        view._backout_last_valid_ost = (1.0, 2.0)
+        view._clear_backout_state()
+        self.assertEqual(events, [])
+        self.assertIsNone(view._backout_last_valid_ost)
+
+    def test_cancelling_backout_mode_clears_the_state(self):
+        view = self._view()
+        events = self._record_signals(view)
+        view._set_backout_state("p1", "c1")
+        view.cancel_backout_mode()
+        self.assertIs(view._backout_mode_active, False)
+        self.assertEqual(events, [("backout", True), ("backout", False)])
+
+    def test_entering_backout_mode_needs_editing_and_a_valid_area_parent(self):
+        view = self._view()
+        view._current_takeoffs = {
+            "host": self._takeoff("host", "area", [0.0, 0.0, 10.0, 0.0, 0.0, 10.0]),
+            "line": self._takeoff("line", "line", [0.0, 0.0, 10.0, 0.0, 0.0, 10.0]),
+        }
+        events = self._record_signals(view)
+        view._editing_enabled = False
+        view._set_backout_state("old", "area")
+        events.clear()
+        self.assertIs(view.enter_backout_mode("host"), False)
+        self.assertEqual(view._backout_parent_uid, "old")
+        self.assertEqual(events, [])
+        view._editing_enabled = True
+        self.assertIs(view.enter_backout_mode("line"), False)
+        self.assertEqual(
+            (
+                view._backout_mode_active,
+                view._backout_parent_uid,
+                view._backout_active_uid,
+            ),
+            (False, None, None),
+        )
+        self.assertEqual(events, [("backout", False)])
+        events.clear()
+        self.assertIs(view.enter_backout_mode("host"), True)
+        self.assertEqual(
+            (
+                view._backout_mode_active,
+                view._backout_parent_uid,
+                view._backout_active_uid,
+            ),
+            (True, "host", "area"),
+        )
+        self.assertEqual(events, [("backout", True)])
+
+    # ---- is_inside_parent
+    def _backout_parent_view(self, position):
+        view = self._view()
+        view._current_takeoffs = {"host": self._takeoff("host", "area", position)}
+        view._backout_parent_uid = "host"
+        return view
+
+    def test_a_point_is_inside_the_backout_parent_polygon_in_screen_space(self):
+        # The scaling coordinate system doubles every value, parent and point alike.
+        # A 10 x 4 rectangle away from the origin is not symmetric in x/y, uses all four
+        # vertices and needs its first vertex (an implicit start would be at 0, 0).
+        view = self._backout_parent_view([3.0, 1.0, 13.0, 1.0, 13.0, 5.0, 3.0, 5.0])
+        for x, y in ((8.0, 3.0), (3.4, 1.4), (12.6, 4.6), (3.4, 4.6), (12.6, 1.4)):
+            with self.subTest(inside=(x, y)):
+                self.assertIs(view.is_inside_parent(x, y), True)
+        for x, y in (
+            (1.5, 1.0),
+            (2.0, 1.5),
+            (2.0, 3.0),
+            (8.0, 6.0),
+            (14.0, 3.0),
+            (3.0, 0.5),
+        ):
+            with self.subTest(outside=(x, y)):
+                self.assertIs(view.is_inside_parent(x, y), False)
+        triangle = self._backout_parent_view([0.0, 0.0, 10.0, 0.0, 0.0, 10.0])
+        self.assertIs(triangle.is_inside_parent(4.0, 4.0), True)
+        self.assertIs(triangle.is_inside_parent(6.0, 6.0), False)
+
+    def test_a_point_is_never_inside_a_missing_or_unusable_backout_parent(self):
+        view = self._backout_parent_view([0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0])
+        view._backout_parent_uid = None
+        self.assertIs(view.is_inside_parent(2.0, 2.0), False)
+        view._backout_parent_uid = "missing"
+        self.assertIs(view.is_inside_parent(2.0, 2.0), False)
+        view._backout_parent_uid = "host"
+        view._current_takeoffs["host"].position = []
+        self.assertIs(view.is_inside_parent(2.0, 2.0), False)
+        view._current_takeoffs["host"].position = [0.0, 0.0, 10.0, 0.0]
+        self.assertIs(view.is_inside_parent(2.0, 2.0), False)
+        view._current_takeoffs["host"].position = [0.0, 0.0, 10.0, 0.0, 0.0, 10.0]
+        view._scene_builder.cs.parse_position = lambda position: None
+        self.assertIs(view.is_inside_parent(2.0, 2.0), False)
+
+    # ---- activate_place_for_condition
+    def _stub_activation(self, view):
+        calls = []
+        view.cancel_overlay_move_mode = lambda restore_preview=True: calls.append(
+            ("overlay", restore_preview)
+        )
+        view._remove_rotate_handle = lambda: calls.append("handle")
+        view.finish_intelligent_paste_placement = lambda: calls.append("paste")
+        view._exit_annotation_place_mode = lambda: calls.append("annotation")
+        view._exit_place_mode = lambda: calls.append("place")
+        view._clear_backout_state = lambda: calls.append("backout")
+        return calls
+
+    def test_activating_placement_cancels_other_tools_then_enters_place_mode(self):
+        view = self._view()
+        calls = self._stub_activation(view)
+        events = self._record_signals(view)
+        view._current_conditions["area3"] = Condition(
+            uid="area3", condition_type=Condition.TYPE_AREA
+        )
+        view._current_conditions["hidden"] = Condition(
+            uid="hidden", condition_type=Condition.TYPE_AREA
+        )
+        view._current_conditions["hidden"].layer_visible = False
+        entered = []
+        with patch.object(
+            plan_view_module.PlacementModeMixin,
+            "enter_place_mode_for_condition",
+            lambda self, uid: entered.append(uid) or True,
+        ):
+            result = view.activate_place_for_condition(
+                "area", ["area", "area2", "line", "hidden", "area3", "area2", "missing"]
+            )
+        self.assertIs(result, True)
+        self.assertEqual(calls, [("overlay", True), "handle", "paste", "annotation"])
+        self.assertEqual(entered, ["area"])
+        self.assertEqual(view._place_all_condition_uids, ["area2", "area3"])
+        self.assertEqual(view._cursor_mode, "place")
+        self.assertEqual(events, [("cursor", "place")])
+
+    def test_activating_placement_without_secondary_conditions_keeps_the_list_empty(
+        self,
+    ):
+        view = self._view()
+        self._stub_activation(view)
+        view._place_all_condition_uids = ["stale"]
+        with patch.object(
+            plan_view_module.PlacementModeMixin,
+            "enter_place_mode_for_condition",
+            lambda self, uid: True,
+        ):
+            self.assertIs(view.activate_place_for_condition("area"), True)
+            self.assertEqual(view._place_all_condition_uids, [])
+            view._place_all_condition_uids = ["stale"]
+            self.assertIs(view.activate_place_for_condition("area", None), True)
+            self.assertEqual(view._place_all_condition_uids, [])
+
+    def test_activating_placement_stops_when_editing_is_off_or_the_mixin_refuses(self):
+        view = self._view()
+        calls = self._stub_activation(view)
+        events = self._record_signals(view)
+        view._editing_enabled = False
+        with patch.object(
+            plan_view_module.PlacementModeMixin,
+            "enter_place_mode_for_condition",
+            lambda self, uid: True,
+        ):
+            self.assertIs(view.activate_place_for_condition("area"), False)
+        self.assertEqual(calls, [])
+        view._editing_enabled = True
+        view._cursor_mode = "select"
+        view._place_all_condition_uids = ["stale"]
+        with patch.object(
+            plan_view_module.PlacementModeMixin,
+            "enter_place_mode_for_condition",
+            lambda self, uid: False,
+        ):
+            self.assertIs(view.activate_place_for_condition("area", ["area2"]), False)
+        self.assertEqual(calls, [("overlay", True), "handle", "paste", "annotation"])
+        self.assertEqual(view._place_all_condition_uids, ["stale"])
+        self.assertEqual(view._cursor_mode, "select")
+        self.assertEqual(events, [])
+
+    def test_secondary_placement_conditions_are_visible_conditions_of_the_same_type(
+        self,
+    ):
+        view = self._view()
+        view._current_conditions["area3"] = Condition(
+            uid="area3", condition_type=Condition.TYPE_AREA
+        )
+        view._current_conditions["area3"].layer_visible = False
+        self.assertEqual(
+            view._secondary_place_condition_uids(
+                "area", ["area", "area2", "area2", "line", "area3", "gone", None]
+            ),
+            ["area2"],
+        )
+        self.assertEqual(view._secondary_place_condition_uids("area", None), [])
+        self.assertEqual(view._secondary_place_condition_uids("area", []), [])
+        self.assertEqual(view._secondary_place_condition_uids("gone", ["area2"]), [])
+        self.assertEqual(
+            view._secondary_place_condition_uids("line", ["area", "count", "line"]), []
+        )
+
+    # ---- cancel_place_mode and cursor modes
+    def test_cancelling_place_mode_ends_every_placement_tool_and_selects(self):
+        view = self._view()
+        calls = []
+        view._exit_place_mode = lambda: calls.append("place")
+        view._exit_annotation_place_mode = lambda: calls.append("annotation")
+        events = self._record_signals(view)
+        view._set_backout_state("p1", "area")
+        events.clear()
+        view.cancel_place_mode()
+        self.assertEqual(calls, ["place", "annotation"])
+        self.assertIs(view._backout_mode_active, False)
+        self.assertEqual(view._cursor_mode, "select")
+        self.assertEqual(events, [("backout", False), ("cursor", "select")])
+
+    def test_the_cursor_mode_is_stored_persistently_and_refreshes_tracking_and_cursor(
+        self,
+    ):
+        view = self._view()
+        calls = []
+        view._update_viewport_mouse_tracking = lambda: calls.append("tracking")
+        view._update_cursor = lambda: calls.append("cursor")
+        view._apply_cursor_mode("rotate")
+        self.assertEqual(
+            (view._cursor_mode, view._persistent_cursor_mode), ("rotate", "rotate")
+        )
+        self.assertEqual(calls, ["tracking", "cursor"])
+
+    def test_the_tool_revision_advances_only_when_the_tool_state_changes(self):
+        view = self._view()
+        view._apply_cursor_mode("select")
+        base = view.tool_revision
+        self.assertIsInstance(base, int)
+        view._apply_cursor_mode("select")
+        self.assertEqual(view.tool_revision, base)
+        view._place_session_uid = "c1"
+        view._apply_cursor_mode("select")
+        self.assertEqual(view.tool_revision, base)
+        view._apply_cursor_mode("place")
+        self.assertEqual(view.tool_revision, base + 1)
+        view._apply_cursor_mode("place")
+        self.assertEqual(view.tool_revision, base + 1)
+        view._place_session_uid = "c2"
+        view._apply_cursor_mode("place")
+        self.assertEqual(view.tool_revision, base + 2)
+        view._annotation_place_type = "rect"
+        view._apply_cursor_mode("place")
+        self.assertEqual(view.tool_revision, base + 2)
+        view._apply_cursor_mode("annotation_place")
+        self.assertEqual(view.tool_revision, base + 3)
+        view._annotation_place_type = "oval"
+        view._apply_cursor_mode("annotation_place")
+        self.assertEqual(view.tool_revision, base + 4)
+        view._place_session_uid = "c3"
+        view._apply_cursor_mode("annotation_place")
+        self.assertEqual(view.tool_revision, base + 4)
+        view._apply_cursor_mode("select")
+        self.assertEqual(view.tool_revision, base + 5)
+
+    def test_leaving_zoom_forgets_the_pre_zoom_mode_unless_a_right_button_pan_is_active(
+        self,
+    ):
+        view = self._view()
+        view._right_pan_active = False
+        view._pre_zoom_persistent_mode = "select"
+        view._apply_cursor_mode("zoom")
+        self.assertEqual(view._pre_zoom_persistent_mode, "select")
+        view._apply_cursor_mode("pan")
+        self.assertIsNone(view._pre_zoom_persistent_mode)
+        view._pre_zoom_persistent_mode = "select"
+        view._right_pan_active = True
+        view._apply_cursor_mode("pan")
+        self.assertEqual(view._pre_zoom_persistent_mode, "select")
+        view._right_pan_active = False
+        view._apply_cursor_mode("zoom")
+        self.assertEqual(view._pre_zoom_persistent_mode, "select")
+
+    def test_changing_the_colour_map_replaces_it_by_identity(self):
+        view = self._view()
+        colors = {"c1": "#112233"}
+        view.update_color_map(colors)
+        self.assertIs(view._current_color_map, colors)
+
+    # ---- begin_paste_backout / cancel_paste_backout
+    def _paste_view(self):
+        view = self._view()
+        view._current_takeoffs = {
+            "host": self._takeoff("host", "area", [0.0, 0.0, 10.0, 0.0, 0.0, 10.0])
+        }
+        calls = []
+        view.cancel_overlay_move_mode = lambda restore_preview=True: calls.append(
+            ("overlay", restore_preview)
+        )
+        view._remove_rotate_handle = lambda: calls.append("handle")
+        view.finish_intelligent_paste_placement = lambda: calls.append("paste")
+        view._exit_place_mode = lambda: calls.append("place")
+        view._exit_annotation_place_mode = lambda: calls.append("annotation")
+        view._clear_backout_state = lambda: calls.append("backout")
+        view.update_paste_backout_preview = lambda scene_pos: calls.append(
+            ("preview", scene_pos)
+        )
+        return view, calls
+
+    def test_pasting_into_a_backout_starts_a_session_from_the_copied_takeoffs(self):
+        view, calls = self._paste_view()
+        events = self._record_signals(view)
+        hole = self._takeoff(
+            "h1",
+            "area",
+            [1.0, 1.0, 4.0, 1.0, 1.0, 4.0],
+            parent_uid="host",
+            curve=2,
+            rotation=0.5,
+            is_negative=True,
+        )
+        line = self._takeoff("l1", "line", [0.0, 0.0, 6.0, 8.0])
+        count = self._takeoff("c1", "count", [3.0, 9.0])
+        hole_extras = {"x": 1}
+        self.assertIs(
+            view.begin_paste_backout(
+                [hole, line, count], {"h1": hole_extras, "l1": {}}, "bid-7"
+            ),
+            True,
+        )
+        self.assertEqual(
+            calls,
+            [("overlay", True), "handle", "paste", "place", "annotation", "backout"],
+        )
+        self.assertIs(view._paste_backout_active, True)
+        self.assertEqual(view._paste_backout_source_bid_uid, "bid-7")
+        # Vertices: (1,1) (4,1) (1,4) (0,0) (6,8) (3,9) -> mean (15/6, 23/6).
+        self.assertAlmostEqual(
+            view._paste_backout_group_centroid[0], 15.0 / 6.0, places=12
+        )
+        self.assertAlmostEqual(
+            view._paste_backout_group_centroid[1], 23.0 / 6.0, places=12
+        )
+        sources = view._paste_backout_sources
+        self.assertEqual([s["uid"] for s in sources], ["h1", "l1", "c1"])
+        first = sources[0]
+        self.assertEqual(first["condition_uid"], "area")
+        self.assertEqual(first["parent_uid"], "host")
+        self.assertEqual(
+            (first["curve"], first["rotation"], first["is_negative"]), (2, 0.5, True)
+        )
+        self.assertEqual(first["position"], [1.0, 1.0, 4.0, 1.0, 1.0, 4.0])
+        self.assertIsNot(first["position"], hole.position)
+        self.assertEqual(first["extras"], {"x": 1})
+        self.assertIsNot(first["extras"], hole_extras)
+        self.assertEqual(first["condition"].uid, "area")
+        self.assertIsNot(first["condition"], view._current_conditions["area"])
+        self.assertEqual(sources[1]["extras"], {})
+        self.assertEqual(sources[2]["extras"], {})
+        self.assertEqual(view._cursor_mode, "paste_backout")
+        self.assertEqual(events, [("cursor", "paste_backout")])
+        self.assertNotIn("preview", [c[0] for c in calls if isinstance(c, tuple)])
+
+    def test_pasting_into_a_backout_previews_at_the_last_pointer_position(self):
+        view, calls = self._paste_view()
+        view._last_mouse_vp_pos = QtCore.QPoint(30, 40)
+        takeoff = self._takeoff("h1", "area", [1.0, 1.0, 4.0, 1.0, 1.0, 4.0])
+        self.assertIs(view.begin_paste_backout([takeoff], {}, None), True)
+        self.assertEqual(calls[-1], ("preview", view.mapToScene(QtCore.QPoint(30, 40))))
+        self.assertIsNone(view._paste_backout_source_bid_uid)
+
+    def test_pasting_into_a_backout_uses_an_explicit_condition_table_for_validity(self):
+        view, _calls = self._paste_view()
+        line_only = {
+            "line": Condition(uid="line", condition_type=Condition.TYPE_LINEAR)
+        }
+        short_line = self._takeoff("l1", "line", [0.0, 0.0, 6.0, 8.0])
+        self.assertIs(
+            view.begin_paste_backout([short_line], {}, None, conditions=line_only), True
+        )
+        self.assertEqual(view._paste_backout_sources[0]["condition"].uid, "line")
+        view.cancel_paste_backout()
+        # Without the table argument the view's own conditions are consulted (they have "line" too).
+        self.assertIs(view.begin_paste_backout([short_line], {}, None), True)
+        view.cancel_paste_backout()
+        self.assertIs(
+            view.begin_paste_backout([short_line], {}, None, conditions={}), False
+        )
+
+    def test_pasting_into_a_backout_rejects_unusable_takeoffs_and_missing_hosts(self):
+        long_enough = self._takeoff("a", "area", [1.0, 1.0, 4.0, 1.0, 1.0, 4.0])
+        cases = (
+            ("no takeoffs", [], None),
+            ("empty position", [self._takeoff("e", "area", [])], None),
+            (
+                "too short for an area",
+                [self._takeoff("s", "area", [1.0, 1.0, 4.0, 1.0])],
+                None,
+            ),
+            (
+                "five values",
+                [self._takeoff("s", "area", [1.0, 1.0, 4.0, 1.0, 1.0])],
+                None,
+            ),
+            (
+                "three values for a line",
+                [self._takeoff("s", "line", [1.0, 1.0, 4.0])],
+                None,
+            ),
+            (
+                "two values for an unknown condition",
+                [self._takeoff("s", "gone", [1.0, 2.0])],
+                None,
+            ),
+            (
+                "short count with a non-count condition",
+                [self._takeoff("s", "line", [1.0, 2.0])],
+                None,
+            ),
+            (
+                "short unknown condition",
+                [self._takeoff("s", "gone", [1.0, 2.0, 3.0, 4.0])],
+                None,
+            ),
+            (
+                "one invalid among valid",
+                [long_enough, self._takeoff("s", "area", [1.0, 1.0, 4.0])],
+                None,
+            ),
+            ("none entry", [long_enough, None], None),
+        )
+        for label, takeoffs, _ in cases:
+            with self.subTest(label):
+                view, calls = self._paste_view()
+                events = self._record_signals(view)
+                self.assertIs(view.begin_paste_backout(takeoffs, {}, "bid"), False)
+                self.assertIs(view._paste_backout_active, False)
+                self.assertEqual(calls, [])
+                self.assertEqual(events, [])
+        view, calls = self._paste_view()
+        view._current_takeoffs = {
+            "hole": self._takeoff(
+                "hole", "area", [0.0, 0.0, 1.0, 0.0, 0.0, 1.0], parent_uid="host"
+            ),
+            "line": self._takeoff("line", "line", [0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
+            "ghost": self._takeoff("ghost", "gone", [0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
+        }
+        self.assertIs(view.begin_paste_backout([long_enough], {}, "bid"), False)
+        self.assertEqual(calls, [])
+        view._editing_enabled = False
+        view._current_takeoffs = {
+            "host": self._takeoff("host", "area", [0.0, 0.0, 10.0, 0.0, 0.0, 10.0])
+        }
+        self.assertIs(view.begin_paste_backout([long_enough], {}, "bid"), False)
+        self.assertEqual(calls, [])
+
+    def test_pasting_into_a_backout_accepts_short_linear_attachment_and_count_takeoffs(
+        self,
+    ):
+        view, _calls = self._paste_view()
+        view._current_conditions["attach"] = Condition(
+            uid="attach", condition_type=Condition.TYPE_ATTACHMENT
+        )
+        takeoffs = [
+            self._takeoff("l", "line", [0.0, 0.0, 6.0, 8.0]),
+            self._takeoff("c", "count", [3.0, 9.0]),
+            self._takeoff("t", "attach", [4.0, 4.0]),
+        ]
+        self.assertIs(view.begin_paste_backout(takeoffs, {}, None), True)
+        self.assertEqual(
+            [s["uid"] for s in view._paste_backout_sources], ["l", "c", "t"]
+        )
+        view.cancel_paste_backout()
+        # A two-value linear takeoff and a four-value count takeoff are not valid shapes.
+        self.assertIs(
+            view.begin_paste_backout(
+                [self._takeoff("l", "line", [1.0, 2.0])], {}, None
+            ),
+            False,
+        )
+        self.assertIs(
+            view.begin_paste_backout(
+                [self._takeoff("c", "count", [1.0, 2.0, 3.0, 4.0])], {}, None
+            ),
+            False,
+        )
+
+    def test_cancelling_a_paste_backout_resets_the_session_and_selects(self):
+        view, calls = self._paste_view()
+        events = self._record_signals(view)
+        cleared = []
+        view.clear_paste_backout_preview = lambda: cleared.append(True)
+        view.cancel_paste_backout()
+        self.assertEqual((cleared, events), ([], []))
+        view._apply_cursor_mode("paste_backout")
+        view._paste_backout_active = True
+        view._paste_backout_sources = [{"uid": "x"}]
+        view._paste_backout_source_bid_uid = "bid"
+        view._paste_backout_group_centroid = (3.0, 4.0)
+        view.cancel_paste_backout()
+        self.assertIs(view._paste_backout_active, False)
+        self.assertEqual(view._paste_backout_sources, [])
+        self.assertIsNone(view._paste_backout_source_bid_uid)
+        self.assertEqual(view._paste_backout_group_centroid, (0.0, 0.0))
+        self.assertEqual(cleared, [True])
+        self.assertEqual(view._cursor_mode, "select")
+        self.assertEqual(events, [("cursor", "select")])
+
+    # ---- cleanup
+    def _cleanup_view(self):
+        view = self._view()
+        calls = []
+        view._zoom_debouncer = SimpleNamespace(cancel=lambda: calls.append("debounce"))
+        view._finish_active_inline_text_edit = lambda commit=True: calls.append(
+            ("inline", commit)
+        )
+        view._cancel_pending_renders = lambda: calls.append("renders")
+        view.clear = lambda: calls.append("clear")
+        view._rendering_service = SimpleNamespace(
+            shutdown=lambda: calls.append("shutdown")
+        )
+        view._scene = SimpleNamespace(
+            focusItemChanged=SimpleNamespace(
+                disconnect=lambda slot: calls.append(("disconnect", slot))
+            )
+        )
+        view._condition_text_toolbar = SimpleNamespace(
+            deleteLater=lambda: calls.append("toolbar")
+        )
+        view._set_inline_text_edit_target = lambda *a: calls.append("inline_target")
+        view._clear_inline_text_document = lambda: calls.append("inline_document")
+        return view, calls
+
+    def test_cleanup_stops_services_in_order_and_releases_every_collaborator(self):
+        view, calls = self._cleanup_view()
+        view._selected_text_item = "item"
+        view._selected_text_annotation_uid = "a1"
+        view._selected_text_model_font_size = 12
+        view._selected_text_annotation_font_scale = 2.0
+        view._finishing_named_view_rename = True
+        view._draft_named_view_uid = "n1"
+        view._named_view_name_validator = object()
+        view._editing_text_original = "text"
+        view._text_annotation_inline_edit_allowed_fn = lambda: True
+        view._annotation_placement_allowed_fn = lambda: True
+        view._paste_allowed_fn = lambda: True
+        view._prefetch_coordinator = object()
+        view._load_coordinator = object()
+        view._color_service = object()
+        view._pending_page_data = {"p": 1}
+        view._takeoff_snap_index = object()
+        view._pdf_snap_index = object()
+        slot = view._on_scene_focus_item_changed
+        view.cleanup()
+        self.assertEqual(
+            calls,
+            [
+                "debounce",
+                ("inline", True),
+                "renders",
+                "clear",
+                "shutdown",
+                ("disconnect", slot),
+                "toolbar",
+                "inline_target",
+                "inline_document",
+            ],
+        )
+        for name, expected in (
+            ("_condition_text_toolbar", None),
+            ("_selected_text_item", None),
+            ("_selected_text_annotation_uid", None),
+            ("_selected_text_model_font_size", None),
+            ("_selected_text_annotation_font_scale", 1.0),
+            ("_finishing_named_view_rename", False),
+            ("_draft_named_view_uid", None),
+            ("_named_view_name_validator", None),
+            ("_editing_text_original", ""),
+            ("_text_annotation_inline_edit_allowed_fn", None),
+            ("_annotation_placement_allowed_fn", None),
+            ("_paste_allowed_fn", None),
+            ("_rendering_service", None),
+            ("_prefetch_coordinator", None),
+            ("_load_coordinator", None),
+            ("_color_service", None),
+            ("_scene_builder", None),
+            ("_pending_page_data", None),
+            ("_takeoff_snap_index", None),
+            ("_pdf_snap_index", None),
+        ):
+            with self.subTest(name):
+                self.assertEqual(getattr(view, name), expected)
+
+    def test_cleanup_runs_only_once(self):
+        view, calls = self._cleanup_view()
+        view.cleanup()
+        count = len(calls)
+        self.assertGreater(count, 0)
+        view.cleanup()
+        self.assertEqual(len(calls), count)
+        self.assertIs(view._is_cleaning_up, True)
+
+    def test_cleanup_logs_each_failing_step_and_still_finishes_the_rest(self):
+        view, calls = self._cleanup_view()
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("step failed")
+
+        view._zoom_debouncer = SimpleNamespace(cancel=boom)
+        view._finish_active_inline_text_edit = boom
+        view._cancel_pending_renders = boom
+        view.clear = boom
+        view._rendering_service = SimpleNamespace(shutdown=boom)
+        view._scene = SimpleNamespace(focusItemChanged=SimpleNamespace(disconnect=boom))
+        view._condition_text_toolbar = SimpleNamespace(deleteLater=boom)
+        with self.assertLogs(plan_view_module.logger, level="ERROR") as logs:
+            view.cleanup()
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Failed to cancel zoom debounce during plan-view cleanup",
+                "Failed to finish the active inline text edit during plan-view cleanup",
+                "Failed to cancel pending renders during plan-view cleanup",
+                "Failed to clear the plan scene during plan-view cleanup",
+                "Failed to shut down page rendering during plan-view cleanup",
+                "Failed to disconnect scene focus notifications during plan-view cleanup",
+                "Failed to delete the condition text toolbar during plan-view cleanup",
+            ],
+        )
+        self.assertEqual(calls, ["inline_target", "inline_document"])
+        self.assertIsNone(view._rendering_service)
+        self.assertIsNone(view._condition_text_toolbar)
+
+
+class TakeoffPlanViewToolModeSweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """set_cursor_mode / activate_annotation_placement sequencing of the tool-exit collaborators."""
+
+    def _view(
+        self, *, inline_ok=True, can_begin=True, enter_place=True, enter_annotation=True
+    ):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        calls = []
+        view._finish_inline_text_edit_before_tool_change = (
+            lambda: calls.append("inline") or inline_ok
+        )
+        view._can_begin_annotation_placement = (
+            lambda: calls.append("can_begin") or can_begin
+        )
+        view.cancel_overlay_move_mode = lambda restore_preview=True: calls.append(
+            ("overlay", restore_preview)
+        )
+        view._remove_rotate_handle = lambda: calls.append("handle")
+        view.finish_intelligent_paste_placement = lambda: calls.append("paste")
+        view._exit_annotation_place_mode = lambda: calls.append("annotation_exit")
+        view.enter_place_mode = lambda: calls.append("enter_place") or enter_place
+        view._exit_place_mode = lambda: calls.append("place_exit")
+        view._clear_backout_state = lambda: calls.append("backout")
+        view._enter_annotation_place_mode = (
+            lambda kind: calls.append(("enter_annotation", kind)) or enter_annotation
+        )
+        view._apply_cursor_mode = lambda mode: calls.append(("apply", mode))
+        view.cursor_mode_change_requested.connect(
+            lambda mode: calls.append(("emit", mode))
+        )
+        return view, calls
+
+    # ---- set_cursor_mode
+    def test_selecting_a_tool_cancels_the_others_and_announces_the_mode(self):
+        view, calls = self._view()
+        view.set_cursor_mode("select")
+        self.assertEqual(
+            calls,
+            [
+                "inline",
+                ("overlay", True),
+                "handle",
+                "place_exit",
+                "annotation_exit",
+                "backout",
+                ("apply", "select"),
+                ("emit", "select"),
+            ],
+        )
+
+    def test_other_tools_also_finish_an_intelligent_paste(self):
+        for mode in ("pan", "zoom", "default"):
+            with self.subTest(mode):
+                view, calls = self._view()
+                view.set_cursor_mode(mode)
+                self.assertIn("paste", calls)
+                self.assertEqual(calls[-2:], [("apply", mode), ("emit", mode)])
+        view, calls = self._view()
+        view.set_cursor_mode("select")
+        self.assertNotIn("paste", calls)
+
+    def test_overlay_moving_and_rotating_tools_keep_their_own_resources(self):
+        for mode, kept in (
+            ("move_overlay", ("overlay", True)),
+            ("move_overlay_handle", ("overlay", True)),
+            ("rotate", "handle"),
+            ("slope_rotate", "handle"),
+        ):
+            with self.subTest(mode):
+                view, calls = self._view()
+                view.set_cursor_mode(mode)
+                self.assertNotIn(kept, calls)
+                other = "handle" if mode.startswith("move") else ("overlay", True)
+                self.assertIn(other, calls)
+                self.assertEqual(calls[-2:], [("apply", mode), ("emit", mode)])
+
+    def test_editing_tools_need_editing_to_be_enabled(self):
+        for mode in (
+            "rotate",
+            "slope_rotate",
+            "paste_backout",
+            "move_overlay",
+            "move_overlay_handle",
+            "place",
+        ):
+            with self.subTest(mode):
+                view, calls = self._view()
+                view._editing_enabled = False
+                view.set_cursor_mode(mode)
+                self.assertEqual(calls, [])
+        view, calls = self._view()
+        view._editing_enabled = False
+        view.set_cursor_mode("pan")
+        self.assertEqual(calls[-1], ("emit", "pan"))
+
+    def test_the_annotation_tool_is_gated_by_the_annotation_placement_permission_not_editing(
+        self,
+    ):
+        view, calls = self._view(can_begin=False)
+        view.set_cursor_mode("annotation_place")
+        self.assertEqual(calls, ["can_begin"])
+        view, calls = self._view(can_begin=True)
+        view._editing_enabled = False
+        view.set_cursor_mode("annotation_place")
+        self.assertEqual(
+            calls[-2:], [("apply", "annotation_place"), ("emit", "annotation_place")]
+        )
+        self.assertIn(("overlay", True), calls)
+        # A plain editing tool is not gated by that permission.
+        view, calls = self._view(can_begin=False)
+        view.set_cursor_mode("rotate")
+        self.assertEqual(calls[-1], ("emit", "rotate"))
+        self.assertNotIn("can_begin", calls)
+
+    def test_the_annotation_tool_keeps_its_own_state_while_leaving_place_mode(self):
+        view, calls = self._view()
+        view.set_cursor_mode("annotation_place")
+        self.assertIn("place_exit", calls)
+        self.assertIn("backout", calls)
+        self.assertNotIn("annotation_exit", calls)
+        self.assertNotIn("enter_place", calls)
+
+    def test_a_tool_change_is_abandoned_when_the_inline_text_edit_refuses(self):
+        view, calls = self._view(inline_ok=False)
+        view.set_cursor_mode("select")
+        self.assertEqual(calls, ["inline"])
+
+    def test_the_place_tool_leaves_annotation_placement_and_needs_a_place_session(self):
+        view, calls = self._view(enter_place=True)
+        view.set_cursor_mode("place")
+        self.assertEqual(
+            calls,
+            [
+                "inline",
+                ("overlay", True),
+                "handle",
+                "paste",
+                "annotation_exit",
+                "enter_place",
+                ("apply", "place"),
+                ("emit", "place"),
+            ],
+        )
+        self.assertNotIn("place_exit", calls)
+        self.assertNotIn("backout", calls)
+        view, calls = self._view(enter_place=False)
+        view.set_cursor_mode("place")
+        self.assertEqual(calls[-2:], ["annotation_exit", "enter_place"])
+        self.assertNotIn(("apply", "place"), calls)
+        self.assertNotIn(("emit", "place"), calls)
+
+    # ---- activate_annotation_placement
+    def test_activating_annotation_placement_runs_the_tool_exits_before_entering_it(
+        self,
+    ):
+        view, calls = self._view()
+        view._current_bid_page_uid = "p1"
+        self.assertIs(view.activate_annotation_placement("rect"), True)
+        self.assertEqual(
+            calls,
+            [
+                "inline",
+                "can_begin",
+                ("overlay", True),
+                "handle",
+                "paste",
+                "place_exit",
+                "backout",
+                ("enter_annotation", "rect"),
+                ("apply", "annotation_place"),
+                ("emit", "annotation_place"),
+            ],
+        )
+
+    def test_activating_annotation_placement_stops_at_each_refusal(self):
+        view, calls = self._view(inline_ok=False)
+        view._current_bid_page_uid = "p1"
+        self.assertIs(view.activate_annotation_placement("rect"), False)
+        self.assertEqual(calls, ["inline"])
+        view, calls = self._view(can_begin=False)
+        view._current_bid_page_uid = "p1"
+        self.assertIs(view.activate_annotation_placement("rect"), False)
+        self.assertEqual(calls, ["inline", "can_begin"])
+        view, calls = self._view()
+        view._current_bid_page_uid = None
+        self.assertIs(view.activate_annotation_placement("rect"), False)
+        self.assertEqual(
+            calls, ["inline", "can_begin", ("overlay", True), "handle", "paste"]
+        )
+        view, calls = self._view(enter_annotation=False)
+        view._current_bid_page_uid = "p1"
+        self.assertIs(view.activate_annotation_placement("oval"), False)
+        self.assertEqual(
+            calls[-3:], ["place_exit", "backout", ("enter_annotation", "oval")]
+        )
+        self.assertNotIn(("apply", "annotation_place"), calls)
+
+    def test_the_annotation_place_type_reports_the_active_annotation_tool(self):
+        view, _calls = self._view()
+        view._annotation_place_type = "oval"
+        self.assertEqual(view.annotation_place_type, "oval")
+        view._annotation_place_type = None
+        self.assertIsNone(view.annotation_place_type)
+
+    # ---- palette
+    def test_the_view_background_follows_the_window_palette_colour(self):
+        view, _calls = self._view()
+        palette = view.palette()
+        palette.setColor(QtGui.QPalette.ColorRole.Window, QColor("#123456"))
+        view.setPalette(palette)
+        view.setBackgroundBrush(QBrush(QColor("#abcdef")))
+        view._set_palette_background()
+        self.assertEqual(view.backgroundBrush().color(), QColor("#123456"))
+
+
+class _AreaColorService:
+    """Colour service double: a takeoff is inactive when its uid is a key of the selections."""
+
+    def is_inactive_area_takeoff(self, takeoff, selections):
+        return takeoff.uid in (selections or {})
+
+
+class TakeoffPlanViewOverlayIdentitySweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Annotation/takeoff identity bookkeeping, dirty-position overlays and overlay item pruning."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        return view
+
+    @staticmethod
+    def _annotation(uid, annotation_type="rect", position=None):
+        return BidAnnotation(
+            uid=uid,
+            annotation_type=annotation_type,
+            position=list(position or [0.0, 0.0, 1.0, 1.0]),
+        )
+
+    @staticmethod
+    def _takeoff(uid, position=None):
+        return Takeoff(
+            uid=uid, condition_uid="c1", position=list(position or [1.0, 2.0])
+        )
+
+    # ---- dirty positions folded into a refresh
+    def test_takeoffs_with_dirty_positions_are_replaced_by_copies_with_the_dirty_position(
+        self,
+    ):
+        view = self._view()
+        first, second, third = (
+            self._takeoff("t1"),
+            self._takeoff("t2"),
+            self._takeoff("t3"),
+        )
+        takeoffs = [first, second, third]
+        self.assertIs(view._takeoffs_with_dirty_positions(takeoffs), takeoffs)
+        dirty = [9.0, 8.0]
+        view._dirty_positions = {"t2": dirty}
+        result = view._takeoffs_with_dirty_positions(takeoffs)
+        self.assertIsNot(result, takeoffs)
+        self.assertEqual(len(result), 3)
+        self.assertIs(result[0], first)
+        self.assertIs(result[2], third)
+        self.assertEqual((result[1].uid, result[1].position), ("t2", [9.0, 8.0]))
+        self.assertIsNot(result[1], second)
+        self.assertIsNot(result[1].position, dirty)
+        self.assertEqual(second.position, [1.0, 2.0])
+
+    def test_annotations_with_dirty_positions_match_by_database_uid_and_type(self):
+        view = self._view()
+        plain = self._annotation("a", "rect")
+        oval = self._annotation("a", "oval")
+        other = self._annotation("b", "oval")
+        annotations = [plain, oval, other]
+        self.assertIs(view._annotations_with_dirty_positions(annotations), annotations)
+        self.assertIsNone(view._annotations_with_dirty_positions(None))
+        view._ann_db_uid_map = {"a_oval": "a"}
+        dirty = [5.0, 5.0, 6.0, 6.0]
+        view._dirty_ann_positions = {"a_oval": ("oval", dirty)}
+        self.assertEqual(view._annotations_with_dirty_positions([]), [])
+        self.assertIsNone(view._annotations_with_dirty_positions(None))
+        result = view._annotations_with_dirty_positions(annotations)
+        self.assertEqual(len(result), 3)
+        self.assertIs(result[0], plain)
+        self.assertIs(result[2], other)
+        self.assertEqual(
+            (result[1].uid, result[1].annotation_type, result[1].position),
+            ("a", "oval", dirty),
+        )
+        self.assertIsNot(result[1], oval)
+        self.assertIsNot(result[1].position, dirty)
+        self.assertEqual(oval.position, [0.0, 0.0, 1.0, 1.0])
+        view._dirty_ann_positions = {}
+        self.assertIs(view._annotations_with_dirty_positions(annotations), annotations)
+
+    def test_a_refresh_marks_itself_active_and_feeds_the_dirty_adjusted_model_to_the_unflushed_pass(
+        self,
+    ):
+        view = self._view()
+        takeoff = self._takeoff("t1")
+        annotation = self._annotation("a1")
+        view._dirty_positions = {"t1": [7.0, 7.0]}
+        view._dirty_ann_positions = {"a1": ("rect", [3.0, 3.0, 4.0, 4.0])}
+        seen = []
+
+        def unflushed(*args):
+            seen.append((view._refreshing_overlays, args))
+
+        view._refresh_overlays_impl_unflushed = unflushed
+        page = Page(uid="p1", name="P1")
+        conditions, colors, areas, bid_ref = (
+            {"c1": "cond"},
+            {"c1": "#fff"},
+            {"p1": "a"},
+            BidRef("db.mdb", "b"),
+        )
+        view._refresh_overlays_impl(
+            page, [takeoff], conditions, colors, [annotation], areas, bid_ref
+        )
+        self.assertIs(view._refreshing_overlays, False)
+        ((flag, args),) = seen
+        self.assertIs(flag, True)
+        self.assertIs(args[0], page)
+        self.assertEqual(args[1][0].position, [7.0, 7.0])
+        self.assertEqual(args[4][0].position, [3.0, 3.0, 4.0, 4.0])
+        self.assertEqual(args[2:4] + args[5:], (conditions, colors, areas, bid_ref))
+        self.assertIs(args[2], conditions)
+
+    def test_a_failing_refresh_still_releases_the_refreshing_flag(self):
+        view = self._view()
+
+        def boom(*_args):
+            raise RuntimeError("refresh failed")
+
+        view._refresh_overlays_impl_unflushed = boom
+        with self.assertRaises(RuntimeError):
+            view._refresh_overlays_impl(
+                Page(uid="p1", name="P1"), [], {}, {}, None, None, None
+            )
+        self.assertIs(view._refreshing_overlays, False)
+
+    def test_refreshing_overlays_delegates_every_argument_to_the_implementation(self):
+        view = self._view()
+        seen = []
+        view._refresh_overlays_impl = lambda *args: seen.append(args)
+        values = (
+            Page(uid="p1", name="P1"),
+            ["t"],
+            {"c": 1},
+            {"c": "#fff"},
+            ["a"],
+            {"p": "a"},
+            BidRef("db.mdb", "b"),
+        )
+        view._refresh_overlays(*values)
+        self.assertEqual(len(seen), 1)
+        for got, expected in zip(seen[0], values):
+            self.assertIs(got, expected)
+
+    # ---- annotation identities
+    def test_annotation_event_identities_pair_text_uids_with_text_types(self):
+        view = self._view()
+        identities = view._annotation_event_identities
+        self.assertEqual(
+            identities(["a", 7], ["rect", "oval"]), {("a", "rect"), ("7", "oval")}
+        )
+        self.assertEqual(identities(["a", "a"], ["rect", "rect"]), {("a", "rect")})
+        self.assertEqual(identities(["a"], ["rect"]), {("a", "rect")})
+        for label, uids, types in (
+            ("no uids", None, ["rect"]),
+            ("no types", ["a"], None),
+            ("empty uids", [], ["rect"]),
+            ("empty types", ["a"], []),
+            ("length mismatch", ["a", "b"], ["rect"]),
+            ("empty uid", ["a", ""], ["rect", "oval"]),
+            ("missing uid", ["a", None], ["rect", "oval"]),
+            ("empty type", ["a", "b"], ["rect", ""]),
+            ("missing type", ["a", "b"], [None, "oval"]),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(identities(uids, types))
+
+    def test_an_annotation_identity_uses_the_database_uid_when_the_key_was_renamed(
+        self,
+    ):
+        view = self._view()
+        annotation = self._annotation("a", "oval")
+        self.assertEqual(
+            view._annotation_identity("a_oval", annotation, {"a_oval": "a"}),
+            ("a", "oval"),
+        )
+        self.assertEqual(
+            view._annotation_identity("a_oval", annotation, {"other": "z"}),
+            ("a", "oval"),
+        )
+        self.assertEqual(
+            view._annotation_identity("k", annotation, {"k": 5}), ("5", "oval")
+        )
+
+    def test_annotation_keys_are_listed_by_identity_unless_two_share_one(self):
+        view = self._view()
+        annotations = {
+            "a": self._annotation("a", "rect"),
+            "a_oval": self._annotation("a", "oval"),
+            "b": self._annotation("b", "rect"),
+        }
+        db_map = {"a_oval": "a"}
+        self.assertEqual(
+            view._annotation_keys_by_identity(annotations, db_map),
+            {("a", "rect"): "a", ("a", "oval"): "a_oval", ("b", "rect"): "b"},
+        )
+        annotations["a_rect_1"] = self._annotation("a", "rect")
+        self.assertIsNone(view._annotation_keys_by_identity(annotations, db_map))
+        self.assertEqual(view._annotation_keys_by_identity({}, {}), {})
+
+    def _identity_view(self):
+        view = self._view()
+        view._current_takeoffs = {"t1": self._takeoff("t1"), "t2": self._takeoff("t2")}
+        view._current_annotations = {
+            "a": self._annotation("a", "rect"),
+            "a_oval": self._annotation("a", "oval"),
+            "b": self._annotation("b", "rect"),
+        }
+        view._ann_db_uid_map = {"a_oval": "a"}
+        return view
+
+    def test_overlay_identities_of_keys_split_into_takeoff_uids_and_annotation_identities(
+        self,
+    ):
+        view = self._identity_view()
+        takeoffs, annotations = view._overlay_identities_for_keys(
+            {"t1", "a_oval", "b", "missing"}
+        )
+        self.assertEqual(takeoffs, {"t1"})
+        self.assertEqual(annotations, {("a", "oval"), ("b", "rect")})
+        self.assertEqual(view._overlay_identities_for_keys(set()), (set(), set()))
+        view._selected_uids = {"t2", "a"}
+        self.assertEqual(view._selected_overlay_identities(), ({"t2"}, {("a", "rect")}))
+
+    def test_overlay_keys_resolve_identities_back_to_current_keys(self):
+        view = self._identity_view()
+        self.assertEqual(
+            view._overlay_keys_for_identities(
+                {"t1", "gone"}, {("a", "oval"), ("zz", "rect")}
+            ),
+            {"t1", "a_oval"},
+        )
+        self.assertEqual(view._overlay_keys_for_identities(set(), set()), set())
+        self.assertEqual(view._overlay_keys_for_identities({"t2"}, set()), {"t2"})
+        self.assertEqual(
+            view._overlay_keys_for_identities(set(), {("b", "rect")}), {"b"}
+        )
+        view._current_annotations["dup"] = self._annotation("b", "rect")
+        self.assertEqual(
+            view._overlay_keys_for_identities({"t1"}, {("b", "rect")}), {"t1"}
+        )
+
+    def test_restoring_selected_identities_selects_the_matching_current_keys(self):
+        view = self._identity_view()
+        previous = view._selected_uids
+        view._restore_selected_overlay_identities({"t1", "gone"}, {("a", "oval")})
+        self.assertEqual(view._selected_uids, {"t1", "a_oval"})
+        self.assertIsNot(view._selected_uids, previous)
+
+    def test_restoring_pending_identities_updates_only_the_changed_visuals(self):
+        view = self._identity_view()
+        applied = []
+        view._apply_pending_mutation_visual = lambda key: applied.append(key)
+        view._pending_mutation_uids = {"t1", "b"}
+        view._restore_pending_overlay_identities({"t1", "t2"}, {("a", "oval")})
+        self.assertEqual(view._pending_mutation_uids, {"t1", "t2", "a_oval"})
+        self.assertEqual(sorted(applied), ["a_oval", "b", "t2"])
+
+    def test_the_annotation_identity_of_a_key_is_missing_for_none_and_unknown_keys(
+        self,
+    ):
+        view = self._identity_view()
+        self.assertIsNone(view._annotation_identity_for_key(None))
+        self.assertIsNone(view._annotation_identity_for_key("missing"))
+        self.assertEqual(view._annotation_identity_for_key("a_oval"), ("a", "oval"))
+        self.assertEqual(view._annotation_identity_for_key("b"), ("b", "rect"))
+
+    def test_the_annotation_key_of_an_identity_is_missing_for_none_unknown_and_ambiguous_identities(
+        self,
+    ):
+        view = self._identity_view()
+        self.assertIsNone(view._annotation_key_for_identity(None))
+        self.assertIsNone(view._annotation_key_for_identity(("zz", "rect")))
+        self.assertEqual(view._annotation_key_for_identity(("a", "oval")), "a_oval")
+        view._current_annotations["dup"] = self._annotation("b", "rect")
+        self.assertIsNone(view._annotation_key_for_identity(("a", "oval")))
+
+    def test_editing_annotation_uids_collect_every_active_editor_or_draft(self):
+        view = self._view()
+        self.assertEqual(view._editing_annotation_uids(), set())
+        view._editing_text_annotation_uid = "t"
+        view._draft_text_annotation_uid = "d"
+        view._editing_named_view_uid = "n"
+        view._draft_named_view_uid = "dn"
+        self.assertEqual(view._editing_annotation_uids(), {"t", "d", "n", "dn"})
+        view._draft_text_annotation_uid = ""
+        view._editing_named_view_uid = None
+        self.assertEqual(view._editing_annotation_uids(), {"t", "dn"})
+
+    # ---- annotation overlay item removal
+    def _items_view(self):
+        view = self._view()
+        items = {
+            name: QGraphicsRectItem(0.0, 0.0, 5.0, 5.0)
+            for name in ("a1", "a2", "keep", "link")
+        }
+        for item in items.values():
+            view._scene.addItem(item)
+        view._uid_to_items = {
+            "a": [items["a1"], items["a2"]],
+            "k": [items["keep"]],
+            "h": [items["link"]],
+        }
+        view._takeoff_items = [items["a1"], items["a2"], items["keep"]]
+        view._hotlink_items = [(items["link"], "target"), (items["keep"], "other")]
+        return view, items
+
+    def test_removing_annotation_overlay_items_takes_them_out_of_the_scene_and_every_registry(
+        self,
+    ):
+        view, items = self._items_view()
+        view._remove_annotation_overlay_items({"a", "h", "unknown"})
+        for name in ("a1", "a2", "link"):
+            self.assertIsNone(items[name].scene())
+        self.assertIs(items["keep"].scene(), view._scene)
+        self.assertEqual(view._uid_to_items, {"k": [items["keep"]]})
+        self.assertEqual(view._takeoff_items, [items["keep"]])
+        self.assertEqual(view._hotlink_items, [(items["keep"], "other")])
+
+    def test_removing_nothing_leaves_the_registries_untouched(self):
+        view, items = self._items_view()
+        takeoff_items, hotlinks = view._takeoff_items, view._hotlink_items
+        view._remove_annotation_overlay_items({"unknown"})
+        view._remove_annotation_overlay_items(set())
+        self.assertIs(view._takeoff_items, takeoff_items)
+        self.assertIs(view._hotlink_items, hotlinks)
+        self.assertEqual(len(view._uid_to_items), 3)
+
+    def test_removing_items_that_already_left_the_scene_does_not_touch_the_scene(self):
+        view, items = self._items_view()
+        view._scene.removeItem(items["a1"])
+        messages = []
+        previous = QtCore.qInstallMessageHandler(
+            lambda mode, ctx, msg: messages.append(msg)
+        )
+        try:
+            view._remove_annotation_overlay_items({"a"})
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+        self.assertEqual(messages, [])
+        self.assertIsNone(items["a2"].scene())
+
+    def test_removing_the_overlay_of_an_edited_annotation_ends_the_inline_edit(self):
+        for label, attribute in (
+            ("text", "_editing_text_annotation_uid"),
+            ("named view", "_editing_named_view_uid"),
+        ):
+            with self.subTest(label):
+                view, _items = self._items_view()
+                ended = []
+                view._clear_inline_text_edit_state = lambda: ended.append(True)
+                setattr(view, attribute, "a")
+                view._remove_annotation_overlay_items({"a"})
+                self.assertEqual(ended, [True])
+                ended.clear()
+                setattr(view, attribute, "other")
+                view._remove_annotation_overlay_items({"h"})
+                self.assertEqual(ended, [])
+
+    # ---- pruning and visibility of page overlay items
+    def test_a_graphics_item_is_live_only_when_present_and_not_deleted(self):
+        view = self._view()
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        self.assertIs(view._is_live_graphics_item(item), True)
+        self.assertIs(view._is_live_graphics_item(None), False)
+        delete(item)
+        self.assertIs(view._is_live_graphics_item(item), False)
+
+    def test_pruning_drops_deleted_items_from_every_registry(self):
+        view = self._view()
+        live = [QGraphicsRectItem(0.0, 0.0, 1.0, 1.0) for _ in range(4)]
+        dead = [QGraphicsRectItem(0.0, 0.0, 1.0, 1.0) for _ in range(4)]
+        for item in live + dead:
+            view._scene.addItem(item)
+        for item in dead:
+            delete(item)
+        view._takeoff_items = [live[0], dead[0]]
+        view._selection_items = [dead[1], live[1]]
+        view._handle_infos = [
+            SimpleNamespace(item=dead[2]),
+            SimpleNamespace(item=live[2]),
+        ]
+        view._hotlink_items = [(dead[3], "x"), (live[3], "y")]
+        view._uid_to_items = {"a": [live[0], dead[0]], "b": [dead[1]], "c": [live[3]]}
+        view._prune_deleted_page_overlay_items()
+        self.assertEqual(view._takeoff_items, [live[0]])
+        self.assertEqual(view._selection_items, [live[1]])
+        self.assertEqual([info.item for info in view._handle_infos], [live[2]])
+        self.assertEqual(view._hotlink_items, [(live[3], "y")])
+        self.assertEqual(view._uid_to_items, {"a": [live[0]], "c": [live[3]]})
+
+    def test_page_overlay_items_are_shown_or_hidden_together_after_pruning(self):
+        view = self._view()
+        takeoff, hotlink, selection, dead = (
+            QGraphicsRectItem(0.0, 0.0, 1.0, 1.0) for _ in range(4)
+        )
+        for item in (takeoff, hotlink, selection, dead):
+            view._scene.addItem(item)
+        delete(dead)
+        view._takeoff_items = [takeoff, dead]
+        view._hotlink_items = [(hotlink, None)]
+        view._selection_items = [selection]
+        view._set_page_overlay_items_visible(False)
+        self.assertEqual(
+            [takeoff.isVisible(), hotlink.isVisible(), selection.isVisible()],
+            [False, False, False],
+        )
+        view._set_page_overlay_items_visible(True)
+        self.assertEqual(
+            [takeoff.isVisible(), hotlink.isVisible(), selection.isVisible()],
+            [True, True, True],
+        )
+        self.assertEqual(view._takeoff_items, [takeoff])
+
+    # ---- building the overlay items
+    class _ScriptedSceneBuilder:
+        def __init__(
+            self, takeoff_items, takeoff_map, annotation_items, hotlinks, annotation_map
+        ):
+            self.takeoff_result = (takeoff_items, takeoff_map)
+            self.annotation_result = (annotation_items, hotlinks, annotation_map)
+            self.takeoff_calls = []
+            self.annotation_calls = []
+
+        def add_takeoff_overlays(
+            self, scene, takeoffs, conditions, color_map, page_info, areas, **kwargs
+        ):
+            self.takeoff_calls.append(
+                (scene, takeoffs, conditions, color_map, page_info, areas, kwargs)
+            )
+            return self.takeoff_result
+
+        def add_annotation_overlays(self, scene, annotation_items, page_info, page_uid):
+            self.annotation_calls.append((scene, annotation_items, page_info, page_uid))
+            return self.annotation_result
+
+    def test_building_overlay_items_registers_takeoff_and_annotation_items_by_uid(self):
+        view = self._view()
+        takeoff_item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        annotation_item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        hotlink_item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder = self._ScriptedSceneBuilder(
+            [takeoff_item],
+            {"t1": [takeoff_item]},
+            [annotation_item],
+            [(hotlink_item, "target")],
+            {"a1": [annotation_item], "a1_rect": []},
+        )
+        view._scene_builder = builder
+        view._inactive_object_color = "#808080"
+        view._current_bid_page_uid = "p1"
+        view._current_takeoffs = {"t1": self._takeoff("t1")}
+        view._uid_to_items = {"stale": [takeoff_item]}
+        view._hotlink_items = []
+        takeoff = self._takeoff("t1")
+        taken = self._annotation("t1", "rect")
+        free = self._annotation("a1", "rect")
+        page_info, areas = object(), {"p1": "a"}
+        view._build_current_overlay_items(
+            [takeoff], {"c1": 1}, {"c1": "#fff"}, page_info, areas, [taken, free]
+        )
+        scene, takeoffs, conditions, colors, got_info, got_areas, kwargs = (
+            builder.takeoff_calls[0]
+        )
+        self.assertIs(scene, view._scene)
+        self.assertEqual(
+            (takeoffs, conditions, colors), ([takeoff], {"c1": 1}, {"c1": "#fff"})
+        )
+        self.assertIs(got_info, page_info)
+        self.assertIs(got_areas, areas)
+        self.assertEqual(kwargs, {"inactive_object_color": "#808080"})
+        scene, annotation_items, got_info, page_uid = builder.annotation_calls[0]
+        self.assertIs(scene, view._scene)
+        # The annotation sharing a takeoff uid is renamed so the keys stay unique.
+        self.assertEqual(annotation_items, [("t1_rect", taken), ("a1", free)])
+        self.assertIs(got_info, page_info)
+        self.assertEqual(page_uid, "p1")
+        self.assertEqual(view._takeoff_items, [takeoff_item, annotation_item])
+        self.assertEqual(view._hotlink_items, [(hotlink_item, "target")])
+        self.assertEqual(view._current_annotations, {"t1_rect": taken, "a1": free})
+        self.assertEqual(view._ann_db_uid_map, {"t1_rect": "t1"})
+        self.assertEqual(set(view._uid_to_items), {"t1", "t1_rect", "a1"})
+        self.assertEqual(view._uid_to_items["t1"], [takeoff_item])
+        self.assertEqual(view._uid_to_items["t1_rect"], [])
+        self.assertEqual(view._uid_to_items["a1"], [annotation_item])
+
+    def test_building_overlay_items_without_annotations_clears_the_annotation_registries(
+        self,
+    ):
+        view = self._view()
+        builder = self._ScriptedSceneBuilder([], {}, [], [], {})
+        view._scene_builder = builder
+        view._current_annotations = {"old": self._annotation("old")}
+        view._ann_db_uid_map = {"old_rect": "old"}
+        view._uid_to_items = {"stale": []}
+        for annotations in (None, []):
+            view._build_current_overlay_items([], {}, {}, object(), None, annotations)
+            self.assertEqual(view._current_annotations, {})
+            self.assertEqual(view._ann_db_uid_map, {})
+            self.assertEqual(view._uid_to_items, {})
+            self.assertEqual(builder.annotation_calls, [])
+            view._current_annotations = {"old": self._annotation("old")}
+            view._ann_db_uid_map = {"old_rect": "old"}
+
+    # ---- prefetching
+    def test_prefetching_nearby_pages_forwards_to_the_coordinator_when_there_is_one(
+        self,
+    ):
+        view = self._view()
+        calls = []
+        view._prefetch_coordinator = SimpleNamespace(
+            prefetch_nearby_pages=lambda **kwargs: calls.append(kwargs)
+        )
+        current, ordered, bid_ref = (
+            Page(uid="p1", name="P1"),
+            [Page(uid="p2", name="P2")],
+            BidRef("db.mdb", "b"),
+        )
+        view.prefetch_nearby_pages(current, ordered, bid_ref)
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0]["current_page"], current)
+        self.assertIs(calls[0]["ordered_pages"], ordered)
+        self.assertIs(calls[0]["bid_ref"], bid_ref)
+        view._prefetch_coordinator = None
+        view.prefetch_nearby_pages(current, ordered)
+        self.assertEqual(len(calls), 1)
+
+
+class _ChangeSceneBuilder:
+    """Scene-builder double recording the partial-rebuild calls made by the changed-overlay refreshes."""
+
+    def __init__(self):
+        self.page_info_calls = []
+        self.annotation_calls = []
+        self.subset_calls = []
+        self.z_calls = []
+        self.annotation_result = ([], [], {})
+        self.subset_result = ([], {})
+        self.subset_error = None
+
+    def build_page_info(self, page, pdf_width, pdf_height, scale, rotation):
+        self.page_info_calls.append((page, pdf_width, pdf_height, scale, rotation))
+        return "page-info"
+
+    def add_annotation_overlays(self, scene, annotations, page_info, page_uid):
+        self.annotation_calls.append((scene, list(annotations), page_info, page_uid))
+        return self.annotation_result
+
+    def add_takeoff_overlays_subset(
+        self,
+        scene,
+        takeoffs,
+        affected,
+        conditions,
+        color_map,
+        page_info,
+        areas,
+        inactive_object_color=None,
+    ):
+        if self.subset_error is not None:
+            raise self.subset_error
+        self.subset_calls.append(
+            (
+                scene,
+                list(takeoffs),
+                list(affected),
+                conditions,
+                color_map,
+                page_info,
+                areas,
+                inactive_object_color,
+            )
+        )
+        return self.subset_result
+
+    def update_takeoff_overlay_z_values(self, takeoffs, uid_to_items):
+        self.z_calls.append((list(takeoffs), dict(uid_to_items)))
+
+
+class TakeoffPlanViewChangedOverlayRefreshSweepTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    """Partial overlay rebuilds for changed annotations or takeoffs and the refresh routing around them."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view._pdf_width_pts, view._pdf_height_pts, view._scene_scale = 100.0, 200.0, 3.0
+        view._scene_builder = _ChangeSceneBuilder()
+        view._current_page_transform = lambda: None
+        self.calls = calls = []
+        view._restore_selected_text_annotation_toolbar = lambda key: calls.append(
+            ("text", key)
+        )
+        view._restore_selected_dimension_text_label_toolbar = lambda key: calls.append(
+            ("dimension", key)
+        )
+        view._restore_selected_condition_text_label_toolbar = (
+            lambda target: calls.append(("condition", target))
+        )
+        view._selected_dimension_text_label_target = lambda: None
+        view._selected_condition_text_label_target = lambda: "condition-target"
+        view.update_selection_visuals = lambda *a, **k: calls.append(
+            "selection_visuals"
+        )
+        view._update_cursor = lambda: calls.append("cursor")
+        view._invalidate_snap_index = lambda: calls.append("snap_index")
+        self.conditions = {
+            "c1": Condition(uid="c1", condition_type=Condition.TYPE_AREA)
+        }
+        self.colors = {"c1": "#111111"}
+        self.areas = {"p1": "x"}
+        self.bid_ref = BidRef("db.mdb", "bid-1")
+        self.page = page
+        # The view holds equal-but-distinct (or stale) values so a refresh that adopts
+        # the incoming objects can be told apart from one that forgets to.
+        view._current_page = replace(page, name="stale")
+        view._current_bid_page_uid = "stale"
+        view._current_conditions = dict(self.conditions)
+        view._current_color_map = dict(self.colors)
+        view._current_page_area_selections = dict(self.areas)
+        view._current_bid_ref = BidRef("db.mdb", "stale")
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="c1", position=[0.0, 0.0, 10.0, 0.0, 0.0, 10.0]
+            ),
+            "t2": Takeoff(
+                uid="t2",
+                condition_uid="c1",
+                position=[20.0, 20.0, 30.0, 20.0, 20.0, 30.0],
+            ),
+            "h1": Takeoff(
+                uid="h1",
+                condition_uid="c1",
+                position=[1.0, 1.0, 2.0, 1.0, 1.0, 2.0],
+                parent_uid="t1",
+            ),
+        }
+        view._current_annotations = {
+            "a": BidAnnotation(
+                uid="a", annotation_type="rect", position=[0.0, 0.0, 5.0, 5.0]
+            ),
+            "b": BidAnnotation(
+                uid="b", annotation_type="rect", position=[9.0, 9.0, 12.0, 12.0]
+            ),
+        }
+        view._ann_db_uid_map = {}
+        self.items = {}
+        view._uid_to_items = {}
+        view._takeoff_items = []
+        for uid in ("t1", "t2", "h1", "a", "b"):
+            item = QGraphicsRectItem(0.0, 0.0, 4.0, 4.0)
+            view._scene.addItem(item)
+            self.items[uid] = item
+            view._uid_to_items[uid] = [item]
+            view._takeoff_items.append(item)
+        return view, view._scene_builder
+
+    def _incoming(self, view, **overrides):
+        values = {
+            "page": self.page,
+            "takeoffs": [replace(t) for t in view._current_takeoffs.values()],
+            "conditions": dict(self.conditions),
+            "color_map": dict(view._current_color_map),
+            "annotations": [replace(a) for a in view._current_annotations.values()],
+            "page_area_selections": dict(self.areas),
+            "bid_ref": self.bid_ref,
+        }
+        values.update(overrides)
+        return values
+
+    def _annotation_call(self, view, incoming, uids=("a",), types=("rect",)):
+        return view._try_refresh_changed_annotation_overlays(
+            **incoming,
+            changed_takeoff_uids=None,
+            changed_annotation_uids=list(uids),
+            changed_annotation_types=list(types),
+        )
+
+    # ---- annotation fast path
+    def test_a_changed_annotation_is_rebuilt_alone_and_the_model_adopts_the_incoming_state(
+        self,
+    ):
+        view, builder = self._view()
+        new_a = BidAnnotation(
+            uid="a", annotation_type="rect", position=[1.0, 1.0, 6.0, 6.0]
+        )
+        new_item, link = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0), QGraphicsRectItem(
+            0.0, 0.0, 1.0, 1.0
+        )
+        builder.annotation_result = ([new_item], [(link, "target")], {"a": [new_item]})
+        new_page = replace(self.page, name="renamed")
+        new_bid = BidRef("db.mdb", "bid-2")
+        incoming = self._incoming(
+            view,
+            page=new_page,
+            bid_ref=new_bid,
+            annotations=[
+                new_a,
+                BidAnnotation(
+                    uid="b", annotation_type="rect", position=[9.0, 9.0, 12.0, 12.0]
+                ),
+            ],
+        )
+        old_item = self.items["a"]
+        previous_annotations, previous_db_map = (
+            view._current_annotations,
+            view._ann_db_uid_map,
+        )
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertIsNone(old_item.scene())
+        self.assertIs(self.items["b"].scene(), view._scene)
+        ((scene, rendered, page_info, page_uid),) = builder.annotation_calls
+        self.assertIs(scene, view._scene)
+        self.assertEqual(rendered, [("a", new_a)])
+        self.assertEqual((page_info, page_uid), ("page-info", "stale"))
+        self.assertEqual(
+            builder.page_info_calls, [(new_page, 100.0, 200.0, 3.0, new_page.rotation)]
+        )
+        self.assertEqual(
+            view._current_annotations, {"a": new_a, "b": view._current_annotations["b"]}
+        )
+        self.assertIs(view._current_annotations["a"], new_a)
+        self.assertIsNot(view._current_annotations, previous_annotations)
+        self.assertEqual(view._ann_db_uid_map, {})
+        self.assertIsNot(view._ann_db_uid_map, previous_db_map)
+        self.assertEqual(view._uid_to_items["a"], [new_item])
+        self.assertEqual(view._uid_to_items["b"], [self.items["b"]])
+        self.assertIn(new_item, view._takeoff_items)
+        self.assertNotIn(old_item, view._takeoff_items)
+        self.assertEqual(view._hotlink_items, [(link, "target")])
+        self.assertIs(view._current_page, new_page)
+        self.assertEqual(view._current_bid_page_uid, "p1")
+        self.assertIs(view._current_bid_ref, new_bid)
+        self.assertEqual(
+            view._current_render_identity,
+            view._build_render_identity(new_page, new_bid),
+        )
+        self.assertIs(view._current_conditions, incoming["conditions"])
+        self.assertIs(view._current_color_map, incoming["color_map"])
+        self.assertIs(
+            view._current_page_area_selections, incoming["page_area_selections"]
+        )
+        self.assertEqual(self.calls[-1], "cursor")
+
+    def test_a_removed_annotation_is_dropped_without_rendering_anything(self):
+        view, builder = self._view()
+        incoming = self._incoming(view, annotations=[view._current_annotations["b"]])
+        old_item = self.items["a"]
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertEqual(builder.annotation_calls, [])
+        self.assertIsNone(old_item.scene())
+        self.assertEqual(list(view._current_annotations), ["b"])
+        self.assertNotIn("a", view._uid_to_items)
+
+    def test_an_added_annotation_is_rendered_and_registered(self):
+        view, builder = self._view()
+        added = BidAnnotation(
+            uid="c", annotation_type="oval", position=[0.0, 0.0, 2.0, 2.0]
+        )
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.annotation_result = ([item], [], {"c": [item]})
+        incoming = self._incoming(
+            view, annotations=list(view._current_annotations.values()) + [added]
+        )
+        self.assertIs(self._annotation_call(view, incoming, ["c"], ["oval"]), True)
+        self.assertEqual(builder.annotation_calls[0][1], [("c", added)])
+        self.assertEqual(view._uid_to_items["c"], [item])
+        self.assertEqual(set(view._current_annotations), {"a", "b", "c"})
+        self.assertIs(self.items["a"].scene(), view._scene)
+
+    def test_the_annotation_fast_path_declines_when_anything_besides_the_changed_annotations_differs(
+        self,
+    ):
+        changed_a = BidAnnotation(
+            uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+        )
+        unchanged_b_moved = BidAnnotation(
+            uid="b", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+        )
+        extra = BidAnnotation(
+            uid="x", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+        )
+        b = BidAnnotation(
+            uid="b", annotation_type="rect", position=[9.0, 9.0, 12.0, 12.0]
+        )
+        cases = (
+            ("takeoffs differ", {"takeoffs": []}, ("a",), ("rect",)),
+            ("conditions differ", {"conditions": {}}, ("a",), ("rect",)),
+            ("colours differ", {"color_map": {"c1": "#222222"}}, ("a",), ("rect",)),
+            (
+                "areas differ",
+                {"page_area_selections": {"p1": "other"}},
+                ("a",),
+                ("rect",),
+            ),
+            (
+                "unchanged annotation modified",
+                {"annotations": [changed_a, unchanged_b_moved]},
+                ("a",),
+                ("rect",),
+            ),
+            (
+                "unchanged annotation added",
+                {"annotations": [changed_a, b, extra]},
+                ("a",),
+                ("rect",),
+            ),
+            ("changed identity unknown", {}, ("zz",), ("rect",)),
+            ("changed type unknown", {}, ("a",), ("oval",)),
+            ("no identities", {}, (), ()),
+            ("mismatched identities", {}, ("a", "b"), ("rect",)),
+        )
+        for label, overrides, uids, types in cases:
+            with self.subTest(label):
+                view, builder = self._view()
+                incoming = self._incoming(view, **overrides)
+                before = dict(view._current_annotations)
+                self.assertIs(self._annotation_call(view, incoming, uids, types), False)
+                self.assertEqual(view._current_annotations, before)
+                self.assertEqual(builder.annotation_calls, [])
+                self.assertIs(self.items["a"].scene(), view._scene)
+        view, builder = self._view()
+        incoming = self._incoming(view, annotations=[changed_a, b])
+        self.assertIs(
+            view._try_refresh_changed_annotation_overlays(
+                **incoming,
+                changed_takeoff_uids=["t1"],
+                changed_annotation_uids=["a"],
+                changed_annotation_types=["rect"],
+            ),
+            False,
+        )
+
+    def test_the_annotation_fast_path_declines_when_one_of_several_changed_identities_is_unknown(
+        self,
+    ):
+        view, builder = self._view()
+        changed = BidAnnotation(
+            uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+        )
+        incoming = self._incoming(
+            view, annotations=[changed, view._current_annotations["b"]]
+        )
+        self.assertIs(
+            self._annotation_call(view, incoming, ["a", "zz"], ["rect", "rect"]), False
+        )
+        self.assertEqual(builder.annotation_calls, [])
+        self.assertIs(self.items["a"].scene(), view._scene)
+
+    def test_the_annotation_fast_path_declines_when_an_edit_target_is_only_a_new_or_an_old_key(
+        self,
+    ):
+        reserved = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="c1", position=[0.0, 0.0, 10.0, 0.0, 0.0, 10.0]
+            )
+        }
+        for label, current_has_key in (
+            ("only the incoming key", False),
+            ("only the current key", True),
+        ):
+            with self.subTest(label):
+                view, builder = self._view()
+                view._current_takeoffs = dict(reserved)
+                renamed = BidAnnotation(
+                    uid="t1", annotation_type="oval", position=[1.0, 1.0, 2.0, 2.0]
+                )
+                if current_has_key:
+                    view._current_annotations["t1_oval"] = renamed
+                    view._ann_db_uid_map = {"t1_oval": "t1"}
+                    incoming_annotations = list(view._current_annotations.values())[:-1]
+                else:
+                    incoming_annotations = list(view._current_annotations.values()) + [
+                        renamed
+                    ]
+                view._editing_text_annotation_uid = "t1_oval"
+                incoming = self._incoming(
+                    view, takeoffs=[reserved["t1"]], annotations=incoming_annotations
+                )
+                self.assertIs(
+                    self._annotation_call(view, incoming, ["t1"], ["oval"]), False
+                )
+                self.assertEqual(builder.annotation_calls, [])
+
+    def test_the_annotation_fast_path_declines_for_duplicate_identities(self):
+        view, _builder = self._view()
+        view._current_annotations["a_dup"] = BidAnnotation(
+            uid="a", annotation_type="rect", position=[1.0]
+        )
+        incoming = self._incoming(
+            view,
+            annotations=[
+                view._current_annotations["a"],
+                view._current_annotations["b"],
+            ],
+        )
+        self.assertIs(self._annotation_call(view, incoming), False)
+        view, _builder = self._view()
+        dup = BidAnnotation(
+            uid="a", annotation_type="rect", position=[3.0, 3.0, 4.0, 4.0]
+        )
+        incoming = self._incoming(
+            view,
+            annotations=[
+                view._current_annotations["a"],
+                dup,
+                view._current_annotations["b"],
+            ],
+        )
+        self.assertIs(self._annotation_call(view, incoming), False)
+
+    def test_the_annotation_fast_path_declines_when_an_unchanged_annotation_was_renamed(
+        self,
+    ):
+        view, _builder = self._view()
+        view._current_annotations["b_rect"] = view._current_annotations.pop("b")
+        view._ann_db_uid_map = {"b_rect": "b"}
+        incoming = self._incoming(
+            view,
+            annotations=[
+                BidAnnotation(
+                    uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+                ),
+                BidAnnotation(
+                    uid="b", annotation_type="rect", position=[9.0, 9.0, 12.0, 12.0]
+                ),
+            ],
+        )
+        self.assertIs(self._annotation_call(view, incoming), False)
+
+    def test_the_annotation_fast_path_declines_while_an_affected_annotation_is_being_edited(
+        self,
+    ):
+        changed = BidAnnotation(
+            uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+        )
+        for label, attribute, value in (
+            ("text editor", "_editing_text_annotation_uid", "a"),
+            ("text draft", "_draft_text_annotation_uid", "a"),
+            ("named view editor", "_editing_named_view_uid", "a"),
+            ("named view draft", "_draft_named_view_uid", "a"),
+        ):
+            with self.subTest(label):
+                view, builder = self._view()
+                setattr(view, attribute, value)
+                incoming = self._incoming(
+                    view, annotations=[changed, view._current_annotations["b"]]
+                )
+                self.assertIs(self._annotation_call(view, incoming), False)
+                self.assertEqual(builder.annotation_calls, [])
+        view, _builder = self._view()
+        view._editing_text_annotation_uid = "b"
+        incoming = self._incoming(
+            view, annotations=[changed, view._current_annotations["b"]]
+        )
+        self.assertIs(self._annotation_call(view, incoming), True)
+
+    def test_the_annotation_fast_path_declines_when_an_edit_target_matches_only_the_changed_uid(
+        self,
+    ):
+        view, _builder = self._view()
+        view._current_annotations["a_oval"] = BidAnnotation(
+            uid="a", annotation_type="oval", position=[1.0, 1.0]
+        )
+        view._ann_db_uid_map = {"a_oval": "a"}
+        view._editing_text_annotation_uid = "a"
+        incoming_annotations = [
+            view._current_annotations["a"],
+            view._current_annotations["b"],
+            BidAnnotation(uid="a", annotation_type="oval", position=[2.0, 2.0]),
+        ]
+        incoming = self._incoming(view, annotations=incoming_annotations)
+        self.assertIs(self._annotation_call(view, incoming, ["a"], ["oval"]), False)
+
+    def test_the_annotation_fast_path_compares_against_unflushed_drag_positions(self):
+        view, _builder = self._view()
+        view._dirty_ann_positions = {"b": ("rect", [1.0, 1.0, 2.0, 2.0])}
+        changed = BidAnnotation(
+            uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+        )
+        incoming = self._incoming(
+            view, annotations=[changed, view._current_annotations["b"]]
+        )
+        self.assertIs(self._annotation_call(view, incoming), False)
+
+    def test_a_removed_annotation_leaves_the_selection_and_the_pending_set(self):
+        view, builder = self._view()
+        view._selected_uids = {"a", "t1"}
+        view._pending_mutation_uids = {"a", "b"}
+        view._apply_pending_mutation_visual = lambda key: None
+        incoming = self._incoming(view, annotations=[view._current_annotations["b"]])
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertEqual(view._selected_uids, {"t1"})
+        self.assertEqual(view._pending_mutation_uids, {"b"})
+        self.assertIn("selection_visuals", self.calls)
+
+    def test_the_annotation_fast_path_keeps_the_selection_pending_state_and_toolbars(
+        self,
+    ):
+        view, builder = self._view()
+        view._selected_uids = {"a", "t1"}
+        view._pending_mutation_uids = {"b"}
+        view._selected_text_annotation_uid = "a"
+        applied = []
+        view._apply_pending_mutation_visual = lambda key: applied.append(key)
+        new_a = BidAnnotation(
+            uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+        )
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.annotation_result = ([item], [], {"a": [item]})
+        incoming = self._incoming(
+            view, annotations=[new_a, view._current_annotations["b"]]
+        )
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertEqual(view._selected_uids, {"a", "t1"})
+        self.assertEqual(view._pending_mutation_uids, {"b"})
+        self.assertIn("selection_visuals", self.calls)
+        self.assertIn(("text", "a"), self.calls)
+        self.assertIn(("dimension", None), self.calls)
+        self.assertIn(("condition", "condition-target"), self.calls)
+
+    def test_the_annotation_fast_path_refreshes_selection_visuals_only_when_it_matters(
+        self,
+    ):
+        for label, selected, expected in (
+            ("nothing selected", set(), False),
+            ("unrelated selection", {"t1"}, False),
+            ("affected annotation selected", {"a"}, True),
+        ):
+            with self.subTest(label):
+                view, builder = self._view()
+                view._selected_uids = set(selected)
+                new_a = BidAnnotation(
+                    uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+                )
+                item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+                builder.annotation_result = ([item], [], {"a": [item]})
+                incoming = self._incoming(
+                    view, annotations=[new_a, view._current_annotations["b"]]
+                )
+                self.assertIs(self._annotation_call(view, incoming), True)
+                self.assertEqual("selection_visuals" in self.calls, expected)
+
+    def test_the_annotation_fast_path_selection_follows_a_replaced_annotation_key(self):
+        view, builder = self._view()
+        view._selected_uids = {"b"}
+        view._current_annotations.pop("a")
+        incoming = self._incoming(
+            view,
+            annotations=[
+                BidAnnotation(
+                    uid="a", annotation_type="rect", position=[1.0, 1.0, 2.0, 2.0]
+                ),
+                BidAnnotation(
+                    uid="b", annotation_type="rect", position=[9.0, 9.0, 12.0, 12.0]
+                ),
+            ],
+        )
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.annotation_result = ([item], [], {"a": [item]})
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertEqual(view._selected_uids, {"b"})
+        self.assertNotIn("selection_visuals", self.calls)
+
+    def test_new_annotation_items_follow_the_page_transform_and_the_deferred_reveal(
+        self,
+    ):
+        view, builder = self._view()
+        transform = QTransform.fromScale(2.0, 3.0)
+        view._current_page_transform = lambda: transform
+        view._defer_page_visual_reveal = True
+        new_a = BidAnnotation(
+            uid="a", annotation_type="rect", position=[7.0, 7.0, 8.0, 8.0]
+        )
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        builder.annotation_result = ([item], [], {"a": [item]})
+        incoming = self._incoming(
+            view, annotations=[new_a, view._current_annotations["b"]]
+        )
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertEqual(item.transform(), transform)
+        self.assertFalse(item.isVisible())
+        self.assertTrue(self.items["b"].isVisible())
+        view, builder = self._view()
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        builder.annotation_result = ([item], [], {"a": [item]})
+        incoming = self._incoming(
+            view, annotations=[new_a, view._current_annotations["b"]]
+        )
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertTrue(item.transform().isIdentity())
+        self.assertTrue(item.isVisible())
+
+    def test_dropping_an_edited_annotation_overlay_resets_the_inline_edit_state(self):
+        view, _builder = self._view()
+        ended = []
+        view._clear_inline_text_edit_state = lambda: ended.append(True)
+        view._editing_named_view_uid = "zzz"
+        incoming = self._incoming(view, annotations=[view._current_annotations["b"]])
+        self.assertIs(self._annotation_call(view, incoming), True)
+        self.assertEqual(ended, [])
+
+    # ---- takeoff fast path
+    def _takeoff_call(self, view, incoming, changed, **kwargs):
+        incoming = dict(incoming)
+        return view._try_refresh_changed_takeoff_overlays(
+            **incoming, changed_takeoff_uids=changed, **kwargs
+        )
+
+    def test_a_changed_takeoff_is_rebuilt_alone_and_the_model_adopts_the_incoming_state(
+        self,
+    ):
+        view, builder = self._view()
+        new_t2 = Takeoff(
+            uid="t2", condition_uid="c1", position=[21.0, 21.0, 31.0, 21.0, 21.0, 31.0]
+        )
+        new_item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.subset_result = ([new_item], {"t2": [new_item]})
+        view._inactive_object_color = "#808080"
+        new_page = replace(self.page, name="renamed")
+        new_bid = BidRef("db.mdb", "bid-2")
+        incoming = self._incoming(
+            view,
+            page=new_page,
+            bid_ref=new_bid,
+            takeoffs=[
+                view._current_takeoffs["t1"],
+                new_t2,
+                view._current_takeoffs["h1"],
+            ],
+        )
+        old_item = self.items["t2"]
+        previous_annotations, previous_db_map = (
+            view._current_annotations,
+            view._ann_db_uid_map,
+        )
+        self.assertIs(self._takeoff_call(view, incoming, ["t2"]), True)
+        self.assertIsNone(old_item.scene())
+        (
+            (scene, takeoffs, affected, conditions, colors, page_info, areas, inactive),
+        ) = builder.subset_calls
+        self.assertIs(scene, view._scene)
+        self.assertEqual([t.uid for t in takeoffs], ["t1", "t2", "h1"])
+        self.assertEqual(affected, [new_t2])
+        self.assertEqual((page_info, inactive), ("page-info", "#808080"))
+        self.assertIs(areas, incoming["page_area_selections"])
+        self.assertEqual(
+            builder.page_info_calls, [(new_page, 100.0, 200.0, 3.0, new_page.rotation)]
+        )
+        self.assertIs(view._current_takeoffs["t2"], new_t2)
+        self.assertEqual(set(view._current_takeoffs), {"t1", "t2", "h1"})
+        self.assertEqual(view._uid_to_items["t2"], [new_item])
+        self.assertIn(new_item, view._takeoff_items)
+        self.assertNotIn(old_item, view._takeoff_items)
+        self.assertEqual(len(builder.z_calls), 1)
+        self.assertEqual([t.uid for t in builder.z_calls[0][0]], ["t1", "t2", "h1"])
+        self.assertEqual(builder.z_calls[0][1], dict(view._uid_to_items))
+        self.assertIs(view._current_page, new_page)
+        self.assertEqual(view._current_bid_page_uid, "p1")
+        self.assertIs(view._current_bid_ref, new_bid)
+        self.assertEqual(
+            view._current_render_identity,
+            view._build_render_identity(new_page, new_bid),
+        )
+        self.assertIs(view._current_conditions, incoming["conditions"])
+        self.assertIs(view._current_color_map, incoming["color_map"])
+        self.assertIs(
+            view._current_page_area_selections, incoming["page_area_selections"]
+        )
+        self.assertIsNot(view._current_annotations, previous_annotations)
+        self.assertEqual(view._current_annotations, previous_annotations)
+        self.assertIsNot(view._ann_db_uid_map, previous_db_map)
+        self.assertEqual(self.calls[-2:], ["snap_index", "cursor"])
+
+    def test_changing_a_hole_rebuilds_its_parent_and_every_hole_of_that_parent(self):
+        view, builder = self._view()
+        other_hole = Takeoff(
+            uid="h2",
+            condition_uid="c1",
+            position=[3.0, 3.0, 4.0, 3.0, 3.0, 4.0],
+            parent_uid="t1",
+        )
+        unrelated_hole = Takeoff(
+            uid="h3",
+            condition_uid="c1",
+            position=[3.0, 3.0, 4.0, 3.0, 3.0, 4.0],
+            parent_uid="t2",
+        )
+        view._current_takeoffs["h2"] = other_hole
+        view._current_takeoffs["h3"] = unrelated_hole
+        for uid in ("h2", "h3"):
+            hole_item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+            view._scene.addItem(hole_item)
+            view._uid_to_items[uid] = [hole_item]
+            view._takeoff_items.append(hole_item)
+            self.items[uid] = hole_item
+        new_h1 = Takeoff(
+            uid="h1",
+            condition_uid="c1",
+            position=[1.5, 1.5, 2.5, 1.5, 1.5, 2.5],
+            parent_uid="t1",
+        )
+        new_items = {
+            uid: QGraphicsRectItem(0.0, 0.0, 1.0, 1.0) for uid in ("t1", "h1", "h2")
+        }
+        builder.subset_result = (
+            list(new_items.values()),
+            {uid: [item] for uid, item in new_items.items()},
+        )
+        incoming = self._incoming(
+            view,
+            takeoffs=[
+                view._current_takeoffs["t1"],
+                view._current_takeoffs["t2"],
+                new_h1,
+                other_hole,
+                unrelated_hole,
+            ],
+        )
+        self.assertIs(self._takeoff_call(view, incoming, ["h1"]), True)
+        affected = builder.subset_calls[0][2]
+        self.assertEqual([t.uid for t in affected], ["h1", "h2", "t1"])
+        for uid in ("t1", "h1", "h2"):
+            self.assertEqual(view._uid_to_items[uid], [new_items[uid]])
+            self.assertIsNone(self.items[uid].scene())
+        for uid in ("t2", "h3"):
+            self.assertEqual(view._uid_to_items[uid], [self.items[uid]])
+            self.assertIs(self.items[uid].scene(), view._scene)
+
+    def test_removing_a_hole_rebuilds_the_parent_and_the_remaining_holes_from_current_items(
+        self,
+    ):
+        view, builder = self._view()
+        sibling = Takeoff(
+            uid="h2",
+            condition_uid="c1",
+            position=[3.0, 3.0, 4.0, 3.0, 3.0, 4.0],
+            parent_uid="t1",
+        )
+        view._current_takeoffs["h2"] = sibling
+        sibling_item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(sibling_item)
+        view._uid_to_items["h2"] = [sibling_item]
+        view._takeoff_items.append(sibling_item)
+        fresh = {uid: QGraphicsRectItem(0.0, 0.0, 1.0, 1.0) for uid in ("t1", "h2")}
+        builder.subset_result = (
+            list(fresh.values()),
+            {uid: [item] for uid, item in fresh.items()},
+        )
+        incoming = self._incoming(
+            view,
+            takeoffs=[
+                view._current_takeoffs["t1"],
+                view._current_takeoffs["t2"],
+                sibling,
+            ],
+        )
+        self.assertIs(self._takeoff_call(view, incoming, ["h1"]), True)
+        self.assertEqual([t.uid for t in builder.subset_calls[0][2]], ["h2", "t1"])
+        self.assertIsNone(self.items["h1"].scene())
+        self.assertIsNone(sibling_item.scene())
+        self.assertIsNone(self.items["t1"].scene())
+        self.assertNotIn("h1", view._uid_to_items)
+
+    def test_a_removed_takeoff_is_dropped_and_an_added_one_is_rendered(self):
+        view, builder = self._view()
+        incoming = self._incoming(
+            view, takeoffs=[view._current_takeoffs["t1"], view._current_takeoffs["h1"]]
+        )
+        self.assertIs(self._takeoff_call(view, incoming, ["t2"]), True)
+        self.assertEqual(builder.subset_calls, [])
+        self.assertNotIn("t2", view._current_takeoffs)
+        self.assertNotIn("t2", view._uid_to_items)
+        self.assertIsNone(self.items["t2"].scene())
+        view, builder = self._view()
+        added = Takeoff(
+            uid="t3", condition_uid="c1", position=[1.0, 1.0, 2.0, 1.0, 1.0, 2.0]
+        )
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.subset_result = ([item], {"t3": [item]})
+        incoming = self._incoming(
+            view, takeoffs=list(view._current_takeoffs.values()) + [added]
+        )
+        self.assertIs(self._takeoff_call(view, incoming, [3, "t3", None, ""]), True)
+        self.assertEqual(set(view._current_takeoffs), {"t1", "t2", "h1", "t3"})
+        self.assertEqual(view._uid_to_items["t3"], [item])
+
+    def test_the_takeoff_fast_path_declines_when_anything_besides_the_changed_takeoffs_differs(
+        self,
+    ):
+        moved_t1 = Takeoff(
+            uid="t1", condition_uid="c1", position=[5.0, 5.0, 15.0, 5.0, 5.0, 15.0]
+        )
+        extra = Takeoff(
+            uid="t9", condition_uid="c1", position=[1.0, 1.0, 2.0, 1.0, 1.0, 2.0]
+        )
+        cases = (
+            ("no changed uids", {}, []),
+            ("none changed uids", {}, None),
+            ("blank changed uids", {}, ["", None]),
+            ("changed uid unknown", {}, ["zz"]),
+            (
+                "unchanged takeoff modified",
+                {
+                    "takeoffs_fn": lambda v: [
+                        moved_t1,
+                        v._current_takeoffs["t2"],
+                        v._current_takeoffs["h1"],
+                    ]
+                },
+                ["t2"],
+            ),
+            (
+                "unlisted takeoff added",
+                {"takeoffs_fn": lambda v: list(v._current_takeoffs.values()) + [extra]},
+                ["t2"],
+            ),
+            (
+                "unlisted takeoff removed",
+                {
+                    "takeoffs_fn": lambda v: [
+                        v._current_takeoffs["t1"],
+                        v._current_takeoffs["h1"],
+                    ]
+                },
+                ["t1"],
+            ),
+            ("conditions differ", {"conditions": {}}, ["t2"]),
+            ("colours differ", {"color_map": {"c1": "#222222"}}, ["t2"]),
+            ("areas differ", {"page_area_selections": {"p1": "other"}}, ["t2"]),
+            ("annotations differ", {"annotations": []}, ["t2"]),
+            ("changed uid is an annotation key", {}, ["a"]),
+            ("one of several changed uids is an annotation key", {}, ["t2", "a"]),
+            ("annotation table renamed", {"db_map": {"x": "y"}}, ["t2"]),
+        )
+        for label, overrides, changed in cases:
+            with self.subTest(label):
+                view, builder = self._view()
+                overrides = dict(overrides)
+                takeoffs_fn = overrides.pop("takeoffs_fn", None)
+                if "db_map" in overrides:
+                    view._ann_db_uid_map = overrides.pop("db_map")
+                incoming = self._incoming(view, **overrides)
+                if takeoffs_fn:
+                    incoming["takeoffs"] = takeoffs_fn(view)
+                before = dict(view._current_takeoffs)
+                self.assertIs(self._takeoff_call(view, incoming, changed), False)
+                self.assertEqual(view._current_takeoffs, before)
+                self.assertEqual(builder.subset_calls, [])
+                self.assertIs(self.items["t2"].scene(), view._scene)
+
+    def test_the_takeoff_fast_path_tolerates_page_area_changes_only_when_allowed(self):
+        view, builder = self._view()
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.subset_result = ([item], {"t2": [item]})
+        areas = {"p1": "changed"}
+        incoming = self._incoming(view, page_area_selections=areas)
+        self.assertIs(self._takeoff_call(view, incoming, ["t2"]), False)
+        self.assertIs(
+            self._takeoff_call(view, incoming, ["t2"], allow_page_area_change=True),
+            True,
+        )
+        self.assertIs(view._current_page_area_selections, areas)
+        self.assertIs(builder.subset_calls[0][6], areas)
+
+    def test_the_takeoff_fast_path_gives_up_when_the_scene_builder_fails_or_returns_the_wrong_uids(
+        self,
+    ):
+        view, builder = self._view()
+        builder.subset_error = ValueError("cannot build")
+        self.assertIs(self._takeoff_call(view, self._incoming(view), ["t2"]), False)
+        self.assertIs(self.items["t2"].scene(), view._scene)
+        view, builder = self._view()
+        stray = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(stray)
+        builder.subset_result = ([stray], {"t2": [stray], "extra": []})
+        self.assertIs(self._takeoff_call(view, self._incoming(view), ["t2"]), False)
+        self.assertIsNone(stray.scene())
+        self.assertIs(self.items["t2"].scene(), view._scene)
+        view, builder = self._view()
+        stray = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.subset_result = ([stray], {"t2": [stray], "extra": []})
+        self.assertIs(self._takeoff_call(view, self._incoming(view), ["t2"]), False)
+        self.assertEqual(view._takeoff_items.count(stray), 0)
+
+    def test_the_takeoff_fast_path_restores_selection_pending_state_and_snap_data(self):
+        view, builder = self._view()
+        view._selected_uids = {"t2", "a"}
+        view._pending_mutation_uids = {"t1"}
+        applied = []
+        view._apply_pending_mutation_visual = lambda key: applied.append(key)
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.subset_result = ([item], {"t2": [item]})
+        self.assertIs(self._takeoff_call(view, self._incoming(view), ["t2"]), True)
+        self.assertEqual(view._selected_uids, {"t2", "a"})
+        self.assertEqual(view._pending_mutation_uids, {"t1"})
+        self.assertIn("selection_visuals", self.calls)
+        # Only the rebuilt takeoff's own visual is refreshed (by its registration); the
+        # pending set is unchanged so nothing else is touched.
+        self.assertEqual(applied, ["t2"])
+
+    def test_a_removed_takeoff_leaves_the_selection_and_the_pending_set(self):
+        view, builder = self._view()
+        view._selected_uids = {"t2", "t1"}
+        view._pending_mutation_uids = {"t2", "t1"}
+        view._apply_pending_mutation_visual = lambda key: None
+        incoming = self._incoming(
+            view, takeoffs=[view._current_takeoffs["t1"], view._current_takeoffs["h1"]]
+        )
+        self.assertIs(self._takeoff_call(view, incoming, ["t2"]), True)
+        self.assertEqual(view._selected_uids, {"t1"})
+        self.assertEqual(view._pending_mutation_uids, {"t1"})
+        self.assertIn("selection_visuals", self.calls)
+
+    def test_the_takeoff_fast_path_accepts_missing_annotation_lists_when_there_are_none(
+        self,
+    ):
+        view, builder = self._view()
+        view._current_annotations = {}
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        builder.subset_result = ([item], {"t2": [item]})
+        self.assertIs(
+            self._takeoff_call(view, self._incoming(view, annotations=None), ["t2"]),
+            True,
+        )
+
+    def test_the_takeoff_fast_path_refreshes_selection_visuals_only_when_it_matters(
+        self,
+    ):
+        for label, selected, expected in (
+            ("nothing selected", set(), False),
+            ("unrelated selection", {"t1"}, False),
+            ("changed takeoff selected", {"t2"}, True),
+        ):
+            with self.subTest(label):
+                view, builder = self._view()
+                view._selected_uids = set(selected)
+                item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+                builder.subset_result = ([item], {"t2": [item]})
+                self.assertIs(
+                    self._takeoff_call(view, self._incoming(view), ["t2"]), True
+                )
+                self.assertEqual("selection_visuals" in self.calls, expected)
+
+    def test_new_takeoff_items_follow_the_page_transform_and_the_deferred_reveal(self):
+        view, builder = self._view()
+        transform = QTransform.fromScale(2.0, 3.0)
+        view._current_page_transform = lambda: transform
+        view._defer_page_visual_reveal = True
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        builder.subset_result = ([item], {"t2": [item]})
+        self.assertIs(self._takeoff_call(view, self._incoming(view), ["t2"]), True)
+        self.assertEqual(item.transform(), transform)
+        self.assertFalse(item.isVisible())
+        view, builder = self._view()
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        builder.subset_result = ([item], {"t2": [item]})
+        self.assertIs(self._takeoff_call(view, self._incoming(view), ["t2"]), True)
+        self.assertTrue(item.transform().isIdentity())
+        self.assertTrue(item.isVisible())
+
+    # ---- refresh_current_page_overlays routing
+    def _routing_view(self):
+        view, builder = self._view()
+        view._current_render_identity = view._build_render_identity(
+            self.page, self.bid_ref
+        )
+        view._current_bid_page_uid = "p1"
+        log = []
+        self.log = log
+        view._has_loaded_page_visual_items = lambda: True
+        view._can_skip_unchanged_overlay_refresh = (
+            lambda **kw: log.append(("skip", kw)) or False
+        )
+        view._try_refresh_changed_annotation_overlays = (
+            lambda **kw: log.append(("annotations", kw)) or False
+        )
+        view._try_refresh_changed_takeoff_overlays = (
+            lambda **kw: log.append(("takeoffs", kw)) or False
+        )
+        view._refresh_overlays = lambda *args: log.append(("full", args))
+        view._sync_page_image_layer_visibility = lambda: log.append("sync")
+        view._update_scene_rect = lambda: log.append("scene_rect")
+        view.viewport = lambda: FakeViewport(log)
+        return view
+
+    def _refresh(self, view, **kwargs):
+        args = dict(
+            page=self.page,
+            takeoffs=[Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])],
+            conditions=self.conditions,
+            color_map=self.colors,
+            bid_ref=self.bid_ref,
+            annotations=None,
+            page_area_selections=None,
+        )
+        args.update(kwargs)
+        return view.refresh_current_page_overlays(**args)
+
+    def test_refreshing_a_page_that_is_not_the_loaded_one_is_refused(self):
+        view = self._routing_view()
+        other = replace(self.page, uid="other")
+        self.assertIs(self._refresh(view, page=other), False)
+        self.assertIs(self._refresh(view, page=replace(self.page, rotation=90)), False)
+        self.assertIs(self._refresh(view, bid_ref=BidRef("db.mdb", "other-bid")), False)
+        self.assertEqual(self.log, [])
+
+    def test_refreshing_does_not_consult_the_load_strategy_once_visuals_are_loaded(
+        self,
+    ):
+        view = self._routing_view()
+        view._has_loaded_page_visual_items = lambda: True
+        view._load_coordinator = SimpleNamespace(
+            determine_load_strategy=lambda page: self.fail("visuals already loaded")
+        )
+        self.assertIs(self._refresh(view), True)
+
+    def test_refreshing_waits_for_a_page_whose_visuals_are_still_loading(self):
+        view = self._routing_view()
+        view._has_loaded_page_visual_items = lambda: False
+        view._load_coordinator = SimpleNamespace(
+            determine_load_strategy=lambda page: SimpleNamespace(
+                needs_async_loading=True
+            )
+        )
+        self.assertIs(self._refresh(view), False)
+        self.assertEqual(self.log, [])
+        view._load_coordinator = SimpleNamespace(
+            determine_load_strategy=lambda page: SimpleNamespace(
+                needs_async_loading=False
+            )
+        )
+        self.assertIs(self._refresh(view), True)
+        view = self._routing_view()
+        view._has_loaded_page_visual_items = lambda: False
+        view._load_coordinator = SimpleNamespace(
+            determine_load_strategy=lambda page: self.fail("no strategy needed")
+        )
+        hidden_page = replace(self.page, layer_visible=False)
+        view._current_page = hidden_page
+        view._current_render_identity = view._build_render_identity(
+            hidden_page, self.bid_ref
+        )
+        self.assertIs(self._refresh(view, page=hidden_page), True)
+
+    def test_refresh_routing_takes_the_first_path_that_accepts_the_change(self):
+        view = self._routing_view()
+        view._can_skip_unchanged_overlay_refresh = (
+            lambda **kw: self.log.append(("skip", kw)) or True
+        )
+        self.assertIs(self._refresh(view, hidden_layer_uids=set()), True)
+        self.assertEqual([entry[0] for entry in self.log], ["skip"])
+        view = self._routing_view()
+        view._try_refresh_changed_annotation_overlays = (
+            lambda **kw: self.log.append(("annotations", kw)) or True
+        )
+        self.assertIs(self._refresh(view), True)
+        self.assertEqual(
+            [entry if isinstance(entry, str) else entry[0] for entry in self.log],
+            ["skip", "annotations", "sync", "scene_rect", "viewport.update"],
+        )
+        view = self._routing_view()
+        view._try_refresh_changed_takeoff_overlays = (
+            lambda **kw: self.log.append(("takeoffs", kw)) or True
+        )
+        self.assertIs(self._refresh(view), True)
+        self.assertEqual(
+            [entry if isinstance(entry, str) else entry[0] for entry in self.log],
+            [
+                "skip",
+                "annotations",
+                "takeoffs",
+                "sync",
+                "scene_rect",
+                "viewport.update",
+            ],
+        )
+        view = self._routing_view()
+        self.assertIs(self._refresh(view), True)
+        self.assertEqual(
+            [entry if isinstance(entry, str) else entry[0] for entry in self.log],
+            [
+                "skip",
+                "annotations",
+                "takeoffs",
+                "full",
+                "sync",
+                "scene_rect",
+                "viewport.update",
+            ],
+        )
+
+    def test_a_forced_or_layer_changing_refresh_skips_every_fast_path(self):
+        view = self._routing_view()
+        self.assertIs(self._refresh(view, force_overlay_refresh=True), True)
+        self.assertEqual(
+            [entry if isinstance(entry, str) else entry[0] for entry in self.log],
+            ["full", "sync", "scene_rect", "viewport.update"],
+        )
+        view = self._routing_view()
+        view._hidden_layer_uids = {"1"}
+        self.assertIs(self._refresh(view, hidden_layer_uids={"1", 2}), True)
+        self.assertEqual(view._hidden_layer_uids, {"1", "2"})
+        self.assertEqual(
+            [entry if isinstance(entry, str) else entry[0] for entry in self.log],
+            ["full", "sync", "scene_rect", "viewport.update"],
+        )
+        view = self._routing_view()
+        view._hidden_layer_uids = {"1", "2"}
+        self.assertIs(self._refresh(view, hidden_layer_uids=["1", 2]), True)
+        self.assertEqual(self.log[0][0], "skip")
+        self.assertEqual(view._hidden_layer_uids, {"1", "2"})
+        view = self._routing_view()
+        view._hidden_layer_uids = {"keep"}
+        self._refresh(view)
+        self.assertEqual(view._hidden_layer_uids, {"keep"})
+
+    def test_refresh_routing_passes_the_whole_request_to_each_path(self):
+        view = self._routing_view()
+        view._hidden_layer_uids = {"h"}
+        takeoffs = [Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])]
+        annotations = [
+            BidAnnotation(
+                uid="a", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+            )
+        ]
+        areas = {"p1": "x"}
+        self._refresh(
+            view,
+            takeoffs=takeoffs,
+            annotations=annotations,
+            page_area_selections=areas,
+            hidden_layer_uids={"h"},
+            changed_takeoff_uids=["t1"],
+            changed_annotation_uids=["a"],
+            changed_annotation_types=["rect"],
+        )
+        by_name = {
+            entry[0]: entry[1]
+            for entry in self.log
+            if isinstance(entry, tuple) and isinstance(entry[1], dict)
+        }
+        skip, annotation_path, takeoff_path = (
+            by_name["skip"],
+            by_name["annotations"],
+            by_name["takeoffs"],
+        )
+        for kwargs in (skip, annotation_path, takeoff_path):
+            self.assertIs(kwargs["page"], self.page)
+            self.assertIs(kwargs["takeoffs"], takeoffs)
+            self.assertIs(kwargs["conditions"], self.conditions)
+            self.assertIs(kwargs["color_map"], self.colors)
+            self.assertIs(kwargs["bid_ref"], self.bid_ref)
+            self.assertEqual(kwargs["page_area_selections"], areas)
+            self.assertIsNot(kwargs["page_area_selections"], areas)
+            self.assertEqual(kwargs["changed_takeoff_uids"], ["t1"])
+        for kwargs in (skip, annotation_path):
+            self.assertIs(kwargs["annotations"], annotations)
+            self.assertEqual(kwargs["changed_annotation_uids"], ["a"])
+            self.assertEqual(kwargs["changed_annotation_types"], ["rect"])
+        self.assertIs(takeoff_path["annotations"], annotations)
+        self.assertEqual(skip["hidden_layer_uids"], {"h"})
+        self.assertNotIn("changed_annotation_uids", takeoff_path)
+        full = next(
+            entry
+            for entry in self.log
+            if isinstance(entry, tuple) and entry[0] == "full"
+        )[1]
+        self.assertEqual(
+            full[1:5], (takeoffs, self.conditions, self.colors, annotations)
+        )
+        self.assertEqual(full[5], areas)
+        self.assertIsNot(full[5], areas)
+        self.assertIs(full[6], self.bid_ref)
+
+    # ---- refresh_page_area_selection
+    def _area_view(self):
+        view, builder = self._view()
+        view._color_service = _AreaColorService()
+        view._current_page = self.page
+        view._current_bid_ref = self.bid_ref
+        view._current_page_area_selections = {"keep": "x"}
+        log = []
+        self.log = log
+        view._sync_page_image_layer_visibility = lambda: log.append("sync")
+        view._update_scene_rect = lambda: log.append("scene_rect")
+        view.viewport = lambda: FakeViewport(log)
+        return view
+
+    def test_a_page_area_change_without_an_inactive_flip_only_stores_the_new_selection(
+        self,
+    ):
+        view = self._area_view()
+        view._try_refresh_changed_takeoff_overlays = lambda **kw: self.fail(
+            "nothing flipped"
+        )
+        areas = {"keep": "y"}
+        self.assertIs(view.refresh_page_area_selection(areas), True)
+        self.assertEqual(view._current_page_area_selections, {"keep": "y"})
+        self.assertIsNot(view._current_page_area_selections, areas)
+        self.assertEqual(self.log, [])
+
+    def test_a_page_area_change_refreshes_only_the_takeoffs_whose_inactive_state_flipped(
+        self,
+    ):
+        view = self._area_view()
+        seen = []
+
+        def refresh(**kwargs):
+            seen.append(kwargs)
+            return True
+
+        view._try_refresh_changed_takeoff_overlays = refresh
+        areas = {"keep": "x", "t2": "z"}
+        self.assertIs(view.refresh_page_area_selection(areas), True)
+        (kwargs,) = seen
+        self.assertEqual(kwargs["changed_takeoff_uids"], ["t2"])
+        self.assertIs(kwargs["allow_page_area_change"], True)
+        self.assertIs(kwargs["page"], self.page)
+        self.assertEqual([t.uid for t in kwargs["takeoffs"]], ["t1", "t2", "h1"])
+        self.assertIs(kwargs["conditions"], view._current_conditions)
+        self.assertIs(kwargs["color_map"], view._current_color_map)
+        self.assertEqual([a.uid for a in kwargs["annotations"]], ["a", "b"])
+        self.assertEqual(kwargs["page_area_selections"], areas)
+        self.assertIsNot(kwargs["page_area_selections"], areas)
+        self.assertIs(kwargs["bid_ref"], self.bid_ref)
+        self.assertEqual(self.log, ["sync", "scene_rect", "viewport.update"])
+
+    def test_a_failed_page_area_refresh_reports_failure_without_repainting(self):
+        view = self._area_view()
+        view._try_refresh_changed_takeoff_overlays = lambda **kw: False
+        self.assertIs(view.refresh_page_area_selection({"keep": "x", "t2": "z"}), False)
+        self.assertEqual(self.log, [])
+
+    def test_a_page_area_change_needs_a_loaded_page(self):
+        view = self._area_view()
+        view._current_page = None
+        self.assertIs(view.refresh_page_area_selection({"t2": "z"}), False)
+        self.assertEqual(view._current_page_area_selections, {"keep": "x"})
+
+    def test_a_takeoff_flipped_back_to_active_counts_as_changed(self):
+        view = self._area_view()
+        view._current_page_area_selections = {"t1": "x", "t2": "x"}
+        seen = []
+        view._try_refresh_changed_takeoff_overlays = (
+            lambda **kw: seen.append(kw["changed_takeoff_uids"]) or True
+        )
+        view.refresh_page_area_selection({"t2": "x", "h1": "x"})
+        self.assertEqual(seen, [["t1", "h1"]])
+
+    # ---- _can_skip_unchanged_overlay_refresh
+    def _skip_view(self):
+        view, _builder = self._view()
+        view._current_page = self.page
+        view._current_bid_ref = self.bid_ref
+        return view
+
+    def _skip_call(self, view, **overrides):
+        values = dict(
+            page=self.page,
+            takeoffs=list(view._current_takeoffs.values()),
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            annotations=list(view._current_annotations.values()),
+            page_area_selections=view._current_page_area_selections,
+            bid_ref=self.bid_ref,
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=None,
+            changed_annotation_uids=None,
+            changed_annotation_types=None,
+        )
+        values.update(overrides)
+        return view._can_skip_unchanged_overlay_refresh(**values)
+
+    def test_an_unchanged_refresh_request_can_be_skipped(self):
+        view = self._skip_view()
+        self.assertIs(self._skip_call(view), True)
+        self.assertIs(
+            self._skip_call(
+                view, takeoffs=list(reversed(list(view._current_takeoffs.values())))
+            ),
+            True,
+        )
+        view._current_annotations = {}
+        self.assertIs(self._skip_call(view, annotations=None), True)
+
+    def test_a_refresh_request_is_not_skipped_when_any_input_differs(self):
+        self._skip_view()
+        changed_page = replace(self.page, name="renamed")
+        cases = (
+            ("changed takeoff uids", {"changed_takeoff_uids": ["t1"]}, None),
+            ("changed annotation uids", {"changed_annotation_uids": ["a"]}, None),
+            ("changed annotation types", {"changed_annotation_types": ["rect"]}, None),
+            ("no hidden layer information", {"hidden_layer_uids": None}, None),
+            (
+                "deferred reveal",
+                {},
+                lambda v: setattr(v, "_defer_page_visual_reveal", True),
+            ),
+            (
+                "text editor open",
+                {},
+                lambda v: setattr(v, "_editing_text_annotation_uid", "a"),
+            ),
+            (
+                "named view draft open",
+                {},
+                lambda v: setattr(v, "_draft_named_view_uid", "n"),
+            ),
+            (
+                "unflushed takeoff drag",
+                {},
+                lambda v: setattr(v, "_dirty_positions", {"t1": [1.0, 1.0]}),
+            ),
+            (
+                "unflushed annotation drag",
+                {},
+                lambda v: setattr(v, "_dirty_ann_positions", {"a": ("rect", [1.0])}),
+            ),
+            ("other page", {"page": changed_page}, None),
+            ("other bid", {"bid_ref": BidRef("db.mdb", "other")}, None),
+            ("takeoffs differ", {"takeoffs": []}, None),
+            ("conditions differ", {"conditions": {}}, None),
+            ("colours differ", {"color_map": {}}, None),
+            ("areas differ", {"page_area_selections": {"p": "x"}}, None),
+            ("annotations differ", {"annotations": []}, None),
+        )
+        for label, overrides, prepare in cases:
+            with self.subTest(label):
+                view = self._skip_view()
+                if prepare:
+                    prepare(view)
+                self.assertIs(self._skip_call(view, **overrides), False)
+
+    def test_a_refresh_request_is_not_skipped_when_equal_annotations_share_one_identity(
+        self,
+    ):
+        view = self._skip_view()
+        first = BidAnnotation(
+            uid="a", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+        )
+        second = BidAnnotation(
+            uid="a", annotation_type="rect", position=[2.0, 2.0, 3.0, 3.0]
+        )
+        view._current_annotations = {"a": first, "a_rect": second}
+        view._ann_db_uid_map = {"a_rect": "a"}
+        # The incoming list rebuilds the very same dict and map, but both entries are the
+        # same (uid, type) identity, so the changes cannot be told apart and nothing is skipped.
+        self.assertIs(self._skip_call(view, annotations=[first, second]), False)
+
+    def test_a_refresh_request_is_not_skipped_when_annotation_identities_collide(self):
+        view = self._skip_view()
+        view._current_annotations["a_dup"] = BidAnnotation(
+            uid="a", annotation_type="rect", position=[1.0, 2.0]
+        )
+        self.assertIs(
+            self._skip_call(view, annotations=list(view._current_annotations.values())),
+            False,
+        )
+        view = self._skip_view()
+        view._ann_db_uid_map = {"x": "y"}
+        self.assertIs(self._skip_call(view), False)
+
+
+class TakeoffPlanViewFullOverlayRebuildSweepTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    """The full overlay rebuild: what it resets, what it carries across and how it restores tools."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view._pdf_width_pts, view._pdf_height_pts, view._scene_scale = 100.0, 200.0, 3.0
+        self.page = page
+        self.log = log = []
+        self.page_infos = []
+        self.takeoff_items, self.annotation_items = [], []
+        self.takeoff_map, self.hotlinks, self.annotation_map = {}, [], {}
+        test = self
+
+        class Builder:
+            def build_page_info(self, page, pdf_width, pdf_height, scale, rotation):
+                test.page_infos.append((page, pdf_width, pdf_height, scale, rotation))
+                return "page-info"
+
+            def add_takeoff_overlays(
+                self, scene, takeoffs, conditions, color_map, page_info, areas, **kwargs
+            ):
+                log.append(("add_takeoffs", [t.uid for t in takeoffs]))
+                return list(test.takeoff_items), dict(test.takeoff_map)
+
+            def add_annotation_overlays(self, scene, annotations, page_info, page_uid):
+                log.append(("add_annotations", [key for key, _a in annotations]))
+                return (
+                    list(test.annotation_items),
+                    list(test.hotlinks),
+                    dict(test.annotation_map),
+                )
+
+        view._scene_builder = Builder()
+        view._clear_text_selection = lambda: log.append("clear_text_selection")
+        view._remove_text_annotation_draft = lambda: log.append("remove_text_draft")
+        view._remove_named_view_draft = lambda: log.append("remove_named_view_draft")
+        view.clear_selection_items = lambda: log.append("clear_selection_items")
+        view._remove_rotate_handle = lambda: log.append("remove_rotate_handle")
+        view._invalidate_snap_index = lambda: log.append("snap_index")
+        view._cancel_backout_if_invalid = lambda: log.append("cancel_backout")
+        view._apply_page_transform_to_items = lambda: log.append("page_transform")
+        view.update_selection_visuals = lambda *a, **k: log.append("selection_visuals")
+        view._update_cursor = lambda: log.append("cursor")
+        view._restore_selected_text_annotation_toolbar = lambda key: log.append(
+            ("text_toolbar", key)
+        )
+        view._restore_selected_dimension_text_label_toolbar = lambda key: log.append(
+            ("dimension_toolbar", key)
+        )
+        view._restore_selected_condition_text_label_toolbar = lambda target: log.append(
+            ("condition_toolbar", target)
+        )
+        view._selected_dimension_text_label_target = lambda: None
+        view._selected_condition_text_label_target = lambda: "condition-target"
+        return view
+
+    def _rebuild(
+        self,
+        view,
+        takeoffs=(),
+        annotations=None,
+        conditions=None,
+        colors=None,
+        areas=None,
+        bid_ref=None,
+        page=None,
+    ):
+        view._refresh_overlays_impl_unflushed(
+            page or self.page,
+            list(takeoffs),
+            {} if conditions is None else conditions,
+            {} if colors is None else colors,
+            annotations,
+            areas,
+            bid_ref,
+        )
+
+    # ---- what the rebuild resets
+    def test_a_rebuild_clears_text_and_selection_state_before_replacing_the_overlay(
+        self,
+    ):
+        view = self._view()
+        view._selected_uids = {"t1"}
+        self._rebuild(view)
+        self.assertEqual(
+            self.log[:5],
+            [
+                "clear_text_selection",
+                "remove_text_draft",
+                "remove_named_view_draft",
+                "clear_selection_items",
+                "remove_rotate_handle",
+            ],
+        )
+        self.assertEqual(view._selected_uids, set())
+
+    def test_a_rebuild_forgets_every_drag_and_rotation_in_progress(self):
+        view = self._view()
+        view._drag_plan_item_uid = "t1"
+        view._drag_handle_index = 4
+        view._drag_orig_position = [1.0]
+        view._drag_item_orig_positions = {"t1": [1.0]}
+        view._drag_item_orig_paths = {"t1": 1}
+        view._drag_item_orig_text_states = {"t1": 1}
+        view._drag_uid_orig_items = {"t1": 1}
+        view._drag_multi_orig_positions = {"t1": [1.0]}
+        view._drag_last_valid_new_pos = [2.0]
+        view._drag_model_orig_position = [3.0]
+        view._drag_position_before_edit_existed = True
+        view._rotation_drag_uid = "t1"
+        view._rotation_drag_active = True
+        self._rebuild(view)
+        self.assertIsNone(view._drag_plan_item_uid)
+        self.assertEqual(view._drag_handle_index, -2)
+        self.assertEqual(view._drag_orig_position, [])
+        for name in (
+            "_drag_item_orig_positions",
+            "_drag_item_orig_paths",
+            "_drag_item_orig_text_states",
+            "_drag_uid_orig_items",
+            "_drag_multi_orig_positions",
+        ):
+            with self.subTest(name):
+                self.assertEqual(getattr(view, name), {})
+        self.assertEqual(view._drag_last_valid_new_pos, [])
+        self.assertIsNone(view._drag_model_orig_position)
+        self.assertIs(view._drag_position_before_edit_existed, False)
+        self.assertIsNone(view._rotation_drag_uid)
+        self.assertIs(view._rotation_drag_active, False)
+
+    def test_a_rebuild_removes_the_old_items_the_scene_still_owns(self):
+        view = self._view()
+        owned = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        hotlink = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        orphan = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        for item in (owned, hotlink):
+            view._scene.addItem(item)
+        view._takeoff_items = [owned, orphan]
+        view._hotlink_items = [(hotlink, "target")]
+        view._uid_to_items = {"stale": [owned]}
+        messages = []
+        previous = QtCore.qInstallMessageHandler(
+            lambda mode, ctx, msg: messages.append(msg)
+        )
+        try:
+            self._rebuild(view)
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+        self.assertEqual(messages, [])
+        self.assertIsNone(owned.scene())
+        self.assertIsNone(hotlink.scene())
+        self.assertEqual(view._takeoff_items, [])
+        self.assertEqual(view._hotlink_items, [])
+        self.assertEqual(view._uid_to_items, {})
+
+    def test_a_rebuild_ends_an_inline_edit_whose_item_is_being_replaced(self):
+        view = self._view()
+        editing = QGraphicsTextItem("x")
+        view._scene.addItem(editing)
+        view._takeoff_items = [editing]
+        ended = []
+        view._clear_inline_text_edit_state = lambda: ended.append(True)
+        view._active_inline_text_item = lambda: editing
+        self._rebuild(view)
+        self.assertEqual(ended, [True])
+        view._takeoff_items = []
+        view._hotlink_items = []
+        ended.clear()
+        view._active_inline_text_item = lambda: editing
+        self._rebuild(view)
+        self.assertEqual(ended, [])
+
+    # ---- what the rebuild adopts
+    def test_a_rebuild_adopts_the_incoming_page_and_model(self):
+        view = self._view()
+        takeoffs = [
+            Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0]),
+            Takeoff(uid="t2", condition_uid="c1", position=[2.0, 2.0]),
+        ]
+        conditions, colors, areas = {"c1": "cond"}, {"c1": "#fff"}, {"p1": "a"}
+        bid_ref = BidRef("db.mdb", "bid-1")
+        page = replace(self.page, rotation=90)
+        view._current_page = None
+        view._current_bid_page_uid = None
+        view._current_bid_ref = None
+        view._current_render_identity = None
+        view._current_conditions = {}
+        view._current_color_map = {}
+        view._current_page_area_selections = None
+        self._rebuild(view, takeoffs, None, conditions, colors, areas, bid_ref, page)
+        self.assertIs(view._current_page, page)
+        self.assertEqual(view._current_bid_page_uid, "p1")
+        self.assertIs(view._current_bid_ref, bid_ref)
+        self.assertEqual(
+            view._current_render_identity, view._build_render_identity(page, bid_ref)
+        )
+        self.assertEqual(list(view._current_takeoffs), ["t1", "t2"])
+        self.assertIs(view._current_takeoffs["t2"], takeoffs[1])
+        self.assertIs(view._current_conditions, conditions)
+        self.assertIs(view._current_color_map, colors)
+        self.assertIs(view._current_page_area_selections, areas)
+        self.assertEqual(self.page_infos, [(page, 100.0, 200.0, 3.0, 90)])
+        self.assertIn("snap_index", self.log)
+        self.assertIn("cancel_backout", self.log)
+        self.assertEqual(
+            self.log.index("snap_index") < self.log.index("cancel_backout"), True
+        )
+        self.assertIn(("add_takeoffs", ["t1", "t2"]), self.log)
+
+    def test_a_rebuild_registers_new_items_applies_the_page_transform_and_hides_them_when_deferred(
+        self,
+    ):
+        view = self._view()
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        self.takeoff_items, self.takeoff_map = [item], {"t1": [item]}
+        hidden_calls = []
+        view._set_page_overlay_items_visible = lambda visible: hidden_calls.append(
+            visible
+        )
+        self._rebuild(
+            view, [Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])]
+        )
+        self.assertEqual(view._uid_to_items, {"t1": [item]})
+        self.assertIn("page_transform", self.log)
+        self.assertEqual(hidden_calls, [])
+        view._defer_page_visual_reveal = True
+        self._rebuild(
+            view, [Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])]
+        )
+        self.assertEqual(hidden_calls, [False])
+
+    def test_a_rebuild_keeps_the_selection_and_pending_state_by_identity(self):
+        view = self._view()
+        view._current_takeoffs = {
+            "t1": Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0]),
+            "gone": Takeoff(uid="gone", condition_uid="c1", position=[1.0, 1.0]),
+        }
+        view._current_annotations = {
+            "a_oval": BidAnnotation(
+                uid="a", annotation_type="oval", position=[0.0, 0.0, 1.0, 1.0]
+            )
+        }
+        view._ann_db_uid_map = {"a_oval": "a"}
+        view._selected_uids = {"t1", "gone", "a_oval"}
+        view._pending_mutation_uids = {"t1", "gone"}
+        applied = []
+        view._apply_pending_mutation_visual = lambda key: applied.append(key)
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        self.takeoff_items, self.takeoff_map = [item], {"t1": [item]}
+        annotation = BidAnnotation(
+            uid="a", annotation_type="oval", position=[0.0, 0.0, 2.0, 2.0]
+        )
+        self.annotation_map = {"a": []}
+        # The oval used to live under the renamed key a_oval; it is now simply "a".
+        self._rebuild(
+            view,
+            [Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])],
+            [annotation],
+        )
+        self.assertEqual(view._selected_uids, {"t1", "a"})
+        self.assertEqual(view._pending_mutation_uids, {"t1"})
+        # Registering the rebuilt items refreshes t1 and a; the vanished pending key is refreshed last.
+        self.assertEqual(applied, ["t1", "a", "gone"])
+        self.assertIn("selection_visuals", self.log)
+
+    def test_a_rebuild_refreshes_selection_visuals_only_when_something_was_or_is_selected(
+        self,
+    ):
+        view = self._view()
+        self._rebuild(view)
+        self.assertNotIn("selection_visuals", self.log)
+        view = self._view()
+        view._selected_uids = {"t1"}
+        self._rebuild(view)
+        self.assertIn("selection_visuals", self.log)
+        view = self._view()
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        self.takeoff_items, self.takeoff_map = [item], {"t1": [item]}
+        view._selected_uids = {"t1"}
+        view._current_takeoffs = {
+            "t1": Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])
+        }
+        self._rebuild(
+            view, [Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])]
+        )
+        self.assertIn("selection_visuals", self.log)
+
+    def test_a_rebuild_restores_the_text_toolbars_for_the_matching_replaced_items(self):
+        view = self._view()
+        view._current_annotations = {
+            "a_oval": BidAnnotation(
+                uid="a", annotation_type="oval", position=[0.0, 0.0, 1.0, 1.0]
+            ),
+            "d": BidAnnotation(
+                uid="d", annotation_type="dimension", position=[0.0, 0.0, 5.0, 0.0]
+            ),
+        }
+        view._ann_db_uid_map = {"a_oval": "a"}
+        view._selected_text_annotation_uid = "a_oval"
+        view._selected_dimension_text_label_target = lambda: "d"
+        self.annotation_map = {"a": [], "d": []}
+        incoming = [
+            BidAnnotation(
+                uid="a", annotation_type="oval", position=[0.0, 0.0, 1.0, 1.0]
+            ),
+            BidAnnotation(
+                uid="d", annotation_type="dimension", position=[0.0, 0.0, 5.0, 0.0]
+            ),
+        ]
+        self._rebuild(view, [], incoming)
+        self.assertIn(("text_toolbar", "a"), self.log)
+        self.assertIn(("dimension_toolbar", "d"), self.log)
+        self.assertIn(("condition_toolbar", "condition-target"), self.log)
+        self.assertEqual(self.log[-1], "cursor")
+        view = self._view()
+        self._rebuild(view)
+        self.assertIn(("text_toolbar", None), self.log)
+        self.assertIn(("dimension_toolbar", None), self.log)
+
+    # ---- tool restoration after the rebuild
+    def test_the_rotate_tool_keeps_its_handle_when_the_selection_survives(self):
+        view = self._view()
+        view._cursor_mode = "rotate"
+        view._current_takeoffs = {
+            "t1": Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])
+        }
+        view._selected_uids = {"t1"}
+        item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+        view._scene.addItem(item)
+        self.takeoff_items, self.takeoff_map = [item], {"t1": [item]}
+        created = []
+        view._create_rotate_handle = lambda uids: created.append(set(uids)) or True
+        modes = []
+        view._apply_cursor_mode = lambda mode: modes.append(mode)
+        view.cursor_mode_change_requested.connect(modes.append)
+        self._rebuild(
+            view, [Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])]
+        )
+        self.assertEqual(created, [{"t1"}])
+        self.assertEqual(modes, [])
+
+    def test_the_rotate_tool_falls_back_to_select_without_a_selection_or_handle(self):
+        for label, selected, handle_created, expect_create in (
+            ("no selection", set(), True, False),
+            ("handle cannot be created", {"t1"}, False, True),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                view._cursor_mode = "rotate"
+                view._current_takeoffs = {
+                    "t1": Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])
+                }
+                view._selected_uids = set(selected)
+                item = QGraphicsRectItem(0.0, 0.0, 1.0, 1.0)
+                view._scene.addItem(item)
+                self.takeoff_items, self.takeoff_map = [item], {"t1": [item]}
+                created = []
+                view._create_rotate_handle = (
+                    lambda uids: created.append(True) or handle_created
+                )
+                modes = []
+                view._apply_cursor_mode = lambda mode: modes.append(("apply", mode))
+                view.cursor_mode_change_requested.connect(
+                    lambda mode: modes.append(("emit", mode))
+                )
+                self._rebuild(
+                    view, [Takeoff(uid="t1", condition_uid="c1", position=[1.0, 1.0])]
+                )
+                self.assertEqual(bool(created), expect_create)
+                self.assertEqual(modes, [("apply", "select"), ("emit", "select")])
+
+    def test_the_slope_rotate_tool_falls_back_to_select_when_its_handle_cannot_be_rebuilt(
+        self,
+    ):
+        for handle_created, expected in (
+            (True, []),
+            (False, [("apply", "select"), ("emit", "select")]),
+        ):
+            with self.subTest(handle_created=handle_created):
+                view = self._view()
+                view._cursor_mode = "slope_rotate"
+                view._create_slope_rotate_handle = lambda: handle_created
+                modes = []
+                view._apply_cursor_mode = lambda mode: modes.append(("apply", mode))
+                view.cursor_mode_change_requested.connect(
+                    lambda mode: modes.append(("emit", mode))
+                )
+                self._rebuild(view)
+                self.assertEqual(modes, expected)
+
+    def test_other_tools_are_left_alone_by_a_rebuild(self):
+        view = self._view()
+        view._cursor_mode = "select"
+        modes = []
+        view._apply_cursor_mode = lambda mode: modes.append(mode)
+        view._create_rotate_handle = lambda uids: self.fail(
+            "select mode needs no handle"
+        )
+        view._create_slope_rotate_handle = lambda: self.fail(
+            "select mode needs no handle"
+        )
+        self._rebuild(view)
+        self.assertEqual(modes, [])
+        self.assertEqual(self.log[-1], "cursor")
+
+
+from ost_visualizer.application.services.page_load_strategy_service import (
+    LoadStrategy as _SweepLoadStrategy,
+)
+from ost_visualizer.presentation.components.plan_view.components.page_loader import (
+    VISUAL_KIND_COMPOSITE as _SWEEP_VISUAL_KIND_COMPOSITE,
+    VISUAL_KIND_OVERLAY as _SWEEP_VISUAL_KIND_OVERLAY,
+    VISUAL_KIND_PAGE as _SWEEP_VISUAL_KIND_PAGE,
+)
+
+
+class _ScriptedLoadCoordinator:
+    """Load coordinator returning a fixed strategy and recording the pending-data requests."""
+
+    def __init__(self, strategy):
+        self.strategy = strategy
+        self.pending_calls = []
+
+    def determine_load_strategy(self, page):
+        return self.strategy
+
+    def create_pending_page_data(self, page, strategy, pdf_width_pts, pdf_height_pts):
+        self.pending_calls.append((page, strategy, pdf_width_pts, pdf_height_pts))
+        return {"page": page}
+
+
+class TakeoffPlanViewLoadPageContractSweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """_load_page_impl: refresh-vs-reload decision, what a reload carries across and how loads start."""
+
+    @staticmethod
+    def _strategy(**overrides):
+        values = dict(
+            needs_async_loading=False,
+            view_scale=2.0,
+            show_canvas=True,
+            pdf_width_pts=612.0,
+            pdf_height_pts=792.0,
+            placeholder_width=1224.0,
+            placeholder_height=1584.0,
+            main_scale=2.5,
+        )
+        values.update(overrides)
+        return _SweepLoadStrategy(**values)
+
+    def _view(self, strategy=None, page=None):
+        view = self._make_plan_view()
+        self.page = page or Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self.bid_ref = BidRef("db.mdb", "bid-1")
+        self.coordinator = _ScriptedLoadCoordinator(strategy or self._strategy())
+        view._load_coordinator = self.coordinator
+        self.log = log = []
+        view._begin_load_cycle = lambda page, preserve_current_view: log.append(
+            ("begin", page, preserve_current_view)
+        )
+        view._cancel_pending_renders = lambda: log.append("cancel_renders")
+        view._refresh_overlays = lambda *args: log.append(("refresh", args))
+        view._sync_page_image_layer_visibility = lambda: log.append("sync_layers")
+        view._request_pdf_text_extraction = lambda: log.append("pdf_text")
+        view._mark_load_geometry_ready = lambda: log.append("geometry_ready")
+        view._ensure_page_canvas = lambda width, height: log.append(
+            ("canvas", width, height)
+        )
+        view._apply_page_transform_to_items = lambda: log.append("page_transform")
+        view._update_scene_rect = lambda: log.append("scene_rect")
+        view._apply_loading_view_contract = lambda: log.append("loading_contract")
+        view._start_current_page_render_loading = (
+            lambda: log.append("start_loading") or "token"
+        )
+        view._cache_aware_base_raster_scale = (
+            lambda scale, width, height: log.append(
+                ("cache_scale", scale, width, height)
+            )
+            or 7.5
+        )
+        view._target_base_raster_scale = (
+            lambda scale: log.append(("target_scale", scale)) or 6.5
+        )
+        view.load_composite_async = lambda page, bid_ref, scale: log.append(
+            ("composite", page, bid_ref, scale)
+        )
+        view.load_page_async = lambda *args, **kwargs: log.append(
+            ("page_async", args, kwargs)
+        )
+        view.load_overlay_async = lambda *args: log.append(("overlay_async", args))
+        view._clear_backout_state = lambda: log.append("clear_backout")
+        view._cancel_backout_if_invalid = lambda: log.append("cancel_backout")
+        view._invalidate_snap_index = lambda: log.append("snap_index")
+        view.update_selection_visuals = lambda *a, **k: log.append("selection_visuals")
+        real_clear = view.clear
+
+        def recording_clear(*args, **kwargs):
+            log.append(("clear", args, kwargs))
+            return real_clear(*args, **kwargs)
+
+        view.clear = recording_clear
+        return view
+
+    def _load(self, view, takeoffs=None, **kwargs):
+        args = dict(
+            page=self.page,
+            takeoffs=[] if takeoffs is None else takeoffs,
+            conditions={},
+            color_map={},
+            bid_ref=self.bid_ref,
+        )
+        args.update(kwargs)
+        return view._load_page_impl(**args)
+
+    def _names(self):
+        return [entry if isinstance(entry, str) else entry[0] for entry in self.log]
+
+    def _prepare_loaded(self, view, kind=None):
+        view._current_page = self.page
+        view._current_bid_page_uid = self.page.uid
+        view._current_bid_ref = self.bid_ref
+        view._current_render_identity = view._build_render_identity(
+            self.page, self.bid_ref
+        )
+        view._loaded_visual_kind = kind
+
+    # ---- refresh of an already loaded page
+    def test_reloading_an_unchanged_page_only_refreshes_overlays(self):
+        view = self._view()
+        self._prepare_loaded(view)
+        takeoffs = [Takeoff(uid="1", condition_uid="c1", position=[1.0, 1.0])]
+        conditions, colors, areas = {"c1": "cond"}, {"c1": "#fff"}, {"p1": "a"}
+        annotations = [
+            BidAnnotation(
+                uid="a", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+            )
+        ]
+        self.assertIs(
+            view._load_page_impl(
+                self.page,
+                takeoffs,
+                conditions,
+                colors,
+                self.bid_ref,
+                annotations,
+                areas,
+                {"h"},
+            ),
+            True,
+        )
+        self.assertEqual(
+            self._names(),
+            ["begin", "refresh", "sync_layers", "pdf_text", "geometry_ready"],
+        )
+        _tag, args = self.log[1]
+        self.assertIs(args[0], self.page)
+        self.assertIs(args[1], takeoffs)
+        self.assertIs(args[2], conditions)
+        self.assertIs(args[3], colors)
+        self.assertIs(args[4], annotations)
+        self.assertEqual(args[5], areas)
+        self.assertIsNot(args[5], areas)
+        self.assertIs(args[6], self.bid_ref)
+        self.assertEqual(view._hidden_layer_uids, {"h"})
+
+    def test_a_refresh_keeps_the_current_view_only_after_the_view_was_applied(self):
+        for applied, force, expected in (
+            (False, False, False),
+            (True, False, True),
+            (True, True, True),
+            (False, True, False),
+        ):
+            with self.subTest(applied=applied, force=force):
+                view = self._view()
+                self._prepare_loaded(view)
+                view._load_view_applied = applied
+                self._load(view, force_visual_reload=force)
+                self.assertEqual(self.log[0], ("begin", self.page, expected))
+
+    def test_a_full_reload_does_not_keep_the_view_even_when_it_was_applied(self):
+        view = self._view()
+        self._prepare_loaded(view)
+        view._load_view_applied = True
+        self._load(view, bid_ref=BidRef("db.mdb", "bid-2"))
+        self.assertEqual(self.log[0], ("begin", self.page, False))
+        self.assertNotIn("refresh", self._names())
+
+    def test_a_forced_reload_ignores_a_matching_loaded_page(self):
+        view = self._view()
+        self._prepare_loaded(view)
+        self._load(view, force_visual_reload=True)
+        self.assertNotIn("refresh", self._names())
+        self.assertIn("cancel_renders", self._names())
+
+    def test_the_reload_decision_depends_on_project_page_identity_and_loaded_visual(
+        self,
+    ):
+        changed_page = Page(
+            uid="p1", name="P1", width_pts=612.0, height_pts=792.0, rotation=90
+        )
+        cases = (
+            ("same page", {}, None, True),
+            ("other project", {"bid_ref": BidRef("db.mdb", "bid-2")}, None, False),
+            ("nothing loaded", {}, lambda v: setattr(v, "_current_page", None), False),
+            ("other render identity", {"page": changed_page}, None, False),
+        )
+        for label, kwargs, prepare, expect_refresh in cases:
+            with self.subTest(label):
+                view = self._view()
+                self._prepare_loaded(view)
+                if prepare:
+                    prepare(view)
+                self._load(view, **kwargs)
+                self.assertEqual("refresh" in self._names(), expect_refresh)
+
+    def test_an_async_page_is_only_refreshed_once_its_visual_layer_is_loaded(self):
+        strategy = self._strategy(needs_async_loading=True, load_main=True)
+        for label, kind, expect_refresh in (
+            ("page visual loaded", _SWEEP_VISUAL_KIND_PAGE, True),
+            ("nothing loaded", None, False),
+            ("other visual loaded", _SWEEP_VISUAL_KIND_OVERLAY, False),
+        ):
+            with self.subTest(label):
+                view = self._view(strategy)
+                self._prepare_loaded(view, kind)
+                self._load(view)
+                self.assertEqual("refresh" in self._names(), expect_refresh)
+        view = self._view(self._strategy(needs_async_loading=False, load_main=True))
+        self._prepare_loaded(view, None)
+        self._load(view)
+        self.assertIn("refresh", self._names())
+
+    # ---- expected visual layer
+    def test_a_synchronous_load_records_the_visual_layer_it_expects(self):
+        for label, strategy, page_overrides, expected in (
+            (
+                "composite",
+                self._strategy(load_composite=True),
+                {},
+                _SWEEP_VISUAL_KIND_COMPOSITE,
+            ),
+            ("page", self._strategy(load_main=True), {}, _SWEEP_VISUAL_KIND_PAGE),
+            (
+                "overlay",
+                self._strategy(load_overlay=True),
+                {},
+                _SWEEP_VISUAL_KIND_OVERLAY,
+            ),
+            ("nothing", self._strategy(), {}, None),
+            (
+                "hidden layer",
+                self._strategy(load_composite=True),
+                {"layer_visible": False},
+                None,
+            ),
+        ):
+            with self.subTest(label):
+                view = self._view(strategy)
+                view._loaded_visual_kind = "stale"
+                page = replace(self.page, **page_overrides)
+                self.page = page
+                self.assertIs(self._load(view), True)
+                self.assertEqual(view._loaded_visual_kind, expected)
+                self.assertEqual(self.log[-1], "geometry_ready")
+
+    # ---- what a reload resets and adopts
+    def test_a_reload_adopts_the_page_the_model_and_the_strategy_geometry(self):
+        strategy = self._strategy(
+            view_scale=4.5, pdf_width_pts=500.0, pdf_height_pts=700.0, load_main=True
+        )
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            rotation=90,
+            flip_x=True,
+            flip_y=True,
+            image_path="x.pdf",
+        )
+        view = self._view(strategy, page)
+        generation = view._page_render_generation_id
+        takeoffs = [
+            Takeoff(uid="1", condition_uid="c1", position=[1.0, 1.0]),
+            Takeoff(uid="2", condition_uid="c1", position=[2.0, 2.0]),
+        ]
+        conditions, colors, areas = {"c1": "cond"}, {"c1": "#fff"}, {"p1": "a"}
+        view._current_load_token = "keep-me"
+        annotations = [
+            BidAnnotation(
+                uid="a1", annotation_type="rect", position=[0.0, 0.0, 5.0, 5.0]
+            )
+        ]
+        self.assertIs(
+            view._load_page_impl(
+                page, takeoffs, conditions, colors, self.bid_ref, annotations, areas
+            ),
+            True,
+        )
+        self.assertEqual(list(view._current_annotations), ["a1"])
+        self.assertIn("a1", view._uid_to_items)
+        # One generation for the clear() and one for the new page.
+        self.assertEqual(view._page_render_generation_id, generation + 2)
+        self.assertIs(view._current_page, page)
+        self.assertEqual(view._current_bid_page_uid, "p1")
+        self.assertIs(view._current_bid_ref, self.bid_ref)
+        self.assertEqual(
+            view._current_render_identity,
+            view._build_render_identity(page, self.bid_ref),
+        )
+        self.assertEqual(list(view._current_takeoffs), ["1", "2"])
+        self.assertIs(view._current_conditions, conditions)
+        self.assertIs(view._current_color_map, colors)
+        self.assertEqual(view._current_page_area_selections, areas)
+        self.assertIsNot(view._current_page_area_selections, areas)
+        self.assertEqual(
+            (view._current_rotation, view._current_flip_x, view._current_flip_y),
+            (90, True, True),
+        )
+        self.assertEqual(view._scene_scale, 4.5)
+        self.assertEqual((view._pdf_width_pts, view._pdf_height_pts), (500.0, 700.0))
+        self.assertEqual(view._current_load_token, "keep-me")
+        # clear() and the reload each invalidate the snap index.
+        self.assertEqual(self._names().count("snap_index"), 2)
+        self.assertIn("cancel_backout", self.log)
+
+    def test_a_reload_resets_the_transform_and_scene_rect_and_rebuilds_the_overlays(
+        self,
+    ):
+        view = self._view()
+        view.resetTransform()
+        view.scale(2.0, 2.0)
+        view._scene.setSceneRect(QtCore.QRectF(0.0, 0.0, 50.0, 50.0))
+        self._load(view)
+        self.assertTrue(view.transform().isIdentity())
+        self.assertNotEqual(
+            view._scene.sceneRect(), QtCore.QRectF(0.0, 0.0, 50.0, 50.0)
+        )
+        self.assertIn("page_transform", self.log)
+        self.assertIn("pdf_text", self.log)
+        self.assertIn("scene_rect", self.log)
+        self.assertEqual(self.log[0], ("begin", self.page, False))
+
+    def test_a_reload_derives_zoom_rerendering_from_the_pdf_and_the_strategy(self):
+        pdf_page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            image_path="plan.pdf",
+        )
+        png_page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            image_path="plan.png",
+        )
+        no_image = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        hidden = replace(pdf_page, layer_visible=False)
+        cases = (
+            ("pdf main", pdf_page, dict(load_main=True), True),
+            ("pdf composite", pdf_page, dict(load_composite=True), True),
+            ("pdf overlay only", pdf_page, dict(load_overlay=True), False),
+            ("png main", png_page, dict(load_main=True), False),
+            ("no image", no_image, dict(load_main=True), False),
+            ("hidden pdf", hidden, dict(load_main=True), False),
+        )
+        for label, page, flags, expected in cases:
+            with self.subTest(label):
+                view = self._view(self._strategy(**flags), page)
+                view._can_zoom_rerender = not expected
+                self._load(view)
+                self.assertIs(view._can_zoom_rerender, expected)
+
+    def test_a_reload_remembers_a_composite_load_and_the_pdf_page_size(self):
+        view = self._view(
+            self._strategy(
+                load_composite=True, pdf_width_pts=111.0, pdf_height_pts=222.0
+            )
+        )
+        self._load(view)
+        self.assertIs(view._is_composite_mode, True)
+        self.assertEqual((view._pdf_width_pts, view._pdf_height_pts), (111.0, 222.0))
+        view = self._view(self._strategy(load_main=True))
+        view._is_composite_mode = True
+        self._load(view)
+        self.assertIs(view._is_composite_mode, False)
+
+    def test_a_reload_clears_the_old_state_and_asks_for_a_canvas_only_when_the_strategy_shows_one(
+        self,
+    ):
+        view = self._view(
+            self._strategy(placeholder_width=100.0, placeholder_height=200.0)
+        )
+        self._load(view)
+        self.assertIn(("canvas", 100.0, 200.0), self.log)
+        self.assertLess(
+            self._names().index("cancel_renders"), self._names().index("clear")
+        )
+        view = self._view(self._strategy(show_canvas=False))
+        self._load(view)
+        self.assertNotIn("canvas", self._names())
+
+    def test_the_hidden_layer_set_is_replaced_by_a_reload_and_cleared_when_not_given(
+        self,
+    ):
+        view = self._view()
+        view._hidden_layer_uids = {"old"}
+        self._load(view, hidden_layer_uids={1, "2"})
+        self.assertEqual(view._hidden_layer_uids, {"1", "2"})
+        view = self._view()
+        view._hidden_layer_uids = {"old"}
+        self._load(view)
+        self.assertEqual(view._hidden_layer_uids, set())
+
+    def test_a_reload_builds_page_info_from_the_strategy_geometry(self):
+        strategy = self._strategy(
+            view_scale=4.5, pdf_width_pts=500.0, pdf_height_pts=700.0
+        )
+        page = Page(
+            uid="p1", name="P1", width_pts=612.0, height_pts=792.0, rotation=270
+        )
+        view = self._view(strategy, page)
+        calls = []
+        real = view._scene_builder.build_page_info
+
+        def recording(*args):
+            calls.append(args)
+            return real(*args)
+
+        view._scene_builder.build_page_info = recording
+        self._load(view)
+        self.assertEqual(calls, [(page, 500.0, 700.0, 4.5, 270)])
+
+    # ---- tools and selection across a reload
+    def test_a_reload_hands_the_clear_the_right_preservation_flags(self):
+        cases = (
+            ("same page and project, place session", {}, "c1", True, True),
+            ("same page and project, no session", {}, None, False, True),
+            (
+                "other project",
+                {"bid_ref": BidRef("db.mdb", "bid-2")},
+                "c1",
+                False,
+                False,
+            ),
+            (
+                "other page",
+                {"page": Page(uid="p2", name="P2", width_pts=612.0, height_pts=792.0)},
+                "c1",
+                True,
+                False,
+            ),
+        )
+        for label, kwargs, session, preserve_place, preserve_selection in cases:
+            with self.subTest(label):
+                view = self._view()
+                self._prepare_loaded(view)
+                view._place_session_uid = session
+                self._load(view, force_visual_reload=True, **kwargs)
+                ((_tag, args, clear_kwargs),) = [
+                    entry for entry in self.log if entry[0] == "clear"
+                ]
+                self.assertEqual(args, ())
+                self.assertEqual(
+                    clear_kwargs,
+                    {
+                        "preserve_place_session": preserve_place,
+                        "preserve_deferred_selection": preserve_selection,
+                        "notify_page_cleared": False,
+                    },
+                )
+
+    def test_backout_state_is_dropped_only_when_the_project_or_page_changes(self):
+        # clear() itself drops the backout state once; a project or page change drops it first as well.
+        for label, kwargs, expected in (
+            ("same", {}, 1),
+            ("other project", {"bid_ref": BidRef("db.mdb", "bid-2")}, 2),
+            (
+                "other page",
+                {"page": Page(uid="p2", name="P2", width_pts=612.0, height_pts=792.0)},
+                2,
+            ),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                self._prepare_loaded(view)
+                self._load(view, force_visual_reload=True, **kwargs)
+                self.assertEqual(self._names().count("clear_backout"), expected)
+                if expected == 2:
+                    self.assertLess(
+                        self._names().index("clear_backout"),
+                        self._names().index("clear"),
+                    )
+
+    def test_a_reload_reapplies_the_persistent_cursor_mode_unless_a_place_tool_is_involved(
+        self,
+    ):
+        for label, mode, session, project_changed, expected in (
+            ("pan", "pan", None, False, ["pan"]),
+            ("place mode is not restored", "place", None, False, []),
+            ("place session preserved", "pan", "c1", False, []),
+            ("project change drops a session", "pan", "c1", True, ["pan"]),
+        ):
+            with self.subTest(label):
+                view = self._view()
+                self._prepare_loaded(view)
+                modes = []
+                real_apply = view._apply_cursor_mode
+                view._apply_cursor_mode = (
+                    lambda m, real_apply=real_apply, modes=modes: modes.append(
+                        ("apply", m)
+                    )
+                    or real_apply(m)
+                )
+                view.cursor_mode_change_requested.connect(
+                    lambda m, modes=modes: modes.append(("emit", m))
+                )
+                view._place_session_uid = session
+                view._persistent_cursor_mode = mode
+                kwargs = (
+                    {"bid_ref": BidRef("db.mdb", "bid-2")} if project_changed else {}
+                )
+                self._load(view, force_visual_reload=True, **kwargs)
+                restored = [
+                    m
+                    for kind, m in modes
+                    if m == mode and kind == "apply" and mode != "select"
+                ]
+                emitted = [m for kind, m in modes if kind == "emit" and m == mode]
+                self.assertEqual(restored, expected)
+                self.assertEqual(emitted, expected)
+
+    def test_a_reload_of_the_same_project_keeps_the_selection_by_identity(self):
+        view = self._view()
+        self._prepare_loaded(view)
+        view._current_takeoffs = {
+            "1": Takeoff(uid="1", condition_uid="c1", position=[1.0, 1.0]),
+            "99": Takeoff(uid="99", condition_uid="c1", position=[1.0, 1.0]),
+        }
+        view._selected_uids = {"1", "99"}
+        view._pending_mutation_uids = {"1"}
+        view._apply_pending_mutation_visual = lambda key: None
+        self._load(
+            view,
+            [Takeoff(uid="1", condition_uid="c1", position=[2.0, 2.0])],
+            force_visual_reload=True,
+        )
+        self.assertEqual(view._selected_uids, {"1"})
+        self.assertEqual(view._pending_mutation_uids, {"1"})
+        self.assertIn("selection_visuals", self.log)
+
+    def test_a_reload_whose_model_lost_every_selected_item_still_refreshes_the_selection_visuals(
+        self,
+    ):
+        view = self._view()
+        self._prepare_loaded(view)
+        view._current_takeoffs = {
+            "99": Takeoff(uid="99", condition_uid="c1", position=[1.0, 1.0])
+        }
+        view._selected_uids = {"99"}
+        self._load(
+            view,
+            [Takeoff(uid="1", condition_uid="c1", position=[2.0, 2.0])],
+            force_visual_reload=True,
+        )
+        self.assertEqual(view._selected_uids, set())
+        self.assertIn("selection_visuals", self.log)
+
+    def test_a_reload_for_another_project_forgets_the_selection(self):
+        view = self._view()
+        self._prepare_loaded(view)
+        view._current_takeoffs = {
+            "1": Takeoff(uid="1", condition_uid="c1", position=[1.0, 1.0])
+        }
+        view._selected_uids = {"1"}
+        view._pending_mutation_uids = {"1"}
+        view._apply_pending_mutation_visual = lambda key: None
+        self._load(
+            view,
+            [Takeoff(uid="1", condition_uid="c1", position=[2.0, 2.0])],
+            bid_ref=BidRef("db.mdb", "bid-2"),
+        )
+        self.assertEqual(view._selected_uids, set())
+        self.assertEqual(view._pending_mutation_uids, set())
+        self.assertNotIn("selection_visuals", self.log)
+
+    def test_a_reload_with_nothing_selected_does_not_refresh_selection_visuals(self):
+        view = self._view()
+        self._prepare_loaded(view)
+        self._load(view, force_visual_reload=True)
+        self.assertNotIn("selection_visuals", self.log)
+
+    def test_a_deferred_reveal_hides_the_rebuilt_overlay_items(self):
+        view = self._view()
+        hidden = []
+        view._set_page_overlay_items_visible = lambda visible: hidden.append(visible)
+        self._load(view)
+        self.assertEqual(hidden, [])
+        view._defer_page_visual_reveal = True
+        self._load(view, force_visual_reload=True)
+        self.assertEqual(hidden, [False])
+
+    def test_an_active_overlay_move_is_cancelled_before_a_reload_when_it_hides_the_normal_tiles(
+        self,
+    ):
+        view = self._view()
+        cancelled = []
+        view.cancel_overlay_move_mode = lambda restore_preview=True: cancelled.append(
+            restore_preview
+        )
+        view._overlay_move_suppresses_normal_tiles = lambda: False
+        self._load(view)
+        # The reload's own clear() always cancels once.
+        self.assertEqual(cancelled, [True])
+        cancelled.clear()
+        view._overlay_move_suppresses_normal_tiles = lambda: True
+        self._load(view, force_visual_reload=True)
+        self.assertEqual(cancelled, [True, True])
+
+    def test_a_reload_snapshots_the_page_area_selections(self):
+        view = self._view()
+        areas = {"p1": "a"}
+        self._load(view, page_area_selections=areas)
+        self.assertEqual(view._current_page_area_selections, {"p1": "a"})
+        self.assertIsNot(view._current_page_area_selections, areas)
+        self._load(view, page_area_selections=None, force_visual_reload=True)
+        self.assertIsNone(view._current_page_area_selections)
+        self.assertEqual(view._snapshot_page_area_selections({"x": None}), {"x": None})
+
+    def test_loading_a_page_delegates_every_argument_to_the_implementation(self):
+        view = self._view()
+        seen = []
+        view._load_page_impl = lambda *args: seen.append(args) or "result"
+        values = (
+            self.page,
+            ["t"],
+            {"c": 1},
+            {"c": "#fff"},
+            self.bid_ref,
+            ["a"],
+            {"p": "a"},
+            {"h"},
+        )
+        self.assertEqual(view.load_page(*values), "result")
+        for got, expected in zip(seen[0], values):
+            self.assertIs(got, expected)
+        seen.clear()
+        view.load_page(self.page, [], {}, {})
+        self.assertEqual(seen[0][4:], (None, None, None, None))
+
+    # ---- asynchronous loads
+    def test_an_async_load_shows_the_canvas_and_records_what_it_is_waiting_for(self):
+        view = self._view(
+            self._strategy(
+                needs_async_loading=True,
+                load_main=True,
+                pdf_width_pts=500.0,
+                pdf_height_pts=700.0,
+            )
+        )
+        view._current_load_token = "tok"
+        self._load(view)
+        names = self._names()
+        self.assertLess(names.index("loading_contract"), names.index("start_loading"))
+        self.assertEqual(
+            self.coordinator.pending_calls,
+            [(self.page, self.coordinator.strategy, 500.0, 700.0)],
+        )
+        pending = view._pending_page_data
+        self.assertEqual(pending["load_token"], "tok")
+        self.assertEqual(
+            pending["render_identity"],
+            view._build_render_identity(self.page, self.bid_ref),
+        )
+        self.assertIsNot(pending["render_identity"], view._current_render_identity)
+        self.assertEqual(pending["base_raster_scale"], 6.5)
+        self.assertEqual(self.log[-2][0], "target_scale")
+        self.assertEqual(self.log[-2], ("target_scale", 2.5))
+        self.assertIsNone(view._loaded_visual_kind)
+        self.assertNotIn("geometry_ready", names)
+
+    def test_the_loading_view_contract_needs_an_async_load_with_a_canvas(self):
+        for needs_async, show_canvas, expected in (
+            (True, True, True),
+            (True, False, False),
+            (False, True, False),
+        ):
+            with self.subTest(needs_async=needs_async, show_canvas=show_canvas):
+                view = self._view(
+                    self._strategy(
+                        needs_async_loading=needs_async,
+                        show_canvas=show_canvas,
+                        load_main=True,
+                    )
+                )
+                self._load(view)
+                self.assertEqual("loading_contract" in self._names(), expected)
+
+    def test_a_main_page_load_requests_the_page_image_with_a_tint_only_for_a_both_view(
+        self,
+    ):
+        strategy = self._strategy(needs_async_loading=True, load_main=True)
+        for label, mode, overlay_path, expected_tint in (
+            ("both with overlay", SHOW_BOTH, "overlay.pdf", (255, 80, 80)),
+            ("both without overlay", SHOW_BOTH, "", None),
+            ("original only", 0, "overlay.pdf", None),
+        ):
+            with self.subTest(label):
+                page = Page(
+                    uid="p1",
+                    name="P1",
+                    width_pts=612.0,
+                    height_pts=792.0,
+                    image_path="plan.pdf",
+                    page_index=4,
+                    invert=True,
+                    bitonal=True,
+                    image_show_mode=mode,
+                    overlay_image_path=overlay_path,
+                )
+                view = self._view(strategy, page)
+                self._load(view)
+                ((_tag, args, kwargs),) = [
+                    entry for entry in self.log if entry[0] == "page_async"
+                ]
+                self.assertEqual(args, ("plan.pdf", 4, 6.5, True, True))
+                self.assertEqual(kwargs, {"tint_rgb": expected_tint})
+                self.assertEqual(view._pending_page_data["base_raster_scale"], 6.5)
+                self.assertNotIn("composite", self._names())
+
+    def test_a_composite_load_uses_the_cache_aware_base_scale(self):
+        view = self._view(
+            self._strategy(
+                needs_async_loading=True,
+                load_composite=True,
+                pdf_width_pts=500.0,
+                pdf_height_pts=700.0,
+                main_scale=1.5,
+            )
+        )
+        self._load(view)
+        self.assertIn(("cache_scale", 1.5, 500.0, 700.0), self.log)
+        self.assertIn(("composite", self.page, self.bid_ref, 7.5), self.log)
+        self.assertEqual(view._pending_page_data["base_raster_scale"], 7.5)
+        self.assertNotIn("page_async", self._names())
+        self.assertNotIn("target_scale", self._names())
+
+    def test_an_overlay_only_load_picks_the_render_scale_from_the_overlay_type(self):
+        strategy = self._strategy(needs_async_loading=True, load_overlay=True)
+        for label, overlay_path, expected_scale, expected_logs in (
+            ("pdf overlay", "overlay.pdf", 6.5, [("target_scale", 3.0)]),
+            ("raster overlay", "overlay.png", 1.0, []),
+        ):
+            with self.subTest(label):
+                page = Page(
+                    uid="p1",
+                    name="P1",
+                    width_pts=612.0,
+                    height_pts=792.0,
+                    overlay_image_path=overlay_path,
+                    image_show_mode=1,
+                    rotation=90,
+                )
+                view = self._view(strategy, page)
+                self._load(view)
+                self.assertEqual(
+                    [
+                        e
+                        for e in self.log
+                        if isinstance(e, tuple) and e[0] == "target_scale"
+                    ],
+                    expected_logs,
+                )
+                self.assertIn(
+                    ("overlay_async", (page, 1, 90, expected_scale)), self.log
+                )
+                pending = view._pending_page_data
+                self.assertEqual(pending["overlay_render_scale"], expected_scale)
+                self.assertEqual(pending["base_raster_scale"], expected_scale)
+                self.assertNotIn("page_async", self._names())
+                self.assertNotIn("composite", self._names())
+
+    def test_an_async_load_without_any_visual_to_fetch_only_prepares_the_pending_data(
+        self,
+    ):
+        view = self._view(self._strategy(needs_async_loading=True))
+        self._load(view)
+        names = self._names()
+        for forbidden in ("composite", "page_async", "overlay_async"):
+            self.assertNotIn(forbidden, names)
+        self.assertIn("start_loading", names)
+        self.assertNotIn("base_raster_scale", view._pending_page_data)
+
+
+class TakeoffPlanViewRotationGroupFlushSweepTests(
+    _TakeoffPlanViewOverlayRefreshFixture
+):
+    """_flush_rotation_group: one signal carrying position, annotation and rotation edits together."""
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        return view
+
+    def test_a_rotation_group_flush_reports_positions_annotations_and_rotations_together(
+        self,
+    ):
+        view = self._view()
+        view._ann_db_uid_map = {"a1_oval": "a1"}
+        view._dirty_positions = {"t1": [1.0, 2.0], "t2": [3.0, 4.0]}
+        view._dirty_ann_positions = {
+            "a1_oval": ("oval", [5.0, 6.0]),
+            "a2": ("rect", [7.0, 8.0]),
+        }
+        view._dirty_rotations = {"t1": 0.5, "t3": 1.5}
+        view._position_before_edit = {"t1": [0.0, 0.0], "a1_oval": [9.0, 9.0]}
+        view._rotation_before_edit = {"t1": 0.25}
+        emitted = []
+        view.group_rotation_flushed.connect(
+            lambda t, a, r: emitted.append((list(t), list(a), list(r)))
+        )
+        view._flush_rotation_group()
+        self.assertEqual(
+            emitted,
+            [
+                (
+                    [("t1", [0.0, 0.0], [1.0, 2.0]), ("t2", [], [3.0, 4.0])],
+                    [
+                        ("a1", "oval", [9.0, 9.0], [5.0, 6.0]),
+                        ("a2", "rect", [], [7.0, 8.0]),
+                    ],
+                    [("t1", 0.25, 0.5), ("t3", 0.0, 1.5)],
+                )
+            ],
+        )
+
+    def test_a_rotation_group_flush_empties_every_edit_buffer(self):
+        view = self._view()
+        view._dirty_positions = {"t1": [1.0, 2.0]}
+        view._dirty_ann_positions = {"a1": ("rect", [5.0, 6.0])}
+        view._dirty_rotations = {"t1": 0.5}
+        view._position_before_edit = {"t1": [0.0, 0.0]}
+        view._rotation_before_edit = {"t1": 0.25}
+        view.group_rotation_flushed.connect(lambda *args: None)
+        view._flush_rotation_group()
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(view._dirty_ann_positions, {})
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertEqual(view._position_before_edit, {})
+        self.assertEqual(view._rotation_before_edit, {})
+
+    def test_a_rotation_group_flush_with_nothing_dirty_still_announces_empty_changes(
+        self,
+    ):
+        view = self._view()
+        emitted = []
+        view.group_rotation_flushed.connect(
+            lambda t, a, r: emitted.append((list(t), list(a), list(r)))
+        )
+        view._flush_rotation_group()
+        self.assertEqual(emitted, [([], [], [])])
+
+
+class TakeoffPlanViewOverlayMoveCommitSweepTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """_commit_overlay_move sequencing, failure rollback and the small overlay-move item helpers."""
+
+    ORIGINAL = (1.0, 2.0, 300.0, 400.0)
+    MOVED = (9.0, 8.0, 300.0, 400.0)
+
+    def _view(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=self.MOVED,
+        )
+        self._install_page_canvas(view, page)
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view._overlay_move_original_rect = self.ORIGINAL
+        view._overlay_move_preview_rect = self.MOVED
+        view._overlay_move_anchor_scene = QtCore.QPointF(1.0, 1.0)
+        view._overlay_move_drag_start_rect = self.ORIGINAL
+        view._overlay_move_dragging = True
+        self.log = log = []
+        view.cancel_overlay_move_mode = lambda restore_preview=True: log.append(
+            ("cancel", restore_preview)
+        )
+        view._remove_overlay_move_handle = lambda: log.append("remove_handle")
+        view._accept_overlay_move_preview_rect = lambda rect: log.append(
+            ("accept", rect)
+        )
+        view._update_cursor = lambda: log.append("cursor")
+        view._force_reload_current_page_visuals = (
+            lambda: log.append("reload") or self.reload_ok
+        )
+        view.cursor_mode_change_requested.connect(
+            lambda mode: log.append(("emit", mode))
+        )
+        real_apply = view._apply_cursor_mode
+        view._apply_cursor_mode = lambda mode: log.append(
+            ("apply", mode)
+        ) or real_apply(mode)
+        self.reload_ok = True
+        self.warnings = warnings = []
+        patcher = patch.object(
+            plan_view_module,
+            "show_warning",
+            lambda parent, title, text: warnings.append((parent, title, text)),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return view, page
+
+    def test_committing_without_editing_or_without_both_rects_just_cancels(self):
+        view, _page = self._view()
+        view._editing_enabled = False
+        view._overlay_rect_save_handler = lambda rect: self.fail("must not save")
+        view._commit_overlay_move()
+        self.assertEqual(self.log, [("cancel", True)])
+        for label, attribute in (
+            ("no preview", "_overlay_move_preview_rect"),
+            ("no original", "_overlay_move_original_rect"),
+        ):
+            with self.subTest(label):
+                view, _page = self._view()
+                view._overlay_rect_save_handler = lambda rect: self.fail(
+                    "must not save"
+                )
+                setattr(view, attribute, None)
+                view._commit_overlay_move()
+                self.assertEqual(self.log, [("cancel", True)])
+                self.assertTrue(view._overlay_move_dragging)
+
+    def test_committing_an_unchanged_rect_cancels_without_restoring_or_saving(self):
+        view, _page = self._view()
+        view._overlay_move_preview_rect = self.ORIGINAL
+        view._overlay_rect_save_handler = lambda rect: self.fail("must not save")
+        view._commit_overlay_move()
+        self.assertEqual(self.log, ["remove_handle", ("cancel", False)])
+        self.assertIsNone(view._overlay_move_anchor_scene)
+        self.assertIsNone(view._overlay_move_drag_start_rect)
+        self.assertIs(view._overlay_move_dragging, False)
+
+    def test_a_saved_move_is_accepted_selects_the_select_tool_and_reloads_the_page(
+        self,
+    ):
+        view, _page = self._view()
+        saved = []
+        view._overlay_rect_save_handler = lambda rect: saved.append(rect) or True
+        view._commit_overlay_move()
+        self.assertEqual(saved, [self.MOVED])
+        self.assertEqual(
+            self.log,
+            [
+                "remove_handle",
+                ("accept", self.MOVED),
+                ("apply", "select"),
+                "cursor",
+                ("emit", "select"),
+                "cursor",
+                "reload",
+            ],
+        )
+        self.assertEqual(self.warnings, [])
+        self.assertIs(view._overlay_move_dragging, False)
+        self.assertIsNone(view._overlay_move_anchor_scene)
+        self.assertIsNone(view._overlay_move_drag_start_rect)
+
+    def test_a_saved_move_whose_page_refresh_fails_warns_that_it_was_only_queued(self):
+        view, _page = self._view()
+        view._overlay_rect_save_handler = lambda rect: True
+        self.reload_ok = False
+        view._commit_overlay_move()
+        self.assertEqual(
+            self.warnings,
+            [
+                (
+                    view,
+                    "Move Overlay Image",
+                    "The overlay position was queued for saving, but the page could not be refreshed.",
+                )
+            ],
+        )
+
+    def test_a_missing_or_failing_save_handler_rolls_the_page_back_and_warns(self):
+        for label, handler in (
+            ("no handler", None),
+            ("handler refuses", lambda rect: False),
+        ):
+            with self.subTest(label):
+                view, page = self._view()
+                view._overlay_rect_save_handler = handler
+                view._current_render_identity = {"stale": True}
+                view._commit_overlay_move()
+                self.assertEqual(page.overlay_rect, self.ORIGINAL)
+                self.assertEqual(
+                    view._current_render_identity,
+                    view._build_render_identity(page, view._current_bid_ref),
+                )
+                self.assertEqual(self.log, ["remove_handle", ("cancel", False)])
+                self.assertEqual(
+                    self.warnings,
+                    [
+                        (
+                            view,
+                            "Move Overlay Image",
+                            "The overlay position could not be saved.",
+                        )
+                    ],
+                )
+                self.assertIs(view._overlay_move_dragging, False)
+
+    def test_rolling_back_without_a_current_page_still_cancels_and_warns(self):
+        view, _page = self._view()
+        view._overlay_rect_save_handler = lambda rect: False
+        view._current_page = None
+        view._commit_overlay_move()
+        self.assertEqual(self.log, ["remove_handle", ("cancel", False)])
+        self.assertEqual(len(self.warnings), 1)
+
+    # ---- helpers around the move handle and normal visuals
+    def test_removing_a_move_handle_the_scene_no_longer_owns_does_not_touch_the_scene(
+        self,
+    ):
+        view, _page = self._view()
+        view._remove_overlay_move_handle = (
+            TakeoffPlanView._remove_overlay_move_handle.__get__(view)
+        )
+        handle = QGraphicsRectItem(0.0, 0.0, 4.0, 4.0)
+        view._scene.addItem(handle)
+        view._overlay_move_handle_item = handle
+        view._remove_overlay_move_handle()
+        self.assertIsNone(handle.scene())
+        self.assertIsNone(view._overlay_move_handle_item)
+        view._overlay_move_handle_item = handle
+        messages = []
+        previous = QtCore.qInstallMessageHandler(
+            lambda mode, ctx, msg: messages.append(msg)
+        )
+        try:
+            view._remove_overlay_move_handle()
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+        self.assertEqual(messages, [])
+        self.assertIsNone(view._overlay_move_handle_item)
+
+    def test_restoring_normal_visuals_only_touches_live_items_the_scene_still_owns(
+        self,
+    ):
+        view, _page = self._view()
+        view._restore_overlay_move_normal_visuals = (
+            TakeoffPlanView._restore_overlay_move_normal_visuals.__get__(view)
+        )
+        live, detached, dead = (QGraphicsRectItem(0.0, 0.0, 4.0, 4.0) for _ in range(3))
+        for item in (live, dead):
+            view._scene.addItem(item)
+        live.setVisible(False)
+        detached.setVisible(False)
+        view._overlay_move_hidden_visual_visibility = {
+            None: True,
+            live: True,
+            detached: True,
+            dead: True,
+        }
+        delete(dead)
+        view._overlay_move_normal_visuals_hidden = True
+        view._restore_overlay_move_normal_visuals()
+        self.assertTrue(live.isVisible())
+        self.assertFalse(detached.isVisible())
+        self.assertEqual(view._overlay_move_hidden_visual_visibility, {})
+        self.assertIs(view._overlay_move_normal_visuals_hidden, False)
+
+    def test_the_outlined_icon_pixmap_completes_its_painting_without_qt_warnings(self):
+        view, _page = self._view()
+        messages = []
+        previous = QtCore.qInstallMessageHandler(
+            lambda mode, ctx, msg: messages.append(msg)
+        )
+        try:
+            pixmap = view._outlined_icon_pixmap(
+                plan_view_module._MOVE_OVERLAY_ICON, "#ffffff"
+            )
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+        self.assertEqual(messages, [])
+        self.assertEqual((pixmap.width(), pixmap.height()), (26, 26))

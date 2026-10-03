@@ -52,6 +52,12 @@ class PageDeletionQuantitySidebarTests(unittest.TestCase):
         )
         try:
             sidebar.load_conditions(conditions, {}, "Bid", grayscale=False)
+            # Before the deletion both pages count: 2 spanning takeoffs and 1 on
+            # the deleted page (hand count from the takeoff list above).
+            sidebar.update_quantities(compute_page_quantities(conditions, takeoffs))
+            self.assertEqual(sidebar._condition_items[spanning.uid].text(2), "2 EA")
+            self.assertEqual(sidebar._condition_items[deleted_only.uid].text(2), "1 EA")
+            # After deleting page-1 only page-2's single spanning takeoff remains.
             sidebar.update_quantities(quantities)
             self.assertEqual(sidebar._condition_items[spanning.uid].text(2), "1 EA")
             self.assertEqual(sidebar._condition_items[deleted_only.uid].text(2), "0 EA")

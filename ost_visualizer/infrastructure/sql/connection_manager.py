@@ -70,16 +70,18 @@ class SqlConnectionLease:
         if self._closed:
             return
         self._closed = True
-        for cursor in reversed(tuple(self._cursors)):
+        try:
+            for cursor in reversed(tuple(self._cursors)):
+                try:
+                    cursor.close()
+                except pyodbc.Error:
+                    pass
+            self._cursors.clear()
+        finally:
             try:
-                cursor.close()
+                self._connection.close()
             except pyodbc.Error:
                 pass
-        self._cursors.clear()
-        try:
-            self._connection.close()
-        except pyodbc.Error:
-            pass
 
 
 class SqlConnectionManager:

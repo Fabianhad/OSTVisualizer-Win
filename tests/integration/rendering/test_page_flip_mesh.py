@@ -143,3 +143,55 @@ class PageFlip3DMeshTests(unittest.TestCase):
             (round(x, 6), round(y, 6), round(z, 6)) for x, y, z in flipped[0].vertices
         }
         self.assertEqual(actual, expected)
+
+    def test_flip_keeps_top_face_winding_direction_of_unflipped_mesh(self):
+        condition = Condition(
+            uid="area-condition",
+            condition_type=Condition.TYPE_AREA,
+            thickness=1.0,
+        )
+        takeoff = Takeoff(
+            uid="asymmetric-area",
+            condition_uid=condition.uid,
+            page_uid="page-1",
+            position=[1.0, 1.0, 2.5, 1.0, 2.0, 2.0, 1.0, 2.0],
+        )
+        generator = _MeshGeneratorAdapter(
+            CoordinateTransformerFactory(),
+            _page_flip_support__ColorService(),
+            _page_flip_support__TakeoffService(),
+        )
+
+        def top_face_normal_z(flip_x, flip_y):
+            meshes, _colors, _bounds = generator.generate_meshes(
+                {condition.uid: condition},
+                [takeoff],
+                inactive_object_color="#000000",
+                page_infos={
+                    takeoff.page_uid: _page_flip_support__page_info(
+                        flip_x=flip_x, flip_y=flip_y
+                    )
+                },
+            )
+            mesh = meshes[0]
+            top_z = max(vertex[2] for vertex in mesh.vertices)
+            normals = []
+            for face in mesh.faces:
+                a, b, c = (mesh.vertices[index] for index in face)
+                if a[2] == b[2] == c[2] == top_z:
+                    normals.append(
+                        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+                    )
+            return normals
+
+        baseline = top_face_normal_z(False, False)
+        self.assertTrue(baseline)
+        outward = 1.0 if baseline[0] > 0.0 else -1.0
+        self.assertTrue(all(normal * outward > 0.0 for normal in baseline))
+        # A mirrored mesh needs its faces reversed to keep facing the same way;
+        # a double flip is a rotation and must not be reversed.
+        for flip_x, flip_y in ((True, False), (False, True), (True, True)):
+            with self.subTest(flip_x=flip_x, flip_y=flip_y):
+                normals = top_face_normal_z(flip_x, flip_y)
+                self.assertEqual(len(normals), len(baseline))
+                self.assertTrue(all(normal * outward > 0.0 for normal in normals))

@@ -1,5 +1,8 @@
+import io
+import json
 import logging
 import unittest
+import urllib.error
 from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.application.dtos.license_activation_identity_dto import (
@@ -20,6 +23,7 @@ from ost_visualizer.application.use_cases.license.activate_license_use_case impo
 from ost_visualizer.application.use_cases.license.utils.license_use_case import (
     ERROR_CONTRACT,
     ERROR_DEVICE_ACTIVATION_INACTIVE,
+    ERROR_INVALID_HWID,
     ERROR_INVALID_ACTIVATION_IDENTITY,
     ERROR_LICENSE_NOT_FOUND,
     ERROR_MAX_ACTIVATIONS_REACHED,
@@ -133,6 +137,39 @@ class ImmediateThreadManager:
         pass
 
 
+class _WireRecorder:
+    """Stands in for urllib.request.urlopen: the only network boundary.
+    Every request is recorded as (method, url, decoded JSON body); the answer is
+    an HTTP 4xx response carrying the supplied JSON body, like the real server.
+    """
+
+    def __init__(self, status, body):
+        self.requests = []
+        self._status = status
+        self._body = body
+
+    def __call__(self, request, timeout=None, context=None):
+        self.requests.append(
+            (request.get_method(), request.full_url, json.loads(request.data))
+        )
+        raise urllib.error.HTTPError(
+            request.full_url,
+            self._status,
+            "rejected",
+            {},
+            io.BytesIO(json.dumps(self._body).encode("utf-8")),
+        )
+
+
+_ACTIVATION_IDENTITY = LicenseActivationIdentityDto(
+    version=LICENSE_ACTIVATION_IDENTITY_VERSION,
+    windows_account=r"EXAMPLE\Estimator",
+    computer_name="ESTIMATOR-PC",
+    join_type=WindowsJoinType.DOMAIN,
+    join_name="EXAMPLE",
+)
+
+
 class LicenseActivationContractTests(unittest.TestCase):
     def test_startup_reactivation_uses_required_activation_identity_payload(self):
         validate = FakeUseCase(
@@ -144,50 +181,106 @@ class LicenseActivationContractTests(unittest.TestCase):
                 ERROR_CONTRACT[ERROR_DEVICE_ACTIVATION_INACTIVE],
             )
         )
-        activation_identity = LicenseActivationIdentityDto(
-            version=LICENSE_ACTIVATION_IDENTITY_VERSION,
-            windows_account=r"EXAMPLE\Estimator",
-            computer_name="ESTIMATOR-PC",
-            join_type=WindowsJoinType.DOMAIN,
-            join_name="EXAMPLE",
-        )
         client = LicenseApiClient(
             activation_identity_provider=SimpleNamespace(
-                get_identity=lambda: activation_identity
-            )
+                get_identity=lambda: _ACTIVATION_IDENTITY
+            ),
+            base_url="https://license.invalid/api",
         )
-        activation_limit = {
-            "success": False,
-            "error": "Maximum activations reached",
-            "error_name": ERROR_MAX_ACTIVATIONS_REACHED,
-            "error_code": ERROR_CONTRACT[ERROR_MAX_ACTIVATIONS_REACHED],
-        }
+        wire = _WireRecorder(
+            403,
+            {
+                "success": False,
+                "error": "Maximum activations reached",
+                "error_name": ERROR_MAX_ACTIVATIONS_REACHED,
+                "error_code": ERROR_CONTRACT[ERROR_MAX_ACTIVATIONS_REACHED],
+            },
+        )
         model = FakeModel()
         activate = ActivateLicenseUseCase(model, client)
+        publisher = FakeEventPublisher()
         orchestrator = self._build_orchestrator(
             validate,
             activate,
-            FakeEventPublisher(),
+            publisher,
             model=model,
         )
-        with patch.object(
-            client, "_post", return_value=(False, activation_limit)
-        ) as post:
+        with patch("urllib.request.urlopen", wire):
             orchestrator.initialize()
-        post.assert_called_once_with(
-            "activate",
-            {
-                "license_key": "LIC-test-key",
-                "hwid": TEST_HWID,
-                "activation_identity": {
-                    "version": "v1",
-                    "windows_account": r"EXAMPLE\Estimator",
-                    "computer_name": "ESTIMATOR-PC",
-                    "join_type": "domain",
-                    "join_name": "EXAMPLE",
-                },
-            },
+        # Exactly one POST (a 4xx is not retried), carrying the versioned
+        # activation_identity next to the canonical HWID.
+        self.assertEqual(
+            wire.requests,
+            [
+                (
+                    "POST",
+                    "https://license.invalid/api/activate",
+                    {
+                        "license_key": "LIC-test-key",
+                        "hwid": TEST_HWID,
+                        "activation_identity": {
+                            "version": "v1",
+                            "windows_account": r"EXAMPLE\Estimator",
+                            "computer_name": "ESTIMATOR-PC",
+                            "join_type": "domain",
+                            "join_name": "EXAMPLE",
+                        },
+                    },
+                )
+            ],
         )
+        # The single reactivation attempt is final: the activation-limit answer
+        # is published as an invalidation instead of looping back to validate.
+        self.assertEqual(validate.calls, [None])
+        self.assertEqual(
+            publisher.invalidated,
+            [
+                (
+                    "License activation limit reached. This license is active on "
+                    "the maximum number of devices.",
+                    LicenseStatus.INVALID,
+                )
+            ],
+        )
+        self.assertEqual(publisher.activated_calls, 0)
+        self.assertEqual(
+            orchestrator.get_license_info().status, LicenseStatus.INVALID.value
+        )
+
+    def test_startup_validation_failure_without_inactive_device_does_not_reactivate(
+        self,
+    ):
+        # Negative control for the reactivation test: only the dedicated
+        # DEVICE_ACTIVATION_INACTIVE status triggers an activation request.
+        validate = FakeUseCase(
+            self._result(
+                False,
+                LicenseOperationStatus.FAILED,
+                LicenseStatus.INVALID,
+                "rejected",
+                ERROR_CONTRACT[ERROR_INVALID_HWID],
+            )
+        )
+        client = LicenseApiClient(
+            activation_identity_provider=SimpleNamespace(
+                get_identity=lambda: _ACTIVATION_IDENTITY
+            ),
+            base_url="https://license.invalid/api",
+        )
+        wire = _WireRecorder(403, {})
+        model = FakeModel()
+        publisher = FakeEventPublisher()
+        orchestrator = self._build_orchestrator(
+            validate,
+            ActivateLicenseUseCase(model, client),
+            publisher,
+            model=model,
+        )
+        with patch("urllib.request.urlopen", wire):
+            orchestrator.initialize()
+        self.assertEqual(wire.requests, [])
+        self.assertEqual(validate.calls, [None])
+        self.assertEqual(publisher.invalidated, [("rejected", LicenseStatus.INVALID)])
 
     def _build_orchestrator(
         self,

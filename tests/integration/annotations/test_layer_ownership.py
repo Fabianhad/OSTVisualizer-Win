@@ -98,7 +98,7 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
         self.ops = _layer_ownership_support__AnnotationOps(self.connection)
         self.model = OstAggregate(None)
         self.data = ProjectDataService(self.model)
-        self.write_service = Mock()
+        self.write_service = Mock(spec=AnnotationWriteService)
         self.write_service.insert_annotations.side_effect = (
             lambda path, bid, specs, **_kwargs: self.ops.insert_annotations(
                 path, bid, specs
@@ -208,8 +208,9 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
         plan.current_page_uid = "20"
         plan.annotation_key_map = {("1", "rect"): "1_rect"}
         undo = FakeUndoService()
-        ui_state = Mock()
-        ui_state.get_selected_bid_ref.side_effect = lambda: self.model.current_bid_ref
+        ui_state = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.model.current_bid_ref
+        )
         project_writer = FakeWriteService()
         handler = PlanViewActionHandler(
             plan_view=plan,
@@ -221,7 +222,7 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=Mock(),
             deferred_persistence_manager=Mock(),
-            ui_access_manager=Mock(),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
         )
         return handler, plan, undo, project_writer
 
@@ -289,7 +290,9 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
     def test_sql_queue_uses_owned_layer_and_scoped_dependency(self):
         self.select_bid("1", "10")
         self.select_bid("179326", "20")
-        handler, _plan, _undo, writer = self.make_handler(Mock())
+        handler, _plan, _undo, writer = self.make_handler(
+            Mock(spec=AnnotationWriteService)
+        )
         with patch.object(
             writer, "uses_sql_collaboration_mutations", return_value=True
         ), patch.object(writer, "queue_plan_items_paste") as queue:
@@ -409,6 +412,12 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
             with self.subTest(expected_layer=expected):
                 self.data.set_bid_layer_visibility(
                     reader.get_bid_layers_for_sidebar(path, "179326")
+                )
+                # The global template row is projected (as unowned) alongside
+                # any owned layer; only the owned one may be assigned.
+                self.assertEqual(
+                    [(layer.uid, layer.bid_uid) for layer in self.model.bid_layers],
+                    [("2", "")] if expected is None else [("2", ""), ("7", "179326")],
                 )
                 spec = self.spec()
                 self.assertTrue(
@@ -534,7 +543,9 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
     def test_null_sql_layer_has_no_dependency_and_is_pdf_exportable(self):
         self.connection.execute("DELETE FROM BidLayers WHERE UID=7")
         self.select_bid("179326", "20")
-        handler, _plan, _undo, writer = self.make_handler(Mock())
+        handler, _plan, _undo, writer = self.make_handler(
+            Mock(spec=AnnotationWriteService)
+        )
         with patch.object(
             writer, "uses_sql_collaboration_mutations", return_value=True
         ), patch.object(writer, "queue_plan_items_paste") as queue:

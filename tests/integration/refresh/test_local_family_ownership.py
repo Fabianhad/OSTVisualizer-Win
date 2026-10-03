@@ -20,6 +20,7 @@ from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.services.uom_service import CALC_LINEAR_LENGTH, UOM_INCHES
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
     SidebarCoordinator,
 )
@@ -237,7 +238,7 @@ class RefreshScopeTests(unittest.TestCase):
         coordinator._request_or_defer_mesh_refresh = Mock()
         coordinator._is_summary_tab_active = lambda: True
         sidebar = SidebarCoordinator.__new__(SidebarCoordinator)
-        sidebar.conditions_sidebar = Mock()
+        sidebar.conditions_sidebar = Mock(spec=ConditionsSidebar)
         sidebar._view_stack = None
         sidebar._ui_state = coordinator.ui_state_manager
         sidebar._project_data = self.fixture.data
@@ -254,4 +255,9 @@ class RefreshScopeTests(unittest.TestCase):
         after = sidebar.conditions_sidebar.update_quantities.call_args.args[0]["12"][0]
         self.assertEqual(before, 12)
         self.assertEqual(after, 6)
+        # Only the quantity projection ran; the sidebar was not rebuilt or reloaded.
+        self.assertEqual(
+            [call[0] for call in sidebar.conditions_sidebar.method_calls],
+            ["update_quantities"],
+        )
         sidebar.load_condition_summary_from_memory.assert_called_once_with()

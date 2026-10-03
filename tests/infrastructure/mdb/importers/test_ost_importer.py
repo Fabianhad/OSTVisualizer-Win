@@ -1292,3 +1292,125 @@ class OstImporterRelationshipTests(unittest.TestCase):
             unmapped,
             {"JobStatusUID": "NULL", "PayClassUID": "NULL", "CdnTypeUID": "13"},
         )
+
+    def test_ost_page_uid_zero_is_never_a_page_and_collapses_as_no_page_selection(
+        self,
+    ):
+        # Decision D11: source Page UID 0 is "no page". It is never assigned a new
+        # UID or page mapping, and a 0 reference becomes NULL before the page-area
+        # selections are canonicalised (one surviving selection for no page).
+        importer = OstImporter(None)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={"BidPages": [{"UID": "0"}, {"UID": "7"}]},
+            page_tables={},
+        )
+        uid_map = importer._build_uid_map(raw_data, 100)
+        self.assertEqual(uid_map, {"1": "101", "7": "102"})
+        self.assertEqual(importer._build_page_uid_map(raw_data, uid_map), {"7": "102"})
+        # Even a uid map that did contain 0 must not make it a page.
+        self.assertEqual(
+            importer._build_page_uid_map(raw_data, {**uid_map, "0": "999"}),
+            {"7": "102"},
+        )
+        settings = [
+            {"UID": "30", "BidPageUID": "0", "BidAreaUID": "4", "BidAreaSelected": "1"},
+            {"UID": "31", "BidPageUID": "0", "BidAreaUID": "5", "BidAreaSelected": "1"},
+            {"UID": "32", "BidPageUID": "7", "BidAreaUID": "4", "BidAreaSelected": "1"},
+        ]
+        remapped = [
+            importer._remap_row(row, uid_map, {"7": "102"}, {}, {}, {}, {})
+            for row in settings
+        ]
+        self.assertEqual(
+            [row["BidPageUID"] for row in remapped], ["NULL", "NULL", "102"]
+        )
+        self.assertEqual(
+            [
+                (row["UID"], row["BidPageUID"])
+                for row in importer._canonicalize_page_area_settings(remapped)
+            ],
+            [("31", "NULL"), ("32", "102")],
+        )
+
+    def test_ost_blank_and_zero_page_selections_leave_one_no_page_selection(self):
+        # Decision D16: selected BidPageSettings rows whose source BidPageUID is
+        # "" (kept as-is by the remap), "0" (rewritten to the "NULL" placeholder)
+        # or absent are one no-page group, so exactly one selection survives for
+        # it (BidAreaSelected DESC, UID DESC) while the real page, a second real
+        # page and inactive rows are untouched.
+        importer = OstImporter(None)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={"BidPages": [{"UID": "7"}, {"UID": "8"}]},
+            page_tables={
+                "BidPageSettings": [
+                    {
+                        "UID": "30",
+                        "BidPageUID": "",
+                        "BidAreaUID": "4",
+                        "BidAreaSelected": "1",
+                    },
+                    {
+                        "UID": "31",
+                        "BidPageUID": "0",
+                        "BidAreaUID": "5",
+                        "BidAreaSelected": "2",
+                    },
+                    {"UID": "32", "BidAreaUID": "6", "BidAreaSelected": "1"},
+                    {
+                        "UID": "33",
+                        "BidPageUID": "7",
+                        "BidAreaUID": "4",
+                        "BidAreaSelected": "1",
+                    },
+                    {
+                        "UID": "34",
+                        "BidPageUID": "8",
+                        "BidAreaUID": "4",
+                        "BidAreaSelected": "1",
+                    },
+                    {
+                        "UID": "35",
+                        "BidPageUID": "0",
+                        "BidAreaUID": "7",
+                        "BidAreaSelected": "0",
+                    },
+                ]
+            },
+        )
+        uid_map = importer._build_uid_map(raw_data, 100)
+        page_uid_map = importer._build_page_uid_map(raw_data, uid_map)
+        remapped = importer._remap_data(raw_data, uid_map, page_uid_map, {}, {}, {}, {})
+        settings = remapped.page_tables["BidPageSettings"]
+        # The "0" row carries the highest selection rank of the no-page group.
+        self.assertEqual(
+            [(row["UID"], row.get("BidPageUID")) for row in settings],
+            [
+                (uid_map["35"], "NULL"),
+                (uid_map["31"], "NULL"),
+                (uid_map["33"], page_uid_map["7"]),
+                (uid_map["34"], page_uid_map["8"]),
+            ],
+        )
+        # Equal rank: the highest remapped UID of the group wins, whichever
+        # spelling it uses (here the blank one is last).
+        raw_data.page_tables["BidPageSettings"][1]["BidAreaSelected"] = "1"
+        raw_data.page_tables["BidPageSettings"][0]["UID"] = "29"
+        uid_map = importer._build_uid_map(raw_data, 100)
+        remapped = importer._remap_data(
+            raw_data,
+            uid_map,
+            importer._build_page_uid_map(raw_data, uid_map),
+            {},
+            {},
+            {},
+            {},
+        )
+        no_page = [
+            row
+            for row in remapped.page_tables["BidPageSettings"]
+            if row.get("BidAreaSelected") != "0"
+            and row.get("BidPageUID") in (None, "", "NULL")
+        ]
+        self.assertEqual([row["UID"] for row in no_page], [uid_map["32"]])

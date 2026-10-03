@@ -22,9 +22,7 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
-    ViewerSyncCoordinator,
-)
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.handlers.plan_view_action_handler import (
     PlanViewActionHandler,
 )
@@ -1248,14 +1246,6 @@ class FakeUndoService:
         return any(item[0] is token for item in self.forward_mutations)
 
 
-class FakeEventBus:
-    def __init__(self):
-        self.events = []
-
-    def publish(self, event_name, **event_payload):
-        self.events.append((event_name, event_payload))
-
-
 class FakeAccess:
     def __init__(self, allowed_features):
         self.allowed_features = set(allowed_features)
@@ -1336,42 +1326,28 @@ class UncheckedPagePlacementWorkflowTests(unittest.TestCase):
                 self.clears += 1
                 # Programmatic 3D clears must not emit mesh_clicked([]).
 
-        class SyncEventBus(FakeEventBus):
-            def __init__(self, on_takeoffs_changed):
-                super().__init__()
-                self._on_takeoffs_changed = on_takeoffs_changed
-
-            def publish(self, event_name, **event_payload):
-                super().publish(event_name, **event_payload)
-                if event_name == AppEvents.TAKEOFFS_CHANGED:
-                    self._on_takeoffs_changed(**event_payload)
-
         data = FakeProjectData()
         data.selected_page_uids = []
         plan_view = ValidatingPlanView(data)
         visualization = VisualizationService()
-        viewer = ViewerSyncCoordinator(
-            ui_state_manager=ActiveUncheckedPageUiState(),
-            ui_access_manager=None,
-            color_service=None,
-            project_data=data,
-            callback_bridge=SimpleNamespace(
-                dispatch=lambda callback, payload: callback(payload)
-            ),
-        )
-        viewer.plan_view = plan_view
-        viewer.opengl_viewer = OpenGLViewer()
+        opengl_viewer = OpenGLViewer()
+        published = []
 
-        def on_takeoffs_changed(page_uid, **_call_options):
+        def on_takeoffs_changed(page_uid, **call_options):
+            published.append((page_uid, call_options["takeoff_uids"]))
             plan_view.current_page_uid = page_uid
             plan_view._current_takeoffs = {
                 uid: takeoff
                 for uid, takeoff in data.takeoffs.items()
                 if takeoff.page_uid == page_uid
             }
-            viewer.opengl_viewer.clear_scene()
+            opengl_viewer.clear_scene()
             visualization.refresh_mesh_view([])
 
+        # The production bus builds a TakeoffsChangedEvent from the published
+        # payload, so a payload the event type rejects fails the test.
+        event_bus = EventBus()
+        event_bus.subscribe(AppEvents.TAKEOFFS_CHANGED, on_takeoffs_changed)
         handler = PlanViewActionHandler(
             plan_view=plan_view,
             ui_state_manager=ActiveUncheckedPageUiState(),
@@ -1380,13 +1356,14 @@ class UncheckedPagePlacementWorkflowTests(unittest.TestCase):
             annotation_write_svc=None,
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
-            event_bus=SyncEventBus(on_takeoffs_changed),
+            event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_takeoff_created("42", [1.0, 2.0], "p2")
+        self.assertEqual(published, [("p2", ["100"])])
         self.assertEqual(plan_view.selected, {"100"})
         self.assertEqual(plan_view.current_page_uid, "p2")
         self.assertEqual(plan_view.clear_calls, 0)
-        self.assertEqual(viewer.opengl_viewer.clears, 1)
+        self.assertEqual(opengl_viewer.clears, 1)
         self.assertEqual(visualization.mesh_pages, [[]])

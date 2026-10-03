@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtTest import QTest
 from shiboken6 import delete, isValid
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
     SelectNamedViewDialog,
 )
@@ -126,6 +127,7 @@ class HotlinkCursorLifecycleTests(unittest.TestCase):
                 writer.next_uids = [f"hotlink-{index}"]
                 dialogs = []
                 previous_writes = len(writer.insert_calls)
+                deletes_before = list(writer.delete_calls)
                 self.assertTrue(plan.activate_annotation_placement("hotlink"))
                 with patch.object(
                     action_fixture.handler_module,
@@ -146,11 +148,22 @@ class HotlinkCursorLifecycleTests(unittest.TestCase):
                     spec = writer.insert_calls[-1][2][0]
                     self.assertEqual(spec.properties, {"BidPageViewUID": "nv1"})
                     self.assertEqual(spec.page_uid, "p1")
+                    self.assertEqual(writer.delete_calls, deletes_before)
+                    # Undo deletes exactly the Hotlink this click inserted and redo
+                    # inserts it again with the same stored properties.
                     self.assertTrue(undo.undo())
+                    self.assertEqual(
+                        writer.delete_calls,
+                        deletes_before
+                        + [("bid.mdb", [(f"hotlink-{index}", "hotlink")], False)],
+                    )
+                    self.assertEqual(len(writer.insert_calls), previous_writes + 1)
                     self.assertTrue(undo.redo())
+                    self.assertEqual(len(writer.insert_calls), previous_writes + 2)
                     self.assertEqual(
                         writer.insert_calls[-1][2][0].properties, spec.properties
                     )
+                    self.assertEqual(writer.insert_calls[-1][2][0].page_uid, "p1")
                 elif ending == "new":
                     self.assertEqual(plan._annotation_place_type, "namedview")
                 else:
@@ -181,6 +194,33 @@ class HotlinkCursorLifecycleTests(unittest.TestCase):
                 self.assertEqual(undo.count, 0)
                 self.assertFalse(isValid(dialogs[0]))
                 self.host_fixture._assert_no_promotion(host)
+
+    def test_bid_switched_while_picker_open_drops_completion_without_write(self):
+        # Positive control: the same accepted pick writes in
+        # test_real_plan_click_save_cancel_repeat_and_history, so only the bid
+        # switch can explain the missing write here.
+        host, plan, handler, writer, undo = self._workflow()
+        plan.activate_annotation_placement("hotlink")
+        dialogs = []
+        create = self._picker_factory(plan, "save", dialogs)
+        other_bid = BidRef("bid.mdb", "8")
+
+        def create_then_switch_bid(choices, parent=None):
+            dialog = create(choices, parent)
+            handler._ui_state.get_selected_bid_ref = lambda: other_bid
+            return dialog
+
+        with patch.object(
+            action_fixture.handler_module,
+            "SelectNamedViewDialog",
+            create_then_switch_bid,
+        ):
+            handler.on_hotlink_placement_requested([10, 20], "p1")
+        self.assertEqual(len(dialogs), 1)
+        self.assertEqual(writer.insert_calls, [])
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(plan._cursor_mode, CURSOR_MODE_SELECT)
+        self.host_fixture._assert_no_promotion(host)
 
     def test_initialization_exception_leaves_selection_mode_and_no_native_promotion(
         self,

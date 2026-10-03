@@ -130,6 +130,45 @@ class WorkspaceHeaderPersistenceTests(unittest.TestCase):
         tree.deleteLater()
         restored.deleteLater()
 
+    def test_valid_stored_layout_is_restored_where_unusable_ones_reset(self):
+        # Positive control for the reset test below: the same payload with a
+        # usable order restores its width, order and sort from workspace_state.json.
+        self.state_path.write_text(
+            json.dumps(
+                {
+                    "header_layouts": {
+                        "ordinary_table": {
+                            "widths": {"name": 245},
+                            "order": ["quantity", "number", "name"],
+                            "sort_column": "name",
+                            "sort_descending": True,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        model = WorkspaceStateAggregate(JsonWorkspaceStateRepository(self.state_path))
+        tree = self._tree()
+        controller = PersistentHeaderController(
+            tree,
+            "ordinary_table",
+            ("number", "name", "quantity"),
+            model,
+            sorting=True,
+            movable=True,
+            default_sort_column="number",
+        )
+        header = tree.header()
+        self.assertEqual([header.logicalIndex(i) for i in range(3)], [2, 0, 1])
+        self.assertEqual(header.sectionSize(1), 245)
+        self.assertEqual(header.sortIndicatorSection(), 1)
+        self.assertEqual(
+            header.sortIndicatorOrder(), QtCore.Qt.SortOrder.DescendingOrder
+        )
+        del controller
+        tree.deleteLater()
+
     def test_duplicate_or_unusable_order_fully_resets_the_header_layout(self):
         for order in (
             ["name", "name"],
@@ -189,6 +228,7 @@ class WorkspaceHeaderPersistenceTests(unittest.TestCase):
         )
         tab.columns_about_to_change.connect(controller.begin_columns_update)
         tab.columns_changed.connect(controller.end_columns_update)
+        all_keys = tab.column_keys
         name_column = tab.column_keys.index("name")
         area_column = tab.column_keys.index("area")
         notes_column = tab.column_keys.index("notes")
@@ -223,6 +263,11 @@ class WorkspaceHeaderPersistenceTests(unittest.TestCase):
         )
         visible_name_column = tab.column_keys.index("name")
         tab.tree.header().resizeSection(visible_name_column, 280)
+        # A save made while "area" is hidden still keeps it in the stored order.
+        self.assertEqual(
+            self.model.state.header_layouts["condition_summary"].order,
+            ["notes"] + [key for key in all_keys if key != "notes"],
+        )
         tab.load_summary(root, ConditionSummaryGrouping())
         self.assertEqual(tab.tree.header().logicalIndex(0), notes_column)
         self.assertEqual(tab.tree.header().sectionSize(name_column), 280)
@@ -251,8 +296,9 @@ class WorkspaceHeaderPersistenceTests(unittest.TestCase):
                 uid="project-z",
                 name="Zulu",
                 bids=[
-                    Bid(uid="bid-20", name="Twenty", bid_no=20),
-                    Bid(uid="bid-10", name="Ten", bid_no=10),
+                    # Numeric, not lexical, order: "9" sorts before "100".
+                    Bid(uid="bid-100", name="Hundred", bid_no=100),
+                    Bid(uid="bid-9", name="Nine", bid_no=9),
                 ],
             ),
             Project(uid="project-a", name="Alpha", bids=[]),
@@ -298,7 +344,7 @@ class WorkspaceHeaderPersistenceTests(unittest.TestCase):
         )
         self.assertEqual(
             [zulu_item.child(i).text(0) for i in range(2)],
-            ["10", "20"],
+            ["9", "100"],
         )
         view.top_tree.header().moveSection(view.top_tree.header().visualIndex(1), 0)
         self.assertEqual(
@@ -308,7 +354,7 @@ class WorkspaceHeaderPersistenceTests(unittest.TestCase):
         self.assertEqual(
             [project.uid for project in projects], ["project-z", "project-a"]
         )
-        self.assertEqual([bid.uid for bid in projects[0].bids], ["bid-20", "bid-10"])
+        self.assertEqual([bid.uid for bid in projects[0].bids], ["bid-100", "bid-9"])
         del controller
         view.deleteLater()
 
@@ -327,6 +373,8 @@ class WorkspaceHeaderPersistenceTests(unittest.TestCase):
         header.resizeSection(3, 275)
         dialog.table.sortByColumn(4, QtCore.Qt.SortOrder.DescendingOrder)
         self.assertFalse(header.sectionsMovable())
+        # A non-movable table never persists a column order.
+        self.assertEqual(self.model.state.header_layouts["open_databases"].order, [])
         dialog.close()
         dialog.cleanup()
         dialog.deleteLater()

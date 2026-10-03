@@ -74,6 +74,12 @@ class BidLockPermissionTests(unittest.TestCase):
             "status-2",
         )
         self.assertEqual(updates, [])
+        # Positive control: the same command for the editable (active) database
+        # goes through, so the empty result above is a real denial.
+        MainWindow._update_project_tree_bid_job_status(
+            window, project_data.bid_ref, "status-2"
+        )
+        self.assertEqual(updates, [(project_data.bid_ref, "status-2")])
 
     def test_project_tree_delete_rejects_selection_with_inaccessible_bid(self):
         project_data = _permissions__ProjectData()
@@ -111,6 +117,17 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         MainWindow._delete_selected(window)
         self.assertEqual(calls, [])
+        # Positive control: with only the accessible bid selected, delete runs.
+        accessible_state = _permissions__UiState(active_ref)
+        accessible_state.get_selected_bid_refs = lambda: [active_ref]
+        window.ui_state_manager = accessible_state
+        window.ui_access_manager = self._access_manager(
+            project_data,
+            ui_state=accessible_state,
+            capability=_ActiveOnlyCapability(),
+        )
+        MainWindow._delete_selected(window)
+        self.assertEqual(calls, [{"kind": "file_root"}])
 
     def test_project_tree_cut_checks_every_selected_bid_resource(self):
         project_data = _permissions__ProjectData()
@@ -141,6 +158,20 @@ class BidLockPermissionTests(unittest.TestCase):
         window._bid_clipboard = SimpleNamespace(cut=cut_calls.append)
         MainWindow._cut_selected(window)
         self.assertEqual(cut_calls, [])
+        # Positive control: with only the unlocked bid selected, cut proceeds.
+        accessible_state = _permissions__UiState(active_ref)
+        accessible_state.get_selected_bid_refs = lambda: [active_ref]
+        window.ui_state_manager = accessible_state
+        window.ui_access_manager = self._access_manager(
+            project_data,
+            ui_state=accessible_state,
+            capability=_SecondBidLockedCapability(),
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(refresh_toolbar=lambda: None)
+        )
+        MainWindow._cut_selected(window)
+        self.assertEqual(cut_calls, [[active_ref]])
 
     def test_context_paste_checks_captured_destination_database(self):
         project_data = _permissions__ProjectData()
@@ -168,6 +199,19 @@ class BidLockPermissionTests(unittest.TestCase):
             window, "C:/jobs/other.mdb", "project-9"
         )
         self.assertFalse(allowed)
+        # Positive control: the same clipboard shape is allowed for the
+        # editable database, so only the captured destination decides.
+        active_file = project_data.bid_ref.file_path
+        window._bid_clipboard = SimpleNamespace(
+            is_cut=False,
+            bid_refs=[BidRef(active_file, "9")],
+            reconcile=lambda _hierarchy: None,
+            has_content=lambda: True,
+            source_matches_file=lambda path: path == active_file,
+        )
+        self.assertTrue(
+            MainWindow._can_paste_project_bids(window, active_file, "project-9")
+        )
 
     def test_takeoff_shortcuts_do_not_run_when_selection_access_denied(self):
         project_data = _permissions__ProjectData()
@@ -185,6 +229,12 @@ class BidLockPermissionTests(unittest.TestCase):
         MainWindow._select_all(window)
         self.assertEqual(window.plan_view.deleted, 0)
         self.assertEqual(window.plan_view.selected_all, 0)
+        # Positive control: unlocking the bid lets the same shortcuts act.
+        project_data.locked = False
+        MainWindow._delete_selected(window)
+        MainWindow._select_all(window)
+        self.assertEqual(window.plan_view.deleted, 1)
+        self.assertEqual(window.plan_view.selected_all, 1)
 
     def test_project_paste_allows_same_database_with_normalized_paths(self):
         window = MainWindow.__new__(MainWindow)
@@ -211,6 +261,15 @@ class BidLockPermissionTests(unittest.TestCase):
                 window, "C:\\jobs\\test.mdb", "project-2"
             )
         )
+        # Negative control: the same normalized-path paste is refused once the
+        # duplicate permission is gone.
+        window.ui_access_manager.allowed.clear()
+        self.assertFalse(
+            MainWindow._can_paste_project_bids(
+                window, "C:\\jobs\\test.mdb", "project-2"
+            )
+        )
+        self.assertTrue(window._bid_clipboard.has_content())
 
     def test_context_copy_stores_bid_clipboard_with_normalized_same_database_refs(self):
         window = MainWindow.__new__(MainWindow)
@@ -231,6 +290,12 @@ class BidLockPermissionTests(unittest.TestCase):
             [ref.bid_uid for ref in window._bid_clipboard.bid_refs],
             ["bid-1", "bid-2"],
         )
+        self.assertEqual(refresh_calls, [True])
+        # Negative control: without COPY_BID the command leaves the clipboard alone.
+        window.ui_access_manager.allowed.clear()
+        window._bid_clipboard = BidClipboardService()
+        MainWindow._copy_project_bids(window, [BidRef("C:/jobs/test.mdb", "bid-1")])
+        self.assertFalse(window._bid_clipboard.has_content())
         self.assertEqual(refresh_calls, [True])
 
     def test_project_paste_invokes_bid_paste_handler_for_same_database_target(self):

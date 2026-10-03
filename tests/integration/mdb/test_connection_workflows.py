@@ -1,4 +1,7 @@
 import os
+import subprocess
+import sys
+import tempfile
 import threading
 import unittest
 import uuid
@@ -13,6 +16,10 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 from ost_visualizer.application.services.base_write_service import (
     DatabaseMutationWriteService,
 )
+from ost_visualizer.domain.entities.database_descriptor import (
+    DatabaseDescriptor,
+    SqlServerDatabaseLocation,
+)
 from ost_visualizer.domain.entities.file_results import FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.infrastructure.database.descriptor_registry import (
@@ -20,6 +27,8 @@ from ost_visualizer.infrastructure.database.descriptor_registry import (
 )
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from tests.paths import REPO_ROOT
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.persistence.repositories.file_project_repository import (
@@ -446,3 +455,241 @@ class MdbConnectionWorkflowTests(unittest.TestCase):
         self.assert_cursors_released()
         manager.close()
         self.assert_all_resources_released()
+
+
+try:
+    import pythoncom
+    import win32com.client
+except ImportError:  # pragma: no cover - pywin32 ships with the project venv
+    pythoncom = None
+    win32com = None
+
+
+def _create_real_access_database(test_case, directory, statements):
+    """Create a real .mdb through DAO, or skip when Access DAO is unavailable."""
+    if pythoncom is None:
+        test_case.skipTest("pywin32 is unavailable")
+    pythoncom.CoInitialize()
+    test_case.addCleanup(pythoncom.CoUninitialize)
+    try:
+        engine = win32com.client.Dispatch("DAO.DBEngine.120")
+    except pythoncom.com_error as exc:
+        test_case.skipTest(f"Access DAO unavailable: {exc.hresult}")
+    path = os.path.join(directory, "real.mdb")
+    database = engine.CreateDatabase(path, ";LANGID=0x0409;CP=1252;COUNTRY=0", 64)
+    try:
+        for statement in statements:
+            database.Execute(statement)
+    finally:
+        database.Close()
+    return path
+
+
+class RealAccessConnectionWorkflowTests(unittest.TestCase):
+    """Second-pass: the same lifecycle rules against the real Access ODBC driver.
+    ACE keeps process-level client tasks alive even after ODBC connections are
+    closed and fails with 08004/-1036 after roughly sixty connections in one
+    process; the integration suite already sits at that ceiling. The scenarios
+    therefore run in a child process (like
+    SchemaAcceptanceCompatibilityTests.test_zz_duplicate_bid_round_trip...)
+    and are driven by the single collected test below. Scenario methods are
+    deliberately not named ``test_*`` so discovery never runs them in-process.
+    """
+
+    SCENARIOS = (
+        "scenario_rollback_discards_pending_rows_and_keeps_the_writer_handle",
+        "scenario_statement_errors_roll_back_the_mutation_and_keep_handles",
+        "scenario_database_close_releases_read_and_write_handles",
+        "scenario_routed_uid_allocation_is_reference_safe_but_sql_is_deferred",
+    )
+    _STATEMENTS = (
+        "CREATE TABLE Items (UID LONG CONSTRAINT ItemsPK PRIMARY KEY, Name TEXT(50))",
+        "CREATE TABLE BidPages (UID LONG, MasterPageUID LONG)",
+        "INSERT INTO BidPages VALUES (7, 12)",
+    )
+
+    def _database(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return _create_real_access_database(self, directory.name, self._STATEMENTS)
+
+    @staticmethod
+    def _item_names(manager, path):
+        with manager.connection(path) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT Name FROM Items ORDER BY UID")
+                return [row[0] for row in cursor.fetchall()]
+
+    def scenario_rollback_discards_pending_rows_and_keeps_the_writer_handle(
+        self,
+    ):
+        path = self._database()
+        manager = MdbConnectionManager()
+        self.addCleanup(manager.close)
+        writer = MdbWriter(conn_manager=manager)
+        key = os.path.normcase(os.path.abspath(path))
+        with writer._connection(path) as connection:
+            connection.cursor().execute("INSERT INTO Items VALUES (1, 'kept')")
+        write_handle = manager._write_conns[key]
+        with self.assertRaisesRegex(ValueError, "validation failed"):
+            with writer._connection(path) as connection:
+                connection.cursor().execute("INSERT INTO Items VALUES (2, 'pending')")
+                raise ValueError("validation failed")
+        # Successful rollback + passing health probe: the handle is reused.
+        self.assertIs(manager._write_conns[key], write_handle)
+        self.assertEqual(self._item_names(manager, path), ["kept"])
+        with writer._connection(path) as connection:
+            connection.cursor().execute("INSERT INTO Items VALUES (3, 'next')")
+        self.assertIs(manager._write_conns[key], write_handle)
+        self.assertEqual(self._item_names(manager, path), ["kept", "next"])
+
+    def scenario_statement_errors_roll_back_the_mutation_and_keep_handles(self):
+        path = self._database()
+        manager = MdbConnectionManager()
+        self.addCleanup(manager.close)
+        writer = MdbWriter(conn_manager=manager)
+        key = os.path.normcase(os.path.abspath(path))
+        self.assertEqual(self._item_names(manager, path), [])
+        read_handle = manager._read_conns[key]
+        with writer._connection(path) as connection:
+            connection.cursor().execute("INSERT INTO Items VALUES (1, 'kept')")
+        write_handle = manager._write_conns[key]
+        # Constraint violation (SQLSTATE 23000) on the second statement dooms
+        # the whole Access mutation, including the first statement.
+        with self.assertRaises(pyodbc.IntegrityError) as constraint:
+            with writer._connection(path) as connection:
+                cursor = connection.cursor()
+                cursor.execute("INSERT INTO Items VALUES (2, 'doomed')")
+                cursor.execute("INSERT INTO Items VALUES (1, 'duplicate')")
+        self.assertEqual(constraint.exception.args[0], "23000")
+        self.assertIs(manager._write_conns[key], write_handle)
+        # Schema error (SQLSTATE 42S02) on a read lease is a statement error.
+        with self.assertRaises(pyodbc.ProgrammingError) as missing:
+            with manager.connection(path) as connection:
+                connection.cursor().execute("SELECT * FROM MissingTable")
+        self.assertEqual(missing.exception.args[0], "42S02")
+        self.assertEqual(self._item_names(manager, path), ["kept"])
+        self.assertIs(manager._read_conns[key], read_handle)
+        with writer._connection(path) as connection:
+            connection.cursor().execute("INSERT INTO Items VALUES (4, 'after')")
+        self.assertIs(manager._write_conns[key], write_handle)
+        self.assertEqual(self._item_names(manager, path), ["kept", "after"])
+        self.assertIs(manager._read_conns[key], read_handle)
+
+    def scenario_database_close_releases_read_and_write_handles(self):
+        path = self._database()
+        manager = MdbConnectionManager()
+        self.addCleanup(manager.close)
+        writer = MdbWriter(conn_manager=manager)
+        key = os.path.normcase(os.path.abspath(path))
+        self.assertEqual(self._item_names(manager, path), [])
+        with writer._connection(path) as connection:
+            connection.cursor().execute("INSERT INTO Items VALUES (1, 'kept')")
+        self.assertEqual([*manager._read_conns, *manager._write_conns], [key, key])
+        old_handles = (manager._read_conns[key], manager._write_conns[key])
+        manager.close_database(path.upper())
+        self.assertEqual((manager._read_conns, manager._write_conns), ({}, {}))
+        for handle in old_handles:
+            with self.assertRaises(pyodbc.ProgrammingError):
+                handle.cursor()
+        self.assertEqual(self._item_names(manager, path), ["kept"])
+        self.assertIsNot(manager._read_conns[key], old_handles[0])
+
+    def scenario_routed_uid_allocation_is_reference_safe_but_sql_is_deferred(
+        self,
+    ):
+        path = self._database()
+        manager = MdbConnectionManager()
+        self.addCleanup(manager.close)
+        sql_registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        sql_registry.register(descriptor)
+        writer = DatabaseProjectWriter(manager, sql_registry, object(), object())
+        with manager.connection(path) as connection:
+            statements = []
+
+            class _RecordingCursor:
+                def __init__(self, cursor):
+                    self._cursor = cursor
+
+                def execute(self, sql, *params):
+                    statements.append(sql)
+                    self._cursor.execute(sql, *params)
+                    return self
+
+                def fetchone(self):
+                    return self._cursor.fetchone()
+
+            with connection.cursor() as raw_cursor:
+                cursor = _RecordingCursor(raw_cursor)
+                schema = None
+                with writer._backend_scope(path):
+                    schema = writer._schema(connection)
+                    # BidPages.MasterPageUID already names UID 12 although the
+                    # largest stored UID is 7: the Access range starts at 13.
+                    self.assertEqual(writer._next_uid(cursor, "BidPages"), 8)
+                    self.assertEqual(
+                        writer._next_uid_preserving_references(
+                            cursor, schema, "BidPages"
+                        ),
+                        13,
+                    )
+                    self.assertEqual(
+                        list(
+                            writer._next_uids_preserving_references(
+                                cursor, schema, "BidPages", 3
+                            )
+                        ),
+                        [13, 14, 15],
+                    )
+                access_statements = list(statements)
+                del statements[:]
+                with writer._backend_scope(descriptor.database_id):
+                    deferred = writer._next_uids_preserving_references(
+                        cursor, schema, "BidPages", 3
+                    )
+                    single = writer._next_uid_preserving_references(
+                        cursor, schema, "BidPages"
+                    )
+                    plain = writer._next_uid(cursor, "BidPages")
+        # Three allocator calls: the batch of three UIDs costs one scan.
+        self.assertEqual(
+            access_statements.count("SELECT MAX([UID]) FROM [BidPages]"), 3
+        )
+        self.assertEqual(
+            access_statements.count("SELECT MAX([MasterPageUID]) FROM [BidPages]"), 2
+        )
+        # SQL Server identities are database generated: no MAX scan at all.
+        self.assertEqual(statements, [])
+        self.assertEqual(len(deferred), 3)
+        for identity in (*deferred, single, plain):
+            with self.assertRaisesRegex(RuntimeError, "has not been generated"):
+                str(identity)
+
+    def test_real_access_scenarios_run_in_an_isolated_process(self):
+        code = (
+            "import sys, unittest; "
+            "from tests.integration.mdb.test_connection_workflows import "
+            "RealAccessConnectionWorkflowTests as Scenarios; "
+            "suite = unittest.TestSuite(map(Scenarios, Scenarios.SCENARIOS)); "
+            "result = unittest.TextTestRunner(verbosity=2).run(suite); "
+            "sys.exit(0 if result.wasSuccessful() else 1)"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        for name in self.SCENARIOS:
+            self.assertRegex(output, rf"{name} .*\.\.\. (ok|skipped)")
+        if "skipped" in output:
+            self.skipTest(
+                "Access DAO unavailable in the child process: " + output[-300:]
+            )

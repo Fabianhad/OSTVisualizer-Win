@@ -33,6 +33,13 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
         _toolbar_visibility_support_register_test_fonts()
 
     def setUp(self):
+        # Exceptions raised inside Qt slots are reported through sys.excepthook and
+        # would otherwise be swallowed; fail the test if any occur.
+        errors = []
+        hook = patch("sys.excepthook", side_effect=lambda *error: errors.append(error))
+        hook.start()
+        self.addCleanup(hook.stop)
+        self.addCleanup(lambda: self.assertEqual(errors, []))
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name) / "config.json"
@@ -40,6 +47,12 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
         self.model = ConfigAggregate(self.repository)
         self.bus = EventBus()
         self.service = ConfigService(self.model, self.bus)
+
+    def stored(self):
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
+    def reloaded(self):
+        return ConfigAggregate(JsonConfigRepository(self.path)).snapshot()
 
     def dialog(self):
         dialog = OptionsDialog(
@@ -101,6 +114,9 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
             self.model.snapshot().hidden_takeoff_toolbar_items,
             ("line_annotation_tool",),
         )
+        self.assertEqual(
+            self.stored()["hidden_takeoff_toolbar_items"], ["line_annotation_tool"]
+        )
         tab.checks["arrow_annotation_tool"].setChecked(False)
         dialog.reject()
         self.assertEqual(len(changes), 1)
@@ -116,6 +132,8 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
         restored.accept()
         self.assertEqual(self.model.snapshot().hidden_takeoff_toolbar_items, ())
         self.assertEqual(len(changes), 2)
+        self.assertEqual(self.stored()["hidden_takeoff_toolbar_items"], [])
+        self.assertEqual(self.reloaded().hidden_takeoff_toolbar_items, ())
 
     def test_scoped_restore_clears_unknown_entries_without_resetting_other_preferences(
         self,
@@ -131,24 +149,28 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
         dialog.accept()
         self.assertFalse(self.model.snapshot().show_toolbar_text)
         self.assertEqual(self.model.snapshot().hidden_takeoff_toolbar_items, ())
+        stored = self.stored()
+        self.assertIs(stored["show_toolbar_text"], False)
+        self.assertEqual(stored["hidden_takeoff_toolbar_items"], [])
+        self.assertFalse(self.reloaded().show_toolbar_text)
 
     def test_reset_all_uses_existing_reset_lifecycle(self):
         self.service.update_app_options(
             {"hidden_takeoff_toolbar_items": ["line_annotation_tool"]}
         )
         dialog = self.dialog()
+        checks = dialog._takeoff_toolbar_tab.checks
+        self.assertIn("line_annotation_tool", checks)
+        self.assertFalse(checks["line_annotation_tool"].isChecked())
         with patch(
             "ost_visualizer.presentation.dialogs.options.dialog.confirm",
             return_value=True,
         ):
             dialog._reset_all_button.click()
         self.assertEqual(self.model.snapshot().hidden_takeoff_toolbar_items, ())
-        self.assertTrue(
-            all(
-                check.isChecked()
-                for check in dialog._takeoff_toolbar_tab.checks.values()
-            )
-        )
+        self.assertTrue(checks["line_annotation_tool"].isChecked())
+        self.assertTrue(all(check.isChecked() for check in checks.values()))
+        self.assertEqual(self.stored()["hidden_takeoff_toolbar_items"], [])
 
     def test_failed_apply_preserves_saved_state_and_retry_persists_and_publishes(self):
         original = self.model.snapshot()

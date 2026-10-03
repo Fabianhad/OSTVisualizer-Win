@@ -11,6 +11,7 @@ from ost_visualizer.application.dtos.annotation_caption_dto import (
 from ost_visualizer.application.dtos.page_export_data_dto import (
     PageExportData as PageExportDto,
 )
+from ost_visualizer.application.dtos.export_dto import ExportErrorCode
 from ost_visualizer.application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     RASTER_NATIVE_RENDER_SCALE,
@@ -33,6 +34,7 @@ from tests.presentation.visualization.exporters.overlay_export_support import (
     _ExplodingPainter as _overlay_export_support__ExplodingPainter,
     _FailingClearable as _overlay_export_support__FailingClearable,
     _FakeWriter as _overlay_export_support__FakeWriter,
+    _geometry as _overlay_export_support__geometry,
     _ImageCache as _overlay_export_support__ImageCache,
     _RecordingImageCache as _overlay_export_support__RecordingImageCache,
     _TakeoffService as _overlay_export_support__TakeoffService,
@@ -43,7 +45,19 @@ from tests.presentation.visualization.exporters.overlay_export_support import (
     _read_pdf_text as _overlay_export_support__read_pdf_text,
 )
 import math
-from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_INK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
@@ -122,6 +136,7 @@ class PDFOverlayExportTests(unittest.TestCase):
             )
         self.assertFalse(result.success)
         self.assertIn("Native PDF page geometry is unavailable", result.error_message)
+        self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
         self.assertEqual(writer.merge_calls, 0)
 
     def test_main_only_export_uses_main_pdf_source(self):
@@ -135,6 +150,15 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(exported_page.source_pdf, "main.pdf")
         self.assertEqual(exported_page.page_index, 2)
         self.assertFalse(exported_page.is_blank)
+        self.assertEqual(
+            (exported_page.page_width, exported_page.page_height), (612.0, 792.0)
+        )
+        self.assertEqual(
+            (exported_page.source_width, exported_page.source_height), (612.0, 792.0)
+        )
+        self.assertEqual(exported_page.rotation, 0)
+        self.assertFalse(exported_page.flip_x)
+        self.assertFalse(exported_page.flip_y)
 
     def test_overlay_only_pdf_export_uses_overlay_source_directly(self):
         writer = _overlay_export_support__FakeWriter()
@@ -263,6 +287,62 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(
             (image.width(), image.height()), (expected_size, expected_size)
         )
+        # The overlay rectangle spans -36..36 pt on a 72 pt page, so it covers
+        # exactly the top-left quadrant of the canvas; the rest stays white paper.
+        half = expected_size // 2
+        blue = QColor(80, 80, 255).name()
+        white = QColor(255, 255, 255).name()
+        for x, y in ((10, 10), (half - 10, half - 10), (10, half - 10)):
+            self.assertEqual(image.pixelColor(x, y).name(), blue, (x, y))
+        for x, y in (
+            (half + 10, half + 10),
+            (expected_size - 10, 10),
+            (10, expected_size - 10),
+            (expected_size - 10, expected_size - 10),
+        ):
+            self.assertEqual(image.pixelColor(x, y).name(), white, (x, y))
+
+    def test_positioned_overlay_without_calibration_or_image_is_not_rendered(self):
+        exporter = _overlay_export_support__make_exporter(
+            _overlay_export_support__FakeWriter()
+        )
+        overlay = QImage(10, 10, QImage.Format.Format_ARGB32)
+        overlay.fill(QColor(80, 80, 255).rgba())
+        cache = _overlay_export_support__RecordingImageCache(overlay)
+        exporter._export_page_cache = cache
+        page_info = {"width": 72.0, "height": 72.0}
+        self.assertIsNone(
+            exporter._render_positioned_overlay_background(
+                _overlay_export_support__page(
+                    overlay_image_path="", overlay_rect=(0.0, 0.0, 64.0, 64.0)
+                ),
+                page_info,
+            )
+        )
+        self.assertIsNone(
+            exporter._render_positioned_overlay_background(
+                _overlay_export_support__page(
+                    overlay_image_path="overlay.pdf",
+                    scale_factor1=0.0,
+                    overlay_rect=(0.0, 0.0, 64.0, 64.0),
+                ),
+                page_info,
+            )
+        )
+        self.assertEqual(cache.requests, [])
+        cache.image = None
+        self.assertIsNone(
+            exporter._render_positioned_overlay_background(
+                _overlay_export_support__page(
+                    overlay_image_path="overlay.pdf",
+                    width_pts=72.0,
+                    height_pts=72.0,
+                    overlay_rect=(0.0, 0.0, 64.0, 64.0),
+                ),
+                page_info,
+            )
+        )
+        self.assertEqual(len(cache.requests), 1)
 
     def test_positioned_raster_overlay_loads_native_pixels(self):
         exporter = _overlay_export_support__make_exporter(
@@ -283,7 +363,9 @@ class PDFOverlayExportTests(unittest.TestCase):
             {"width": 72.0, "height": 72.0},
         )
         self.assertIsNotNone(image)
-        self.assertEqual(cache.requests[0][2], RASTER_NATIVE_RENDER_SCALE)
+        self.assertEqual(
+            cache.requests, [("overlay.tif", 0, RASTER_NATIVE_RENDER_SCALE, 0)]
+        )
         expected_size = round(72 * INTERACTIVE_PDF_RENDER_SCALE)
         self.assertEqual(
             (image.width(), image.height()), (expected_size, expected_size)
@@ -297,8 +379,11 @@ class PDFOverlayExportTests(unittest.TestCase):
         cache = _overlay_export_support__RecordingImageCache(source)
         exporter._export_page_cache = cache
         written_images = []
+        forwarded = []
         exporter._write_raster_background_pdf = (
-            lambda image, *_args: written_images.append(image) or "image.pdf"
+            lambda image, *args: written_images.append(image)
+            or forwarded.append(args)
+            or "image.pdf"
         )
         result = exporter._create_image_source_background_pdf(
             "main.tif",
@@ -308,8 +393,14 @@ class PDFOverlayExportTests(unittest.TestCase):
             "image",
         )
         self.assertEqual(result, "image.pdf")
-        self.assertEqual(cache.requests[0][2], RASTER_NATIVE_RENDER_SCALE)
-        self.assertEqual(written_images, [source])
+        self.assertEqual(
+            cache.requests, [("main.tif", 0, RASTER_NATIVE_RENDER_SCALE, 0)]
+        )
+        self.assertEqual(len(written_images), 1)
+        self.assertIs(written_images[0], source)
+        self.assertEqual(
+            forwarded, [({"width": 72.0, "height": 72.0}, "unused", "image")]
+        )
         self.assertEqual(
             (written_images[0].width(), written_images[0].height()), (10, 7)
         )
@@ -357,6 +448,30 @@ class PDFOverlayExportTests(unittest.TestCase):
                     "composite.pdf",
                 )
                 self.assertEqual(calls[-1]["render_scale"], expected)
+                self.assertIsNone(calls[-1]["bid_ref"])
+                self.assertEqual(calls[-1]["raster_rotation"], 0)
+
+    def test_composite_export_renders_an_unrotated_unflipped_page(self):
+        exporter = _overlay_export_support__make_exporter(
+            _overlay_export_support__FakeWriter()
+        )
+        captured_pages = []
+        exporter._export_composite_renderer = SimpleNamespace(
+            render_composite=lambda page, **_kwargs: captured_pages.append(page)
+            or QImage(10, 10, QImage.Format.Format_ARGB32)
+        )
+        exporter._write_raster_background_pdf = lambda *_args: "composite.pdf"
+        page = _overlay_export_support__page(rotation=90, flip_x=True, flip_y=True)
+        exporter._create_composite_background_pdf(
+            page, {"width": 612.0, "height": 792.0}, "unused"
+        )
+        self.assertEqual(len(captured_pages), 1)
+        rendered = captured_pages[0]
+        self.assertEqual(
+            (rendered.rotation, rendered.flip_x, rendered.flip_y), (0, False, False)
+        )
+        # User rotation and flips are applied once, by the native writer.
+        self.assertEqual((page.rotation, page.flip_x, page.flip_y), (90, True, True))
 
     def test_composite_export_uses_native_page_geometry_not_stored_dimensions(self):
         exporter = _overlay_export_support__make_exporter(
@@ -473,7 +588,9 @@ class PDFOverlayExportTests(unittest.TestCase):
         writer = _overlay_export_support__FakeWriter()
         exporter = _overlay_export_support__make_exporter(writer)
         exporter._create_composite_background_pdf = (
-            lambda _page, _page_info, _temp_dir: None
+            lambda _page, _page_info, _temp_dir: self.fail(
+                "a missing main source should not trigger comparison rendering"
+            )
         )
         result = _overlay_export_support__export_single_page(
             exporter,
@@ -517,8 +634,10 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertTrue(result.success)
         exported_page = writer.pages[0]
         self.assertTrue(exported_page.is_blank)
+        self.assertEqual(exported_page.source_pdf, "")
         self.assertEqual(exported_page.page_width, 612.0)
         self.assertEqual(exported_page.page_height, 792.0)
+        self.assertEqual(writer.merge_calls, 1)
 
     def test_annotations_are_exported_over_composite_background(self):
         writer = _overlay_export_support__FakeWriter()
@@ -568,6 +687,7 @@ class PDFOverlayExportTests(unittest.TestCase):
         )
         rendered_image = QImage(10, 10, QImage.Format.Format_ARGB32)
         rendered_image.fill(QColor(255, 0, 0))
+        _overlay_export_support__ExplodingPainter.last_instance = None
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch(
                 "ost_visualizer.presentation.visualization.exporters.pdf_exporter.QPainter",
@@ -607,8 +727,44 @@ class PDFOverlayExportTests(unittest.TestCase):
         exporter = _overlay_export_support__make_exporter(writer)
         progress_calls = []
         with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = os.path.join(temp_dir, "out.pdf")
             result = exporter.export(
                 [PageExportDto(page=_overlay_export_support__page())],
+                output_path,
+                display_mode="color",
+                grayscale_enabled=False,
+                caption_settings=_overlay_export_support__DISABLED_CAPTION_SETTINGS,
+                elevation_callouts_enabled=False,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                on_progress=lambda current, total, name: progress_calls.append(
+                    (current, total, name)
+                ),
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(result.page_count, 1)
+        self.assertEqual(result.format_name, "PDF")
+        self.assertEqual(writer.merge_calls, 1)
+        self.assertEqual(writer.output_paths, [output_path])
+        self.assertEqual(progress_calls, [(1, 1, "Page 1")])
+
+    def test_multi_page_export_keeps_page_order_and_reports_progress(self):
+        writer = _overlay_export_support__FakeWriter()
+        exporter = _overlay_export_support__make_exporter(writer)
+        progress_calls = []
+        pages = [
+            _overlay_export_support__page(
+                uid="a", name="First", image_path="a.pdf", page_index=0
+            ),
+            _overlay_export_support__page(
+                uid="b", name="", image_path="b.pdf", page_index=1
+            ),
+            _overlay_export_support__page(
+                uid="c", name="Third", image_path="c.pdf", page_index=2
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = exporter.export(
+                [PageExportDto(page=page) for page in pages],
                 os.path.join(temp_dir, "out.pdf"),
                 display_mode="color",
                 grayscale_enabled=False,
@@ -620,8 +776,176 @@ class PDFOverlayExportTests(unittest.TestCase):
                 ),
             )
         self.assertTrue(result.success)
+        self.assertEqual(result.page_count, 3)
         self.assertEqual(writer.merge_calls, 1)
-        self.assertEqual(progress_calls, [(1, 1, "Page 1")])
+        self.assertEqual(
+            [(page.source_pdf, page.page_index) for page in writer.pages],
+            [("a.pdf", 0), ("b.pdf", 1), ("c.pdf", 2)],
+        )
+        self.assertEqual(
+            progress_calls,
+            [(1, 3, "First"), (2, 3, "Page 2"), (3, 3, "Third")],
+        )
+
+    def test_export_without_pages_reports_no_data_and_does_not_write(self):
+        writer = _overlay_export_support__FakeWriter()
+        exporter = _overlay_export_support__make_exporter(writer)
+        page_cache = _overlay_export_support__Clearable()
+        exporter._export_page_cache = page_cache
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertLogs(
+                "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
+                level="ERROR",
+            ):
+                result = exporter.export(
+                    [],
+                    os.path.join(temp_dir, "out.pdf"),
+                    display_mode="color",
+                    grayscale_enabled=False,
+                    caption_settings=_overlay_export_support__DISABLED_CAPTION_SETTINGS,
+                    elevation_callouts_enabled=False,
+                    inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                )
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, ExportErrorCode.NO_DATA)
+        self.assertEqual(result.error_message, "No valid pages to export.")
+        self.assertEqual(writer.merge_calls, 0)
+        self.assertEqual(page_cache.clear_calls, 1)
+
+    def test_native_merge_failure_is_reported_with_the_writer_error(self):
+        for last_error, expected in (
+            ("disk full", "disk full"),
+            ("", "Failed to write PDF."),
+        ):
+            with self.subTest(last_error=last_error):
+                writer = _overlay_export_support__FakeWriter()
+                writer.merge_result = False
+                writer.last_error = last_error
+                exporter = _overlay_export_support__make_exporter(writer)
+                page_cache = _overlay_export_support__Clearable()
+                exporter._export_page_cache = page_cache
+                with self.assertLogs(
+                    "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
+                    level="ERROR",
+                ):
+                    result = _overlay_export_support__export_single_page(
+                        exporter, _overlay_export_support__page()
+                    )
+                self.assertFalse(result.success)
+                self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
+                self.assertEqual(result.error_message, expected)
+                self.assertEqual(writer.merge_calls, 1)
+                self.assertEqual(page_cache.clear_calls, 1)
+
+    def test_unexpected_exception_is_reported_and_resources_are_still_cleared(self):
+        writer = _overlay_export_support__FakeWriter()
+
+        def exploding_merge(_pages, _output_path):
+            raise OSError("writer exploded")
+
+        writer.merge_pages_with_annotations = exploding_merge
+        exporter = _overlay_export_support__make_exporter(writer)
+        page_cache = _overlay_export_support__Clearable()
+        composite_renderer = _overlay_export_support__Clearable()
+        exporter._export_page_cache = page_cache
+        exporter._export_composite_renderer = composite_renderer
+        with self.assertLogs(
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
+            level="ERROR",
+        ):
+            result = _overlay_export_support__export_single_page(
+                exporter, _overlay_export_support__page()
+            )
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
+        self.assertEqual(result.error_message, "writer exploded")
+        self.assertEqual(page_cache.clear_calls, 1)
+        self.assertEqual(composite_renderer.clear_calls, 1)
+
+    def test_export_geometry_follows_native_unit_rotation_and_user_rotation(self):
+        # Visible box is 300 x 400 native units at UserUnit 2: 600 x 800 pt.
+        box = (10.0, 20.0, 310.0, 420.0)
+        cases = (
+            # native rotation, user rotation, (source w, h), (export w, h), stored rotation
+            (0, 0, (600.0, 800.0), (600.0, 800.0), 0),
+            (90, 0, (800.0, 600.0), (800.0, 600.0), 0),
+            (270, 0, (800.0, 600.0), (800.0, 600.0), 0),
+            (0, 90, (600.0, 800.0), (800.0, 600.0), 90),
+            (90, 90, (800.0, 600.0), (600.0, 800.0), 90),
+            (0, 180, (600.0, 800.0), (600.0, 800.0), 180),
+            (0, -90, (600.0, 800.0), (800.0, 600.0), 270),
+            (0, 450, (600.0, 800.0), (800.0, 600.0), 90),
+        )
+        for native, user, source, export, stored in cases:
+            with self.subTest(native_rotation=native, user_rotation=user):
+                writer = _overlay_export_support__FakeWriter()
+                geometry = _overlay_export_support__geometry(box, 2.0, native)
+                writer.get_page_geometries = lambda _path, g=geometry: [g, g, g]
+                exporter = _overlay_export_support__make_exporter(writer)
+                result = _overlay_export_support__export_single_page(
+                    exporter,
+                    _overlay_export_support__page(
+                        rotation=user, flip_x=user == 0 and native == 0
+                    ),
+                )
+                self.assertTrue(result.success, result.error_message)
+                exported = writer.pages[0]
+                self.assertEqual(
+                    (exported.source_width, exported.source_height), source
+                )
+                self.assertEqual((exported.page_width, exported.page_height), export)
+                self.assertEqual(exported.rotation, stored)
+                self.assertEqual(exported.flip_x, user == 0 and native == 0)
+                self.assertFalse(exported.flip_y)
+
+    def test_blank_page_export_rotates_stored_dimensions_once(self):
+        writer = _overlay_export_support__FakeWriter()
+        exporter = _overlay_export_support__make_exporter(writer)
+        result = _overlay_export_support__export_single_page(
+            exporter,
+            _overlay_export_support__page(
+                image_path="",
+                image_show_mode=SHOW_ORIGINAL,
+                rotation=90,
+                flip_y=True,
+            ),
+        )
+        self.assertTrue(result.success)
+        exported = writer.pages[0]
+        self.assertTrue(exported.is_blank)
+        self.assertEqual(
+            (exported.source_width, exported.source_height), (612.0, 792.0)
+        )
+        self.assertEqual((exported.page_width, exported.page_height), (792.0, 612.0))
+        self.assertEqual(exported.rotation, 90)
+        self.assertTrue(exported.flip_y)
+
+    def test_invalid_native_page_geometry_fails_the_export_without_writing(self):
+        cases = {
+            "page index beyond the native pages": (
+                [_overlay_export_support__geometry()],
+                "Native PDF page geometry is unavailable for page 2",
+            ),
+            "empty visible box": (
+                [_overlay_export_support__geometry((5.0, 5.0, 5.0, 100.0))] * 3,
+                "Native PDF page geometry is invalid for page 2",
+            ),
+        }
+        for name, (geometries, message) in cases.items():
+            with self.subTest(case=name):
+                writer = _overlay_export_support__FakeWriter()
+                writer.get_page_geometries = lambda _path, g=geometries: list(g)
+                exporter = _overlay_export_support__make_exporter(writer)
+                with self.assertLogs(
+                    "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
+                    level="ERROR",
+                ):
+                    result = _overlay_export_support__export_single_page(
+                        exporter, _overlay_export_support__page()
+                    )
+                self.assertFalse(result.success)
+                self.assertEqual(result.error_message, message)
+                self.assertEqual(writer.merge_calls, 0)
 
     def test_export_clears_background_render_resources_after_run(self):
         writer = _overlay_export_support__FakeWriter()
@@ -841,6 +1165,38 @@ class PdfOvalCollectionTests(unittest.TestCase):
                     ),
                 )
 
+    def test_axis_aligned_oval_vectors_mirror_with_flips_and_half_turn(self):
+        # Circle of radius 30 centred at OST (40, 50) on a 500 x 400 page.
+        position = [10.0, 20.0, 70.0, 80.0]
+        cases = (
+            ("identity", {}, (40.0, 350.0), (30.0, 0.0), (0.0, -30.0)),
+            ("flip_x", {"flip_x": True}, (460.0, 350.0), (-30.0, 0.0), (0.0, -30.0)),
+            ("flip_y", {"flip_y": True}, (40.0, 50.0), (30.0, 0.0), (0.0, 30.0)),
+            ("half turn", {"rotation": 180}, (460.0, 50.0), (-30.0, 0.0), (0.0, 30.0)),
+        )
+        for name, overrides, center, x_axis, y_axis in cases:
+            with self.subTest(case=name):
+                oval = self._collect(position, _oval_support__page_info(**overrides))
+                self.assertOvalGeometry(
+                    oval, center=center, x_axis=x_axis, y_axis=y_axis
+                )
+
+    def test_oval_collection_ignores_other_pages_hidden_and_other_annotation_types(
+        self,
+    ):
+        position = [10.0, 20.0, 70.0, 80.0]
+        valid = self._annotation(position)
+        other_page = self._annotation(position)
+        other_page.page_uid = "elsewhere"
+        hidden = self._annotation(position)
+        hidden.visible = False
+        rectangle = self._annotation(position, annotation_type="rect")
+        result = self.exporter._collect_ovals(
+            "page", [other_page, hidden, rectangle, valid], _oval_support__page_info()
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].color, [0x12, 0x34, 0x56])
+
     def test_rectangle_and_line_collection_remain_unchanged(self):
         rectangle = self._annotation([10.0, 20.0, 130.0, 60.0], annotation_type="rect")
         line = self._annotation([10.0, 20.0, 130.0, 60.0], annotation_type="line")
@@ -858,6 +1214,50 @@ class PdfOvalCollectionTests(unittest.TestCase):
             [lines[0].x1, lines[0].y1, lines[0].x2, lines[0].y2],
             [10.0, 380.0, 130.0, 340.0],
         )
+        self.assertEqual(rects[0].color, [0x12, 0x34, 0x56])
+        self.assertEqual((rects[0].width, lines[0].width), (2.0, 2.0))
+
+    def test_rotated_rectangle_uses_the_extent_of_all_eight_coordinates(self):
+        rectangle = self._annotation(
+            [10.0, 20.0, 130.0, 20.0, 130.0, 60.0, 10.0, 60.0], annotation_type="rect"
+        )
+        short = self._annotation([10.0, 20.0, 130.0], annotation_type="rect")
+        line = self._annotation([10.0, 20.0, 130.0, 60.0], annotation_type="line")
+        rects = self.exporter._collect_rects(
+            "page", [short, line, rectangle], _oval_support__page_info()
+        )
+        self.assertEqual(len(rects), 1)
+        self.assertEqual(
+            [rects[0].min_x, rects[0].min_y, rects[0].max_x, rects[0].max_y],
+            [10.0, 340.0, 130.0, 380.0],
+        )
+
+    def test_arrow_and_polygon_collection_convert_to_native_page_coordinates(self):
+        arrow = self._annotation([10.0, 20.0, 130.0, 60.0], annotation_type="arrow")
+        arrow.width = 3.0
+        arrows = self.exporter._collect_arrows(
+            "page", [arrow], _oval_support__page_info()
+        )
+        self.assertEqual(len(arrows), 1)
+        self.assertEqual(
+            [arrows[0].x1, arrows[0].y1, arrows[0].x2, arrows[0].y2],
+            [10.0, 380.0, 130.0, 340.0],
+        )
+        self.assertEqual((arrows[0].color, arrows[0].width), ([0x12, 0x34, 0x56], 3.0))
+        triangle = [0.0, 0.0, 100.0, 0.0, 100.0, 50.0]
+        polygon = self._annotation(triangle, annotation_type="polygon")
+        cloud = self._annotation(triangle, annotation_type="cloud")
+        too_short = self._annotation(triangle[:4], annotation_type="polygon")
+        polygons = self.exporter._collect_polygons(
+            "page", [polygon, cloud, too_short], _oval_support__page_info()
+        )
+        self.assertEqual(len(polygons), 2)
+        for exported in polygons:
+            self.assertEqual(
+                [tuple(vertex) for vertex in exported.vertices],
+                [(0.0, 400.0), (100.0, 400.0), (100.0, 350.0)],
+            )
+        self.assertEqual([item.is_cloud for item in polygons], [False, True])
 
 
 class PdfExportPhysicalGeometryTests(unittest.TestCase):
@@ -893,9 +1293,13 @@ class PdfExportPhysicalGeometryTests(unittest.TestCase):
                     annotation_type="ink",
                     page_uid="page",
                     position=list(position),
+                    color="#112233",
+                    width=3.0,
                 )
                 exported = exporter._collect_inks("page", [ink], page_info)
                 self.assertEqual(len(exported), 1)
+                self.assertEqual(exported[0].color, [0x11, 0x22, 0x33])
+                self.assertEqual(exported[0].width, 3.0)
                 self.assertEqual(
                     [tuple(point) for point in exported[0].strokes[0]],
                     [(10.0, 280.0), (40.0, 250.0)],
@@ -964,7 +1368,9 @@ class PdfExportPhysicalGeometryTests(unittest.TestCase):
                 condition = Condition(
                     uid="condition", condition_type=family, width=5, depth=5
                 )
-                polygons, _callouts = self._exporter()._collect_takeoffs(
+                exporter = self._exporter()
+                exporter._takeoff_service = TakeoffDomainService()
+                polygons, _callouts = exporter._collect_takeoffs(
                     [takeoff],
                     {condition.uid: condition},
                     {
@@ -1009,7 +1415,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
 
     def test_disabled_pdf_callouts_add_no_text_and_skip_resolution(self):
         with mock.patch.object(
-            self.exporter, "_build_elevation_callout_text"
+            self.exporter, "_build_elevation_callout_text", autospec=True
         ) as callout_adapter:
             polygons, callouts = self.exporter._collect_takeoffs(
                 [self.takeoff],
@@ -1160,6 +1566,55 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             [dimensions[0].x2, dimensions[0].y2],
         ]
         self.assertEqual(actual_coords, expected_coords)
+        self.assertEqual(dimensions[0].color, [255, 0, 0])
+        self.assertEqual(dimensions[0].font_size, 10.0)
+        self.assertEqual(
+            (dimensions[0].scale_factor1, dimensions[0].scale_factor2), (1.0, 72.0)
+        )
+
+    def test_pdf_export_skips_zero_length_dimensions(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._color_service = _dimension_support__ColorService()
+        degenerate = BidAnnotation(
+            uid="d0",
+            annotation_type="dimension",
+            page_uid="p1",
+            position=[5.0, 5.0, 5.0, 5.0],
+            color="#ff0000",
+        )
+        valid = BidAnnotation(
+            uid="d1",
+            annotation_type="dimension",
+            page_uid="p1",
+            position=[0.0, 0.0, 255.0, 0.0],
+            color="#ff0000",
+        )
+        dimensions = exporter._collect_dimensions(
+            "p1", [degenerate, valid], _dimension_support__page_info()
+        )
+        self.assertEqual([dimension.content for dimension in dimensions], ["21' - 3\""])
+
+    def test_text_alignment_values_map_to_native_alignment(self):
+        cases = (
+            (0, "left"),
+            (1, "center"),
+            (2, "right"),
+            (5, "left"),
+            (1.0, "center"),
+            (None, "left"),
+            ("center", "center"),
+            (" Right ", "right"),
+            ("1", "center"),
+            ("2", "right"),
+            ("0", "left"),
+            ("left", "left"),
+            ("justified", "left"),
+            ("", "left"),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(PDFExporter._text_align_to_pdf_value(raw), expected)
 
     def test_pdf_export_collects_text_alignment_from_ost_numeric_values(self):
         exporter = PDFExporter.__new__(PDFExporter)
@@ -1202,9 +1657,22 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             properties={"Text": "Hidden"},
             visible=False,
         )
+        shown = BidAnnotation(
+            uid="shown",
+            annotation_type="text",
+            page_uid="p1",
+            position=[60.0, 80.0, 40.0, 20.0],
+            color="#000000",
+            properties={"Text": "Shown"},
+        )
         self.assertEqual(
             exporter._collect_texts("p1", [hidden], _dimension_support__page_info()), []
         )
+        texts = exporter._collect_texts(
+            "p1", [hidden, shown], _dimension_support__page_info()
+        )
+        self.assertEqual([text.content for text in texts], ["Shown"])
+        self.assertEqual(texts[0].font_size, 12.0)
 
     def test_pdf_export_skips_takeoffs_on_hidden_conditions(self):
         exporter = PDFExporter.__new__(PDFExporter)
@@ -1233,6 +1701,20 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             elevation_callouts_enabled=False,
         )
         self.assertEqual(takeoffs, [])
+        self.assertEqual(callouts, [])
+        exporter._color_service = _dimension_support__ColorService()
+        exporter._color_service.get_condition_color = lambda _condition: [255, 0, 0]
+        condition.layer_visible = True
+        takeoffs, callouts = exporter._collect_takeoffs(
+            [takeoff],
+            {"c1": condition},
+            _dimension_support__page_info(),
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            caption_settings=AnnotationCaptionSettingsDto(False, ()),
+            elevation_callouts_enabled=False,
+        )
+        self.assertEqual(len(takeoffs), 1)
+        self.assertEqual(takeoffs[0].color, [255, 0, 0])
         self.assertEqual(callouts, [])
 
     def test_pdf_export_passes_structured_resolved_caption_to_native_boundary(self):
@@ -1286,6 +1768,43 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ),
         )
 
+    def test_disabled_caption_settings_leave_the_native_caption_empty(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._color_service = _dimension_support__ColorService()
+        exporter._color_service.get_condition_color = lambda _condition: [255, 0, 0]
+        exporter._takeoff_service = SimpleNamespace(
+            group_area_takeoffs_with_holes=lambda takeoffs, _conditions: (takeoffs, {})
+        )
+        exporter._uom_service = UOMDomainService()
+        resolved_calls = []
+        exporter._annotation_caption_resolver = SimpleNamespace(
+            resolve=lambda *args: resolved_calls.append(args)
+        )
+        takeoff = Takeoff(
+            uid="t-caption",
+            condition_uid="c-caption",
+            page_uid="p1",
+            position=[0.0, 0.0, 144.0, 0.0, 144.0, 144.0, 0.0, 144.0],
+        )
+        condition = Condition(
+            uid="c-caption", name="Slab", condition_type=Condition.TYPE_AREA
+        )
+        polygons, _callouts = exporter._collect_takeoffs(
+            [takeoff],
+            {condition.uid: condition},
+            _dimension_support__page_info(),
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            caption_settings=AnnotationCaptionSettingsDto(
+                enabled=False, selected_ids=(AnnotationCaptionId.AREA,)
+            ),
+            elevation_callouts_enabled=False,
+        )
+        self.assertEqual(len(polygons), 1)
+        self.assertEqual(resolved_calls, [])
+        self.assertEqual(list(polygons[0].caption.lines), [])
+        self.assertEqual(polygons[0].caption.measurement_types, 0)
+
     def test_pdf_export_collects_highlights_as_native_highlight_data(self):
         exporter = PDFExporter.__new__(PDFExporter)
         exporter._coord_system = OSTCoordinateSystem()
@@ -1328,3 +1847,104 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             [highlights[0].paths[0][index] for index in (0, 1, 5, 4)],
             [[10.0, 772.0], [110.0, 772.0], [10.0, 732.0], [110.0, 732.0]],
         )
+
+
+class PdfExportAnnotationRoutingTests(unittest.TestCase):
+    def test_export_routes_each_annotation_family_to_its_native_field(self):
+        writer = _overlay_export_support__FakeWriter()
+        exporter = _overlay_export_support__make_exporter(writer)
+        exporter._coord_system = OSTCoordinateSystem()
+        families = (
+            (ANNOTATION_TYPE_ARROW, 1, [10.0, 20.0, 130.0, 60.0], {}),
+            (ANNOTATION_TYPE_RECT, 2, [10.0, 20.0, 130.0, 60.0], {}),
+            (ANNOTATION_TYPE_LINE, 3, [10.0, 20.0, 130.0, 60.0], {}),
+            (ANNOTATION_TYPE_DIMENSION, 4, [0.0, 0.0, 255.0, 0.0], {}),
+            (ANNOTATION_TYPE_OVAL, 5, [10.0, 20.0, 70.0, 80.0], {}),
+            (ANNOTATION_TYPE_POLYGON, 6, [0.0, 0.0, 100.0, 0.0, 100.0, 50.0], {}),
+            (ANNOTATION_TYPE_INK, 7, [20.0, 40.0, 80.0, 100.0], {}),
+            (ANNOTATION_TYPE_TEXT, 8, [60.0, 80.0, 40.0, 20.0], {"Text": "note"}),
+            (ANNOTATION_TYPE_HIGHLIGHT, 9, [10.0, 20.0, 110.0, 60.0], {}),
+        )
+        annotations = []
+        for annotation_type, count, position, properties in families:
+            for index in range(count):
+                annotations.append(
+                    BidAnnotation(
+                        uid=f"{annotation_type}-{index}",
+                        annotation_type=annotation_type,
+                        page_uid="page-1",
+                        position=list(position),
+                        color="#102030",
+                        width=2.0,
+                        properties=dict(properties),
+                    )
+                )
+            for distractor in ("other-page", "hidden"):
+                annotations.append(
+                    BidAnnotation(
+                        uid=f"{annotation_type}-{distractor}",
+                        annotation_type=annotation_type,
+                        page_uid=(
+                            "elsewhere" if distractor == "other-page" else "page-1"
+                        ),
+                        position=list(position),
+                        color="#102030",
+                        width=2.0,
+                        properties=dict(properties),
+                        visible=distractor != "hidden",
+                    )
+                )
+        annotations.append(
+            BidAnnotation(
+                uid="cloud",
+                annotation_type=ANNOTATION_TYPE_CLOUD,
+                page_uid="page-1",
+                position=[0.0, 0.0, 100.0, 0.0, 100.0, 50.0],
+                color="#102030",
+                width=2.0,
+            )
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = exporter.export(
+                [PageExportDto(page=_overlay_export_support__page())],
+                os.path.join(temp_dir, "out.pdf"),
+                display_mode="color",
+                grayscale_enabled=False,
+                caption_settings=_overlay_export_support__DISABLED_CAPTION_SETTINGS,
+                elevation_callouts_enabled=False,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                bid_annotations=annotations,
+            )
+        self.assertTrue(result.success, result.error_message)
+        exported = writer.pages[0]
+        self.assertEqual(
+            {
+                "arrows": len(exported.arrows),
+                "rects": len(exported.rects),
+                "lines": len(exported.lines),
+                "dimensions": len(exported.dimensions),
+                "ovals": len(exported.ovals),
+                "polygons": len(exported.polygons),
+                "inks": len(exported.inks),
+                "texts": len(exported.texts),
+                "highlights": len(exported.highlights),
+                "takeoffs": len(exported.takeoffs),
+            },
+            {
+                "arrows": 1,
+                "rects": 2,
+                "lines": 3,
+                "dimensions": 4,
+                "ovals": 5,
+                "polygons": 7,
+                "inks": 7,
+                "texts": 8,
+                "highlights": 9,
+                "takeoffs": 0,
+            },
+        )
+        self.assertEqual(
+            [polygon.is_cloud for polygon in exported.polygons],
+            [False] * 6 + [True],
+        )
+        self.assertEqual(exported.texts[0].content, "note")

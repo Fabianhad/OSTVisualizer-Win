@@ -1,8 +1,10 @@
+import threading
 import unittest
 from ost_visualizer.application.dtos.collaboration_dtos import ResourceRef
 from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
+from tests.helpers.lock_guard import guard_mapping
 
 
 class DatabaseSessionRegistryCollaborationTests(unittest.TestCase):
@@ -84,3 +86,55 @@ class DatabaseSessionRegistryCollaborationTests(unittest.TestCase):
                     registry.register(database, session)
         self.assertEqual(registry.require("database"), "session")
         self.assertEqual(registry.get("missing"), "")
+
+
+class DatabaseSessionRegistryConcurrencyTests(unittest.TestCase):
+    def test_every_operation_touches_both_tables_only_while_locked(self):
+        registry = DatabaseSessionRegistry()
+        registry._sessions = guard_mapping(registry._lock, registry._sessions)
+        registry._lock_tokens = guard_mapping(registry._lock, registry._lock_tokens)
+        resource = ResourceRef("condition", "42", 8)
+        registry.register("database", "session")
+        registry.register_lock("database", resource, "token")
+        self.assertEqual(registry.get("database"), "session")
+        self.assertEqual(registry.require("database"), "session")
+        self.assertEqual(registry.lock_tokens("database", (resource,)), ("token",))
+        registry.remove_lock("database", resource)
+        registry.register_lock("database", resource, "token")
+        registry.remove("database", "other-session")
+        self.assertEqual(registry.lock_tokens("database", (resource,)), ("token",))
+        registry.remove("database", "session")
+        self.assertEqual(registry.get("database"), "")
+        self.assertEqual(registry.lock_tokens("database", (resource,)), ())
+        with self.assertRaisesRegex(AssertionError, "without the lock"):
+            registry._sessions.get("database")
+        with self.assertRaisesRegex(AssertionError, "without the lock"):
+            registry._lock_tokens.get(("database", resource.lease_identity))
+
+    def test_racing_registrations_leave_one_session_and_every_lock_token(self):
+        registry = DatabaseSessionRegistry()
+        racers = 8
+        start = threading.Barrier(racers)
+        resources = [ResourceRef("takeoff", str(index), 8) for index in range(racers)]
+
+        def race(index):
+            start.wait(10.0)
+            registry.register("database", f"session-{index}")
+            registry.register_lock("database", resources[index], f"token-{index}")
+
+        threads = [
+            threading.Thread(target=race, args=(index,)) for index in range(racers)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10.0)
+            self.assertFalse(thread.is_alive())
+        self.assertIn(
+            registry.require("database"),
+            {f"session-{index}" for index in range(racers)},
+        )
+        self.assertEqual(
+            registry.lock_tokens("database", tuple(resources)),
+            tuple(f"token-{index}" for index in range(racers)),
+        )

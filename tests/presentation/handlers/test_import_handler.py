@@ -13,7 +13,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 )
 from ost_visualizer.presentation.handlers import import_handler as import_handler_module
 from ost_visualizer.presentation.handlers.import_handler import ImportHandler
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 from shiboken6 import delete, isValid
 from tests.helpers.import_workflow import (
     FakeAccess as _import_workflow_FakeAccess,
@@ -505,6 +505,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
 
     def test_import_handler_does_not_refresh_after_rejected_import(self):
         service = _import_workflow_FakeImportService()
+        service.next_result = False
         handler = ImportHandler(
             window=None,
             project_data_service=_import_workflow_FakeProjectData(),
@@ -998,3 +999,235 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             None, "Import Error", "The OST import could not be queued."
         )
         self.assertEqual(service.import_calls, [])
+
+
+class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
+    """Decision S1: an Access import is a success or a failure by the worker result only.
+    ProgressDialog.reject() is allowed once the result has arrived and its thread has
+    stopped, so Esc in the window before the queued QThread.finished slot runs ends
+    exec() with Rejected AFTER the import committed; the dialog code must not turn that
+    committed import into a failed import or skip the refresh and success message."""
+
+    ACCEPTED = QtWidgets.QDialog.DialogCode.Accepted
+    REJECTED = QtWidgets.QDialog.DialogCode.Rejected
+    FAILED_TEXT = (
+        "Failed to import OST file. "
+        "The file may be corrupted or in an unsupported format."
+    )
+
+    def _handler(self, service, window=None):
+        return ImportHandler(
+            window=window,
+            project_data_service=_import_workflow_FakeProjectData(),
+            import_service=service,
+            ui_state_manager=_import_workflow_FakeUiState(),
+            deferred_persistence_manager=_import_workflow_FakeDeferredPersistence(),
+            ui_access_manager=_import_workflow_FakeAccess(),
+        )
+
+    def _import(self, handler, dialog_class):
+        with (
+            patch.object(
+                import_handler_module.QtWidgets.QFileDialog,
+                "getOpenFileName",
+                return_value=("source.ost", ""),
+            ),
+            patch.object(import_handler_module, "ProgressDialog", dialog_class),
+            patch.object(import_handler_module, "show_info") as info,
+            patch.object(import_handler_module, "show_warning") as warning,
+            patch.object(import_handler_module, "show_critical") as critical,
+        ):
+            handler.import_ost()
+        return info, warning, critical
+
+    def _fixed_code_dialog(self, code, error=None):
+        class FixedCodeDialog(_import_workflow_FakeProgressDialog):
+            result_code = code
+
+            def __init__(self, filename, task_fn, parent=None):
+                super().__init__(filename, task_fn, parent=parent)
+                self.error = error
+
+        return FixedCodeDialog
+
+    def test_a_committed_import_survives_a_dialog_rejected_after_the_result(self):
+        for code in (self.ACCEPTED, self.REJECTED):
+            with self.subTest(code=code):
+                service = _import_workflow_FakeImportService()
+                info, warning, critical = self._import(
+                    self._handler(service), self._fixed_code_dialog(code)
+                )
+                self.assertEqual(service.reloads, ["target.mdb"])
+                info.assert_called_once_with(
+                    None,
+                    "Import Complete",
+                    "Successfully imported 'source.ost' into the database.",
+                )
+                warning.assert_not_called()
+                critical.assert_not_called()
+
+    def test_a_rejected_dialog_after_a_committed_import_still_reports_a_failed_refresh(
+        self,
+    ):
+        service = _import_workflow_FakeImportService()
+        service.reload_result = False
+        info, warning, critical = self._import(
+            self._handler(service), self._fixed_code_dialog(self.REJECTED)
+        )
+        self.assertEqual(service.reloads, ["target.mdb"])
+        info.assert_not_called()
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1], "Refresh Error")
+        critical.assert_not_called()
+
+    def test_an_import_that_did_not_commit_fails_for_every_dialog_code(self):
+        for code in (self.ACCEPTED, self.REJECTED):
+            for result in (False, None):
+                with self.subTest(code=code, result=result):
+                    service = _import_workflow_FakeImportService()
+                    service.next_result = result
+                    info, warning, critical = self._import(
+                        self._handler(service), self._fixed_code_dialog(code)
+                    )
+                    self.assertEqual(service.reloads, [])
+                    info.assert_not_called()
+                    warning.assert_not_called()
+                    critical.assert_called_once_with(
+                        None, "Import Error", self.FAILED_TEXT
+                    )
+
+    def test_a_crashed_worker_without_a_result_fails_for_every_dialog_code(self):
+        for code in (self.ACCEPTED, self.REJECTED):
+            for error in (None, RuntimeError("worker died")):
+                with self.subTest(code=code, error=error):
+                    service = _import_workflow_FakeImportService()
+                    service.next_result = None
+                    with patch.object(import_handler_module, "logger") as logger:
+                        info, warning, critical = self._import(
+                            self._handler(service),
+                            self._fixed_code_dialog(code, error),
+                        )
+                    self.assertEqual(logger.error.call_count, int(error is not None))
+                    self.assertEqual(service.reloads, [])
+                    info.assert_not_called()
+                    warning.assert_not_called()
+                    critical.assert_called_once_with(
+                        None, "Import Error", self.FAILED_TEXT
+                    )
+
+    def _escaping_dialog_class(self, escape_after_result):
+        from ost_visualizer.presentation.components.progress_dialog import (
+            ProgressDialog as RealProgressDialog,
+        )
+
+        class EscapeBetweenResultAndFinishedSlot(RealProgressDialog):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.escaped = False
+                guard = QtCore.QTimer(self)
+                guard.setSingleShot(True)
+                guard.timeout.connect(lambda: QtWidgets.QDialog.reject(self))
+                guard.start(8000)
+
+            def _finish_if_ready(self):
+                if escape_after_result and self._worker_finished:
+                    if not self.escaped:
+                        self.escaped = True
+                        self._thread.wait(5000)
+                        self.reject()
+                    return
+                super()._finish_if_ready()
+
+        return EscapeBetweenResultAndFinishedSlot
+
+    def _import_through_a_real_dialog(
+        self, *, escape_after_result, service=None, fail_with=None
+    ):
+        QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = QtWidgets.QWidget()
+        service = service or _import_workflow_FakeImportService()
+        if fail_with is not None:
+
+            def failing_import(*_args, **_kwargs):
+                raise fail_with
+
+            service.import_ost = failing_import
+        try:
+            with patch.object(import_handler_module, "logger") as logger:
+                info, warning, critical = self._import(
+                    self._handler(service, window),
+                    self._escaping_dialog_class(escape_after_result),
+                )
+        finally:
+            window.deleteLater()
+        return service, info, warning, critical, window, logger
+
+    def test_esc_between_the_worker_result_and_the_finished_slot_keeps_a_committed_import(
+        self,
+    ):
+        service, info, warning, critical, window, _logger = (
+            self._import_through_a_real_dialog(escape_after_result=True)
+        )
+        self.assertEqual(
+            service.import_calls, [("source.ost", "target.mdb", None, False)]
+        )
+        self.assertEqual(service.reloads, ["target.mdb"])
+        info.assert_called_once_with(
+            window,
+            "Import Complete",
+            "Successfully imported 'source.ost' into the database.",
+        )
+        warning.assert_not_called()
+        critical.assert_not_called()
+
+    def test_a_real_dialog_without_an_escape_reports_the_same_committed_import(self):
+        service, info, warning, critical, window, _logger = (
+            self._import_through_a_real_dialog(escape_after_result=False)
+        )
+        self.assertEqual(service.reloads, ["target.mdb"])
+        info.assert_called_once_with(
+            window,
+            "Import Complete",
+            "Successfully imported 'source.ost' into the database.",
+        )
+        warning.assert_not_called()
+        critical.assert_not_called()
+
+    def test_a_real_dialog_reports_a_refused_import_as_a_failure_with_or_without_an_escape(
+        self,
+    ):
+        for escape in (False, True):
+            with self.subTest(escape=escape):
+                service = _import_workflow_FakeImportService()
+                service.next_result = False
+                service, info, warning, critical, window, _logger = (
+                    self._import_through_a_real_dialog(
+                        escape_after_result=escape, service=service
+                    )
+                )
+                self.assertEqual(service.reloads, [])
+                info.assert_not_called()
+                warning.assert_not_called()
+                critical.assert_called_once_with(
+                    window, "Import Error", self.FAILED_TEXT
+                )
+
+    def test_a_real_dialog_reports_a_raising_worker_as_a_failure_with_or_without_an_escape(
+        self,
+    ):
+        for escape in (False, True):
+            with self.subTest(escape=escape):
+                failure = OSError("source is unreadable")
+                service, info, warning, critical, window, logger = (
+                    self._import_through_a_real_dialog(
+                        escape_after_result=escape, fail_with=failure
+                    )
+                )
+                self.assertEqual(service.reloads, [])
+                info.assert_not_called()
+                warning.assert_not_called()
+                critical.assert_called_once_with(
+                    window, "Import Error", self.FAILED_TEXT
+                )
+                logger.error.assert_called_once()
+                self.assertIs(logger.error.call_args.args[2], failure)

@@ -1,5 +1,9 @@
+import gc
 import threading
+import time
 import unittest
+import weakref
+from PySide6 import QtCore
 from ost_visualizer.presentation.coordinators.remote_plan_update_pipeline import (
     RemotePlanUpdatePipeline,
 )
@@ -489,3 +493,154 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
                 self.assertEqual(completed, [False])
                 pipeline.submit(2, completed.append)
                 self.assertEqual(len(pool.runnables), 1)
+
+
+class RemotePlanUpdatePipelineOrderingAndOwnershipTests(unittest.TestCase):
+    def pipeline(self, bridge, pool, **overrides):
+        options = dict(
+            callback_bridge=bridge,
+            thread_pool=pool,
+            prepare=lambda value: value,
+            apply=lambda _value: True,
+            is_current=lambda _request: True,
+            coalesce=lambda _previous, current: current,
+        )
+        options.update(overrides)
+        return RemotePlanUpdatePipeline(**options)
+
+    def deliver(self, bridge):
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+
+    def test_default_thread_pool_is_the_global_pool_and_runs_the_preparation(self):
+        bridge = _QueuedBridge()
+        preparation_threads = []
+        pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=bridge,
+            prepare=lambda value: preparation_threads.append(threading.get_ident())
+            or value,
+            apply=lambda _value: True,
+            is_current=lambda _request: True,
+            coalesce=lambda _previous, current: current,
+        )
+        self.assertIs(pipeline._thread_pool, QtCore.QThreadPool.globalInstance())
+        completed = []
+        pipeline.submit(1, completed.append)
+        deadline = time.monotonic() + 5
+        while not bridge.callbacks and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(len(bridge.callbacks), 1)
+        self.assertNotEqual(preparation_threads, [threading.get_ident()])
+        self.deliver(bridge)
+        self.assertEqual(completed, [True])
+
+    def test_coalescing_keeps_submission_order_in_both_callbacks(self):
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        asked = []
+        prepared = []
+        pipeline = self.pipeline(
+            bridge,
+            pool,
+            prepare=lambda value: prepared.append(value) or value,
+            coalesce=lambda previous, current: previous + current,
+            can_coalesce=lambda previous, current: asked.append((previous, current))
+            or True,
+        )
+        for value in ("a", "b", "c", "d"):
+            pipeline.submit(value, lambda _success: None)
+        # "a" is in flight; "b", "c", "d" coalesce in the order they arrived.
+        self.assertEqual(asked, [("b", "c"), ("bc", "d")])
+        pool.run_next()
+        self.deliver(bridge)
+        pool.run_next()
+        self.assertEqual(prepared, ["a", "bcd"])
+
+    def test_a_duplicate_or_stale_delivery_never_completes_a_newer_submission(self):
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        applied = []
+        completed = []
+        pipeline = self.pipeline(
+            bridge,
+            pool,
+            apply=lambda value: applied.append(value) or True,
+        )
+        pipeline.submit("first", lambda success: completed.append(("first", success)))
+        pool.run_next()
+        first_callback, first_payload = bridge.callbacks.pop(0)
+        first_callback(first_payload)
+        self.assertEqual(completed, [("first", True)])
+        pipeline.submit("second", lambda success: completed.append(("second", success)))
+        # The bridge delivers the first result a second time while the second
+        # submission is in flight: it must be ignored.
+        first_callback(first_payload)
+        self.assertEqual(applied, ["first"])
+        self.assertEqual(completed, [("first", True)])
+        pool.run_next()
+        self.deliver(bridge)
+        self.assertEqual(applied, ["first", "second"])
+        self.assertEqual(completed, [("first", True), ("second", True)])
+
+    def test_cleanup_during_apply_completes_each_submission_exactly_once(self):
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        completed = []
+        pipeline = None
+
+        def apply(_value):
+            pipeline.cleanup()
+            return True
+
+        pipeline = self.pipeline(bridge, pool, apply=apply)
+        pipeline.submit(1, lambda success: completed.append((1, success)))
+        pipeline.submit(2, lambda success: completed.append((2, success)))
+        pool.run_next()
+        self.deliver(bridge)
+        self.assertEqual(completed, [(1, False), (2, False)])
+        self.assertEqual(pool.runnables, [])
+
+    def test_cleanup_while_a_worker_start_is_failing_completes_exactly_once(self):
+        bridge = _QueuedBridge()
+        pool = _BlockingFailingOnceThreadPool()
+        completed = []
+        pipeline = self.pipeline(bridge, pool)
+        submitter = threading.Thread(
+            target=lambda: pipeline.submit(
+                1, lambda success: completed.append((1, success))
+            )
+        )
+        with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+            submitter.start()
+            self.assertTrue(pool.entered.wait(timeout=1.0))
+            pipeline.cleanup()
+            pool.release.set()
+            submitter.join(timeout=2.0)
+        self.assertEqual(completed, [(1, False)])
+        self.assertEqual(pool.start_count, 1)
+
+    def test_cleanup_releases_the_completions_it_rejected(self):
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        pipeline = self.pipeline(bridge, pool)
+
+        class Completion:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, success):
+                self.calls.append(success)
+
+        in_flight, pending = Completion(), Completion()
+        in_flight_ref, pending_ref = weakref.ref(in_flight), weakref.ref(pending)
+        calls = (in_flight.calls, pending.calls)
+        pipeline.submit(1, in_flight)
+        pipeline.submit(2, pending)
+        pipeline.cleanup()
+        self.assertEqual(calls, ([False], [False]))
+        del in_flight, pending
+        pool.runnables.clear()
+        bridge.callbacks.clear()
+        gc.collect()
+        self.assertIsNone(in_flight_ref())
+        self.assertIsNone(pending_ref())

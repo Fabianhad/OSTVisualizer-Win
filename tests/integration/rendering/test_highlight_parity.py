@@ -84,3 +84,22 @@ class HighlightPlanPdfParityTests(unittest.TestCase):
         self.assertEqual(exported[0].opacity, 1.0)
         self.assertEqual(item.brush().color(), QColor("#ffff00"))
         self.assertEqual(item.brush().color().alphaF(), exported[0].opacity)
+
+    def test_plan_highlight_multiplies_with_backdrop_like_exported_multiply_blend(
+        self,
+    ):
+        annotation = self._highlight()
+        item = self._render_annotation(annotation)
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = _IdentityCoordinateSystem()
+        exporter._color_service = _ColorService()
+        exported = exporter._collect_highlights("", [annotation], object())[0]
+        image = self._paint_item(item, QStyle.StateFlag.State_None)
+        # Multiply of the #808080 backdrop with the exported yellow, per channel:
+        # a Normal-mode fill would instead replace the backdrop with pure yellow.
+        expected = [round(128 * channel / 255) for channel in exported.color]
+        self.assertEqual(expected, [128, 128, 0])
+        inside = image.pixelColor(60, 40)
+        self.assertEqual([inside.red(), inside.green(), inside.blue()], expected)
+        outside = image.pixelColor(5, 5)
+        self.assertEqual([outside.red(), outside.green(), outside.blue()], [128] * 3)

@@ -200,6 +200,7 @@ class AggregateProjectionWorkflowTests(unittest.TestCase):
                             counts.clear()
                         coordinator.takeoff_sidebar.calls.clear()
                         coordinator._page_settings_bar.calls.clear()
+                        coordinator._viewer.plan_pages.clear()
                         widget.load_conditions(conditions, {}, "Bid")
                         if has_condition:
                             coordinator._on_conditions_changed(
@@ -248,6 +249,11 @@ class AggregateProjectionWorkflowTests(unittest.TestCase):
                         )
                         self.assertEqual(len(layer_loads), int(has_layer))
                         self.assertEqual(len(rebuilds), int(has_condition or has_layer))
+                        # A deferred batch leaves the Plan untouched (the barrier projects
+                        # it later); an immediate batch redraws the active page.
+                        self.assertEqual(not coordinator._viewer.plan_pages, deferred)
+                        if not deferred:
+                            self.assertIn("page-1", coordinator._viewer.plan_pages)
 
     def test_mixed_condition_takeoff_projection_calculates_final_aggregates_once(self):
         database_id = "sql-db"

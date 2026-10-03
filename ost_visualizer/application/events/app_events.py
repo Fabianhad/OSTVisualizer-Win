@@ -129,6 +129,12 @@ class CollaborationMutationStateChangedEvent:
 
 
 @dataclass
+class BidLockedRejectionEvent:
+    database_id: str = ""
+    operation_id: str = ""
+
+
+@dataclass
 class PresenceChangedEvent:
     database_id: str = ""
     bid_uid: str = ""
@@ -264,6 +270,7 @@ class AppEvents:
     REMOTE_PLAN_PROJECTION_REQUESTED = RemotePlanProjectionRequestedEvent
     COLLABORATION_STATE_CHANGED = CollaborationStateChangedEvent
     COLLABORATION_MUTATION_STATE_CHANGED = CollaborationMutationStateChangedEvent
+    BID_LOCKED_REJECTION = BidLockedRejectionEvent
     PRESENCE_CHANGED = PresenceChangedEvent
     SYNCHRONIZATION_CONFLICT = SynchronizationConflictEvent
     FULL_RECONCILIATION_REQUIRED = FullReconciliationRequiredEvent

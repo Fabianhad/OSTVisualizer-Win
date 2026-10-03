@@ -39,6 +39,10 @@ class NativeTintTests(unittest.TestCase):
         self.assertGreater(black[3], gray[3])
         self.assertGreater(gray[3], near_paper[3])
         self.assertGreater(near_paper[3], paper[3])
+        # Hand-derived: alpha = (coverage * 255 + threshold // 2) // threshold
+        # with coverage = threshold - gray and threshold = 235:
+        # gray 128 -> (107 * 255 + 117) // 235 = 116, gray 234 -> (255 + 117) // 235 = 1.
+        self.assertEqual((gray[3], near_paper[3]), (116, 1))
 
     def test_tint_red_and_blue_keep_alpha_coverage_behavior(self):
         red = _bgra_pixels(ost_image.tint_red(bytes([0, 128, 235]), 3, 1))
@@ -47,7 +51,20 @@ class NativeTintTests(unittest.TestCase):
         self.assertEqual(blue[0], (255, 80, 80, 255))
         self.assertEqual(red[1][:3], red[0][:3])
         self.assertEqual(blue[1][:3], blue[0][:3])
-        self.assertTrue(0 < red[1][3] < red[0][3])
-        self.assertTrue(0 < blue[1][3] < blue[0][3])
+        self.assertEqual((red[1][3], blue[1][3]), (116, 116))
+        self.assertEqual((red[0][3], blue[0][3]), (255, 255))
         self.assertEqual(red[2], (0, 0, 0, 0))
         self.assertEqual(blue[2], (0, 0, 0, 0))
+
+    def test_custom_paper_threshold_and_undersized_buffer_follow_native_contract(self):
+        tinted = ost_image.tint_grayscale(bytes([0, 100, 200]), 3, 1, 10, 20, 30, 100)
+        self.assertEqual((tinted.width, tinted.height), (3, 1))
+        self.assertEqual(
+            _bgra_pixels(tinted),
+            [(30, 20, 10, 255), (0, 0, 0, 0), (0, 0, 0, 0)],
+        )
+        # A zero threshold has no pixel below it, so everything is paper.
+        paper_only = ost_image.tint_grayscale(bytes([0, 100]), 2, 1, 10, 20, 30, 0)
+        self.assertEqual(_bgra_pixels(paper_only), [(0, 0, 0, 0)] * 2)
+        with self.assertRaisesRegex(RuntimeError, "Buffer too small"):
+            ost_image.tint_grayscale(bytes([0, 1, 2]), 2, 2, 1, 2, 3)

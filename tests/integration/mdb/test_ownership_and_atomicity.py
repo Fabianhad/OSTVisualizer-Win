@@ -71,6 +71,10 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
         for operation, create_sql, table in fixtures:
             with self.subTest(operation=operation):
                 conn = sqlite3.connect(":memory:")
+                # Both owning bids exist, so only the mixed ownership of the
+                # batch can explain a rejection.
+                conn.execute("CREATE TABLE Bids (UID INTEGER)")
+                conn.executemany("INSERT INTO Bids VALUES (?)", ((1,), (2,)))
                 conn.execute(create_sql)
                 if table in {"BidConditionFolders", "BidTakeoffs"}:
                     conn.executemany(
@@ -94,6 +98,18 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
                 self.assertEqual(
                     conn.execute(f"SELECT UID FROM [{table}] ORDER BY UID").fetchall(),
                     [(7,), (8,)],
+                )
+                # Control: a batch confined to one bid is accepted.
+                if table == "BidConditionFolders":
+                    result = operations.delete_condition_folders("malformed.mdb", ["7"])
+                elif table == "BidPages":
+                    result = operations.delete_pages("malformed.mdb", ["7"])
+                else:
+                    result = operations.delete_takeoffs("malformed.mdb", ["7"])
+                self.assertTrue(result)
+                self.assertEqual(
+                    conn.execute(f"SELECT UID FROM [{table}] ORDER BY UID").fetchall(),
+                    [(8,)],
                 )
 
     def test_root_hierarchy_inserts_require_authoritative_bid_before_allocation(self):
@@ -119,6 +135,21 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             conn.execute("SELECT UID FROM BidConditionFolders").fetchall(), []
         )
         self.assertEqual(conn.execute("SELECT UID FROM BidLayers").fetchall(), [])
+        # Control: once the owning bid exists, the same inserts succeed.
+        conn.execute("INSERT INTO Bids VALUES (99)")
+        folder_uid = operations.insert_condition_folder(
+            "malformed.mdb", "99", "Owned folder", None
+        )
+        self.assertIsNotNone(folder_uid)
+        operations.insert_layer("malformed.mdb", "99", "Owned layer", 0)
+        self.assertEqual(
+            conn.execute("SELECT BidUID, Name FROM BidConditionFolders").fetchall(),
+            [(99, "Owned folder")],
+        )
+        self.assertEqual(
+            conn.execute("SELECT BidUID, Name FROM BidLayers").fetchall(),
+            [(99, "Owned layer")],
+        )
 
     def test_later_chunk_delete_failure_rolls_back_page_condition_and_folder_batches(
         self,
@@ -175,6 +206,18 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             ).fetchone()[0],
             1,
         )
+        # Control: without the failing trigger the same batch commits, clears
+        # the dependent master-page reference and keeps only the unrelated row.
+        page_conn.execute("DROP TRIGGER fail_second_BidPages")
+        self.assertTrue(
+            TransactionalOps(page_conn).delete_pages(
+                "large.mdb", [str(uid) for uid in range(1, 52)]
+            )
+        )
+        self.assertEqual(
+            page_conn.execute("SELECT UID, MasterPageUID FROM BidPages").fetchall(),
+            [(100, None)],
+        )
         condition_conn = connection_for("BidConditions")
         with self.assertLogs("test", level="ERROR"):
             self.assertFalse(
@@ -185,6 +228,16 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
         self.assertEqual(
             condition_conn.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0],
             51,
+        )
+        condition_conn.execute("DROP TRIGGER fail_second_BidConditions")
+        self.assertTrue(
+            TransactionalOps(condition_conn).delete_conditions(
+                "large.mdb", "1", [str(uid) for uid in range(1, 52)]
+            )
+        )
+        self.assertEqual(
+            condition_conn.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0],
+            0,
         )
         folder_conn = connection_for("BidConditionFolders", ", ParentUID INTEGER")
         folder_conn.execute(
@@ -209,6 +262,18 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
                 "SELECT ParentUID FROM BidConditionFolders WHERE UID=100"
             ).fetchone()[0],
             1,
+        )
+        folder_conn.execute("DROP TRIGGER fail_second_BidConditionFolders")
+        self.assertTrue(
+            TransactionalOps(folder_conn).delete_condition_folders(
+                "large.mdb", [str(uid) for uid in range(1, 52)]
+            )
+        )
+        self.assertEqual(
+            folder_conn.execute(
+                "SELECT UID, ParentUID FROM BidConditionFolders"
+            ).fetchall(),
+            [(100, None)],
         )
 
     def test_large_condition_and_folder_deletes_stay_below_access_parameter_limit(
@@ -240,6 +305,10 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             ),
             6,
         )
+        self.assertEqual(
+            condition_conn.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0],
+            0,
+        )
         folder_conn = sqlite3.connect(":memory:")
         folder_conn.execute("CREATE TABLE Bids (UID INTEGER)")
         folder_conn.execute("INSERT INTO Bids VALUES (1)")
@@ -265,6 +334,12 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             for operation in ("UPDATE", "DELETE")
         }
         self.assertEqual(folder_counts, {"UPDATE": 6, "DELETE": 6})
+        self.assertEqual(
+            folder_conn.execute("SELECT COUNT(*) FROM BidConditionFolders").fetchone()[
+                0
+            ],
+            0,
+        )
 
     def test_large_project_and_bid_batches_stay_below_access_parameter_limit(self):
         row_count = 256
@@ -288,7 +363,19 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
                 "large.mdb", uid_strings, "901", orig_project_uid="900"
             )
         )
+        self.assertEqual(
+            move_conn.execute(
+                "SELECT DISTINCT BidProjectUID, OrigBidProjectUID FROM Bids"
+            ).fetchall(),
+            [(901, 900)],
+        )
         self.assertTrue(move_ops.orphan_bids("large.mdb", uid_strings))
+        self.assertEqual(
+            move_conn.execute(
+                "SELECT COUNT(*), COUNT(BidProjectUID) FROM Bids"
+            ).fetchall(),
+            [(row_count, 0)],
+        )
         self.assertEqual(
             sum(
                 sql.lstrip().upper().startswith("UPDATE [BIDS]")
@@ -324,6 +411,17 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             for operation in ("UPDATE", "DELETE")
         }
         self.assertEqual(project_counts, {"UPDATE": 12, "DELETE": 6})
+        # All projects are gone; their bids survive without project references.
+        self.assertEqual(
+            project_conn.execute("SELECT COUNT(*) FROM BidProjects").fetchone()[0], 0
+        )
+        self.assertEqual(
+            project_conn.execute(
+                "SELECT COUNT(*), COUNT(BidProjectUID), COUNT(OrigBidProjectUID) "
+                "FROM Bids"
+            ).fetchall(),
+            [(row_count, 0, 0)],
+        )
         bid_conn = sqlite3.connect(":memory:")
         bid_conn.execute("CREATE TABLE Bids (UID INTEGER)")
         bid_conn.executemany(
@@ -342,6 +440,7 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             ),
             6,
         )
+        self.assertEqual(bid_conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0)
 
     def test_orphan_page_edit_and_delete_reject_before_mutation(self):
         conn = sqlite3.connect(":memory:")
@@ -360,6 +459,15 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             self.assertFalse(ops.delete_pages("malformed.mdb", ["7"]))
         self.assertIn("Bids has no row for UID 99", delete_logs.output[0])
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages").fetchone()[0], 1)
+        # Control: with the owning bid present both operations go through.
+        conn.execute("INSERT INTO Bids VALUES (99)")
+        self.assertTrue(ops.save_page_name("malformed.mdb", "7", "Changed"))
+        self.assertEqual(
+            conn.execute("SELECT Name FROM BidPages WHERE UID=7").fetchone()[0],
+            "Changed",
+        )
+        self.assertTrue(ops.delete_pages("malformed.mdb", ["7"]))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages").fetchone()[0], 0)
 
     def test_orphan_layer_and_folder_mutations_reject_before_write(self):
         conn = sqlite3.connect(":memory:")
@@ -398,6 +506,25 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
                 0
             ],
             "Orphan folder",
+        )
+        # Control: with the owning bid present the same mutations succeed.
+        conn.execute("INSERT INTO Bids VALUES (99)")
+        ops.update_layer_name("malformed.mdb", "7", "Changed")
+        ops.update_all_layers_show("malformed.mdb", "99", True)
+        self.assertEqual(
+            conn.execute("SELECT Name, Show FROM BidLayers WHERE UID=7").fetchone(),
+            ("Changed", -1),
+        )
+        self.assertTrue(ops.rename_condition_folder("malformed.mdb", "8", "Renamed"))
+        self.assertEqual(
+            conn.execute("SELECT Name FROM BidConditionFolders WHERE UID=8").fetchone()[
+                0
+            ],
+            "Renamed",
+        )
+        self.assertTrue(ops.delete_condition_folders("malformed.mdb", ["8"]))
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidConditionFolders").fetchone()[0], 0
         )
 
     def test_orphan_takeoff_and_annotation_mutations_reject_before_write(self):
@@ -443,4 +570,23 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
         self.assertEqual(
             conn.execute("SELECT Name FROM BidNamedViews WHERE UID=8").fetchone()[0],
             "Orphan view",
+        )
+        # Control: with the owning bid present the same mutations succeed.
+        conn.execute("INSERT INTO Bids VALUES (99)")
+        self.assertTrue(takeoff_ops.set_takeoffs_negative("malformed.mdb", ["7"], True))
+        self.assertEqual(
+            conn.execute(
+                "SELECT IsNegativeQuantity FROM BidTakeoffs WHERE UID=7"
+            ).fetchone()[0],
+            1,
+        )
+        self.assertTrue(takeoff_ops.delete_takeoffs("malformed.mdb", ["7"]))
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidTakeoffs").fetchone()[0], 0
+        )
+        self.assertTrue(
+            annotation_ops.delete_annotations("malformed.mdb", [("8", "namedview")])
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidNamedViews").fetchone()[0], 0
         )

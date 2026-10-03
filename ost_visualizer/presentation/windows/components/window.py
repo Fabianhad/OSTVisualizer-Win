@@ -6,6 +6,10 @@ from dataclasses import dataclass, replace
 from typing import Callable, List, Optional, Tuple, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
+from ....application.dtos.active_bid_locked_error import (
+    ActiveBidLockedError,
+    locked_bid_refusal_result,
+)
 from ....application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseLoss,
@@ -18,6 +22,9 @@ from ....application.dtos.collaboration_resource_catalog import annotation_resou
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
+from ....application.dtos.queue_submission_failure import (
+    queue_submission_failure_result,
+)
 from ....application.events.app_events import AppEvents
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
@@ -68,6 +75,7 @@ from ...modes.cursor import (
     CURSOR_MODE_SELECT,
     CURSOR_MODE_ZOOM,
 )
+from ...services.annotation_history import AnnotationHistoryDependencyError
 from ...services.selection_clipboard_service import SelectionClipboardService
 from ...services.selection_commands import (
     DeleteAnnotationsCommand,
@@ -93,7 +101,7 @@ from ...utils.annotation_style_controls import (
     create_annotation_tool_split_button,
 )
 from ...utils.dialog import delete_later_if_valid
-from ...utils.messagebox import confirm
+from ...utils.messagebox import confirm, show_warning
 from ...utils.named_view_focus import focus_plan_view_on_named_view
 from ...utils.named_view_validation import (
     named_view_name_exists,
@@ -1447,6 +1455,37 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if result.outcome_status == MutationOutcomeStatus.COMMITTED:
             self._completed_sql_mutation_ids.add(result.operation_id)
 
+    def _unwind_failed_submission(
+        self,
+        complete: Callable[[QueuedMutationResult], None],
+        database_id: str,
+        error: Exception,
+        *,
+        history_token=None,
+        lease_handle: Optional[EditLeaseHandle] = None,
+    ) -> None:
+        def finish_token() -> None:
+            if self._undo_svc.is_forward_mutation_current(history_token):
+                self._undo_svc.finish_forward_mutation(history_token)
+
+        steps = []
+        if lease_handle is not None:
+            steps.append(
+                lambda: self._project_write_svc.end_plan_edit_lease(lease_handle)
+            )
+        steps.append(
+            lambda: complete(queue_submission_failure_result(database_id, error))
+        )
+        if self._undo_svc is not None:
+            steps.append(finish_token)
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                self.logger.exception(
+                    "Failed to release plan state after a queue submission error"
+                )
+
     def _set_annotation_items_pending(
         self,
         bid_ref,
@@ -1606,8 +1645,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._set_annotation_items_pending(bid_ref, identities, True)
         selection_revision = self.plan_view.begin_deferred_selection()
         window_ref = weakref.ref(self)
+        failure_delivered = False
 
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal failure_delivered
             window = window_ref()
             if window is None:
                 return
@@ -1619,6 +1660,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             if window._sql_result_remains_pending(result):
                 return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if failure_delivered:
+                    return
+                failure_delivered = True
             current_keys = window._annotation_keys_for_identities(identities)
             window._set_annotation_items_pending(bid_ref, identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
@@ -1676,9 +1721,21 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 owning_surface="detached-plan",
                 edit_lease_handle=edit_lease_handle,
             )
-        except Exception:
-            if self._undo_svc is not None:
-                self._undo_svc.finish_forward_mutation(history_token)
+        except ActiveBidLockedError:
+            self.logger.warning(
+                "SQL annotation geometry blocked: the active bid is locked"
+            )
+            if edit_lease_handle is not None:
+                self._project_write_svc.end_plan_edit_lease(edit_lease_handle)
+            complete(locked_bid_refusal_result(db_path))
+        except Exception as error:
+            self._unwind_failed_submission(
+                complete,
+                db_path,
+                error,
+                history_token=history_token,
+                lease_handle=edit_lease_handle,
+            )
             raise
 
     def _push_sql_annotation_geometry_history(
@@ -1748,8 +1805,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._set_annotation_items_pending(bid_ref, identities, True)
         selection_revision = self.plan_view.begin_deferred_selection()
         window_ref = weakref.ref(self)
+        failure_delivered = False
 
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal failure_delivered
             window = window_ref()
             if window is None:
                 return
@@ -1761,6 +1820,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             if window._sql_result_remains_pending(result):
                 return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if failure_delivered:
+                    return
+                failure_delivered = True
             current_keys = window._annotation_keys_for_identities(identities)
             window._set_annotation_items_pending(bid_ref, identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
@@ -1814,9 +1877,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 page_uids=page_uids,
                 owning_surface="detached-plan",
             )
-        except Exception:
-            if self._undo_svc is not None:
-                self._undo_svc.finish_forward_mutation(history_token)
+        except ActiveBidLockedError:
+            self.logger.warning(
+                "SQL annotation properties blocked: the active bid is locked"
+            )
+            complete(locked_bid_refusal_result(db_path))
+        except Exception as error:
+            self._unwind_failed_submission(
+                complete, db_path, error, history_token=history_token
+            )
             raise
 
     def _push_sql_annotation_property_history(
@@ -1982,6 +2051,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 complete,
                 owning_surface="detached-plan",
             )
+        except ActiveBidLockedError:
+            self.logger.warning(
+                "SQL annotation insert blocked: the active bid is locked"
+            )
+            complete(locked_bid_refusal_result(bid_ref.file_path))
         except Exception:
             if self._undo_svc is not None:
                 self._undo_svc.finish_forward_mutation(history_token)
@@ -2003,6 +2077,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             [uid_map[source] for source in payload.annotation_source_uids],
             self._undo_svc,
             captured_scales=captured_scales,
+            source_uids=payload.annotation_source_uids,
         )
         self._push_sql_annotation_lifetime_history(
             bid_ref, payload, history, deleted=False
@@ -2052,11 +2127,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 owning_surface="detached-plan",
             )
 
+        restore_submit = self._warn_when_history_view_unavailable(restore_submit)
         self._undo_svc.push_for_bid(
             bid_ref,
             restore_submit if deleted else delete_submit,
             delete_submit if deleted else restore_submit,
-            annotation_targets=tuple(history.targets.values()),
+            annotation_targets=history.history_targets(),
         )
 
     def _queue_sql_annotation_delete(
@@ -2100,8 +2176,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         selection_revision = self.plan_view.begin_deferred_selection()
         history_service = self._undo_svc
         window_ref = weakref.ref(self)
+        failure_delivered = False
 
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal failure_delivered
             window = window_ref()
             if window is None or window._is_closing:
                 if history_service is not None:
@@ -2123,6 +2201,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             if window._sql_result_remains_pending(result):
                 return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if failure_delivered:
+                    return
+                failure_delivered = True
             window._set_annotation_items_pending(bid_ref, pending_identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 if (
@@ -2190,9 +2272,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 page_uids=page_uids,
                 owning_surface="detached-plan",
             )
-        except Exception:
-            if self._undo_svc is not None:
-                self._undo_svc.finish_forward_mutation(history_token)
+        except ActiveBidLockedError:
+            self.logger.warning(
+                "SQL annotation delete blocked: the active bid is locked"
+            )
+            complete(locked_bid_refusal_result(bid_ref.file_path))
+        except Exception as error:
+            self._unwind_failed_submission(
+                complete, bid_ref.file_path, error, history_token=history_token
+            )
             raise
 
     def _push_sql_annotation_delete_history(
@@ -2580,6 +2668,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             bid_ref,
             [(uid, spec.annotation_type) for uid, spec in zip(new_uids, specs)],
             self._undo_svc,
+            specs=specs,
         )
         cmd = PasteAnnotationsCommand(
             history=history,
@@ -2596,7 +2685,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             ),
         )
         self._undo_svc.push_local(
-            cmd.undo, cmd.redo, annotation_targets=tuple(history.targets.values())
+            self._warn_when_history_view_unavailable(cmd.undo),
+            self._warn_when_history_view_unavailable(cmd.redo),
+            annotation_targets=history.history_targets(),
         )
 
     def _on_annotation_created(
@@ -2855,6 +2946,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             bid_ref,
             [(uid, spec.annotation_type) for uid, spec in zip(new_uids, [spec])],
             self._undo_svc,
+            specs=[spec],
         )
         cmd = InsertAnnotationsCommand(
             history=history,
@@ -2871,8 +2963,20 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             ),
         )
         self._undo_svc.push_local(
-            cmd.undo, cmd.redo, annotation_targets=tuple(history.targets.values())
+            self._warn_when_history_view_unavailable(cmd.undo),
+            self._warn_when_history_view_unavailable(cmd.redo),
+            annotation_targets=history.history_targets(),
         )
+
+    def _warn_when_history_view_unavailable(self, action):
+        def run(*args):
+            try:
+                return action(*args)
+            except AnnotationHistoryDependencyError as error:
+                show_warning(self, "Hot Link History", str(error))
+                raise
+
+        return run
 
     def _on_elements_deleted(self, uids: list) -> None:
         if not self._editing_enabled():
@@ -2952,7 +3056,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             ),
         )
         self._undo_svc.push_local(
-            cmd.undo, cmd.redo, annotation_targets=tuple(history.targets.values())
+            self._warn_when_history_view_unavailable(cmd.undo),
+            self._warn_when_history_view_unavailable(cmd.redo),
+            annotation_targets=history.history_targets(),
         )
 
     def cleanup(self) -> None:

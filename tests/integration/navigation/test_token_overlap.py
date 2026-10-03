@@ -1,7 +1,7 @@
 import threading
 import unittest
 from copy import deepcopy
-from unittest.mock import Mock
+from unittest.mock import create_autospec
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ConcurrencyToken,
     DatabaseMutationResult,
@@ -10,6 +10,27 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ResourceRef,
 )
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.application.interfaces.i_database_descriptor_registry import (
+    IDatabaseDescriptorRegistry,
+)
+from ost_visualizer.application.interfaces.i_database_mutation_executor import (
+    IDatabaseMutationExecutor,
+    IMutationRecorder,
+)
+from ost_visualizer.application.interfaces.i_mdb_writer import IMdbWriter
+from ost_visualizer.application.interfaces.i_thread_callback_bridge import (
+    IThreadCallbackBridge,
+)
+from ost_visualizer.application.services.active_bid_write_guard import (
+    ActiveBidWriteGuard,
+)
+from ost_visualizer.application.services.database_capability_service import (
+    DatabaseCapabilityService,
+)
+from ost_visualizer.application.services.sql_workspace_state_service import (
+    SqlWorkspaceStateService,
+)
+from ost_visualizer.domain.services.file_manager_service import FileManager
 from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
@@ -41,9 +62,9 @@ class NavigationTokenOverlapTests(unittest.TestCase):
         self.server = Condition("42", name="Old")
         self.version = ConcurrencyToken((1).to_bytes(8, "big"))
         self.context.tokens._reader.resources = {self.resource: self.version}
-        self.files = Mock()
+        self.files = create_autospec(FileManager, instance=True)
         self.files.prepare_bid_load.side_effect = self.read
-        workspace = Mock()
+        workspace = create_autospec(SqlWorkspaceStateService, instance=True)
         workspace.uses_sql_workspace.return_value = False
         self.loader = LoadBidUseCase(
             self.context.fixture.model,
@@ -85,16 +106,18 @@ class NavigationTokenOverlapTests(unittest.TestCase):
 
     def edit(self):
         service = ProjectWriteService.__new__(ProjectWriteService)
-        service._database_capability_service = Mock()
+        service._database_capability_service = create_autospec(
+            DatabaseCapabilityService, instance=True
+        )
         service._database_capability_service.is_editable.return_value = True
         service._event_bus = self.context.events
         service._session_registry = DatabaseSessionRegistry()
         service._session_registry.register("database", "session")
         service._concurrency_tokens = self.context.tokens
         service._project_data = self.context.data
-        service._bid_write_guard = Mock()
+        service._bid_write_guard = create_autospec(ActiveBidWriteGuard, instance=True)
         service._bid_write_guard.blocks_active_locked_bid_write.return_value = False
-        writer = Mock()
+        writer = create_autospec(IMdbWriter, instance=True)
 
         def update(_db, _bid, _uid, updates):
             self.server.name = updates.get("name")
@@ -102,7 +125,7 @@ class NavigationTokenOverlapTests(unittest.TestCase):
 
         writer.update_condition.side_effect = update
         service._update_condition = UpdateConditionUseCase(writer)
-        executor = Mock()
+        executor = create_autospec(IDatabaseMutationExecutor, instance=True)
 
         def execute(request, operation):
             self.presented = request.expected_versions[0].expected
@@ -111,7 +134,7 @@ class NavigationTokenOverlapTests(unittest.TestCase):
                     operation_id=request.operation_id,
                     outcome_status=MutationOutcomeStatus.CONFLICT,
                 )
-            value = operation(Mock())
+            value = operation(create_autospec(IMutationRecorder, instance=True))
             self.version = ConcurrencyToken(
                 (int.from_bytes(self.version.value, "big") + 1).to_bytes(8, "big")
             )
@@ -133,14 +156,16 @@ class NavigationTokenOverlapTests(unittest.TestCase):
         self.files.prepare_bid_load.return_value = self.read()
         queued = threading.Event()
         callbacks = []
-        dispatcher = Mock()
+        dispatcher = create_autospec(IThreadCallbackBridge, instance=True)
 
         def dispatch(callback, payload):
             callbacks.append((callback, payload))
             queued.set()
 
         dispatcher.dispatch.side_effect = dispatch
-        navigation = NavigationLoadService(Mock(), dispatcher)
+        navigation = NavigationLoadService(
+            create_autospec(IDatabaseDescriptorRegistry, instance=True), dispatcher
+        )
         self.addCleanup(navigation.cleanup)
         applied = []
         navigation.submit(

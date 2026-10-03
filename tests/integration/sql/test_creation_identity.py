@@ -1,10 +1,15 @@
 import json
+import os
 import unittest
 from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import create_autospec, patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.interfaces.i_database_catalog import IDatabaseCatalog
 from ost_visualizer.application.interfaces.i_sql_database_creator import (
+    ISqlDatabaseCreator,
     SqlDatabaseCreationResult,
     SqlDatabaseRuntimeCredentials,
 )
@@ -34,6 +39,7 @@ from ost_visualizer.presentation.dialogs.sql_connection_dialog import (
 from ost_visualizer.presentation.dialogs.sql_database_dialog import (
     SqlDatabasePropertiesDialog,
     SqlDatabasePropertiesMode,
+    SqlDatabasePropertiesResult,
 )
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
@@ -48,6 +54,26 @@ from tests.helpers.sql.creation_handoff_support import (
     _RUNTIME as _creation_handoff_support__RUNTIME,
     _error as _creation_handoff_support__error,
 )
+
+
+class _RecordingCredentialStore:
+    """In-memory credential store that records every write and read."""
+
+    def __init__(self):
+        self.passwords = {}
+        self.writes = []
+        self.reads = []
+
+    def read_password(self, target):
+        self.reads.append(target)
+        return self.passwords.get(target)
+
+    def write_password(self, target, username, password):
+        self.writes.append((target, username, password))
+        self.passwords[target] = password
+
+    def delete_password(self, target):
+        self.passwords.pop(target, None)
 
 
 class CreationIdentityCreationDialogIdentityTests(unittest.TestCase):
@@ -119,12 +145,137 @@ class CreationIdentityCreationDialogIdentityTests(unittest.TestCase):
             )
         )
 
+    def test_runtime_login_on_a_different_server_than_the_creator_is_refused(self):
+        connections = _creation_handoff_support__Connections(
+            [(1, b"creator-sid", "test-server")],
+            [("client", b"client-sid", "other-server", "S"), (0, 0, 0)],
+        )
+        dialog = self._dialog(SqlDatabaseCreator(connections))
+        with patch(
+            "ost_visualizer.presentation.dialogs.sql_database_dialog.show_warning"
+        ) as warning:
+            dialog._accept_if_valid()
+        self.assertIsNone(dialog.result_data())
+        self.assertEqual(len(connections.requests), 2)
+        self.assertEqual(len(warning.call_args_list), 1)
+        self.assertIn("same SQL Server", warning.call_args.args[2])
+        self.assertFalse(
+            any(
+                statement.lstrip().startswith("CREATE DATABASE ")
+                for lease in connections.leases
+                for statement, _parameters in lease.statements
+            )
+        )
+
+    def _handler(self, creator, *, request_on_start=True):
+        state = SimpleNamespace(file_entries=[])
+
+        def update_entries(entries):
+            state.file_entries = list(entries)
+
+        state.update_entries = update_entries
+        registry = DatabaseDescriptorRegistry()
+        credentials = _RecordingCredentialStore()
+        starts = []
+        factory = SqlDescriptorConnectionFactory(registry, credentials)
+        handler = with_workspace_state(FileOperationHandler)(
+            window=None,
+            icon_provider=SimpleNamespace(set_window_icon=lambda _widget: None),
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=state,
+            cleanup_deleted_files_use_case=None,
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: False),
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: False,
+            deferred_persistence_manager=None,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda _id, _reason, callback: callback(True, ""),
+                start_database=lambda database_id, **kwargs: (
+                    starts.append(
+                        factory.request(database_id, read_only=False)
+                        if request_on_start
+                        else database_id
+                    ),
+                    kwargs["on_initial_open"](True, ""),
+                    True,
+                )[-1],
+            ),
+            database_catalog=create_autospec(IDatabaseCatalog, instance=True),
+            credential_store=credentials,
+            database_descriptor_registry=registry,
+            sql_database_creator=creator,
+        )
+        return handler, state, registry, credentials, starts, factory
+
+    def test_a_password_is_saved_only_for_sql_authentication_with_a_password(self):
+        runtime = replace(
+            _creation_handoff_support__CREATOR,
+            database="Test database",
+            database_guid=_creation_handoff_support__GUID,
+            username="client",
+        )
+        cases = (
+            (
+                "windows login with a password",
+                SqlAuthenticationMode.WINDOWS,
+                "leaked",
+                False,
+            ),
+            (
+                "sql login with a password",
+                SqlAuthenticationMode.SQL_SERVER,
+                "secret",
+                True,
+            ),
+            (
+                "sql login without a password",
+                SqlAuthenticationMode.SQL_SERVER,
+                "",
+                False,
+            ),
+        )
+        for label, mode, password, saved in cases:
+            with self.subTest(label):
+                creator = create_autospec(ISqlDatabaseCreator, instance=True)
+                dialog = self._dialog(creator, own_cleanup=False)
+                handler, state, _registry, credentials, starts, _factory = (
+                    self._handler(creator, request_on_start=False)
+                )
+                result = SqlDatabasePropertiesResult(
+                    replace(runtime, authentication_mode=mode), 1, password
+                )
+                with (
+                    patch(
+                        "ost_visualizer.presentation.handlers.file_operation_handler.SqlDatabasePropertiesDialog",
+                        return_value=dialog,
+                    ),
+                    patch.object(
+                        dialog,
+                        "exec",
+                        return_value=QtWidgets.QDialog.DialogCode.Accepted,
+                    ),
+                    patch.object(dialog, "result_data", return_value=result),
+                ):
+                    self.assertTrue(handler.create_sql_database())
+                self.assertEqual(len(state.file_entries), 1)
+                self.assertEqual(len(starts), 1)
+                database_id = state.file_entries[0].database_id
+                self.assertEqual(
+                    credentials.writes,
+                    (
+                        [(f"OSTVisualizer/SqlServer/{database_id}", "client", password)]
+                        if saved
+                        else []
+                    ),
+                )
+
     def test_actual_dialog_registers_selected_runtime_and_reopens_with_its_credentials(
         self,
     ):
         for windows, fail in ((False, False), (True, False), (False, True)):
             with self.subTest(windows=windows, fail=fail):
-                creator = Mock()
+                creator = create_autospec(ISqlDatabaseCreator, instance=True)
                 dialog = self._dialog(creator, own_cleanup=False)
                 if windows:
                     dialog.windows_auth_radio.setChecked(True)
@@ -148,48 +299,8 @@ class CreationIdentityCreationDialogIdentityTests(unittest.TestCase):
                     dialog._accept_if_valid()
                     return dialog.result()
 
-                state = SimpleNamespace(file_entries=[])
-
-                def update_entries(entries):
-                    state.file_entries = list(entries)
-
-                state.update_entries = update_entries
-                registry = DatabaseDescriptorRegistry()
-                credentials = Mock()
-                credentials.read_password.return_value = (
-                    _creation_handoff_support__RUNTIME.password
-                )
-                starts = []
-                factory = SqlDescriptorConnectionFactory(registry, credentials)
-                handler = with_workspace_state(FileOperationHandler)(
-                    window=None,
-                    icon_provider=SimpleNamespace(set_window_icon=lambda _widget: None),
-                    event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
-                    file_state_model=state,
-                    cleanup_deleted_files_use_case=None,
-                    file_loading_service=SimpleNamespace(
-                        is_loaded=lambda _locator: False
-                    ),
-                    working_directory_service=None,
-                    unload_file_fn=lambda _locator: False,
-                    deferred_persistence_manager=None,
-                    ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
-                    sql_collaboration_coordinator=SimpleNamespace(
-                        stop_database_async=lambda _id, _reason, callback: callback(
-                            True, ""
-                        ),
-                        start_database=lambda database_id, **kwargs: (
-                            starts.append(
-                                factory.request(database_id, read_only=False)
-                            ),
-                            kwargs["on_initial_open"](True, ""),
-                            True,
-                        )[-1],
-                    ),
-                    database_catalog=Mock(),
-                    credential_store=credentials,
-                    database_descriptor_registry=registry,
-                    sql_database_creator=creator,
+                handler, state, registry, credentials, starts, factory = self._handler(
+                    creator
                 )
                 with patch(
                     "ost_visualizer.presentation.handlers.file_operation_handler.SqlDatabasePropertiesDialog",
@@ -204,7 +315,7 @@ class CreationIdentityCreationDialogIdentityTests(unittest.TestCase):
                 if fail:
                     self.assertEqual(state.file_entries, [])
                     self.assertEqual(starts, [])
-                    credentials.write_password.assert_not_called()
+                    self.assertEqual(credentials.writes, [])
                     continue
                 self.assertEqual(len(state.file_entries), 1)
                 self.assertEqual(starts[0].location, runtime_location)
@@ -212,17 +323,22 @@ class CreationIdentityCreationDialogIdentityTests(unittest.TestCase):
                     starts[0].password,
                     "" if windows else _creation_handoff_support__RUNTIME.password,
                 )
+                database_id = state.file_entries[0].database_id
                 if windows:
-                    credentials.write_password.assert_not_called()
-                    credentials.read_password.assert_not_called()
+                    self.assertEqual(credentials.writes, [])
+                    self.assertEqual(credentials.reads, [])
                 else:
-                    credentials.write_password.assert_called_once()
+                    # The reopen password comes from the credential the handler
+                    # saved under the database's own target, not from a fixture.
                     self.assertEqual(
-                        credentials.write_password.call_args.args[1:],
-                        (
-                            _creation_handoff_support__RUNTIME.username,
-                            _creation_handoff_support__RUNTIME.password,
-                        ),
+                        credentials.writes,
+                        [
+                            (
+                                f"OSTVisualizer/SqlServer/{database_id}",
+                                _creation_handoff_support__RUNTIME.username,
+                                _creation_handoff_support__RUNTIME.password,
+                            )
+                        ],
                     )
                 args, kwargs = creator.create_database_for_client.call_args
                 self.assertEqual(

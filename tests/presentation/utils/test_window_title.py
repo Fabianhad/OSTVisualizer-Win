@@ -83,6 +83,7 @@ class MainWindowTitleFormatterTests(unittest.TestCase):
             (None, None),
             (0, ""),
             ("0", "  "),
+            (" 0 ", None),
             ("  ", None),
         ):
             with self.subTest(bid_no=bid_no, bid_name=bid_name):

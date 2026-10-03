@@ -21,6 +21,7 @@ from ost_visualizer.application.dtos.collaboration_resource_catalog import (
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
 from ost_visualizer.presentation.services.selection_clipboard_service import (
     SelectionClipboardService,
 )
@@ -392,7 +393,7 @@ class CrossSystemWorkflowTests(unittest.TestCase):
         handler, data, write, undo = self.mixed_handler(True)
         active_bid = [BidRef("bid.mdb", "7")]
         handler._ui_state.get_selected_bid_ref = lambda: active_bid[0]
-        mesh = Mock()
+        mesh = Mock(spec=OpenGLViewer)
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = handler._ui_state
         coordinator._pending_3d_takeoff_uids_by_bid = {}
@@ -416,12 +417,20 @@ class CrossSystemWorkflowTests(unittest.TestCase):
         )
         old_b = list(data.takeoffs["parent"].position)
         handler.on_positions_flushed([("parent", old_b, [v + 2 for v in old_b])], [])
+        completion_b = write.queued_geometry[-1][-1]
         self.assertEqual(handler._plan_view.pending_mutation_uids, {"parent"})
         mesh.reset_mock()
         completion_a(history_fixture.PlanPropertyHistoryIdentityTests.committed())
         self.assertEqual(handler._plan_view.pending_mutation_uids, {"parent"})
         mesh.set_pending_mutation_uids.assert_not_called()
         self.assertFalse(undo.can_undo())
+        # Positive control: the new bid's own completion does clear its pending
+        # state and updates the mesh, so the stale completion above was ignored
+        # rather than the notifications being dead.
+        completion_b(history_fixture.PlanPropertyHistoryIdentityTests.committed())
+        self.assertEqual(handler._plan_view.pending_mutation_uids, set())
+        mesh.set_pending_mutation_uids.assert_called_with(set())
+        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_bid, {})
 
     def test_interleaved_placement_unknown_result_and_reverse_completion_order(self):
         handler, data, write, undo = self.mixed_handler(True)
@@ -667,6 +676,102 @@ class DetachedScaleWorkflowTests(unittest.TestCase):
                     self.assertEqual(replay, [value * 2 for value in original])
                 finally:
                     case.doCleanups()
+
+
+class CrossSystemPlacementOutcomeTests(unittest.TestCase):
+    """Second-pass additions: terminal placement outcomes that the first-pass workflows only covered negatively.
+    Same real PlanViewActionHandler + UndoRedoService + placement harness as CrossSystemWorkflowTests
+    (borrowed helper); the write service, plan view and event bus are the recording fakes of the
+    handler tests, so the SQL leg is a queue whose callbacks the test completes by hand.
+    """
+
+    mixed_handler = CrossSystemWorkflowTests.mixed_handler
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def result(operation_id, status):
+        return QueuedMutationResult(
+            database_id="bid.mdb",
+            runtime_generation=3,
+            operation_id=operation_id,
+            outcome_status=status,
+        )
+
+    def test_failed_queued_placement_on_the_same_bid_refreshes_the_plan_and_releases_history(
+        self,
+    ):
+        handler, data, write, undo = self.mixed_handler(True)
+        undo.push_local(lambda: True, lambda: True)
+        handler.on_takeoff_created("c1", [24, 24, 48, 24, 48, 48], "p1")
+        operation_id, callback = write.queued_takeoff_callbacks[-1]
+        pending_uids = handler._pending_takeoff_placements[operation_id].pending_uids
+        self.assertFalse(undo.can_undo())
+        handler._event_bus.events.clear()
+        callback(self.result(operation_id, MutationOutcomeStatus.FAILED_BEFORE_COMMIT))
+        refreshed = [
+            payload
+            for event, payload in handler._event_bus.events
+            if event == AppEvents.TAKEOFFS_CHANGED
+        ]
+        self.assertEqual(len(refreshed), 1)
+        self.assertEqual(refreshed[0]["page_uid"], "p1")
+        self.assertEqual(refreshed[0]["takeoff_uids"], list(pending_uids))
+        self.assertEqual(refreshed[0]["condition_uids"], ["c1"])
+        self.assertTrue(undo.can_undo())
+        self.assertEqual(handler._pending_plan_takeoff_uids_by_bid, {})
+        self.assertNotIn(operation_id, handler._pending_takeoff_placements)
+
+    def test_placement_cancelled_before_start_after_its_preview_was_deleted_stays_silent(
+        self,
+    ):
+        handler, data, write, undo = self.mixed_handler(True)
+        undo.push_local(lambda: True, lambda: True)
+        handler.on_takeoff_created("c1", [24, 24, 48, 24, 48, 48], "p1")
+        operation_id, callback = write.queued_takeoff_callbacks[-1]
+        pending_uid = handler._pending_takeoff_placements[operation_id].pending_uids[0]
+        handler.on_elements_deleted([pending_uid])
+        self.assertEqual(write.cancelled_mutations, [("bid.mdb", operation_id)])
+        handler._event_bus.events.clear()
+        callback(
+            self.result(operation_id, MutationOutcomeStatus.CANCELLED_BEFORE_START)
+        )
+        self.assertEqual(
+            [
+                event
+                for event, _payload in handler._event_bus.events
+                if event == AppEvents.TAKEOFFS_CHANGED
+            ],
+            [],
+        )
+        self.assertEqual(write.queued_deletes, [])
+        self.assertTrue(undo.can_undo())
+        self.assertEqual(handler._pending_plan_takeoff_uids_by_bid, {})
+        self.assertNotIn(operation_id, handler._pending_takeoff_placements)
+
+    def test_queued_delete_scale_before_completion_then_undo_uses_the_deletion_time_scale(
+        self,
+    ):
+        handler, data, write, undo = self.mixed_handler(True)
+        handler.on_elements_deleted(["parent", "text"])
+        self.assertFalse(undo.can_undo())
+        # The Page is recalibrated while the delete is still queued: the saved
+        # geometry is still in the old scale, so history must keep the old scale.
+        data.pages["p1"].scale_factor1 = 0.25
+        data.takeoffs.clear()
+        data.annotations.clear()
+        write.queued_deletes[-1][-1](
+            history_fixture.PlanPropertyHistoryIdentityTests.committed()
+        )
+        self.assertTrue(undo.can_undo())
+        undo.undo()
+        payload = write.queued_pastes[-1][1]
+        self.assertEqual(
+            payload.takeoff_specs[0].position, [0, 0, 48, 0, 48, 48, 0, 48]
+        )
+        self.assertEqual(payload.annotation_specs[0].position, [12, 12, 24, 12])
 
 
 if __name__ == "__main__":

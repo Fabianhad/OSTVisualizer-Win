@@ -65,12 +65,27 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
         window.show()
         window.activateWindow()
         self.app.processEvents()
-        wrapper.set_toolbar_visible(False)
-        QtTest.QTest.keyClick(window, QtCore.Qt.Key.Key_PageDown)
+        # The command's own shortcut, not a literal key, drives the keystrokes.
+        combination = command.shortcut()[0]
+        self.assertNotEqual(combination.key(), QtCore.Qt.Key.Key_unknown)
+
+        def press_shortcut():
+            QtTest.QTest.keyClick(
+                window, combination.key(), combination.keyboardModifiers()
+            )
+
+        # Positive control: shown in the toolbar and triggerable by shortcut.
+        self.assertTrue(wrapper.isVisible())
+        press_shortcut()
         self.assertEqual(calls, [True])
+        wrapper.set_toolbar_visible(False)
+        self.assertFalse(wrapper.isVisible())
+        self.assertTrue(command.isVisible())
+        press_shortcut()
+        self.assertEqual(calls, [True, True])
         self.assertTrue(menu.actions()[0].isVisible())
         command.setEnabled(False)
-        QtTest.QTest.keyClick(window, QtCore.Qt.Key.Key_PageDown)
-        self.assertEqual(calls, [True])
+        press_shortcut()
+        self.assertEqual(calls, [True, True])
         self.assertFalse(wrapper.isVisible())
         window.close()

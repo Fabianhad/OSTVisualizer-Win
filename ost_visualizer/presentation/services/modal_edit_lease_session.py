@@ -68,8 +68,12 @@ class ModalEditLeaseSession:
         self._request(resolved)
 
     def accept_initial_lease(self, result: EditLeaseResult) -> None:
-        if result.granted:
-            self._handle = result.handle
+        if not result.granted:
+            return
+        if self._closed:
+            self._owner.end_collaboration_edit(result.handle)
+            return
+        self._handle = result.handle
 
     def submit_mutation(self, submit, completed) -> bool:
         handle = self._handle
@@ -99,9 +103,13 @@ class ModalEditLeaseSession:
             self._request(reacquired)
 
         submitting = True
+        completion_delivered = False
 
         def mutation_completed(success: bool, value=None) -> None:
-            nonlocal synchronous_completion
+            nonlocal synchronous_completion, completion_delivered
+            if completion_delivered:
+                return
+            completion_delivered = True
             if submitting:
                 synchronous_completion = (success, value)
                 return
@@ -110,11 +118,11 @@ class ModalEditLeaseSession:
         try:
             started = submit(handle, mutation_completed)
         except Exception:
-            self._handle = handle
+            self._restore_handle(handle)
             raise
         submitting = False
         if not started:
-            self._handle = handle
+            self._restore_handle(handle)
             if synchronous_completion is not None:
                 completed(*synchronous_completion)
             return False
@@ -148,6 +156,12 @@ class ModalEditLeaseSession:
         self._handle = None
         if self._dialog is not None:
             self._dialog.reject()
+
+    def _restore_handle(self, handle: EditLeaseHandle) -> None:
+        if self._closed:
+            self._owner.end_collaboration_edit(handle)
+            return
+        self._handle = handle
 
     def _request(self, callback) -> None:
         self._owner.request_collaboration_edit(

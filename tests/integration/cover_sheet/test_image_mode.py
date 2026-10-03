@@ -54,6 +54,28 @@ class ImageModeCoverSheetPathTests(unittest.TestCase):
         )
         try:
             item = dialog.plan_tree.topLevelItem(0)
+            # Positive control: before the clear the row owns overlay mode and the
+            # overlay-only load strategy, so the Original assertions below can only
+            # come from the clear action.
+            before = _path_support__first_page_update(dialog)
+            self.assertEqual(before["overlay_path"], r"C:\Plans\overlay.pdf")
+            self.assertEqual(before["show_mode"], 1)
+            self.assertEqual(item.text(dialog._SHOW_COLUMN), "Overlay")
+            before_strategy = PageLoadStrategyService(
+                SimpleNamespace(get_page_size=lambda _path, _index: (3024.0, 2160.0))
+            ).determine_load_strategy(
+                Page(
+                    uid="p1",
+                    name="Level 1",
+                    image_path=before["image_path"],
+                    overlay_image_path=before["overlay_path"],
+                    image_show_mode=before["show_mode"],
+                    width_pts=3024.0,
+                    height_pts=2160.0,
+                )
+            )
+            self.assertFalse(before_strategy.load_main)
+            self.assertTrue(before_strategy.load_overlay)
             _overlay_browse, overlay_clear = _path_support__path_buttons(
                 dialog, item, 5
             )
@@ -70,7 +92,7 @@ class ImageModeCoverSheetPathTests(unittest.TestCase):
                 uid="p1",
                 name="Level 1",
                 image_path=page_update["image_path"],
-                overlay_image_path=None,
+                overlay_image_path=page_update["overlay_path"],
                 image_show_mode=page_update["show_mode"],
                 width_pts=3024.0,
                 height_pts=2160.0,

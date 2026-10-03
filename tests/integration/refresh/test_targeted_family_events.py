@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from contextlib import nullcontext
 import pyodbc
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.condition import Condition
@@ -13,6 +14,16 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 )
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
+)
+from ost_visualizer.presentation.components.page_combo import PageComboBox
+from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+    SidebarCoordinator,
+)
+from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
+    ViewerSyncCoordinator,
+)
+from ost_visualizer.presentation.windows.components.window import (
+    DetachedPageViewWindow,
 )
 import tests.integration.refresh.test_local_family_ownership as scope_fixture
 
@@ -47,6 +58,35 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
                     result = fixture.service.save_page_scale("test.mdb", "42", 1, 24)
                 self.assertTrue(result)
                 self.assertEqual(replacement.scale_factor2, 96)
+                fixture.service._reload_database.assert_called_once_with("test.mdb")
+                metadata.assert_not_called()
+
+    def test_page_projection_rejects_a_switched_bid_for_scale_and_rename(self):
+        for operation in ("scale", "batch scale", "rename"):
+            with self.subTest(operation=operation):
+                self.case.setUp()
+                fixture = self.case.fixture
+                page = fixture.original
+
+                def persist(*_args):
+                    # The same Page object stays loaded, but another Bid became
+                    # current while the write was in flight.
+                    fixture.model.current_bid_ref = BidRef("test.mdb", "8")
+                    return True
+
+                fixture.service._save_page_scale.execute = persist
+                fixture.service._save_page_name.execute = persist
+                fixture.service._reload_database = Mock(return_value=True)
+                metadata = Mock()
+                fixture.events.subscribe(AppEvents.PAGE_METADATA_CHANGED, metadata)
+                if operation == "scale":
+                    result = fixture.service.save_page_scale("test.mdb", "42", 1, 24)
+                elif operation == "batch scale":
+                    result = fixture.service.save_page_scales("test.mdb", ["42"], 1, 24)
+                else:
+                    result = fixture.service.save_page_name("test.mdb", "42", "Renamed")
+                self.assertTrue(result)
+                self.assertEqual((page.name, page.scale_factor2), ("Page 42", 48))
                 fixture.service._reload_database.assert_called_once_with("test.mdb")
                 metadata.assert_not_called()
 
@@ -184,7 +224,7 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
 
     def test_metadata_event_surface_matrix_has_no_generic_fanout(self):
         for field in ("name", "scale"):
-            for target in ("42", "43"):
+            for target in ("42", "43", ""):
                 for matching_bid in (True, False):
                     with self.subTest(
                         field=field, target=target, matching=matching_bid
@@ -197,9 +237,9 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
                         main = UIEventCoordinator.__new__(UIEventCoordinator)
                         main.ui_state_manager = fixture.coordinator.ui_state_manager
                         main.project_data = fixture.data
-                        main.takeoff_sidebar = Mock()
-                        main._sidebar = Mock()
-                        main._viewer = Mock()
+                        main.takeoff_sidebar = Mock(spec=PageComboBox)
+                        main._sidebar = Mock(spec=SidebarCoordinator)
+                        main._viewer = Mock(spec=ViewerSyncCoordinator)
                         main._sync_page_info_status = Mock()
                         main._update_page_settings_bar = Mock()
                         main._apply_pending_hotlink_named_view_focus = Mock()
@@ -209,7 +249,7 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
                         detached = DetachedPageViewManager.__new__(
                             DetachedPageViewManager
                         )
-                        detached._window = Mock()
+                        detached._window = Mock(spec=DetachedPageViewWindow)
                         detached.repository = SimpleNamespace(
                             get_active_view=lambda: SimpleNamespace(
                                 bid_ref=fixture.bid_ref, target_page_uid="42"
@@ -255,7 +295,7 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
                         )
                         self.assertEqual(
                             main._sidebar.load_condition_summary_from_memory.call_count,
-                            int(matching_bid),
+                            int(matching_bid and target != ""),
                         )
                         main._do_file_refresh.assert_not_called()
                         detached._refresh_signaler.request.assert_not_called()

@@ -163,6 +163,8 @@ class WindowsThemeTests(unittest.TestCase):
     def test_explicit_platform_dark_mode_opt_out_is_respected(self):
         result = self.probe("windowsvista", "windows:darkmode=0")
         self.assertEqual(result["style"], "fusion")
+        # Three theme changes on each of the four windows: not a vacuous all().
+        self.assertEqual(len(result["snapshots"]), 12)
         # This option disables Qt's dark style integration too. Do not promise
         # dark client-area palettes after an explicit platform-level opt-out.
         self.assertTrue(
@@ -172,6 +174,7 @@ class WindowsThemeTests(unittest.TestCase):
     def test_platform_without_windows_theme_api_keeps_its_style_without_crashing(self):
         result = self.probe("fusion", "offscreen")
         self.assertEqual(result["style"], "fusion")
+        self.assertEqual(len(result["snapshots"]), 12)
         self.assertTrue(
             all(state["dark_border"] is None for state in result["snapshots"])
         )

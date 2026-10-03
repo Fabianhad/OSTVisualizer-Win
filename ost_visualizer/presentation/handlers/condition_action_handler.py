@@ -6,10 +6,12 @@ from types import SimpleNamespace
 from typing import Callable, Optional
 from PySide6.QtCore import QSignalBlocker
 from shiboken6 import isValid
+from ...application.dtos.active_bid_locked_error import ActiveBidLockedError
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
     EditLeaseResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     QueuedMutationResult,
     ResourceRef,
 )
@@ -83,6 +85,7 @@ class ConditionActionHandler:
         submit,
         on_committed=None,
         on_failed=None,
+        on_blocked=None,
     ) -> bool:
         key = (
             str(bid_ref.file_path),
@@ -118,10 +121,23 @@ class ConditionActionHandler:
             )
             if on_failed is not None:
                 on_failed(result)
+            if (
+                result.rejection_reason == MutationRejectionReason.BID_LOCKED
+                and on_blocked is not None
+            ):
+                on_blocked()
 
         try:
             submit(complete)
+        except ActiveBidLockedError:
+            terminal_delivered = True
+            self._pending_sql_operations.discard(key)
+            logger.warning("%s blocked: the active bid is locked", title)
+            if on_blocked is not None:
+                on_blocked()
+            return False
         except (RuntimeError, ValueError) as exc:
+            terminal_delivered = True
             self._pending_sql_operations.discard(key)
             show_warning(
                 self._coordinator.conditions_sidebar.window(),
@@ -129,6 +145,10 @@ class ConditionActionHandler:
                 str(exc),
             )
             return False
+        except Exception:
+            terminal_delivered = True
+            self._pending_sql_operations.discard(key)
+            raise
         return True
 
     def _is_current_bid(self, bid_ref) -> bool:
@@ -877,24 +897,38 @@ class ConditionActionHandler:
                 ):
                     self._finish_condition_duplicate(new_uids, sidebar)
 
-            submitted = self._submit_sql_condition_operation(
-                bid_ref,
-                (
-                    ("duplicate_reassign", reassign_takeoffs.page_uid, *condition_uids)
-                    if reassign_takeoffs
-                    else ("duplicate", *condition_uids)
-                ),
-                "Duplicate Conditions",
-                lambda callback: write_service.queue_conditions_duplicate(
-                    bid_ref.file_path,
-                    bid_ref.bid_uid,
-                    condition_uids,
-                    callback,
-                    **options,
-                ),
-                committed,
-                on_failed=property_complete,
-            )
+            try:
+                submitted = self._submit_sql_condition_operation(
+                    bid_ref,
+                    (
+                        (
+                            "duplicate_reassign",
+                            reassign_takeoffs.page_uid,
+                            *condition_uids,
+                        )
+                        if reassign_takeoffs
+                        else ("duplicate", *condition_uids)
+                    ),
+                    "Duplicate Conditions",
+                    lambda callback: write_service.queue_conditions_duplicate(
+                        bid_ref.file_path,
+                        bid_ref.bid_uid,
+                        condition_uids,
+                        callback,
+                        **options,
+                    ),
+                    committed,
+                    on_failed=property_complete,
+                )
+            except Exception:
+                if abort is not None:
+                    try:
+                        abort()
+                    except Exception:
+                        logger.exception(
+                            "Failed to release plan state after a queue submission error"
+                        )
+                raise
             if not submitted and abort is not None:
                 abort()
             return
@@ -1392,6 +1426,7 @@ class ConditionActionHandler:
                     new_name,
                     callback,
                 ),
+                on_blocked=self._coordinator.refresh_conditions_ui,
             )
             return
         success = write_service.rename_condition_folder(
@@ -1434,6 +1469,9 @@ class ConditionActionHandler:
                     if self._bid_owner_is_current(bid_ref, bid_owner)
                     else None
                 ),
+                on_blocked=lambda: self._revert_blocked_condition_rename(
+                    condition_uid, sidebar
+                ),
             )
             return
         result = write_service.update_condition(
@@ -1449,6 +1487,11 @@ class ConditionActionHandler:
             self._coordinator.refresh_conditions_ui()
             if sidebar:
                 self._coordinator.highlight_sidebar({condition_uid})
+
+    def _revert_blocked_condition_rename(self, condition_uid: str, sidebar) -> None:
+        self._coordinator.refresh_conditions_ui()
+        if sidebar:
+            self._coordinator.highlight_sidebar({condition_uid})
 
     def on_folder_delete_requested(self, folder_uids: list) -> None:
         if not folder_uids:

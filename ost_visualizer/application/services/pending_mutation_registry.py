@@ -112,14 +112,3 @@ class PendingMutationRegistry:
                 for pending in self._mutations.values()
                 if pending.request.database_id == database_id
             )
-
-    def clear_database(self, database_id: str) -> tuple[PendingMutation, ...]:
-        with self._lock:
-            operation_ids = tuple(
-                operation_id
-                for operation_id, pending in self._mutations.items()
-                if pending.request.database_id == database_id
-            )
-            return tuple(
-                self._mutations.pop(operation_id) for operation_id in operation_ids
-            )

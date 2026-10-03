@@ -15,13 +15,16 @@ ROOT = Path(__file__).resolve().parents[1]
 def inventory():
     modules = {}
     review_path = ROOT / "tests" / "quality_review.json"
-    reviews = json.loads(review_path.read_text(encoding="utf-8"))["modules"] if review_path.exists() else {}
+    review_data = json.loads(review_path.read_text(encoding="utf-8")) if review_path.exists() else {}
+    reviews = review_data.get("modules", {})
+    campaign = review_data.get("second_pass_campaign", {})
     for path in sorted((ROOT / "tests").rglob("test_*.py")):
         source = path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source)
         methods = []
         relative = path.relative_to(ROOT).as_posix()
         reviewed = reviews.get(relative, {}).get("reviewed_tests", {})
+        second_pass = reviews.get(relative, {}).get("second_pass", {}).get("reviewed_tests", {})
         for owner in tree.body:
             if isinstance(owner, ast.ClassDef):
                 candidates = owner.body
@@ -45,6 +48,8 @@ def inventory():
                     "decorators": [ast.unparse(item) for item in node.decorator_list],
                     "review_status": "reviewed; final fresh pass pending" if prefix + node.name in reviewed else "pending",
                     "review_note": reviewed.get(prefix + node.name, ""),
+                    "second_pass_status": "second pass reviewed" if prefix + node.name in second_pass else "not selected or pending",
+                    "second_pass_note": second_pass.get(prefix + node.name, ""),
                 })
         modules[relative] = {
             "sha256": hashlib.sha256(source.encode()).hexdigest(),
@@ -55,6 +60,7 @@ def inventory():
         "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
         "module_count": len(modules),
         "method_count": sum(len(item["methods"]) for item in modules.values()),
+        "second_pass_decisions": campaign.get("decisions", []),
         "modules": modules,
     }
 
@@ -89,6 +95,7 @@ def main():
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"{result['module_count']} modules; {result['method_count']} defined tests")
     print("Reviewed tests:", sum(method["review_status"] != "pending" for entry in result["modules"].values() for method in entry["methods"]))
+    print("Second-pass tests:", sum(method["second_pass_status"] == "second pass reviewed" for entry in result["modules"].values() for method in entry["methods"]))
     for name, entry in result["modules"].items():
         if entry["duplicate_method_names"]:
             print("DUPLICATE DEFINITIONS", name, entry["duplicate_method_names"])

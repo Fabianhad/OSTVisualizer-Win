@@ -9,6 +9,7 @@ from ost_visualizer.application.services.page_load_strategy_service import (
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.render_priority import RenderPriority
 from ost_visualizer.presentation.visualization.pdf.services.page_render_prefetch_coordinator import (
     PageRenderPrefetchCoordinator,
@@ -130,7 +131,7 @@ class FakeCache:
         self.checks += 1
         return self.can_accept
 
-    def can_accept_prefetch_render(self, width_pts, height_pts, scale):
+    def can_accept_prefetch_render(self, width_pts, height_pts, scale, *, tinted=False):
         self.render_checks.append((width_pts, height_pts, scale))
         return self.can_accept_prefetch() and self.can_accept_render
 
@@ -180,6 +181,76 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
             )
         )
         self.assertGreater(RenderPriority.NEARBY_PREFETCH, RenderPriority.REQUIRED_PAGE)
+        self.assertEqual(
+            [
+                (call[2]["page_index"], call[2]["scale"], call[2]["rotation"])
+                for call in rendering.calls
+            ],
+            [(0, INTERACTIVE_PDF_RENDER_SCALE, 0)] * 2,
+        )
+
+    def test_edge_pages_prefetch_only_their_single_neighbour(self):
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="p2.pdf"),
+            self._page("p3", image_path="p3.pdf"),
+        ]
+        for current, expected in (
+            (0, ["p2.pdf"]),
+            (2, ["p2.pdf"]),
+            (1, ["p1.pdf", "p3.pdf"]),
+        ):
+            with self.subTest(current=pages[current].uid):
+                rendering = FakeRenderingService()
+                self._coordinator(rendering).prefetch_nearby_pages(
+                    pages[current], pages, None
+                )
+                self.assertEqual(
+                    [call[2]["file_path"] for call in rendering.calls], expected
+                )
+
+    def test_unknown_or_missing_current_page_schedules_nothing_and_cancels_pending(
+        self,
+    ):
+        rendering = FakeRenderingService()
+        coordinator = self._coordinator(rendering)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="p2.pdf"),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        pending_id = rendering.calls[0][1]
+        coordinator.prefetch_nearby_pages(
+            self._page("elsewhere", image_path="elsewhere.pdf"), pages, None
+        )
+        self.assertEqual(rendering.cancelled, [pending_id])
+        self.assertEqual(len(rendering.calls), 1)
+        self.assertEqual(coordinator._active_request_ids, set())
+        coordinator.prefetch_nearby_pages(None, pages, None)
+        self.assertEqual(len(rendering.calls), 1)
+        # Positive control: None entries are ignored, a known page still works.
+        coordinator.prefetch_nearby_pages(
+            pages[0], [None, pages[0], None, pages[1]], None
+        )
+        self.assertEqual(
+            [call[2]["file_path"] for call in rendering.calls], ["p2.pdf", "p2.pdf"]
+        )
+
+    def test_prefetch_forwards_page_effects_and_skips_hidden_layers(self):
+        rendering = FakeRenderingService()
+        coordinator = self._coordinator(rendering)
+        pages = [
+            self._page("p1", image_path="p1.pdf", invert=True, bitonal=True),
+            self._page("p2", image_path="p2.pdf"),
+            self._page("p3", image_path="p3.pdf", layer_visible=False),
+        ]
+        coordinator.prefetch_nearby_pages(pages[1], pages, None)
+        self.assertEqual(len(rendering.calls), 1)
+        options = rendering.calls[0][2]
+        self.assertEqual(options["file_path"], "p1.pdf")
+        self.assertTrue(options["invert"])
+        self.assertTrue(options["bitonal"])
+        self.assertEqual(coordinator._active_request_ids, {rendering.calls[0][1]})
 
     def test_duplicate_adjacent_page_uid_is_scheduled_once(self):
         rendering = FakeRenderingService()
@@ -204,8 +275,21 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         ]
         coordinator.prefetch_nearby_pages(pages[1], pages, None)
         self.assertEqual([call[0] for call in rendering.calls], ["page", "overlay"])
-        coordinator.prefetch_nearby_pages(pages[2], pages, None)
+        overlay_options = rendering.calls[1][2]
+        self.assertIs(overlay_options["page"], pages[2])
+        self.assertEqual(overlay_options["show_mode"], 1)
+        self.assertEqual(overlay_options["rotation"], 0)
+        self.assertEqual(overlay_options["render_scale"], INTERACTIVE_PDF_RENDER_SCALE)
+        bid_ref = BidRef("bid.mdb", "bid")
+        coordinator.prefetch_nearby_pages(pages[2], pages, bid_ref)
         self.assertEqual(rendering.calls[-1][0], "composite")
+        composite_options = rendering.calls[-1][2]
+        self.assertIs(composite_options["page"], pages[1])
+        self.assertIs(composite_options["bid_ref"], bid_ref)
+        self.assertEqual(
+            composite_options["render_scale"], INTERACTIVE_PDF_RENDER_SCALE
+        )
+        self.assertEqual(composite_options["priority"], RenderPriority.NEARBY_PREFETCH)
 
     def test_switching_pages_cancels_and_invalidates_stale_prefetch(self):
         rendering = FakeRenderingService()
@@ -220,9 +304,15 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         coordinator.prefetch_nearby_pages(pages[2], pages, None)
         self.assertCountEqual(rendering.cancelled, old_ids)
         scheduled_after_switch = list(rendering.calls)
+        new_ids = [call[1] for call in scheduled_after_switch[len(old_ids) :]]
+        self.assertEqual(len(new_ids), 1)
+        self.assertEqual(coordinator._active_request_ids, set(new_ids))
         rendering.complete(old_ids[0])
         self.assertEqual(rendering.calls, scheduled_after_switch)
         self.assertCountEqual(rendering.cancelled, old_ids)
+        self.assertEqual(coordinator._active_request_ids, set(new_ids))
+        rendering.complete(new_ids[0])
+        self.assertEqual(coordinator._active_request_ids, set())
 
     def test_synchronous_prefetch_completion_does_not_leave_orphaned_request(self):
         class SynchronousRenderingService(FakeRenderingService):
@@ -277,7 +367,9 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         ]
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         request_id = rendering.calls[0][1]
+        self.assertEqual(coordinator._active_request_ids, {request_id})
         rendering.complete(request_id)
+        self.assertEqual(coordinator._active_request_ids, set())
         rendering.complete(request_id)
         self.assertEqual(coordinator._active_request_ids, set())
         coordinator.cancel_pending()
@@ -312,8 +404,10 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         self.assertEqual(len(rendering.calls), 1)
         scale = rendering.calls[0][2]["scale"]
-        self.assertLess(scale, 2.0)
-        self.assertEqual(cache.render_checks, [(3024.0, 2160.0, scale)])
+        # floor(sqrt(20_000_000 / (3024 * 2160)) * 1000) / 1000: the 20M-pixel
+        # base raster cap rather than the interactive 3.0 baseline.
+        self.assertEqual(scale, 1.749)
+        self.assertEqual(cache.render_checks, [(3024.0, 2160.0, 1.749)])
 
     def test_raster_overlay_prefetch_uses_native_pixel_scale(self):
         rendering = FakeRenderingService()
@@ -381,3 +475,92 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         self.assertEqual(rendering.calls, [])
         self.assertEqual(len(cache.render_checks), 1)
+
+    def test_unreadable_raster_overlay_size_skips_prefetch_without_cache_check(self):
+        rendering = FakeRenderingService()
+        cache = FakeCache(sizes={("overlay.tif", 0): (0.0, 1584.0)})
+        size_provider = FakePageSizeProvider({"overlay.tif": (1224.0, 1584.0)})
+        coordinator = self._coordinator(rendering, cache, size_provider)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", overlay_image_path="overlay.tif", image_show_mode=1),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(rendering.calls, [])
+        self.assertEqual(cache.render_checks, [])
+
+    def test_pdf_overlay_prefetch_uses_pdf_baseline_scale_and_page_rotation(self):
+        rendering = FakeRenderingService()
+        cache = FakeCache()
+        coordinator = self._coordinator(rendering, cache)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page(
+                "p2",
+                overlay_image_path="overlay.pdf",
+                image_show_mode=1,
+                rotation=90,
+            ),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual([call[0] for call in rendering.calls], ["overlay"])
+        options = rendering.calls[0][2]
+        self.assertEqual(options["render_scale"], INTERACTIVE_PDF_RENDER_SCALE)
+        self.assertEqual(options["rotation"], 90)
+        self.assertEqual(
+            cache.render_checks, [(612.0, 792.0, INTERACTIVE_PDF_RENDER_SCALE)]
+        )
+
+    def test_submission_superseded_while_scheduling_is_cancelled_immediately(self):
+        class ReentrantRenderingService(FakeRenderingService):
+            coordinator = None
+
+            def render_page_async(self, *args, **kwargs):
+                request_id = super().render_page_async(*args, **kwargs)
+                # A newer navigation cancels pending work before this submission
+                # has returned its request id.
+                self.coordinator.cancel_pending()
+                return request_id
+
+        rendering = ReentrantRenderingService()
+        coordinator = self._coordinator(rendering)
+        rendering.coordinator = coordinator
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="p2.pdf"),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(len(rendering.calls), 1)
+        self.assertEqual(rendering.cancelled, [rendering.calls[0][1]])
+        self.assertEqual(coordinator._active_request_ids, set())
+
+    def test_real_page_cache_pressure_gates_prefetch_admission(self):
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="p2.pdf"),
+        ]
+        rendering = FakeRenderingService()
+        cache = PageCache()
+        coordinator = self._coordinator(rendering, cache)
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual([call[2]["file_path"] for call in rendering.calls], ["p2.pdf"])
+        coordinator.cancel_pending()
+        for index in range(PageCache.MAX_ENTRIES):
+            cache._cache[f"held-{index}"] = None
+        cache._image_size_bytes = lambda _image: 0
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(len(rendering.calls), 1)
+
+    def test_completion_for_another_request_id_does_not_release_the_submission(self):
+        rendering = FakeRenderingService()
+        coordinator = self._coordinator(rendering)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="p2.pdf"),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        request_id = rendering.calls[0][1]
+        rendering.callbacks[request_id](RenderResult("unrelated", True, object(), None))
+        self.assertEqual(coordinator._active_request_ids, {request_id})
+        rendering.complete(request_id)
+        self.assertEqual(coordinator._active_request_ids, set())

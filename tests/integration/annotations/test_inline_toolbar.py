@@ -139,6 +139,14 @@ class PlanInlineTextToolbarWorkflowTests(unittest.TestCase):
             )
             self.assertEqual(new_spec.color, "#445566")
             self.assertEqual(new_spec.width, 6.0)
+            # Positive control: the selection style channel the dropdown must
+            # NOT drive is live, so the unchanged colours above are meaningful.
+            view.apply_annotation_style_to_selection(color="#778899")
+            self.assertEqual(selected.color, "#778899")
+            self.assertEqual(other.color, "#0000ff")
+            self.assertEqual(
+                emitted, [("a1", "rect", {"Color": "#ff0000"}, {"Color": "#778899"})]
+            )
         finally:
             set_annotation_style_for_tool(
                 "rect", color=original_style.color, line_width=original_style.line_width

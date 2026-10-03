@@ -13,15 +13,19 @@ from ost_visualizer.presentation.services.qt_scene_notifier import QtSceneNotifi
 
 class QtSceneNotifierLifecycleTests(unittest.TestCase):
     def test_native_scene_contract_has_no_legacy_bounds_payload(self):
-        self.assertNotIn(
-            "bounds",
-            {field.name for field in fields(NativeSceneUpdatedEvent)},
-        )
-        self.assertNotIn(
-            "bounds",
-            inspect.signature(IThreadSceneNotifier.notify_scene_ready).parameters,
-        )
-        self.assertNotIn(
-            "bounds",
-            inspect.signature(QtSceneNotifier.notify_scene_ready).parameters,
-        )
+        event_fields = {field.name for field in fields(NativeSceneUpdatedEvent)}
+        interface_parameters = inspect.signature(
+            IThreadSceneNotifier.notify_scene_ready
+        ).parameters
+        implementation_parameters = inspect.signature(
+            QtSceneNotifier.notify_scene_ready
+        ).parameters
+        # Positive controls: the inspected payloads are the real scene
+        # contract, so a missing "bounds" is not an artefact of inspecting an
+        # empty or unrelated signature.
+        self.assertTrue({"geometries", "scene_identity"} <= event_fields)
+        for parameters in (interface_parameters, implementation_parameters):
+            self.assertTrue({"geometries", "gen_id", "scene_failed"} <= set(parameters))
+        self.assertNotIn("bounds", event_fields)
+        self.assertNotIn("bounds", interface_parameters)
+        self.assertNotIn("bounds", implementation_parameters)

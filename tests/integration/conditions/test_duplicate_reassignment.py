@@ -1,12 +1,17 @@
 import unittest
+from contextlib import ExitStack
 from dataclasses import replace
 from unittest.mock import Mock, patch
+from ost_visualizer.application.dtos.active_bid_locked_error import (
+    ActiveBidLockedError,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     ConcurrencyToken,
     DatabaseMutationResult,
     DurableOperationResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     QueuedMutationResult,
     ResourceRef,
 )
@@ -18,6 +23,10 @@ from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
 )
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+)
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.components import conditions_sidebar as sidebar_module
 from ost_visualizer.presentation.handlers.condition_action_handler import (
@@ -26,7 +35,29 @@ from ost_visualizer.presentation.handlers.condition_action_handler import (
 from ost_visualizer.presentation.handlers.plan_view_action_handler import (
     PlanViewActionHandler,
 )
+from ost_visualizer.application.services.annotation_write_service import (
+    AnnotationWriteService,
+)
+from ost_visualizer.application.services.project_read_service import (
+    ProjectReadService,
+)
+from ost_visualizer.application.services.project_write_service import (
+    ProjectWriteService,
+)
+from ost_visualizer.infrastructure.events.event_bus import EventBus
+from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
+from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+    SidebarCoordinator,
+)
+from ost_visualizer.presentation.managers.deferred_persistence_manager import (
+    DeferredPersistenceManager,
+)
+from tests.helpers.workspace_state import make_workspace_state_model
+from ost_visualizer.presentation.coordinators.placement_coordinator import (
+    PlacementCoordinator,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
     PlanSurfaceAccessState,
 )
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
@@ -56,7 +87,7 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
             can_select_plan_items=True, can_edit_plan_items=True
         )
         self.sidebar.set_duplicate_enabled(True)
-        self.write = Mock()
+        self.write = Mock(spec=ProjectWriteService)
         self.write.uses_sql_collaboration_mutations.return_value = False
         self.write.duplicate_conditions_result.return_value = WriteReloadResult(
             ["new"], write_success=True, reload_success=True
@@ -68,20 +99,25 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
             self.state,
             self.data,
             self.write,
-            Mock(),
-            Mock(),
+            Mock(spec=AnnotationWriteService),
+            Mock(spec=PageSettingsBar),
             self.undo,
-            Mock(),
-            Mock(),
+            EventBus(),
+            Mock(spec=DeferredPersistenceManager),
             self.access,
         )
         self.coordinator._plan_view_handler = self.plan_handler
-        self.coordinator._deferred_persistence = Mock()
+        self.coordinator._deferred_persistence = Mock(spec=DeferredPersistenceManager)
         self.coordinator._deferred_persistence.flush_for_file.return_value = True
-        self.coordinator._placement = Mock()
-        self.coordinator._sidebar = Mock()
+        self.coordinator._placement = Mock(spec=PlacementCoordinator)
+        self.coordinator._sidebar = Mock(spec=SidebarCoordinator)
         self.handler = ConditionActionHandler(
-            self.coordinator, self.write, Mock(), self.data, self.state, Mock()
+            self.coordinator,
+            self.write,
+            Mock(spec=ProjectReadService),
+            self.data,
+            self.state,
+            make_workspace_state_model(),
         )
         self.coordinator._condition_handler = self.handler
         self.coordinator.flush_deferred_for_file = Mock(return_value=True)
@@ -148,7 +184,8 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
         self.assertTrue(self.open_menu("other"))
         self.assertFalse(self.open_menu("unused"))
         self.assertFalse(self.open_menu("elsewhere"))
-        self.write.assert_not_called()
+        self.write.duplicate_conditions_result.assert_not_called()
+        self.write.queue_conditions_duplicate.assert_not_called()
 
     def test_invocation_uses_single_right_clicked_condition_and_all_matching_takeoffs(
         self,
@@ -346,7 +383,17 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
         self.assertEqual(self.plan.get_selected_uids(), ["4"])
         self.coordinator.placement.enter.assert_not_called()
         self.write.queue_conditions_duplicate.assert_called_once()
+        # The committed reassignment on the original Page is still recorded
+        # (and only undo/redo ever queue plan properties), unchanged by the
+        # navigation; the assertion is made through a real undo.
         self.write.queue_plan_properties.assert_not_called()
+        self.assertTrue(self.undo.can_undo())
+        self.undo.undo()
+        args, options = self.write.queue_plan_properties.call_args
+        self.assertEqual(
+            args[2:4], ("takeoff_condition", [("1", "target"), ("2", "target")])
+        )
+        self.assertEqual(options["page_uids"], ("p1",))
 
     def test_sql_page_replacement_before_completion_cannot_project_history_or_selection(
         self,
@@ -378,6 +425,19 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
         self.open_menu(during_menu=lambda action: action.trigger())
         self.assertEqual(detached.get_selected_uids(), ["4"])
 
+    def test_sql_pending_selection_handling_leaves_detached_surface_alone(self):
+        detached = self.make_plan()
+        self.load_page(detached, self.other_page)
+        detached.set_selected_uids({"4"})
+        self.plan.set_selected_uids({"1"})
+        self.submit_sql()
+        # Positive control: the Main Plan's own selection was handled...
+        self.assertEqual(self.plan.get_selected_uids(), [])
+        self.assertEqual(detached.get_selected_uids(), ["4"])
+        self.callback(self.result())
+        self.assertEqual(self.plan.get_selected_uids(), ["1"])
+        self.assertEqual(detached.get_selected_uids(), ["4"])
+
     def test_partial_stale_plan_projection_does_not_reassign_a_subset(self):
         # One matching Takeoff is hydrated before its new geometry reaches this Plan.
         self.page.takeoffs.append(self.takeoff("6", "target", "p1"))
@@ -393,11 +453,12 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
 
     def test_destroyed_main_plan_rejects_sql_completion_without_qobject_access(self):
         self.submit_sql()
-        self.plan.cleanup()
+        # Native deletion alone (no cleanup() state reset, no cleanup flag): only
+        # the validity guards stand between the completion and the dead widget.
         delete(self.plan)
-        self.coordinator._is_cleaning_up = True
         self.callback(self.result())
         self.coordinator.placement.enter.assert_not_called()
+        self.assertEqual(self.undo.can_undo(), False)
 
     def test_bid_replacement_before_sql_completion_cannot_install_history(self):
         self.submit_sql()
@@ -515,3 +576,659 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
         self.write.duplicate_conditions_result.side_effect = duplicate
         self.open_menu(during_menu=lambda action: action.trigger())
         self.coordinator.placement.enter.assert_called_once_with("new", ["new"])
+
+    # --- Guard isolation: each scenario changes exactly one captured owner so
+    # --- that the guard under test is the only one that can stop the action.
+    def deny_only(self, feature):
+        self.access.is_allowed.side_effect = lambda requested: requested != feature
+
+    def assert_menu_action_invalidated(self, change_during_menu):
+        self.open_menu(
+            during_menu=lambda action: (change_during_menu(), action.trigger())
+        )
+        self.write.duplicate_conditions_result.assert_not_called()
+        self.write.queue_conditions_duplicate.assert_not_called()
+
+    def assert_mdb_placement_blocked(self, change_during_write, *, history):
+        def duplicate(*_args, **_options):
+            change_during_write()
+            return WriteReloadResult(["new"], write_success=True, reload_success=True)
+
+        self.write.duplicate_conditions_result.side_effect = duplicate
+        self.open_menu(during_menu=lambda action: action.trigger())
+        self.write.duplicate_conditions_result.assert_called_once()
+        self.coordinator.placement.enter.assert_not_called()
+        # The write itself committed; only a Bid switch may drop its history.
+        self.assertEqual(self.undo.can_undo(), history)
+
+    def test_mdb_unchanged_context_after_write_places_and_records_history(self):
+        # Positive control for the isolated MDB guard scenarios below.
+        self.write.duplicate_conditions_result.side_effect = (
+            lambda *_args, **_options: WriteReloadResult(
+                ["new"], write_success=True, reload_success=True
+            )
+        )
+        self.open_menu(during_menu=lambda action: action.trigger())
+        self.coordinator.placement.enter.assert_called_once_with("new", ["new"])
+        self.assertTrue(self.undo.can_undo())
+
+    def test_mdb_active_page_change_alone_blocks_placement(self):
+        self.assert_mdb_placement_blocked(
+            lambda: setattr(self.state, "active_page_uid", "p2"), history=True
+        )
+
+    def test_mdb_page_replacement_alone_blocks_placement(self):
+        self.assert_mdb_placement_blocked(
+            lambda: self.model.set_pages(
+                {"p1": replace(self.page), "p2": self.other_page}
+            ),
+            history=True,
+        )
+
+    def test_mdb_selected_bid_change_blocks_placement_and_history(self):
+        other = BidRef("C:/other.mdb", "9")
+        self.assert_mdb_placement_blocked(
+            lambda: setattr(self.state, "get_selected_bid_ref", lambda: other),
+            history=False,
+        )
+
+    def test_mdb_main_plan_replacement_blocks_placement(self):
+        self.assert_mdb_placement_blocked(
+            lambda: setattr(self.coordinator, "plan_view", self.make_plan()),
+            history=True,
+        )
+
+    def test_mdb_main_plan_destruction_blocks_placement(self):
+        # Delete the native widget without the Plan's own cleanup(), which
+        # would also clear its projected Page and hide the destruction itself.
+        self.assert_mdb_placement_blocked(lambda: delete(self.plan), history=True)
+
+    def test_mdb_cleanup_in_progress_blocks_placement(self):
+        self.assert_mdb_placement_blocked(
+            lambda: setattr(self.coordinator, "_is_cleaning_up", True), history=True
+        )
+
+    def test_mdb_edit_access_loss_alone_blocks_placement(self):
+        self.assert_mdb_placement_blocked(
+            lambda: self.deny_only(Feature.EDIT_PLAN_ITEMS), history=True
+        )
+
+    def test_mdb_duplicate_access_loss_alone_blocks_placement(self):
+        self.assert_mdb_placement_blocked(
+            lambda: self.deny_only(Feature.DUPLICATE_CONDITION), history=True
+        )
+
+    def test_mdb_active_2d_loss_blocks_placement(self):
+        self.assert_mdb_placement_blocked(
+            lambda: setattr(
+                self.coordinator._toolbar.is_takeoff_2d_view_active,
+                "return_value",
+                False,
+            ),
+            history=True,
+        )
+
+    def test_reassignment_without_captured_context_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "captured Plan context"):
+            self.handler.on_duplicate_requested(
+                ["target"],
+                reassign_takeoffs=ConditionTakeoffReassignment(
+                    "target", "p1", ("1", "2")
+                ),
+            )
+        self.write.duplicate_conditions_result.assert_not_called()
+        self.write.queue_conditions_duplicate.assert_not_called()
+
+    def test_sql_revalidation_after_deferred_flush_rejects_replacement(self):
+        self.write.uses_sql_collaboration_mutations.return_value = True
+
+        def flush(_path):
+            self.conditions["target"] = replace(self.conditions["target"])
+            return True
+
+        self.coordinator.flush_deferred_for_file.side_effect = flush
+        self.open_menu(during_menu=lambda action: action.trigger())
+        self.write.queue_conditions_duplicate.assert_not_called()
+        self.assertEqual(self.plan.get_pending_mutation_uids(), set())
+        self.assertFalse(self.undo.can_undo())
+
+    def test_sql_selection_change_after_submission_skips_placement_only(self):
+        self.submit_sql()
+        self.plan.set_selected_uids({"3"})
+        self.callback(self.result())
+        self.assertEqual(self.plan.get_selected_uids(), ["3"])
+        self.coordinator.placement.enter.assert_not_called()
+        # The committed reassignment is still undoable and no longer pending.
+        self.assertTrue(self.undo.can_undo())
+        self.assertEqual(self.plan.get_pending_mutation_uids(), set())
+
+    def test_sql_selection_revision_change_with_equal_selection_blocks_placement(
+        self,
+    ):
+        self.submit_sql()
+        self.plan.set_selected_uids({"3"})
+        self.plan.set_selected_uids(set())
+        self.callback(self.result())
+        self.assertEqual(self.plan.get_selected_uids(), [])
+        self.coordinator.placement.enter.assert_not_called()
+        self.assertTrue(self.undo.can_undo())
+
+    def test_sql_cleanup_flag_after_submission_blocks_placement(self):
+        self.submit_sql()
+        self.coordinator._is_cleaning_up = True
+        self.callback(self.result())
+        self.coordinator.placement.enter.assert_not_called()
+
+    def test_sql_edit_access_loss_alone_blocks_placement(self):
+        self.submit_sql()
+        self.deny_only(Feature.EDIT_PLAN_ITEMS)
+        self.callback(self.result())
+        self.coordinator.placement.enter.assert_not_called()
+
+    def test_sql_duplicate_access_loss_alone_blocks_placement(self):
+        self.submit_sql()
+        self.deny_only(Feature.DUPLICATE_CONDITION)
+        self.callback(self.result())
+        self.coordinator.placement.enter.assert_not_called()
+
+    def test_sql_page_model_replacement_without_plan_reload_blocks_placement(self):
+        self.submit_sql()
+        self.model.set_pages({"p1": replace(self.page), "p2": self.other_page})
+        self.callback(self.result())
+        self.coordinator.placement.enter.assert_not_called()
+
+    def test_sql_plan_projected_for_other_bid_blocks_placement(self):
+        self.submit_sql()
+        self.assertTrue(
+            self.plan.load_page(
+                self.page,
+                self.page.takeoffs,
+                self.conditions,
+                {uid: "#000000" for uid in self.conditions},
+                bid_ref=BidRef(self.bid_ref.file_path, "9"),
+            )
+        )
+        self.callback(self.result())
+        self.coordinator.placement.enter.assert_not_called()
+
+    def test_sql_success_records_reassignment_history_with_new_condition(self):
+        self.submit_sql()
+        self.callback(self.result())
+        self.undo.undo()
+        args, options = self.write.queue_plan_properties.call_args
+        self.assertEqual(
+            args[2:4], ("takeoff_condition", [("1", "target"), ("2", "target")])
+        )
+        self.assertEqual(options["page_uids"], ("p1",))
+        expected_dependencies = (
+            ResourceRef("condition", "target", 7),
+            ResourceRef("condition", "new", 7),
+        )
+        self.assertEqual(options["dependency_resources"], expected_dependencies)
+        args[4](self.result())
+        self.assertTrue(self.undo.can_redo())
+        self.undo.redo()
+        args, options = self.write.queue_plan_properties.call_args
+        self.assertEqual(args[2:4], ("takeoff_condition", [("1", "new"), ("2", "new")]))
+        self.assertEqual(options["dependency_resources"], expected_dependencies)
+
+    # --- Action availability guards, one captured owner at a time.
+    def test_missing_plan_handler_disables_action(self):
+        self.coordinator._plan_view_handler = None
+        self.assertFalse(self.open_menu())
+
+    def test_main_plan_replacement_invalidates_action(self):
+        self.assert_menu_action_invalidated(
+            lambda: setattr(self.coordinator, "plan_view", self.make_plan())
+        )
+
+    def test_selected_bid_change_invalidates_action(self):
+        other = BidRef("C:/other.mdb", "9")
+        self.assert_menu_action_invalidated(
+            lambda: setattr(self.state, "get_selected_bid_ref", lambda: other)
+        )
+
+    def test_active_page_change_alone_invalidates_action(self):
+        self.assert_menu_action_invalidated(
+            lambda: setattr(self.state, "active_page_uid", "p2")
+        )
+
+    def test_selection_change_invalidates_action(self):
+        self.assert_menu_action_invalidated(lambda: self.plan.set_selected_uids({"3"}))
+
+    def test_selection_revision_change_with_equal_selection_invalidates_action(self):
+        self.assert_menu_action_invalidated(
+            lambda: (
+                self.plan.set_selected_uids({"3"}),
+                self.plan.set_selected_uids(set()),
+            )
+        )
+
+    def test_plan_surface_edit_access_alone_disables_action(self):
+        self.access.get_plan_surface_access.return_value = PlanSurfaceAccessState(
+            can_select_plan_items=True, can_edit_plan_items=False
+        )
+        self.assertFalse(self.open_menu())
+
+    def test_duplicate_feature_denied_alone_disables_action(self):
+        self.deny_only(Feature.DUPLICATE_CONDITION)
+        self.assertFalse(self.open_menu())
+
+    def test_duplicate_disabled_in_sidebar_disables_reassign_action_too(self):
+        self.assertTrue(self.open_menu())
+        self.sidebar.set_duplicate_enabled(False)
+        self.assertFalse(self.open_menu())
+
+    def test_edit_plan_items_feature_denied_alone_disables_action(self):
+        self.deny_only(Feature.EDIT_PLAN_ITEMS)
+        self.assertFalse(self.open_menu())
+
+    def test_takeoff_displayed_on_other_page_disables_action(self):
+        self.assertTrue(self.open_menu())
+        stale = [replace(item, page_uid="p2") for item in self.page.takeoffs]
+        self.assertTrue(
+            self.plan.load_page(
+                self.page,
+                stale,
+                self.conditions,
+                {uid: "#000000" for uid in self.conditions},
+                bid_ref=self.bid_ref,
+            )
+        )
+        self.assertFalse(self.open_menu())
+
+    # --- Second-pass additions: guards that were only reachable together with others.
+    def test_missing_cleaning_or_destroyed_main_plan_disables_action(self):
+        self.assertTrue(self.open_menu())
+        plan = self.coordinator.plan_view
+        self.coordinator.plan_view = None
+        self.assertFalse(self.open_menu())
+        self.coordinator.plan_view = plan
+        self.coordinator._is_cleaning_up = True
+        self.assertFalse(self.open_menu())
+        self.coordinator._is_cleaning_up = False
+        self.assertTrue(self.open_menu())
+        delete(self.plan)
+        self.assertFalse(self.open_menu())
+        self.write.duplicate_conditions_result.assert_not_called()
+
+    def test_bid_missing_from_hierarchy_or_plan_without_bid_ref_disables_action(self):
+        self.assertTrue(self.open_menu())
+        self.assertTrue(
+            self.plan.load_page(
+                self.page,
+                self.page.takeoffs,
+                self.conditions,
+                {uid: "#000000" for uid in self.conditions},
+            )
+        )
+        self.assertIsNone(self.plan._context_menu_owner()[0])
+        self.assertFalse(self.open_menu())
+        self.assertTrue(
+            self.plan.load_page(
+                self.page,
+                self.page.takeoffs,
+                self.conditions,
+                {uid: "#000000" for uid in self.conditions},
+                bid_ref=self.bid_ref,
+            )
+        )
+        self.assertTrue(self.open_menu())
+        self.model.set_hierarchy(
+            HierarchyData(
+                loaded_files=[
+                    HierarchyFileEntry(file_path=self.bid_ref.file_path, orphan_bids=[])
+                ]
+            )
+        )
+        self.assertIsNone(self.data.get_bid(self.bid_ref))
+        self.assertFalse(self.open_menu())
+        self.write.duplicate_conditions_result.assert_not_called()
+
+    def test_cleanup_flags_or_destruction_during_menu_invalidate_action(self):
+        self.assert_menu_action_invalidated(
+            lambda: setattr(self.coordinator, "_is_cleaning_up", True)
+        )
+
+    def test_plan_cleanup_flag_alone_during_menu_invalidates_action(self):
+        self.assert_menu_action_invalidated(
+            lambda: setattr(self.plan, "_is_cleaning_up", True)
+        )
+
+    def test_plan_surface_without_select_access_disables_action(self):
+        self.access.get_plan_surface_access.return_value = PlanSurfaceAccessState(
+            can_select_plan_items=False, can_edit_plan_items=True
+        )
+        self.assertFalse(self.open_menu())
+
+    def test_sql_pending_duplicate_blocks_resubmission_and_completion_reports_no_error(
+        self,
+    ):
+        self.write.uses_sql_collaboration_mutations.return_value = True
+        callbacks = []
+        self.write.queue_conditions_duplicate.side_effect = (
+            lambda _path, _bid, _uids, callback: callbacks.append(callback)
+        )
+        self.handler.on_duplicate_requested(["target"])
+        self.handler.on_duplicate_requested(["target"])
+        self.assertEqual(len(callbacks), 1)
+        self.assertEqual(len(self.handler._pending_sql_operations), 1)
+        callbacks[0](self.result())
+        self.assertEqual(self.handler._pending_sql_operations, set())
+        self.coordinator.present_queued_mutation_error.assert_not_called()
+        self.handler.on_duplicate_requested(["target"])
+        self.assertEqual(len(callbacks), 2)
+
+    def test_sql_submission_failure_releases_the_pending_operation_key(self):
+        self.write.uses_sql_collaboration_mutations.return_value = True
+        self.write.queue_conditions_duplicate.side_effect = RuntimeError(
+            "not submitted"
+        )
+        self.open_menu(during_menu=lambda action: action.trigger())
+        self.assertEqual(self.handler._pending_sql_operations, set())
+        self.warning.assert_called_once()
+
+    def test_sql_locked_bid_rejection_reports_once_and_releases_pending_state(self):
+        self.submit_sql()
+        locked = replace(
+            self.result(MutationOutcomeStatus.REJECTED),
+            rejection_reason=MutationRejectionReason.BID_LOCKED,
+        )
+        self.callback(locked)
+        self.coordinator.present_queued_mutation_error.assert_called_once()
+        self.assertEqual(self.plan.get_pending_mutation_uids(), set())
+        self.assertEqual(self.handler._pending_sql_operations, set())
+        self.coordinator.placement.enter.assert_not_called()
+
+    def test_sql_selected_bid_change_before_completion_blocks_placement_and_history(
+        self,
+    ):
+        self.submit_sql()
+        other = BidRef("C:/other.mdb", "9")
+        self.state.get_selected_bid_ref = lambda: other
+        self.callback(self.result())
+        self.coordinator.placement.enter.assert_not_called()
+        self.assertFalse(self.undo.can_undo())
+
+    def test_sql_plan_cleanup_flag_alone_after_submission_blocks_placement(self):
+        self.submit_sql()
+        self.plan._is_cleaning_up = True
+        self.callback(self.result())
+        self.coordinator.placement.enter.assert_not_called()
+
+    def test_direct_duplicate_request_without_selected_bid_does_nothing(self):
+        self.state.get_selected_bid_ref = lambda: None
+        self.handler.on_duplicate_requested(["target"])
+        self.write.duplicate_conditions_result.assert_not_called()
+        self.write.queue_conditions_duplicate.assert_not_called()
+        self.state.get_selected_bid_ref = lambda: self.bid_ref
+        self.handler.on_duplicate_requested(["target"])
+        self.write.duplicate_conditions_result.assert_called_once()
+
+    def test_finished_duplicate_highlights_the_new_condition_without_reveal(self):
+        highlight = Mock()
+        self.coordinator.highlight_sidebar = highlight
+        self.open_menu(during_menu=lambda action: action.trigger())
+        highlight.assert_called_once_with({"new"}, reveal=False)
+        highlight.reset_mock()
+        self.submit_sql()
+        highlight.assert_not_called()
+        self.callback(self.result())
+        highlight.assert_called_once_with({"new"}, reveal=False)
+
+    def test_duplicate_without_conditions_sidebar_places_and_failure_warns_without_parent(
+        self,
+    ):
+        highlight = Mock()
+        self.coordinator.highlight_sidebar = highlight
+        self.coordinator.conditions_sidebar = None
+        self.handler.on_duplicate_requested(["target"])
+        self.write.duplicate_conditions_result.assert_called_once()
+        self.coordinator.placement.enter.assert_called_once_with("new", ["new"])
+        highlight.assert_not_called()
+        self.write.duplicate_conditions_result.return_value = WriteReloadResult([])
+        self.handler.on_duplicate_requested(
+            ["target"],
+            reassign_takeoffs=ConditionTakeoffReassignment("target", "p1", ("1", "2")),
+            context_is_current=lambda: True,
+        )
+        self.warning.assert_called_once()
+        self.assertIsNone(self.warning.call_args.args[0])
+
+    def test_multiple_duplicated_conditions_place_the_last_one_and_highlight_all(self):
+        highlight = Mock()
+        self.coordinator.highlight_sidebar = highlight
+        self.write.duplicate_conditions_result.return_value = WriteReloadResult(
+            ["first", "second"], write_success=True, reload_success=True
+        )
+        self.handler.on_duplicate_requested(["target", "other"])
+        self.coordinator.placement.enter.assert_called_once_with(
+            "second", ["first", "second"]
+        )
+        highlight.assert_called_once_with({"first", "second"}, reveal=False)
+
+    def test_sql_commit_without_created_conditions_finishes_nothing(self):
+        self.write.uses_sql_collaboration_mutations.return_value = True
+        callbacks = []
+        self.write.queue_conditions_duplicate.side_effect = (
+            lambda _path, _bid, _uids, callback: callbacks.append(callback)
+        )
+        self.handler.on_duplicate_requested(["target"])
+        callbacks[0](
+            replace(
+                self.result(),
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=()
+                ),
+            )
+        )
+        self.coordinator.placement.enter.assert_not_called()
+        self.assertEqual(self.handler._pending_sql_operations, set())
+
+    def test_failed_duplicate_is_logged_and_warns_with_the_sidebar_window(self):
+        self.write.duplicate_conditions_result.return_value = WriteReloadResult([])
+        reassign = ConditionTakeoffReassignment("target", "p1", ("1", "2"))
+        with self.assertLogs(
+            "ost_visualizer.presentation.handlers.condition_action_handler", "WARNING"
+        ) as logs:
+            self.handler.on_duplicate_requested(
+                ["target"], reassign_takeoffs=reassign, context_is_current=lambda: True
+            )
+        self.assertIn("Failed to duplicate conditions", logs.output[0])
+        self.assertIs(self.warning.call_args.args[0], self.sidebar.window())
+
+    def test_sql_cleanup_flag_after_submission_installs_no_history(self):
+        self.submit_sql()
+        self.coordinator._is_cleaning_up = True
+        self.callback(self.result())
+        self.assertFalse(self.undo.can_undo())
+        self.assertEqual(self.plan.get_pending_mutation_uids(), set())
+
+
+class ConditionDuplicateReassignmentCleanupTests(unittest.TestCase):
+    """Second-pass additions that need the same fixture as ConditionDuplicateReassignmentTests.
+    Real sidebar, Plan, handlers and UndoRedoService; the write service is a spec'd Mock,
+    so the SQL leg is the queue stub whose callback the test completes by hand.
+    """
+
+    make_plan = ConditionDuplicateReassignmentTests.make_plan
+    load_page = ConditionDuplicateReassignmentTests.load_page
+    takeoff = staticmethod(ConditionDuplicateReassignmentTests.takeoff)
+    setUp = ConditionDuplicateReassignmentTests.setUp
+    open_menu = ConditionDuplicateReassignmentTests.open_menu
+    submit_sql = ConditionDuplicateReassignmentTests.submit_sql
+    result = ConditionDuplicateReassignmentTests.result
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def test_completion_never_touches_a_plan_that_is_cleaning_up(self):
+        with patch.object(
+            self.plan,
+            "set_pending_mutation_uids",
+            wraps=self.plan.set_pending_mutation_uids,
+        ) as pending:
+            self.submit_sql()
+            self.assertEqual(self.plan.get_pending_mutation_uids(), {"1", "2"})
+            self.assertEqual(pending.call_count, 1)
+            self.callback(self.result())
+            # Positive control: a normal completion releases the marks on the Plan.
+            self.assertEqual(self.plan.get_pending_mutation_uids(), set())
+            self.assertEqual(pending.call_count, 2)
+            self.submit_sql()
+            self.assertEqual(pending.call_count, 3)
+            self.plan._is_cleaning_up = True
+            # A new operation id: a repeated id would be ignored as an applied duplicate.
+            self.callback(
+                replace(
+                    self.result(), operation_id="00000000-0000-0000-0000-000000000002"
+                )
+            )
+            self.assertEqual(pending.call_count, 3)
+            self.assertEqual(self.plan.get_pending_mutation_uids(), {"1", "2"})
+            self.assertEqual(self.handler._pending_sql_operations, set())
+
+
+class ConditionDuplicateReassignmentGenericFailureTests(unittest.TestCase):
+    """Decision S3: a generic exception (RuntimeError, ValueError, KeyError) at each
+    submit boundary of duplicate-and-reassign leaves nothing behind on the real Plan,
+    the real PlanViewActionHandler, the real UndoRedoService and the real condition
+    handler: no pending marks, no forward-mutation token, the selection restored, no
+    pending key, no edit lease, no history, no placement and no second write. The write
+    service is a spec'd Mock; the queue stub raises after receiving its callback."""
+
+    make_plan = ConditionDuplicateReassignmentTests.make_plan
+    load_page = ConditionDuplicateReassignmentTests.load_page
+    takeoff = staticmethod(ConditionDuplicateReassignmentTests.takeoff)
+    setUp = ConditionDuplicateReassignmentTests.setUp
+    result = ConditionDuplicateReassignmentTests.result
+    FAILURES = (
+        RuntimeError("queue closed"),
+        ValueError("bad value"),
+        KeyError("missing"),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def start(self, failure=None, prepare_patch=None):
+        self.undone = []
+        self.undo.push_local(lambda: self.undone.append("undo") or True, lambda: True)
+        self.plan.set_selected_uids({"1", "3"})
+        self.write.uses_sql_collaboration_mutations.return_value = True
+        self.callbacks = []
+
+        def submit(_path, _bid, _uids, callback, **_options):
+            self.callbacks.append(callback)
+            if failure is not None:
+                raise failure
+            return 1
+
+        self.write.queue_conditions_duplicate.side_effect = submit
+        assignment = ConditionTakeoffReassignment("target", "p1", ("1", "2"))
+        outcome = []
+        with ExitStack() as stack:
+            if prepare_patch is not None:
+                stack.enter_context(prepare_patch)
+            try:
+                self.handler.on_duplicate_requested(
+                    ["target"],
+                    reassign_takeoffs=assignment,
+                    context_is_current=lambda: True,
+                )
+            except Exception as error:
+                outcome.append(error)
+        return outcome
+
+    def assert_nothing_left_behind(self):
+        self.assertEqual(self.plan.get_pending_mutation_uids(), set())
+        self.assertEqual(self.plan_handler._pending_plan_takeoff_uids_by_bid, {})
+        self.assertEqual(self.plan_handler._pending_plan_annotations_by_bid, {})
+        self.assertEqual(self.undo._forward_mutations, {})
+        self.assertTrue(self.undo.can_undo())
+        self.assertEqual(sorted(self.plan.get_selected_uids()), ["1", "3"])
+        self.assertEqual(self.handler._pending_sql_operations, set())
+        self.assertIsNone(self.plan_handler._geometry_edit_lease_handle)
+        self.assertEqual(
+            [call for call in self.write.mock_calls if "lease" in call[0]], []
+        )
+        self.write.queue_plan_properties.assert_not_called()
+        self.coordinator.placement.enter.assert_not_called()
+
+    def assert_the_callback_is_inert(self):
+        self.assertEqual(len(self.callbacks), 1)
+        self.callbacks[0](self.result())
+        self.assertEqual(self.plan.get_pending_mutation_uids(), set())
+        self.coordinator.placement.enter.assert_not_called()
+        self.coordinator.present_queued_mutation_error.assert_not_called()
+        self.assertEqual(self.write.queue_conditions_duplicate.call_count, 1)
+        self.assertTrue(self.undo.can_undo())
+        self.undo.undo()
+        self.write.queue_plan_properties.assert_not_called()
+        self.assertEqual(self.undone, ["undo"])
+
+    def test_a_generic_error_from_the_duplicate_queue_call_leaves_nothing_behind(self):
+        for failure in self.FAILURES:
+            with self.subTest(type(failure).__name__):
+                self.setUp()
+                outcome = self.start(failure)
+                swallowed = isinstance(failure, (RuntimeError, ValueError))
+                self.assertEqual(outcome, [] if swallowed else [failure])
+                if outcome:
+                    self.assertIs(outcome[0], failure)
+                self.assertEqual(self.warning.call_count, 1 if swallowed else 0)
+                self.assert_nothing_left_behind()
+                self.assert_the_callback_is_inert()
+
+    def test_a_locked_bid_still_refuses_silently_and_leaves_nothing_behind(self):
+        outcome = self.start(ActiveBidLockedError())
+        self.assertEqual(outcome, [])
+        self.warning.assert_not_called()
+        self.assert_nothing_left_behind()
+        self.assert_the_callback_is_inert()
+
+    def test_a_control_submission_holds_every_piece_of_state_until_it_completes(self):
+        self.assertEqual(self.start(), [])
+        self.assertEqual(self.plan.get_pending_mutation_uids(), {"1", "2"})
+        self.assertEqual(
+            self.plan_handler._pending_plan_takeoff_uids_by_bid,
+            {self.bid_ref: {"1", "2"}},
+        )
+        self.assertEqual(len(self.undo._forward_mutations), 1)
+        self.assertFalse(self.undo.can_undo())
+        self.assertEqual(self.plan.get_selected_uids(), ["3"])
+        self.assertEqual(
+            self.handler._pending_sql_operations,
+            {(self.bid_ref.file_path, "7", "duplicate_reassign", "p1", "target")},
+        )
+
+    def prepare_failures(self):
+        return (
+            (
+                "page identities",
+                lambda failure: patch.object(
+                    self.plan_handler, "_capture_page_identities", side_effect=failure
+                ),
+            ),
+            (
+                "pending marks",
+                lambda failure: patch.object(
+                    self.plan, "set_pending_mutation_uids", side_effect=failure
+                ),
+            ),
+        )
+
+    def test_a_generic_error_while_preparing_the_completion_leaves_nothing_behind(self):
+        for label, make_patch in self.prepare_failures():
+            for failure in self.FAILURES:
+                with self.subTest(label, error=type(failure).__name__):
+                    self.setUp()
+                    outcome = self.start(prepare_patch=make_patch(failure))
+                    self.assertEqual(len(outcome), 1)
+                    self.assertIs(outcome[0], failure)
+                    self.write.queue_conditions_duplicate.assert_not_called()
+                    self.warning.assert_not_called()
+                    self.assertEqual(self.callbacks, [])
+                    self.assert_nothing_left_behind()

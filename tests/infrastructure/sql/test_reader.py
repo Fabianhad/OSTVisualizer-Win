@@ -1,3 +1,4 @@
+from tests.helpers.sql.strict_sql_fakes import StrictLeaseProxy, strict_manager
 import contextlib
 import logging
 import os
@@ -156,7 +157,7 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         reader = SqlProjectReader(
             registry,
             _cleanup_support__CredentialStore(),
-            connection_manager=connections,
+            connection_manager=strict_manager(connections),
         )
         with patch.object(
             reader,
@@ -174,7 +175,9 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         )
         self.assertEqual(connections.lease.commits, 2)
         self.assertEqual(connections.lease.rollbacks, 0)
-        parse.assert_called_once_with(descriptor.database_id, connections.lease)
+        parse.assert_called_once()
+        self.assertEqual(parse.call_args.args[0], descriptor.database_id)
+        self.assertIs(parse.call_args.args[1]._inner, connections.lease)
 
     def test_sql_parse_file_rolls_back_failed_snapshot(self):
         class _Cursor:
@@ -221,7 +224,7 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         reader = SqlProjectReader(
             registry,
             _cleanup_support__CredentialStore(),
-            connection_manager=connections,
+            connection_manager=strict_manager(connections),
         )
         with (
             patch.object(
@@ -286,10 +289,10 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         reader = SqlProjectReader(
             registry,
             _cleanup_support__CredentialStore(),
-            connection_manager=connections,
+            connection_manager=strict_manager(connections),
         )
         with reader._connection(descriptor.database_id) as lease:
-            self.assertIs(lease, connections.lease)
+            self.assertIs(lease._inner, connections.lease)
         self.assertFalse(connections.autocommit)
         self.assertEqual(
             connections.lease.cursor_value.executed,
@@ -309,7 +312,7 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         reader = SqlProjectReader(
             registry,
             _cleanup_support__CredentialStore(),
-            manager,
+            strict_manager(manager),
         )
         with (
             patch.object(
@@ -342,7 +345,7 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         reader = SqlProjectReader(
             DatabaseDescriptorRegistry(),
             _cleanup_support__CredentialStore(),
-            _NeverConnects(),
+            strict_manager(_NeverConnects()),
         )
         with self.assertRaises(SqlInfrastructureError) as raised:
             reader.parse_file("not-registered")
@@ -386,7 +389,7 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         reader = SqlProjectReader(
             registry,
             _cleanup_support__CredentialStore(),
-            connection_manager=_Connections(),
+            connection_manager=strict_manager(_Connections()),
         )
         with (
             patch.object(
@@ -409,7 +412,7 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         reader = SqlProjectReader(
             registry,
             _cleanup_support__CredentialStore(),
-            _cleanup_support__InspectionManager(),
+            strict_manager(_cleanup_support__InspectionManager()),
         )
         reader._validator.validate = lambda _inventory: SimpleNamespace(is_valid=True)
         with (
@@ -445,3 +448,235 @@ class TakeoffHydrationContractTests(unittest.TestCase):
         )
         self.assertEqual(takeoff.condition_uid, "10")
         self.assertFalse(hasattr(takeoff, "layer_uid"))
+
+
+from tests.helpers.sql.strict_sql_fakes import (  # noqa: E402
+    Reply,
+    StrictSqlServer,
+    snapshot_transaction_rules,
+    sql_server_error,
+)
+
+
+class ReaderStrictSnapshotTests(unittest.TestCase):
+    """SqlProjectReader's snapshot transaction against the strict pyodbc model."""
+
+    def _reader(self, server):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        reader = SqlProjectReader(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=server.manager(),
+        )
+        return reader, descriptor
+
+    def _server(self):
+        server = StrictSqlServer()
+        snapshot_transaction_rules(server)
+        server.on("SELECT 1", Reply.rows((1,)))
+        return server
+
+    def test_read_runs_in_a_snapshot_transaction_that_is_committed_after_the_work(self):
+        server = self._server()
+        reader, descriptor = self._reader(server)
+
+        def work(lease):
+            with lease.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                return cursor.fetchone()
+
+        with server.patched():
+            with reader._connection(descriptor.database_id) as lease:
+                self.assertEqual(work(lease), (1,))
+        raw = server.connections[0]
+        self.assertFalse(server.connect_calls[0]["autocommit"])
+        self.assertIn(
+            "ApplicationIntent=ReadOnly", server.connect_calls[0]["connection_string"]
+        )
+        self.assertEqual(
+            server.event_kinds(1),
+            [
+                "cursor_open",
+                "execute",
+                "commit",
+                "execute",
+                "cursor_close",
+                "cursor_open",
+                "execute",
+                "cursor_close",
+                "commit",
+                "close",
+            ],
+        )
+        self.assertEqual(
+            server.statements(1)[:2],
+            ["SET TRANSACTION ISOLATION LEVEL SNAPSHOT", "BEGIN TRANSACTION"],
+        )
+        self.assertEqual((raw.commits, raw.rollbacks), (2, 0))
+        server.assert_everything_closed()
+
+    def test_every_failure_path_rolls_back_and_closes_the_physical_connection(self):
+        for label, prepare in (
+            ("body error", lambda server: None),
+            (
+                "rollback also fails",
+                lambda server: server.fail(
+                    "rollback", sql_server_error("08S01", "Communication link failure")
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                server = self._server()
+                prepare(server)
+                reader, descriptor = self._reader(server)
+                with server.patched():
+                    with self.assertRaisesRegex(RuntimeError, "body failed"):
+                        with reader._connection(descriptor.database_id):
+                            raise RuntimeError("body failed")
+                raw = server.connections[0]
+                self.assertEqual((raw.commits, raw.rollbacks), (1, 1))
+                server.assert_everything_closed()
+
+    def test_failed_final_commit_rolls_back_and_surfaces_the_driver_failure(self):
+        server = self._server()
+        # the first commit is the snapshot preamble; the second is the final one
+        server.fail(
+            "commit",
+            sql_server_error("08S01", "Communication link failure"),
+            skip=1,
+        )
+        reader, descriptor = self._reader(server)
+        with server.patched():
+            with self.assertRaises(SqlInfrastructureError) as raised:
+                with reader._connection(descriptor.database_id):
+                    pass
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.CONNECTION_FAILED)
+        raw = server.connections[0]
+        self.assertEqual((raw.commits, raw.rollbacks), (2, 1))
+        server.assert_everything_closed()
+
+    def test_database_without_snapshot_isolation_fails_the_first_read_not_silently(
+        self,
+    ):
+        server = StrictSqlServer(snapshot_enabled=False)
+        snapshot_transaction_rules(server)
+        server.on("SELECT 1", Reply.rows((1,)))
+        reader, descriptor = self._reader(server)
+        with server.patched():
+            with self.assertRaises(SqlInfrastructureError):
+                with reader._connection(descriptor.database_id) as lease:
+                    with lease.cursor() as cursor:
+                        cursor.execute("SELECT 1")
+        raw = server.connections[0]
+        self.assertEqual(raw.rollbacks, 1)
+        server.assert_everything_closed()
+
+
+class ReaderConstructionAndContractTests(unittest.TestCase):
+    """Survivors of the second-pass mutation sweep over reader.py."""
+
+    def _reader(self, **kwargs):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        return (
+            SqlProjectReader(registry, _cleanup_support__CredentialStore(), **kwargs),
+            descriptor,
+        )
+
+    def test_logger_and_connection_manager_default_or_use_the_injected_collaborators(
+        self,
+    ):
+        from ost_visualizer.infrastructure.sql.connection_manager import (
+            SqlConnectionManager,
+        )
+
+        reader, _descriptor = self._reader()
+        self.assertEqual(reader.logger.name, "ost_visualizer.infrastructure.sql.reader")
+        self.assertIsInstance(reader._sql_connections, SqlConnectionManager)
+        logger = logging.getLogger("tests.injected_reader_logger")
+        manager = SqlConnectionManager(drivers=["ODBC Driver 18 for SQL Server"])
+        reader, _descriptor = self._reader(logger=logger, connection_manager=manager)
+        self.assertIs(reader.logger, logger)
+        self.assertIs(reader._sql_connections, manager)
+
+    def test_write_schema_contract_is_the_canonical_v1_core_schema(self):
+        reader, _descriptor = self._reader()
+        schema = reader._schema(object())
+        self.assertIsInstance(schema, CurrentSqlWriteSchema)
+        self.assertTrue(schema.table_exists("Bids"))
+        self.assertFalse(
+            schema.table_exists("Sessions")
+        )  # ostv tables are not core tables
+        self.assertIs(reader._schema(object()), schema)
+
+    def test_sql_navigation_loads_hydrate_snapshots_and_read_errors_are_recorded(self):
+        reader, _descriptor = self._reader()
+        self.assertIs(reader._hydrates_bid_navigation_snapshots(), True)
+        self.assertIs(reader._record_caught_read_error(RuntimeError("x")), True)
+        # the Access reader is the opposite on both points
+        self.assertIs(
+            MdbReader._hydrates_bid_navigation_snapshots(MdbReader.__new__(MdbReader)),
+            False,
+        )
+
+    def test_hierarchy_and_cdn_types_are_read_from_the_same_validated_connection(self):
+        reader, descriptor = self._reader()
+        connection = object()
+        calls = []
+        hierarchy = HierarchyFileEntry(file_path="")
+        reader._validator.validate = lambda _inventory: SimpleNamespace(is_valid=True)
+        reader._inspector.inspect_connection = lambda received: (
+            calls.append(("inspect", received)) or None
+        )
+        with (
+            patch.object(
+                reader,
+                "_parse_hierarchy",
+                side_effect=lambda *args: calls.append(("hierarchy", args))
+                or hierarchy,
+            ),
+            patch.object(
+                reader,
+                "_parse_cdn_types",
+                side_effect=lambda *args: calls.append(("cdn", args)) or {"1": "x"},
+            ),
+        ):
+            result_hierarchy, cdn_types = reader.parse_file_connection(
+                descriptor.database_id, connection
+            )
+        self.assertIs(result_hierarchy, hierarchy)
+        self.assertEqual(cdn_types, {"1": "x"})
+        self.assertEqual(
+            calls,
+            [
+                ("inspect", connection),
+                ("hierarchy", (connection, descriptor.database_id)),
+                ("cdn", (connection,)),
+            ],
+        )
+
+    def test_unregistered_descriptor_after_validation_is_a_lookup_error_not_a_partial_result(
+        self,
+    ):
+        reader, descriptor = self._reader()
+        reader._validator.validate = lambda _inventory: SimpleNamespace(is_valid=True)
+        reader._inspector.inspect_connection = lambda _connection: None
+        with (
+            patch.object(
+                reader,
+                "_parse_hierarchy",
+                return_value=HierarchyFileEntry(file_path=""),
+            ),
+            patch.object(reader, "_parse_cdn_types", return_value={}),
+            self.assertRaisesRegex(LookupError, "not registered"),
+        ):
+            reader.parse_file_connection("unregistered-id", object())

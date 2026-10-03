@@ -79,3 +79,15 @@ class AttachmentMovementTests(unittest.TestCase):
                 view, backout.position, "parent", "backout"
             )
         )
+        # Positive control: the very same sibling geometry, once its condition is
+        # an Area, does overlap the backout, so the checks above pass because the
+        # sibling is a linear and not because the geometry happens not to meet.
+        view._current_conditions["linear"] = Condition(
+            uid="linear", condition_type=Condition.TYPE_AREA
+        )
+        self.assertFalse(view._validate_hole_position(backout, backout.position))
+        self.assertTrue(
+            PlacementModeMixin._check_hole_overlap(
+                view, backout.position, "parent", "backout"
+            )
+        )

@@ -3920,16 +3920,6 @@ class TakeoffPlanView(
         if ann and ann.is_interactive and len(ann.position) >= 2:
             pos = ann.position
             if ann.is_text:
-                if mode == "screen" and len(pos) >= 5 and pos[4] != 0.0:
-                    cx_o, cy_o, w_o, h_o = pos[0], pos[1], pos[2], pos[3]
-                    rad = pos[4]
-                    cos_r, sin_r = math.cos(rad), math.sin(rad)
-                    tl_x = cx_o - w_o / 2
-                    tl_y = cy_o - h_o / 2
-                    vis_cx = tl_x + (w_o / 2) * cos_r - (h_o / 2) * sin_r
-                    vis_cy = tl_y + (w_o / 2) * sin_r + (h_o / 2) * cos_r
-                    tx = cs.transform_vertices_to_2d([vis_cx, vis_cy])
-                    return tx[0], tx[1]
                 tx = (
                     cs.transform_vertices_to_2d(pos[:2])
                     if mode == "screen"

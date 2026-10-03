@@ -33,3 +33,31 @@ class ConflictResolutionServiceCollaborationTests(unittest.TestCase):
                         ),
                     ),
                 )
+
+    def test_plan_is_independent_of_the_conflicted_resource_and_surface(self):
+        service = ConflictResolutionService()
+        expected_actions = (
+            ConflictResolutionAction.RELOAD,
+            ConflictResolutionAction.DISCARD_DRAFT,
+            ConflictResolutionAction.CANCEL_READ_ONLY,
+        )
+        for resource, draft_type, surface in (
+            (
+                ResourceRef("condition", "9", 3),
+                "conditions_editor",
+                "condition-sidebar",
+            ),
+            (ResourceRef("annotation", "rect/4", 3), "annotation_text", "detached-2d"),
+            (ResourceRef("cover_sheet", "3", 3), "cover_sheet_editor", "dialog"),
+            (ResourceRef("database", "database"), "project_write", "tree"),
+        ):
+            with self.subTest(resource=resource.resource_type):
+                plan = service.plan(
+                    LocalDraftConflict("draft-x", resource, draft_type, surface)
+                )
+                self.assertEqual(plan.draft_id, "draft-x")
+                self.assertEqual(plan.actions, expected_actions)
+                self.assertEqual(
+                    [action.value for action in plan.actions],
+                    ["reload", "discard_draft", "cancel_read_only"],
+                )

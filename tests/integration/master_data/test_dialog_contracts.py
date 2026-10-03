@@ -359,6 +359,8 @@ class MasterDataDialogContractTests(unittest.TestCase):
                     self.assertTrue(restored.isMaximized())
                     restored.showNormal()
                     self.app.processEvents()
+                    # The windowed size saved with the maximized state returns.
+                    self.assertEqual(restored.size(), resized)
                     restored.reject()
                 finally:
                     restored.cleanup()
@@ -439,6 +441,14 @@ class MasterDataDialogContractTests(unittest.TestCase):
                         dialog.btn_select.click()
                         if asynchronous:
                             completions.pop()(False, None)
+                        # The select attempt submitted once (a blank draft is not
+                        # a row to create), was rejected, and the dialog stays
+                        # open with the draft still in the tree for a retry.
+                        self.assertEqual(len(submissions), 1)
+                        self.assertEqual(submissions[0]["new"], [])
+                        self.assertGreaterEqual(
+                            dialog.tree.indexOfTopLevelItem(draft), 0
+                        )
                         self.assertTrue(dialog.isVisible())
                         self.assertTrue(dialog.btn_new.isEnabled())
                         dialog.tree.editItem(draft, dialog._edit_col)
@@ -452,6 +462,7 @@ class MasterDataDialogContractTests(unittest.TestCase):
                         dialog.btn_select.click()
                         if asynchronous:
                             completions.pop()(True, {"new_0": "created-1"})
+                        self.assertEqual(len(submissions), 2)
                         self.assertEqual(
                             [row["name"] for row in submissions[-1]["new"]],
                             ["New record"],
@@ -549,6 +560,11 @@ class MasterDataDialogContractTests(unittest.TestCase):
         dialog._employees[0].first_name = first_name
 
     def test_async_master_data_completion_preserves_external_interactivity_block(self):
+        for external_block in (True, False):
+            with self.subTest(external_block=external_block):
+                self._run_async_completion(external_block)
+
+    def _run_async_completion(self, external_block):
         condition_callbacks = []
         condition_dialog = _master_data_support_MasterConditionTypesDialog(
             _master_data_support_FakeIconProvider(),
@@ -577,14 +593,19 @@ class MasterDataDialogContractTests(unittest.TestCase):
             layer_item = layer_dialog.tree.topLevelItem(0)
             layer_dialog._set_item_text(layer_item, "Renamed")
             layer_dialog._on_item_changed(layer_item, 2)
-            condition_dialog.set_interactive(False)
-            layer_dialog.set_interactive(False)
+            self.assertEqual(len(condition_callbacks), 1)
+            self.assertEqual(len(layer_callbacks), 1)
+            if external_block:
+                condition_dialog.set_interactive(False)
+                layer_dialog.set_interactive(False)
             condition_callbacks[0](True, {})
             layer_callbacks[0](True, None)
-            self.assertFalse(condition_dialog._is_interactive)
-            self.assertFalse(layer_dialog._is_interactive)
-            self.assertFalse(condition_dialog.btn_new.isEnabled())
-            self.assertFalse(layer_dialog.btn_new.isEnabled())
+            # Without an external block the completed save returns the dialog to
+            # an interactive state; with one, completion must not lift it.
+            self.assertEqual(condition_dialog._is_interactive, not external_block)
+            self.assertEqual(layer_dialog._is_interactive, not external_block)
+            self.assertEqual(condition_dialog.btn_new.isEnabled(), not external_block)
+            self.assertEqual(layer_dialog.btn_new.isEnabled(), not external_block)
         finally:
             condition_dialog.close()
             condition_dialog.cleanup()

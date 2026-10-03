@@ -129,7 +129,9 @@ class DisposableSqlDatabase(AbstractContextManager):
                 )
                 self.location = result.location
                 self._create_test_roles()
-        except (DatabaseCatalogError, OSError, RuntimeError, ValueError, pyodbc.Error):
+        except BaseException:
+            # Any failure (including KeyboardInterrupt) must not leak a database
+            # whose ownership was already proven.
             if self._marker_verified:
                 self.drop()
             raise

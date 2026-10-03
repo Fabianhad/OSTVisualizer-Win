@@ -64,6 +64,7 @@ class _ProjectData:
         self.pages = {}
         self.areas = ()
         self.database_settings = {}
+        self.settings_replacements = []
         self.cover_sheets = {}
         self.page_delete_content = {}
         self.removed_transient_takeoff_uids = []
@@ -151,6 +152,7 @@ class _ProjectData:
         used_job_status_uids=None,
         used_employee_uids=None,
     ):
+        self.settings_replacements.append(database_id)
         values = dict(
             default_layers=default_layers,
             job_statuses=job_statuses,

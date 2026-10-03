@@ -255,6 +255,7 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
                 changed_takeoff_uids=None,
                 changed_annotation_uids=None,
                 changed_annotation_types=None,
+                force_overlay_refresh=False,
             ):
                 del (
                     page,
@@ -268,6 +269,7 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
                     changed_takeoff_uids,
                     changed_annotation_uids,
                     changed_annotation_types,
+                    force_overlay_refresh,
                 )
                 calls.append("refresh")
                 return False

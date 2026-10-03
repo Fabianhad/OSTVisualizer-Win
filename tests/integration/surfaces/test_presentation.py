@@ -1,7 +1,6 @@
 import logging
 import os
 import tempfile
-import time
 import unittest
 import uuid
 from copy import deepcopy
@@ -42,6 +41,7 @@ from ost_visualizer.presentation.actions.action_ids import (
 )
 from ost_visualizer.presentation.builders.component_builder import ComponentBuilder
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+from ost_visualizer.presentation.components.page_combo import PageComboBox
 from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.components.popup_tracking_combo import (
@@ -51,6 +51,9 @@ from ost_visualizer.presentation.components.scene_navigation_controls import (
     SceneNavigationControls,
 )
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+    SidebarCoordinator,
+)
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
@@ -65,6 +68,7 @@ from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
 from ost_visualizer.presentation.utils.dialog import delete_later_if_valid
+from ost_visualizer.presentation.utils.qt_callback_bridge import QtVoidCallback
 from ost_visualizer.presentation.visualization.native_page_plane import (
     NativePageImagePlaneData,
     NativePageImagePlaneProvider,
@@ -301,18 +305,63 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         painter.end()
         return output.pixelColor(32, 32)
 
+    def _wait_until(self, predicate, timeout_ms=10000):
+        # Event-driven wait for worker results posted back to the Qt thread: the
+        # loop blocks until the next Qt event rather than sleeping, and returns
+        # as soon as the predicate holds. The timer event only bounds a failing
+        # run (generous so a loaded CI machine does not turn slow workers into
+        # false failures).
+        expired = []
+        timer = QtCore.QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: expired.append(True))
+        timer.start(timeout_ms)
+        try:
+            while True:
+                self.app.processEvents()
+                if predicate():
+                    return True
+                if expired:
+                    return False
+                self.app.processEvents(
+                    QtCore.QEventLoop.ProcessEventsFlag.WaitForMoreEvents
+                )
+        finally:
+            timer.stop()
+
+    def _scene_center_colors(self):
+        return [
+            self._scene_center_color(surface)
+            for surface in (self.main_plan, self.detached.plan_view)
+        ]
+
     def _wait_for_scene_colors(self, colors):
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            self.app.processEvents()
-            actual = [
-                self._scene_center_color(surface)
-                for surface in (self.main_plan, self.detached.plan_view)
-            ]
-            if actual == colors:
-                return
-            QtCore.QThread.msleep(5)
-        self.assertEqual(actual, colors)
+        self._wait_until(lambda: self._scene_center_colors() == colors)
+        self.assertEqual(self._scene_center_colors(), colors)
+
+    def _wait_for_pages_loaded(self):
+        self.assertTrue(
+            self._wait_until(
+                lambda: not any(
+                    surface._pending_page_data
+                    for surface in (self.main_plan, self.detached.plan_view)
+                )
+            ),
+            "a plan surface is still loading its page data",
+        )
+
+    def _wait_for_renders_idle(self):
+        # No tracked render request may still be reading a source file when a test
+        # rewrites it in place (a torn read would be a test race, not a product result).
+        self.assertTrue(
+            self._wait_until(
+                lambda: not any(
+                    surface._pending_page_data or surface._current_render_requests
+                    for surface in (self.main_plan, self.detached.plan_view)
+                )
+            ),
+            "a plan surface still has render requests in flight",
+        )
 
     def test_database_unload_clears_open_detached_plan_without_navigation(self):
         from ost_visualizer.presentation.services.undo_redo_service import (
@@ -349,6 +398,10 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             active_context_removed=False,
         )
         self.assertEqual(self.detached.plan_view.current_page_uid, page.uid)
+        # An unrelated database leaves selection and history untouched; the
+        # matching unload below clears both (positive control).
+        self.assertEqual(self.detached.plan_view.get_selected_uids(), ["selected"])
+        self.assertTrue(history.can_undo())
         current[0] = False
         self.bus.publish(
             AppEvents.FILE_UNLOADED,
@@ -870,9 +923,9 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.coordinator._mesh_window = None
         self.coordinator._undo_service = None
         self.coordinator._pending_takeoff_page_uids = None
-        self.coordinator._sidebar = Mock()
+        self.coordinator._sidebar = Mock(spec=SidebarCoordinator)
         self.coordinator._bid_data_cache = None
-        self.coordinator.takeoff_sidebar = Mock()
+        self.coordinator.takeoff_sidebar = Mock(spec=PageComboBox)
         self.coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
         self.coordinator._update_export_menu_state = lambda: None
         self.state.selected_page_uids = [self.data.page.uid]
@@ -2097,7 +2150,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         coordinator._mesh_window_action = None
         coordinator.main_window.menu_controller = None
         coordinator._nav = SimpleNamespace(is_refreshing=False)
-        coordinator._plan_view_signaler = Mock()
+        coordinator._plan_view_signaler = Mock(spec=QtVoidCallback)
         main_mesh = OpenGLViewer(None, coordinator._color_service)
         main_mesh._renderer = MeshRendererBoundary(FakeMeshScene([]))
         self.addCleanup(main_mesh.deleteLater)
@@ -2432,12 +2485,14 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 self.state.selected_page_uids = [page.uid]
                 self.state.set_page_selection = lambda uids: None
                 self.data.select_pages = lambda uids: uids
-                self.coordinator._deferred_persistence = Mock()
+                self.coordinator._deferred_persistence = Mock(
+                    spec=DeferredPersistenceManager
+                )
                 self.coordinator._undo_service = None
                 self.coordinator._pending_takeoff_page_uids = None
-                self.coordinator._sidebar = Mock()
+                self.coordinator._sidebar = Mock(spec=SidebarCoordinator)
                 self.coordinator._bid_data_cache = None
-                self.coordinator.takeoff_sidebar = Mock()
+                self.coordinator.takeoff_sidebar = Mock(spec=PageComboBox)
                 self.coordinator._restore_project_tree_bid_selection_if_needed = (
                     lambda: None
                 )
@@ -2569,13 +2624,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                             self.coordinator._project_page_image_flag_if_current(
                                 self.bid_ref, page.uid, flag, write, value
                             )
-                    deadline = time.monotonic() + 2.0
-                    while time.monotonic() < deadline and any(
-                        surface._pending_page_data
-                        for surface in (self.main_plan, self.detached.plan_view)
-                    ):
-                        self.app.processEvents()
-                        QtCore.QThread.msleep(5)
+                    self._wait_for_pages_loaded()
                     for surface in (
                         self.main_plan,
                         self.detached.plan_view,
@@ -2639,13 +2688,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 ):
                     page.overlay_rotation, page.rotation = overlay_rotation, rotation
                     project_mode(mode)
-                    deadline = time.monotonic() + 2.0
-                    while time.monotonic() < deadline and any(
-                        surface._pending_page_data
-                        for surface in (self.main_plan, self.detached.plan_view)
-                    ):
-                        self.app.processEvents()
-                        QtCore.QThread.msleep(5)
+                    self._wait_for_pages_loaded()
                     output = QtGui.QImage(64, 64, QtGui.QImage.Format.Format_RGBA8888)
                     output.fill(QtCore.Qt.GlobalColor.transparent)
                     painter = QtGui.QPainter(output)
@@ -3053,7 +3096,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             coordinator._mesh_window_action = None
             coordinator.main_window.menu_controller = None
             coordinator._nav = SimpleNamespace(is_refreshing=False)
-            coordinator._plan_view_signaler = Mock()
+            coordinator._plan_view_signaler = Mock(spec=QtVoidCallback)
 
             def create_mesh(**kwargs):
                 window = MeshViewWindow(**kwargs)
@@ -3509,6 +3552,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                     self._wait_for_scene_colors(
                         [QtGui.QColor("cyan" if invert else "red")] * 2
                     )
+                    self._wait_for_renders_idle()
                     image.fill(QtGui.QColor("blue"))
                     self.assertTrue(image.save(str(path)))
                     os.utime(
@@ -4265,13 +4309,10 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.main_plan.show()
 
         def wait_for_color(color):
-            deadline = time.monotonic() + 2.0
             expected = QtGui.QColor(color)
-            while time.monotonic() < deadline:
-                self.app.processEvents()
-                if self._scene_center_color(self.main_plan) == expected:
-                    return
-                QtCore.QThread.msleep(5)
+            self._wait_until(
+                lambda: self._scene_center_color(self.main_plan) == expected
+            )
             self.assertEqual(self._scene_center_color(self.main_plan), expected)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -4372,7 +4413,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         main_mesh._renderer = MeshRendererBoundary(FakeMeshScene([]))
         configure_mesh_state(coordinator, view_index=0, opengl_viewer=main_mesh)
         coordinator.ui_access_manager = self.access
-        coordinator._plan_view_signaler = Mock()
+        coordinator._plan_view_signaler = Mock(spec=QtVoidCallback)
         coordinator._save_current_page_view_state = lambda **_options: None
         coordinator._update_export_menu_state = lambda: None
         coordinator._update_plan_view = self.viewer.update_plan_view
@@ -4910,6 +4951,10 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 queued_service = ProjectWriteService.__new__(ProjectWriteService)
                 provider = _CapturedQueueProvider()
                 queued_service._project_data = self.data
+                # Unlocked Bid: page settings are refused at queue time on a locked one.
+                queued_service._bid_write_guard = SimpleNamespace(
+                    blocks_active_locked_bid_write=lambda *_args: False
+                )
                 queued_service._sql_collaboration_provider = lambda: provider
                 queued_service.logger = logging.getLogger("test.sql.images")
                 self.coordinator._project_write_service = queued_service
@@ -5115,6 +5160,49 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                                 visuals,
                             )
                         self.assertEqual(len(rejected_writes), previous_write_count + 2)
+
+    def test_sql_scale_terminal_result_restores_rejected_picker_and_keeps_committed(
+        self,
+    ):
+        service = FakeProjectWriteService()
+        service.queue_sql_settings = True
+        persistence = DeferredPersistenceManager(
+            service, FakeSqlWorkspaceService(service)
+        )
+        self.addCleanup(persistence.cleanup)
+        self.coordinator._deferred_persistence = persistence
+        self.coordinator._project_write_service = service
+        self.bar.scale_change_requested.connect(self.coordinator._on_page_scale_changed)
+        page = self.data.page
+        for outcome, expected in (
+            (MutationOutcomeStatus.REJECTED, (1.0, 120.0)),
+            (MutationOutcomeStatus.COMMITTED, (1.0, 240.0)),
+        ):
+            with self.subTest(outcome=outcome):
+                page.scale_factor1, page.scale_factor2 = 1.0, 120.0
+                self.refresh()
+                self.assertEqual(self.bar.scale_combo.currentData(), (1.0, 120.0))
+                index = next(
+                    index
+                    for index in range(self.bar.scale_combo.count())
+                    if self.bar.scale_combo.itemData(index) == (1.0, 240.0)
+                )
+                self.bar.scale_combo.setCurrentIndex(index)
+                self.bar.scale_combo.activated.emit(index)
+                self.assertEqual(self.bar.scale_combo.currentData(), (1.0, 240.0))
+                self.assertTrue(persistence.flush())
+                service.queued_setting_callbacks[-1](
+                    QueuedMutationResult(
+                        database_id=self.bid_ref.file_path,
+                        runtime_generation=1,
+                        operation_id=str(uuid.uuid4()),
+                        outcome_status=outcome,
+                    )
+                )
+                self.assertEqual(self.bar.scale_combo.currentData(), expected)
+                # The authoritative page was never rewritten by the picker.
+                self.assertEqual((page.scale_factor1, page.scale_factor2), (1.0, 120.0))
+                self.assertEqual(self.detached._scale_combo.currentData(), (1.0, 120.0))
 
     def test_sql_area_rejection_restores_main_picker_and_both_plan_surfaces(self):
         service = FakeProjectWriteService()
@@ -5413,6 +5501,7 @@ class SceneControlPresentationTests(unittest.TestCase):
         bundle.view_stack.setCurrentIndex(1)
         page = self.main_data.page
         actions = bundle.central_widget.findChild(SceneNavigationControls)._actions
+        self.assertTrue(actions)
         for transition in ("rename", "replace", "delete", "first-page"):
             with self.subTest(transition=transition):
                 bundle.view_stack.setCurrentIndex(0)
@@ -5701,7 +5790,7 @@ class SceneControlPresentationTests(unittest.TestCase):
         coordinator._mesh_window_action = None
         coordinator.main_window = SimpleNamespace(menu_controller=None)
         coordinator._nav = SimpleNamespace(is_refreshing=False)
-        coordinator._plan_view_signaler = Mock()
+        coordinator._plan_view_signaler = Mock(spec=QtVoidCallback)
         main = OpenGLViewer(None, coordinator._color_service)
         main._renderer = MeshRendererBoundary(FakeMeshScene([]))
         self.addCleanup(main.deleteLater)
@@ -6009,13 +6098,13 @@ class SceneControlPresentationTests(unittest.TestCase):
         self.assertFalse(window._zoom_combo.isEnabled())
         self.assertEqual(window._zoom_combo.currentText(), "")
         toolbar = window.findChild(QtWidgets.QToolBar)
-        self.assertFalse(
-            any(
-                action.isEnabled()
-                for action in toolbar.actions()
-                if not isinstance(action, QtWidgets.QWidgetAction)
-            )
-        )
+        tool_actions = [
+            action
+            for action in toolbar.actions()
+            if not isinstance(action, QtWidgets.QWidgetAction)
+        ]
+        self.assertTrue(tool_actions)
+        self.assertFalse(any(action.isEnabled() for action in tool_actions))
 
     def test_main_and_detached_camera_controls_follow_accepted_content_and_recover(
         self,
@@ -6053,6 +6142,7 @@ class SceneControlPresentationTests(unittest.TestCase):
         )
         bid_ref = FakeUiState().get_selected_bid_ref()
         for viewer, combo, actions in controls:
+            self.assertTrue(actions)
             viewer._renderer = MeshRendererBoundary(FakeMeshScene([]))
             self.assertFalse(combo.isEnabled())
             self.assertFalse(any(action.isEnabled() for action in actions))
@@ -6143,6 +6233,98 @@ class SceneControlPresentationTests(unittest.TestCase):
         self.assertTrue(window._zoom_combo.isEnabled())
         self.assertTrue(window._zoom_combo.currentText())
         self.assertEqual(viewer._renderer.resume_calls, 0)
+
+
+class SceneNavigationControlsZoomDisplayTests(unittest.TestCase):
+    """Second-pass additions: the zoom box that SceneNavigationControls itself drives.
+    SceneNavigationControls has no unit module; the other scene tests only read its
+    enablement. Real: OpenGLViewer (renderer boundary without GL), SceneNavigationControls,
+    a real editable QComboBox, a real QStackedWidget. No refresh function is passed, so
+    the 3D branch writes the label.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def make_controls(self, *, zoom_percent=100.0, with_stack=False, plan=None):
+        parent = QtWidgets.QWidget()
+        self.addCleanup(parent.deleteLater)
+        stack = QtWidgets.QStackedWidget(parent) if with_stack else None
+        viewer = OpenGLViewer(stack, SimpleNamespace())
+        self.addCleanup(viewer.cleanup)
+        viewer._renderer = MeshRendererBoundary(FakeMeshScene(["t1"]))
+        viewer._zoom_reference_distance = viewer._get_camera_distance()
+        viewer.set_zoom_percent(zoom_percent)
+        if stack is not None:
+            stack.addWidget(viewer)
+            stack.addWidget(QtWidgets.QWidget() if plan is None else plan)
+        zoom = QtWidgets.QComboBox(parent)
+        zoom.setEditable(True)
+        zoom.addItems(["50%", "100%", "200%"])
+        action = QtGui.QAction("Zoom In", parent)
+        controls = SceneNavigationControls(
+            viewer, [action], zoom, parent, stack, plan_view=plan
+        )
+        return controls, viewer, zoom, action, stack
+
+    def test_available_3d_scene_shows_the_viewer_zoom_percent(self):
+        for percent in (250.0, 40.0):
+            with self.subTest(percent=percent):
+                _controls, viewer, zoom, action, _stack = self.make_controls(
+                    zoom_percent=percent
+                )
+                self.assertAlmostEqual(viewer.get_zoom_percent(), percent, places=5)
+                self.assertTrue(zoom.isEnabled())
+                self.assertTrue(action.isEnabled())
+                self.assertEqual(zoom.currentText(), f"{percent:.0f}%")
+                self.assertEqual(zoom.currentIndex(), -1)
+
+    def test_scene_loss_clears_index_and_draft_text_without_emitting_signals(self):
+        _controls, viewer, zoom, action, _stack = self.make_controls()
+        emitted = []
+        zoom.currentIndexChanged.connect(emitted.append)
+        zoom.editTextChanged.connect(emitted.append)
+        zoom.setCurrentIndex(2)
+        self.assertEqual(zoom.currentText(), "200%")
+        emitted.clear()
+        viewer._renderer.scene = FakeMeshScene([])
+        viewer.scene_content_changed.emit()
+        self.assertFalse(zoom.isEnabled())
+        self.assertFalse(action.isEnabled())
+        self.assertEqual(zoom.currentIndex(), -1)
+        self.assertEqual(zoom.currentText(), "")
+        self.assertEqual(emitted, [])
+        # A typed draft with no list entry selected is cleared too.
+        viewer._renderer.scene = FakeMeshScene(["t1"])
+        viewer.scene_content_changed.emit()
+        self.assertTrue(zoom.isEnabled())
+        self.assertEqual(zoom.currentIndex(), -1)
+        zoom.setEditText("17")
+        self.assertEqual(zoom.currentText(), "17")
+        emitted.clear()
+        viewer._renderer.scene = FakeMeshScene([])
+        viewer.scene_content_changed.emit()
+        self.assertEqual(zoom.currentIndex(), -1)
+        self.assertEqual(zoom.currentText(), "")
+        self.assertEqual(emitted, [])
+
+    def test_plan_mode_without_a_plan_view_is_unavailable_and_with_one_is_available(
+        self,
+    ):
+        _controls, _viewer, zoom, action, stack = self.make_controls(with_stack=True)
+        self.assertTrue(action.isEnabled())
+        stack.setCurrentIndex(1)
+        self.assertFalse(action.isEnabled())
+        self.assertFalse(zoom.isEnabled())
+        plan = LoadedPlanNavigationBoundary()
+        self.addCleanup(plan.deleteLater)
+        _controls, _viewer, zoom, action, stack = self.make_controls(
+            with_stack=True, plan=plan
+        )
+        stack.setCurrentIndex(1)
+        self.assertTrue(action.isEnabled())
+        self.assertTrue(zoom.isEnabled())
 
 
 if __name__ == "__main__":

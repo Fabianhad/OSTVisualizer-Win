@@ -1,7 +1,11 @@
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyBidInfo,
     HierarchyData,
     HierarchyFileEntry,
+    HierarchyFolderInfo,
+    HierarchyPageInfo,
+    HierarchyProjectInfo,
 )
 from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
@@ -1259,3 +1263,84 @@ class PageAreaProjectionTests(unittest.TestCase):
         self.assertEqual(model.page_area_selections["43"], "21")
         self.assertEqual(removed.area_uid, UNASSIGNED_AREA_UID)
         self.assertEqual(retained.area_uid, "21")
+
+
+class ProjectDataServiceOwningBidOfPageTests(unittest.TestCase):
+    """Decision Q2: the hierarchy answers which Bid of a database owns a page (used by
+    the SQL page delete to key the locked-Bid guard on each owning Bid)."""
+
+    @staticmethod
+    def _bid(uid, *, pages=(), folders=None):
+        return HierarchyBidInfo(
+            uid=uid,
+            pages_without_folder=[HierarchyPageInfo(uid=p, name=p) for p in pages],
+            folders=folders or {},
+        )
+
+    def _service(self):
+        nested = HierarchyFolderInfo(
+            name="Nested", pages=[HierarchyPageInfo(uid="22", name="22")]
+        )
+        folder = HierarchyFolderInfo(
+            name="Folder",
+            pages=[HierarchyPageInfo(uid="21", name="21")],
+            subfolders={"f2": nested},
+        )
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="C:/Data/Test.mdb",
+                    bid_projects={
+                        "proj": HierarchyProjectInfo(
+                            name="P",
+                            bids=[
+                                self._bid("7", pages=["20"], folders={"f1": folder}),
+                                self._bid("8", pages=["30", ""]),
+                            ],
+                        )
+                    },
+                    orphan_bids=[self._bid("9", pages=["40"])],
+                ),
+                HierarchyFileEntry(
+                    file_path="C:/Data/Other.mdb",
+                    orphan_bids=[self._bid("5", pages=["20", "50"])],
+                ),
+                HierarchyFileEntry(
+                    file_path="", orphan_bids=[self._bid("1", pages=["60"])]
+                ),
+            ]
+        )
+        return ProjectDataService(SimpleNamespace(get_hierarchy_data=lambda: hierarchy))
+
+    def test_the_owning_bid_is_found_at_every_nesting_level_and_for_orphan_bids(self):
+        service = self._service()
+        for page_uid, bid_uid in (
+            ("20", "7"),
+            ("21", "7"),
+            ("22", "7"),
+            ("30", "8"),
+            ("40", "9"),
+        ):
+            with self.subTest(page=page_uid):
+                self.assertEqual(
+                    service.find_owning_bid_uid_for_page("C:/Data/Test.mdb", page_uid),
+                    bid_uid,
+                )
+
+    def test_the_lookup_is_scoped_to_the_database_and_tolerates_path_spelling(self):
+        service = self._service()
+        owner = service.find_owning_bid_uid_for_page
+        self.assertEqual(owner("C:/Data/Other.mdb", "20"), "5")
+        self.assertEqual(owner("C:/Data/Other.mdb", "50"), "5")
+        self.assertIsNone(owner("C:/Data/Test.mdb", "50"))
+        self.assertEqual(owner("c:\data\TEST.mdb", "30"), "8")
+        self.assertIsNone(owner("C:/Data/Missing.mdb", "20"))
+
+    def test_an_unknown_or_empty_page_has_no_owner(self):
+        service = self._service()
+        for page_uid in ("99", "", None):
+            with self.subTest(page=page_uid):
+                self.assertIsNone(
+                    service.find_owning_bid_uid_for_page("C:/Data/Test.mdb", page_uid)
+                )
+        self.assertIsNone(service.find_owning_bid_uid_for_page("", "60"))

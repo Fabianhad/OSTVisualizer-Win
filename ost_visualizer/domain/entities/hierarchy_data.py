@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from .file_state import normalize_path
 from .identity_refs import BidRef
 
 
@@ -91,6 +92,22 @@ class HierarchyData:
             for bid in file_entry.orphan_bids:
                 if bid.uid == bid_uid:
                     return bid
+        return None
+
+    def find_bid_uid_for_page(self, page_uid: str, file_path: str) -> Optional[str]:
+        if not page_uid or not file_path:
+            return None
+        for file_entry in self.loaded_files:
+            if normalize_path(file_entry.file_path) != normalize_path(file_path):
+                continue
+            bids = [
+                bid
+                for project_info in file_entry.bid_projects.values()
+                for bid in project_info.bids
+            ] + list(file_entry.orphan_bids)
+            for bid in bids:
+                if self._bid_has_page(bid, str(page_uid)):
+                    return bid.uid
         return None
 
     def bid_exists(self, bid_ref: BidRef) -> bool:

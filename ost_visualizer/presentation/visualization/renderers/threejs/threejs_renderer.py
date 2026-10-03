@@ -2,6 +2,7 @@ import base64
 import html
 import json
 import os
+import re
 import tempfile
 import webbrowser
 from pathlib import Path
@@ -271,5 +272,12 @@ def _generate_html(scene_data: SceneData, title: str) -> str:
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
     scene_json = json.dumps(scene_data, separators=(",", ":")).replace("<", "\\u003c")
-    rendered_html = template.replace("{{TITLE}}", html.escape(title, quote=False))
-    return rendered_html.replace("{{SCENE_DATA}}", scene_json)
+    replacements = {
+        "{{TITLE}}": html.escape(title, quote=False),
+        "{{SCENE_DATA}}": scene_json,
+    }
+    return re.sub(
+        r"\{\{(?:TITLE|SCENE_DATA)\}\}",
+        lambda match: replacements[match.group(0)],
+        template,
+    )

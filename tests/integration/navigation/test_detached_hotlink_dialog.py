@@ -53,11 +53,13 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
         window._named_views = [("nv1", "p1", "Page 1", "Lobby")]
         owner = QtWidgets.QWidget()
+        created = []
 
         def make_rejected_dialog(named_views, parent=None):
             del parent
             dialog = SelectNamedViewDialog(named_views, parent=owner)
             dialog.exec = lambda: QtWidgets.QDialog.DialogCode.Rejected
+            created.append(dialog)
             return dialog
 
         try:
@@ -70,6 +72,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                     window._on_hotlink_placement_requested([5.0, 6.0], "p1")
             self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
             self.app.processEvents()
+            # Positive control: every request really opened (and rejected) a
+            # picker, so the empty child list below is not a vacuous early return.
+            self.assertEqual(len(created), 100)
+            self.assertEqual(write_service.insert_calls, [])
             self.assertEqual(owner.findChildren(SelectNamedViewDialog), [])
         finally:
             owner.deleteLater()

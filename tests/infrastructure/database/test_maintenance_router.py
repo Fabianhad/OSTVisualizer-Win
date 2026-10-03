@@ -105,3 +105,22 @@ class MaintenanceBackendRoutingTests(unittest.TestCase):
             sql.compact("any"),
             DatabaseMaintenanceResult(False, reason),
         )
+
+    def test_router_owns_every_public_maintenance_port_operation(self):
+        # The router does not inherit the port, so an operation added to
+        # IDatabaseMaintenance would silently stay unrouted.
+        port = {name for name in dir(IDatabaseMaintenance) if not name.startswith("_")}
+        self.assertEqual(
+            port,
+            {
+                "capture_target",
+                "prepare",
+                "is_target_current",
+                "release_target",
+                "unavailable_reason",
+                "compact",
+            },
+        )
+        for name in port:
+            with self.subTest(operation=name):
+                self.assertIn(name, vars(DatabaseMaintenanceRouter))

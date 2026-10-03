@@ -103,6 +103,18 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             colors = {call.args[2] for call in expected}
             self.assertIn("#336699", colors)
             self.assertIn("#00aa00", colors)
+            # Pin the literal per-tool colors so the expected list above is
+            # not the only oracle for which tool received which color.
+            color_by_target = {
+                call.args[0].text(): call.args[2]
+                for call in apply_colored.call_args_list
+            }
+            labels = {
+                spec.annotation_type: spec.label for spec in PLAN_ANNOTATION_TOOL_SPECS
+            }
+            self.assertEqual(color_by_target[labels["dimension"]], "#336699")
+            self.assertEqual(color_by_target[labels["text"]], "#00aa00")
+            self.assertEqual(color_by_target[labels["line"]], "#ff0000")
         finally:
             set_annotation_style_for_tool("dimension", color="#ff0000")
             set_annotation_style_for_tool("text", color="#ff0000")
@@ -604,6 +616,9 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             self.assertFalse(bool(plain.property("annotationStyleDropdown")))
             self.assertFalse(bool(plain.property("annotationToolMainButton")))
             self.assertFalse(bool(tool.property("annotationStyleDropdown")))
+            self.assertFalse(bool(dropdown.property("annotationToolMainButton")))
+            self.assertFalse(bool(parent.property("annotationToolMainButton")))
+            self.assertTrue(container.property("annotationToolSplitButton"))
         finally:
             parent.deleteLater()
 
@@ -611,14 +626,20 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
         _preferences_support__app()
         parent = QtWidgets.QWidget()
         try:
-            for factory in (
-                create_annotation_style_button,
-                create_annotation_style_menu,
+            # The button delegates to the menu factory, so the message must
+            # name the control that rejected the missing callback itself.
+            for factory, control in (
+                (create_annotation_style_button, "button"),
+                (create_annotation_style_menu, "menu"),
             ):
                 with self.subTest(factory=factory.__name__):
-                    with self.assertRaisesRegex(ValueError, "getter"):
+                    with self.assertRaisesRegex(
+                        ValueError, f"style {control} requires .*getter"
+                    ):
                         factory(parent, None, lambda **updates: None)
-                    with self.assertRaisesRegex(ValueError, "setter"):
+                    with self.assertRaisesRegex(
+                        ValueError, f"style {control} requires .*setter"
+                    ):
                         factory(parent, lambda: AnnotationStyle(), None)
         finally:
             parent.deleteLater()

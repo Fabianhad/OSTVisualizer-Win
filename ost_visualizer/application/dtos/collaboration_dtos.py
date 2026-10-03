@@ -5,7 +5,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from functools import total_ordering
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, Iterable, Optional, TypeVar
 from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
@@ -16,12 +16,14 @@ from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.hierarchy_data import HierarchyFileEntry
 from ...domain.entities.layer import BidLayer
 from .collaboration_resource_catalog import (
+    CollaborationResourceType,
     parse_annotation_resource_id,
     resource_definition,
 )
 from .insert_annotation_spec_dto import InsertAnnotationSpec
 from .insert_takeoff_spec_dto import InsertTakeoffSpec
 
+BID_LOCKED_MESSAGE = "The active bid is locked"
 COLLABORATION_STALE_SECONDS = 45
 COLLABORATION_LOCK_SECONDS = 45
 
@@ -60,6 +62,16 @@ class MutationOutcomeStatus(str, Enum):
     COMMITTED_PROJECTION_FAILED = "committed_projection_failed"
     COMMIT_STATUS_UNKNOWN = "commit_status_unknown"
     CANCELLED_BEFORE_START = "cancelled_before_start"
+
+
+class MutationRejectionReason(str, Enum):
+    BID_LOCKED = "bid_locked"
+
+
+def rejection_reason_message(reason: "MutationRejectionReason") -> str:
+    if reason == MutationRejectionReason.BID_LOCKED:
+        return BID_LOCKED_MESSAGE
+    raise ValueError(f"Unsupported mutation rejection reason: {reason!r}")
 
 
 class PendingMutationState(str, Enum):
@@ -156,6 +168,20 @@ class ResourceRef:
     @property
     def lease_identity(self) -> tuple[str, str]:
         return self.resource_type, self.resource_id
+
+
+def resource_lock_sort_key(resource: ResourceRef) -> tuple[int, str, str, bool, int]:
+    return (
+        0 if resource.resource_type == CollaborationResourceType.BID.value else 1,
+        resource.resource_type,
+        resource.resource_id,
+        resource.bid_uid is not None,
+        resource.bid_uid or 0,
+    )
+
+
+def ordered_lock_resources(resources: Iterable[ResourceRef]) -> tuple[ResourceRef, ...]:
+    return tuple(sorted(set(resources), key=resource_lock_sort_key))
 
 
 @dataclass(frozen=True)
@@ -292,6 +318,18 @@ def canonical_mutation_request_hash(payload: object) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_rejection_reason_only_when_rejected(
+    reason: Optional[MutationRejectionReason],
+    outcome_status: MutationOutcomeStatus,
+) -> None:
+    if reason is None:
+        return
+    if not isinstance(reason, MutationRejectionReason):
+        raise ValueError("A rejection reason must be a MutationRejectionReason")
+    if outcome_status != MutationOutcomeStatus.REJECTED:
+        raise ValueError("Only a rejected outcome may carry a rejection reason")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -686,6 +724,7 @@ class MutationExecutionResult:
     conflict: Optional[SynchronizationConflict] = None
     commit_attempted: bool = False
     consumed_lock_tokens: tuple[str, ...] = ()
+    rejection_reason: Optional[MutationRejectionReason] = None
 
     def __post_init__(self) -> None:
         if (
@@ -693,6 +732,9 @@ class MutationExecutionResult:
             and self.outcome_status != MutationOutcomeStatus.CONFLICT
         ):
             raise ValueError("Only a conflict outcome may carry a conflict")
+        _require_rejection_reason_only_when_rejected(
+            self.rejection_reason, self.outcome_status
+        )
         if (
             self.outcome_status == MutationOutcomeStatus.COMMITTED
             and not self.commit_attempted
@@ -711,6 +753,7 @@ class QueuedMutationResult:
     message: str = ""
     conflict: Optional[SynchronizationConflict] = None
     commit_attempted: bool = False
+    rejection_reason: Optional[MutationRejectionReason] = None
 
     def __post_init__(self) -> None:
         try:
@@ -722,6 +765,9 @@ class QueuedMutationResult:
             and self.outcome_status != MutationOutcomeStatus.CONFLICT
         ):
             raise ValueError("Only a conflict outcome may carry a conflict")
+        _require_rejection_reason_only_when_rejected(
+            self.rejection_reason, self.outcome_status
+        )
         if (
             self.outcome_status == MutationOutcomeStatus.COMMITTED
             and not self.commit_attempted
@@ -838,6 +884,7 @@ class DatabaseMutationRequest:
     required_lock_tokens: tuple[str, ...] = ()
     block_bid_child_locks: bool = False
     block_bid_active_editors: bool = False
+    bid_lock_exempt: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -875,12 +922,16 @@ class DatabaseMutationResult(Generic[T]):
     failure_reason: Optional[str] = None
     commit_attempted: bool = False
     consumed_lock_tokens: tuple[str, ...] = ()
+    rejection_reason: Optional[MutationRejectionReason] = None
 
     def __post_init__(self) -> None:
         try:
             operation_id = str(uuid.UUID(str(self.operation_id)))
         except ValueError as exc:
             raise ValueError("Database mutation result IDs must be UUIDs") from exc
+        _require_rejection_reason_only_when_rejected(
+            self.rejection_reason, self.outcome_status
+        )
         if (
             self.conflict is not None
             and self.outcome_status != MutationOutcomeStatus.CONFLICT
@@ -893,6 +944,11 @@ class DatabaseMutationResult(Generic[T]):
             raise ValueError(
                 "Only a failed-before-commit outcome may carry a failure reason"
             )
+        if (
+            self.value is not None
+            and self.outcome_status != MutationOutcomeStatus.COMMITTED
+        ):
+            raise ValueError("Only a committed outcome may carry a value")
         if (
             self.outcome_status == MutationOutcomeStatus.COMMITTED
             and not self.commit_attempted

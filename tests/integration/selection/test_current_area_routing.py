@@ -135,3 +135,93 @@ class CurrentAreaSelectionRoutingTests(unittest.TestCase):
             controller._select_objects_in_current_area()
         self.assertEqual(self.shell.plan_view.selected_areas, [])
         stale_window.close()
+
+    def _select_with_focus(self, controller, focus_widget, active_window):
+        with patch.object(
+            QtWidgets.QApplication, "focusWidget", return_value=focus_widget
+        ), patch.object(
+            QtWidgets.QApplication, "activeWindow", return_value=active_window
+        ), patch(
+            "ost_visualizer.presentation.controllers.menu_controller.show_warning"
+        ) as warning:
+            controller._select_objects_in_current_area()
+        return warning
+
+    def test_menu_hosted_inside_another_menu_falls_back_to_active_window(self):
+        outer = QtWidgets.QMenu(self.shell)
+        holder = QtWidgets.QWidget(outer)
+        menu = QtWidgets.QMenu(holder)
+        self.assertIs(menu.parentWidget().window(), outer)
+        warning = self._select_with_focus(
+            _area_routing_support__controller(self.shell), menu, self.shell
+        )
+        warning.assert_not_called()
+        self.assertEqual(self.shell.plan_view.selected_areas, ["main-area"])
+        menu.close()
+        outer.close()
+
+    def test_main_view_without_takeoff_tab_warns_instead_of_selecting(self):
+        controller = _area_routing_support__controller(self.shell)
+        warning = self._select_with_focus(
+            controller, self.shell.focus_child, self.shell
+        )
+        warning.assert_not_called()
+        self.assertEqual(self.shell.plan_view.selected_areas, ["main-area"])
+        self.shell.is_takeoff_tab_active = lambda: False
+        warning = self._select_with_focus(
+            controller, self.shell.focus_child, self.shell
+        )
+        warning.assert_called_once()
+        self.assertIs(warning.call_args.args[0], self.shell)
+        self.assertEqual(self.shell.plan_view.selected_areas, ["main-area"])
+
+    def test_main_view_without_selected_area_selects_with_no_area_filter(self):
+        self.shell._page_settings_bar._area_uid = ""
+        warning = self._select_with_focus(
+            _area_routing_support__controller(self.shell),
+            self.shell.focus_child,
+            self.shell,
+        )
+        warning.assert_not_called()
+        self.assertEqual(self.shell.plan_view.selected_areas, [None])
+
+    def test_denied_select_permission_neither_selects_nor_warns(self):
+        controller = _area_routing_support__controller(self.shell)
+        controller.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: False
+        )
+        warning = self._select_with_focus(
+            controller, self.shell.focus_child, self.shell
+        )
+        warning.assert_not_called()
+        self.assertEqual(self.shell.plan_view.selected_areas, [])
+        self.assertEqual(self.detached.plan_view.selected_areas, [])
+        controller.ui_access_manager = _area_routing_support__Access()
+        self._select_with_focus(controller, self.shell.focus_child, self.shell)
+        self.assertEqual(self.shell.plan_view.selected_areas, ["main-area"])
+
+    def test_detached_plan_showing_another_page_is_not_selected(self):
+        controller = _area_routing_support__controller(self.shell)
+        warning = self._select_with_focus(
+            controller, self.detached.focus_child, self.detached
+        )
+        warning.assert_not_called()
+        self.assertEqual(self.detached.plan_view.selected_areas, ["detached-area"])
+        self.detached.plan_view.current_page_uid = "stale-page"
+        warning = self._select_with_focus(
+            controller, self.detached.focus_child, self.detached
+        )
+        warning.assert_called_once()
+        self.assertIs(warning.call_args.args[0], self.shell)
+        self.assertEqual(self.detached.plan_view.selected_areas, ["detached-area"])
+        self.assertEqual(self.shell.plan_view.selected_areas, [])
+
+    def test_toolbar_refreshes_only_after_a_successful_selection(self):
+        refreshes = []
+        controller = _area_routing_support__controller(self.shell)
+        controller.handlers.ui_event.refresh_toolbar = lambda: refreshes.append(True)
+        self._select_with_focus(controller, self.shell.focus_child, self.shell)
+        self.assertEqual(self.shell.plan_view.selected_areas, ["main-area"])
+        self.assertEqual(refreshes, [True])
+        self._select_with_focus(controller, None, None)
+        self.assertEqual(refreshes, [True])

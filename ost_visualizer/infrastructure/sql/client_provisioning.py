@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import pyodbc
 from .client_permissions import (
     apply_sql_client_permissions,
     require_sql_client_editability,
@@ -80,7 +81,10 @@ def provision_runtime_client(
             committed = True
         finally:
             if not committed:
-                lease.rollback()
+                try:
+                    lease.rollback()
+                except pyodbc.Error:
+                    pass
 
 
 def verify_runtime_client(

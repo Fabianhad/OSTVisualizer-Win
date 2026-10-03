@@ -12,6 +12,9 @@ class CrossSystemRawTextWorkflowTests(unittest.TestCase):
         for table, column, content, encoding in (
             ("BidTexts", "Name", "café / Ã©\n  end ", "latin-1"),
             ("BidCallOuts", "Name", "Entrée", "latin-1"),
+            # Bytes 0x93/0x94 are C1 controls in latin-1 (curly quotes only in
+            # cp1252), so this pins the exact single-byte codec.
+            ("BidTexts", "Name", "q\x93x\x94", "latin-1"),
             ("BidConditions", "Notes", "Résumé / 東京", "utf-8"),
         ):
             with self.subTest(table=table):

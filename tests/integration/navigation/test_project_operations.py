@@ -131,3 +131,54 @@ class ProjectOperationsNavigationWorkflowTests(unittest.TestCase):
         self.assertNotEqual(thread_ids[0][1], calling_thread)
         self.assertEqual(thread_ids[1][0:2], ("apply", calling_thread))
         self.assertEqual(completed, [(True, "")])
+
+    def _request_sql_load(self, use_case):
+        operations = ProjectOperationsService(SimpleNamespace(), self.service)
+        operations.configure_use_cases(
+            SimpleNamespace(),
+            lambda _path=None: True,
+            use_case,
+            lambda _path=None: True,
+        )
+        completed = []
+        bid_ref = BidRef(self.descriptor.database_id, "17")
+        self.assertTrue(
+            operations.request_load_bid(bid_ref, lambda *args: completed.append(args))
+        )
+        self.assertTrue(self.dispatcher.ready.wait(1.0))
+        self.dispatcher.drain()
+        return completed
+
+    def test_failed_background_prepare_reports_failure_and_never_applies(self):
+        applied = []
+
+        class _UseCase:
+            def prepare(self, _requested):
+                raise RuntimeError("prepare failed")
+
+            def apply_prepared(self, requested, result):
+                applied.append((requested, result))
+                return True
+
+        with self.assertLogs(
+            "ost_visualizer.application.services.navigation_load_service",
+            level="WARNING",
+        ):
+            completed = self._request_sql_load(_UseCase())
+        self.assertEqual(completed, [(False, "prepare failed")])
+        self.assertEqual(applied, [])
+
+    def test_projection_exception_on_dispatch_thread_reports_failure(self):
+        class _UseCase:
+            def prepare(self, _requested):
+                return BidLoadResult()
+
+            def apply_prepared(self, _requested, _result):
+                raise RuntimeError("projection failed")
+
+        with self.assertLogs(
+            "ost_visualizer.application.services.project_operations_service",
+            level="ERROR",
+        ):
+            completed = self._request_sql_load(_UseCase())
+        self.assertEqual(completed, [(False, "projection failed")])

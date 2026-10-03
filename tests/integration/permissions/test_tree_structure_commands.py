@@ -27,6 +27,9 @@ class BidLockPermissionTests(unittest.TestCase):
         tree._drag_items = [item]
         self.assertTrue(tree._move_bids_allowed())
         self.assertEqual(access.checked, [Feature.EDIT_PROJECT_TREE_STRUCTURE])
+        # Negative control: dragging is refused once the structure permission is gone.
+        access.allowed.clear()
+        self.assertFalse(tree._move_bids_allowed())
         tree.deleteLater()
         calls = []
         window = MainWindow.__new__(MainWindow)
@@ -40,3 +43,10 @@ class BidLockPermissionTests(unittest.TestCase):
         MainWindow._restore_project_bids(window, ["bid-1"])
         MainWindow._move_project_bids(window, ["bid-1"], "project-2")
         self.assertEqual(calls, [])
+        # Positive control: the same command runs once the structure permission
+        # is granted, so the empty result above is a real denial.
+        window.ui_access_manager = _permissions__FakeAccess(
+            {Feature.EDIT_PROJECT_TREE_STRUCTURE}
+        )
+        MainWindow._restore_project_bids(window, ["bid-1"])
+        self.assertEqual(calls, [("restore", ["bid-1"])])

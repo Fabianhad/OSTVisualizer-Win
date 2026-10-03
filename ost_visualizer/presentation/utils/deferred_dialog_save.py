@@ -15,6 +15,8 @@ class DeferredDialogSaveController(QtCore.QObject):
         self._save_fn = save_fn
         self._pending = False
         self._flushing = False
+        self._revision = 0
+        self._auto_flush = False
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(debounce_ms)
@@ -25,10 +27,14 @@ class DeferredDialogSaveController(QtCore.QObject):
         return self._pending
 
     def schedule(self) -> None:
+        self._revision += 1
+        self._auto_flush = True
         self._pending = True
         self._timer.start()
 
     def mark_pending(self) -> None:
+        self._revision += 1
+        self._auto_flush = False
         self._timer.stop()
         self._pending = True
 
@@ -39,15 +45,21 @@ class DeferredDialogSaveController(QtCore.QObject):
             return True
         self._timer.stop()
         self._flushing = True
+        revision = self._revision
         try:
             success = bool(self._save_fn())
         finally:
             self._flushing = False
         if success:
-            self._pending = False
+            if self._revision == revision:
+                self._pending = False
+            elif self._pending and self._auto_flush:
+                self._timer.start()
         return success
 
     def cancel(self) -> None:
+        self._revision += 1
+        self._auto_flush = False
         self._timer.stop()
         self._pending = False
 

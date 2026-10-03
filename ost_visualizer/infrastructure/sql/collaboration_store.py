@@ -19,6 +19,7 @@ from ...application.dtos.collaboration_dtos import (
     PresenceSnapshot,
     ResourceLock,
     ResourceRef,
+    ordered_lock_resources,
     session_identities_equal,
 )
 from ...application.interfaces.i_collaboration_store import ICollaborationStore
@@ -298,7 +299,7 @@ class SqlCollaborationStore(ICollaborationStore):
         resources: tuple[ResourceRef, ...],
         operation_description: str,
     ) -> tuple[ResourceLock, ...]:
-        resources = tuple(sorted(set(resources)))
+        resources = ordered_lock_resources(resources)
         if not resources:
             return ()
         request = self._requests.request(database_id, read_only=False)
@@ -552,12 +553,9 @@ class SqlCollaborationStore(ICollaborationStore):
                     if high_water_row is None or high_water_row[0] is None:
                         raise ValueError("SQL Change Tracking metadata is unavailable.")
                     high_water_version = int(high_water_row[0])
-                    checkpoint_invalid = bool(
-                        after_version
-                        and (
-                            after_version < minimum_valid_version
-                            or after_version > high_water_version
-                        )
+                    checkpoint_invalid = (
+                        after_version < minimum_valid_version
+                        or after_version > high_water_version
                     )
                     if checkpoint_invalid:
                         markers: tuple[tuple[str, int], ...] = ()

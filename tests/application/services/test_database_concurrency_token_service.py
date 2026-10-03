@@ -1,4 +1,6 @@
+import threading
 import unittest
+from contextlib import contextmanager
 from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ConcurrencyToken,
@@ -14,6 +16,7 @@ from ost_visualizer.application.services.database_concurrency_token_service impo
     DatabaseConcurrencyTokenService,
 )
 from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
+from tests.helpers.lock_guard import guard_mapping, guard_set
 from tests.helpers.sql.collaboration import _change
 
 
@@ -282,3 +285,194 @@ class DatabaseConcurrencyTokenServiceCollaborationTests(unittest.TestCase):
         self.reader.databases["database"].clear()
         self.assertEqual(self.tokens.load_bid("database", "8"), ())
         self.assertTrue(self.tokens.bid_versions_are_current("database", "8", ()))
+
+
+class DatabaseConcurrencyTokenScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.resource = ResourceRef("condition", "42", 8)
+        self.initial = ConcurrencyToken((1).to_bytes(8, "big"))
+        self.current = ConcurrencyToken((2).to_bytes(8, "big"))
+        self.reader = _VersionReader({"database": {self.resource: self.initial}})
+        self.drafts = LocalDraftRegistry()
+        self.tokens = DatabaseConcurrencyTokenService(self.reader, self.drafts)
+
+    def test_bid_snapshot_check_ignores_other_databases_and_other_bids(self):
+        sibling = ResourceRef("condition", "99", 9)
+        self.reader.databases["database"][sibling] = self.initial
+        self.reader.databases["other"] = {self.resource: self.current}
+        snapshot = self.tokens.load_bid("database", "8")
+        self.tokens.load_bid("database", "9")
+        self.tokens.load_bid("other", "8")
+        self.assertEqual(snapshot, ((self.resource, self.initial),))
+        self.assertTrue(self.tokens.bid_versions_are_current("database", "8", snapshot))
+        self.assertTrue(
+            self.tokens.bid_versions_are_current(
+                "database", "9", ((sibling, self.initial),)
+            )
+        )
+        self.assertTrue(
+            self.tokens.bid_versions_are_current(
+                "other", "8", ((self.resource, self.current),)
+            )
+        )
+        self.assertFalse(
+            self.tokens.bid_versions_are_current(
+                "database", "8", ((self.resource, self.current),)
+            )
+        )
+
+    def test_scoped_operations_hold_the_database_scope_around_their_reads(self):
+        trace = []
+
+        @contextmanager
+        def scope(database_id):
+            trace.append(("enter", database_id))
+            try:
+                yield
+            finally:
+                trace.append(("exit", database_id))
+
+        self.tokens.mutation_scope = scope
+        original_read = self.reader._read
+
+        def traced_read(database_id, bid_uid):
+            trace.append(("read", database_id, bid_uid))
+            return original_read(database_id, bid_uid)
+
+        self.reader._read = traced_read
+        self.tokens.load_database("database")
+        self.tokens.load_bid("database", "8")
+        self.assertEqual(
+            trace,
+            [
+                ("enter", "database"),
+                ("read", "database", None),
+                ("exit", "database"),
+                ("enter", "database"),
+                ("read", "database", 8),
+                ("exit", "database"),
+            ],
+        )
+        del trace[:]
+        self.tokens.apply_remote_changes(
+            "database", (_change("database", self.resource, 2),)
+        )
+        self.assertEqual(trace, [("enter", "database"), ("exit", "database")])
+        del trace[:]
+        self.tokens.clear_database("database")
+        self.assertEqual(trace, [("enter", "database"), ("exit", "database")])
+
+    def test_database_scope_excludes_other_threads_for_the_same_database_only(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with self.tokens.mutation_scope("database"):
+                entered.set()
+                release.wait(10.0)
+
+        thread = threading.Thread(target=holder)
+        thread.start()
+        self.addCleanup(thread.join, 10.0)
+        self.addCleanup(release.set)
+        self.assertTrue(entered.wait(10.0))
+        lock = self.tokens._mutation_locks.get("database")
+        self.assertIsNotNone(lock)
+        free = lock.acquire(blocking=False)
+        if free:
+            lock.release()
+        self.assertFalse(free)
+        second_passed_guard = threading.Event()
+        real_guard = self.tokens._mutation_locks_guard
+        guard_exits = []
+
+        class CountingGuard:
+            def __enter__(self):
+                real_guard.acquire()
+
+            def __exit__(self, *exc_info):
+                real_guard.release()
+                guard_exits.append(1)
+                if len(guard_exits) >= 2:
+                    second_passed_guard.set()
+
+        self.tokens._mutation_locks_guard = CountingGuard()
+        guard_exits.append(1)
+        second_entered = threading.Event()
+
+        def second_same_database():
+            with self.tokens.mutation_scope("database"):
+                second_entered.set()
+
+        second = threading.Thread(target=second_same_database, daemon=True)
+        second.start()
+        self.addCleanup(second.join, 10.0)
+        self.assertTrue(second_passed_guard.wait(10.0))
+        self.assertIs(self.tokens._mutation_locks.get("database"), lock)
+        self.assertEqual(len(guard_exits), 2)
+        other_entered = threading.Event()
+
+        def other_database():
+            with self.tokens.mutation_scope("other"):
+                other_entered.set()
+
+        other = threading.Thread(target=other_database)
+        other.start()
+        other.join(10.0)
+        self.assertFalse(other.is_alive())
+        self.assertTrue(other_entered.is_set())
+        release.set()
+        thread.join(10.0)
+        self.assertFalse(thread.is_alive())
+        second.join(10.0)
+        self.assertTrue(second_entered.is_set())
+        with self.tokens.mutation_scope("database"):
+            pass
+
+    def test_database_scope_is_reentrant_for_nested_loads_on_one_thread(self):
+        loaded = []
+
+        def nested():
+            with self.tokens.mutation_scope("database"):
+                with self.tokens.mutation_scope("database"):
+                    loaded.append(self.tokens.load_bid("database", "8"))
+                self.tokens.ensure_resources_loaded("database", (self.resource,))
+
+        worker = threading.Thread(target=nested, daemon=True)
+        worker.start()
+        worker.join(10.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(loaded, [((self.resource, self.initial),)])
+        self.assertEqual(self.reader.calls, [("database", 8)])
+
+    def test_every_state_access_happens_under_the_state_lock(self):
+        tokens = self.tokens
+
+        def guard():
+            tokens._loaded_bids = guard_set(tokens._lock, tokens._loaded_bids)
+
+        tokens._tokens = guard_mapping(tokens._lock, tokens._tokens)
+        guard()
+        self.reader.databases["other"] = {self.resource: self.initial}
+        tokens.load_database("database")
+        guard()
+        snapshot = tokens.load_bid("database", "8")
+        tokens.bid_versions_are_current("database", "8", snapshot)
+        tokens.ensure_resources_loaded("database", (self.resource,))
+        tokens.ensure_resources_loaded("other", (self.resource,))
+        tokens.expected_versions("database", (self.resource,))
+        tokens.tokens_for_resources("database", (self.resource,))
+        tokens.apply_result("database", {self.resource: self.current})
+        tokens.apply_remote_changes(
+            "database", (_change("database", self.resource, 3),)
+        )
+        with self.assertRaisesRegex(AssertionError, "without the lock"):
+            tokens._tokens.get(("other", self.resource))
+        with self.assertRaisesRegex(AssertionError, "without the lock"):
+            ("other", 8) in tokens._loaded_bids
+        tokens.clear_database("database")
+        self.assertEqual(tokens.tokens_for_resources("database", (self.resource,)), ())
+        self.assertEqual(
+            tokens.tokens_for_resources("other", (self.resource,)),
+            ((self.resource, self.initial),),
+        )

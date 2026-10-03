@@ -44,6 +44,20 @@ class ImportAcceptanceRelationshipTests(unittest.TestCase):
                 )
             finally:
                 writer._conn_manager.close()
+            conn = _import_export_support__connect_access_or_skip(self, db_path)
+            cursor = conn.cursor()
+            try:
+                # The dangling selected page (138631) was cleared; the page that
+                # was present in the file was imported.
+                cursor.execute("SELECT [BidPageSelectedUID] FROM [BidSettings]")
+                rows = cursor.fetchall()
+                self.assertEqual([row[0] for row in rows], [None])
+                cursor.execute("SELECT [Name] FROM [BidPages]")
+                self.assertEqual([row[0] for row in cursor.fetchall()], ["Sheet"])
+            finally:
+                conn.rollback()
+                cursor.close()
+                conn.close()
 
     def test_access_import_handles_new_ost_zero_bid_settings_uid(self):
         if not _import_export_support__access_driver_available():
@@ -79,8 +93,11 @@ class ImportAcceptanceRelationshipTests(unittest.TestCase):
             cursor = conn.cursor()
             try:
                 cursor.execute("SELECT [UID], [BidPageSelectedUID] FROM [BidSettings]")
-                row = cursor.fetchone()
-                self.assertIsNotNone(row[0])
+                rows = cursor.fetchall()
+                self.assertEqual(len(rows), 1)
+                row = rows[0]
+                # The zero UID in the file was replaced by an allocated identity.
+                self.assertGreater(int(row[0]), 0)
                 self.assertIsNone(row[1])
             finally:
                 conn.rollback()
@@ -99,20 +116,37 @@ class ImportAcceptanceRelationshipTests(unittest.TestCase):
             conn = _import_export_support__connect_access_or_skip(self, db_path)
             cursor = conn.cursor()
             try:
+                for uid in (100, 200, 300):
+                    cursor.execute(
+                        "INSERT INTO [Bids] ([UID], [JobName]) VALUES (?, ?)",
+                        uid,
+                        f"Bid {uid}",
+                    )
                 cursor.execute(
-                    "INSERT INTO [Bids] ([UID], [JobName]) VALUES (?, ?)", 100, "Bid"
+                    "INSERT INTO [BidPages] ([UID], [BidUID], [Name]) VALUES (?, ?, ?)",
+                    400,
+                    100,
+                    "Page",
                 )
+                # A NULL selected page and an existing page are both accepted ...
                 cursor.execute(
                     "INSERT INTO [BidSettings] ([BidUID], [BidPageSelectedUID]) "
                     "VALUES (?, ?)",
                     100,
                     None,
                 )
+                cursor.execute(
+                    "INSERT INTO [BidSettings] ([BidUID], [BidPageSelectedUID]) "
+                    "VALUES (?, ?)",
+                    200,
+                    400,
+                )
+                # ... only a page that does not exist is rejected.
                 with self.assertRaises(pyodbc.IntegrityError):
                     cursor.execute(
                         "INSERT INTO [BidSettings] "
                         "([BidUID], [BidPageSelectedUID]) VALUES (?, ?)",
-                        100,
+                        300,
                         999,
                     )
             finally:
@@ -169,6 +203,11 @@ class ImportAcceptanceRelationshipTests(unittest.TestCase):
             try:
                 cursor.execute("SELECT COUNT(*) FROM [Bids] WHERE [UID]=100")
                 self.assertEqual(cursor.fetchone()[0], 0)
+                # The other bid and its settings row survive the delete.
+                cursor.execute("SELECT COUNT(*) FROM [Bids] WHERE [UID]=200")
+                self.assertEqual(cursor.fetchone()[0], 1)
+                cursor.execute("SELECT COUNT(*) FROM [BidSettings] WHERE [BidUID]=200")
+                self.assertEqual(cursor.fetchone()[0], 1)
                 cursor.execute("SELECT COUNT(*) FROM [BidPages] WHERE [UID]=300")
                 self.assertEqual(cursor.fetchone()[0], 0)
                 cursor.execute(
@@ -264,6 +303,22 @@ class ImportAcceptanceRelationshipTests(unittest.TestCase):
             finally:
                 cursor.close()
                 conn.close()
+            conn = _import_export_support__connect_access_or_skip(self, db_path)
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT [UID] FROM [BidPageSettings]")
+                imported_uids = sorted(int(row[0]) for row in cursor.fetchall())
+            finally:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+            # The imported identities keep the source file's gap: they are not
+            # a contiguous run, which is what defeats the Access autonumber.
+            self.assertEqual(len(imported_uids), 15)
+            self.assertNotEqual(
+                imported_uids,
+                list(range(imported_uids[0], imported_uids[-1] + 1)),
+            )
             writer = MdbWriter()
             try:
                 self.assertTrue(writer.save_page_area(str(db_path), str(page_uid), "0"))
@@ -278,7 +333,11 @@ class ImportAcceptanceRelationshipTests(unittest.TestCase):
                     page_uid,
                 )
                 row = cursor.fetchone()
-                self.assertEqual((int(row[0]), row[1], int(row[2])), (42, None, 1))
+                # Explicit identity: one past the highest imported UID.
+                self.assertEqual(
+                    (int(row[0]), row[1], int(row[2])),
+                    (imported_uids[-1] + 1, None, 1),
+                )
             finally:
                 conn.rollback()
                 cursor.close()
@@ -324,8 +383,63 @@ class ImportAcceptanceRelationshipTests(unittest.TestCase):
             creator._create_schema(Path("test.mdb"))
         finally:
             database_creator.pyodbc.connect = original_connect
+        calls = fake_connection.cursor_instance.calls
+        # Control: the schema statements were really recorded, including the
+        # BidPageSettings table itself.
+        self.assertTrue(
+            any(call.startswith("CREATE TABLE [BidPageSettings]") for call in calls)
+        )
         self.assertNotIn(
             "CREATE UNIQUE INDEX [UI_BidPageSettings_PageSelected] "
             "ON [BidPageSettings] ([BidPageUID], [BidAreaSelected])",
-            fake_connection.cursor_instance.calls,
+            calls,
         )
+        self.assertEqual(
+            [
+                call
+                for call in calls
+                if "UNIQUE" in call.upper() and "BidPageSettings" in call
+            ],
+            [],
+        )
+
+    def test_database_creator_allows_duplicate_page_area_selection_rows_in_access(
+        self,
+    ):
+        # Real-Access counterpart of the statement check above: the created
+        # database accepts two rows with the same (page, selected) values.
+        if not _import_export_support__access_driver_available():
+            self.skipTest("Microsoft Access ODBC driver is not available")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            db_path = Path(temp_dir) / "duplicates.mdb"
+            if not database_creator.DatabaseCreator().create_database(
+                db_path, "Duplicates"
+            ):
+                self.skipTest("Could not create an Access test database")
+            conn = _import_export_support__connect_access_or_skip(self, db_path)
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO [Bids] ([UID], [JobName]) VALUES (?, ?)", 100, "Bid"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidPages] ([UID], [BidUID], [Name]) VALUES (?, ?, ?)",
+                    300,
+                    100,
+                    "Page",
+                )
+                for _ in range(2):
+                    cursor.execute(
+                        "INSERT INTO [BidPageSettings] "
+                        "([BidPageUID], [BidAreaUID], [BidAreaSelected]) "
+                        "VALUES (?, NULL, 2)",
+                        300,
+                    )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM [BidPageSettings] WHERE [BidPageUID]=300"
+                )
+                self.assertEqual(cursor.fetchone()[0], 2)
+            finally:
+                conn.rollback()
+                cursor.close()
+                conn.close()

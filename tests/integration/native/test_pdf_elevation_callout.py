@@ -61,6 +61,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
             elevation_callouts_enabled=True,
         )
+        self.assertEqual(len(callouts), 1)
         page = ost_pdf_writer.PageExportData()
         page.is_blank = True
         page.page_width = 612.0
@@ -85,3 +86,25 @@ class PdfElevationCalloutTests(unittest.TestCase):
         self.assertEqual(len(appearance_streams), 1)
         for expected_line in _elevation_support__EXPECTED_PDF_CALLOUT_LINES:
             self.assertIn(expected_line.encode("ascii"), appearance_streams[0])
+        # The four lines are separate text-show operators in the given order,
+        # not one joined string.
+        shown_lines = [
+            text.replace(b"'", b"'")
+            for text in re.findall(rb"\((.*?)\) Tj", appearance_streams[0])
+        ]
+        self.assertEqual(
+            shown_lines,
+            [
+                line.encode("ascii")
+                for line in _elevation_support__EXPECTED_PDF_CALLOUT_LINES
+            ],
+        )
+        # Centered 180 x 52 pt callout box (_ELEVATION_CALLOUT_BOX_WIDTH/HEIGHT).
+        self.assertIn(b"/Q 1", pdf_bytes)
+        rect = [
+            float(value)
+            for value in re.search(rb"/Rect \[\s*([^\]]+)\]", pdf_bytes)
+            .group(1)
+            .split()
+        ]
+        self.assertEqual((rect[2] - rect[0], rect[3] - rect[1]), (180.0, 52.0))

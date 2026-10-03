@@ -218,6 +218,10 @@ class DeferredLayerVisibilityWorkflowTests(unittest.TestCase):
                         BidLayer("other", "bid-1", "Other", False, 2),
                     ]
                     original = [layer.show for layer in layers]
+                    for page_uid in ("p1", "p2"):
+                        coordinator.project_data.get_page(page_uid).layer_visible = (
+                            not requested
+                        )
                     sidebar = BidLayersSidebar(None)
                     sidebar.load_layers(layers)
                     sidebar.layers_show_all.connect(coordinator._on_layers_show_all)
@@ -244,6 +248,14 @@ class DeferredLayerVisibilityWorkflowTests(unittest.TestCase):
                         button.click()
                         self.assertEqual(
                             [box.isChecked() for box in sidebar._checkboxes],
+                            [requested, requested],
+                        )
+                        # The optimistic projection reaches the loaded pages.
+                        self.assertEqual(
+                            [
+                                coordinator.project_data.get_page(uid).layer_visible
+                                for uid in ("p1", "p2")
+                            ],
                             [requested, requested],
                         )
                         self.assertEqual(manager.flush(), sql)
@@ -369,3 +381,72 @@ class DeferredLayerVisibilityWorkflowTests(unittest.TestCase):
             service.calls,
             [("layer_show", "a.mdb", "l1", True, False)],
         )
+
+    def _connected_sidebar(self, coordinator, layers):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers(layers)
+        sidebar.set_toggle_callback(coordinator.update_layer_visibility_deferred)
+        sidebar.layers_show_all.connect(coordinator._on_layers_show_all)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        coordinator._sidebar.load_condition_summary_from_memory = lambda: None
+        service = FakeProjectWriteService()
+        manager = DeferredPersistenceManager(service, _workspace_service(service))
+        coordinator._deferred_persistence = manager
+        return sidebar, service, manager
+
+    def test_failed_retry_of_one_layer_survives_a_toggle_of_another_layer(self):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [
+            BidLayer("l1", "bid-1", "Layer 1", True, 1),
+            BidLayer("other", "bid-1", "Other", True, 2),
+        ]
+        sidebar, service, manager = self._connected_sidebar(coordinator, layers)
+        service.fail_methods.add("update_layer_show")
+        try:
+            sidebar._checkboxes[0].click()
+            self.assertFalse(manager.flush())
+            self.assertEqual(manager.pending_count, 1)
+            sidebar._checkboxes[1].click()
+            # The failed retry of l1 is not superseded by an unrelated layer.
+            self.assertEqual(manager.pending_count, 2)
+            service.fail_methods.clear()
+            self.assertTrue(manager.flush())
+            self.assertEqual(manager.pending_count, 0)
+            self.assertEqual(
+                [call[2] for call in service.calls if call[0] == "layer_show"],
+                ["l1", "l1", "other"],
+            )
+            self.assertEqual([layer.show for layer in layers], [False, False])
+        finally:
+            manager.cancel_for_file("a.mdb")
+            manager.cleanup()
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_unattempted_layer_write_is_not_discarded_by_a_later_bulk_intent(self):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [
+            BidLayer("l1", "bid-1", "Layer 1", True, 1),
+            BidLayer("other", "bid-1", "Other", False, 2),
+        ]
+        sidebar, service, manager = self._connected_sidebar(coordinator, layers)
+        try:
+            sidebar._checkboxes[0].click()
+            sidebar._select_all_btn.click()
+            self.assertEqual(manager.pending_count, 2)
+            self.assertTrue(manager.flush())
+            # Only a write that already failed is superseded; this one never ran
+            # although the bulk intent covers the same layer.
+            self.assertEqual(
+                [(call[0], call[3]) for call in service.calls],
+                [("layer_show", False), ("all_layers_show", True)],
+            )
+            self.assertEqual([layer.show for layer in layers], [True, True])
+            self.assertEqual(manager.pending_count, 0)
+        finally:
+            manager.cancel_for_file("a.mdb")
+            manager.cleanup()
+            sidebar.close()
+            sidebar.deleteLater()

@@ -191,9 +191,21 @@ class NativePdfOvalAppearanceTests(unittest.TestCase):
         large.center_y = -1_000_000.0
         large_text = self._write_pdf(large)
         large_annotation, _appearance = self._annotation_and_appearance(large_text)
-        self.assertTrue(
-            all(math.isfinite(value) for value in self._array(large_annotation, "Rect"))
-        )
+        large_rect = self._array(large_annotation, "Rect")
+        self.assertTrue(all(math.isfinite(value) for value in large_rect))
+        # Independent bounds: centre -/+ the ellipse extents -/+ half the 2 pt stroke.
+        large_x_extent = math.hypot(large.x_axis_dx, large.y_axis_dx)
+        large_y_extent = math.hypot(large.x_axis_dy, large.y_axis_dy)
+        for actual, expected in zip(
+            large_rect,
+            [
+                1_000_000.0 - large_x_extent - 1.0,
+                -1_000_000.0 - large_y_extent - 1.0,
+                1_000_000.0 + large_x_extent + 1.0,
+                -1_000_000.0 + large_y_extent + 1.0,
+            ],
+        ):
+            self.assertAlmostEqual(actual, expected, places=2)
         normal = self._native_oval(stroke_width=2.0)
         reversed_x = self._native_oval(stroke_width=2.0)
         reversed_x.x_axis_dx *= -1.0

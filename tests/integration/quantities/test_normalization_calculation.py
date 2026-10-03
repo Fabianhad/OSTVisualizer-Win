@@ -75,11 +75,21 @@ class ConditionUomConsistencyTests(unittest.TestCase):
             page_uid="page-1",
             position=[0.0, 0.0, 120.0, 0.0],
         )
+        # Precondition: the fixture starts imperial, so normalizing is a real change.
+        self.assertEqual(
+            (condition.uom1, condition.uom2, condition.uom3),
+            (UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET),
+        )
         normalize_condition_uoms_for_system(condition, metric=True)
         first_codes = (condition.uom1, condition.uom2, condition.uom3)
+        self.assertEqual(first_codes, (UOM_M, UOM_M2, UOM_M3))
         first_quantities = compute_page_quantities(
             {condition.uid: condition}, [takeoff]
         )[condition.uid]
+        # 120 in = 10 ft = 3.048 m; 20 sq ft = 1.8580608 m2; 5 cu ft = 0.14158423296 m3.
+        expected_quantities = (3.048, 1.8580608, 0.14158423296)
+        for actual, expected in zip(first_quantities, expected_quantities):
+            self.assertAlmostEqual(actual, expected)
         for _iteration in range(3):
             normalize_condition_uoms_for_system(condition, metric=True)
         self.assertEqual((condition.uom1, condition.uom2, condition.uom3), first_codes)

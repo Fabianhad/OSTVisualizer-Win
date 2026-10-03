@@ -148,3 +148,25 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(first_hotlink_enabled, normal_enabled)
         self.assertEqual(reopened_hotlink_enabled, normal_enabled)
         self.assertEqual(len(windows), 3)
+
+    def test_hotlink_open_does_not_grant_annotation_tools_when_access_is_denied(self):
+        # Negative control for the test above: a hotlink-opened window must
+        # take the same denied access as a normal open instead of enabling tools.
+        access = _detached_support_FakePlanSurfaceAccessManager(
+            PlanSurfaceAccessState()
+        )
+        manager, windows, _calls, bid_ref = self._make_opening_manager(access)
+        manager.open_view(bid_ref, "page-1")
+        self.assertFalse(windows[-1].annotation_tools_enabled)
+        manager.close_view()
+        use_case = OpenAnnotationViewUseCase(manager, manager.project_data)
+        use_case.execute_from_hotlink(
+            AppEvents.HOTLINK_CLICKED(
+                hotlink_uid="hotlink-1",
+                bid_page_uid="page-1",
+                target_view_uid="named-view-1",
+            )
+        )
+        self.assertEqual(len(windows), 2)
+        self.assertFalse(windows[-1].annotation_tools_enabled)
+        self.assertEqual(access.state, PlanSurfaceAccessState())

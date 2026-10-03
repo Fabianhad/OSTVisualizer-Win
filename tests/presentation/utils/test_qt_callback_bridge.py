@@ -31,6 +31,9 @@ class QtVoidCallbackLifecycleTests(unittest.TestCase):
     def test_void_callback_without_callback_is_a_no_op(self):
         signaler = QtVoidCallback()
         signaler.request()
+        # Slots run by a signal swallow exceptions, so call the slot directly
+        # to prove the missing callback is guarded rather than raising.
+        signaler._invoke()
         calls = []
         signaler.set_callback(lambda: calls.append("late"))
         signaler.request()
@@ -85,11 +88,19 @@ class QtCallbackBridgeSqlDialogTests(unittest.TestCase):
         )
         self.assertEqual(results, [(True, "done"), (False, "bad"), (True, "after")])
         self.assertEqual(bridge._callbacks, {})
+        bridge.callback_ready.emit(0, True, "duplicate")
+        self.assertEqual(results, [(True, "done"), (False, "bad"), (True, "after")])
         self.assertIn("callback failed", "\n".join(logs.output))
         bridge.deleteLater()
 
     def test_unknown_callback_id_is_ignored(self):
         bridge = QtCallbackBridge()
-        bridge.callback_ready.emit(999, True, "stale")
+        results = []
+        bridge.request_callback(lambda ok, msg: results.append((ok, msg)), True, "ok")
+        with self.assertNoLogs("ost_visualizer.presentation.utils.qt_callback_bridge"):
+            # Direct slot call: a signal-delivered exception would be swallowed.
+            bridge._on_callback_ready(999, True, "stale")
+            bridge.callback_ready.emit(999, True, "stale")
+        self.assertEqual(results, [(True, "ok")])
         self.assertEqual(bridge._callbacks, {})
         bridge.deleteLater()

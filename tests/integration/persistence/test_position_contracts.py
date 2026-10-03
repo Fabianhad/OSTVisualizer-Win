@@ -32,6 +32,7 @@ class PositionConsumerParityTests(unittest.TestCase):
         for value, expected in cases:
             with self.subTest(value=value):
                 self.assertEqual(parse_position(value), expected)
+                self.assertEqual(parse_position_storage(value), expected)
                 self.assertEqual(OSTCoordinateSystem.parse_position(value), expected)
 
     def test_position_storage_preserves_binary_and_text_contracts(self):
@@ -43,4 +44,11 @@ class PositionConsumerParityTests(unittest.TestCase):
             parse_position_storage(bytearray(b"1;2;3;4\n")),
             [1.0, 2.0, 3.0, 4.0],
         )
-        self.assertEqual(OSTCoordinateSystem.parse_position((1, 2)), [1.0, 2.0])
+        self.assertEqual(OSTCoordinateSystem.parse_position((1.5, 2)), [1.5, 2.0])
+        self.assertEqual(OSTCoordinateSystem.parse_position([3, "4.25"]), [3.0, 4.25])
+        # Stored blobs carry the same text form (including XML newline entities).
+        self.assertEqual(
+            parse_position_storage(b"1;&#xA;2;&#10;3;4"), [1.0, 2.0, 3.0, 4.0]
+        )
+        self.assertEqual(parse_position_storage(b""), [])
+        self.assertEqual(parse_position_storage(None), [])

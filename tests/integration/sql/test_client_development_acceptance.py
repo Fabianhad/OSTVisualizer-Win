@@ -30,6 +30,22 @@ from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspecto
 from tools.manage_sql_development import DATABASE_MARKER_PROPERTY, read_secrets
 
 
+def _same_secret(actual, expected) -> bool:
+    # Secrets are compared without assertEqual so a failure never prints them.
+    return secrets.compare_digest(str(actual).encode(), str(expected).encode())
+
+
+def _development_location(development) -> SqlServerDatabaseLocation:
+    return SqlServerDatabaseLocation(
+        server=f"tcp:{development.server}",
+        database=development.database,
+        authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+        username=development.username,
+        encrypt=development.encrypt,
+        trust_server_certificate=development.trust_server_certificate,
+    )
+
+
 class _RuntimeCredentialStore:
     def __init__(self, password: str) -> None:
         self._password = password
@@ -59,6 +75,30 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
         cls.development = read_secrets(cls.secrets_path)
         if cls.development is None:
             raise unittest.SkipTest("The SQL development secrets file is missing.")
+        cls._require_owned_database()
+
+    @classmethod
+    def _require_owned_database(cls):
+        # Every test below writes sessions, locks or probes: refuse any database
+        # that does not carry this environment's ownership marker.
+        request = SqlConnectionRequest(
+            _development_location(cls.development),
+            password=cls.development.password,
+            read_only=True,
+        )
+        with SqlConnectionManager().connection(request, autocommit=True) as lease:
+            with lease.cursor() as cursor:
+                cursor.execute(
+                    "SELECT CONVERT(nvarchar(128), value) FROM "
+                    "sys.extended_properties WHERE class=0 AND name=?",
+                    DATABASE_MARKER_PROPERTY,
+                )
+                row = cursor.fetchone()
+        if row is None or not _same_secret(row[0], cls.development.ownership_marker):
+            raise RuntimeError(
+                "Refusing client integration tests: the SQL development database "
+                "ownership marker is missing or invalid."
+            )
 
     def test_secrets_file_acl_is_restricted(self):
         command = (
@@ -89,12 +129,22 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
             store.write_password(
                 temporary_target, "temporary-test-user", temporary_password
             )
-            self.assertEqual(store.read_password(temporary_target), temporary_password)
+            self.assertTrue(
+                _same_secret(store.read_password(temporary_target), temporary_password),
+                "The temporary credential did not round-trip.",
+            )
         finally:
             store.delete_password(temporary_target)
-        self.assertEqual(
-            store.read_password(self.development.credential_target),
-            self.development.password,
+        self.assertTrue(
+            store.read_password(temporary_target) is None,
+            "The temporary credential remained after deletion.",
+        )
+        self.assertTrue(
+            _same_secret(
+                store.read_password(self.development.credential_target),
+                self.development.password,
+            ),
+            "The persistent client credential does not match the secrets file.",
         )
 
     def test_client_login_is_least_privilege_and_schema_is_current(self):
@@ -143,7 +193,10 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
             (0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0),
         )
         self.assertFalse(obsolete_role_exists)
-        self.assertEqual(marker, self.development.ownership_marker)
+        self.assertTrue(
+            _same_secret(marker, self.development.ownership_marker),
+            "The database ownership marker does not match the secrets file.",
+        )
         try:
             with self.assertRaises(SqlInfrastructureError):
                 with manager.connection(request, autocommit=False) as lease:
@@ -230,6 +283,8 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
                         "WHERE [SessionId]=?",
                         session.session_id,
                     )
+                    # Positive control: the rolled-back statement really matched.
+                    self.assertEqual(cursor.rowcount, 1)
                 lease.rollback()
             with manager.connection(request, autocommit=True) as lease:
                 with lease.cursor() as cursor:
@@ -274,14 +329,7 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
                 self.assertEqual(tuple(map(int, cursor.fetchone())), (0, 0, 0))
 
     def _location(self):
-        return SqlServerDatabaseLocation(
-            server=f"tcp:{self.development.server}",
-            database=self.development.database,
-            authentication_mode=SqlAuthenticationMode.SQL_SERVER,
-            username=self.development.username,
-            encrypt=self.development.encrypt,
-            trust_server_certificate=self.development.trust_server_certificate,
-        )
+        return _development_location(self.development)
 
 
 if __name__ == "__main__":

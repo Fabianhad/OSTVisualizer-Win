@@ -26,7 +26,20 @@ surfaces, native rendering, and import/export roundtrips. A Qt widget test is
 not automatically an integration test; tests focused on one widget or mixin
 stay with that source module. `architecture/` contains source/build contract
 checks. `helpers/sql/test_*.py` tests the safety contracts of the SQL test
-harness itself.
+harness itself. `helpers/sql/strict_sql_fakes.py` is the strict pyodbc/T-SQL
+stand-in for the SQL infrastructure tests (marker/parameter counts, the
+2100-parameter limit, closed cursors, session `SET NOCOUNT` rowcounts, result
+sets and the busy connection, autocommit-only DDL, transaction-owned
+application locks, snapshot isolation rules and the canonical v1 catalog);
+prefer it, or `strict_manager`/`strict_cursor` around an existing canned fake,
+over a permissive per-test cursor. Its contract is pinned in
+`tests/infrastructure/sql/test_connection_manager.py`. It is a model, not SQL
+Server: it proves protocol rules, never T-SQL correctness. Opt-in extras:
+`model_result_counts` (a batch that leaves `SET NOCOUNT` OFF fronts its rows
+with count-only result sets) and `helpers/sql/sqlite_lock_validation.py`, which
+runs the SQL the SQL writer really sent (lock validation and operation prepare)
+on sqlite against described lock/session/version rows with an injected server
+clock; sqlite is not T-SQL, so those tests prove predicate logic only.
 
 Fixtures live beside the contract they implement. Shared workspace and SQL
 fixtures remain in `helpers/`; rendering, permissions, window lifetime, and

@@ -500,6 +500,8 @@ class SchemaAcceptanceCompatibilityTests(unittest.TestCase):
             self.assertIsNone(next(iter(conditions.values())).layer_uid)
 
     def test_zz_duplicate_bid_round_trip_owns_its_complete_reference_graph(self):
+        if not _schema_support__access_available():
+            self.skipTest("Access ODBC/ADOX metadata is not available")
         code = (
             "from tests.integration.mdb.test_schema_acceptance import "
             "SchemaAcceptanceCompatibilityTests as Tests; "
@@ -717,19 +719,22 @@ class SchemaAcceptanceCompatibilityTests(unittest.TestCase):
             self.skipTest("Access ODBC/ADOX metadata is not available")
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             temp_path = Path(temp_dir)
-            db_paths = []
-            if not _schema_support__NEW_MDB_PATH.exists():
-                self.skipTest(
-                    f"MDB is not available at {_schema_support__NEW_MDB_PATH}"
-                )
-            copied_path = temp_path / "new.mdb"
-            shutil.copy2(_schema_support__NEW_MDB_PATH, copied_path)
-            db_paths.append(("new", copied_path))
             app_path = temp_path / "app_created.mdb"
             self.assertTrue(DatabaseCreator().create_database(app_path, "Compat"))
-            db_paths.append(("app", app_path))
-            for label, db_path in db_paths:
+            for label in ("new", "app"):
                 with self.subTest(database=label):
+                    if label == "new":
+                        # Machine-local reference OST database (not committed);
+                        # the app-created database is still exercised without it.
+                        if not _schema_support__NEW_MDB_PATH.exists():
+                            self.skipTest(
+                                f"MDB is not available at "
+                                f"{_schema_support__NEW_MDB_PATH}"
+                            )
+                        db_path = temp_path / "new.mdb"
+                        shutil.copy2(_schema_support__NEW_MDB_PATH, db_path)
+                    else:
+                        db_path = app_path
                     connection = _schema_support__connect_mdb(db_path)
                     cursor = connection.cursor()
                     try:
@@ -738,45 +743,48 @@ class SchemaAcceptanceCompatibilityTests(unittest.TestCase):
                     finally:
                         cursor.close()
                         connection.close()
+
+                    def page_settings():
+                        reader_connection = _schema_support__connect_mdb(db_path)
+                        reader_cursor = reader_connection.cursor()
+                        try:
+                            return _schema_support__fetch_dicts(
+                                reader_cursor,
+                                "SELECT [UID], [BidAreaUID], [BidAreaSelected] "
+                                "FROM [BidPageSettings] WHERE [BidPageUID]=?",
+                                ids["page_uid"],
+                            )
+                        finally:
+                            reader_connection.rollback()
+                            reader_cursor.close()
+                            reader_connection.close()
+
                     writer = MdbWriter()
                     try:
-                        self.assertTrue(
-                            writer.save_page_area(
-                                str(db_path),
-                                str(ids["page_uid"]),
-                                str(ids["area_uid"]),
+                        # Each save leaves exactly one selected row: first the
+                        # area, then the sibling area, then "unassigned" (area
+                        # NULL with selection value 1).
+                        for area_uid, expected_area, expected_selected in (
+                            (ids["area_uid"], ids["area_uid"], 2),
+                            (ids["area_uid"] + 1, ids["area_uid"] + 1, 2),
+                            (0, None, 1),
+                        ):
+                            self.assertTrue(
+                                writer.save_page_area(
+                                    str(db_path),
+                                    str(ids["page_uid"]),
+                                    str(area_uid),
+                                )
                             )
-                        )
-                        self.assertTrue(
-                            writer.save_page_area(
-                                str(db_path),
-                                str(ids["page_uid"]),
-                                str(ids["area_uid"] + 1),
+                            writer._conn_manager.close_database(str(db_path))
+                            rows = page_settings()
+                            self.assertEqual(len(rows), 1)
+                            self.assertEqual(rows[0]["BidAreaUID"], expected_area)
+                            self.assertEqual(
+                                rows[0]["BidAreaSelected"], expected_selected
                             )
-                        )
-                        self.assertTrue(
-                            writer.save_page_area(
-                                str(db_path), str(ids["page_uid"]), "0"
-                            )
-                        )
                     finally:
                         writer._conn_manager.close()
-                    connection = _schema_support__connect_mdb(db_path)
-                    cursor = connection.cursor()
-                    try:
-                        rows = _schema_support__fetch_dicts(
-                            cursor,
-                            "SELECT [UID], [BidAreaUID], [BidAreaSelected] "
-                            "FROM [BidPageSettings] WHERE [BidPageUID]=?",
-                            ids["page_uid"],
-                        )
-                    finally:
-                        connection.rollback()
-                        cursor.close()
-                        connection.close()
-                    self.assertEqual(len(rows), 1)
-                    self.assertEqual(rows[0]["BidAreaSelected"], 1)
-                    self.assertIsNone(rows[0]["BidAreaUID"])
                     self.assertGreater(rows[0]["UID"], ids["page_uid"])
 
     def test_zz_employee_estimator_export_import_round_trip_on_supported_schema_versions(
@@ -789,9 +797,9 @@ class SchemaAcceptanceCompatibilityTests(unittest.TestCase):
             ("app", None),
         )
         for label, source_path in cases:
-            if source_path is not None and not source_path.exists():
-                self.skipTest(f"{label} MDB is not available at {source_path}")
             with self.subTest(database=label):
+                if source_path is not None and not source_path.exists():
+                    self.skipTest(f"{label} MDB is not available at {source_path}")
                 source_path_text = None
                 if source_path is not None:
                     source_path_text = str(source_path)

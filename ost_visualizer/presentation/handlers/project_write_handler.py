@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6 import QtWidgets
 from shiboken6 import isValid
+from ...application.dtos.active_bid_locked_error import ActiveBidLockedError
 from ...application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
@@ -68,16 +69,19 @@ class ProjectWriteHandler:
             return False
         self._pending_sql_operations.add(key)
         handler_ref = weakref.ref(self)
+        terminal_delivered = False
 
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal terminal_delivered
             handler = handler_ref()
-            if handler is None:
+            if handler is None or terminal_delivered:
                 return
             if result.outcome_status in {
                 MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
                 MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
             }:
                 return
+            terminal_delivered = True
             handler._pending_sql_operations.discard(key)
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 if on_committed is not None:
@@ -94,12 +98,21 @@ class ProjectWriteHandler:
 
         try:
             submit(complete)
+        except ActiveBidLockedError:
+            self._pending_sql_operations.discard(key)
+            if on_failed is not None:
+                on_failed(None)
+            logger.warning("%s blocked: the active bid is locked", title)
+            return False
         except (RuntimeError, ValueError) as exc:
             self._pending_sql_operations.discard(key)
             if on_failed is not None:
                 on_failed(None)
             show_warning(self.window, title, str(exc))
             return False
+        except Exception:
+            self._pending_sql_operations.discard(key)
+            raise
         return True
 
     def set_duplicate_action(self, action) -> None:
@@ -132,20 +145,24 @@ class ProjectWriteHandler:
             return
         if self._uses_sql_queue(bid_ref.file_path):
             self._set_duplicate_busy(True)
-            target_project_uid = self.project_data.find_project_uid_for_bid(bid_ref)
-            submitted = self._submit_sql_hierarchy_operation(
-                bid_ref.file_path,
-                ("duplicate_bid", bid_ref.bid_uid),
-                "Duplicate Bid",
-                lambda callback: self._write_service.queue_bids_duplicate(
+            try:
+                target_project_uid = self.project_data.find_project_uid_for_bid(bid_ref)
+                submitted = self._submit_sql_hierarchy_operation(
                     bid_ref.file_path,
-                    [bid_ref.bid_uid],
-                    target_project_uid,
-                    callback,
-                ),
-                lambda _result: self._set_duplicate_busy(False),
-                lambda _result: self._set_duplicate_busy(False),
-            )
+                    ("duplicate_bid", bid_ref.bid_uid),
+                    "Duplicate Bid",
+                    lambda callback: self._write_service.queue_bids_duplicate(
+                        bid_ref.file_path,
+                        [bid_ref.bid_uid],
+                        target_project_uid,
+                        callback,
+                    ),
+                    lambda _result: self._set_duplicate_busy(False),
+                    lambda _result: self._set_duplicate_busy(False),
+                )
+            except Exception:
+                self._set_duplicate_busy(False)
+                raise
             if not submitted:
                 self._set_duplicate_busy(False)
             return
@@ -411,7 +428,7 @@ class ProjectWriteHandler:
             )
         label = self._paste_bid_label(bid_refs)
         reporter = ProgressReporter()
-        rc, result, worker_error = self._run_progress_dialog(
+        _rc, result, worker_error = self._run_progress_dialog(
             label,
             lambda: self._paste_bids_with_reload(
                 bid_refs,
@@ -438,11 +455,7 @@ class ProjectWriteHandler:
         paste_result = result if isinstance(result, _PasteBidsResult) else None
         if paste_result is not None and paste_result.reload_success:
             self._write_service.notify_database_refreshed(file_path)
-        if (
-            rc == QtWidgets.QDialog.DialogCode.Accepted
-            and paste_result is not None
-            and paste_result.partial_success
-        ):
+        if paste_result is not None and paste_result.partial_success:
             logger.error("Bid paste partially completed before failing")
             message = (
                 "Some bids were pasted, but the paste did not finish. "
@@ -459,11 +472,7 @@ class ProjectWriteHandler:
                 message,
             )
             return True
-        if (
-            rc == QtWidgets.QDialog.DialogCode.Accepted
-            and paste_result is not None
-            and paste_result.success
-        ):
+        if paste_result is not None and paste_result.success:
             if is_cut and on_cut_committed is not None:
                 on_cut_committed()
             if not paste_result.reload_success:

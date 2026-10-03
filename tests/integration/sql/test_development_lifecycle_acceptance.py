@@ -2,10 +2,16 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import secrets
 import subprocess
 import unittest
 from pathlib import Path
 from tests.paths import REPO_ROOT
+
+
+def _same_secret(actual: str, expected: str) -> bool:
+    # Compared without assertEqual so a failure never prints a password.
+    return secrets.compare_digest(actual.encode(), expected.encode())
 
 
 class SqlDevelopmentLifecycleIntegrationTests(unittest.TestCase):
@@ -49,18 +55,25 @@ class SqlDevelopmentLifecycleIntegrationTests(unittest.TestCase):
             initial_password = self._required_client_password()
             initial_snapshot = self._machine_snapshot()
             self._run_setup()
-            self.assertEqual(self._required_client_password(), initial_password)
+            self.assertTrue(
+                _same_secret(self._required_client_password(), initial_password),
+                "A repeated setup run must keep the client password.",
+            )
             self.assertEqual(self._machine_snapshot(), initial_snapshot)
             self._run_setup("-RotateClientPassword")
             rotated_password = self._required_client_password()
-            self.assertNotEqual(rotated_password, initial_password)
+            self.assertFalse(
+                _same_secret(rotated_password, initial_password),
+                "-RotateClientPassword must replace the client password.",
+            )
             self.assertEqual(
                 self._machine_snapshot(),
                 initial_snapshot,
                 "Password rotation must not rebuild or restart the SQL environment.",
             )
-            self._run_setup("-RemoveOwnedEnvironment", "-ConfirmDestructive")
+            # Set first: a removal that fails half-way must still be rebuilt.
             environment_removed = True
+            self._run_setup("-RemoveOwnedEnvironment", "-ConfirmDestructive")
             self._assert_owned_environment_absent()
             self._run_setup()
             environment_removed = False
@@ -184,11 +197,15 @@ $backupRootExists=Test-Path -LiteralPath `
         self.assertEqual(result["root_personal_count"], 0)
         self.assertEqual(result["root_trusted_count"], 0)
         self.assertFalse(result["backup_root_exists"])
-        self.assertIsNone(
-            self.credential_store.read_password(self.client_credential_target)
+        # assertIsNone would echo a remaining password on failure.
+        self.assertTrue(
+            self.credential_store.read_password(self.client_credential_target) is None,
+            "The client credential remained after removal.",
         )
-        self.assertIsNone(
+        self.assertTrue(
             self.credential_store.read_password(self.integration_credential_target)
+            is None,
+            "The integration credential remained after removal.",
         )
         self.assertFalse(
             (self.repo_root / ".secrets" / "sql-development.json").exists()

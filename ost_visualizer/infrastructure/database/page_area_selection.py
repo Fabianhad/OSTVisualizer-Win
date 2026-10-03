@@ -2,6 +2,12 @@ from collections.abc import Mapping
 from typing import TypeVar
 
 _PageSettingRow = TypeVar("_PageSettingRow", bound=Mapping[str, object])
+_NO_PAGE_TEXTS = frozenset({"", "0", "NULL"})
+
+
+def _page_group_key(value: object) -> str:
+    text = str(value or "")
+    return "" if text in _NO_PAGE_TEXTS else text
 
 
 def _integer_or_zero(value: object) -> int:
@@ -21,7 +27,7 @@ def canonicalize_page_area_settings(
         if selected_value <= 0:
             inactive_rows.append(row)
             continue
-        page_uid = str(row.get("BidPageUID") or "")
+        page_uid = _page_group_key(row.get("BidPageUID"))
         current = selected_by_page.get(page_uid)
         if current is None:
             selected_by_page[page_uid] = row

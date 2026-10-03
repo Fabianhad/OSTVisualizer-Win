@@ -132,5 +132,19 @@ class TextAnnotationAccessRoundtripTests(unittest.TestCase):
                         str(path), [(uids[0], "text", {**properties, "Text": "Retry"})]
                     )
                 )
+                connections.close_database(str(path))
+                retried = {
+                    str(item.uid): item.properties["Text"]
+                    for item in reader.get_bid_data(str(path), bid)[6]
+                    if item.is_text
+                }
+                # Only the retried member changed; the other keeps its text.
+                self.assertEqual(
+                    retried,
+                    {
+                        str(uids[0]): "Retry",
+                        str(uids[1]): properties["Text"],
+                    },
+                )
             finally:
                 connections.close_database(str(path))

@@ -1,13 +1,17 @@
 import unittest
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, create_autospec
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     ConcurrencyToken,
     ResourceRef,
 )
+from ost_visualizer.application.services.sql_workspace_state_service import (
+    SqlWorkspaceStateService,
+)
 from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,
 )
+from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyFileEntry,
@@ -15,9 +19,13 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page_info import BidPageInfo
+from ost_visualizer.domain.services.file_manager_service import FileManager
 from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 import tests.integration.navigation.test_remote_batch_handoff as test_remote_batch_navigation_handoff
+from tests.integration.sql.test_global_condition_scope import (
+    strict_project_reader_double,
+)
 from tests.helpers.sql.collaboration import _batch, _change
 
 FAMILIES = (
@@ -43,11 +51,15 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
             (9,),
         ]
         reader = SqlRemoteChangeReader.__new__(SqlRemoteChangeReader)
-        reader._reader = Mock()
+        reader._reader = strict_project_reader_double()
         source = reader._reader
         source._parse_bid_conditions_for_bid.return_value = {}
         source._parse_bid_condition_folders_for_bid.return_value = {}
-        source._parse_bid_areas_for_bid.return_value = {}
+        source._parse_bid_areas_for_bid.side_effect = lambda _connection, bid, *_a: (
+            {}
+            if empty
+            else {f"{bid}01": BidArea(f"{bid}01", bid, "", f"Area of Bid {bid}", 1)}
+        )
         source._parse_bid_takeoffs_for_bid.return_value = ([], {})
         source._parse_bid_annotations_for_bid.return_value = []
         source._parse_page_area_selections_for_bid.return_value = {}
@@ -75,6 +87,10 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
                 else {"901": BidPageInfo("B Page", sequence=2, folder_uid="90")}
             )
         )
+        # The active Bid already shows an area that no longer exists in SQL.
+        context.fixture.model.bid_areas = {
+            "stale": BidArea("stale", "8", "", "Stale area", 1)
+        }
         bids = range(8, 459) if global_scope else (8, 9)
         # Bid-qualified collections are themselves valid coalescer inputs.
         records = [
@@ -120,6 +136,17 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
         self.assertFalse(runtime.recovery_requested)
         self.assertTrue(runtime.healthy)
 
+    def check_active_areas(self, context, family, *, empty=False):
+        areas = context.fixture.model.bid_areas
+        if family != "areas_collection":
+            # Positive control: other families never touch the active areas.
+            self.assertEqual(list(areas), ["stale"])
+        elif empty:
+            self.assertEqual(areas, {})
+        else:
+            self.assertEqual(list(areas), ["801"])
+            self.assertEqual(areas["801"].name, "Area of Bid 8")
+
     def check_scope(self, resource_type, hydrated):
         self.assertEqual(
             set(
@@ -145,6 +172,7 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
                 context, reader, connection, hydrated = self.make_fixture(family, False)
                 self.check_scope(family, hydrated)
                 self.check_projection(context, hydrated)
+                self.check_active_areas(context, family)
                 connection.cursor.assert_not_called()
 
     def test_global_families_hydrate_before_acknowledgement(self):
@@ -153,6 +181,7 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
                 context, reader, connection, hydrated = self.make_fixture(family, True)
                 self.check_scope(family, hydrated)
                 self.check_projection(context, hydrated)
+                self.check_active_areas(context, family)
                 connection.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
                     "SELECT [UID] FROM [Bids] ORDER BY [UID]"
                 )
@@ -183,6 +212,7 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
                 )
                 self.check_scope(family, hydrated)
                 self.check_projection(context, hydrated)
+                self.check_active_areas(context, family, empty=True)
                 if family == "pages_collection":
                     self.assertEqual(context.data.get_all_pages(), [])
 
@@ -216,12 +246,12 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
         resource = ResourceRef("page", "901", 9)
         token = ConcurrencyToken((5).to_bytes(8, "big"))
         context.tokens._reader.resources[resource] = token
-        files = Mock()
+        files = create_autospec(FileManager, instance=True)
         # A fresh independent navigation read, rather than retaining inactive
         # hydration objects or inferring ownership from the current active Bid.
         fresh = reader.hydrate_connection(hydrated.batch, connection).bid_data_by_bid[9]
         files.prepare_bid_load.return_value = fresh
-        workspace = Mock()
+        workspace = create_autospec(SqlWorkspaceStateService, instance=True)
         workspace.uses_sql_workspace.return_value = False
         loader = LoadBidUseCase(
             context.fixture.model, context.data, files, context.tokens, workspace
@@ -235,8 +265,60 @@ class GlobalBidFamilyScopeTests(unittest.TestCase):
         self.assertEqual(page.sequence, 2)
         self.assertEqual([p.uid for p in context.data.get_all_pages()], ["901"])
         self.assertIsNone(context.fixture.model.get_page("1"))
+        # Nothing of Bid 8 (its pages or its areas) is carried into Bid 9.
+        self.assertEqual(context.fixture.model.bid_areas, {})
         self.assertEqual(
             context.tokens.expected_versions("database", (resource,))[0].expected, token
+        )
+
+    def test_a_bid_prepared_before_its_tokens_changed_is_not_applied(self):
+        context, reader, connection, hydrated = self.make_fixture(
+            "pages_collection", True
+        )
+        self.check_projection(context, hydrated)
+        context.data.replace_database_hierarchy(
+            HierarchyFileEntry(
+                file_path="database",
+                orphan_bids=[
+                    context.fixture.info,
+                    HierarchyBidInfo(
+                        uid="9",
+                        name="B",
+                        folders={"90": HierarchyFolderInfo("B Folder")},
+                    ),
+                ],
+            ),
+            {},
+        )
+        resource = ResourceRef("page", "901", 9)
+        context.tokens._reader.resources[resource] = ConcurrencyToken(
+            (5).to_bytes(8, "big")
+        )
+        files = create_autospec(FileManager, instance=True)
+        files.prepare_bid_load.return_value = reader.hydrate_connection(
+            hydrated.batch, connection
+        ).bid_data_by_bid[9]
+        workspace = create_autospec(SqlWorkspaceStateService, instance=True)
+        workspace.uses_sql_workspace.return_value = False
+        loader = LoadBidUseCase(
+            context.fixture.model, context.data, files, context.tokens, workspace
+        )
+        ref = BidRef("database", "9")
+        prepared = loader.prepare(ref)
+        # Another client commits while the navigation is being prepared, and the
+        # reconciliation reloads the Bid's tokens: the prepared content is stale.
+        newer = ConcurrencyToken((6).to_bytes(8, "big"))
+        context.tokens._reader.resources[resource] = newer
+        context.tokens.load_bid("database", "9")
+        active = context.fixture.model.current_bid
+        self.assertFalse(loader.apply_prepared(ref, prepared))
+        self.assertIs(context.fixture.model.current_bid, active)
+        self.assertIsNone(context.fixture.model.get_page("901"))
+        again = loader.prepare(ref)
+        self.assertTrue(loader.apply_prepared(ref, again))
+        self.assertIsNotNone(context.fixture.model.get_page("901"))
+        self.assertEqual(
+            context.tokens.expected_versions("database", (resource,))[0].expected, newer
         )
 
 

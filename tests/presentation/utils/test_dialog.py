@@ -76,6 +76,11 @@ class BasePickerSaveRejectionTests(unittest.TestCase):
             self.assertTrue(dialog._save_done)
             dialog.accept()
             self.assertEqual(len(calls), 1)
+            self.assertEqual(
+                [record["uid"] for record in calls[0]["updated"]], ["pay-1"]
+            )
+            self.assertEqual(calls[0]["new"], [])
+            self.assertEqual(calls[0]["deleted_uids"], [])
         finally:
             dialog.close()
             dialog.cleanup()
@@ -119,16 +124,21 @@ class BaseListDialogCleanupTests(unittest.TestCase):
             _master_data_support_FakeIconProvider(),
             pay_classes=[PayClass(uid="pay-1", name="Regular")],
             save_fn=lambda _changes: True,
+            save_async_fn=lambda _changes, _completed: True,
             used_uids_fn=lambda: set(),
             menu_mode=True,
         )
         try:
+            dialog._persisted_deleted_uids.add("pay-9")
             self.assertEqual(len(dialog._items), 1)
+            self.assertEqual(dialog.persisted_deleted_uids, frozenset({"pay-9"}))
             dialog.cleanup()
             self.assertIsNone(dialog.icon_provider)
             self.assertIsNone(dialog._save_fn)
+            self.assertIsNone(dialog._save_async_fn)
             self.assertIsNone(dialog._used_uids_fn)
             self.assertEqual(dialog._items, [])
+            self.assertEqual(dialog.persisted_deleted_uids, frozenset())
         finally:
             dialog.close()
             dialog.deleteLater()

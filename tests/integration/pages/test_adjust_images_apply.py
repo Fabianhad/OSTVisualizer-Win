@@ -4,9 +4,16 @@ import unittest
 import uuid
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, create_autospec, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.interfaces.i_database_mutation_executor import (
+    IMutationRecorder,
+)
+from ost_visualizer.application.interfaces.i_mdb_writer import IMdbWriter
+from ost_visualizer.application.services.active_bid_write_guard import (
+    ActiveBidWriteGuard,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseResult,
@@ -23,11 +30,16 @@ from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.services.file_manager_service import FileManager
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
+from ost_visualizer.presentation.managers.deferred_persistence_manager import (
+    DeferredPersistenceManager,
+)
+from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from PySide6 import QtWidgets
 
 
@@ -39,7 +51,7 @@ class AdjustImagesRepeatedApplyTests(unittest.TestCase):
     def setUp(self):
         self.bid_ref = BidRef("test.mdb", "7")
         self.original = Page(uid="42", name="Page 42", scale_factor2=48.0)
-        self.model = OstAggregate(Mock())
+        self.model = OstAggregate(create_autospec(FileManager, instance=True))
         self.model.current_bid_ref = self.bid_ref
         self.model.current_bid = Bid("7", "Test bid")
         self.model.set_pages({"42": self.original})
@@ -50,7 +62,9 @@ class AdjustImagesRepeatedApplyTests(unittest.TestCase):
         self.events = EventBus()
         self.service = object.__new__(ProjectWriteService)
         self.service._project_data = self.data
-        self.service._bid_write_guard = Mock()
+        self.service._bid_write_guard = create_autospec(
+            ActiveBidWriteGuard, instance=True
+        )
         self.service._bid_write_guard.blocks_active_locked_bid_write.return_value = (
             False
         )
@@ -60,10 +74,11 @@ class AdjustImagesRepeatedApplyTests(unittest.TestCase):
         self.service._reload_database = self._reload
         self.service._execute_database_mutation = (
             lambda _db, _resources, operation, **_kw: SimpleNamespace(
-                outcome_status=MutationOutcomeStatus.COMMITTED, value=operation(Mock())
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                value=operation(create_autospec(IMutationRecorder, instance=True)),
             )
         )
-        self.writer = Mock()
+        self.writer = create_autospec(IMdbWriter, instance=True)
         self.writer.save_page_image_adjustments.side_effect = self._write
         self.service._save_page_image_adjustments = SavePageImageAdjustmentsUseCase(
             self.writer
@@ -77,12 +92,12 @@ class AdjustImagesRepeatedApplyTests(unittest.TestCase):
             active_page_uid="42",
             get_selected_bid_ref=lambda: self.model.current_bid_ref,
         )
-        self.coordinator.ui_access_manager = Mock()
+        self.coordinator.ui_access_manager = Mock(spec=UIAccessManager)
         self.coordinator.ui_access_manager.is_allowed.return_value = True
         self.coordinator.takeoff_sidebar = SimpleNamespace(
             get_page_order=lambda: list(self.persisted)
         )
-        self.coordinator._deferred_persistence = Mock()
+        self.coordinator._deferred_persistence = Mock(spec=DeferredPersistenceManager)
         self.coordinator._deferred_persistence.flush_for_file.return_value = True
         self.coordinator._project_write_service = self.service
 
@@ -111,7 +126,10 @@ class AdjustImagesRepeatedApplyTests(unittest.TestCase):
         return True
 
     def _open(self, interact):
+        interactions = []
+
         def run(dialog, _events):
+            interactions.append(dialog)
             dialog.show()
             try:
                 interact(dialog)
@@ -119,11 +137,19 @@ class AdjustImagesRepeatedApplyTests(unittest.TestCase):
                 dialog.reject()
             return dialog.result()
 
+        # A failed save that is not expected by the test must not block the
+        # run on a real modal warning; tests expecting one patch it themselves.
         with patch(
+            "ost_visualizer.presentation.dialogs.adjust_images_dialog.show_warning"
+        ) as unexpected_warning, patch(
             "ost_visualizer.presentation.coordinators.ui_event_coordinator.exec_with_ost_blocking",
             side_effect=run,
         ):
             self.coordinator.open_adjust_images_dialog()
+        # A permission/selection early return would skip `interact` and make
+        # every assertion inside it vacuous.
+        self.assertEqual(len(interactions), 1)
+        unexpected_warning.assert_not_called()
 
     def test_two_applies_use_reloaded_authoritative_page_in_same_dialog(self):
         pages_submitted = []

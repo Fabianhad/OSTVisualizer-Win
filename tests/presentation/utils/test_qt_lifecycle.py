@@ -79,6 +79,15 @@ class DeleteLaterIfValidTests(unittest.TestCase):
         self.assertFalse(isValid(widget))
         delete_later_if_valid(widget)
 
+    def test_runtime_error_from_a_still_valid_object_is_not_hidden(self):
+        class Failing:
+            def deleteLater(self):
+                raise RuntimeError("unrelated failure")
+
+        self.assertTrue(isValid(Failing()))
+        with self.assertRaisesRegex(RuntimeError, "unrelated failure"):
+            delete_later_if_valid(Failing())
+
     def test_valid_object_is_scheduled_for_deletion(self):
         app = _dialog_lifecycle_support__app()
         widget = QtWidgets.QWidget()

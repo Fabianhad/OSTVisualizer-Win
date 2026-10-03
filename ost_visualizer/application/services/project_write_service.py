@@ -17,6 +17,7 @@ from ...domain.services.takeoff_domain_service import (
     expand_takeoff_uids_with_descendants,
     takeoffs_can_reassign_to_condition,
 )
+from ..dtos.active_bid_locked_error import ActiveBidLockedError
 from ..dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     ChangeOperation,
@@ -27,6 +28,7 @@ from ..dtos.collaboration_dtos import (
     ExpectedResourceVersion,
     MutationExecutionResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     PageSettingsPayload,
     PlanGeometryPayload,
     PlanItemsDeletePayload,
@@ -665,7 +667,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(collection, ChangeOperation.UPDATE)
             return success
 
-        success = self._execute_database_mutation(db_path, (collection,), delete).value
+        mutation = self._execute_database_mutation(db_path, (collection,), delete)
+        success = bool(
+            mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+            and mutation.value
+        )
         return bool(
             success
             and self.reload_conditions_and_notify(
@@ -814,7 +820,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(resource, ChangeOperation.UPDATE)
             return success
 
-        success = self._execute_database_mutation(db_path, (resource,), rename).value
+        mutation = self._execute_database_mutation(db_path, (resource,), rename)
+        success = bool(
+            mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+            and mutation.value
+        )
         return bool(
             success
             and self.reload_conditions_and_notify(
@@ -875,9 +885,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(collection, ChangeOperation.UPDATE)
             return success
 
-        success = self._execute_database_mutation(
+        mutation = self._execute_database_mutation(
             db_path, (collection,), delete_folders
-        ).value
+        )
+        success = bool(
+            mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+            and mutation.value
+        )
         reload_success = (
             self.reload_conditions_and_notify(
                 db_path,
@@ -1335,7 +1349,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(collection, ChangeOperation.REORDER)
             return success
 
-        success = self._execute_database_mutation(db_path, (collection,), reorder).value
+        mutation = self._execute_database_mutation(db_path, (collection,), reorder)
+        success = bool(
+            mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+            and mutation.value
+        )
         return bool(
             success
             and self.reload_conditions_and_notify(
@@ -1651,6 +1669,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             return DatabaseMutationResult(
                 operation_id=operation_id,
                 outcome_status=MutationOutcomeStatus.REJECTED,
+                rejection_reason=MutationRejectionReason.BID_LOCKED,
             )
         collection = ResourceRef("takeoffs_collection", bid_uid, int(bid_uid))
 
@@ -1768,7 +1787,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 operation_id=request.operation_id,
                 request_hash=request.request_hash,
             )
-            created_resource_ids = tuple(mutation.value or ())
+            created_resource_ids = (
+                tuple(mutation.value or ())
+                if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+                else ()
+            )
             return MutationExecutionResult(
                 outcome_status=mutation.outcome_status,
                 created_resource_ids=created_resource_ids,
@@ -1811,6 +1834,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
                 consumed_lock_tokens=mutation.consumed_lock_tokens,
+                rejection_reason=mutation.rejection_reason,
             )
 
         request = QueuedMutationRequest(
@@ -1849,6 +1873,53 @@ class ProjectWriteService(DatabaseMutationWriteService):
         dependency_resources: tuple[ResourceRef, ...] = (),
         owning_surface: str = "main-plan",
     ) -> int:
+        return self._queue_plan_items_delete(
+            database_id,
+            bid_uid,
+            takeoff_uids,
+            annotations,
+            callback,
+            page_uids=page_uids,
+            dependency_resources=dependency_resources,
+            owning_surface=owning_surface,
+        )
+
+    def queue_cancelled_placement_cleanup_delete(
+        self,
+        database_id: str,
+        bid_uid: str,
+        takeoff_uids: List[str],
+        callback: Callable[[QueuedMutationResult], None],
+        *,
+        page_uids: tuple[str, ...] = (),
+        dependency_resources: tuple[ResourceRef, ...] = (),
+    ) -> int:
+        return self._queue_plan_items_delete(
+            database_id,
+            bid_uid,
+            takeoff_uids,
+            [],
+            callback,
+            page_uids=page_uids,
+            dependency_resources=dependency_resources,
+            bid_lock_exempt=True,
+        )
+
+    def _queue_plan_items_delete(
+        self,
+        database_id: str,
+        bid_uid: str,
+        takeoff_uids: List[str],
+        annotations: List[Tuple[str, str]],
+        callback: Callable[[QueuedMutationResult], None],
+        *,
+        page_uids: tuple[str, ...] = (),
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        owning_surface: str = "main-plan",
+        bid_lock_exempt: bool = False,
+    ) -> int:
+        if not bid_lock_exempt:
+            self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         payload = PlanItemsDeletePayload(
             takeoff_uids=tuple(takeoff_uids),
@@ -1931,6 +2002,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 mutation_type=request.mutation_type.value,
                 request_hash=request.request_hash,
                 publish_conflict_event=False,
+                bid_lock_exempt=bid_lock_exempt,
             )
             return MutationExecutionResult(
                 outcome_status=mutation.outcome_status,
@@ -1962,12 +2034,20 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
                 consumed_lock_tokens=mutation.consumed_lock_tokens,
+                rejection_reason=mutation.rejection_reason,
             )
 
         return self._sql_collaboration_provider().queue_request(
             request,
             execute,
             callback,
+        )
+
+    @staticmethod
+    def _active_bid_locked_rejection(message: str) -> MutationExecutionResult:
+        return MutationExecutionResult(
+            outcome_status=MutationOutcomeStatus.REJECTED,
+            message=message,
         )
 
     def execute_plan_items_delete_local(
@@ -1983,6 +2063,10 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> MutationExecutionResult:
         if self.uses_sql_collaboration_mutations(database_id):
             raise ValueError("SQL plan-item deletion must use the collaboration queue")
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            database_id, str(bid_uid)
+        ):
+            return self._active_bid_locked_rejection("The database rejected deletion.")
         bid_value = int(bid_uid)
         payload = PlanItemsDeletePayload(
             takeoff_uids=tuple(takeoff_uids),
@@ -2095,6 +2179,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             conflict=mutation.conflict,
             commit_attempted=mutation.commit_attempted,
             consumed_lock_tokens=mutation.consumed_lock_tokens,
+            rejection_reason=mutation.rejection_reason,
         )
 
     def execute_plan_geometry_local(
@@ -2111,6 +2196,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> MutationExecutionResult:
         if self.uses_sql_collaboration_mutations(database_id):
             raise ValueError("SQL plan geometry must use the collaboration queue")
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            database_id, str(bid_uid)
+        ):
+            return self._active_bid_locked_rejection(
+                "The database rejected the geometry update."
+            )
         bid_value = int(bid_uid)
         payload = PlanGeometryPayload(
             takeoff_positions=tuple(
@@ -2291,6 +2382,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             conflict=mutation.conflict,
             commit_attempted=mutation.commit_attempted,
             consumed_lock_tokens=mutation.consumed_lock_tokens,
+            rejection_reason=mutation.rejection_reason,
         )
 
     def queue_plan_geometry(
@@ -2307,6 +2399,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         owning_surface: str = "main-plan",
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         payload = PlanGeometryPayload(
             takeoff_positions=tuple(
@@ -2493,6 +2586,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
                 consumed_lock_tokens=mutation.consumed_lock_tokens,
+                rejection_reason=mutation.rejection_reason,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -2555,6 +2649,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> MutationExecutionResult:
         if self.uses_sql_collaboration_mutations(database_id):
             raise ValueError("SQL plan properties must use the collaboration queue")
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            database_id, str(bid_uid)
+        ):
+            return self._active_bid_locked_rejection(
+                "The database rejected the property update."
+            )
         bid_value = int(bid_uid)
         is_annotation = property_kind.startswith("annotation_")
         resources = tuple(
@@ -2656,6 +2756,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             conflict=mutation.conflict,
             commit_attempted=mutation.commit_attempted,
             consumed_lock_tokens=mutation.consumed_lock_tokens,
+            rejection_reason=mutation.rejection_reason,
         )
 
     def _apply_plan_property_payload(
@@ -2771,6 +2872,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         dependency_resources: tuple[ResourceRef, ...] = (),
         owning_surface: str = "main-plan",
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         payload = self._plan_property_payload(
             database_id, bid_uid, property_kind, updates
@@ -2893,6 +2995,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
                 consumed_lock_tokens=mutation.consumed_lock_tokens,
+                rejection_reason=mutation.rejection_reason,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -2985,6 +3088,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         dependency_resources: tuple[ResourceRef, ...] = (),
         owning_surface: str = "main-plan",
     ) -> int:
+        self._require_unlocked_active_bid(database_id, str(payload.destination_bid_uid))
         payload = prepare_plan_items_paste_payload(payload)
         bid_value = int(payload.destination_bid_uid)
         families = tuple(
@@ -3248,6 +3352,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
                 consumed_lock_tokens=mutation.consumed_lock_tokens,
+                rejection_reason=mutation.rejection_reason,
             )
 
         expected_count = len(payload.takeoff_specs) + len(payload.annotation_specs)
@@ -3274,6 +3379,10 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> MutationExecutionResult:
         if self.uses_sql_collaboration_mutations(database_id):
             raise ValueError("SQL paste must use the collaboration queue")
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            database_id, str(payload.destination_bid_uid)
+        ):
+            return self._active_bid_locked_rejection("The database rejected paste.")
         payload = prepare_plan_items_paste_payload(payload)
         bid_value = int(payload.destination_bid_uid)
         families = tuple(
@@ -3518,6 +3627,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             conflict=mutation.conflict,
             commit_attempted=mutation.commit_attempted,
             consumed_lock_tokens=mutation.consumed_lock_tokens,
+            rejection_reason=mutation.rejection_reason,
         )
 
     def queue_page_settings(
@@ -3531,6 +3641,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         owning_surface: str = "main-plan",
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         payload = PageSettingsPayload.from_updates(setting_kind, updates)
         if setting_kind == "layer_show":
@@ -3729,6 +3840,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
                 consumed_lock_tokens=mutation.consumed_lock_tokens,
+                rejection_reason=mutation.rejection_reason,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -3817,6 +3929,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
                 consumed_lock_tokens=mutation.consumed_lock_tokens,
+                rejection_reason=mutation.rejection_reason,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -4070,6 +4183,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         valid_uids = self._unique_nonempty_uids(bid_uids)
         if not valid_uids:
             raise ValueError("A queued bid move requires at least one bid")
+        for bid_uid in valid_uids:
+            self._require_unlocked_active_bid(database_id, bid_uid)
         resources = tuple(ResourceRef("bid", uid, int(uid)) for uid in valid_uids)
         collections = tuple(
             ResourceRef("project_bids", project_uid or "orphan")
@@ -4230,6 +4345,10 @@ class ProjectWriteService(DatabaseMutationWriteService):
         valid_uids = self._unique_nonempty_uids(project_uids)
         if not valid_uids:
             raise ValueError("A queued project deletion requires at least one project")
+        if self._bid_write_guard.blocks_active_locked_bid_project_delete(
+            database_id, valid_uids
+        ):
+            raise ActiveBidLockedError()
         project_resources = tuple(ResourceRef("project", uid) for uid in valid_uids)
         bid_resources = tuple(
             ResourceRef("bid", uid, int(uid))
@@ -4325,6 +4444,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         changes = replace(
             changes,
             new=[replace(area) for area in changes.new],
@@ -4417,6 +4537,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         updates = deepcopy(updates)
         bid_value = int(bid_uid)
         bid_resource = ResourceRef("bid", bid_uid, bid_value)
@@ -4940,6 +5061,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         valid_page_uids = self._unique_nonempty_uids(page_uids)
         if not valid_page_uids:
             raise ValueError("A queued page deletion requires at least one page")
+        self._require_unlocked_page_owners(database_id, bid_uid, valid_page_uids)
         bid_value = int(bid_uid)
         deleted_resources = {
             ResourceRef("page", page_uid, bid_value) for page_uid in valid_page_uids
@@ -5003,6 +5125,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         spec: CreateConditionSpec,
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         spec = deepcopy(spec)
         bid_value = int(bid_uid)
         collection = ResourceRef("conditions_collection", bid_uid, bid_value)
@@ -5060,6 +5183,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         valid_uids = self._unique_nonempty_uids(condition_uids)
         if not valid_uids:
             raise ValueError("A queued condition deletion requires a condition")
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         resources = tuple(
             ResourceRef("condition", uid, bid_value) for uid in valid_uids
@@ -5106,6 +5230,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         source_uids = self._unique_nonempty_uids(condition_uids)
         if not source_uids:
             raise ValueError("A queued condition duplicate requires a condition")
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         collection = ResourceRef("conditions_collection", bid_uid, bid_value)
         changes = dict(target_changes or {})
@@ -5219,6 +5344,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         valid_uids = self._unique_nonempty_uids(condition_uids)
         if not valid_uids or not changes:
             raise ValueError("A queued condition update requires items and changes")
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         resources = tuple(
             ResourceRef("condition", uid, bid_value) for uid in valid_uids
@@ -5291,6 +5417,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         ordered_uids = self._unique_nonempty_uids(ordered_condition_uids)
         if not ordered_uids:
             raise ValueError("A queued condition reorder requires conditions")
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         collection = ResourceRef("conditions_collection", bid_uid, bid_value)
         resources = tuple(
@@ -5330,6 +5457,25 @@ class ProjectWriteService(DatabaseMutationWriteService):
             owning_surface="condition-sidebar",
         )
 
+    def _require_unlocked_active_bid(self, database_id: str, bid_uid: str) -> None:
+        if self._bid_write_guard.blocks_active_locked_bid_write(database_id, bid_uid):
+            raise ActiveBidLockedError()
+
+    def _require_unlocked_page_owners(
+        self, database_id: str, bid_uid: str, page_uids: List[str]
+    ) -> None:
+        if self._bid_write_guard.active_locked_bid_ref_for(database_id) is None:
+            return
+        owners = {
+            str(
+                self._project_data.find_owning_bid_uid_for_page(database_id, page_uid)
+                or bid_uid
+            )
+            for page_uid in page_uids
+        }
+        for owner in sorted(owners):
+            self._require_unlocked_active_bid(database_id, owner)
+
     def queue_condition_folder_create(
         self,
         database_id: str,
@@ -5338,6 +5484,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         parent_uid: Optional[str],
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         collection = ResourceRef("conditions_collection", bid_uid, bid_value)
         dependencies = (
@@ -5385,6 +5532,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         name: str,
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         resource = ResourceRef("condition_folder", str(folder_uid), bid_value)
         payload = ProjectWritePayload.from_values(
@@ -5422,6 +5570,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         valid_uids = self._unique_nonempty_uids(folder_uids)
         if not valid_uids:
             raise ValueError("A queued folder deletion requires a folder")
+        self._require_unlocked_active_bid(database_id, bid_uid)
         validation = self.validate_condition_folder_delete(
             database_id, bid_uid, valid_uids
         )
@@ -5467,6 +5616,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         after_sequence: int,
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         collection = ResourceRef("layers_collection", bid_uid, bid_value)
         payload = ProjectWritePayload.from_values(
@@ -5525,6 +5675,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         valid_uids = self._unique_nonempty_uids(layer_uids)
         if not valid_uids:
             raise ValueError("A queued layer deletion requires at least one layer")
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         resources = tuple(ResourceRef("layer", uid, bid_value) for uid in valid_uids)
         collection = ResourceRef("layers_collection", bid_uid, bid_value)
@@ -5563,6 +5714,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         layer_uid_b: str,
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         collection = ResourceRef("layers_collection", bid_uid, bid_value)
         resources = tuple(
@@ -5613,6 +5765,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         captured_layer_uids = tuple(dict.fromkeys(str(uid) for uid in layer_uids))
         if not captured_layer_uids:
             raise ValueError("A bulk Layer visibility update requires Layer UIDs")
+        self._require_unlocked_active_bid(database_id, bid_uid)
         payload = ProjectWritePayload.from_values(
             "update_all_layers_show",
             {"show": bool(show), "layer_uids": list(captured_layer_uids)},
@@ -5655,6 +5808,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         name: str,
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
         bid_value = int(bid_uid)
         resource = ResourceRef("layer", str(layer_uid), bid_value)
         payload = ProjectWritePayload.from_values(
@@ -5721,28 +5875,36 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if callback is not None:
                 callback(result)
 
-        if setting_kind == "all_layers_show":
-            if len(values) != 2 or not isinstance(values[1], (list, tuple)):
-                raise ValueError(
-                    "An all-Layers visibility update requires a value and Layer UIDs"
+        try:
+            if setting_kind == "all_layers_show":
+                if len(values) != 2 or not isinstance(values[1], (list, tuple)):
+                    raise ValueError(
+                        "An all-Layers visibility update requires a value and Layer UIDs"
+                    )
+                sequence = self.queue_all_layers_show(
+                    database_id,
+                    str(bid_uid),
+                    bool(values[0]),
+                    [str(uid) for uid in values[1]],
+                    complete,
+                    owning_surface=owning_surface,
                 )
-            sequence = self.queue_all_layers_show(
-                database_id,
-                str(bid_uid),
-                bool(values[0]),
-                [str(uid) for uid in values[1]],
-                complete,
-                owning_surface=owning_surface,
-            )
-        else:
-            sequence = self.queue_page_settings(
-                database_id,
-                str(bid_uid),
+            else:
+                sequence = self.queue_page_settings(
+                    database_id,
+                    str(bid_uid),
+                    setting_kind,
+                    [[str(page_uid), *values]],
+                    complete,
+                    owning_surface=owning_surface,
+                )
+        except ActiveBidLockedError:
+            self.logger.warning(
+                "Queued page setting %s for %s blocked: the active bid is locked",
                 setting_kind,
-                [[str(page_uid), *values]],
-                complete,
-                owning_surface=owning_surface,
+                page_uid,
             )
+            return False
         return sequence >= 0
 
     def delete_takeoffs(
@@ -6175,11 +6337,15 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     break
             return result.any_success
 
-        self._execute_database_mutation(
+        mutation = self._execute_database_mutation(
             db_path,
             tuple(ResourceRef("layer", uid, bid_uid) for uid in unique_uids),
             delete_all,
         )
+        if mutation.outcome_status != MutationOutcomeStatus.COMMITTED:
+            result.succeeded_uids = []
+            result.failed_uids = list(unique_uids)
+            return result
         if result.any_success:
             result.reload_success = self.reload_and_notify(db_path)
         return result
@@ -6209,7 +6375,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(collection, ChangeOperation.UPDATE)
             return result.any_success
 
-        self._execute_database_mutation(db_path, (collection,), delete_all)
+        mutation = self._execute_database_mutation(db_path, (collection,), delete_all)
+        if mutation.outcome_status != MutationOutcomeStatus.COMMITTED:
+            result.succeeded_uids = []
+            result.failed_uids = list(unique_uids)
+            return result
         if result.any_success:
             result.reload_success = self.reload_and_notify(db_path)
         return result

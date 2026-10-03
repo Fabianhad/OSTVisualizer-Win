@@ -1,4 +1,6 @@
+import threading
 import unittest
+from dataclasses import FrozenInstanceError
 from ost_visualizer.application.dtos.file_dto import FileLoadResultDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.interfaces.i_database_maintenance import (
@@ -385,3 +387,148 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
                 self.assertEqual(self.events.events, [])
                 staged.close_error = None
                 self._assert_retry_can_acquire()
+
+
+class MaintenanceBoundaryTests(_MaintenanceCase):
+    def test_prepare_hands_the_captured_identity_to_the_backend_in_order(self):
+        target = self.service.capture_target("db.mdb")
+        self.assertEqual(self.trace, [("capture", "db.mdb")])
+        staged = self.service.prepare(target)
+        self.assertIs(staged, self.backend.prepared)
+        self.assertEqual(
+            self.trace,
+            [
+                ("capture", "db.mdb"),
+                ("current", "db.mdb", self.backend.identity),
+                ("prepare", "db.mdb", self.backend.identity),
+            ],
+        )
+        self.service.discard(staged)
+        self.service.release_target(target)
+        self.assertEqual(
+            self.trace[-2:], ["close", ("release", "db.mdb", self.backend.identity)]
+        )
+        with self.assertRaises(FrozenInstanceError):
+            target.locator = "other.mdb"
+        with self.assertRaises(FrozenInstanceError):
+            target.source_identity = object()
+
+    def test_failed_source_release_and_interrupts_still_free_the_exclusion_lock(self):
+        class Interrupted(BaseException):
+            pass
+
+        target = self.service.capture_target("db.mdb")
+        for prepare_error in (OSError("stage failed"), Interrupted()):
+            with self.subTest(error=type(prepare_error).__name__):
+                self.backend.prepare_error = prepare_error
+                original_release = self.backend.release_target
+
+                def failing_release(locator, identity):
+                    original_release(locator, identity)
+                    raise PermissionError("release failed")
+
+                self.backend.release_target = failing_release
+                with self.assertRaises(PermissionError):
+                    self.service.prepare(target)
+                self.backend.release_target = original_release
+                self.backend.prepare_error = None
+                self._assert_retry_can_acquire()
+        self.backend.prepare_error = Interrupted()
+        with self.assertRaises(Interrupted):
+            self.service.prepare(target)
+        self.assertEqual(self.trace[-1], ("release", "db.mdb", target.source_identity))
+        self.backend.prepare_error = None
+        self._assert_retry_can_acquire()
+
+    def test_failed_commit_and_failed_cleanup_report_both_without_refreshing(self):
+        target, staged = self._prepare()
+        staged.result = DatabaseMaintenanceResult(False, "commit rejected")
+        staged.close_error = OSError("temporary file busy")
+        self.trace.clear()
+        self.assertEqual(
+            self.service.finish(target, staged, self.files.unload),
+            DatabaseMaintenanceResult(
+                False,
+                "commit rejected Temporary-file cleanup failed: temporary file busy",
+            ),
+        )
+        self.assertEqual(
+            self.trace,
+            [("current", "db.mdb", target.source_identity), "commit", "close"],
+        )
+        self.assertEqual(self.events.events, [])
+        staged.close_error = None
+        self._assert_retry_can_acquire()
+
+    def test_target_probe_failure_cancels_without_commit_and_releases_exclusion(self):
+        target, staged = self._prepare()
+
+        def failing_probe(_locator, _identity):
+            raise OSError("probe failed")
+
+        self.backend.is_target_current = failing_probe
+        self.trace.clear()
+        self.assertEqual(
+            self.service.finish(target, staged, self.files.unload),
+            DatabaseMaintenanceResult(False, "probe failed"),
+        )
+        self.assertEqual(self.trace, ["close"])
+        self.assertEqual(self.events.events, [])
+        self.backend.is_target_current = lambda _locator, identity: (
+            identity is self.backend.identity
+        )
+        self._assert_retry_can_acquire()
+
+    def test_unload_failure_propagates_but_the_exclusion_lock_is_released(self):
+        target, staged = self._prepare()
+        self.files.reload_error = OSError("read failed")
+
+        def exploding_unload(_locator):
+            raise RuntimeError("unload exploded")
+
+        with self.assertRaisesRegex(RuntimeError, "unload exploded"):
+            self.service.finish(target, staged, exploding_unload)
+        self.assertEqual(self.events.events, [])
+        self.files.reload_error = None
+        self._assert_retry_can_acquire()
+
+    def test_concurrent_maintenance_from_another_thread_is_rejected_without_blocking(
+        self,
+    ):
+        outcomes = {}
+
+        def from_other_thread(name, action):
+            def run():
+                try:
+                    outcomes[name] = action()
+                except RuntimeError as exc:
+                    outcomes[name] = exc
+
+            worker = threading.Thread(target=run, daemon=True)
+            worker.start()
+            worker.join(2.0)
+            self.assertFalse(worker.is_alive(), f"{name} blocked on the exclusion lock")
+
+        def compact(_locator):
+            from_other_thread("compact", lambda: self.service.compact("db.mdb"))
+            from_other_thread(
+                "prepare",
+                lambda: self.service.prepare(self.service.capture_target("db.mdb")),
+            )
+            return DatabaseMaintenanceResult(True, "done")
+
+        self.backend.compact_work = compact
+        self.assertEqual(
+            self.service.compact("db.mdb"), DatabaseMaintenanceResult(True, "done")
+        )
+        self.assertEqual(
+            outcomes["compact"],
+            DatabaseMaintenanceResult(
+                False, "Database maintenance is already running."
+            ),
+        )
+        self.assertIsInstance(outcomes["prepare"], RuntimeError)
+        self.assertEqual(
+            str(outcomes["prepare"]), "Database maintenance is already running."
+        )
+        self._assert_retry_can_acquire()

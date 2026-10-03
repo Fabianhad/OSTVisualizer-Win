@@ -8,6 +8,7 @@ from ...application.condition_change_impact import (
     condition_changes_require_mesh_refresh,
     condition_changes_require_plan_refresh,
 )
+from ...application.dtos.active_bid_locked_error import ActiveBidLockedError
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
     CollaborationStatus,
@@ -15,6 +16,7 @@ from ...application.dtos.collaboration_dtos import (
     EditLeaseLoss,
     EditLeaseResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     QueuedMutationResult,
     ResourceRef,
     SynchronizationState,
@@ -255,10 +257,13 @@ class UIEventCoordinator:
         self._pending_takeoff_selected_area_uid: str = ""
         self._pending_takeoff_place_condition_uid: Optional[str] = None
         self._pending_takeoff_place_condition_uids: List[str] = []
+        self._page_delete_stage_token: Optional[object] = None
         self._selected_takeoff_uids: Tuple[str, ...] = ()
         self._selection_projected_condition_uids: set[str] = set()
         self._pending_hotlink_page_uid: Optional[str] = None
         self._pending_hotlink_named_view: Optional[NamedView] = None
+        self._bid_lock_reverify_scheduled: set[str] = set()
+        self._bid_lock_watch: set[str] = set()
         self._plan_view_signaler = QtVoidCallback(parent=main_window)
         self._plan_view_signaler.set_callback(self._update_plan_view_for_active)
         self._menu_state_signaler = QtVoidCallback(parent=main_window)
@@ -1010,6 +1015,7 @@ class UIEventCoordinator:
         place_condition_uid: Optional[str] = None,
         place_condition_uids: Optional[List[str]] = None,
     ) -> None:
+        self._page_delete_stage_token = None
         if page_uids is None:
             self._pending_takeoff_page_uids = None
             self._pending_takeoff_active_page_uid = None
@@ -1658,6 +1664,14 @@ class UIEventCoordinator:
         )
         self._subscribe(AppEvents.PRESENCE_CHANGED, self._on_presence_changed)
         self._subscribe(
+            AppEvents.BID_LOCKED_REJECTION,
+            self._on_bid_locked_rejection,
+        )
+        self._subscribe(
+            AppEvents.REMOTE_MASTER_DATA_CHANGED,
+            self._on_remote_master_data_changed,
+        )
+        self._subscribe(
             AppEvents.FULL_RECONCILIATION_REQUIRED,
             self._on_full_reconciliation_required,
         )
@@ -2007,6 +2021,9 @@ class UIEventCoordinator:
                     finish,
                     edit_lease_handle=edit_lease_handle,
                 )
+        except ActiveBidLockedError:
+            logger.warning("Bid Areas blocked: the active bid is locked")
+            return False
         except (RuntimeError, ValueError) as exc:
             show_warning(self.main_window, "Bid Areas", str(exc))
             return False
@@ -2914,6 +2931,8 @@ class UIEventCoordinator:
         if self._is_cleaning_up:
             return
         if result.outcome_status == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED:
+            return
+        if result.rejection_reason == MutationRejectionReason.BID_LOCKED:
             return
         self._prepare_for_modal_mutation_error(database_id)
         if result.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN:
@@ -4970,6 +4989,50 @@ class UIEventCoordinator:
             )
         self.project_data.set_current_bid_locked(is_locked)
 
+    def _on_bid_locked_rejection(
+        self, database_id: str = "", operation_id: str = ""
+    ) -> None:
+        if self._is_cleaning_up:
+            return
+        logger.warning(
+            "Queued write refused by the SQL writer: the active bid is locked "
+            "(operation %s)",
+            operation_id,
+        )
+        self._bid_lock_watch.add(database_id)
+        if database_id in self._bid_lock_reverify_scheduled:
+            return
+        self._bid_lock_reverify_scheduled.add(database_id)
+        QtCore.QTimer.singleShot(
+            0, lambda: self._reverify_bid_lock_state(database_id, scheduled=True)
+        )
+
+    def _on_remote_master_data_changed(
+        self, database_id: str = "", families: Optional[List[str]] = None
+    ) -> None:
+        if database_id in self._bid_lock_watch and "job_statuses" in (families or ()):
+            self._reverify_bid_lock_state(database_id)
+
+    def _reverify_bid_lock_state(
+        self, database_id: str, *, scheduled: bool = False
+    ) -> None:
+        if scheduled:
+            self._bid_lock_reverify_scheduled.discard(database_id)
+        if self._is_cleaning_up:
+            return
+        active_bid = self.project_data.get_current_bid_ref()
+        if (
+            active_bid is None
+            or normalize_path(active_bid.file_path) != normalize_path(database_id)
+            or self.project_data.get_bid(active_bid) is None
+        ):
+            return
+        self._resolve_bid_lock_state(active_bid)
+        self.ui_access_manager.refresh()
+        self._update_menu_state()
+        if self.project_data.is_current_bid_locked():
+            self._bid_lock_watch.discard(database_id)
+
     def _on_page_scale_changed(
         self, file_path: str, page_uid: str, sf1: float, sf2: float
     ) -> None:
@@ -5241,16 +5304,20 @@ class UIEventCoordinator:
                 ]
                 for uid in page_uids
             ]
-            return (
-                self._project_write_service.queue_page_settings(
-                    bid_ref.file_path,
-                    bid_ref.bid_uid,
-                    "image_adjustments",
-                    updates,
-                    lambda _result: None,
+            try:
+                return (
+                    self._project_write_service.queue_page_settings(
+                        bid_ref.file_path,
+                        bid_ref.bid_uid,
+                        "image_adjustments",
+                        updates,
+                        lambda _result: None,
+                    )
+                    >= 0
                 )
-                >= 0
-            )
+            except ActiveBidLockedError:
+                logger.warning("Image adjustments blocked: the active bid is locked")
+                return False
         return self._project_write_service.save_page_image_adjustments(
             bid_ref.file_path,
             page_uids,
@@ -5412,19 +5479,23 @@ class UIEventCoordinator:
         if self._project_write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
         ):
-            return (
-                self._project_write_service.queue_page_settings(
-                    bid_ref.file_path,
-                    bid_ref.bid_uid,
-                    "scale",
-                    [
-                        [uid, settings.scale_factor1, settings.scale_factor2]
-                        for uid in page_uids
-                    ],
-                    lambda _result: None,
+            try:
+                return (
+                    self._project_write_service.queue_page_settings(
+                        bid_ref.file_path,
+                        bid_ref.bid_uid,
+                        "scale",
+                        [
+                            [uid, settings.scale_factor1, settings.scale_factor2]
+                            for uid in page_uids
+                        ],
+                        lambda _result: None,
+                    )
+                    >= 0
                 )
-                >= 0
-            )
+            except ActiveBidLockedError:
+                logger.warning("Page scale blocked: the active bid is locked")
+                return False
         if len(page_uids) == 1:
             return self._project_write_service.save_page_scale(
                 bid_ref.file_path,
@@ -5500,6 +5571,9 @@ class UIEventCoordinator:
                 finish,
                 edit_lease_handle=edit_lease_handle,
             )
+        except ActiveBidLockedError:
+            logger.warning("%s blocked: the active bid is locked", title)
+            return False
         except (RuntimeError, ValueError) as exc:
             show_warning(self.main_window, title, str(exc))
             return False
@@ -5664,6 +5738,9 @@ class UIEventCoordinator:
                 finish,
                 edit_lease_handle=edit_lease_handle,
             )
+        except ActiveBidLockedError:
+            logger.warning("Rename Page blocked: the active bid is locked")
+            return False
         except (RuntimeError, ValueError) as exc:
             show_warning(self.main_window, "Rename Page", str(exc))
             return False
@@ -5732,14 +5809,23 @@ class UIEventCoordinator:
             self._clear_staged_takeoff_restore()
             return
         if uses_sql_queue:
-            self._project_write_service.queue_pages_delete(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                [page_uid],
-                lambda result: self._on_queued_page_delete_complete(
-                    bid_ref.file_path, result
-                ),
-            )
+            stage_token = self._page_delete_stage_token = object()
+            failure_handled = []
+
+            def on_complete(result: QueuedMutationResult) -> None:
+                if not failure_handled and self._on_queued_page_delete_complete(
+                    bid_ref.file_path, result, stage_token
+                ):
+                    failure_handled.append(True)
+
+            try:
+                self._project_write_service.queue_pages_delete(
+                    bid_ref.file_path, bid_ref.bid_uid, [page_uid], on_complete
+                )
+            except ActiveBidLockedError:
+                logger.warning("Delete Page blocked: the active bid is locked")
+                self._page_delete_stage_token = None
+                self._clear_staged_takeoff_restore()
             return
         if not self._project_write_service.delete_pages(bid_ref.file_path, [page_uid]):
             self._clear_staged_takeoff_restore()
@@ -5750,17 +5836,23 @@ class UIEventCoordinator:
             )
 
     def _on_queued_page_delete_complete(
-        self, database_id: str, result: QueuedMutationResult
-    ) -> None:
-        if result.outcome_status == MutationOutcomeStatus.COMMITTED:
-            return
-        self._clear_staged_takeoff_restore()
+        self, database_id: str, result: QueuedMutationResult, stage_token: object
+    ) -> bool:
+        if result.outcome_status in (
+            MutationOutcomeStatus.COMMITTED,
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            return False
+        if self._page_delete_stage_token is stage_token:
+            self._clear_staged_takeoff_restore()
         self.present_queued_mutation_error(
             database_id,
             "Delete Page",
             result,
             critical=True,
         )
+        return True
 
     def _stage_selection_after_page_delete(self, page_uid: str) -> bool:
         if not self.takeoff_sidebar:
@@ -6331,18 +6423,21 @@ class UIEventCoordinator:
             bid_owner = self.project_data.get_bid(bid_ref)
             if bid_owner is None:
                 return
-            self._project_write_service.queue_layer_insert(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                name,
-                after_sequence,
-                lambda result: self._on_queued_layer_insert_complete(
-                    sidebar,
-                    bid_ref,
-                    bid_owner,
-                    result,
-                ),
-            )
+            try:
+                self._project_write_service.queue_layer_insert(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    name,
+                    after_sequence,
+                    lambda result: self._on_queued_layer_insert_complete(
+                        sidebar,
+                        bid_ref,
+                        bid_owner,
+                        result,
+                    ),
+                )
+            except ActiveBidLockedError:
+                self._refuse_locked_layer_write("Layer Creation")
             return
         try:
             result = self._project_write_service.insert_layer_result(
@@ -6384,7 +6479,8 @@ class UIEventCoordinator:
             if owns_current_sidebar:
                 sidebar.set_pending_selection(result.created_resource_ids[0])
             return
-        logger.warning("Queued SQL layer insertion failed: %s", result.message)
+        if result.rejection_reason != MutationRejectionReason.BID_LOCKED:
+            logger.warning("Queued SQL layer insertion failed: %s", result.message)
         if not self._is_cleaning_up and owns_current_sidebar:
             self._sidebar.load_bid_layers_sidebar_from_memory()
             self.present_queued_mutation_error(
@@ -6401,12 +6497,15 @@ class UIEventCoordinator:
         if not self._flush_deferred_for_file(bid_ref.file_path):
             return
         if write_svc.uses_sql_collaboration_mutations(bid_ref.file_path):
-            write_svc.queue_layer_delete(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                layer_uid,
-                self._on_queued_layer_delete_complete,
-            )
+            try:
+                write_svc.queue_layer_delete(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    layer_uid,
+                    self._on_queued_layer_delete_complete,
+                )
+            except ActiveBidLockedError:
+                self._refuse_locked_layer_write("Delete Layer")
             return
         success = False
         try:
@@ -6626,13 +6725,16 @@ class UIEventCoordinator:
         if self._project_write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
         ):
-            self._project_write_service.queue_layer_reorder(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                layer_uid,
-                neighbor_uid,
-                self._on_queued_layer_write_complete,
-            )
+            try:
+                self._project_write_service.queue_layer_reorder(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    layer_uid,
+                    neighbor_uid,
+                    self._on_queued_layer_write_complete,
+                )
+            except ActiveBidLockedError:
+                self._refuse_locked_layer_write("Move Layer", reload_sidebar=False)
             return
         try:
             self._project_write_service.swap_layer_sequence(
@@ -6657,13 +6759,16 @@ class UIEventCoordinator:
                 self._sidebar.load_bid_layers_sidebar()
             return
         if uses_sql_queue:
-            write_svc.queue_layer_rename(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                layer_uid,
-                new_name,
-                self._on_queued_layer_write_complete,
-            )
+            try:
+                write_svc.queue_layer_rename(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    layer_uid,
+                    new_name,
+                    self._on_queued_layer_write_complete,
+                )
+            except ActiveBidLockedError:
+                self._refuse_locked_layer_write("Rename Layer")
             return
         try:
             success = bool(
@@ -6673,6 +6778,13 @@ class UIEventCoordinator:
             logger.warning("Failed to rename layer", exc_info=True)
         if not success:
             self._sidebar.load_bid_layers_sidebar()
+
+    def _refuse_locked_layer_write(
+        self, title: str, *, reload_sidebar: bool = True
+    ) -> None:
+        logger.warning("%s blocked: the active bid is locked", title)
+        if reload_sidebar and not self._is_cleaning_up:
+            self._sidebar.load_bid_layers_sidebar_from_memory()
 
     def _on_queued_layer_write_complete(self, result: QueuedMutationResult) -> None:
         self._finish_queued_layer_write(result, "Layer Update")
@@ -6685,7 +6797,8 @@ class UIEventCoordinator:
     ) -> None:
         if result.outcome_status == MutationOutcomeStatus.COMMITTED:
             return
-        logger.warning("Queued SQL %s failed: %s", title.lower(), result.message)
+        if result.rejection_reason != MutationRejectionReason.BID_LOCKED:
+            logger.warning("Queued SQL %s failed: %s", title.lower(), result.message)
         if not self._is_cleaning_up:
             self._sidebar.load_bid_layers_sidebar_from_memory()
             self.present_queued_mutation_error(result.database_id, title, result)

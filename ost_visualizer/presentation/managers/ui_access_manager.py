@@ -5,6 +5,7 @@ from ...application.dtos.collaboration_dtos import ResourceRef
 from ...application.events.app_events import AppEvents
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
+from ...domain.entities.project_constants import is_deleted_bids_project_uid
 
 MAIN_PLAN_SURFACE_ID = "main-plan"
 
@@ -89,6 +90,7 @@ _OST_BLOCKED: FrozenSet[Feature] = frozenset(
 )
 _LOCK_BLOCKED: FrozenSet[Feature] = frozenset(
     {
+        Feature.EDIT_CONDITION_STRUCTURE,
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
         Feature.EDIT_PLAN_ITEMS,
@@ -311,6 +313,36 @@ class UIAccessManager:
     def is_bid_locked(self) -> bool:
         return self._bid_locked
 
+    def _is_active_locked_bid(self, bid_ref: BidRef) -> bool:
+        if not self._bid_locked:
+            return False
+        active = self._project_data.get_current_bid_ref()
+        return bool(
+            active
+            and normalize_path(bid_ref.file_path) == normalize_path(active.file_path)
+            and str(bid_ref.bid_uid) == str(active.bid_uid)
+        )
+
+    def _is_active_locked_bid_project(
+        self, database_id: str, project_uids: List[str]
+    ) -> bool:
+        if not self._bid_locked:
+            return False
+        active = self._project_data.get_current_bid_ref()
+        if not active or normalize_path(database_id) != normalize_path(
+            active.file_path
+        ):
+            return False
+        project_uid = self._project_data.find_project_uid_for_bid(active)
+        return bool(project_uid) and str(project_uid) in {
+            str(uid) for uid in project_uids
+        }
+
+    def _is_trashing_active_locked_bid(self, bid_ref: BidRef) -> bool:
+        return self._is_active_locked_bid(bid_ref) and not is_deleted_bids_project_uid(
+            self._project_data.find_project_uid_for_bid(bid_ref)
+        )
+
     def can_create_project_tree_items(self, has_file_context: bool) -> bool:
         if not has_file_context:
             return False
@@ -488,13 +520,15 @@ class UIAccessManager:
 
     def can_delete_bids(self, bid_refs: List[BidRef]) -> bool:
         return bool(bid_refs) and all(
-            self._is_bid_action_allowed(Feature.DELETE_BID, bid_ref)
+            not self._is_trashing_active_locked_bid(bid_ref)
+            and self._is_bid_action_allowed(Feature.DELETE_BID, bid_ref)
             for bid_ref in bid_refs
         )
 
     def can_edit_bid_structure(self, bid_refs: List[BidRef]) -> bool:
         return bool(bid_refs) and all(
-            not self._feature_blocked(
+            not self._is_active_locked_bid(bid_ref)
+            and not self._feature_blocked(
                 Feature.EDIT_PROJECT_TREE_STRUCTURE,
                 require_current_selection=False,
                 resource=ResourceRef(
@@ -522,6 +556,8 @@ class UIAccessManager:
 
     def can_delete_projects(self, database_id: str, project_uids: List[str]) -> bool:
         if not database_id or not project_uids:
+            return False
+        if self._is_active_locked_bid_project(database_id, project_uids):
             return False
         if any(
             self._feature_blocked(
@@ -642,6 +678,10 @@ class UIAccessManager:
         database_key = normalize_path(database_id)
         if not bid_refs or any(
             normalize_path(ref.file_path) != database_key for ref in bid_refs
+        ):
+            return False
+        if feature is Feature.DELETE_BID and any(
+            self._is_active_locked_bid(ref) for ref in bid_refs
         ):
             return False
         if any(
@@ -819,7 +859,8 @@ class UIAccessManager:
             or not context.database_id
             or context.bid_ref is None
             or not context.page_uid
-            or context.database_id != str(context.bid_ref.file_path or "")
+            or normalize_path(context.database_id)
+            != normalize_path(str(context.bid_ref.file_path or ""))
         ):
             return False
         current_bid_ref = (

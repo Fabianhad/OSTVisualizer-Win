@@ -18,9 +18,12 @@ from ...domain.entities.takeoff import Takeoff
 from ..interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ..interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ..utils.page_info_builder import build_page_info as build_page_info_util
-from .plan_view_z_order import PAGE_CANVAS_Z, TAKEOFF_BODY_Z, TAKEOFF_LABEL_Z
-
-_TAKEOFF_DRAW_ORDER_STEP = 0.0000001
+from .plan_view_z_order import (
+    PAGE_CANVAS_Z,
+    TAKEOFF_BODY_Z,
+    TAKEOFF_LABEL_Z,
+    takeoff_z_value,
+)
 
 
 def _numeric_takeoff_uid(uid: str) -> int:
@@ -41,10 +44,6 @@ def _takeoffs_in_draw_order(takeoffs: List[Takeoff]) -> List[Takeoff]:
         return (0, _numeric_takeoff_uid(uid), index)
 
     return [takeoff for _index, takeoff in sorted(indexed_takeoffs, key=sort_key)]
-
-
-def _takeoff_z_value(base_z: float, draw_index: int) -> float:
-    return base_z + (draw_index * _TAKEOFF_DRAW_ORDER_STEP)
 
 
 class SceneBuilder:
@@ -167,9 +166,9 @@ class SceneBuilder:
             for item in items_to_add:
                 draw_index = uid_to_draw_index[uid_key]
                 if item.data(2) == "condition_label":
-                    item.setZValue(_takeoff_z_value(TAKEOFF_LABEL_Z, draw_index))
+                    item.setZValue(takeoff_z_value(TAKEOFF_LABEL_Z, draw_index))
                 else:
-                    item.setZValue(_takeoff_z_value(TAKEOFF_BODY_Z, draw_index))
+                    item.setZValue(takeoff_z_value(TAKEOFF_BODY_Z, draw_index))
                 scene.addItem(item)
                 takeoff_items.append(item)
             uid_to_items[uid_key] = items_to_add
@@ -187,7 +186,7 @@ class SceneBuilder:
                     if item.data(2) == "condition_label"
                     else TAKEOFF_BODY_Z
                 )
-                item.setZValue(_takeoff_z_value(base_z, draw_index))
+                item.setZValue(takeoff_z_value(base_z, draw_index))
 
     def add_annotation_overlays(
         self,

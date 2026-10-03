@@ -110,8 +110,12 @@ class CompactMenuContinuationTests(unittest.TestCase):
         )
         clicks = 0
         while menu.actions()[0].text() == PREVIOUS:
+            left_page = [a.text() for a in menu.actions()]
+            first_left_item = int(left_page[1])
             self._click_overflow(menu, 0)
             clicks += 1
+            # Going back must not skip the item just before the page left.
+            self.assertIn(str(first_left_item - 1), [a.text() for a in menu.actions()])
             self.assertLessEqual(len(menu.actions()), 22)
             self.assertLess(clicks, 5)
         self.assertEqual([a.text() for a in menu.actions()], numbers(0, 21) + [NEXT])

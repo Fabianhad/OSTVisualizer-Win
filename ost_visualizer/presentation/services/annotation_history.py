@@ -1,8 +1,22 @@
 from dataclasses import replace
+from ...domain.entities.annotation import (
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+)
 from ...domain.services.page_scale_transform import (
     rescale_annotation_position_between_page_scales,
 )
 from .undo_redo_service import AnnotationHistoryTarget
+
+HOTLINK_VIEW_UNAVAILABLE_MESSAGE = (
+    "A Hot Link cannot be restored because the Named View it points to is no "
+    "longer the same Named View: it was deleted without being restored, or "
+    "another Named View took its place."
+)
+
+
+class AnnotationHistoryDependencyError(ValueError):
+    """A retained history dependency cannot be proven to be the same object."""
 
 
 def _annotation_page_scale(data, page_uid):
@@ -55,9 +69,84 @@ def resolve_annotation_updates(data, updates, targets):
     ]
 
 
+def capture_hotlink_view_dependencies(data, bid_ref, items, batch_named_view_uids=()):
+    batch = {str(uid) for uid in batch_named_view_uids}
+    named_views = None
+    shared = {}
+    dependencies = []
+    for item in items:
+        target_uid = (
+            item.properties.get("BidPageViewUID")
+            if item.annotation_type == ANNOTATION_TYPE_HOTLINK
+            else None
+        )
+        key = str(target_uid)
+        if target_uid in (None, "", 0, "0") or key in batch:
+            dependencies.append(None)
+            continue
+        if key not in shared:
+            if named_views is None:
+                named_views = {
+                    str(annotation.uid): annotation
+                    for annotation in data.get_all_annotations()
+                    if annotation.annotation_type == ANNOTATION_TYPE_NAMED_VIEW
+                }
+            view = named_views.get(key)
+            shared[key] = (
+                None
+                if view is None
+                else AnnotationHistoryTarget(
+                    bid_ref, str(view.page_uid), ANNOTATION_TYPE_NAMED_VIEW, key
+                )
+            )
+        dependencies.append(shared[key])
+    return tuple(dependencies)
+
+
+def retained_hotlink_view_targets(dependencies):
+    return tuple(
+        {id(target): target for target in dependencies if target is not None}.values()
+    )
+
+
+def resolve_hotlink_view_targets(data, items, dependencies):
+    resolved = list(items)
+    named_views = None
+    for index, dependency in enumerate(dependencies[: len(resolved)]):
+        if dependency is None:
+            continue
+        if named_views is None:
+            named_views = {
+                (str(annotation.uid), str(annotation.page_uid))
+                for annotation in data.get_all_annotations()
+                if annotation.annotation_type == ANNOTATION_TYPE_NAMED_VIEW
+            }
+        if (
+            not dependency.available
+            or data.get_current_bid_ref() != dependency.bid_ref
+            or (dependency.uid, dependency.page_uid) not in named_views
+        ):
+            raise AnnotationHistoryDependencyError(HOTLINK_VIEW_UNAVAILABLE_MESSAGE)
+        item = resolved[index]
+        resolved[index] = replace(
+            item, properties={**item.properties, "BidPageViewUID": dependency.uid}
+        )
+    return resolved
+
+
 class AnnotationHistoryBinding:
-    def __init__(self, data, undo, bid_ref, targets, *, captured_scales=None):
+    def __init__(
+        self,
+        data,
+        undo,
+        bid_ref,
+        targets,
+        *,
+        captured_scales=None,
+        view_dependencies=(),
+    ):
         self._data = data
+        self.view_dependencies = tuple(view_dependencies)
         self._undo = undo
         self.bid_ref = bid_ref
         self.targets = targets
@@ -98,16 +187,26 @@ class AnnotationHistoryBinding:
             self._page_scale(target.page_uid),
         )
 
+    def history_targets(self):
+        return (
+            *self.targets.values(),
+            *retained_hotlink_view_targets(self.view_dependencies),
+        )
+
     def specs(self, specs):
-        return [
-            replace(spec, position=self._position(target, spec.position))
-            for spec, target in zip(specs, self.targets.values())
-        ]
+        return resolve_hotlink_view_targets(
+            self._data,
+            [
+                replace(spec, position=self._position(target, spec.position))
+                for spec, target in zip(specs, self.targets.values())
+            ],
+            self.view_dependencies,
+        )
 
     def saved_annotations(self, annotations, *, restoring=False):
         if not restoring:
             self.keys()
-        return [
+        saved = [
             replace(
                 annotation,
                 uid=annotation.uid if restoring else target.uid,
@@ -115,6 +214,11 @@ class AnnotationHistoryBinding:
             )
             for annotation, target in zip(annotations, self.targets.values())
         ]
+        if restoring:
+            return resolve_hotlink_view_targets(
+                self._data, saved, self.view_dependencies
+            )
+        return saved
 
     def suspend(self):
         self._suspended = self._undo.suspend_deleted_annotations(

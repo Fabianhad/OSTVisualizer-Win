@@ -547,6 +547,10 @@ class _QueryRecordingCursor:
         return self
 
     @staticmethod
+    def fetchone():
+        return None
+
+    @staticmethod
     def fetchall():
         return ()
 
@@ -565,6 +569,7 @@ class _QueryReplayCursor:
         self._owner = owner
         self.description = ()
         self._rows = ()
+        self._position = 0
 
     def __enter__(self):
         return self
@@ -581,10 +586,20 @@ class _QueryReplayCursor:
             raise RuntimeError("The SQL hydration replay query order changed.")
         self.description = description
         self._rows = rows
+        self._position = 0
         return self
 
+    def fetchone(self):
+        if self._position >= len(self._rows):
+            return None
+        row = self._rows[self._position]
+        self._position += 1
+        return row
+
     def fetchall(self):
-        return self._rows
+        remaining = self._rows[self._position :]
+        self._position = len(self._rows)
+        return remaining
 
 
 class _QueryReplayConnection:

@@ -2,9 +2,15 @@ import logging
 import sqlite3
 import unittest
 from copy import deepcopy
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 from ost_visualizer.application.dtos.user_workspace_state_dtos import (
     UserBidWorkspaceState,
+)
+from ost_visualizer.application.services.database_concurrency_token_service import (
+    DatabaseConcurrencyTokenService,
+)
+from ost_visualizer.application.services.sql_workspace_state_service import (
+    SqlWorkspaceStateService,
 )
 from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,
@@ -22,6 +28,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.domain.entities.project_factory import build_bid
+from ost_visualizer.domain.repositories.i_file_parser import IFileParser
 from ost_visualizer.domain.services.file_manager_service import FileManager
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
@@ -79,7 +86,7 @@ class PageFolderOwnershipTests(unittest.TestCase):
             },
             pages_without_folder=[HierarchyPageInfo(uid="3", name="Root")],
         )
-        self.model = OstAggregate(Mock())
+        self.model = OstAggregate(create_autospec(FileManager, instance=True))
         self.model.set_hierarchy(
             HierarchyData(
                 loaded_files=[
@@ -89,6 +96,16 @@ class PageFolderOwnershipTests(unittest.TestCase):
         )
         self.model.current_bid_ref = self.bid_ref
         self.model.current_bid = build_bid(self.info)
+
+    def load_use_case(self):
+        # Spec'd collaborators: calls outside each real interface raise.
+        return LoadBidUseCase(
+            self.model,
+            create_autospec(ProjectDataService, instance=True),
+            create_autospec(FileManager, instance=True),
+            create_autospec(DatabaseConcurrencyTokenService, instance=True),
+            create_autospec(SqlWorkspaceStateService, instance=True),
+        )
 
     def read(self):
         reader = BidDataReaderMixin()
@@ -114,11 +131,29 @@ class PageFolderOwnershipTests(unittest.TestCase):
     def test_remote_hydration_preserves_nested_ownership_and_exact_pages(self):
         old = self.model.current_bid.folders["10"].subfolders["11"].pages[0]
         service = ProjectDataService(self.model)
+        data = self.read()
+        data.page_area_selections = {"2": "area-9"}
+        self.assertEqual(self.model.page_area_selections, {})
         self.assertTrue(
-            service.replace_remote_bid_families(self.bid_ref, self.read(), {"pages"})
+            service.replace_remote_bid_families(self.bid_ref, data, {"pages"})
         )
         self.assert_nested()
         self.assertIsNot(self.model.get_page("1"), old)
+        self.assertEqual(self.model.page_area_selections, {"2": "area-9"})
+
+    def test_page_graph_orders_by_sequence_not_by_hydration_dict_order(self):
+        data = self.read()
+        data.pages = dict(reversed(list(data.pages.items())))
+        self.assertEqual(list(data.pages), ["3", "1", "2", "4"])
+        service = ProjectDataService(self.model)
+        self.assertTrue(
+            service.replace_remote_bid_families(self.bid_ref, data, {"pages"})
+        )
+        self.assert_nested()
+        # Sequences 5 / 10 / 20 / 30: Parent, Nested first, Nested second, Root.
+        bid = self.model.current_bid
+        self.assertEqual([page.uid for page in bid.folders["10"].pages], ["4"])
+        self.assertEqual([page.uid for page in bid.pages_without_folder], ["3"])
 
     def test_mdb_and_sql_prepared_loads_preserve_ownership(self):
         for workspace in (None, UserBidWorkspaceState()):
@@ -127,22 +162,27 @@ class PageFolderOwnershipTests(unittest.TestCase):
                     data = self.read()
                     if not prebuilt:
                         data.pages = {}
-                    use_case = LoadBidUseCase(
-                        self.model, Mock(), Mock(), Mock(), Mock()
-                    )
+                    stale_bid = self.model.current_bid
+                    use_case = self.load_use_case()
                     self.assertTrue(
                         use_case.apply_prepared(
                             self.bid_ref, PreparedBidLoad(data, workspace)
                         )
                     )
+                    # The load rebuilds the Bid graph from the hierarchy rather
+                    # than keeping the pre-load object.
+                    self.assertIsNot(self.model.current_bid, stale_bid)
+                    self.assertEqual(self.model.current_bid_ref, self.bid_ref)
                     self.assert_nested()
 
     def test_load_does_not_overwrite_new_folder_assignment_with_cached_hierarchy(self):
         self.connection.execute(
             "UPDATE BidPages SET BidPageFolderUID = 10 WHERE UID = 1"
         )
-        use_case = LoadBidUseCase(self.model, Mock(), Mock(), Mock(), Mock())
-        use_case.apply_prepared(self.bid_ref, PreparedBidLoad(self.read(), None))
+        use_case = self.load_use_case()
+        self.assertTrue(
+            use_case.apply_prepared(self.bid_ref, PreparedBidLoad(self.read(), None))
+        )
         self.assertEqual(self.model.get_page("1").folder_uid, "10")
         self.assertIn(
             self.model.get_page("1"), self.model.current_bid.folders["10"].pages
@@ -194,7 +234,7 @@ class PageFolderOwnershipTests(unittest.TestCase):
         )
 
     def hierarchy_service(self):
-        repository = FileProjectRepository(Mock())
+        repository = FileProjectRepository(create_autospec(IFileParser, instance=True))
         self.model.file_manager = FileManager(repository)
         self.model.file_manager.register_loaded_hierarchy(
             HierarchyFileEntry(file_path="database", orphan_bids=[self.info]), {}

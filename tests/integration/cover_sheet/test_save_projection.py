@@ -247,6 +247,22 @@ class SaveProjectionCoverSheetPathTests(unittest.TestCase):
         self.assertEqual([call[0] for call in calls].count("save"), 1)
         self.assertEqual([call[0] for call in calls].count("flush"), 1)
         self.assertEqual([call[0] for call in calls].count("reload"), 1)
+        # Pending visual state is flushed before the write, the write receives the
+        # full 225-page delete set for the selected bid, and the reload follows it.
+        self.assertEqual(
+            [call[0] for call in calls], ["flush", "save", "reload", "publish"]
+        )
+        self.assertEqual(calls[0], ("flush", "bid.mdb"))
+        self.assertEqual(
+            calls[1],
+            (
+                "save",
+                "bid.mdb",
+                "7",
+                {"deleted_page_uids": [str(index) for index in range(1, 226)]},
+            ),
+        )
+        self.assertEqual(calls[2], ("reload", "bid.mdb"))
         publish_calls = [call for call in calls if call[0] == "publish"]
         self.assertEqual(len(publish_calls), 1)
         self.assertIs(publish_calls[0][1], AppEvents.DATABASE_REFRESHED)

@@ -54,8 +54,15 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         return annotation, text_item
 
-    def _assert_multi_selection_border_matches_text_item(self, text_item, border):
+    def _assert_multi_selection_border_matches_text_item(
+        self, text_item, border, expected_rotation
+    ):
+        # Positive control: the label really carries the dimension's angle and a
+        # non-empty extent, so the border match below cannot hold trivially.
+        self.assertAlmostEqual(text_item.rotation(), expected_rotation)
         text_rect = text_item.mapToScene(text_item.boundingRect()).boundingRect()
+        self.assertGreater(text_rect.width(), 0.0)
+        self.assertGreater(text_rect.height(), 0.0)
         border_rect = border.mapToScene(border.path()).boundingRect()
         self.assertAlmostEqual(border_rect.x(), text_rect.x(), places=4)
         self.assertAlmostEqual(border_rect.y(), text_rect.y(), places=4)
@@ -73,7 +80,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(
             borders[0].transformOriginPoint(), text_item.transformOriginPoint()
         )
-        self._assert_multi_selection_border_matches_text_item(text_item, borders[0])
+        self._assert_multi_selection_border_matches_text_item(
+            text_item, borders[0], 45.0
+        )
 
     def test_horizontal_dimension_multi_selection_highlight_matches_text_bounds(self):
         annotation, text_item = self._dimension_text_item_for_position(
@@ -86,7 +95,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(
             borders[0].transformOriginPoint(), text_item.transformOriginPoint()
         )
-        self._assert_multi_selection_border_matches_text_item(text_item, borders[0])
+        self._assert_multi_selection_border_matches_text_item(
+            text_item, borders[0], 0.0
+        )
 
     def test_vertical_dimension_multi_selection_highlight_matches_text_bounds(self):
         annotation, text_item = self._dimension_text_item_for_position(
@@ -99,4 +110,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(
             borders[0].transformOriginPoint(), text_item.transformOriginPoint()
         )
-        self._assert_multi_selection_border_matches_text_item(text_item, borders[0])
+        self._assert_multi_selection_border_matches_text_item(
+            text_item, borders[0], 90.0
+        )

@@ -28,6 +28,9 @@ class PageScaleGeometryStorageTests(unittest.TestCase):
         scaled = rescale_legend_position(payload, 2.0)
         root = fromstring(scaled)
         self.assertEqual(root.attrib, {"dX": "2", "dY": "4", "Custom": "7"})
+        self.assertEqual(
+            root.find("Legend").attrib, {"dX": "6", "dY": "8", "FontSize": "12"}
+        )
         self.assertEqual(root.find("Extension").attrib["dX"], "9")
         self.assertIn(b"<!--keep-->", scaled)
         ops = _scale_position_support__PageOps()
@@ -39,6 +42,23 @@ class PageScaleGeometryStorageTests(unittest.TestCase):
         )
         self.assertEqual(cursor.updates, [])
         self.assertEqual(ops.logger.warnings, [])
+        # Positive control: the same page-rescale path does write a populated row.
+        populated = _scale_position_support__Cursor(
+            "BidLegends",
+            [
+                SimpleNamespace(
+                    UID=7,
+                    Position=b'<Legends dX="1" dY="2"><Legend dX="3" dY="4"/></Legends>',
+                )
+            ],
+        )
+        ops._rescale_page_positions(
+            populated, _scale_position_support__Schema("BidLegends"), 3, 2.0
+        )
+        self.assertEqual(
+            populated.updates,
+            [(b'<Legends dX="2" dY="4"><Legend dX="6" dY="8" /></Legends>', 7)],
+        )
 
     def test_repeated_round_trips_obey_storage_precision(self):
         from xml.etree.ElementTree import fromstring
@@ -51,6 +71,15 @@ class PageScaleGeometryStorageTests(unittest.TestCase):
         )
 
         numeric = b"1234.567;2345.678\n"
+        # Hand-computed single step: 1234.567 * 0.3 = 370.3701 and
+        # 2345.678 * 0.3 = 703.7034, stored to three decimals.
+        single = _scale_position_support__Cursor(
+            "BidTakeoffs", [SimpleNamespace(UID=7, Position=numeric)]
+        )
+        _scale_position_support__PageOps()._rescale_page_positions(
+            single, _scale_position_support__Schema("BidTakeoffs"), 3, 0.3
+        )
+        self.assertEqual(single.updates, [(b"370.37;703.703\n", 7)])
         legend = b'<Legends dX="1234.567" dY="2345.678"/>'
         overlay = "1234.567,2345.678,100.123456,200.123456"
         for _ in range(20):

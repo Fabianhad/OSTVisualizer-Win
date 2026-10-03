@@ -24,6 +24,7 @@ class FormatCustomScaleTests(unittest.TestCase):
 
     def test_only_the_twelve_inch_ratio_uses_foot_notation(self):
         self.assertEqual(format_custom_scale(2, 12), '2" = 1\' 0"')
+        self.assertEqual(format_custom_scale(1, 12.0000001), "1 : 12.0000001")
         self.assertEqual(format_custom_scale(1, 12.001), "1 : 12.001")
         self.assertEqual(format_custom_scale(1, 11.999), "1 : 11.999")
         self.assertEqual(format_custom_scale(1, 24), "1 : 24")
@@ -32,3 +33,10 @@ class FormatCustomScaleTests(unittest.TestCase):
         self.assertEqual(format_custom_scale(0.1 + 0.2, 1), "0.3 : 1")
         self.assertEqual(format_custom_scale(1, 1.0), "1 : 1")
         self.assertEqual(format_custom_scale(1234567.5, 2), "1234567.5 : 2")
+        # Sixteen-plus digit inputs are cut to exactly fifteen significant digits.
+        self.assertEqual(
+            format_custom_scale(0.123456789012345678, 1), "0.123456789012346 : 1"
+        )
+        self.assertEqual(
+            format_custom_scale(1, 1234567.12345678912), "1 : 1234567.12345679"
+        )

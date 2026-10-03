@@ -1,3 +1,8 @@
+from tests.helpers.sql.strict_sql_fakes import (
+    StrictLeaseProxy,
+    strict_cursor,
+    strict_manager,
+)
 import contextlib
 import os
 import unittest
@@ -104,7 +109,9 @@ class PermissionsSqlCleanupTests(unittest.TestCase):
             @contextlib.contextmanager
             def connection(self, _request, *, autocommit=False):
                 self.autocommit = autocommit
-                yield SimpleNamespace(cursor=lambda: self._cursor)
+                yield StrictLeaseProxy(
+                    SimpleNamespace(cursor=lambda: self._cursor), autocommit=autocommit
+                )
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -277,7 +284,9 @@ class PermissionsSqlCleanupTests(unittest.TestCase):
             def connection(self, request, *, autocommit=False):
                 self.requests.append(request)
                 self.autocommit_values.append(autocommit)
-                yield SimpleNamespace(cursor=_Cursor)
+                yield StrictLeaseProxy(
+                    SimpleNamespace(cursor=_Cursor), autocommit=autocommit
+                )
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -351,3 +360,104 @@ class PermissionsSqlCleanupTests(unittest.TestCase):
             connection_manager=_UnavailableManager(),
         )
         self.assertFalse(probe.can_edit(descriptor.database_id))
+
+
+class PermissionsProbeContractTests(unittest.TestCase):
+    """Survivors of the second-pass mutation sweep over permissions.py."""
+
+    def _registry(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        return registry, descriptor
+
+    def test_probe_owns_a_real_connection_manager_unless_one_is_injected(self):
+        from ost_visualizer.infrastructure.sql.connection_manager import (
+            SqlConnectionManager,
+        )
+
+        registry, _descriptor = self._registry()
+        probe = SqlDatabasePermissionProbe(
+            registry, _cleanup_support__CredentialStore()
+        )
+        self.assertIsInstance(probe._connections, SqlConnectionManager)
+        injected = SqlConnectionManager(drivers=["ODBC Driver 18 for SQL Server"])
+        probe = SqlDatabasePermissionProbe(
+            registry, _cleanup_support__CredentialStore(), connection_manager=injected
+        )
+        self.assertIs(probe._connections, injected)
+
+    def test_can_edit_answers_with_real_booleans_for_grant_and_refusal(self):
+        class _Manager:
+            def __init__(self, error):
+                self.error = error
+
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                if self.error is not None:
+                    raise self.error
+                snapshot = _CanonicalCursor()
+                yield StrictLeaseProxy(
+                    SimpleNamespace(cursor=lambda: snapshot), autocommit=autocommit
+                )
+
+        registry, descriptor = self._registry()
+        granted = SqlDatabasePermissionProbe(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_Manager(None),
+        )
+        self.assertIs(granted.can_edit(descriptor.database_id), True)
+        refused = SqlDatabasePermissionProbe(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_Manager(
+                SqlInfrastructureError(
+                    SqlErrorDetails(SqlErrorCode.CONNECTION_FAILED, "unreachable")
+                )
+            ),
+        )
+        self.assertIs(refused.can_edit(descriptor.database_id), False)
+
+    def test_only_infrastructure_failures_are_read_only_other_errors_propagate(self):
+        class _Manager:
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                raise RuntimeError("programming error must not be hidden")
+                yield
+
+        registry, descriptor = self._registry()
+        probe = SqlDatabasePermissionProbe(
+            registry, _cleanup_support__CredentialStore(), connection_manager=_Manager()
+        )
+        with self.assertRaisesRegex(RuntimeError, "must not be hidden"):
+            probe.can_edit(descriptor.database_id)
+
+
+class _CanonicalCursor:
+    def execute(self, _sql, *_params):
+        return self
+
+    @staticmethod
+    def fetchone():
+        return (
+            1, 1, 1, 1, 1,
+            SQL_SCHEMA_V1.version,
+            SQL_SCHEMA_V1.checksum,
+            "READ_WRITE",
+            "ost_visualizer_only",
+            "disabled",
+            None,
+            1, 1, 1, 1,
+            len(SQL_CLIENT_DIRECT_WRITE_TABLES), 0, 0,
+            1, 1, 0, 0, 1,
+        )  # fmt: skip
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None

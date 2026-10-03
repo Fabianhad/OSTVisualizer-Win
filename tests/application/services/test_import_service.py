@@ -260,3 +260,40 @@ class ImportServiceRefreshTests(unittest.TestCase):
         self.assertEqual(self.ost.calls, [])
         self.assertEqual(self.reloads, [])
         self.assertEqual(self.events.events, [])
+
+
+class ImportServiceQueuedTargetTests(unittest.TestCase):
+    """Second pass: every (source kind, target project) combination of the queued SQL
+    import reaches the importer of its own kind with the target project (an empty target
+    is None for the importer, an empty string in the payload), the other importer is
+    never called, and the target database is forwarded unchanged. Fakes: the recording
+    importers, event bus and write service of this module (no SQL Server)."""
+
+    def test_each_kind_and_target_project_reaches_only_its_own_importer(self):
+        for kind in ("ost", "osp"):
+            for project in ("project-1", None, ""):
+                with self.subTest(
+                    kind=kind, project=project
+                ), tempfile.TemporaryDirectory() as directory:
+                    ost, osp = _Importer(), _Importer()
+                    writes = _Writes()
+                    service = ImportService(
+                        ost, osp, writes, lambda _db: True, _Events()
+                    )
+                    source = Path(directory) / ("source." + kind)
+                    source.write_bytes(b"content")
+                    service.queue_project_import(
+                        str(source), kind, "sql-db", project, lambda _result: None
+                    )
+                    database, target, payload, work, _callback = writes.requests[-1]
+                    self.assertEqual((database, target), ("sql-db", project))
+                    self.assertEqual(payload.target_project_uid, project or "")
+                    self.assertEqual(payload.source_kind, kind)
+                    recorder = object()
+                    work(recorder)
+                    used, unused = (ost, osp) if kind == "ost" else (osp, ost)
+                    self.assertEqual(
+                        used.calls,
+                        [(kind, str(source), "sql-db", project or None, recorder)],
+                    )
+                    self.assertEqual(unused.calls, [])

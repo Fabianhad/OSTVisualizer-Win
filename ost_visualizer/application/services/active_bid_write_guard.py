@@ -1,4 +1,3 @@
-import logging
 from typing import Iterable, Optional
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
@@ -6,13 +5,8 @@ from ...domain.services.project_data_service import ProjectDataService
 
 
 class ActiveBidWriteGuard:
-    def __init__(
-        self,
-        project_data: ProjectDataService,
-        logger: Optional[logging.Logger] = None,
-    ) -> None:
+    def __init__(self, project_data: ProjectDataService) -> None:
         self._project_data = project_data
-        self.logger = logger or logging.getLogger(__name__)
 
     def active_locked_bid_ref_for(self, file_path: str) -> Optional[BidRef]:
         if not self._project_data.is_current_bid_locked():

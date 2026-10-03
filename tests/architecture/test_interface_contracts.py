@@ -24,6 +24,9 @@ from ost_visualizer.infrastructure.providers import (
     InfrastructureServiceProvider,
     RepositoryProvider,
 )
+from ost_visualizer.infrastructure.database.schema_inspector_contract import (
+    IDatabaseSchemaInspector,
+)
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
@@ -196,8 +199,11 @@ class ProviderInterfaceContractTests(unittest.TestCase):
         )
 
     def test_infrastructure_provider_public_methods_match_interface(self):
+        interface_methods = _public_methods(IInfrastructureServiceProvider)
+        # Positive control: the interface exposes ~27 methods (counted by hand).
+        self.assertGreaterEqual(len(interface_methods), 20)
         self.assertEqual(
-            _public_methods(IInfrastructureServiceProvider),
+            interface_methods,
             _public_methods(InfrastructureServiceProvider),
         )
 
@@ -215,7 +221,11 @@ class ProviderInterfaceContractTests(unittest.TestCase):
             self.assertEqual(interface_hints, implementation_hints, name)
 
     def test_database_writer_router_accepts_every_protocol_call_shape(self):
-        for name in _public_methods(IMdbWriter):
+        writer_methods = _public_methods(IMdbWriter)
+        # Positive control: IMdbWriter declares ~63 public methods; an empty
+        # collection would make the loop below vacuous.
+        self.assertGreaterEqual(len(writer_methods), 50)
+        for name in writer_methods:
             with self.subTest(name=name):
                 self.assertEqual(
                     _call_shape(getattr(IMdbWriter, name)),
@@ -223,8 +233,10 @@ class ProviderInterfaceContractTests(unittest.TestCase):
                 )
 
     def test_repository_provider_public_methods_match_interface(self):
+        interface_methods = _public_methods(IRepositoryProvider)
+        self.assertIn("get_license_signature_verifier", interface_methods)
         self.assertEqual(
-            _public_methods(IRepositoryProvider),
+            interface_methods,
             _public_methods(RepositoryProvider),
         )
         self.assertEqual(
@@ -247,9 +259,14 @@ class CollaborationInterfaceContractTests(unittest.TestCase):
             (ISqlDatabaseCreator, SqlDatabaseCreator),
             (IThreadCallbackBridge, QtCallbackBridge),
         )
+        compared = 0
         for interface, implementation in pairs:
             implementation_methods = _public_methods(implementation)
-            for name in _public_methods(interface):
+            interface_methods = _public_methods(interface)
+            # Positive control: every protocol declares at least one method.
+            self.assertTrue(interface_methods, interface.__name__)
+            for name in interface_methods:
+                compared += 1
                 self.assertIn(name, implementation_methods)
                 self.assertEqual(
                     _call_shape(getattr(interface, name)),
@@ -261,6 +278,8 @@ class CollaborationInterfaceContractTests(unittest.TestCase):
                     _hint_shapes(getattr(implementation, name)),
                     f"{implementation.__name__}.{name} annotations",
                 )
+        # The eight protocols declare 30 public methods between them.
+        self.assertGreaterEqual(compared, 25)
 
     def test_phase4_implementation_contracts_are_fully_annotated(self):
         members = (
@@ -321,13 +340,14 @@ class InterfaceShapeContractTests(unittest.TestCase):
                 .parameters["initial_is_maximized"]
                 .default
             )
+            self.assertIsNot(interface_default, inspect.Parameter.empty, name)
             self.assertEqual(interface_default, implementation_default, name)
 
     def test_shutdown_contract_has_no_fallback_implementation(self):
-        self.assertNotIn(
-            "NotImplementedError",
-            inspect.getsource(IShutdownAware.shutdown),
-        )
+        source = inspect.getsource(IShutdownAware.shutdown)
+        # Positive control: the inspected source is the contract method.
+        self.assertIn("def shutdown(", source)
+        self.assertNotIn("NotImplementedError", source)
 
 
 class PageInterfaceContractTests(unittest.TestCase):
@@ -352,38 +372,41 @@ class PageInterfaceContractTests(unittest.TestCase):
             (IPageRenderingService.shutdown, PDFRenderingService.shutdown),
             (IThreadCallbackBridge.request_callback, QtCallbackBridge.request_callback),
         ):
-            self.assertEqual(
-                get_type_hints(interface_member)["return"],
-                get_type_hints(implementation_member)["return"],
+            interface_return = get_type_hints(interface_member)["return"]
+            self.assertIs(interface_return, type(None))
+            self.assertIs(
+                get_type_hints(implementation_member)["return"], interface_return
             )
 
 
 class InterfaceContractsSqlCleanupTests(unittest.TestCase):
     def test_sql_and_access_schemas_implement_every_shared_write_contract(self):
-        implementations = (
-            (
-                CurrentSqlWriteSchema.table_exists,
-                CurrentSqlWriteSchema.column_exists,
-                CurrentSqlWriteSchema.get_columns,
-                CurrentSqlWriteSchema.log_optional_write_skip,
-                CurrentSqlWriteSchema.optional_column,
-                CurrentSqlWriteSchema.optional_table_missing,
-                CurrentSqlWriteSchema.order_by_existing,
-                CurrentSqlWriteSchema.require_column,
-                CurrentSqlWriteSchema.require_table,
-            ),
-            (
-                MdbSchemaInspector.table_exists,
-                MdbSchemaInspector.column_exists,
-                MdbSchemaInspector.get_columns,
-                MdbSchemaInspector.log_optional_write_skip,
-                MdbSchemaInspector.optional_column,
-                MdbSchemaInspector.optional_table_missing,
-                MdbSchemaInspector.order_by_existing,
-                MdbSchemaInspector.require_column,
-                MdbSchemaInspector.require_table,
-            ),
+        contract_methods = _public_methods(IDatabaseSchemaInspector)
+        # Positive control: the shared contract declares these nine methods.
+        self.assertEqual(
+            contract_methods,
+            {
+                "table_exists",
+                "column_exists",
+                "get_columns",
+                "log_optional_write_skip",
+                "optional_column",
+                "optional_table_missing",
+                "order_by_existing",
+                "require_column",
+                "require_table",
+            },
         )
-        self.assertTrue(
-            all(callable(method) for methods in implementations for method in methods)
-        )
+        for implementation in (CurrentSqlWriteSchema, MdbSchemaInspector):
+            for name in sorted(contract_methods):
+                with self.subTest(implementation=implementation.__name__, name=name):
+                    member = getattr(implementation, name)
+                    self.assertTrue(callable(member))
+                    self.assertEqual(
+                        _call_shape(IDatabaseSchemaInspector.__dict__[name]),
+                        _call_shape(member),
+                    )
+                    self.assertEqual(
+                        _hint_shapes(IDatabaseSchemaInspector.__dict__[name]),
+                        _hint_shapes(member),
+                    )

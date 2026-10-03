@@ -106,6 +106,7 @@ class DatabaseMutationWriteService(BaseWriteService):
         block_bid_active_editors: bool = False,
         publish_conflict_event: bool = True,
         captured_versions: tuple[ExpectedResourceVersion, ...] = (),
+        bid_lock_exempt: bool = False,
     ) -> DatabaseMutationResult:
         operation_id = operation_id or str(uuid.uuid4())
         request_hash = request_hash or canonical_mutation_request_hash(
@@ -160,6 +161,7 @@ class DatabaseMutationWriteService(BaseWriteService):
                 ),
                 block_bid_child_locks=block_bid_child_locks,
                 block_bid_active_editors=block_bid_active_editors,
+                bid_lock_exempt=bid_lock_exempt,
             )
             try:
                 result = self._mutation_executor.execute(request, operation)

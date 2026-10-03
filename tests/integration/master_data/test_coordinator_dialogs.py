@@ -90,9 +90,11 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
         coordinator._icon_provider = _master_data_support_FakeIconProvider()
         coordinator.main_window = None
         coordinator._workspace_state_model = make_workspace_state_model()
+        interacted = []
 
         def interact(dialog, *args):
             nonlocal fail_query
+            interacted.append(dialog)
             try:
                 item = dialog.tree.topLevelItem(0)
                 dialog.tree.setCurrentItem(item)
@@ -126,12 +128,18 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                         "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
                     ) as warning,
                     patch.object(QtWidgets.QMessageBox, "question") as question,
+                    patch(
+                        "ost_visualizer.presentation.dialogs.areas_dialog."
+                        "confirm_multi_delete",
+                        return_value=None,
+                    ) as confirm,
                 ):
                     dialog._on_delete()
                 warning.assert_called_once_with(
                     dialog, "Delete Bid Area", "Failed to validate area usage."
                 )
                 self.assertEqual(question.call_count, 0)
+                confirm.assert_not_called()
                 self.assertEqual(len(scans), 3)
                 self.assertEqual(dialog._deleted_uids, [])
                 self.assertIs(dialog.tree.currentItem(), item)
@@ -150,9 +158,12 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
 
         coordinator._exec_with_collaboration_lease = interact
         coordinator.open_areas_dialog()
+        # The assertions live inside the dialog callback, so prove it ran.
+        self.assertEqual(len(interacted), 1)
 
-    def test_open_areas_dialog_refreshes_once_after_saved_changes(self):
+    def _open_areas_dialog_with_capturing_dialog(self, *, saved, reload_ok):
         reload_calls = []
+        warnings = []
         bid_ref = BidRef("db.mdb", "bid-1")
 
         class Access:
@@ -186,7 +197,7 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
 
             def reload_and_notify(self, file_path):
                 reload_calls.append(file_path)
-                return True
+                return reload_ok
 
         class CapturingAreasDialog:
             def __init__(
@@ -210,7 +221,7 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                 pass
 
             def has_saved_changes(self):
-                return True
+                return saved
 
             def deleteLater(self):
                 pass
@@ -255,20 +266,56 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
         coordinator.main_window = None
         coordinator._workspace_state_model = make_workspace_state_model()
         coordinator.event_bus = EventBus()
-        from ost_visualizer.presentation.coordinators import ui_event_coordinator
-
-        old_dialog = ui_event_coordinator.BidAreasDialog
-        old_exec = ui_event_coordinator.exec_with_ost_blocking
-        ui_event_coordinator.BidAreasDialog = CapturingAreasDialog
-        ui_event_coordinator.exec_with_ost_blocking = (
-            lambda _dialog, _event_bus: QtWidgets.QDialog.DialogCode.Rejected
-        )
-        try:
+        with (
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "BidAreasDialog",
+                CapturingAreasDialog,
+            ),
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "exec_with_ost_blocking",
+                lambda _dialog, _event_bus: QtWidgets.QDialog.DialogCode.Rejected,
+            ),
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "show_warning",
+                lambda _parent, title, message: warnings.append((title, message)),
+            ),
+        ):
             UIEventCoordinator.open_areas_dialog(coordinator)
-        finally:
-            ui_event_coordinator.BidAreasDialog = old_dialog
-            ui_event_coordinator.exec_with_ost_blocking = old_exec
+        return reload_calls, warnings
+
+    def test_open_areas_dialog_refreshes_once_after_saved_changes(self):
+        reload_calls, warnings = self._open_areas_dialog_with_capturing_dialog(
+            saved=True, reload_ok=True
+        )
         self.assertEqual(reload_calls, ["db.mdb"])
+        self.assertEqual(warnings, [])
+
+    def test_open_areas_dialog_does_not_refresh_without_saved_changes(self):
+        # Negative control for the refresh test: same flow, nothing was saved.
+        reload_calls, warnings = self._open_areas_dialog_with_capturing_dialog(
+            saved=False, reload_ok=True
+        )
+        self.assertEqual(reload_calls, [])
+        self.assertEqual(warnings, [])
+
+    def test_open_areas_dialog_warns_when_refresh_after_save_fails(self):
+        reload_calls, warnings = self._open_areas_dialog_with_capturing_dialog(
+            saved=True, reload_ok=False
+        )
+        self.assertEqual(reload_calls, ["db.mdb"])
+        self.assertEqual(
+            warnings,
+            [
+                (
+                    "Refresh Error",
+                    "The bid area changes were saved, but the area list could not "
+                    "be refreshed. Reopen the database to see the latest bid areas.",
+                )
+            ],
+        )
 
     def test_sql_master_data_save_transfers_and_reacquires_modal_lease(self):
         database_id = "sql-database"
@@ -366,6 +413,17 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                 lambda success, mapping: completions.append((success, mapping)),
             )
             self.assertTrue(started)
+            # The lease now belongs to the queued mutation: a second save while
+            # it is in flight is refused without touching the queue.
+            self.assertFalse(
+                dialog._save_async_fn(
+                    {"new": [], "updated": [], "deleted_uids": []},
+                    lambda success, mapping: completions.append(
+                        ("in-flight", success, mapping)
+                    ),
+                )
+            )
+            self.assertEqual(len(queued_handles), 1)
             operation_id = str(uuid.uuid4())
             queued_callbacks[0](
                 QueuedMutationResult(
@@ -375,7 +433,9 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                     outcome_status=(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED),
                 )
             )
-            self.assertEqual(completions, [])
+            # A projection failure is not completion: no result is reported and
+            # the lease is not yet reacquired.
+            self.assertEqual(completions, [("in-flight", False, None)])
             self.assertEqual(len(lease_requests), 1)
             queued_callbacks[0](
                 QueuedMutationResult(
@@ -420,7 +480,10 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
         self.assertEqual(len(lease_requests), 2)
         self.assertEqual(queued_handles, [lease_requests[0]])
         self.assertEqual(released_handles, [lease_requests[1]])
-        self.assertEqual(completions, [(True, {}), (False, None)])
+        self.assertEqual(
+            completions,
+            [("in-flight", False, None), (True, {}), (False, None)],
+        )
         self.assertEqual(
             {resource.resource_type for resource in lease_requests[0].resources},
             {"job_status", "job_statuses_collection"},
@@ -546,12 +609,21 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                 dialog._update_all_show_async_fn,
             )
             observed["new_uid"] = dialog._insert_fn("Added", 1)
+            # While editing is allowed every callback reaches the write service.
+            observed["deleted"] = dialog._delete_many_fn(["default-1"])
+            observed["show_result"] = dialog._update_show_fn("default-1", False)
+            observed["show_all_result"] = dialog._update_all_show_fn(False)
+            observed["name_result"] = dialog._update_name_fn("default-1", "Renamed")
+            observed["move_result"] = dialog._move_fn("default-1", "default-2")
+            # Once access is revoked the same callbacks must not write anything.
             access_manager.allowed = False
-            dialog._delete_many_fn(["default-1"])
-            dialog._update_show_fn("default-1", False)
-            dialog._update_all_show_fn(False)
-            dialog._update_name_fn("default-1", "Renamed")
-            dialog._move_fn("default-1", "default-2")
+            observed["denied_results"] = (
+                dialog._delete_many_fn(["default-2"]),
+                dialog._update_show_fn("default-2", True),
+                dialog._update_all_show_fn(True),
+                dialog._update_name_fn("default-2", "Denied"),
+                dialog._move_fn("default-2", "default-3"),
+            )
 
         try:
             with patch(
@@ -571,11 +643,29 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
         self.assertEqual(observed["async_callbacks"], (None,) * 6)
         self.assertEqual(observed["insert"], ("defaults.mdb", "Added", 1))
         self.assertEqual(observed["new_uid"], "default-new")
-        self.assertNotIn("delete", observed)
-        self.assertNotIn("show", observed)
-        self.assertNotIn("show_all", observed)
-        self.assertNotIn("name", observed)
-        self.assertNotIn("move", observed)
+        self.assertEqual(
+            {
+                key: observed[key]
+                for key in ("delete", "show", "show_all", "name", "move")
+            },
+            {
+                "delete": ("defaults.mdb", ["default-1"]),
+                "show": ("defaults.mdb", "default-1", False),
+                "show_all": ("defaults.mdb", False),
+                "name": ("defaults.mdb", "default-1", "Renamed"),
+                "move": ("defaults.mdb", "default-1", "default-2"),
+            },
+        )
+        self.assertEqual(observed["show_result"], True)
+        self.assertEqual(observed["show_all_result"], True)
+        self.assertEqual(observed["name_result"], True)
+        self.assertEqual(observed["move_result"], True)
+        self.assertIsNotNone(observed["deleted"])
+        # The recorded writes above are those of the allowed calls (their
+        # arguments differ from the denied ones), and the denied calls reported
+        # no success.
+        self.assertEqual(observed["denied_results"][1:], (False,) * 4)
+        self.assertIsNone(observed["denied_results"][0])
 
     def test_access_master_data_menus_do_not_install_sql_save_callbacks(self):
         dialogs = []

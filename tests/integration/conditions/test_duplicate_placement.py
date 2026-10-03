@@ -33,7 +33,7 @@ def _app():
 
 
 class DuplicatePlacementConditionBehaviorTests(unittest.TestCase):
-    def test_duplicate_uses_condition_state_projected_before_active_placement(self):
+    def _make_world(self, *, takeoff_2d_view_active=True):
         original_uid = "condition-original"
         duplicate_uid = "condition-duplicate"
         conditions = {
@@ -124,7 +124,7 @@ class DuplicatePlacementConditionBehaviorTests(unittest.TestCase):
         calls = []
         coordinator = SimpleNamespace(
             placement=placement,
-            _is_takeoff_2d_view_active=lambda: True,
+            _is_takeoff_2d_view_active=lambda: takeoff_2d_view_active,
             highlight_sidebar=lambda uids, reveal=True: calls.append(
                 ("highlight", set(uids), reveal)
             ),
@@ -139,12 +139,40 @@ class DuplicatePlacementConditionBehaviorTests(unittest.TestCase):
         )
         plan_view.refresh_conditions()
         calls.append("conditions_changed")
-        handler._finish_condition_duplicate([duplicate_uid], sidebar=object())
-        self.assertEqual(calls[0], "conditions_changed")
-        self.assertEqual(plan_view._place_session_uid, duplicate_uid)
-        self.assertEqual(ui_state.place_condition_uid, duplicate_uid)
-        self.assertEqual(plan_view.active_preview_opacity(), 0.5)
-        self.assertEqual(calls[-1], ("highlight", {duplicate_uid}, False))
+        return SimpleNamespace(
+            handler=handler,
+            plan_view=plan_view,
+            ui_state=ui_state,
+            calls=calls,
+            original_uid=original_uid,
+            duplicate_uid=duplicate_uid,
+        )
+
+    def test_duplicate_uses_condition_state_projected_before_active_placement(self):
+        world = self._make_world()
+        world.handler._finish_condition_duplicate(
+            [world.duplicate_uid], sidebar=object()
+        )
+        self.assertEqual(world.calls[0], "conditions_changed")
+        self.assertEqual(world.plan_view._place_session_uid, world.duplicate_uid)
+        self.assertEqual(world.ui_state.place_condition_uid, world.duplicate_uid)
+        self.assertEqual(world.plan_view.active_preview_opacity(), 0.5)
+        self.assertEqual(world.calls[-1], ("highlight", {world.duplicate_uid}, False))
+
+    def test_duplicate_outside_2d_view_keeps_placement_and_only_highlights(self):
+        # The same wiring as above must not enter placement for the duplicate
+        # when the 2D takeoff view is not active (positive control: the test
+        # above enters it); the sidebar highlight still happens.
+        world = self._make_world(takeoff_2d_view_active=False)
+        world.handler._finish_condition_duplicate(
+            [world.duplicate_uid], sidebar=object()
+        )
+        self.assertEqual(world.plan_view._place_session_uid, world.original_uid)
+        self.assertEqual(world.ui_state.place_condition_uid, world.original_uid)
+        self.assertEqual(
+            world.calls,
+            ["conditions_changed", ("highlight", {world.duplicate_uid}, False)],
+        )
 
     @classmethod
     def setUpClass(cls):

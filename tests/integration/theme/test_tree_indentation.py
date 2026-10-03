@@ -1,4 +1,7 @@
+import os
 import unittest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.presentation.components.project_tree_view import ProjectView
 from ost_visualizer.presentation.components.tree_popup_combo import (
@@ -22,6 +25,10 @@ def _app():
 class TreeWidgetIndentationParityTests(unittest.TestCase):
     def test_representative_app_trees_use_shared_indentation(self):
         _app()
+        # Positive control: an untouched Qt tree does not already use the value.
+        self.assertNotEqual(
+            QtWidgets.QTreeWidget().indentation(), CONDITION_TREE_INDENTATION
+        )
         widgets = [
             TreePopupComboBoxBase(),
             BidLayersSidebar(None),

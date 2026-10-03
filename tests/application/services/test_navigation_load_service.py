@@ -1,7 +1,9 @@
+import logging
 import queue
 import threading
 import unittest
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
+from unittest.mock import patch
 from ost_visualizer.application.services.navigation_load_service import (
     NavigationLoadResult,
     NavigationLoadService,
@@ -43,7 +45,7 @@ def _sql_descriptor(database="OSTV_IT_NAVIGATION"):
     )
 
 
-class NavigationLoadServiceTests(unittest.TestCase):
+class _NavigationFixture(unittest.TestCase):
     def setUp(self):
         self.descriptor = _sql_descriptor()
         self.dispatcher = _QueuedDispatcher()
@@ -74,6 +76,8 @@ class NavigationLoadServiceTests(unittest.TestCase):
 
         return work, started, release
 
+
+class NavigationLoadServiceTests(_NavigationFixture):
     def test_sql_read_returns_promptly_and_runs_off_calling_thread(self):
         calling_thread = threading.get_ident()
         work, started, release = self._blocked_work(7)
@@ -330,3 +334,139 @@ class NavigationLoadServiceTests(unittest.TestCase):
             )
         self.assertEqual(self.service.state(), original)
         self.assertTrue(self.dispatcher.calls.empty())
+
+
+class NavigationLoadServiceBoundaryTests(_NavigationFixture):
+    def test_published_results_are_immutable_snapshots(self):
+        completed = []
+        state = self.service.submit(
+            self.descriptor.database_id, "bid", lambda: [1], completed.append
+        )
+        self.dispatcher.complete_one()
+        for result in (state, self.service.state(), completed[0]):
+            self.assertEqual(result.message, "")
+            with self.assertRaises(FrozenInstanceError):
+                result.state = NavigationLoadState.FAILED
+            with self.assertRaises(FrozenInstanceError):
+                result.value = None
+
+    def test_worker_slot_is_a_single_daemon_latest_wins_queue(self):
+        work, started, _release = self._blocked_work("a")
+        self.service.submit(self.descriptor.database_id, "a", work, lambda _r: None)
+        self.assertTrue(started.wait(1.0))
+        for index in range(5):
+            self.service.submit(
+                self.descriptor.database_id, f"b{index}", lambda: 0, lambda _r: None
+            )
+        self.assertEqual(self.service._requests.maxsize, 1)
+        self.assertEqual(self.service._requests.qsize(), 1)
+        self.assertTrue(self.service._thread.daemon)
+        self.assertEqual(self.service._thread.name, "NavigationRead")
+
+    def test_state_labels_are_stable_diagnostic_values(self):
+        self.assertEqual(
+            {state.name: state.value for state in NavigationLoadState},
+            {
+                "EMPTY": "empty",
+                "LOADING": "loading",
+                "READY": "ready",
+                "FAILED": "failed",
+                "CANCELLED": "cancelled",
+            },
+        )
+
+    def test_missing_bid_uid_is_normalized_to_empty_text(self):
+        completed = []
+        state = self.service.submit(
+            self.descriptor.database_id, None, lambda: 1, completed.append
+        )
+        self.assertEqual(state.bid_uid, "")
+        self.assertEqual(self.service.state().bid_uid, "")
+        self.dispatcher.complete_one()
+        self.assertEqual(completed[0].bid_uid, "")
+
+    def test_cancel_discards_the_queued_read_before_it_can_run(self):
+        executed = []
+        completed = []
+        first, started, release = self._blocked_work("first", executed)
+        self.service.submit(self.descriptor.database_id, "a", first, completed.append)
+        self.assertTrue(started.wait(1.0))
+        self.service.submit(
+            self.descriptor.database_id,
+            "b",
+            lambda: executed.append("queued") or "queued",
+            completed.append,
+        )
+        self.assertEqual(self.service._requests.qsize(), 1)
+        self.service.cancel(self.descriptor.database_id)
+        self.assertEqual(self.service._requests.qsize(), 0)
+        release.set()
+        latest = self.service.submit(
+            self.descriptor.database_id, "c", lambda: "c", completed.append
+        )
+        self.dispatcher.complete_one()
+        self.assertEqual(executed, ["first"])
+        self.assertEqual(
+            completed, [replace(latest, state=NavigationLoadState.READY, value="c")]
+        )
+
+    def test_cleanup_invalidates_state_and_discards_queued_read_so_worker_stops(self):
+        executed = []
+        first, started, release = self._blocked_work("first", executed)
+        before = self.service.submit(
+            self.descriptor.database_id, "a", first, lambda _r: None
+        )
+        self.assertTrue(started.wait(1.0))
+        self.service.submit(
+            self.descriptor.database_id,
+            "b",
+            lambda: executed.append("queued"),
+            lambda _r: None,
+        )
+        queued_generation = self.service.state().generation
+        with patch.object(threading, "excepthook") as excepthook:
+            self.service.cleanup()
+            self.assertEqual(
+                self.service.state(),
+                NavigationLoadResult(
+                    "", queued_generation + 1, "", "", NavigationLoadState.CANCELLED
+                ),
+            )
+            self.assertGreater(queued_generation, before.generation)
+            release.set()
+            self.service._thread.join(2.0)
+            self.assertFalse(self.service._thread.is_alive())
+        excepthook.assert_not_called()
+        self.assertEqual(executed, ["first"])
+        self.assertTrue(self.dispatcher.calls.empty())
+
+    def test_failure_without_message_names_the_exception_type_and_logs_traceback(self):
+        completed = []
+
+        def fail():
+            raise RuntimeError()
+
+        with self.assertLogs(
+            "ost_visualizer.application.services.navigation_load_service",
+            level="WARNING",
+        ) as logged:
+            self.service.submit(
+                self.descriptor.database_id, "bid", fail, completed.append
+            )
+            self.dispatcher.complete_one()
+        self.assertEqual(completed[0].state, NavigationLoadState.FAILED)
+        self.assertEqual(completed[0].message, "RuntimeError")
+        self.assertIs(logged.records[0].exc_info[0], RuntimeError)
+        self.assertIn(self.descriptor.database_id, logged.output[0])
+
+    def test_injected_logger_receives_read_failures(self):
+        logger = logging.getLogger("test.navigation.injected")
+        service = NavigationLoadService(self.registry, self.dispatcher, logger)
+        self.addCleanup(service.cleanup)
+
+        def fail():
+            raise OSError("down")
+
+        with self.assertLogs(logger, level="WARNING"):
+            service.submit(self.descriptor.database_id, "bid", fail, lambda _r: None)
+            self.dispatcher.complete_one()

@@ -83,3 +83,20 @@ class WriteSchemaDatabaseDescriptorTests(unittest.TestCase):
             schema.require_table("NotATable")
         self.assertFalse(schema.table_exists("NotATable"))
         self.assertTrue(schema.table_exists("Bids"))
+
+
+class WriteSchemaAnswerTypeTests(unittest.TestCase):
+    """Survivor of the second-pass mutation sweep over write_schema.py."""
+
+    def test_existence_answers_are_real_booleans_and_missing_tables_never_look_optional(
+        self,
+    ):
+        schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+        self.assertIs(schema.table_exists("Bids"), True)
+        self.assertIs(
+            schema.table_exists("Sessions"), False
+        )  # ostv tables are not write-schema tables
+        self.assertIs(schema.optional_table_missing("Bids"), False)
+        self.assertIs(schema.column_exists("Bids", "UID"), True)
+        with self.assertRaises(SqlInfrastructureError):
+            schema.optional_table_missing("Sessions")

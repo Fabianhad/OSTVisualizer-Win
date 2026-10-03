@@ -276,3 +276,241 @@ class GraphicsItemsPreferenceTests(unittest.TestCase):
                     )
                 finally:
                     painter.end()
+
+
+def _quadrant_image():
+    """4x2 image: red/blue on the top row, green/yellow on the bottom row."""
+    image = QtGui.QImage(4, 2, QtGui.QImage.Format.Format_ARGB32)
+    image.setPixelColor(0, 0, QtGui.QColor(255, 0, 0))
+    image.setPixelColor(1, 0, QtGui.QColor(255, 0, 0))
+    image.setPixelColor(2, 0, QtGui.QColor(0, 0, 255))
+    image.setPixelColor(3, 0, QtGui.QColor(0, 0, 255))
+    image.setPixelColor(0, 1, QtGui.QColor(0, 255, 0))
+    image.setPixelColor(1, 1, QtGui.QColor(0, 255, 0))
+    image.setPixelColor(2, 1, QtGui.QColor(255, 255, 0))
+    image.setPixelColor(3, 1, QtGui.QColor(255, 255, 0))
+    return image
+
+
+class GraphicsItemsGeometryAndPaintTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _preferences_support__app()
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def assertColourNear(self, actual, expected, tolerance=24):
+        # Smoothed scaling blends neighbouring blocks slightly; the four test colours
+        # are far apart, so a small per-channel tolerance still identifies the block.
+        for channel in ("red", "green", "blue", "alpha"):
+            self.assertLessEqual(
+                abs(getattr(actual, channel)() - getattr(expected, channel)()),
+                tolerance,
+                msg="%s: %s vs %s" % (channel, actual.getRgb(), expected.getRgb()),
+            )
+
+    @staticmethod
+    def _paint(item, size, transform=None):
+        target = QtGui.QImage(size[0], size[1], QtGui.QImage.Format.Format_ARGB32)
+        target.fill(QtGui.QColor(0, 0, 0, 0))
+        painter = QtGui.QPainter(target)
+        try:
+            if transform is not None:
+                painter.setTransform(transform)
+            item.paint(painter, None)
+        finally:
+            painter.end()
+        return target
+
+    def test_bounding_rects_are_the_scene_rects_given_at_construction(self):
+        image = _quadrant_image()
+        background = ImageBackgroundItem(image, 120.0, 80.0)
+        tile = TileGraphicsItem(
+            image,
+            QtCore.QRectF(10.0, 20.0, 30.0, 40.0),
+            QtCore.QRectF(2.0, 0.0, 2.0, 2.0),
+        )
+        self.assertEqual(
+            background.boundingRect(), QtCore.QRectF(0.0, 0.0, 120.0, 80.0)
+        )
+        self.assertEqual(tile.boundingRect(), QtCore.QRectF(10.0, 20.0, 30.0, 40.0))
+
+    def test_background_item_paints_the_whole_image_scaled_into_the_scene_rect(self):
+        item = ImageBackgroundItem(_quadrant_image(), 32.0, 16.0)
+        target = self._paint(item, (32, 16))
+        # Block centres only: the item smooths, so block edges are interpolated.
+        expected = {
+            (8, 4): QtGui.QColor(255, 0, 0),
+            (24, 4): QtGui.QColor(0, 0, 255),
+            (8, 12): QtGui.QColor(0, 255, 0),
+            (24, 12): QtGui.QColor(255, 255, 0),
+        }
+        for (x, y), colour in expected.items():
+            with self.subTest(pixel=(x, y)):
+                self.assertColourNear(target.pixelColor(x, y), colour)
+
+    def test_tile_paints_only_its_source_rect_into_its_scene_rect(self):
+        tile = TileGraphicsItem(
+            _quadrant_image(),
+            QtCore.QRectF(10.0, 10.0, 20.0, 10.0),
+            QtCore.QRectF(2.0, 0.0, 2.0, 2.0),
+        )
+        target = self._paint(tile, (40, 30))
+        # The right half of the image (blue over yellow) fills the 20x10 scene rect.
+        self.assertColourNear(target.pixelColor(20, 12), QtGui.QColor(0, 0, 255))
+        self.assertColourNear(target.pixelColor(20, 18), QtGui.QColor(255, 255, 0))
+        for x, y in ((5, 15), (35, 15), (20, 5), (20, 25)):
+            with self.subTest(outside=(x, y)):
+                self.assertEqual(target.pixelColor(x, y).alpha(), 0)
+
+    def test_smoothing_ratio_pairs_each_axis_with_its_own_dimensions(self):
+        image = QtGui.QImage(80, 40, QtGui.QImage.Format.Format_ARGB32)
+
+        def tile(width, height):
+            return TileGraphicsItem(
+                image,
+                QtCore.QRectF(0.0, 0.0, width, height),
+                QtCore.QRectF(0.0, 0.0, 80.0, 40.0),
+            )
+
+        def smooth(item, transform=None):
+            return item._should_smooth_transform(
+                _preferences_support__FakePainter(transform=transform)
+            )
+
+        self.assertIs(smooth(tile(80.0, 40.0)), False)
+        self.assertIs(smooth(tile(160.0, 40.0)), True)
+        self.assertIs(smooth(tile(80.0, 80.0)), True)
+        self.assertIs(smooth(tile(40.0, 40.0)), True)
+        self.assertIs(smooth(tile(80.0, 20.0)), True)
+        # Anisotropic transforms are matched axis by axis with the item geometry.
+        self.assertIs(
+            smooth(tile(160.0, 20.0), QtGui.QTransform().scale(0.5, 2.0)), False
+        )
+        self.assertIs(
+            smooth(tile(80.0, 40.0), QtGui.QTransform().scale(2.0, 0.5)), True
+        )
+
+    def test_smoothing_ignores_translation_and_keeps_inclusive_tolerance_edges(self):
+        image = QtGui.QImage(100, 100, QtGui.QImage.Format.Format_ARGB32)
+        tile = TileGraphicsItem(
+            image,
+            QtCore.QRectF(0.0, 0.0, 100.0, 100.0),
+            QtCore.QRectF(0.0, 0.0, 100.0, 100.0),
+        )
+
+        def smooth(transform):
+            return tile._should_smooth_transform(
+                _preferences_support__FakePainter(transform=transform)
+            )
+
+        moved = QtGui.QTransform().translate(30.0, 50.0)
+        self.assertIs(smooth(moved), False)
+        self.assertIs(smooth(moved.rotate(30.0)), False)
+        self.assertIs(
+            smooth(QtGui.QTransform().translate(7.0, 3.0).scale(2.0, 2.0)), True
+        )
+        # Both edges of the 1% band are still crisp; just beyond them is smoothed.
+        self.assertIs(smooth(QtGui.QTransform().scale(0.99, 0.99)), False)
+        self.assertIs(smooth(QtGui.QTransform().scale(1.01, 1.01)), False)
+        # 0.99005 is inside the band, while its reciprocal (1.01005) would not be.
+        self.assertIs(smooth(QtGui.QTransform().scale(0.99005, 0.99005)), False)
+        self.assertIs(smooth(QtGui.QTransform().scale(1.0101, 1.0101)), True)
+        self.assertIs(smooth(QtGui.QTransform().scale(0.9899, 0.9899)), True)
+        # Each axis must be crisp on its own.
+        self.assertIs(smooth(QtGui.QTransform().scale(1.0, 1.0101)), True)
+        self.assertIs(smooth(QtGui.QTransform().scale(1.0101, 1.0)), True)
+
+    def test_images_one_pixel_wide_or_tall_are_still_measured(self):
+        for width, height in ((1, 1), (1, 5), (5, 1)):
+            with self.subTest(size=(width, height)):
+                image = QtGui.QImage(width, height, QtGui.QImage.Format.Format_ARGB32)
+                tile = TileGraphicsItem(
+                    image,
+                    QtCore.QRectF(0.0, 0.0, float(width), float(height)),
+                    QtCore.QRectF(0.0, 0.0, float(width), float(height)),
+                )
+                self.assertIs(
+                    tile._should_smooth_transform(_preferences_support__FakePainter()),
+                    False,
+                )
+                self.assertIs(
+                    tile._should_smooth_transform(
+                        _preferences_support__FakePainter(
+                            transform=QtGui.QTransform().scale(2.0, 2.0)
+                        )
+                    ),
+                    True,
+                )
+
+    def test_cleared_image_reports_a_plain_false_and_stops_painting(self):
+        tile = TileGraphicsItem(
+            _quadrant_image(),
+            QtCore.QRectF(0.0, 0.0, 8.0, 4.0),
+            QtCore.QRectF(0.0, 0.0, 4.0, 2.0),
+        )
+        tile.clear_image()
+        self.assertIs(
+            tile._should_smooth_transform(_preferences_support__FakePainter()), False
+        )
+        target = self._paint(tile, (8, 4))
+        self.assertEqual(target.pixelColor(2, 2).alpha(), 0)
+
+    def test_clipped_text_set_clip_rect_notifies_the_scene_of_old_and_new_bounds(self):
+        scene = QtWidgets.QGraphicsScene(QtCore.QRectF(0.0, 0.0, 400.0, 400.0))
+        item = ClippedTextGraphicsItem("Text", QtCore.QRectF(0.0, 0.0, 20.0, 20.0))
+        scene.addItem(item)
+        QtTest.QTest.qWait(30)
+        changed = []
+        scene.changed.connect(lambda rects: changed.extend(rects))
+        item.set_clip_rect(QtCore.QRectF(200.0, 200.0, 20.0, 20.0))
+        QtTest.QTest.qWait(30)
+        union = QtCore.QRectF()
+        for rect in changed:
+            union = union.united(rect)
+        self.assertTrue(union.contains(QtCore.QRectF(0.0, 0.0, 20.0, 20.0)))
+        self.assertTrue(union.contains(QtCore.QRectF(200.0, 200.0, 20.0, 20.0)))
+
+    def test_clipped_text_paint_restores_the_painter_state(self):
+        item = ClippedTextGraphicsItem("Text", QtCore.QRectF(0.0, 0.0, 30.0, 20.0))
+        target = QtGui.QImage(60, 40, QtGui.QImage.Format.Format_ARGB32)
+        painter = QtGui.QPainter(target)
+        try:
+            painter.setPen(QtGui.QColor("red"))
+            painter.setTransform(QtGui.QTransform().translate(3.0, 4.0))
+            self.assertFalse(painter.hasClipping())
+            item.paint(painter, QStyleOptionGraphicsItem(), None)
+            self.assertFalse(painter.hasClipping())
+            self.assertEqual(painter.pen().color(), QtGui.QColor("red"))
+            self.assertEqual(
+                painter.worldTransform(), QtGui.QTransform().translate(3.0, 4.0)
+            )
+        finally:
+            painter.end()
+
+
+class _UpdateRecordingTextItem(ClippedTextGraphicsItem):
+    def __init__(self, text, clip_rect):
+        super().__init__(text, clip_rect)
+        self.update_calls = 0
+
+    def update(self, *args):
+        self.update_calls += 1
+        super().update(*args)
+
+
+class ClippedTextRepaintRequestTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _preferences_support__app()
+
+    def test_set_clip_rect_requests_a_repaint_and_stores_a_copy(self):
+        item = _UpdateRecordingTextItem("Text", QtCore.QRectF(0.0, 0.0, 20.0, 20.0))
+        new_rect = QtCore.QRectF(5.0, 6.0, 30.0, 40.0)
+        item.set_clip_rect(new_rect)
+        self.assertEqual(item.update_calls, 1)
+        self.assertEqual(item.clip_rect(), QtCore.QRectF(5.0, 6.0, 30.0, 40.0))
+        self.assertEqual(item.boundingRect(), QtCore.QRectF(5.0, 6.0, 30.0, 40.0))
+        new_rect.setWidth(99.0)
+        self.assertEqual(item.clip_rect().width(), 30.0)

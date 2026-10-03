@@ -3,6 +3,7 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
+from ...application.dtos.active_bid_locked_error import ActiveBidLockedError
 from ...application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
@@ -448,10 +449,12 @@ class UndoRedoService:
         entry.state = pending_state
         self._history_transition_pending = True
         history_generation = self._history_generation
+        terminal_delivered = False
         self._notify_change()
 
         def complete(outcome: QueuedMutationResult) -> None:
-            if history_generation != self._history_generation:
+            nonlocal terminal_delivered
+            if history_generation != self._history_generation or terminal_delivered:
                 return
             status = outcome.outcome_status
             if status in {
@@ -461,6 +464,7 @@ class UndoRedoService:
                 entry.state = MutationHistoryState.UNCERTAIN
                 self._notify_change()
                 return
+            terminal_delivered = True
             self._history_transition_pending = False
             if status == MutationOutcomeStatus.CONFLICT or outcome.conflict is not None:
                 entry.state = MutationHistoryState.CONFLICTED
@@ -475,6 +479,11 @@ class UndoRedoService:
 
         try:
             operation(complete)
+        except ActiveBidLockedError:
+            self.logger.warning("History mutation blocked: the active bid is locked")
+            self._history_transition_pending = False
+            entry.state = MutationHistoryState.READY
+            self._notify_change()
         except Exception:
             self.logger.exception("Error while submitting history mutation")
             self._history_transition_pending = False

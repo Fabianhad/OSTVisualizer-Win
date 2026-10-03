@@ -12,6 +12,9 @@ from ost_visualizer.presentation.dtos.employee_edit_dtos import EmployeeRecord
 from PySide6 import QtWidgets
 from shiboken6 import delete
 from tests.helpers.workspace_state import make_workspace_state_model
+from tests.presentation.dialogs.master_data_support import (
+    FakeIconProvider as _master_data_support_FakeIconProvider,
+)
 
 
 class MasterDataPendingProjectionTests(unittest.TestCase):
@@ -31,7 +34,7 @@ class MasterDataPendingProjectionTests(unittest.TestCase):
 
                     if kind == "employee":
                         dialog = EmployeesDialog(
-                            Mock(),
+                            _master_data_support_FakeIconProvider(),
                             make_workspace_state_model(),
                             employees=[Employee("1", first_name="Old")],
                             save_async_fn=queue,
@@ -39,7 +42,7 @@ class MasterDataPendingProjectionTests(unittest.TestCase):
                         dialog._employees[0].first_name = "Draft"
                     else:
                         dialog = PayrollClassListDialog(
-                            Mock(),
+                            _master_data_support_FakeIconProvider(),
                             make_workspace_state_model(),
                             pay_classes=[PayClass("1", "Old")],
                             save_async_fn=queue,
@@ -113,7 +116,7 @@ class MasterDataPendingProjectionTests(unittest.TestCase):
             return True
 
         parent = EmployeeDetailDialog(
-            Mock(),
+            _master_data_support_FakeIconProvider(),
             [EmployeeRecord("1", first_name="Old", pay_class_uid="p")],
             0,
             make_workspace_state_model(),
@@ -148,35 +151,44 @@ class MasterDataPendingProjectionTests(unittest.TestCase):
 
     def test_completion_after_editor_cleanup_is_inert(self):
         for kind in ("employee", "pay_class"):
-            with self.subTest(kind=kind):
-                callbacks = []
+            for cleaned_up in (True, False):
+                with self.subTest(kind=kind, cleaned_up=cleaned_up):
+                    callbacks = []
 
-                def queue(changes, completed):
-                    callbacks.append(completed)
-                    return True
+                    def queue(changes, completed):
+                        callbacks.append(completed)
+                        return True
 
-                if kind == "employee":
-                    dialog = EmployeesDialog(
-                        Mock(),
-                        make_workspace_state_model(),
-                        employees=[Employee("1")],
-                        save_async_fn=queue,
-                    )
-                else:
-                    dialog = PayrollClassListDialog(
-                        Mock(),
-                        make_workspace_state_model(),
-                        pay_classes=[PayClass("1", "Old")],
-                        save_async_fn=queue,
-                    )
-                accepted = Mock()
-                dialog.accepted.connect(accepted)
-                try:
-                    dialog.accept()
-                    dialog.cleanup()
-                    with patch.object(QtWidgets.QMessageBox, "warning") as warning:
-                        callbacks[0](True, {})
-                        accepted.assert_not_called()
-                        warning.assert_not_called()
-                finally:
-                    delete(dialog)
+                    if kind == "employee":
+                        dialog = EmployeesDialog(
+                            _master_data_support_FakeIconProvider(),
+                            make_workspace_state_model(),
+                            employees=[Employee("1")],
+                            save_async_fn=queue,
+                        )
+                    else:
+                        dialog = PayrollClassListDialog(
+                            _master_data_support_FakeIconProvider(),
+                            make_workspace_state_model(),
+                            pay_classes=[PayClass("1", "Old")],
+                            save_async_fn=queue,
+                        )
+                    accepted = Mock()
+                    dialog.accepted.connect(accepted)
+                    try:
+                        dialog.accept()
+                        self.assertEqual(len(callbacks), 1)
+                        if cleaned_up:
+                            dialog.cleanup()
+                        with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+                            callbacks[0](True, {})
+                            warning.assert_not_called()
+                        # Positive control: the very same completion accepts a
+                        # live editor; after cleanup it must do nothing.
+                        if cleaned_up:
+                            accepted.assert_not_called()
+                        else:
+                            accepted.assert_called_once()
+                    finally:
+                        dialog.cleanup()
+                        delete(dialog)

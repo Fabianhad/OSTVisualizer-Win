@@ -4,12 +4,20 @@ from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from types import SimpleNamespace
 from unittest.mock import Mock
+from ost_visualizer.application.dtos.active_bid_locked_error import (
+    ActiveBidLockedError,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    CollaborationMutationType,
     ConcurrencyToken,
     DatabaseMutationResult,
     ExpectedResourceVersion,
     MutationOutcomeStatus,
     ResourceRef,
+)
+from ost_visualizer.application.services.active_bid_write_guard import (
+    ActiveBidWriteGuard,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -26,6 +34,8 @@ from tests.helpers.mdb.operations import (
 
 class PlanPropertyOwnershipTests(unittest.TestCase):
     def setUp(self):
+        self.mutations = []
+        self.recorded = []
         self.conn = sqlite3.connect(":memory:")
         self.addCleanup(self.conn.close)
         self.conn.executescript(
@@ -82,9 +92,13 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
             rollback=self.conn.rollback,
         )
 
-    def execute_mutation(self, database_id, _resources, operation, **_options):
+    def execute_mutation(self, database_id, resources, operation, **options):
+        self.mutations.append((database_id, resources, options))
+        recorder = SimpleNamespace(
+            record=lambda *args, **kwargs: self.recorded.append((args, kwargs))
+        )
         with self.transaction_writer._connection(database_id):
-            value = operation(SimpleNamespace(record=lambda *_args, **_kwargs: None))
+            value = operation(recorder)
         return DatabaseMutationResult(
             operation_id="00000000-0000-0000-0000-000000000001",
             outcome_status=MutationOutcomeStatus.COMMITTED,
@@ -182,6 +196,7 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
             "UPDATE BidTakeoffs SET BidConditionUID=31 WHERE UID=10",
             "UPDATE BidTakeoffs SET BidUID=8 WHERE UID=10",
             "INSERT INTO BidTakeoffs VALUES (14,7,20,30,1,10,'new')",
+            "DELETE FROM Bids WHERE UID=7",
         )
         initial = self.snapshot()
         for sql in mutations:
@@ -198,6 +213,49 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
                 with self.assertRaises(MissingBidOwnedUidError):
                     self.apply(payload)
                 self.assertEqual(self.snapshot(), before)
+
+    def test_ownership_snapshot_must_cover_validation_targets_exactly_once(self):
+        payload = self.capture()
+        by_uid = {item.uid: item for item in payload.takeoff_ownership}
+        self.assertEqual(set(by_uid), {"10", "11", "12", "13"})
+        self.conn.execute("INSERT INTO BidTakeoffs VALUES (14,7,20,30,1,NULL,'x')")
+        self.conn.commit()
+        before = self.snapshot()
+        # Positive control: the complete captured snapshot validates.
+        MdbWriter.verify_plan_items_exist(
+            self.ops,
+            "database.mdb",
+            "7",
+            tuple(by_uid),
+            [],
+            takeoff_ownership=payload.takeoff_ownership,
+        )
+        for label, targets, ownership in (
+            ("missing", tuple(by_uid), (by_uid["10"], by_uid["11"], by_uid["12"])),
+            (
+                "duplicate",
+                tuple(by_uid),
+                (*payload.takeoff_ownership, by_uid["10"]),
+            ),
+            (
+                "extra target",
+                ("10", "11", "12", "13", "14"),
+                payload.takeoff_ownership,
+            ),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    ValueError, "cover every validation target"
+                ):
+                    MdbWriter.verify_plan_items_exist(
+                        self.ops,
+                        "database.mdb",
+                        "7",
+                        targets,
+                        [],
+                        takeoff_ownership=ownership,
+                    )
+        self.assertEqual(self.snapshot(), before)
 
     def test_late_group_failure_rolls_back_earlier_group(self):
         before = self.snapshot()
@@ -621,3 +679,264 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
             ).fetchall(),
             geometry,
         )
+
+
+class PlanPropertyDeclarationAndLockTests(unittest.TestCase):
+    """Second-pass additions over the same sqlite stand-in as PlanPropertyOwnershipTests.
+    Real: ProjectWriteService capture/apply/queue code, the real ActiveBidWriteGuard,
+    MdbWriter validation and the sqlite rows. Stand-ins: sqlite for Access and a
+    recording executor for the SQL queue, so no SQL Server behaviour is proven here.
+    """
+
+    setUp = PlanPropertyOwnershipTests.setUp
+    connection = PlanPropertyOwnershipTests.connection
+    execute_mutation = PlanPropertyOwnershipTests.execute_mutation
+    snapshot = PlanPropertyOwnershipTests.snapshot
+    takeoffs = PlanPropertyOwnershipTests.takeoffs
+    capture = PlanPropertyOwnershipTests.capture
+    apply = PlanPropertyOwnershipTests.apply
+
+    def lock_active_bid(self, locked_ref=BidRef("database.mdb", "7")):
+        self.service._bid_write_guard = ActiveBidWriteGuard(
+            SimpleNamespace(
+                is_current_bid_locked=lambda: True,
+                get_current_bid_ref=lambda: locked_ref,
+            )
+        )
+
+    def test_capture_rejects_other_bid_uid_and_absent_current_bid(self):
+        self.assertEqual(len(self.capture().takeoff_ownership), 4)
+        for current in (BidRef("database.mdb", "8"), None):
+            with self.subTest(current=current):
+                self.service._project_data.get_current_bid_ref = lambda: current
+                with self.assertRaisesRegex(ValueError, "no longer owns the current"):
+                    self.capture()
+
+    def test_capture_records_unassigned_area_and_parent_with_the_zero_sentinel(self):
+        stored = self.takeoffs()
+        for item in stored:
+            item.area_uid = None if item.uid == "12" else item.area_uid
+            item.parent_uid = "" if item.uid != "13" else item.parent_uid
+        self.service._project_data.get_all_takeoffs = lambda: stored
+        ownership = {
+            item.uid: (item.area_uid, item.parent_uid)
+            for item in self.capture().takeoff_ownership
+        }
+        self.assertEqual(
+            ownership,
+            {"10": ("1", "0"), "11": ("2", "0"), "12": ("0", "0"), "13": ("1", "10")},
+        )
+        # Positive control: the sentinel is what the database comparison expects.
+        self.apply(self.capture())
+        self.assertEqual([row[4] for row in self.snapshot()], [3, 3, 3, 1])
+
+    def test_local_write_declares_children_pages_and_records_each_updated_takeoff(self):
+        area = ResourceRef("area", "3", 7)
+        result = self.service.execute_plan_properties_local(
+            "database.mdb",
+            "7",
+            "takeoff_area",
+            [("10", "3"), ("11", "3")],
+            page_uids=("20",),
+            dependency_resources=(area,),
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        ((database, declared, options),) = self.mutations
+        self.assertEqual(database, "database.mdb")
+        # Updated rows, the frozen child, the Page and the target Area: a set that is
+        # declared in sorted order, with the child declared only as a dependency.
+        self.assertEqual(
+            set(declared),
+            {
+                ResourceRef("takeoff", "10", 7),
+                ResourceRef("takeoff", "11", 7),
+                ResourceRef("takeoff", "13", 7),
+                ResourceRef("page", "20", 7),
+                area,
+            },
+        )
+        self.assertEqual(list(declared), sorted(declared))
+        self.assertEqual(
+            options["mutation_type"], CollaborationMutationType.TAKEOFF_PROPERTIES.value
+        )
+        self.assertFalse(options["publish_conflict_event"])
+        self.assertEqual(
+            self.recorded,
+            [
+                (
+                    (ResourceRef("takeoff", uid, 7), ChangeOperation.UPDATE),
+                    {"changed_fields": ("area",)},
+                )
+                for uid in ("10", "11")
+            ],
+        )
+        authoritative = result.authoritative_result
+        self.assertEqual(
+            authoritative.updated_resources,
+            (ResourceRef("takeoff", "10", 7), ResourceRef("takeoff", "11", 7)),
+        )
+        self.assertEqual(authoritative.affected_page_uids, ("20",))
+        self.assertEqual(authoritative.affected_families, ("takeoffs",))
+
+    def test_queued_write_records_the_same_changes_and_reports_authoritative_rows(self):
+        queued = []
+        self.service._sql_collaboration_provider = lambda: SimpleNamespace(
+            queue_request=lambda *args: queued.append(args) or 1
+        )
+        self.service.queue_plan_properties(
+            "database.mdb",
+            "7",
+            "takeoff_condition",
+            [("10", "30"), ("12", "30")],
+            lambda _result: None,
+            page_uids=("20",),
+        )
+        request, execute, _callback = queued.pop()
+        self.assertEqual(
+            request.mutation_type, CollaborationMutationType.TAKEOFF_PROPERTIES
+        )
+        self.assertEqual(request.page_uid, "20")
+        result = execute()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            self.recorded,
+            [
+                (
+                    (ResourceRef("takeoff", uid, 7), ChangeOperation.UPDATE),
+                    {"changed_fields": ("condition",)},
+                )
+                for uid in ("10", "12")
+            ],
+        )
+        self.assertEqual(
+            result.authoritative_result.updated_resources,
+            (ResourceRef("takeoff", "10", 7), ResourceRef("takeoff", "12", 7)),
+        )
+        self.assertEqual(result.authoritative_result.affected_page_uids, ("20",))
+        self.assertEqual(result.authoritative_result.affected_families, ("takeoffs",))
+        ((_database, declared, options),) = self.mutations
+        self.assertEqual(
+            options["mutation_type"], CollaborationMutationType.TAKEOFF_PROPERTIES.value
+        )
+        self.assertFalse(options["publish_conflict_event"])
+        self.assertIn(ResourceRef("takeoff", "13", 7), declared)
+
+    def test_locked_active_bid_refuses_local_and_queued_property_writes(self):
+        before = self.snapshot()
+        updates = [("10", "3"), ("11", "3")]
+        # Positive control: the same call succeeds while the Bid is unlocked.
+        unlocked = self.service.execute_plan_properties_local(
+            "database.mdb",
+            "7",
+            "takeoff_area",
+            updates,
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(unlocked.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.conn.execute("DELETE FROM BidTakeoffs")
+        self.conn.executemany("INSERT INTO BidTakeoffs VALUES (?,?,?,?,?,?,?)", before)
+        self.conn.commit()
+        self.mutations.clear()
+        self.lock_active_bid()
+        locked = self.service.execute_plan_properties_local(
+            "database.mdb",
+            "7",
+            "takeoff_area",
+            updates,
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(locked.outcome_status, MutationOutcomeStatus.REJECTED)
+        self.assertEqual(self.mutations, [])
+        self.assertEqual(self.snapshot(), before)
+        queued = []
+        self.service._sql_collaboration_provider = lambda: SimpleNamespace(
+            queue_request=lambda *args: queued.append(args) or 1
+        )
+        with self.assertRaises(ActiveBidLockedError):
+            self.service.queue_plan_properties(
+                "database.mdb", "7", "takeoff_area", updates, lambda _result: None
+            )
+        self.assertEqual(queued, [])
+        # A lock on another Bid of the same database does not block this Bid.
+        self.lock_active_bid(BidRef("database.mdb", "9"))
+        other = self.service.execute_plan_properties_local(
+            "database.mdb",
+            "7",
+            "takeoff_area",
+            updates,
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(other.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.service.queue_plan_properties(
+            "database.mdb", "7", "takeoff_area", updates, lambda _result: None
+        )
+        self.assertEqual(len(queued), 1)
+
+
+class PlanPropertyTransactionBoundaryTests(unittest.TestCase):
+    """Second-pass additions: what the outer MDB transaction does around the write.
+    Same sqlite stand-in and real MdbWriter transaction as PlanPropertyOwnershipTests;
+    the connection manager's read-routing hook is a recorder, so only the call is
+    proven, not Access behaviour.
+    """
+
+    setUp = PlanPropertyOwnershipTests.setUp
+    connection = PlanPropertyOwnershipTests.connection
+    execute_mutation = PlanPropertyOwnershipTests.execute_mutation
+    snapshot = PlanPropertyOwnershipTests.snapshot
+    takeoffs = PlanPropertyOwnershipTests.takeoffs
+
+    def route_committed_reads(self):
+        routed = []
+        self.transaction_writer._conn_manager.use_committed_writer_for_reads = (
+            routed.append
+        )
+        return routed
+
+    def test_committed_write_routes_reads_to_the_committed_writer_once(self):
+        routed = self.route_committed_reads()
+        result = self.service.execute_plan_properties_local(
+            "database.mdb",
+            "7",
+            "takeoff_area",
+            [("10", "3"), ("11", "3"), ("12", "3")],
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual([row[4] for row in self.snapshot()], [3, 3, 3, 1])
+        self.assertEqual(routed, ["database.mdb"])
+
+    def test_rolled_back_write_never_routes_reads_to_the_committed_writer(self):
+        routed = self.route_committed_reads()
+        before = self.snapshot()
+        result = self.service.execute_plan_properties_local(
+            "database.mdb",
+            "7",
+            "takeoff_area",
+            [("10", "3"), ("11", "4")],
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(
+            result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+        )
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(routed, [])
+
+    def test_missing_bid_row_is_rejected_even_without_an_ownership_snapshot(self):
+        for targets in ((), ("10", "11", "12", "13")):
+            with self.subTest(targets=targets):
+                self.conn.execute("DELETE FROM Bids WHERE UID=7")
+                self.conn.commit()
+                before = self.snapshot()
+                with self.assertRaisesRegex(MissingBidOwnedUidError, "Bids has no row"):
+                    MdbWriter.verify_plan_items_exist(
+                        self.ops, "database.mdb", "7", targets, []
+                    )
+                self.conn.execute("INSERT INTO Bids VALUES (7)")
+                self.conn.commit()
+                # Positive control: the same call passes while the Bid row exists.
+                MdbWriter.verify_plan_items_exist(
+                    self.ops, "database.mdb", "7", targets, []
+                )
+                self.assertEqual(self.snapshot(), before)

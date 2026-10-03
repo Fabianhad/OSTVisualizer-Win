@@ -76,3 +76,22 @@ class DescriptorRegistryDatabaseDescriptorTests(unittest.TestCase):
         )
         with self.assertRaises(LookupError):
             resolve_database_backend(registry, "unregistered-sql-id")
+
+    def test_sql_descriptors_never_touch_the_access_locator_index(self):
+        registry = DatabaseDescriptorRegistry()
+        # A SQL descriptor reports an empty Access path, which normalises to the
+        # current directory; an Access database registered there must survive
+        # every SQL registration, re-registration and removal.
+        access = DatabaseDescriptor.for_access(os.getcwd(), database_id="cwd-access")
+        sql = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV"),
+            schema_version=1,
+        )
+        registry.register(access)
+        registry.register(sql)
+        self.assertIs(registry.resolve(os.getcwd()), access)
+        registry.register(sql)
+        self.assertIs(registry.resolve(os.getcwd()), access)
+        registry.unregister(sql.database_id)
+        self.assertIs(registry.resolve(os.getcwd()), access)
+        self.assertIs(registry.resolve("cwd-access"), access)

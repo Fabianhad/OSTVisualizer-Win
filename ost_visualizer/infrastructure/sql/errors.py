@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -65,17 +66,11 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
     sql_state = str(args[0]) if args else ""
     text = " ".join(str(value) for value in args[1:]).casefold()
     native_code = _native_code(text)
-    if "certificate" in text and (
-        "not trusted" in text
-        or "certificate chain" in text
-        or "certificate verify failed" in text
-    ):
+    fallback = _fallback_messages(text, native_code)
+    if sql_state.startswith("23"):
         return SqlErrorDetails(
-            SqlErrorCode.CERTIFICATE_FAILED,
-            "SQL Server presented a certificate that Windows does not trust. "
-            "OST Visualizer normally trusts the certificate supplied by configured "
-            "SQL Server connections; reconnect the database or ask an administrator "
-            "to install a trusted certificate.",
+            SqlErrorCode.CONSTRAINT_FAILED,
+            "The requested change violates a SQL data-integrity rule.",
             sql_state,
             native_code,
         )
@@ -86,40 +81,33 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
             sql_state,
             native_code,
         )
-    if native_code == 4060 or "cannot open database" in text:
+    if native_code == 4060:
+        return _database_missing(sql_state, native_code)
+    if native_code in {229, 262, 297}:
+        return _permission_denied(sql_state, native_code)
+    if sql_state in {"HYT00", "HYT01"}:
+        return _timeout(sql_state, native_code)
+    if any(_CERTIFICATE_MESSAGE.match(message) for message in fallback):
         return SqlErrorDetails(
-            SqlErrorCode.DATABASE_MISSING,
-            "The SQL Server is available, but the selected database is missing "
-            "or cannot be opened.",
+            SqlErrorCode.CERTIFICATE_FAILED,
+            "SQL Server presented a certificate that Windows does not trust. "
+            "OST Visualizer normally trusts the certificate supplied by configured "
+            "SQL Server connections; reconnect the database or ask an administrator "
+            "to install a trusted certificate.",
             sql_state,
             native_code,
         )
-    if native_code in {229, 262, 297} or "permission" in text:
-        return SqlErrorDetails(
-            SqlErrorCode.PERMISSION_DENIED,
-            "The SQL login does not have permission to perform this operation.",
-            sql_state,
-            native_code,
-        )
-    if sql_state in {"HYT00", "HYT01"} or "timeout" in text:
-        return SqlErrorDetails(
-            SqlErrorCode.TIMEOUT,
-            "The SQL Server connection timed out.",
-            sql_state,
-            native_code,
-        )
+    if any(_DATABASE_MISSING_MESSAGE.match(message) for message in fallback):
+        return _database_missing(sql_state, native_code)
+    if any(_PERMISSION_DENIED_MESSAGE.match(message) for message in fallback):
+        return _permission_denied(sql_state, native_code)
+    if any(_TIMEOUT_MESSAGE.match(message) for message in fallback):
+        return _timeout(sql_state, native_code)
     if sql_state.startswith("08") or native_code in {53, 64, 233, 10054, 10060}:
         return SqlErrorDetails(
             SqlErrorCode.CONNECTION_FAILED,
             "The SQL Server could not be reached. Check the server name, network, "
             "and SQL Server service.",
-            sql_state,
-            native_code,
-        )
-    if sql_state.startswith("23"):
-        return SqlErrorDetails(
-            SqlErrorCode.CONSTRAINT_FAILED,
-            "The requested change violates a SQL data-integrity rule.",
             sql_state,
             native_code,
         )
@@ -131,8 +119,78 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
     )
 
 
+def _database_missing(sql_state: str, native_code: Optional[int]) -> SqlErrorDetails:
+    return SqlErrorDetails(
+        SqlErrorCode.DATABASE_MISSING,
+        "The SQL Server is available, but the selected database is missing "
+        "or cannot be opened.",
+        sql_state,
+        native_code,
+    )
+
+
+def _permission_denied(sql_state: str, native_code: Optional[int]) -> SqlErrorDetails:
+    return SqlErrorDetails(
+        SqlErrorCode.PERMISSION_DENIED,
+        "The SQL login does not have permission to perform this operation.",
+        sql_state,
+        native_code,
+    )
+
+
+def _timeout(sql_state: str, native_code: Optional[int]) -> SqlErrorDetails:
+    return SqlErrorDetails(
+        SqlErrorCode.TIMEOUT,
+        "The SQL Server connection timed out.",
+        sql_state,
+        native_code,
+    )
+
+
+_KNOWN_NATIVE_CODES = (18456, 4060, 10060, 10054, 297, 262, 233, 229, 64, 53)
+_DIAGNOSTIC_NUMBER = re.compile(
+    r"\((\d+)\)(?=\s*(?:\(SQL\w+\)\s*)?(?:;|$))", re.IGNORECASE
+)
+
+
 def _native_code(text: str) -> Optional[int]:
-    for code in (18456, 4060, 10060, 10054, 297, 262, 233, 229, 64, 53):
+    reported = {int(number) for number in _DIAGNOSTIC_NUMBER.findall(text)}
+    if reported:
+        for code in _KNOWN_NATIVE_CODES:
+            if code in reported:
+                return code
+        return None
+    for code in _KNOWN_NATIVE_CODES:
         if f"({code})" in text or f" {code} " in text:
             return code
     return None
+
+
+_CERTIFICATE_MESSAGE = re.compile(
+    r"(?:(?:ssl|tls)\b[^:]{0,40}:\s*)?(?:(?:the|a)\s+)?certificate\b"
+    r"(?: chain\b|[^.]*?(?:not trusted|verify failed))"
+)
+_DATABASE_MISSING_MESSAGE = re.compile(r"cannot open database\b")
+_PERMISSION_DENIED_MESSAGE = re.compile(
+    r"the user does not have permission\b"
+    r"|(?:the )?[a-z][a-z ]{0,48}? permission (?:was )?denied\b"
+)
+_TIMEOUT_MESSAGE = re.compile(r"(?:(?:login|query|connection) )?timeout\b")
+_RECORD_SEPARATOR = re.compile(r";\s*(?=\[\w{5}\]\s*\[)")
+_DRIVER_PREFIX = re.compile(r"(?:\[[^\]]*\]\s*)+")
+
+
+def _fallback_messages(text: str, native_code: Optional[int]) -> list[str]:
+    reported = bool(_reported_numbers(text))
+    if not reported and native_code is not None:
+        return []
+    messages = []
+    for record in _RECORD_SEPARATOR.split(text):
+        if _reported_numbers(record):
+            continue
+        messages.append(_DRIVER_PREFIX.sub("", record, count=1).strip())
+    return messages
+
+
+def _reported_numbers(text: str) -> set[int]:
+    return {int(number) for number in _DIAGNOSTIC_NUMBER.findall(text)} - {0}

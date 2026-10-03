@@ -50,6 +50,44 @@ class TakeoffLifecycleHistoryTests(unittest.TestCase):
         self.assertEqual(handler._plan_view.selected, set())
         self.assertFalse(undo.can_undo())
 
+    def test_queued_paste_completion_selects_only_in_its_own_bid_and_page(self):
+        import tests.integration.history.test_property_lifetimes as fixtures
+        from ost_visualizer.domain.entities.identity_refs import BidRef
+        from ost_visualizer.domain.entities.takeoff import Takeoff
+
+        fixture = fixtures.PlanPropertyHistoryIdentityTests()
+        # "same" is the positive control: with no switch the completion selects
+        # the persisted Takeoff, so the other cases prove the ownership checks.
+        for switch in ("same", "bid", "page"):
+            with self.subTest(switch=switch):
+                handler, data, write, undo = fixture.make_handler()
+                bid_ref = handler._ui_state.get_selected_bid_ref()
+                payload = PlanItemsPastePayload(
+                    source_bid_uid="7",
+                    destination_bid_uid="7",
+                    takeoff_source_uids=("source",),
+                    takeoff_specs=(InsertTakeoffSpec("c1", "p1", "0", [3, 4]),),
+                )
+                handler._queue_sql_plan_items_paste_payload(bid_ref, "p1", payload, ())
+                callback = write.queued_pastes[-1][-1]
+                data.takeoffs["persisted"] = Takeoff(
+                    uid="persisted", page_uid="p1", condition_uid="c1", position=[3, 4]
+                )
+                if switch == "bid":
+                    other = BidRef(bid_ref.file_path, "8")
+                    handler._ui_state.get_selected_bid_ref = lambda: other
+                elif switch == "page":
+                    handler._plan_view.current_page_uid = "p2"
+                callback(
+                    fixture.committed(
+                        AuthoritativeMutationResult(
+                            created_uid_maps=(("takeoffs", (("source", "persisted"),)),)
+                        )
+                    )
+                )
+                expected = {"persisted"} if switch == "same" else set()
+                self.assertEqual(handler._plan_view.selected, expected)
+
     def test_child_paste_redo_follows_restored_parent_and_current_scale(self):
         import tests.integration.history.test_property_lifetimes as fixtures
 
@@ -184,6 +222,30 @@ class TakeoffLifecycleHistoryTests(unittest.TestCase):
                         data.takeoffs["restored"].position, before.position
                     )
                     self.assertEqual(data.takeoffs["restored"].rotation, 0)
+
+    def test_duplicate_sql_completion_delivery_pushes_history_once(self):
+        import tests.integration.history.test_property_lifetimes as fixtures
+
+        fixture = fixtures.PlanPropertyHistoryIdentityTests()
+        handler, data, write, undo = fixture.make_handler()
+        write.sql_collaboration_mutations = True
+        before = list(data.takeoffs["parent"].position)
+        after = [value + 2 for value in before]
+        handler.on_positions_flushed([("parent", before, after)], [])
+        callback = write.queued_geometry[-1][-1]
+        self.assertFalse(undo.can_undo())
+        result = fixture.committed()
+        callback(result)
+        self.assertTrue(undo.can_undo())
+        # The queue may deliver the same committed operation twice.
+        callback(result)
+        undo.undo()
+        self.assertEqual(
+            write.queued_geometry[-1][2]["takeoff_positions"], [("parent", before)]
+        )
+        write.queued_geometry[-1][-1](fixture.committed())
+        self.assertFalse(undo.can_undo())
+        self.assertTrue(undo.can_redo())
 
     def test_sql_geometry_history_adapts_to_current_page_scale(self):
         import tests.integration.history.test_property_lifetimes as fixtures

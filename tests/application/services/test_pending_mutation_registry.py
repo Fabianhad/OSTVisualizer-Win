@@ -1,3 +1,4 @@
+import threading
 import unittest
 from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
@@ -9,6 +10,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 from ost_visualizer.application.services.pending_mutation_registry import (
     PendingMutationRegistry,
 )
+from tests.helpers.lock_guard import guard_mapping
 
 
 def _request(
@@ -62,7 +64,7 @@ class PendingMutationRegistryTests(unittest.TestCase):
         self.assertIs(registry.finish(overlapping.operation_id), other)
         self.assertEqual(registry.for_database("database"), ())
 
-    def test_registry_rejects_invalid_transition_and_clears_one_database(self):
+    def test_registry_rejects_invalid_transition_and_isolates_databases(self):
         registry = PendingMutationRegistry()
         first = _request()
         second = QueuedMutationRequest(
@@ -77,13 +79,13 @@ class PendingMutationRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid pending mutation transition"):
             registry.transition(first.operation_id, PendingMutationState.PROJECTING)
         self.assertIs(registry.get(first.operation_id), first_pending)
-        cleared = registry.clear_database("database")
-        self.assertEqual(
-            tuple(item.request.operation_id for item in cleared), (first.operation_id,)
-        )
+        # Metadata is only ever released operation by operation; finishing one
+        # database's operation leaves every other database's metadata intact.
+        self.assertEqual(registry.for_database("database"), (first_pending,))
+        self.assertEqual(registry.for_database("other"), (second_pending,))
+        self.assertIs(registry.finish(first.operation_id), first_pending)
         self.assertIs(registry.get(second.operation_id), second_pending)
         self.assertEqual(registry.for_database("database"), ())
-        self.assertEqual(registry.clear_database("database"), ())
         self.assertEqual(registry.for_database("other"), (second_pending,))
 
     def test_transition_matrix_preserves_metadata_and_rejects_invalid_edges(self):
@@ -159,3 +161,127 @@ class PendingMutationRegistryTests(unittest.TestCase):
         self.assertIsNone(registry.finish(request.operation_id))
         with self.assertRaisesRegex(ValueError, "no longer registered"):
             registry.transition(request.operation_id, PendingMutationState.RECOVERING)
+
+
+class PendingMutationRegistryConcurrencyTests(unittest.TestCase):
+    def _guarded(self):
+        registry = PendingMutationRegistry()
+        registry._mutations = guard_mapping(registry._lock, registry._mutations)
+        return registry
+
+    def test_every_public_operation_touches_the_table_only_while_locked(self):
+        registry = self._guarded()
+        request = _request()
+        other = _request(operation_id="00000000-0000-0000-0000-000000000002")
+        registry.begin(request)
+        registry.begin(other)
+        registry.get(request.operation_id)
+        registry.for_database("database")
+        registry.transition(request.operation_id, PendingMutationState.EXECUTING)
+        with self.assertRaises(ValueError):
+            registry.transition(request.operation_id, PendingMutationState.QUEUED)
+        with self.assertRaises(ValueError):
+            registry.transition("missing", PendingMutationState.EXECUTING)
+        with self.assertRaises(ValueError):
+            registry.begin(request)
+        registry.finish(request.operation_id)
+        registry.finish(request.operation_id)
+        self.assertEqual(
+            [p.request for p in registry.for_database("database")], [other]
+        )
+        with self.assertRaisesRegex(AssertionError, "without the lock"):
+            registry._mutations.get(other.operation_id)
+
+    def test_racing_begins_for_one_operation_id_admit_exactly_one_owner(self):
+        registry = PendingMutationRegistry()
+        racers = 8
+        start = threading.Barrier(racers)
+        outcomes = []
+
+        def race(database):
+            request = replace(_request(), database_id=database)
+            start.wait(10.0)
+            try:
+                outcomes.append(("owner", registry.begin(request)))
+            except ValueError as error:
+                outcomes.append(("refused", str(error)))
+
+        threads = [
+            threading.Thread(target=race, args=(f"database-{index}",))
+            for index in range(racers)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10.0)
+            self.assertFalse(thread.is_alive())
+        owners = [value for kind, value in outcomes if kind == "owner"]
+        self.assertEqual(len(owners), 1)
+        self.assertEqual(
+            [value for kind, value in outcomes if kind == "refused"],
+            ["A pending mutation already uses this operation ID"] * (racers - 1),
+        )
+        owner = owners[0]
+        self.assertIs(registry.get(owner.request.operation_id), owner)
+        self.assertEqual(registry.for_database(owner.request.database_id), (owner,))
+        for index in range(racers):
+            if f"database-{index}" != owner.request.database_id:
+                self.assertEqual(registry.for_database(f"database-{index}"), ())
+
+    def test_concurrent_lifecycles_of_distinct_operations_do_not_interfere(self):
+        registry = PendingMutationRegistry()
+        workers = 6
+        start = threading.Barrier(workers)
+        finished = {}
+
+        def lifecycle(index):
+            request = replace(
+                _request(operation_id=f"00000000-0000-0000-0000-{index:012d}"),
+                database_id=f"database-{index % 2}",
+            )
+            start.wait(10.0)
+            registry.begin(request, runtime_generation=index)
+            registry.transition(request.operation_id, PendingMutationState.EXECUTING)
+            registry.transition(
+                request.operation_id,
+                PendingMutationState.PROJECTING,
+                message=f"message-{index}",
+            )
+            finished[index] = registry.finish(request.operation_id)
+
+        threads = [
+            threading.Thread(target=lifecycle, args=(index,))
+            for index in range(workers)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10.0)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(sorted(finished), list(range(workers)))
+        for index, pending in finished.items():
+            self.assertEqual(pending.state, PendingMutationState.PROJECTING)
+            self.assertEqual(pending.runtime_generation, index)
+            self.assertEqual(pending.message, f"message-{index}")
+        self.assertEqual(registry.for_database("database-0"), ())
+        self.assertEqual(registry.for_database("database-1"), ())
+
+
+class PendingMutationRegistryBeginTests(unittest.TestCase):
+    def test_begin_records_queued_state_message_and_runtime_generation(self):
+        registry = PendingMutationRegistry()
+        default = registry.begin(_request())
+        explicit = registry.begin(
+            _request(operation_id="00000000-0000-0000-0000-000000000002"),
+            runtime_generation=9,
+        )
+        self.assertEqual(
+            (default.state, default.runtime_generation, default.message),
+            (PendingMutationState.QUEUED, 0, ""),
+        )
+        self.assertEqual(
+            (explicit.state, explicit.runtime_generation, explicit.message),
+            (PendingMutationState.QUEUED, 9, ""),
+        )
+        self.assertIs(registry.get(default.request.operation_id), default)
+        self.assertIs(registry.get(explicit.request.operation_id), explicit)

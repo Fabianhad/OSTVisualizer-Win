@@ -6,6 +6,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# Never create native windows on the developer's real desktop and screens.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.entities.workspace_state import (
     DetachedWindowState,
     WorkspaceState,
@@ -245,6 +248,8 @@ class DetachedWindowRestoreLifecycleTests(unittest.TestCase):
                     self.prepare(restored, captured)
                     restored._on_page_geometry_ready()
                     self.assertEqual(restored.normalGeometry(), normal)
+                    self.assertEqual(restored.isMaximized(), mode == "maximized")
+                    self.assertEqual(restored.isFullScreen(), mode == "fullscreen")
 
     def test_real_close_during_page_loading_keeps_saved_state_and_rejects_late_show(
         self,

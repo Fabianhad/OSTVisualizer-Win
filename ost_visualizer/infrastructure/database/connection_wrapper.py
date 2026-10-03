@@ -65,6 +65,7 @@ class ConnectionWrapper:
         self._conn = connection
         self._accepts_cursor_options = accepts_cursor_options
         self._open_cursors: list[CursorLease] = []
+        self.rollback_failed = False
 
     def cursor(self, *args, **cursor_options) -> CursorLease:
         if not self._accepts_cursor_options and (args or cursor_options):
@@ -95,7 +96,11 @@ class ConnectionWrapper:
         self._conn.commit()
 
     def rollback(self) -> None:
-        self._conn.rollback()
+        try:
+            self._conn.rollback()
+        except pyodbc.Error:
+            self.rollback_failed = True
+            raise
 
     def getinfo(self, info_type: int):
         return self._conn.getinfo(info_type)

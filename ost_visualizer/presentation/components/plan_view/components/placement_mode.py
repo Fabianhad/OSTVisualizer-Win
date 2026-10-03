@@ -38,6 +38,14 @@ from ....utils.annotation_defaults import (
     annotation_default_style,
     dimension_annotation_properties,
 )
+from ....scene.plan_view_z_order import (
+    ANNOTATION_BODY_Z,
+    DIMENSION_LABEL_Z,
+    PAPER_HIGHLIGHT_Z,
+    TAKEOFF_PREVIEW_BODY_Z,
+    TAKEOFF_PREVIEW_INDICATOR_Z,
+    TAKEOFF_PREVIEW_OUTLINE_Z,
+)
 from ....utils.image_show_mode import mode_to_flags
 from ....visualization.core.geometry.takeoff_geometry import (
     MINIMUM_RENDERED_LINEAR_THICKNESS,
@@ -840,7 +848,7 @@ class PlacementModeMixin:
             self._add_dashed_path_preview(
                 path,
                 _TEXT_SELECTION_OUTLINE_COLOR,
-                15,
+                ANNOTATION_BODY_Z,
                 page_transform,
                 pen_width=2.0,
             )
@@ -862,7 +870,7 @@ class PlacementModeMixin:
             highlight_color.setAlphaF(HIGHLIGHT_OPACITY)
             item.setPen(QPen(Qt.PenStyle.NoPen))
             item.setBrush(QBrush(highlight_color))
-            item.setZValue(15)
+            item.setZValue(PAPER_HIGHLIGHT_Z)
             self._add_preview_item(item, page_transform)
             return
         self._add_annotation_path_preview(path, color, width, page_transform)
@@ -935,7 +943,7 @@ class PlacementModeMixin:
         pen.setCosmetic(True)
         item.setPen(pen)
         item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        item.setZValue(15)
+        item.setZValue(ANNOTATION_BODY_Z)
         self._add_preview_item(item, page_transform)
 
     def update_annotation_place_preview(self, cursor_scene: QtCore.QPointF) -> None:
@@ -985,7 +993,7 @@ class PlacementModeMixin:
                     DIMENSION_FONT_SIZE_ADJUSTMENT,
                 )
                 if text_item is not None:
-                    text_item.setZValue(16)
+                    text_item.setZValue(DIMENSION_LABEL_Z)
                     self._add_preview_item(text_item, page_transform)
             elif annotation_type in (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_ARROW):
                 color, width = self._annotation_preview_style()
@@ -1390,7 +1398,10 @@ class PlacementModeMixin:
                     )
                     self._add_secondary_condition_previews(rect_path, page_transform)
                 self._add_dashed_path_preview(
-                    rect_path, QColor(0, 0, 0), 11, page_transform
+                    rect_path,
+                    QColor(0, 0, 0),
+                    TAKEOFF_PREVIEW_OUTLINE_Z,
+                    page_transform,
                 )
                 x_min, x_max = min(sx1, cx), max(sx1, cx)
                 y_min, y_max = min(sy1, cy), max(sy1, cy)
@@ -1438,7 +1449,7 @@ class PlacementModeMixin:
                 item.setPen(QPen(fill_color))
                 item.setBrush(QBrush(fill_color))
                 item.setOpacity(preview_opacity)
-                item.setZValue(10)
+                item.setZValue(TAKEOFF_PREVIEW_BODY_Z)
                 self._add_preview_item(item, page_transform)
             else:
                 item = QGraphicsPathItem()
@@ -1453,7 +1464,9 @@ class PlacementModeMixin:
                 )
                 if not self._backout_parent_uid:
                     self._add_secondary_condition_previews(path, page_transform)
-            self._add_dashed_path_preview(path, QColor(0, 0, 0), 11, page_transform)
+            self._add_dashed_path_preview(
+                path, QColor(0, 0, 0), TAKEOFF_PREVIEW_OUTLINE_Z, page_transform
+            )
             if endpoint.right_angle_indicator_active:
                 indicator_pen = QPen(QColor("#1f9d45"))
                 indicator_pen.setWidthF(2.0)
@@ -1465,7 +1478,7 @@ class PlacementModeMixin:
                     snapped_end[1],
                 )
                 indicator.setPen(indicator_pen)
-                indicator.setZValue(12)
+                indicator.setZValue(TAKEOFF_PREVIEW_INDICATOR_Z)
                 self._add_preview_item(indicator, page_transform)
             for hx, hy in scene_pts:
                 self._add_place_handle(hx, hy)
@@ -1773,10 +1786,10 @@ class PlacementModeMixin:
             item.setBrush(fill_brush)
         else:
             item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        item.setZValue(10)
+        item.setZValue(TAKEOFF_PREVIEW_BODY_Z)
         self._add_preview_item(item, page_transform)
         for pitem in pattern_items:
-            pitem.setZValue(10)
+            pitem.setZValue(TAKEOFF_PREVIEW_BODY_Z)
             self._add_preview_item(pitem, page_transform)
 
     def _add_secondary_condition_previews(

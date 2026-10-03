@@ -60,7 +60,17 @@ class FontCatalogTests(unittest.TestCase):
 
     def test_installed_families_are_case_insensitively_sorted(self):
         families = installed_font_families()
+        self.assertTrue(families)
         self.assertEqual(families, tuple(sorted(families, key=str.casefold)))
+        with patch.object(
+            QtGui.QFontDatabase,
+            "families",
+            return_value=["banana", "Cherry", "apple", "Banana2", "Apple2"],
+        ):
+            self.assertEqual(
+                installed_font_families(),
+                ("apple", "Apple2", "banana", "Banana2", "Cherry"),
+            )
 
     def test_exact_installed_style_is_kept_and_family_case_is_normalized(self):
         resolved = resolve_font_definition(

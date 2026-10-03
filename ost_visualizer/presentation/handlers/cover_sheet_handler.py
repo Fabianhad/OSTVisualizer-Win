@@ -1,7 +1,10 @@
+import logging
 from PySide6 import QtWidgets
+from ...application.dtos.active_bid_locked_error import ActiveBidLockedError
 from ...application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     QueuedMutationResult,
     ResourceRef,
 )
@@ -12,6 +15,8 @@ from ..managers.ui_access_manager import Feature
 from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical
 from ..utils.ost_blocking import exec_with_ost_blocking
+
+logger = logging.getLogger(__name__)
 
 
 class CoverSheetHandler:
@@ -496,6 +501,9 @@ class CoverSheetHandler:
                     finish,
                     edit_lease_handle=edit_lease_handle,
                 )
+        except ActiveBidLockedError:
+            logger.warning("Bid Areas blocked: the active bid is locked")
+            return False
         except (RuntimeError, ValueError) as exc:
             show_critical(self.window, "Bid Areas", str(exc))
             return False
@@ -531,6 +539,9 @@ class CoverSheetHandler:
                     finish,
                     edit_lease_handle=edit_lease_handle,
                 )
+        except ActiveBidLockedError:
+            logger.warning("Cover Sheet blocked: the active bid is locked")
+            return False
         except (RuntimeError, ValueError) as exc:
             show_critical(self.window, "Cover Sheet", str(exc))
             return False
@@ -582,6 +593,8 @@ class CoverSheetHandler:
             self._ui_event_coordinator.present_queued_mutation_error(
                 file_path, title, result
             )
+            return
+        if result.rejection_reason == MutationRejectionReason.BID_LOCKED:
             return
         show_critical(self.window, title, result.message or "The update failed.")
 

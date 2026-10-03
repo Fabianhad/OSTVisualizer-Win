@@ -1,3 +1,8 @@
+from tests.helpers.sql.strict_sql_fakes import (
+    StrictLeaseProxy,
+    strict_cursor,
+    strict_manager,
+)
 import contextlib
 import os
 import unittest
@@ -36,7 +41,9 @@ from tests.helpers.sql.cleanup_support import (
 
 class SchemaInspectorSqlCleanupTests(unittest.TestCase):
     def test_schema_inspector_index_query_has_canonical_from_clause(self):
-        inspector = SqlSchemaInspector(_cleanup_support__InspectionManager())
+        inspector = SqlSchemaInspector(
+            strict_manager(_cleanup_support__InspectionManager())
+        )
         inventory = inspector.inspect(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         )
@@ -44,7 +51,7 @@ class SchemaInspectorSqlCleanupTests(unittest.TestCase):
 
     def test_schema_inspector_excludes_sql_server_internal_tables(self):
         manager = _cleanup_support__InspectionManager()
-        inspector = SqlSchemaInspector(manager)
+        inspector = SqlSchemaInspector(strict_manager(manager))
         inspector.inspect(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         )
@@ -99,7 +106,7 @@ class SchemaInspectorSqlCleanupTests(unittest.TestCase):
                 yield self.lease
 
         manager = _MetadataManager()
-        inventory = SqlSchemaInspector(manager).inspect(
+        inventory = SqlSchemaInspector(strict_manager(manager)).inspect(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         )
         self.assertEqual(inventory.schema_version, 0)
@@ -204,7 +211,9 @@ class _CatalogLease:
 class SchemaInspectorInventoryParsingTests(unittest.TestCase):
     @staticmethod
     def _inspect(cursor):
-        return SqlSchemaInspector.inspect_connection(_CatalogLease(cursor))
+        return SqlSchemaInspector.inspect_connection(
+            StrictLeaseProxy(_CatalogLease(cursor), autocommit=True)
+        )
 
     def test_inventory_converts_every_catalog_row_into_typed_values(self):
         inventory = self._inspect(_CatalogCursor())
@@ -322,7 +331,9 @@ class SchemaInspectorInventoryParsingTests(unittest.TestCase):
             def connection(self, request, *, autocommit=False):
                 requests.append(request)
                 autocommit_values.append(autocommit)
-                yield _CatalogLease(_CatalogCursor())
+                yield StrictLeaseProxy(
+                    _CatalogLease(_CatalogCursor()), autocommit=autocommit
+                )
 
         location = SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         SqlSchemaInspector(_Manager()).inspect(
@@ -333,3 +344,300 @@ class SchemaInspectorInventoryParsingTests(unittest.TestCase):
         self.assertEqual(requests[0].password, "secret")
         self.assertEqual(requests[0].database_override, "Other")
         self.assertTrue(requests[0].read_only)
+
+
+from ost_visualizer.infrastructure.sql.errors import (  # noqa: E402
+    SqlErrorCode,
+    SqlInfrastructureError,
+)
+from tests.helpers.sql.strict_sql_fakes import (  # noqa: E402
+    EXPECTED_DATABASE_METADATA_PREDICATE,
+    Reply,
+    StrictSqlServer,
+    sql_server_error,
+)
+from ost_visualizer.infrastructure.sql.database_metadata_contract import (  # noqa: E402
+    DATABASE_METADATA_SINGLETON_PREDICATE,
+)
+
+
+class SchemaInspectorStrictServerTests(unittest.TestCase):
+    LOCATION = SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+
+    def _server(self, tables=()):
+        server = StrictSqlServer()
+        server.on(
+            "SELECT CONVERT(nvarchar(36), database_guid)", Reply.rows(("GUID-1",))
+        )
+        server.on("SELECT s.name, t.name FROM sys.tables", Reply.rows(*tables))
+        server.on("FROM [ostv].[DatabaseMetadata] m", Reply.rows((1, "checksum")))
+        server.on("snapshot_isolation_state", Reply.rows((1,)))
+        server.on("FROM sys.change_tracking_databases", Reply.rows((7, "DAYS", 1)))
+        server.on(
+            "FROM sys.change_tracking_tables",
+            Reply.rows(("ostv", "ChangeTransactions")),
+        )
+        server.on("SELECT", Reply.rows())
+        return server
+
+    def test_inspection_is_one_read_only_autocommit_connection_with_every_cursor_closed(
+        self,
+    ):
+        server = self._server()
+        with server.patched():
+            inventory = SqlSchemaInspector(server.manager()).inspect(self.LOCATION)
+        self.assertEqual(inventory.database_guid, "GUID-1")
+        self.assertEqual(len(server.connections), 1)
+        self.assertTrue(server.connect_calls[0]["autocommit"])
+        self.assertIn(
+            "ApplicationIntent=ReadOnly", server.connect_calls[0]["connection_string"]
+        )
+        raw = server.connections[0]
+        # inspection is read-only: it never begins, commits or rolls back
+        self.assertEqual((raw.commits, raw.rollbacks), (0, 0))
+        # the three module reads bind exactly their type-code placeholders
+        modules = [
+            params
+            for cursor in raw.cursors
+            for sql, params in cursor.executed
+            if "FROM sys.objects o" in sql
+        ]
+        self.assertEqual(modules, [("V",), ("P",), ("FN", "IF", "TF", "FS", "FT")])
+        server.assert_everything_closed()
+
+    def test_driver_failure_mid_inspection_is_classified_and_releases_the_connection(
+        self,
+    ):
+        server = self._server()
+
+        def fail(_call):
+            raise sql_server_error("08S01", "Communication link failure")
+
+        server.rules.insert(0, (lambda sql: "FROM sys.foreign_keys fk" in sql, fail))
+        with server.patched():
+            with self.assertRaises(SqlInfrastructureError) as raised:
+                SqlSchemaInspector(server.manager()).inspect(self.LOCATION)
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.CONNECTION_FAILED)
+        server.assert_everything_closed()
+
+    def test_database_metadata_predicate_is_exactly_one_row_for_this_database(self):
+        self.assertEqual(
+            DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
+            EXPECTED_DATABASE_METADATA_PREDICATE,
+        )
+        self.assertTrue(
+            EXPECTED_DATABASE_METADATA_PREDICATE.startswith(
+                DATABASE_METADATA_SINGLETON_PREDICATE
+            )
+        )
+        self.assertEqual(
+            DATABASE_METADATA_SINGLETON_PREDICATE,
+            "m.[Product]=N'OST Visualizer' AND (SELECT COUNT_BIG(*) FROM "
+            "[ostv].[DatabaseMetadata] metadata_count WHERE "
+            "metadata_count.[Product]=N'OST Visualizer')=1",
+        )
+
+    def test_schema_version_is_read_only_through_the_single_row_identity_predicate(
+        self,
+    ):
+        tables = (("ostv", "DatabaseMetadata"), ("ostv", "SchemaMigrations"))
+        server = self._server(tables)
+        with server.patched():
+            inventory = SqlSchemaInspector(server.manager()).inspect(self.LOCATION)
+        self.assertEqual(
+            (inventory.schema_version, inventory.schema_checksum), (1, "checksum")
+        )
+        statements = [
+            sql
+            for number, kind, sql in server.events
+            if kind == "execute" and "FROM [ostv].[DatabaseMetadata] m" in sql
+        ]
+        self.assertEqual(len(statements), 1)
+        self.assertTrue(
+            statements[0].endswith("WHERE " + EXPECTED_DATABASE_METADATA_PREDICATE)
+        )
+        # the metadata read is skipped entirely when the ledger tables are absent
+        empty = self._server(())
+        with empty.patched():
+            absent = SqlSchemaInspector(empty.manager()).inspect(self.LOCATION)
+        self.assertEqual((absent.schema_version, absent.schema_checksum), (0, ""))
+        self.assertFalse(any("DatabaseMetadata" in s for s in empty.statements()))
+
+
+class SchemaInspectorRowMappingTests(unittest.TestCase):
+    """Survivors of the second-pass mutation sweep over schema_inspector.py."""
+
+    def test_inventory_values_are_immutable_and_default_to_an_unconfigured_database(
+        self,
+    ):
+        import dataclasses
+
+        empty = SqlSchemaInventory(
+            database_guid="",
+            schema_version=0,
+            schema_checksum="",
+            tables=frozenset(),
+            columns=(),
+            foreign_keys=(),
+            indexes=(),
+            views=(),
+            triggers=(),
+            procedures=(),
+            functions=(),
+        )
+        self.assertEqual(empty.check_constraints, ())
+        self.assertIs(empty.change_tracking_enabled, False)
+        self.assertEqual(empty.change_tracking_tables, frozenset())
+        self.assertIs(empty.snapshot_isolation_enabled, False)
+        self.assertEqual(empty.change_tracking_retention_days, 0)
+        self.assertIs(empty.change_tracking_auto_cleanup, False)
+        from ost_visualizer.infrastructure.sql.schema_inspector import (
+            SqlCheckConstraintInventory,
+        )
+
+        for value in (
+            empty,
+            SqlColumnInventory("dbo", "T", "C", "int", 4, 0, False, False, False),
+            SqlForeignKeyInventory("fk", "dbo", "C", "a", "dbo", "P", "a"),
+            SqlIndexInventory("dbo", "T", "ix", False, False, ("a",), ""),
+            SqlModuleInventory("dbo", "v"),
+            SqlCheckConstraintInventory("dbo", "T", "ck", "(1=1)"),
+        ):
+            with self.subTest(kind=type(value).__name__):
+                first_field = dataclasses.fields(value)[0].name
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    setattr(value, first_field, "changed")
+        self.assertEqual(
+            SqlForeignKeyInventory(
+                "fk", "dbo", "C", "a", "dbo", "P", "a"
+            ).on_delete_action,
+            "NO_ACTION",
+        )
+        self.assertEqual(
+            SqlColumnInventory(
+                "dbo", "T", "C", "int", 4, 0, False, False, False
+            ).default_definition,
+            "",
+        )
+
+    def test_default_connection_manager_is_created_when_none_is_injected(self):
+        from ost_visualizer.infrastructure.sql.connection_manager import (
+            SqlConnectionManager,
+        )
+
+        self.assertIsInstance(SqlSchemaInspector()._connections, SqlConnectionManager)
+
+    def test_missing_guid_or_ledger_values_default_without_failing(self):
+        class _Cursor(_CatalogCursor):
+            def __init__(self, guid_row, metadata_row, tables):
+                super().__init__()
+                self._guid_row = guid_row
+                self._metadata_row = metadata_row
+                self._tables = tables
+
+            def fetchone(self):
+                if "CONVERT(nvarchar(36), database_guid)" in self._sql:
+                    return self._guid_row
+                if "FROM [ostv].[DatabaseMetadata] m" in self._sql:
+                    return self._metadata_row
+                return super().fetchone()
+
+            def fetchall(self):
+                if self._sql.startswith("SELECT s.name, t.name FROM sys.tables"):
+                    return list(self._tables)
+                return super().fetchall()
+
+        both = (("ostv", "DatabaseMetadata"), ("ostv", "SchemaMigrations"))
+        for guid_row, expected_guid in (
+            (None, ""),
+            ((None,), ""),
+            (("",), ""),
+            (("G",), "G"),
+        ):
+            with self.subTest(guid_row=guid_row):
+                inventory = SqlSchemaInspector.inspect_connection(
+                    _CatalogLease(_Cursor(guid_row, (1, "sum"), both))
+                )
+                self.assertEqual(inventory.database_guid, expected_guid)
+        for metadata_row, expected in (
+            (None, (0, "")),
+            ((None, None), (0, "")),
+            ((1, None), (1, "")),
+            ((2, "abc"), (2, "abc")),
+        ):
+            with self.subTest(metadata_row=metadata_row):
+                inventory = SqlSchemaInspector.inspect_connection(
+                    _CatalogLease(_Cursor(("G",), metadata_row, both))
+                )
+                self.assertEqual(
+                    (inventory.schema_version, inventory.schema_checksum), expected
+                )
+
+    def test_ledger_is_only_read_when_both_ledger_tables_exist(self):
+        class _Cursor(_CatalogCursor):
+            def __init__(self, tables):
+                super().__init__()
+                self._tables = tables
+                self.metadata_reads = 0
+
+            def fetchone(self):
+                if "FROM [ostv].[DatabaseMetadata] m" in self._sql:
+                    self.metadata_reads += 1
+                return super().fetchone()
+
+            def fetchall(self):
+                if self._sql.startswith("SELECT s.name, t.name FROM sys.tables"):
+                    return list(self._tables)
+                return super().fetchall()
+
+        for label, tables, reads in (
+            ("only metadata", (("ostv", "DatabaseMetadata"),), 0),
+            ("only migrations", (("ostv", "SchemaMigrations"),), 0),
+            (
+                "dbo copies are not the ledger",
+                (("dbo", "DatabaseMetadata"), ("dbo", "SchemaMigrations")),
+                0,
+            ),
+            ("both", (("ostv", "DatabaseMetadata"), ("ostv", "SchemaMigrations")), 1),
+        ):
+            with self.subTest(label=label):
+                cursor = _Cursor(tables)
+                inventory = SqlSchemaInspector.inspect_connection(_CatalogLease(cursor))
+                self.assertEqual(cursor.metadata_reads, reads)
+                self.assertEqual(inventory.schema_version, 1 if reads else 0)
+
+    def test_each_column_flag_and_index_flag_is_read_from_its_own_catalog_column(self):
+        class _Cursor(_CatalogCursor):
+            def fetchall(self):
+                sql = self._sql
+                if "ty.name" in sql and "sys.columns c" in sql:
+                    return [
+                        ("dbo", "T", "Identity", "int", 4, 0, 0, 1, 0, None),
+                        ("dbo", "T", "Computed", "int", 4, 0, 0, 0, 1, None),
+                        ("dbo", "T", "Nullable", "int", 4, 0, 1, 0, 0, None),
+                    ]
+                if "FROM sys.indexes i" in sql:
+                    return [
+                        ("dbo", "T", "UQ", 1, 0, "a", 1, ""),
+                        ("dbo", "T", "PK", 0, 1, "a", 1, ""),
+                        ("dbo", "T", "PK_UQ", 1, 1, "a", 1, ""),
+                    ]
+                return super().fetchall()
+
+        inventory = SqlSchemaInspector.inspect_connection(_CatalogLease(_Cursor()))
+        flags = {
+            c.column_name: (c.nullable, c.identity, c.computed)
+            for c in inventory.columns
+        }
+        self.assertEqual(
+            flags,
+            {
+                "Identity": (False, True, False),
+                "Computed": (False, False, True),
+                "Nullable": (True, False, False),
+            },
+        )
+        by_name = {i.index_name: (i.unique, i.primary_key) for i in inventory.indexes}
+        self.assertEqual(
+            by_name, {"UQ": (True, False), "PK": (False, True), "PK_UQ": (True, True)}
+        )

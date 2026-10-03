@@ -11,6 +11,30 @@ from tests.presentation.dialogs.options.preference_support import (
     _app as _preferences_support__app,
 )
 
+_APP_CONFIG_EVENT_NAMES = {"APP_CONFIG_UPDATED", "AppConfigUpdatedEvent"}
+
+
+def _publishes_app_config_updated(tree):
+    """True when any ``*.publish(<app config event>, ...)`` call is present.
+    The event may be named through ``AppEvents.APP_CONFIG_UPDATED``, a bare or
+    qualified ``AppConfigUpdatedEvent``, so none of those routes bypasses the
+    single-publisher rule.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        event_arg = node.args[0]
+        if not (isinstance(func, ast.Attribute) and func.attr == "publish"):
+            continue
+        if isinstance(event_arg, ast.Attribute) and (
+            event_arg.attr in _APP_CONFIG_EVENT_NAMES
+        ):
+            return True
+        if isinstance(event_arg, ast.Name) and event_arg.id in _APP_CONFIG_EVENT_NAMES:
+            return True
+    return False
+
 
 class PreferencesContractPreferenceTests(unittest.TestCase):
     @classmethod
@@ -36,23 +60,14 @@ class PreferencesContractPreferenceTests(unittest.TestCase):
 
     def test_app_config_updated_is_published_only_by_config_service(self):
         publishers = []
+        scanned = 0
         for path in (REPO_ROOT / "ost_visualizer").rglob("*.py"):
+            scanned += 1
             tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call) or not node.args:
-                    continue
-                func = node.func
-                event_arg = node.args[0]
-                if (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "publish"
-                    and isinstance(event_arg, ast.Attribute)
-                    and event_arg.attr == "APP_CONFIG_UPDATED"
-                    and isinstance(event_arg.value, ast.Name)
-                    and event_arg.value.id == "AppEvents"
-                ):
-                    publishers.append(path.relative_to(REPO_ROOT).as_posix())
-                    break
+            if _publishes_app_config_updated(tree):
+                publishers.append(path.relative_to(REPO_ROOT).as_posix())
+        # Positive control: ~590 production modules exist (counted with find).
+        self.assertGreaterEqual(scanned, 500)
         self.assertEqual(
             publishers,
             ["ost_visualizer/application/services/config_service.py"],
@@ -96,8 +111,34 @@ class PreferencesContractPreferenceTests(unittest.TestCase):
                 if path.name == "config_service.py":
                     continue
                 text = path.read_text(encoding="utf-8")
-                if "write" in path.name.lower() or "mdb" in path.parts:
+                if (
+                    "write" in path.name.lower()
+                    or "mdb" in path.relative_to(root).parts
+                ):
                     scanned.append(path)
                     self.assertNotIn("config_service", text)
                     self.assertNotIn("ConfigService", text)
-        self.assertTrue(scanned)
+        # Positive control: ~43 write/mdb modules exist (counted with find).
+        self.assertGreaterEqual(len(scanned), 30)
+
+
+class AppConfigPublisherScannerSelfTests(unittest.TestCase):
+    def test_scanner_flags_every_route_to_the_app_config_event(self):
+        for call in (
+            "bus.publish(AppEvents.APP_CONFIG_UPDATED, setting='x')",
+            "self.event_bus.publish(events.AppEvents.APP_CONFIG_UPDATED)",
+            "bus.publish(AppConfigUpdatedEvent, setting='x')",
+            "bus.publish(app_events.AppConfigUpdatedEvent)",
+        ):
+            with self.subTest(call=call):
+                self.assertTrue(_publishes_app_config_updated(ast.parse(call)))
+
+    def test_scanner_ignores_other_events_subscriptions_and_non_publish_calls(self):
+        for call in (
+            "bus.publish(AppEvents.PRESENCE_CHANGED)",
+            "bus.subscribe(AppEvents.APP_CONFIG_UPDATED, handler)",
+            "log(AppEvents.APP_CONFIG_UPDATED)",
+            "bus.publish()",
+        ):
+            with self.subTest(call=call):
+                self.assertFalse(_publishes_app_config_updated(ast.parse(call)))

@@ -1,11 +1,37 @@
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.interfaces.i_database_maintenance import (
     DatabaseMaintenanceResult,
+    IDatabaseMaintenance,
+    IPreparedDatabaseMaintenance,
 )
+from ost_visualizer.application.interfaces.i_window_icon_provider import (
+    IWindowIconProvider,
+)
+from ost_visualizer.application.services.file_loading_service import (
+    FileLoadingService,
+)
+from ost_visualizer.application.services.sql_collaboration_coordinator import (
+    SqlCollaborationCoordinator,
+)
+from ost_visualizer.application.services.working_directory_service import (
+    WorkingDirectoryService,
+)
+from ost_visualizer.application.use_cases.project.cleanup_deleted_files_use_case import (
+    CleanupDeletedFilesUseCase,
+)
+from ost_visualizer.domain.aggregates.file_state_aggregate import FileStateAggregate
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.infrastructure.events.event_bus import EventBus
+from ost_visualizer.presentation.managers.deferred_persistence_manager import (
+    DeferredPersistenceManager,
+)
+from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from ost_visualizer.application.services.database_maintenance_service import (
     DatabaseMaintenanceService,
 )
@@ -34,6 +60,43 @@ from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 
 
+def _icons():
+    return Mock(spec=IWindowIconProvider)
+
+
+def _working_directory():
+    # A real directory value that is never the parent of the "test.mdb" fixtures.
+    return SimpleNamespace(working_dir=Path("elsewhere"))
+
+
+def _files(hierarchy=None):
+    files = Mock(spec=FileLoadingService)
+    files.data_service = Mock(spec=ProjectDataService)
+    if hierarchy is not None:
+        files.data_service.get_hierarchy.side_effect = lambda: hierarchy
+    return files
+
+
+def _handler(host, service, *, files=None, access=None, state=None, events=None):
+    """FileOperationHandler over spec'd collaborators; every constructor slot is
+    typed so an unexpected collaborator call raises instead of being absorbed."""
+    return FileOperationHandler(
+        host,
+        _icons(),
+        events or Mock(spec=EventBus),
+        state or Mock(spec=FileStateAggregate),
+        Mock(spec=CleanupDeletedFilesUseCase),
+        files or _files(),
+        Mock(spec=WorkingDirectoryService),
+        Mock(return_value=True),
+        Mock(spec=DeferredPersistenceManager),
+        access or Mock(spec=UIAccessManager),
+        Mock(spec=SqlCollaborationCoordinator),
+        make_workspace_state_model(),
+        database_maintenance_service=service,
+    )
+
+
 class DatabaseMaintenanceUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -51,33 +114,19 @@ class DatabaseMaintenanceUiTests(unittest.TestCase):
             schema_version=1,
         )
         registry.register(descriptor)
-        access = Mock()
+        access = Mock(spec=IDatabaseMaintenance)
         service = DatabaseMaintenanceService(
             DatabaseMaintenanceRouter(registry, access, SqlDatabaseMaintenance()),
-            Mock(),
-            Mock(),
+            _files(),
+            Mock(spec=EventBus),
         )
-        handler = FileOperationHandler(
-            host,
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            make_workspace_state_model(),
-            database_maintenance_service=service,
-        )
+        handler = _handler(host, service)
         handler._ui_access_manager.can_maintain_database.return_value = True
         dialog = OpenFilesDialog(
-            Mock(),
+            _icons(),
             host,
             [FileEntry(descriptor=descriptor)],
-            Mock(),
+            _working_directory(),
             make_workspace_state_model(),
             maintenance_allowed_fn=handler._maintenance_allowed,
         )
@@ -91,8 +140,15 @@ class DatabaseMaintenanceUiTests(unittest.TestCase):
             ) as warning:
                 dialog.compact_button.click()
                 warning.assert_called_once()
-                self.assertIn("not available for SQL Server", warning.call_args.args[2])
-            access.compact.assert_not_called()
+                self.assertEqual(warning.call_args.args[1], "Compact/Repair")
+                self.assertTrue(
+                    warning.call_args.args[2].startswith(
+                        "Compact/Repair is not available for SQL Server."
+                    ),
+                    warning.call_args.args[2],
+                )
+            # The SQL Server descriptor must never reach the Access backend at all.
+            self.assertEqual(access.mock_calls, [])
             handler._ui_access_manager.can_maintain_database.return_value = False
             dialog._update_remove_button_state()
             self.assertFalse(dialog.compact_button.isEnabled())
@@ -109,33 +165,19 @@ class DatabaseMaintenanceUiTests(unittest.TestCase):
         for succeeds in (True, False):
             with self.subTest(succeeds=succeeds):
                 host = QtWidgets.QWidget()
-                service = Mock()
+                service = Mock(spec=DatabaseMaintenanceService)
                 service.unavailable_reason.return_value = ""
                 service.finish.return_value = DatabaseMaintenanceResult(
                     succeeds, "result"
                 )
-                handler = FileOperationHandler(
-                    host,
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    make_workspace_state_model(),
-                    database_maintenance_service=service,
-                )
+                handler = _handler(host, service)
                 handler._ui_access_manager.can_maintain_database.return_value = True
                 handler._deferred_persistence.flush_for_file.return_value = True
                 dialog = OpenFilesDialog(
-                    Mock(),
+                    _icons(),
                     host,
                     [FileEntry(file_path="test.mdb")],
-                    Mock(),
+                    _working_directory(),
                     make_workspace_state_model(),
                     maintenance_allowed_fn=handler._maintenance_allowed,
                 )
@@ -146,7 +188,8 @@ class DatabaseMaintenanceUiTests(unittest.TestCase):
                     )
                     self.assertFalse(dialog.compact_button.isEnabled())
                     dialog.compact_button.click()
-                    service.compact.assert_not_called()
+                    # No selection: the disabled button must not reach the service.
+                    self.assertEqual(service.mock_calls, [])
                     item = dialog.table.topLevelItem(0)
                     dialog.table.setCurrentItem(item)
                     self.assertTrue(dialog.compact_button.isEnabled())
@@ -181,6 +224,8 @@ class DatabaseMaintenanceUiTests(unittest.TestCase):
                     )
                     self.assertEqual(info.call_count, int(succeeds))
                     self.assertEqual(warning.call_count, int(not succeeds))
+                    shown = (info if succeeds else warning).call_args.args
+                    self.assertEqual(shown[1:], ("Compact/Repair", "result"))
                     self.assertIs(dialog.table.currentItem(), item)
                     self.assertTrue(dialog.compact_button.isEnabled())
                     self.assertFalse(handler._file_operation_pending)
@@ -199,47 +244,34 @@ class MaintenanceUiOwnershipTests(unittest.TestCase):
         entry = FileEntry("test.mdb")
         owner = SimpleNamespace(file_path=entry.runtime_locator)
         hierarchy = SimpleNamespace(loaded_files=[owner])
-        files = Mock()
-        files.data_service.get_hierarchy.side_effect = lambda: hierarchy
-        files.is_loaded.return_value = True
-        files.reload_database.return_value.success = True
-        backend = Mock()
+        files = _files(hierarchy)
+        files.reload_database.return_value = SimpleNamespace(success=True)
+        events = Mock(spec=EventBus)
+        backend = Mock(spec=IDatabaseMaintenance)
         backend.unavailable_reason.return_value = ""
         backend.capture_target.return_value = "source-A"
         backend.is_target_current.side_effect = (
             lambda _locator, identity: backend.capture_target.return_value == identity
         )
         committed = Mock(return_value=DatabaseMaintenanceResult(True, "done"))
-        staged = Mock()
+        staged = Mock(spec=IPreparedDatabaseMaintenance)
         staged.commit.side_effect = committed
         backend.prepare.return_value = staged
         if transition == "engine":
             backend.prepare.side_effect = RuntimeError("DAO failed")
+        if transition == "commit_cleanup_failure":
+            staged.close.side_effect = OSError("temporary file is locked")
         backend.compact.side_effect = committed
-        service = DatabaseMaintenanceService(backend, files, Mock())
-        access = Mock()
+        service = DatabaseMaintenanceService(backend, files, events)
+        access = Mock(spec=UIAccessManager)
         access.can_maintain_database.return_value = True
-        handler = FileOperationHandler(
-            host,
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            files,
-            Mock(),
-            Mock(),
-            Mock(),
-            access,
-            Mock(),
-            make_workspace_state_model(),
-            database_maintenance_service=service,
-        )
+        handler = _handler(host, service, files=files, access=access)
         handler._deferred_persistence.flush_for_file.return_value = True
         dialog = OpenFilesDialog(
-            Mock(),
+            _icons(),
             host,
             [entry],
-            Mock(),
+            _working_directory(),
             make_workspace_state_model(),
             maintenance_allowed_fn=handler._maintenance_allowed,
         )
@@ -299,10 +331,33 @@ class MaintenanceUiOwnershipTests(unittest.TestCase):
                 committed.assert_called_once()
                 files.reload_database.assert_called_once_with(entry.runtime_locator)
                 info.assert_called_once()
+                events.publish.assert_called_once_with(
+                    AppEvents.DATABASE_REFRESHED, file_path=entry.runtime_locator
+                )
                 self.assertIs(dialog.maintenance_target(), target)
+            elif transition == "commit_cleanup_failure":
+                # The commit and refresh succeeded; only the temporary-file
+                # cleanup failed, so the one result reports failure with the
+                # cleanup reason instead of the success dialog.
+                committed.assert_called_once()
+                files.reload_database.assert_called_once_with(entry.runtime_locator)
+                events.publish.assert_called_once_with(
+                    AppEvents.DATABASE_REFRESHED, file_path=entry.runtime_locator
+                )
+                info.assert_not_called()
+                warning.assert_called_once()
+                self.assertEqual(
+                    warning.call_args.args[1:],
+                    (
+                        "Compact/Repair",
+                        "Compact/Repair completed successfully. "
+                        "Temporary-file cleanup failed: temporary file is locked",
+                    ),
+                )
             else:
                 committed.assert_not_called()
                 files.reload_database.assert_not_called()
+                events.publish.assert_not_called()
                 info.assert_not_called()
             self.assertFalse(service._operation_lock.locked())
             if transition != "initial_selection":
@@ -310,8 +365,18 @@ class MaintenanceUiOwnershipTests(unittest.TestCase):
                     entry.runtime_locator, "source-A"
                 )
                 backend.capture_target.assert_called_once()
-            if before_prepare:
+            stops_early = not during_progress and transition not in (
+                "current",
+                "engine",
+                "commit_cleanup_failure",
+            )
+            if before_prepare or stops_early:
+                # A change (or cancel) before progress starts must stop the
+                # workflow at the handler's own checks, so the backend never
+                # prepares a copy and no warning is shown for the silent stops.
                 backend.prepare.assert_not_called()
+            if stops_early:
+                warning.assert_not_called()
             if transition == "initial_selection":
                 handler._deferred_persistence.flush_for_file.assert_not_called()
             self.assertLessEqual(warning.call_count, 1)
@@ -334,6 +399,7 @@ class MaintenanceUiOwnershipTests(unittest.TestCase):
                 "engine",
                 "initial_selection",
                 "cleanup_failure",
+                "commit_cleanup_failure",
                 "cancel",
             ):
                 with self.subTest(
@@ -349,32 +415,23 @@ class MaintenanceUiOwnershipTests(unittest.TestCase):
     def test_open_files_projects_access_changes_and_unsubscribes(self):
         host = QtWidgets.QWidget()
         entries = [FileEntry("test.mdb")]
-        state = Mock()
+        state = Mock(spec=FileStateAggregate)
         state.file_entries = entries
-        access = Mock()
+        access = Mock(spec=UIAccessManager)
         access.can_maintain_database.return_value = True
         callbacks = []
         access.subscribe_access_state_changed.side_effect = callbacks.append
-        handler = FileOperationHandler(
+        handler = _handler(
             host,
-            Mock(),
-            Mock(),
-            state,
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            Mock(),
-            access,
-            Mock(),
-            make_workspace_state_model(),
-            database_maintenance_service=Mock(),
+            Mock(spec=DatabaseMaintenanceService),
+            access=access,
+            state=state,
         )
         dialog = OpenFilesDialog(
-            Mock(),
+            _icons(),
             host,
             entries,
-            Mock(),
+            _working_directory(),
             make_workspace_state_model(),
             maintenance_allowed_fn=handler._maintenance_allowed,
         )

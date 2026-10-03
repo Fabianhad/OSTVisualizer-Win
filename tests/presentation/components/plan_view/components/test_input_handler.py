@@ -5542,7 +5542,7 @@ class InputHandlerMixinDragTrackingTests(_CtrlDragFixture):
         clean_hidden = []
         clean._rubber_band = SimpleNamespace(hide=lambda: clean_hidden.append(True))
         self.assertFalse(clean._has_active_drag_interaction())
-        self.assertFalse(clean._cancel_active_drag_interaction())
+        self.assertIs(clean._cancel_active_drag_interaction(), False)
         self.assertEqual(clean_hidden, [])
         for name, activate in states.items():
             with self.subTest(name):
@@ -5618,7 +5618,7 @@ class InputHandlerMixinDragTrackingTests(_CtrlDragFixture):
                 view._panning = panning
                 view._last_pan_point = last
                 view._pan_view_changed = False
-                self.assertFalse(view._apply_pan_update(current))
+                self.assertIs(view._apply_pan_update(current), False)
                 self.assertEqual(scrolls, {"h": [], "v": []})
                 self.assertEqual(view.view_changes, [])
                 self.assertFalse(view._pan_view_changed)
@@ -5796,7 +5796,7 @@ class InputHandlerMixinDragTrackingTests(_CtrlDragFixture):
         preview = QGraphicsPathItem()
         preview.setRotation(12.0)
         view._rotation_drag_preview_items = [preview]
-        self.assertFalse(view._cancel_rotation_drag_interaction())
+        self.assertIs(view._cancel_rotation_drag_interaction(), False)
         self.assertEqual(preview.rotation(), 12.0)
         self.assertEqual(view.cursor_updates, [])
 
@@ -9304,3 +9304,6445 @@ class InputHandlerMixinContextMenuActionTests(_CtrlDragFixture):
         view._on_selection_changed = lambda: view.selection_events.append("changed")
         self._run_menu(view, event_pos=(50.0, 0.0))
         self.assertEqual(view.selection_events, [])
+
+
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_MOVE_OVERLAY,
+    CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+    CURSOR_MODE_PAN,
+    CURSOR_MODE_ROTATE,
+    CURSOR_MODE_SLOPE_ROTATE,
+    CURSOR_MODE_ZOOM,
+)
+
+
+class _RealViewGestureFixture(unittest.TestCase):
+    """Drives mouse gestures through a real TakeoffPlanView with real QMouseEvents."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _real_view(self):
+        view = PlanViewInteractionTests._make_plan_view(self)
+        self.mode_requests = []
+        view.cursor_mode_change_requested.connect(self.mode_requests.append)
+        self.calls = []
+        view._apply_zoom = lambda factor: self.calls.append(("zoom", factor))
+        view._mark_user_view_changed_during_load = lambda: self.calls.append("mark")
+        view._publish_current_page_view_state = lambda: self.calls.append("publish")
+        return view
+
+    @staticmethod
+    def _event(
+        button,
+        pos=(20, 30),
+        modifiers=Qt.KeyboardModifier.NoModifier,
+        event_type=QtCore.QEvent.Type.MouseButtonPress,
+        buttons=None,
+    ):
+        point = QtCore.QPointF(*pos)
+        event = QMouseEvent(
+            event_type,
+            point,
+            point,
+            button,
+            button if buttons is None else buttons,
+            modifiers,
+        )
+        # Qt mouse events start accepted; start ignored so accept() is observable.
+        event.setAccepted(False)
+        return event
+
+
+class MiddleAndRightPressTests(_RealViewGestureFixture):
+    def test_middle_press_falls_through_without_advanced_mouse_controls(self):
+        view = self._real_view()
+        view._advanced_mouse_controls_enabled = False
+        event = self._event(Qt.MouseButton.MiddleButton)
+        view.mousePressEvent(event)
+        self.assertFalse(event.isAccepted())
+        self.assertEqual(self.mode_requests, [])
+        self.assertEqual(view._persistent_cursor_mode, CURSOR_MODE_SELECT)
+
+    def test_middle_press_is_swallowed_while_ctrl_is_held_or_placing(self):
+        for label, setup in (
+            ("ctrl held", lambda view: setattr(view, "_ctrl_held", True)),
+            ("placing", lambda view: view._apply_cursor_mode(CURSOR_MODE_PLACE)),
+        ):
+            with self.subTest(label):
+                view = self._real_view()
+                setup(view)
+                self.mode_requests.clear()
+                persistent_before = view._persistent_cursor_mode
+                event = self._event(Qt.MouseButton.MiddleButton)
+                view.mousePressEvent(event)
+                self.assertTrue(event.isAccepted())
+                self.assertEqual(self.mode_requests, [])
+                self.assertEqual(view._persistent_cursor_mode, persistent_before)
+                self.assertIsNone(view._pre_zoom_persistent_mode)
+
+    def test_middle_press_toggles_zoom_mode_and_remembers_the_previous_mode(self):
+        view = self._real_view()
+        event = self._event(Qt.MouseButton.MiddleButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(view._persistent_cursor_mode, CURSOR_MODE_ZOOM)
+        self.assertEqual(view._pre_zoom_persistent_mode, CURSOR_MODE_SELECT)
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_ZOOM])
+        event = self._event(Qt.MouseButton.MiddleButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(view._persistent_cursor_mode, CURSOR_MODE_SELECT)
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_ZOOM, CURSOR_MODE_SELECT])
+
+    def test_middle_press_keeps_an_already_remembered_mode(self):
+        view = self._real_view()
+        view._pre_zoom_persistent_mode = CURSOR_MODE_PAN
+        view.mousePressEvent(self._event(Qt.MouseButton.MiddleButton))
+        self.assertEqual(view._persistent_cursor_mode, CURSOR_MODE_ZOOM)
+        self.assertEqual(view._pre_zoom_persistent_mode, CURSOR_MODE_PAN)
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_ZOOM])
+
+    def test_middle_press_in_zoom_without_a_remembered_mode_does_not_restore(self):
+        view = self._real_view()
+        view._persistent_cursor_mode = CURSOR_MODE_ZOOM
+        view._pre_zoom_persistent_mode = None
+        event = self._event(Qt.MouseButton.MiddleButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(view._persistent_cursor_mode, CURSOR_MODE_ZOOM)
+        self.assertEqual(view._pre_zoom_persistent_mode, CURSOR_MODE_ZOOM)
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_ZOOM])
+
+    def test_right_press_resets_the_context_menu_suppression_flag(self):
+        for advanced in (True, False):
+            with self.subTest(advanced=advanced):
+                view = self._real_view()
+                view._advanced_mouse_controls_enabled = advanced
+                view._suppress_next_context_menu = True
+                view.mousePressEvent(self._event(Qt.MouseButton.RightButton))
+                self.assertIs(view._suppress_next_context_menu, False)
+
+    def test_right_press_falls_through_without_advanced_mouse_controls(self):
+        view = self._real_view()
+        view._advanced_mouse_controls_enabled = False
+        event = self._event(Qt.MouseButton.RightButton)
+        view.mousePressEvent(event)
+        self.assertFalse(event.isAccepted())
+        self.assertFalse(view._right_pan_active)
+        self.assertFalse(view._panning)
+        self.assertEqual(self.mode_requests, [])
+
+    def test_right_press_while_placing_is_swallowed_without_panning(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_PLACE)
+        event = self._event(Qt.MouseButton.RightButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertFalse(view._right_pan_active)
+        self.assertFalse(view._panning)
+        self.assertEqual(self.mode_requests, [])
+
+    def test_right_press_starts_a_pan_and_requests_pan_mode(self):
+        view = self._real_view()
+        cursor_updates = []
+        view._update_cursor = lambda *args: cursor_updates.append(args)
+        view._right_pan_dragged = True
+        view._pan_view_changed = True
+        view._last_pan_point = None
+        view._right_pan_press_timer.invalidate()
+        view._persistent_cursor_mode = CURSOR_MODE_SELECT
+        event = self._event(Qt.MouseButton.RightButton, pos=(21, 33))
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertIs(view._right_pan_active, True)
+        self.assertEqual(view._right_pan_press_pos, QtCore.QPoint(21, 33))
+        self.assertTrue(view._right_pan_press_timer.isValid())
+        self.assertIs(view._right_pan_dragged, False)
+        self.assertEqual(view._pre_pan_persistent_mode, CURSOR_MODE_SELECT)
+        self.assertIs(view._panning, True)
+        self.assertIs(view._pan_view_changed, False)
+        self.assertEqual(view._last_pan_point, QtCore.QPoint(21, 33))
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_PAN])
+        self.assertNotIn(("zoom", 1.0 / view.ZOOM_FACTOR), self.calls)
+        self.assertEqual(cursor_updates, [()])
+
+    def test_right_press_with_ctrl_zooms_out_and_keeps_the_current_mode(self):
+        view = self._real_view()
+        view._ctrl_held = True
+        view.mousePressEvent(self._event(Qt.MouseButton.RightButton))
+        self.assertEqual(
+            self.calls, ["mark", ("zoom", 1.0 / view.ZOOM_FACTOR), "publish"]
+        )
+        self.assertIs(view._right_pan_active, True)
+        self.assertEqual(self.mode_requests, [])
+
+    def test_right_press_in_zoom_mode_zooms_out_and_requests_pan(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_ZOOM)
+        view.mousePressEvent(self._event(Qt.MouseButton.RightButton))
+        self.assertEqual(
+            self.calls, ["mark", ("zoom", 1.0 / view.ZOOM_FACTOR), "publish"]
+        )
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_PAN])
+
+    def test_right_press_in_select_mode_without_ctrl_does_not_zoom(self):
+        view = self._real_view()
+        view.mousePressEvent(self._event(Qt.MouseButton.RightButton))
+        self.assertEqual(self.calls, [])
+
+
+class ZoomAndOverlayPressTests(_RealViewGestureFixture):
+    def test_zoom_mode_left_press_starts_a_rubber_band_at_the_press_point(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_ZOOM)
+        self.assertIsNone(view._rubber_band)
+        event = self._event(Qt.MouseButton.LeftButton, pos=(40, 50))
+        view.mousePressEvent(event)
+        self.assertEqual(
+            view._rubber_band_origin, view.mapToScene(QtCore.QPoint(40, 50))
+        )
+        self.assertIsNotNone(view._rubber_band)
+        self.assertEqual(view._rubber_band.parent(), view)
+        self.assertEqual(view._rubber_band.geometry().topLeft(), QtCore.QPoint(40, 50))
+        self.assertTrue(view._rubber_band.isVisibleTo(view))
+        first_band = view._rubber_band
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton, pos=(60, 70)))
+        self.assertIs(view._rubber_band, first_band)
+        self.assertEqual(view._rubber_band.geometry().topLeft(), QtCore.QPoint(60, 70))
+
+    def test_zoom_mode_non_left_press_uses_the_default_handler(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_ZOOM)
+        event = self._event(Qt.MouseButton.BackButton)
+        view.mousePressEvent(event)
+        self.assertFalse(event.isAccepted())
+        self.assertIsNone(view._rubber_band_origin)
+        self.assertIsNone(view._rubber_band)
+
+    def test_move_overlay_mode_swallows_every_press_and_records_the_position(self):
+        view = self._real_view()
+        view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY
+        view._last_mouse_vp_pos = None
+        for button in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            event = self._event(button, pos=(12, 13))
+            view.mousePressEvent(event)
+            self.assertTrue(event.isAccepted())
+        self.assertEqual(view._last_mouse_vp_pos, QtCore.QPoint(12, 13))
+        self.assertEqual(self.mode_requests, [])
+
+    def _handle_view(self, over_handle, begin_result):
+        view = self._real_view()
+        view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY_HANDLE
+        self.overlay_calls = []
+        view._is_over_overlay_move_handle = lambda pos: (
+            self.overlay_calls.append(("over", pos)) or over_handle
+        )
+        view._begin_overlay_move = lambda pos: (
+            self.overlay_calls.append(("begin", pos)) or begin_result
+        )
+        view._commit_overlay_move = lambda: self.overlay_calls.append("commit")
+        # A press that the overlay handle consumed must never reach the hotlink/default handling.
+        view.find_hotlink_at = lambda pos: self.overlay_calls.append(("hotlink", pos))
+        return view
+
+    def test_overlay_handle_left_press_on_the_handle_begins_the_move(self):
+        view = self._handle_view(True, True)
+        event = self._event(Qt.MouseButton.LeftButton, pos=(7, 8))
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            self.overlay_calls,
+            [("over", QtCore.QPoint(7, 8)), ("begin", QtCore.QPoint(7, 8))],
+        )
+
+    def test_overlay_handle_left_press_that_cannot_begin_commits_the_move(self):
+        view = self._handle_view(True, False)
+        event = self._event(Qt.MouseButton.LeftButton, pos=(7, 8))
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.overlay_calls[-1], "commit")
+        self.assertEqual(len(self.overlay_calls), 3)
+
+    def test_overlay_handle_left_press_away_from_the_handle_commits_the_move(self):
+        view = self._handle_view(False, True)
+        event = self._event(Qt.MouseButton.LeftButton, pos=(7, 8))
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.overlay_calls, [("over", QtCore.QPoint(7, 8)), "commit"])
+
+    def test_overlay_handle_non_left_press_never_begins_or_commits(self):
+        view = self._handle_view(True, True)
+        for button in (Qt.MouseButton.MiddleButton, Qt.MouseButton.BackButton):
+            event = self._event(button)
+            view.mousePressEvent(event)
+            self.assertTrue(event.isAccepted())
+        self.assertEqual(self.overlay_calls, [])
+        self.assertFalse(view._right_pan_active)
+
+    def test_overlay_handle_right_press_pans_only_with_advanced_controls(self):
+        view = self._handle_view(True, True)
+        event = self._event(Qt.MouseButton.RightButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertTrue(view._right_pan_active)
+        self.assertEqual(self.overlay_calls, [])
+        view = self._handle_view(True, True)
+        view._advanced_mouse_controls_enabled = False
+        event = self._event(Qt.MouseButton.RightButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertFalse(view._right_pan_active)
+        self.assertEqual(self.overlay_calls, [])
+
+
+class PressDelegationTests(_RealViewGestureFixture):
+    def _delegating_view(self, mode):
+        view = self._real_view()
+        view._annotation_place_type = "rect"
+        view._apply_cursor_mode(mode)
+        self.delegated = []
+        view.handle_place_press = lambda event: self.delegated.append(("place", event))
+        view.handle_annotation_place_press = lambda event: (
+            self.delegated.append(("annotation", event)) or self.annotation_result
+        )
+        view.handle_paste_backout_press = lambda event: self.delegated.append(
+            ("paste_backout", event)
+        )
+        view.find_hotlink_at = lambda pos: None
+        return view
+
+    annotation_result = True
+
+    def test_each_placement_mode_delegates_left_presses_to_its_handler(self):
+        for mode, name in (
+            (CURSOR_MODE_PLACE, "place"),
+            (CURSOR_MODE_ANNOTATION_PLACE, "annotation"),
+            (CURSOR_MODE_PASTE_BACKOUT, "paste_backout"),
+        ):
+            with self.subTest(mode=mode):
+                view = self._delegating_view(mode)
+                event = self._event(Qt.MouseButton.LeftButton)
+                view.mousePressEvent(event)
+                self.assertEqual(self.delegated, [(name, event)])
+
+    def test_placement_modes_do_not_delegate_non_left_presses(self):
+        for mode in (
+            CURSOR_MODE_PLACE,
+            CURSOR_MODE_ANNOTATION_PLACE,
+            CURSOR_MODE_PASTE_BACKOUT,
+        ):
+            with self.subTest(mode=mode):
+                view = self._delegating_view(mode)
+                view.mousePressEvent(self._event(Qt.MouseButton.BackButton))
+                self.assertEqual(self.delegated, [])
+
+    def test_a_handler_that_declines_an_annotation_press_leaves_it_to_the_default_handler(
+        self,
+    ):
+        self.annotation_result = False
+        try:
+            view = self._delegating_view(CURSOR_MODE_ANNOTATION_PLACE)
+            event = self._event(Qt.MouseButton.LeftButton)
+            view.mousePressEvent(event)
+            self.assertEqual([name for name, _ in self.delegated], ["annotation"])
+            self.assertFalse(event.isAccepted())
+        finally:
+            self.annotation_result = True
+
+    def test_press_in_pan_mode_starts_a_plain_pan(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_PAN)
+        view._pan_view_changed = True
+        cursor_updates = []
+        view._update_cursor = lambda *args: cursor_updates.append(args)
+        event = self._event(Qt.MouseButton.LeftButton, pos=(15, 25))
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertIs(view._panning, True)
+        self.assertIs(view._pan_view_changed, False)
+        self.assertEqual(view._last_pan_point, QtCore.QPoint(15, 25))
+        self.assertFalse(view._zoom_press_ctrl)
+        self.assertEqual(cursor_updates, [()])
+
+    def test_ctrl_press_in_pan_mode_starts_a_zoom_band_instead_of_panning(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_PAN)
+        view._ctrl_held = True
+        view._select_band_active = True
+        view._select_band_dragged = True
+        event = self._event(Qt.MouseButton.LeftButton, pos=(15, 25))
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertIs(view._zoom_press_ctrl, True)
+        self.assertEqual(
+            view._select_band_origin, view.mapToScene(QtCore.QPoint(15, 25))
+        )
+        self.assertIs(view._select_band_active, False)
+        self.assertIs(view._select_band_dragged, False)
+        self.assertIs(view._panning, False)
+
+    def test_ctrl_press_in_pan_mode_without_advanced_controls_pans(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_PAN)
+        view._ctrl_held = True
+        view._advanced_mouse_controls_enabled = False
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertIs(view._panning, True)
+        self.assertFalse(view._zoom_press_ctrl)
+
+    def test_press_on_a_hotlink_in_default_mode_emits_the_link_and_skips_selection(
+        self,
+    ):
+        view = self._real_view()
+        view._apply_cursor_mode("default")
+        hotlink = HotlinkDto(
+            uid="h",
+            bid_page_uid="p",
+            target_view_uid=None,
+            center_x=1.0,
+            center_y=2.0,
+            radius=3.0,
+        )
+        clicked = []
+        view.hotlink_clicked.connect(clicked.append)
+        view.find_hotlink_at = lambda pos: hotlink
+        event = self._event(Qt.MouseButton.LeftButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(clicked, [hotlink])
+
+
+class PressLabelRoutingTests(_RealViewGestureFixture):
+    def _label_view(self):
+        view = self._real_view()
+        self.label_queries = []
+        view._dimension_text_label_at = lambda pos: (
+            self.label_queries.append("dimension") or None
+        )
+        view._condition_text_label_at = lambda pos: (
+            self.label_queries.append("condition") or None
+        )
+        view.find_text_annotation_at = lambda pos: None
+        view._selection_enabled = True
+        return view
+
+    def test_left_press_in_select_mode_looks_for_dimension_and_condition_labels(self):
+        view = self._label_view()
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertEqual(self.label_queries, ["dimension", "condition"])
+
+    def test_labels_are_not_queried_for_non_left_buttons_or_placement_modes(self):
+        view = self._label_view()
+        view.mousePressEvent(self._event(Qt.MouseButton.RightButton))
+        self.assertEqual(self.label_queries, [])
+        for mode in (CURSOR_MODE_PLACE, CURSOR_MODE_ANNOTATION_PLACE):
+            with self.subTest(mode=mode):
+                view = self._label_view()
+                view._annotation_place_type = "rect"
+                view._apply_cursor_mode(mode)
+                view.handle_place_press = lambda event: None
+                view.handle_annotation_place_press = lambda event: True
+                view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+                self.assertEqual(self.label_queries, [])
+
+    def test_rotate_handle_press_skips_label_lookup_but_other_presses_do_not(self):
+        view = self._label_view()
+        view._apply_cursor_mode(CURSOR_MODE_ROTATE)
+        view._is_over_rotate_handle = lambda pos: True
+        view.request_geometry_edit_lease = lambda uids: False
+        event = self._event(Qt.MouseButton.LeftButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.label_queries, [])
+        view = self._label_view()
+        view._apply_cursor_mode(CURSOR_MODE_ROTATE)
+        view._is_over_rotate_handle = lambda pos: False
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertEqual(self.label_queries, ["dimension", "condition"])
+        view = self._label_view()
+        view._is_over_rotate_handle = lambda pos: True
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertEqual(self.label_queries, ["dimension", "condition"])
+
+    def test_press_on_a_text_annotation_clears_any_pdf_text_selection(self):
+        view = self._label_view()
+        calls = []
+        view.find_text_annotation_at = lambda pos: "a1"
+        view._should_defer_text_annotation_press_side_effects = lambda *args: False
+        view._clear_text_selection = lambda: calls.append("clear_text")
+        view._clear_pdf_text_selection = lambda: calls.append("clear_pdf")
+        view._select_text_annotation_label = lambda uid: calls.append(("select", uid))
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertEqual(calls[:3], ["clear_text", "clear_pdf", ("select", "a1")])
+
+    def test_press_off_text_only_clears_the_text_selection(self):
+        view = self._label_view()
+        calls = []
+        view._should_defer_text_annotation_press_side_effects = lambda *args: False
+        view._clear_text_selection = lambda: calls.append("clear_text")
+        view._clear_pdf_text_selection = lambda: calls.append("clear_pdf")
+        view._select_text_annotation_label = lambda uid: calls.append(("select", uid))
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertEqual(calls[:1], ["clear_text"])
+        self.assertNotIn("clear_pdf", calls)
+        self.assertFalse([c for c in calls if isinstance(c, tuple)])
+
+    def test_deferred_text_press_side_effects_skip_both_clears(self):
+        view = self._label_view()
+        calls = []
+        view.find_text_annotation_at = lambda pos: "a1"
+        view._should_defer_text_annotation_press_side_effects = lambda *args: True
+        view._clear_text_selection = lambda: calls.append("clear_text")
+        view._clear_pdf_text_selection = lambda: calls.append("clear_pdf")
+        view._select_text_annotation_label = lambda uid: calls.append(("select", uid))
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertNotIn("clear_text", calls)
+        self.assertNotIn("clear_pdf", calls)
+        self.assertNotIn(("select", "a1"), calls)
+
+    def test_inline_text_editing_only_intercepts_left_presses(self):
+        view = self._label_view()
+        finished = []
+        view.is_text_annotation_inline_edit_active = lambda: True
+        view._active_inline_text_editor_contains_scene_point = lambda pos: False
+        view._finish_active_inline_text_edit = lambda commit: finished.append(commit)
+        event = self._event(Qt.MouseButton.LeftButton)
+        view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(finished, [True])
+        finished.clear()
+        view.mousePressEvent(self._event(Qt.MouseButton.RightButton))
+        self.assertEqual(finished, [])
+        view.mousePressEvent(self._event(Qt.MouseButton.MiddleButton))
+        self.assertEqual(finished, [])
+
+
+class InputHandlerMixinRotationPressTests(_CtrlDragFixture):
+    """mousePressEvent on the rotate handle: drag state capture and preview baking."""
+
+    def _press_view(self, cursor_mode="rotate"):
+        view = self._make_view({"t1"})
+        view._cursor_mode = cursor_mode
+        view._rotate_handle_item = QGraphicsPathItem()
+        view._rotate_handle_item.setPos(10.0, 0.0)
+        view._rotate_center_scene = QtCore.QPointF(3.0, 4.0)
+        view._rotate_handle_uid = "t1"
+        view._rotate_handle_radius = 10.0
+        view._rotate_handle_start_angle_deg = 0.0
+        view._is_rotatable_uid = lambda uid: uid in view._current_takeoffs
+        view._current_takeoffs["t1"].rotation = 0.25
+        view.mapToScene = lambda point: QtCore.QPointF(point.x(), point.y())
+        view._rotation_drag_last_angle = 99.0
+        view._rotation_drag_accumulated_deg = 99.0
+        view._rotation_drag_snapped_deg = 33.0
+        view._rotation_drag_uid = None
+        view._rotation_drag_orig_positions = {"stale": [1.0]}
+        view._rotation_drag_orig_rotations = {"stale": 1.0}
+        view._rotation_drag_preview_items = []
+        view._rotation_drag_handle_origins = []
+        view._uid_to_items = {"t1": [QGraphicsPathItem()], "t2": [QGraphicsPathItem()]}
+        view.mode_signal = _FakeSignal()
+        view.cursor_mode_change_requested = view.mode_signal
+        view.leases = []
+        view.request_geometry_edit_lease = lambda uids: (
+            view.leases.append(set(uids)) or view.lease_result
+        )
+        view.lease_result = True
+        view.removed_handles = []
+        view._remove_rotate_handle = lambda: view.removed_handles.append(True)
+        view.applied_modes = []
+        view._apply_cursor_mode = view.applied_modes.append
+        view._editing_enabled = True
+        return view
+
+    def _press(self, view, x=10, y=0):
+        event = FakeMouseEvent(x=x, y=y)
+        view.mousePressEvent(event)
+        return event
+
+    def test_rotate_handle_press_captures_the_drag_origin_angle_and_originals(self):
+        view = self._press_view()
+        view._current_annotations = {
+            "a1": BidAnnotation(
+                uid="a1", annotation_type="rect", position=[1.0, 2.0, 3.0, 4.0]
+            )
+        }
+        view._selected_uids = {"t1", "a1", "ghost"}
+        view._is_rotatable_uid = lambda uid: True
+        event = self._press(view)
+        self.assertTrue(event.accepted)
+        self.assertIs(view._rotation_drag_active, True)
+        self.assertEqual(view.leases, [{"t1", "a1", "ghost"}])
+        # Press at scene (10, 0) with the pivot at (3, 4): atan2(-4, 7).
+        self.assertAlmostEqual(
+            view._rotation_drag_last_angle, -29.744881296942225, places=9
+        )
+        self.assertEqual(view._rotation_drag_accumulated_deg, 0.0)
+        self.assertEqual(view._rotation_drag_snapped_deg, 0.0)
+        self.assertEqual(view._rotation_drag_uid, "t1")
+        self.assertEqual(
+            view._rotation_drag_orig_positions,
+            {"t1": [0.0, 0.0, 10.0, 0.0], "a1": [1.0, 2.0, 3.0, 4.0]},
+        )
+        self.assertEqual(view._rotation_drag_orig_rotations, {"t1": 0.25})
+
+    def test_rotation_press_copies_positions_so_later_edits_do_not_alias_the_originals(
+        self,
+    ):
+        view = self._press_view()
+        self._press(view)
+        view._current_takeoffs["t1"].position[0] = 99.0
+        self.assertEqual(
+            view._rotation_drag_orig_positions["t1"], [0.0, 0.0, 10.0, 0.0]
+        )
+
+    def test_only_interactive_annotations_are_recorded_for_rotation(self):
+        view = self._press_view()
+        view._current_annotations = {
+            "a1": BidAnnotation(
+                uid="a1", annotation_type="unknown", position=[1.0, 2.0]
+            )
+        }
+        view._selected_uids = {"a1"}
+        view._is_rotatable_uid = lambda uid: True
+        self._press(view)
+        self.assertEqual(view._rotation_drag_orig_positions, {})
+
+    def test_rotation_press_records_the_handle_positions_for_cancellation(self):
+        view = self._press_view()
+        first = FakeItem(5.0, 6.0)
+        second = FakeItem(7.0, 8.0)
+        view._handle_infos = [SimpleNamespace(item=first), SimpleNamespace(item=second)]
+        self._press(view)
+        self.assertEqual(
+            view._rotation_drag_handle_origins,
+            [(first, QtCore.QPointF(5.0, 6.0)), (second, QtCore.QPointF(7.0, 8.0))],
+        )
+        first.setPos(50.0, 60.0)
+        self.assertEqual(
+            view._rotation_drag_handle_origins[0][1], QtCore.QPointF(5.0, 6.0)
+        )
+
+    def test_rotation_press_bakes_item_rotation_and_pivots_previews_on_the_centre(self):
+        view = self._press_view()
+        rotated = QGraphicsPathItem()
+        rotated.setTransformOriginPoint(QtCore.QPointF(2.0, 3.0))
+        rotated.setRotation(30.0)
+        plain = QGraphicsPathItem()
+        plain.setTransform(QTransform().translate(5.0, 6.0))
+        view._uid_to_items = {"t1": [rotated, plain]}
+        self._press(view)
+        bake = QTransform()
+        bake.translate(2.0, 3.0)
+        bake.rotate(30.0)
+        bake.translate(-2.0, -3.0)
+        self.assertEqual(rotated.rotation(), 0.0)
+        self.assertEqual(rotated.transform(), bake)
+        # The baked transform keeps its pivot fixed and turns other points by 30 degrees.
+        self.assertEqual(
+            rotated.transform().map(QtCore.QPointF(2.0, 3.0)), QtCore.QPointF(2.0, 3.0)
+        )
+        turned = rotated.transform().map(QtCore.QPointF(12.0, 3.0))
+        self.assertAlmostEqual(
+            turned.x(), 2.0 + 10.0 * math.cos(math.radians(30.0)), places=9
+        )
+        self.assertAlmostEqual(
+            turned.y(), 3.0 + 10.0 * math.sin(math.radians(30.0)), places=9
+        )
+        self.assertEqual(plain.transform(), QTransform().translate(5.0, 6.0))
+        self.assertEqual(view._rotation_drag_preview_items, [rotated, plain])
+        for item in (rotated, plain):
+            self.assertEqual(
+                item.transformOriginPoint(),
+                item.mapFromScene(QtCore.QPointF(3.0, 4.0)),
+            )
+
+    def test_rotation_press_bakes_only_rotated_items_and_clears_their_pivot(self):
+        view = self._press_view()
+        label = QGraphicsPathItem()
+        label.setData(2, "condition_label")
+        label.setTransformOriginPoint(QtCore.QPointF(2.0, 3.0))
+        label.setRotation(30.0)
+        slightly_rotated = QGraphicsPathItem()
+        slightly_rotated.setRotation(1.0)
+        unrotated_label = QGraphicsPathItem()
+        unrotated_label.setData(2, "condition_label")
+        unrotated_label.setTransformOriginPoint(QtCore.QPointF(4.0, 5.0))
+        view._uid_to_items = {"t1": [label, slightly_rotated, unrotated_label]}
+        self._press(view)
+        # Labels are baked (rotation folded into the transform, pivot reset) but never previewed.
+        self.assertEqual(label.rotation(), 0.0)
+        self.assertEqual(label.transformOriginPoint(), QtCore.QPointF(0.0, 0.0))
+        self.assertEqual(
+            label.transform().map(QtCore.QPointF(2.0, 3.0)), QtCore.QPointF(2.0, 3.0)
+        )
+        self.assertEqual(slightly_rotated.rotation(), 0.0)
+        self.assertEqual(
+            unrotated_label.transformOriginPoint(), QtCore.QPointF(4.0, 5.0)
+        )
+        self.assertEqual(unrotated_label.transform(), QTransform())
+        self.assertEqual(view._rotation_drag_preview_items, [slightly_rotated])
+
+    def test_rotation_press_skips_condition_labels_and_registers_each_item_once(self):
+        view = self._press_view()
+        shape = QGraphicsPathItem()
+        shape.setData(0, "t1")
+        label = QGraphicsPathItem()
+        label.setData(0, "t1")
+        label.setData(2, "condition_label")
+        view._uid_to_items = {"t1": [shape, label]}
+        view._selection_items = [shape]
+        self._press(view)
+        self.assertEqual(view._rotation_drag_preview_items, [shape])
+
+    def test_rotation_press_registers_selection_outlines_of_the_rotated_uids_only(self):
+        view = self._press_view()
+        outline = QGraphicsPathItem()
+        outline.setData(0, "t1")
+        outline.setRotation(20.0)
+        other_uid = QGraphicsPathItem()
+        other_uid.setData(0, "t2")
+        not_a_path = QGraphicsTextItem("t")
+        not_a_path.setData(0, "t1")
+        view._uid_to_items = {"t1": []}
+        view._selection_items = [outline, other_uid, not_a_path]
+        self._press(view)
+        self.assertEqual(view._rotation_drag_preview_items, [outline])
+        self.assertEqual(outline.rotation(), 0.0)
+        self.assertEqual(other_uid.transformOriginPoint(), QtCore.QPointF(0.0, 0.0))
+
+    def test_denied_geometry_lease_swallows_the_press_without_starting_a_drag(self):
+        view = self._press_view()
+        view.lease_result = False
+        event = self._press(view)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view.leases, [{"t1"}])
+        self.assertFalse(view._rotation_drag_active)
+        self.assertEqual(view._rotation_drag_last_angle, 99.0)
+        self.assertEqual(view._rotation_drag_orig_positions, {"stale": [1.0]})
+
+    def test_slope_rotation_press_tracks_only_the_handle_takeoff_rotation(self):
+        view = self._press_view(cursor_mode="slope_rotate")
+        view._selected_uids = {"t1", "t2"}
+        view._uid_to_items["t1"][0].setRotation(10.0)
+        event = self._press(view)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view.leases, [{"t1"}])
+        self.assertIs(view._rotation_drag_active, True)
+        self.assertEqual(view._rotation_drag_uid, "t1")
+        self.assertEqual(view._rotation_drag_orig_rotations, {"t1": 0.25})
+        self.assertEqual(view._rotation_drag_orig_positions, {})
+        self.assertEqual(view._rotation_drag_preview_items, [])
+        self.assertEqual(view._rotation_drag_snapped_deg, 0.0)
+        self.assertEqual(view._rotation_drag_accumulated_deg, 0.0)
+
+    def test_slope_rotation_press_without_a_takeoff_does_not_start_a_drag(self):
+        view = self._press_view(cursor_mode="slope_rotate")
+        view._rotate_handle_uid = "missing"
+        event = self._press(view)
+        self.assertTrue(event.accepted)
+        self.assertIs(view._rotation_drag_active, False)
+
+    def test_press_off_the_rotate_handle_on_an_unselected_takeoff_returns_to_select(
+        self,
+    ):
+        view = self._press_view()
+        view._is_over_rotate_handle = lambda pos: False
+        view.find_takeoff_at = lambda pos, cycle_from_uid=None: "t2"
+        self._press(view)
+        self.assertEqual(view.removed_handles, [True])
+        self.assertEqual(view.applied_modes, [CURSOR_MODE_SELECT])
+        self.assertEqual(view.mode_signal.emitted, [(CURSOR_MODE_SELECT,)])
+
+    def test_press_off_the_rotate_handle_on_empty_space_returns_to_select(self):
+        view = self._press_view()
+        view._is_over_rotate_handle = lambda pos: False
+        view.find_takeoff_at = lambda pos, cycle_from_uid=None: None
+        self._press(view)
+        self.assertEqual(view.applied_modes, [CURSOR_MODE_SELECT])
+        self.assertEqual(view.mode_signal.emitted, [(CURSOR_MODE_SELECT,)])
+
+    def test_press_off_the_rotate_handle_on_a_selected_takeoff_only_removes_the_handle(
+        self,
+    ):
+        view = self._press_view()
+        view._is_over_rotate_handle = lambda pos: False
+        view.find_takeoff_at = lambda pos, cycle_from_uid=None: "t1"
+        self._press(view)
+        self.assertEqual(view.removed_handles, [True])
+        self.assertEqual(view.applied_modes, [])
+        self.assertEqual(view.mode_signal.emitted, [])
+
+
+class MouseMoveModeTests(_RealViewGestureFixture):
+    def _moving_view(self, mode):
+        view = self._real_view()
+        view._annotation_place_type = "rect"
+        view._apply_cursor_mode(mode)
+        self.moves = []
+        view._request_crosshair_repaint = lambda: self.moves.append("crosshair")
+        view._apply_pan_update = lambda pos: (
+            self.moves.append(("pan", pos)) or self.pan_result
+        )
+        view.update_place_preview = lambda pos: self.moves.append(("place", pos))
+        view.update_annotation_place_preview = lambda pos: self.moves.append(
+            ("annotation", pos)
+        )
+        view.update_paste_backout_preview = lambda pos: self.moves.append(
+            ("paste_backout", pos)
+        )
+        view._preview_overlay_move = lambda pos: self.moves.append(("overlay", pos))
+        # Placement/overlay moves are consumed; the default move + cursor refresh must not run.
+        view._update_cursor = lambda *args: self.moves.append(("cursor", args))
+        return view
+
+    pan_result = False
+
+    def setUp(self):
+        self.pan_result = False
+        self.moves = []
+
+    def _move(self, view, pos=(25, 35), buttons=Qt.MouseButton.NoButton):
+        event = self._event(
+            Qt.MouseButton.NoButton,
+            pos=pos,
+            event_type=QtCore.QEvent.Type.MouseMove,
+            buttons=buttons,
+        )
+        view.mouseMoveEvent(event)
+        self.assertNotIn("cursor", [m[0] for m in self.moves if isinstance(m, tuple)])
+        return event
+
+    def test_every_move_records_the_position_and_repaints_the_crosshair(self):
+        view = self._moving_view(CURSOR_MODE_ANNOTATION_PLACE)
+        view._last_mouse_vp_pos = None
+        self._move(view, pos=(25, 35))
+        self.assertEqual(view._last_mouse_vp_pos, QtCore.QPoint(25, 35))
+        self.assertEqual(self.moves[0], "crosshair")
+
+    def test_move_in_place_mode_previews_for_the_active_condition_type(self):
+        view = self._moving_view(CURSOR_MODE_PLACE)
+        view._place_flashing = False
+        seen = []
+        view._should_update_place_preview = lambda cond_type: (
+            seen.append(cond_type) or True
+        )
+        view._current_conditions = {
+            "session": Condition(uid="session", condition_type=Condition.TYPE_AREA),
+            "backout": Condition(uid="backout", condition_type=Condition.TYPE_COUNT),
+        }
+        view._place_session_uid = "session"
+        view._backout_active_uid = None
+        event = self._move(view)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(seen, [Condition.TYPE_AREA])
+        self.assertEqual(
+            self.moves[-1], ("place", view.mapToScene(QtCore.QPoint(25, 35)))
+        )
+        view._backout_active_uid = "backout"
+        self._move(view)
+        self.assertEqual(seen, [Condition.TYPE_AREA, Condition.TYPE_COUNT])
+        view._backout_active_uid = None
+        view._place_session_uid = "missing"
+        self._move(view)
+        self.assertEqual(seen[-1], -1)
+
+    def test_move_in_place_mode_skips_the_preview_when_not_wanted_or_flashing(self):
+        view = self._moving_view(CURSOR_MODE_PLACE)
+        view._place_flashing = False
+        view._place_session_uid = None
+        view._backout_active_uid = None
+        view._should_update_place_preview = lambda cond_type: False
+        event = self._move(view)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            [m for m in self.moves if isinstance(m, tuple) and m[0] == "place"], []
+        )
+        view._should_update_place_preview = lambda cond_type: True
+        view._place_flashing = True
+        self.moves.clear()
+        event = self._move(view)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            [m for m in self.moves if isinstance(m, tuple) and m[0] == "place"], []
+        )
+
+    def test_a_pan_update_replaces_the_preview_in_each_placement_mode(self):
+        self.pan_result = True
+        for mode, name in (
+            (CURSOR_MODE_PLACE, "place"),
+            (CURSOR_MODE_ANNOTATION_PLACE, "annotation"),
+            (CURSOR_MODE_PASTE_BACKOUT, "paste_backout"),
+        ):
+            with self.subTest(mode=mode):
+                view = self._moving_view(mode)
+                view._place_flashing = False
+                view._should_update_place_preview = lambda cond_type: True
+                event = self._move(view, pos=(9, 8))
+                self.assertTrue(event.isAccepted())
+                self.assertEqual(self.moves[-1], ("pan", QtCore.QPoint(9, 8)))
+                self.assertNotIn(
+                    name, [m[0] for m in self.moves if isinstance(m, tuple)]
+                )
+
+    def test_annotation_and_paste_backout_moves_preview_at_the_scene_position(self):
+        for mode, name in (
+            (CURSOR_MODE_ANNOTATION_PLACE, "annotation"),
+            (CURSOR_MODE_PASTE_BACKOUT, "paste_backout"),
+        ):
+            with self.subTest(mode=mode):
+                view = self._moving_view(mode)
+                event = self._move(view, pos=(9, 8))
+                self.assertTrue(event.isAccepted())
+                self.assertEqual(
+                    self.moves[-1], (name, view.mapToScene(QtCore.QPoint(9, 8)))
+                )
+
+    def test_overlay_move_mode_previews_the_overlay_at_the_scene_position(self):
+        view = self._moving_view(CURSOR_MODE_MOVE_OVERLAY)
+        event = self._move(view, pos=(9, 8))
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            self.moves[-1], ("overlay", view.mapToScene(QtCore.QPoint(9, 8)))
+        )
+
+    def test_right_button_pan_is_flagged_as_a_drag_only_past_the_drag_distance(self):
+        view = self._real_view()
+        threshold = QApplication.startDragDistance()
+        for travelled, dragged in ((threshold - 1, False), (threshold, True)):
+            with self.subTest(travelled=travelled):
+                view._panning = True
+                view._right_pan_active = True
+                view._right_pan_dragged = False
+                view._suppress_next_context_menu = False
+                view._right_pan_press_pos = QtCore.QPoint(100, 100)
+                view._last_pan_point = QtCore.QPoint(100, 100)
+                event = self._move(view, pos=(100 + travelled, 100))
+                self.assertTrue(event.isAccepted())
+                self.assertIs(view._right_pan_dragged, dragged)
+                self.assertIs(view._suppress_next_context_menu, dragged)
+
+    def test_vertical_right_button_drag_also_counts_towards_the_drag_distance(self):
+        view = self._real_view()
+        threshold = QApplication.startDragDistance()
+        view._panning = True
+        view._right_pan_active = True
+        view._right_pan_press_pos = QtCore.QPoint(100, 100)
+        view._last_pan_point = QtCore.QPoint(100, 100)
+        view._right_pan_dragged = False
+        self._move(view, pos=(100, 100 + threshold))
+        self.assertIs(view._right_pan_dragged, True)
+
+    def test_plain_pan_move_does_not_set_the_right_button_flags(self):
+        view = self._real_view()
+        view._panning = True
+        view._right_pan_active = False
+        view._right_pan_dragged = False
+        view._suppress_next_context_menu = False
+        view._last_pan_point = QtCore.QPoint(100, 100)
+        self._move(view, pos=(160, 160))
+        self.assertIs(view._right_pan_dragged, False)
+        self.assertIs(view._suppress_next_context_menu, False)
+        self.assertEqual(view._last_pan_point, QtCore.QPoint(160, 160))
+
+
+class InputHandlerMixinMoveDragDispatchTests(_CtrlDragFixture):
+    """mouseMoveEvent: how drag moves are translated into compute_* calls."""
+
+    def _drag_view(
+        self, uid="t1", handle_index=-1, corner_count=0, position=(0.0, 0.0, 10.0, 0.0)
+    ):
+        view = self._make_view({uid})
+        view.mapToScene = lambda point: QtCore.QPointF(point.x(), point.y())
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        view._select_band_origin = QtCore.QPointF(3.0, 7.0)
+        view._drag_plan_item_uid = uid
+        view._drag_handle_index = handle_index
+        view._drag_handle_corner_count = corner_count
+        view._drag_orig_position = list(position)
+        view._drag_last_valid_new_pos = []
+        view.calls = []
+        view.scene_to_ost_delta = lambda dx, dy: (dx * 10.0, dy * 100.0)
+        view.apply_intelligent_paste_axis_snap = lambda dx, dy: (dx + 0.5, dy + 0.25)
+        view.compute_new_position = lambda *args, **kwargs: (
+            view.calls.append(("compute", args, kwargs)) or [1.0, 2.0, 3.0, 4.0]
+        )
+        view._compute_ann_resize = lambda *args: (
+            view.calls.append(("resize", args)) or [5.0, 6.0, 7.0, 8.0]
+        )
+        view._compute_ink_drag_position = lambda *args: (
+            view.calls.append(("ink", args)) or [9.0, 9.0]
+        )
+        view.update_drag_handle_positions = lambda *args: view.calls.append(
+            ("update", args)
+        )
+        return view
+
+    def _move(self, view, x=13, y=27, modifiers=Qt.KeyboardModifier.NoModifier):
+        event = FakeMouseEvent(modifiers, x=x, y=y)
+        view.mouseMoveEvent(event)
+        return event
+
+    def test_takeoff_drag_translates_the_scene_delta_before_computing_the_position(
+        self,
+    ):
+        view = self._drag_view(handle_index=1, corner_count=4)
+        event = self._move(view)
+        self.assertTrue(event.accepted)
+        # scene delta (13-3, 27-7) = (10, 20) -> ost (100, 2000) -> snapped (100.5, 2000.25)
+        self.assertEqual(
+            view.calls,
+            [
+                (
+                    "compute",
+                    ([0.0, 0.0, 10.0, 0.0], 100.5, 2000.25, 1, 4),
+                    {"move_only_first_pair": False, "free_mode": False},
+                ),
+                ("update", ([1.0, 2.0, 3.0, 4.0], "t1", 10.0, 20.0)),
+            ],
+        )
+
+    def test_shift_enables_free_mode_for_the_computed_position(self):
+        view = self._drag_view(handle_index=1, corner_count=4)
+        self._move(view, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.assertIs(view.calls[0][2]["free_mode"], True)
+
+    def test_text_annotation_body_drag_moves_only_the_first_point_pair(self):
+        view = self._drag_view(handle_index=-1, position=(10.0, 10.0, 40.0, 20.0))
+        view._current_takeoffs = {}
+        view._current_annotations = {
+            "t1": BidAnnotation(
+                uid="t1", annotation_type="text", position=[10.0, 10.0, 40.0, 20.0]
+            )
+        }
+        self._move(view)
+        self.assertIs(view.calls[0][2]["move_only_first_pair"], True)
+
+    def test_other_annotation_body_drag_moves_every_point_pair(self):
+        for annotation_type in ("rect", "line"):
+            with self.subTest(annotation_type=annotation_type):
+                view = self._drag_view(
+                    handle_index=-1, position=(10.0, 10.0, 40.0, 20.0)
+                )
+                view._current_takeoffs = {}
+                view._current_annotations = {
+                    "t1": BidAnnotation(
+                        uid="t1",
+                        annotation_type=annotation_type,
+                        position=[10.0, 10.0, 40.0, 20.0],
+                    )
+                }
+                self._move(view)
+                self.assertIs(view.calls[0][2]["move_only_first_pair"], False)
+
+    def test_text_annotation_handle_drag_is_a_resize_not_a_first_pair_move(self):
+        view = self._drag_view(
+            handle_index=2, corner_count=4, position=(10.0, 10.0, 40.0, 20.0)
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {
+            "t1": BidAnnotation(
+                uid="t1", annotation_type="text", position=[10.0, 10.0, 40.0, 20.0]
+            )
+        }
+        self._move(view)
+        self.assertEqual(view.calls[0][0], "resize")
+        self.assertEqual(
+            view.calls[0][1],
+            (
+                view._current_annotations["t1"],
+                [10.0, 10.0, 40.0, 20.0],
+                100.5,
+                2000.25,
+                2,
+                4,
+            ),
+        )
+        self.assertEqual(
+            view.calls[1], ("update", ([5.0, 6.0, 7.0, 8.0], "t1", 10.0, 20.0))
+        )
+
+    def test_ink_annotation_drag_uses_the_ink_position_computation(self):
+        view = self._drag_view(handle_index=-1, position=(0.0, 1.0, 2.0))
+        view._current_takeoffs = {}
+        view._current_annotations = {
+            "t1": BidAnnotation(
+                uid="t1", annotation_type="ink", position=[0.0, 1.0, 2.0]
+            )
+        }
+        self._move(view)
+        self.assertEqual(view.calls[0], ("ink", ([0.0, 1.0, 2.0], 100.5, 2000.25)))
+        self.assertEqual(view.calls[1][0], "update")
+
+    def test_body_drag_marks_the_press_as_dragged_only_for_a_real_change(self):
+        # A two-pixel move stays under the five-pixel latch, so only the meaningful
+        # position change can mark the press as a drag.
+        view = self._drag_view(handle_index=-1)
+        view._select_band_dragged = False
+        self._move(view, x=5, y=8)
+        self.assertIs(view._select_band_dragged, True)
+        view = self._drag_view(handle_index=-1)
+        view._select_band_dragged = False
+        view._drag_last_valid_new_pos = [0.0, 0.0, 10.0, 0.0]
+        view.compute_new_position = lambda *args, **kwargs: [1.0, 2.0, 3.0, 4.0]
+        self._move(view, x=5, y=8)
+        self.assertIs(view._select_band_dragged, False)
+
+    def test_body_drag_without_cursor_movement_does_not_mark_the_press_as_dragged(self):
+        view = self._drag_view(handle_index=-1)
+        view._select_band_dragged = False
+        self._move(view, x=3, y=7)
+        self.assertIs(view._select_band_dragged, False)
+
+    def test_press_is_latched_as_dragged_once_the_cursor_travels_past_five_pixels(self):
+        for x, y, dragged in (
+            (8, 12, False),
+            (9, 7, True),
+            (3, 13, True),
+            (4, 8, False),
+        ):
+            with self.subTest(x=x, y=y):
+                view = self._drag_view(handle_index=1, corner_count=4)
+                view._select_band_dragged = False
+                self._move(view, x=x, y=y)
+                self.assertIs(view._select_band_dragged, dragged)
+
+    def test_drag_move_requires_a_plan_item_original_position_and_a_handle_index(self):
+        for label, change in (
+            ("no uid", lambda v: setattr(v, "_drag_plan_item_uid", None)),
+            ("no original position", lambda v: setattr(v, "_drag_orig_position", [])),
+            ("below body index", lambda v: setattr(v, "_drag_handle_index", -2)),
+        ):
+            with self.subTest(label):
+                view = self._drag_view(handle_index=1, corner_count=4)
+                change(view)
+                view._rubber_band = SimpleNamespace(
+                    setGeometry=lambda rect: None, show=lambda: None, hide=lambda: None
+                )
+                self._move(view)
+                self.assertNotIn("update", [call[0] for call in view.calls])
+
+    def test_multi_selection_drag_updates_the_snapped_preview_with_both_deltas(self):
+        view = self._make_view({"t1", "t2"})
+        view.mapToScene = lambda point: QtCore.QPointF(point.x(), point.y())
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        view._select_band_origin = QtCore.QPointF(3.0, 7.0)
+        view._drag_multi_orig_positions = {"t1": [0.0, 0.0], "t2": [1.0, 1.0]}
+        view._drag_item_orig_positions = {1: QtCore.QPointF(0.0, 0.0)}
+        view.scene_to_ost_delta = lambda dx, dy: (dx * 10.0, dy * 100.0)
+        view.apply_intelligent_paste_axis_snap = lambda dx, dy: (dx + 0.5, dy + 0.25)
+        calls = []
+        view._update_snapped_multi_drag_preview = lambda *args: (
+            calls.append(args) or view.preview_changed
+        )
+        for changed, dragged in ((True, True), (False, False)):
+            with self.subTest(changed=changed):
+                view.preview_changed = changed
+                view._select_band_dragged = False
+                calls.clear()
+                event = self._move(view, x=5, y=8)
+                self.assertTrue(event.accepted)
+                self.assertEqual(calls, [(2.0, 1.0, 20.5, 100.25)])
+                self.assertIs(view._select_band_dragged, dragged)
+        view.preview_changed = True
+        view._select_band_dragged = False
+        self._move(view, x=3, y=7)
+        self.assertIs(view._select_band_dragged, False)
+
+    def test_multi_drag_needs_recorded_original_item_positions(self):
+        view = self._make_view({"t1", "t2"})
+        view.mapToScene = lambda point: QtCore.QPointF(point.x(), point.y())
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        view._select_band_origin = QtCore.QPointF(3.0, 7.0)
+        view._drag_multi_orig_positions = {"t1": [0.0, 0.0]}
+        view._drag_item_orig_positions = {}
+        view._update_snapped_multi_drag_preview = lambda *args: self.fail(
+            "no recorded items"
+        )
+        view._rubber_band = SimpleNamespace(
+            setGeometry=lambda rect: None, show=lambda: None, hide=lambda: None
+        )
+        view._select_band_dragged = False
+        self._move(view, x=4, y=8)
+        self.assertIs(view._select_band_dragged, False)
+
+
+class InputHandlerMixinRotationDragGapTests(_CtrlDragFixture):
+    TRIANGLE = [0.0, 0.0, 6.0, 0.0, 0.0, 3.0]
+
+    def _helper(self):
+        return InputHandlerMixinRotationDragTests(
+            "test_rotation_drag_snaps_to_fifteen_forty_five_or_free_degrees"
+        )
+
+    def _hole_view(self, is_hole=True, condition_type=Condition.TYPE_AREA):
+        view = self._helper()._rotating_view(selected=("h",))
+        view._rotation_drag_uid = "h"
+        view._current_takeoffs = {
+            "h": Takeoff(
+                uid="h",
+                condition_uid="c",
+                parent_uid="p" if is_hole else "0",
+                position=list(self.TRIANGLE),
+            )
+        }
+        view._current_conditions = {
+            "c": Condition(uid="c", condition_type=condition_type)
+        }
+        view._rotation_drag_orig_positions = {"h": list(self.TRIANGLE)}
+        view.validated = []
+        view.hole_valid = True
+        view._validate_hole_position = lambda takeoff, pos: (
+            view.validated.append((takeoff, list(pos))) or view.hole_valid
+        )
+        view.hole_paths = []
+        view._update_parent_hole_path = lambda *args: view.hole_paths.append(args)
+        view._rotation_drag_handle_origins = []
+        return view
+
+    def _rotate(self, view, degrees, center=(0.0, 0.0)):
+        radians = math.radians(degrees)
+        event = FakeMouseEvent(
+            x=round(center[0] + 1000 * math.cos(radians)),
+            y=round(center[1] + 1000 * math.sin(radians)),
+        )
+        view.mouseMoveEvent(event)
+        self.assertTrue(event.accepted)
+
+    def test_hole_rotation_is_validated_about_the_polygon_centroid(self):
+        view = self._hole_view()
+        self._rotate(view, 90.0)
+        self.assertEqual(len(view.validated), 1)
+        takeoff, candidate = view.validated[0]
+        self.assertIs(takeoff, view._current_takeoffs["h"])
+        for actual, expected in zip(candidate, [3.0, -1.0, 3.0, 5.0, 0.0, -1.0]):
+            self.assertAlmostEqual(actual, expected, places=6)
+        self.assertEqual(view._rotation_drag_snapped_deg, 90.0)
+
+    def test_rejected_hole_rotation_leaves_the_preview_untouched(self):
+        view = self._hole_view()
+        view.hole_valid = False
+        self._rotate(view, 90.0)
+        self.assertEqual(len(view.validated), 1)
+        self.assertEqual(view._rotation_drag_snapped_deg, 0.0)
+        self.assertEqual(view.preview_item.rotation(), 0.0)
+        self.assertEqual(view.preview_updates, [])
+        self.assertEqual(view.hole_paths, [])
+
+    def test_accepted_hole_rotation_cuts_the_rotated_hole_out_of_the_parent(self):
+        view = self._hole_view()
+        self._rotate(view, 90.0)
+        self.assertEqual(len(view.hole_paths), 1)
+        parent_uid, hole_uid, path = view.hole_paths[0]
+        self.assertEqual((parent_uid, hole_uid), ("p", "h"))
+        move = QPainterPath.ElementType.MoveToElement
+        line = QPainterPath.ElementType.LineToElement
+        elements = [
+            (path.elementAt(i).type, path.elementAt(i).x, path.elementAt(i).y)
+            for i in range(path.elementCount())
+        ]
+        expected = [
+            (move, 3.0, -1.0),
+            (line, 3.0, 5.0),
+            (line, 0.0, -1.0),
+            (line, 3.0, -1.0),
+        ]
+        self.assertEqual(len(elements), len(expected))
+        for (kind, x, y), (e_kind, e_x, e_y) in zip(elements, expected):
+            self.assertEqual(kind, e_kind)
+            self.assertAlmostEqual(x, e_x, places=6)
+            self.assertAlmostEqual(y, e_y, places=6)
+
+    def test_non_hole_or_non_area_rotations_skip_the_hole_handling(self):
+        for label, view in (
+            ("area, not a hole", self._hole_view(is_hole=False)),
+            (
+                "hole, not an area",
+                self._hole_view(condition_type=Condition.TYPE_LINEAR),
+            ),
+        ):
+            with self.subTest(label):
+                self._rotate(view, 90.0)
+                self.assertEqual(view.validated, [])
+                self.assertEqual(view.hole_paths, [])
+                self.assertEqual(view._rotation_drag_snapped_deg, 90.0)
+
+    def test_rotation_of_an_unknown_takeoff_does_not_validate_anything(self):
+        view = self._hole_view()
+        view._rotation_drag_uid = "ghost"
+        view._rotation_drag_orig_positions = {}
+        self._rotate(view, 90.0)
+        self.assertEqual(view.validated, [])
+        self.assertEqual(view._rotation_drag_snapped_deg, 90.0)
+
+    def test_rotation_about_an_off_origin_pivot_uses_both_pivot_coordinates(self):
+        view = self._helper()._rotating_view()
+        view._rotate_center_scene = QtCore.QPointF(3.0, 4.0)
+        view._rotation_drag_handle_origins = [
+            (view.handle_item, QtCore.QPointF(13.0, 4.0)),
+            (FakeItem(0.0, 0.0), QtCore.QPointF(3.0, 14.0)),
+        ]
+        extra = view._rotation_drag_handle_origins[1][0]
+        # Pointer exactly 90 degrees around the pivot, starting from 0 degrees.
+        event = FakeMouseEvent(x=3, y=4 + 1000)
+        view.mouseMoveEvent(event)
+        self.assertTrue(event.accepted)
+        self.assertAlmostEqual(view._rotation_drag_last_angle, 90.0, places=9)
+        self.assertAlmostEqual(view.handle_item.pos().x(), 3.0, places=6)
+        self.assertAlmostEqual(view.handle_item.pos().y(), 14.0, places=6)
+        self.assertAlmostEqual(extra.pos().x(), -7.0, places=6)
+        self.assertAlmostEqual(extra.pos().y(), 4.0, places=6)
+
+    def test_rotation_angle_is_measured_from_the_pivot_not_the_scene_origin(self):
+        view = self._helper()._rotating_view()
+        view._rotate_center_scene = QtCore.QPointF(3.0, 4.0)
+        view._rotation_drag_last_angle = 0.0
+        event = FakeMouseEvent(x=3 + 700, y=4 - 400)
+        view.mouseMoveEvent(event)
+        self.assertAlmostEqual(
+            view._rotation_drag_last_angle,
+            math.degrees(math.atan2(-400.0, 700.0)),
+            places=9,
+        )
+        self.assertAlmostEqual(
+            view._rotation_drag_accumulated_deg,
+            math.degrees(math.atan2(-400.0, 700.0)),
+            places=9,
+        )
+
+
+class MouseReleaseModeTests(_RealViewGestureFixture):
+    def _release(
+        self, view, button=Qt.MouseButton.LeftButton, pos=(25, 35), modifiers=None
+    ):
+        event = self._event(
+            button,
+            pos=pos,
+            event_type=QtCore.QEvent.Type.MouseButtonRelease,
+            buttons=Qt.MouseButton.NoButton,
+            modifiers=(
+                Qt.KeyboardModifier.NoModifier if modifiers is None else modifiers
+            ),
+        )
+        view.mouseReleaseEvent(event)
+        return event
+
+    def _pan_view(self, held_ms, dragged):
+        view = self._real_view()
+        view._right_pan_active = True
+        view._right_pan_dragged = dragged
+        view._right_pan_press_pos = QtCore.QPoint(1, 1)
+        view._pre_pan_persistent_mode = CURSOR_MODE_ZOOM
+        view._persistent_cursor_mode = CURSOR_MODE_PAN
+        view._suppress_next_context_menu = False
+        view._right_pan_press_timer = SimpleNamespace(elapsed=lambda: held_ms)
+        return view
+
+    def test_right_release_suppresses_the_context_menu_after_a_drag_or_a_long_press(
+        self,
+    ):
+        limit = RIGHT_CLICK_CONTEXT_MENU_MAX_MS
+        for held_ms, dragged, suppressed in (
+            (limit - 1, False, False),
+            (limit, False, False),
+            (limit + 1, False, True),
+            (0, True, True),
+        ):
+            with self.subTest(held_ms=held_ms, dragged=dragged):
+                view = self._pan_view(held_ms, dragged)
+                event = self._release(view, Qt.MouseButton.RightButton)
+                self.assertTrue(event.isAccepted())
+                self.assertIs(view._suppress_next_context_menu, suppressed)
+
+    def test_right_release_ends_the_pan_and_restores_the_remembered_mode(self):
+        view = self._pan_view(0, False)
+        view._pan_view_changed = True
+        self._release(view, Qt.MouseButton.RightButton)
+        self.assertIs(view._right_pan_active, False)
+        self.assertIs(view._panning, False)
+        self.assertEqual(view._persistent_cursor_mode, CURSOR_MODE_ZOOM)
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_ZOOM])
+        self.assertEqual(self.calls, ["publish"])
+
+    def test_right_release_without_a_right_pan_uses_the_default_handler(self):
+        view = self._real_view()
+        view._right_pan_active = False
+        event = self._release(view, Qt.MouseButton.RightButton)
+        self.assertFalse(event.isAccepted())
+
+    def test_left_release_ends_a_plain_pan(self):
+        view = self._real_view()
+        view._panning = True
+        view._pan_view_changed = True
+        view._last_pan_point = QtCore.QPoint(5, 5)
+        event = self._release(view)
+        self.assertTrue(event.isAccepted())
+        self.assertIs(view._panning, False)
+        self.assertIsNone(view._last_pan_point)
+        self.assertEqual(self.calls, ["publish"])
+
+    def test_non_left_release_while_panning_is_left_to_the_default_handler(self):
+        view = self._real_view()
+        view._panning = True
+        event = self._release(view, Qt.MouseButton.BackButton)
+        self.assertFalse(event.isAccepted())
+        self.assertIs(view._panning, True)
+
+    def _placing_view(self, area_result, linear_result):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_PLACE)
+        self.release_calls = []
+        view.handle_place_release_area = lambda event: (
+            self.release_calls.append("area") or area_result
+        )
+        view.handle_place_release_linear = lambda event: (
+            self.release_calls.append("linear") or linear_result
+        )
+        view.handle_annotation_place_release = lambda event: (
+            self.release_calls.append("annotation") or False
+        )
+        return view
+
+    def test_place_release_stops_at_the_first_handler_that_consumes_it(self):
+        view = self._placing_view(True, True)
+        self._release(view)
+        self.assertEqual(self.release_calls, ["area"])
+        view = self._placing_view(False, True)
+        self._release(view)
+        self.assertEqual(self.release_calls, ["area", "linear"])
+
+    def test_place_release_falls_through_when_no_handler_consumes_it(self):
+        view = self._placing_view(False, False)
+        self._release(view)
+        self.assertEqual(self.release_calls, ["area", "linear", "annotation"])
+
+    def test_place_release_handlers_only_see_left_button_releases(self):
+        view = self._placing_view(False, False)
+        self._release(view, Qt.MouseButton.BackButton)
+        self.assertEqual(self.release_calls, [])
+
+    def test_annotation_release_handler_can_consume_any_left_release(self):
+        view = self._real_view()
+        calls = []
+        view.handle_annotation_place_release = lambda event: calls.append("ann") or True
+        view._panning = True
+        view._last_pan_point = QtCore.QPoint(1, 1)
+        self._release(view)
+        self.assertEqual(calls, ["ann"])
+        self.assertIs(view._panning, True)
+
+    def test_overlay_move_release_finishes_the_drag_at_the_scene_position(self):
+        view = self._real_view()
+        view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY
+        finished = []
+        view._finish_overlay_move_drag = finished.append
+        event = self._release(view, pos=(9, 8))
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(finished, [view.mapToScene(QtCore.QPoint(9, 8))])
+        finished.clear()
+        event = self._release(view, Qt.MouseButton.RightButton)
+        self.assertEqual(finished, [])
+
+    def test_overlay_handle_mode_swallows_every_release(self):
+        view = self._real_view()
+        view._cursor_mode = CURSOR_MODE_MOVE_OVERLAY_HANDLE
+        for button in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            event = self._release(view, button)
+            self.assertTrue(event.isAccepted())
+
+    def test_release_records_the_pointer_position(self):
+        view = self._real_view()
+        view._last_mouse_vp_pos = None
+        self._release(view, pos=(31, 41))
+        self.assertEqual(view._last_mouse_vp_pos, QtCore.QPoint(31, 41))
+
+    def _zoom_band_view(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_ZOOM)
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton, pos=(10, 20)))
+        self.calls.clear()
+        self.zoom_changes = []
+        view.zoom_changed.connect(self.zoom_changes.append)
+        self.fit_calls = []
+        view.fitInView = lambda rect, mode: self.fit_calls.append((rect, mode))
+        self.debounced = []
+        view._zoom_debouncer = SimpleNamespace(
+            handle_scale_changed=self.debounced.append
+        )
+        return view
+
+    def test_zoom_band_release_fits_the_dragged_rectangle(self):
+        view = self._zoom_band_view()
+        band = view._rubber_band
+        view._zoom_press_ctrl = True
+        event = self._release(view, pos=(60, 80))
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(len(self.fit_calls), 1)
+        rect, mode = self.fit_calls[0]
+        self.assertEqual(mode, Qt.AspectRatioMode.KeepAspectRatio)
+        self.assertEqual(
+            rect,
+            view.mapToScene(
+                QtCore.QRect(QtCore.QPoint(10, 20), QtCore.QPoint(60, 80))
+            ).boundingRect(),
+        )
+        self.assertIsNone(view._rubber_band_origin)
+        self.assertIs(view._zoom_press_ctrl, False)
+        self.assertTrue(band.isHidden())
+        self.assertEqual(self.calls, ["mark", "publish"])
+        scale = view.transform().m11()
+        self.assertEqual(self.debounced, [scale])
+        self.assertEqual(self.zoom_changes, [scale * view._scene_scale * 0.333])
+
+    def test_zoom_band_release_needs_more_than_five_pixels_in_both_directions(self):
+        # QRect corners are inclusive, so a 4 pixel travel gives a width of 5.
+        for end, fits in (((14, 80), False), ((60, 24), False), ((15, 25), True)):
+            with self.subTest(end=end):
+                view = self._zoom_band_view()
+                self._release(view, pos=end)
+                self.assertEqual(len(self.fit_calls), 1 if fits else 0)
+                if not fits:
+                    self.assertEqual(
+                        self.calls, ["mark", ("zoom", view.ZOOM_FACTOR), "publish"]
+                    )
+                else:
+                    self.assertNotIn(("zoom", view.ZOOM_FACTOR), self.calls)
+
+    def test_a_click_that_is_not_in_zoom_mode_does_not_zoom_in_on_release(self):
+        view = self._zoom_band_view()
+        view._cursor_mode = CURSOR_MODE_SELECT
+        self._release(view, pos=(11, 21))
+        self.assertEqual(self.fit_calls, [])
+        self.assertEqual(self.calls, [])
+
+    def test_a_non_left_release_leaves_the_zoom_band_alone(self):
+        view = self._zoom_band_view()
+        event = self._release(view, Qt.MouseButton.BackButton, pos=(60, 80))
+        self.assertFalse(event.isAccepted())
+        self.assertIsNotNone(view._rubber_band_origin)
+        self.assertEqual(self.fit_calls, [])
+
+
+class InputHandlerMixinReleaseCommitTests(_CtrlDragFixture):
+    """mouseReleaseEvent: committing, discarding and click-selecting after a press."""
+
+    NEW = [2.0, 5.0, 12.0, 5.0]
+
+    def _view(self, uid="t1", condition_type=Condition.TYPE_LINEAR):
+        view = self._make_view({uid})
+        view.mapToScene = lambda point: QtCore.QPointF(point.x(), point.y())
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        view._select_band_origin = QtCore.QPointF(3.0, 7.0)
+        view._select_band_dragged = True
+        view._select_band_active = False
+        view._zoom_press_ctrl = False
+        view._drag_plan_item_uid = uid
+        view._drag_orig_position = [0.0, 0.0, 10.0, 0.0]
+        view._drag_handle_index = -1
+        view._drag_handle_corner_count = 0
+        view._current_conditions = {
+            "c": Condition(uid="c", condition_type=condition_type)
+        }
+        view.scene_to_ost_delta = lambda dx, dy: (dx * 10.0, dy * 100.0)
+        view.apply_intelligent_paste_axis_snap = lambda dx, dy: (dx + 0.5, dy + 0.25)
+        view.events = []
+        view.compute_calls = []
+        view.compute_new_position = lambda *args, **kwargs: (
+            view.compute_calls.append((args, kwargs)) or list(self.NEW)
+        )
+        view.flushed = []
+        view._flush_dirty_positions = lambda: view.flushed.append(
+            (dict(view._dirty_positions), dict(view._dirty_ann_positions))
+        )
+        view.finish_calls = []
+        view.finish_intelligent_paste_placement = lambda: view.finish_calls.append(1)
+        view._update_cursor = lambda *args, **kwargs: view.events.append("cursor")
+        view._press_changed_selection = False
+        view._pdf_text_drag_anchor = None
+        view.find_hotlink_at = lambda pos: None
+        view.hotlink_clicked = _FakeSignal()
+        view._clear_pdf_text_selection = lambda: view.events.append("clear_pdf")
+        view.select_pdf_text_at = lambda pos: False
+        return view
+
+    def _release(self, view, x=13, y=27, modifiers=Qt.KeyboardModifier.NoModifier):
+        event = FakeMouseEvent(modifiers, x=x, y=y, buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(event)
+        return event
+
+    def test_takeoff_body_drag_commits_the_computed_position(self):
+        view = self._view()
+        event = self._release(view)
+        self.assertTrue(event.accepted)
+        # scene delta (13-3, 27-7) = (10, 20) -> ost (100, 2000) -> snapped (100.5, 2000.25)
+        self.assertEqual(
+            view.compute_calls,
+            [
+                (
+                    ([0.0, 0.0, 10.0, 0.0], 100.5, 2000.25, -1, 0),
+                    {"move_only_first_pair": False, "free_mode": False},
+                )
+            ],
+        )
+        self.assertEqual(view._current_takeoffs["t1"].position, self.NEW)
+        self.assertEqual(view._position_before_edit, {"t1": [0.0, 0.0, 10.0, 0.0]})
+        self.assertEqual(view.flushed, [({"t1": self.NEW}, {})])
+        self.assertEqual(view.finish_calls, [1])
+        self.assertIsNone(view._drag_plan_item_uid)
+        self.assertEqual(view._drag_handle_index, -2)
+        self.assertEqual(view._drag_orig_position, [])
+        self.assertIsNone(view._select_band_origin)
+        self.assertIs(view._select_band_dragged, False)
+
+    def test_shift_release_commits_in_free_mode(self):
+        view = self._view()
+        self._release(view, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.assertIs(view.compute_calls[0][1]["free_mode"], True)
+
+    def test_a_handle_release_without_cursor_travel_still_commits_the_resize(self):
+        view = self._view()
+        view._select_band_dragged = False
+        view._drag_handle_index = 1
+        view._drag_handle_corner_count = 4
+        self._release(view, x=3, y=7)
+        self.assertEqual(view.compute_calls[0][0][3:], (1, 4))
+        self.assertEqual(view._current_takeoffs["t1"].position, self.NEW)
+
+    def test_a_body_press_without_travel_is_a_click_not_a_commit(self):
+        view = self._view()
+        view._select_band_dragged = False
+        view.find_takeoff_at = lambda pos, cycle_from_uid=None: "t2"
+        self._release(view, x=3, y=7)
+        self.assertEqual(view.compute_calls, [])
+        self.assertEqual(view._current_takeoffs["t1"].position, [0.0, 0.0, 10.0, 0.0])
+        self.assertEqual(view._selected_uids, {"t2"})
+
+    def test_text_annotation_body_release_moves_only_the_first_pair(self):
+        view = self._view()
+        view._current_takeoffs = {}
+        view._current_annotations = {
+            "t1": BidAnnotation(
+                uid="t1", annotation_type="text", position=[0.0, 0.0, 10.0, 4.0]
+            )
+        }
+        view._drag_orig_position = [0.0, 0.0, 10.0, 4.0]
+        self._release(view)
+        self.assertIs(view.compute_calls[0][1]["move_only_first_pair"], True)
+        self.assertEqual(view._current_annotations["t1"].position, self.NEW)
+        self.assertEqual(view.flushed, [({}, {"t1": ("text", self.NEW)})])
+        self.assertEqual(view._position_before_edit, {"t1": [0.0, 0.0, 10.0, 4.0]})
+
+    def test_interactive_annotation_resize_release_uses_the_resize_computation(self):
+        view = self._view()
+        view._current_takeoffs = {}
+        annotation = BidAnnotation(
+            uid="t1", annotation_type="rect", position=[0.0, 0.0, 10.0, 4.0]
+        )
+        view._current_annotations = {"t1": annotation}
+        view._drag_orig_position = [0.0, 0.0, 10.0, 4.0]
+        view._drag_handle_index = 2
+        view._drag_handle_corner_count = 4
+        resize_calls = []
+        view._compute_ann_resize = lambda *args: (
+            resize_calls.append(args) or [1.0, 1.0, 9.0, 3.0]
+        )
+        self._release(view)
+        self.assertEqual(
+            resize_calls, [(annotation, [0.0, 0.0, 10.0, 4.0], 100.5, 2000.25, 2, 4)]
+        )
+        self.assertEqual(annotation.position, [1.0, 1.0, 9.0, 3.0])
+        self.assertEqual(view.compute_calls, [])
+
+    def test_ink_annotation_release_uses_the_ink_position_computation(self):
+        view = self._view()
+        view._current_takeoffs = {}
+        annotation = BidAnnotation(
+            uid="t1", annotation_type="ink", position=[0.0, 1.0, 2.0]
+        )
+        view._current_annotations = {"t1": annotation}
+        view._drag_orig_position = [0.0, 1.0, 2.0]
+        ink_calls = []
+        view._compute_ink_drag_position = lambda *args: (
+            ink_calls.append(args) or [0.0, 5.0, 6.0]
+        )
+        self._release(view)
+        self.assertEqual(ink_calls, [([0.0, 1.0, 2.0], 100.5, 2000.25)])
+        self.assertEqual(annotation.position, [0.0, 5.0, 6.0])
+
+    def test_dimension_release_refreshes_the_preview_with_the_release_deltas(self):
+        view = self._view()
+        view._current_takeoffs = {}
+        annotation = BidAnnotation(
+            uid="t1", annotation_type="dimension", position=[0.0, 0.0, 10.0, 0.0]
+        )
+        view._current_annotations = {"t1": annotation}
+        view._drag_orig_position = [0.0, 0.0, 10.0, 0.0]
+        view._drag_handle_index = 1
+        view._compute_ann_resize = lambda *args: [0.0, 0.0, 12.0, 0.0]
+        updates = []
+        view.update_drag_handle_positions = lambda *args: updates.append(args)
+        self._release(view)
+        self.assertEqual(updates, [([0.0, 0.0, 12.0, 0.0], "t1", 10.0, 20.0)])
+        self.assertEqual(annotation.position, [0.0, 0.0, 12.0, 0.0])
+
+    def test_area_release_keeps_the_last_valid_polygon_and_moves_child_holes(self):
+        view = self._view(condition_type=Condition.TYPE_AREA)
+        square = [1.0, 2.0, 11.0, 2.0, 11.0, 12.0, 1.0, 12.0]
+        view._current_takeoffs["t1"].position = list(square)
+        view._drag_orig_position = list(square)
+        view._current_takeoffs["hole"] = Takeoff(
+            uid="hole",
+            condition_uid="c",
+            parent_uid="t1",
+            position=[3.0, 4.0, 5.0, 4.0, 5.0, 6.0, 3.0, 6.0],
+        )
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"hole"}
+        last_valid = [4.0, 9.0, 14.0, 9.0, 14.0, 19.0, 4.0, 19.0]
+        view._drag_last_valid_new_pos = list(last_valid)
+        self._release(view)
+        self.assertEqual(view.compute_calls[0][0][0], square)
+        self.assertEqual(view._current_takeoffs["t1"].position, last_valid)
+        # Parent moved by (4 - 1, 9 - 2) = (3, 7); the hole follows by the same delta.
+        self.assertEqual(
+            view._current_takeoffs["hole"].position,
+            [6.0, 11.0, 8.0, 11.0, 8.0, 13.0, 6.0, 13.0],
+        )
+        self.assertEqual(
+            view._position_before_edit["hole"], [3.0, 4.0, 5.0, 4.0, 5.0, 6.0, 3.0, 6.0]
+        )
+        self.assertEqual(
+            view.flushed[0][0]["hole"], [6.0, 11.0, 8.0, 11.0, 8.0, 13.0, 6.0, 13.0]
+        )
+
+    def test_child_holes_only_follow_a_body_drag(self):
+        view = self._view(condition_type=Condition.TYPE_AREA)
+        square = [1.0, 2.0, 11.0, 2.0, 11.0, 12.0, 1.0, 12.0]
+        view._current_takeoffs["t1"].position = list(square)
+        view._drag_orig_position = list(square)
+        view._drag_handle_index = 1
+        view._current_takeoffs["hole"] = Takeoff(
+            uid="hole",
+            condition_uid="c",
+            parent_uid="t1",
+            position=[3.0, 4.0, 5.0, 4.0, 5.0, 6.0],
+        )
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"hole"}
+        view._drag_last_valid_new_pos = [4.0, 9.0, 14.0, 9.0, 14.0, 19.0, 4.0, 19.0]
+        self._release(view)
+        self.assertEqual(
+            view._current_takeoffs["hole"].position, [3.0, 4.0, 5.0, 4.0, 5.0, 6.0]
+        )
+
+    def test_polygon_annotation_resize_release_keeps_the_last_valid_polygon(self):
+        view = self._view()
+        view._current_takeoffs = {}
+        square = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        annotation = BidAnnotation(
+            uid="t1", annotation_type="polygon", position=list(square)
+        )
+        view._current_annotations = {"t1": annotation}
+        view._drag_orig_position = list(square)
+        view._drag_handle_index = 2
+        view._drag_handle_corner_count = 4
+        view._compute_ann_resize = lambda *args: [
+            0.0,
+            0.0,
+            99.0,
+            0.0,
+            99.0,
+            99.0,
+            0.0,
+            99.0,
+        ]
+        last_valid = [0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0]
+        view._drag_last_valid_new_pos = list(last_valid)
+        self._release(view)
+        self.assertEqual(annotation.position, last_valid)
+
+    def test_an_unchanged_position_discards_the_drag_and_restores_the_preview(self):
+        view = self._view()
+        view.compute_new_position = lambda *args, **kwargs: [0.0, 0.0, 10.0, 0.0]
+        restored = []
+        view._restore_drag_preview_positions = lambda: restored.append(True)
+        event = self._release(view)
+        self.assertTrue(event.accepted)
+        self.assertEqual(restored, [True])
+        self.assertEqual(view.finish_calls, [1])
+        self.assertEqual(view.flushed, [])
+        self.assertEqual(view._current_takeoffs["t1"].position, [0.0, 0.0, 10.0, 0.0])
+        self.assertIsNone(view._drag_plan_item_uid)
+        self.assertIn("cursor", view.events)
+
+    def test_attachment_release_that_does_not_fit_falls_back_to_the_last_valid_position(
+        self,
+    ):
+        view = self._view(condition_type=Condition.TYPE_ATTACHMENT)
+        view._drag_orig_position = [1.0, 1.0]
+        view._current_takeoffs["t1"].position = [1.0, 1.0]
+        view.compute_new_position = lambda *args, **kwargs: [50.0, 50.0]
+        checked = []
+        view._attachment_position_valid = lambda takeoff, position: (
+            checked.append(list(position)) or list(position) == [7.0, 8.0]
+        )
+        view._drag_last_valid_new_pos = [7.0, 8.0]
+        self._release(view)
+        self.assertEqual(checked, [[50.0, 50.0], [7.0, 8.0]])
+        self.assertEqual(view._current_takeoffs["t1"].position, [7.0, 8.0])
+
+    def test_attachment_release_without_a_last_valid_position_returns_to_the_original(
+        self,
+    ):
+        view = self._view(condition_type=Condition.TYPE_ATTACHMENT)
+        view._drag_orig_position = [1.0, 1.0]
+        view._current_takeoffs["t1"].position = [1.0, 1.0]
+        view.compute_new_position = lambda *args, **kwargs: [50.0, 50.0]
+        view._attachment_position_valid = lambda takeoff, position: position == [
+            1.0,
+            1.0,
+        ]
+        self._release(view)
+        self.assertEqual(view._current_takeoffs["t1"].position, [1.0, 1.0])
+        self.assertEqual(view.flushed, [])
+        self.assertEqual(view.finish_calls, [1])
+
+    def test_valid_attachment_release_commits_the_new_position(self):
+        view = self._view(condition_type=Condition.TYPE_ATTACHMENT)
+        view._drag_orig_position = [1.0, 1.0]
+        view._current_takeoffs["t1"].position = [1.0, 1.0]
+        view.compute_new_position = lambda *args, **kwargs: [5.0, 6.0]
+        view._attachment_position_valid = lambda takeoff, position: True
+        self._release(view)
+        self.assertEqual(view._current_takeoffs["t1"].position, [5.0, 6.0])
+
+    def test_multi_selection_release_commits_every_moved_item_once(self):
+        view = self._view()
+        view._drag_plan_item_uid = None
+        view._drag_orig_position = []
+        view._selected_uids = {"t1", "a1"}
+        view._current_annotations = {
+            "a1": BidAnnotation(
+                uid="a1", annotation_type="rect", position=[0.0, 0.0, 5.0, 5.0]
+            )
+        }
+        orig_positions = {
+            "t1": [0.0, 0.0, 10.0, 0.0],
+            "a1": [0.0, 0.0, 5.0, 5.0],
+            "still": [1.0, 1.0],
+        }
+        view._drag_multi_orig_positions = orig_positions
+        group_calls = []
+        view._compute_group_translation_positions = lambda positions, dx, dy: (
+            group_calls.append((positions, dx, dy))
+            or {
+                "t1": [1.0, 2.0, 11.0, 2.0],
+                "a1": [1.0, 2.0, 6.0, 7.0],
+                "still": [1.0, 1.0],
+            }
+        )
+        self._release(view)
+        self.assertEqual(group_calls, [(orig_positions, 100.5, 2000.25)])
+        self.assertEqual(view._current_takeoffs["t1"].position, [1.0, 2.0, 11.0, 2.0])
+        self.assertEqual(view._current_annotations["a1"].position, [1.0, 2.0, 6.0, 7.0])
+        self.assertEqual(view._position_before_edit["t1"], [0.0, 0.0, 10.0, 0.0])
+        self.assertEqual(view._position_before_edit["a1"], [0.0, 0.0, 5.0, 5.0])
+        self.assertNotIn("still", view._position_before_edit)
+        self.assertEqual(
+            view.flushed,
+            [({"t1": [1.0, 2.0, 11.0, 2.0]}, {"a1": ("rect", [1.0, 2.0, 6.0, 7.0])})],
+        )
+
+    # ---- click selection after a press without a drag
+    def _click_view(self, selected=("t1",)):
+        view = self._view()
+        view._select_band_dragged = False
+        view._drag_plan_item_uid = None
+        view._drag_orig_position = []
+        view._selected_uids = set(selected)
+        view.selection_events = []
+        view._flush_dirty_positions = lambda: view.selection_events.append("flush")
+        view._on_selection_changed = lambda: view.selection_events.append("changed")
+        view.update_selection_visuals = lambda *a, **k: view.selection_events.append(
+            "visuals"
+        )
+        view.find_takeoff_at = lambda pos, cycle_from_uid=None: view.hit
+        view.find_takeoffs_at = lambda pos: view.hits
+        view.hit = "t2"
+        view.hits = ["t2"]
+        view.cycle_requests = []
+        return view
+
+    def test_click_on_an_unselected_takeoff_replaces_the_selection(self):
+        view = self._click_view(selected=("t1",))
+        self._release(view, x=3, y=7)
+        self.assertEqual(view._selected_uids, {"t2"})
+        self.assertEqual(view.selection_events, ["flush", "changed", "visuals"])
+        self.assertEqual(view._drag_handle_index, -2)
+        self.assertIn("clear_pdf", view.events)
+
+    def test_click_on_the_selected_takeoff_keeps_it_without_flushing(self):
+        view = self._click_view(selected=("t2",))
+        self._release(view, x=3, y=7)
+        self.assertEqual(view._selected_uids, {"t2"})
+        self.assertEqual(view.selection_events, ["changed", "visuals"])
+
+    def test_modifier_click_toggles_the_takeoff_in_the_selection(self):
+        for modifiers in (
+            Qt.KeyboardModifier.ControlModifier,
+            Qt.KeyboardModifier.ShiftModifier,
+        ):
+            with self.subTest(modifiers=modifiers):
+                view = self._click_view(selected=("t1",))
+                self._release(view, x=3, y=7, modifiers=modifiers)
+                self.assertEqual(view._selected_uids, {"t1", "t2"})
+                self.assertEqual(view.selection_events, ["changed", "visuals"])
+
+    def test_modifier_click_on_a_selected_takeoff_deselects_it_after_flushing(self):
+        view = self._click_view(selected=("t1", "t2"))
+        view._select_band_origin = QtCore.QPointF(3.0, 7.0)
+        self._release(view, x=3, y=7, modifiers=Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(view._selected_uids, {"t1"})
+        self.assertEqual(view.selection_events, ["flush", "changed", "visuals"])
+
+    def test_clicking_a_text_annotation_selects_its_label(self):
+        view = self._click_view(selected=())
+        view._current_annotations = {
+            "t2": BidAnnotation(
+                uid="t2", annotation_type="text", position=[0.0, 0.0, 5.0, 5.0]
+            )
+        }
+        self._release(view, x=3, y=7)
+        self.assertEqual(view.selected_text_annotation_uids, ["t2"])
+        view = self._click_view(selected=("t1",))
+        view._current_annotations = {
+            "t2": BidAnnotation(
+                uid="t2", annotation_type="text", position=[0.0, 0.0, 5.0, 5.0]
+            )
+        }
+        self._release(view, x=3, y=7, modifiers=Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(view.selected_text_annotation_uids, [])
+
+    def test_clicking_a_hotlink_follows_it_instead_of_selecting(self):
+        view = self._click_view(selected=("t1",))
+        hotlink = HotlinkDto(
+            uid="h",
+            bid_page_uid="p",
+            target_view_uid=None,
+            center_x=1.0,
+            center_y=2.0,
+            radius=3.0,
+        )
+        view.find_hotlink_at = lambda pos: hotlink
+        self._release(view, x=3, y=7)
+        self.assertEqual(view.hotlink_clicked.emitted, [(hotlink,)])
+        self.assertEqual(view._selected_uids, {"t1"})
+        self.assertIn("clear_pdf", view.events)
+
+    def test_click_on_empty_space_clears_the_selection_unless_extending_it(self):
+        view = self._click_view(selected=("t1",))
+        view.hit = None
+        self._release(view, x=3, y=7)
+        self.assertEqual(view._selected_uids, set())
+        self.assertEqual(view.selection_events, ["flush", "changed", "visuals"])
+        self.assertIn("clear_pdf", view.events)
+        view = self._click_view(selected=("t1",))
+        view.hit = None
+        self._release(view, x=3, y=7, modifiers=Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(view._selected_uids, {"t1"})
+        self.assertEqual(view.selection_events, ["changed", "visuals"])
+
+    def test_click_on_selected_pdf_text_keeps_the_text_selection(self):
+        view = self._click_view(selected=("t1",))
+        view.hit = None
+        view.select_pdf_text_at = lambda pos: True
+        self._release(view, x=3, y=7)
+        self.assertNotIn("clear_pdf", view.events)
+
+    def test_click_cycles_through_overlapping_takeoffs_only_for_a_plain_single_selection(
+        self,
+    ):
+        cases = (
+            (
+                "plain single selection",
+                {"t1"},
+                ["t1", "t2"],
+                False,
+                Qt.KeyboardModifier.NoModifier,
+                "t1",
+            ),
+            ("single hit", {"t1"}, ["t1"], False, Qt.KeyboardModifier.NoModifier, None),
+            (
+                "selection not under cursor",
+                {"t1"},
+                ["t2", "t3"],
+                False,
+                Qt.KeyboardModifier.NoModifier,
+                None,
+            ),
+            (
+                "two selected",
+                {"t1", "t3"},
+                ["t1", "t2"],
+                False,
+                Qt.KeyboardModifier.NoModifier,
+                None,
+            ),
+            (
+                "modifier",
+                {"t1"},
+                ["t1", "t2"],
+                False,
+                Qt.KeyboardModifier.ControlModifier,
+                None,
+            ),
+            (
+                "press already changed selection",
+                {"t1"},
+                ["t1", "t2"],
+                True,
+                Qt.KeyboardModifier.NoModifier,
+                None,
+            ),
+        )
+        for label, selected, hits, changed, modifiers, expected in cases:
+            with self.subTest(label):
+                view = self._click_view(selected=selected)
+                view._press_changed_selection = changed
+                view.hits = hits
+                requested = []
+                view.find_takeoff_at = lambda pos, cycle_from_uid=None: (
+                    requested.append(cycle_from_uid) or "t9"
+                )
+                self._release(view, x=3, y=7, modifiers=modifiers)
+                self.assertEqual(requested, [expected])
+
+    def test_click_in_rotate_mode_shows_the_rotate_handle_for_the_single_selection(
+        self,
+    ):
+        view = self._click_view(selected=("t1",))
+        view._cursor_mode = CURSOR_MODE_ROTATE
+        view.hit = "t2"
+        handles = []
+        view._create_rotate_handle = lambda uid: handles.append(uid) or view.handle_ok
+        view.handle_ok = True
+        modes = []
+        view._apply_cursor_mode = modes.append
+        view.cursor_mode_change_requested = _FakeSignal()
+        self._release(view, x=3, y=7)
+        self.assertEqual(handles, ["t2"])
+        self.assertEqual(modes, [])
+        view.handle_ok = False
+        view._selected_uids = {"t1"}
+        self._release_again(view)
+        self.assertEqual(modes, [CURSOR_MODE_SELECT])
+        self.assertEqual(
+            view.cursor_mode_change_requested.emitted, [(CURSOR_MODE_SELECT,)]
+        )
+
+    def _release_again(self, view):
+        view._select_band_origin = QtCore.QPointF(3.0, 7.0)
+        view._select_band_dragged = False
+        return self._release(view, x=3, y=7)
+
+
+class InputHandlerMixinHelperGapTests(_CtrlDragFixture):
+    """Small pure-ish helpers behind drag, resize and keyboard moves."""
+
+    def _helper_view(self, selected=()):
+        view = self._make_view(set(selected))
+        view._snap_increments = 5.0
+        view.ost_to_scene_delta = lambda dx, dy: (dx * 2.0, dy * 3.0)
+        view._current_takeoffs = {}
+        view._current_annotations = {}
+        view._current_conditions = {
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+            "line": Condition(uid="line", condition_type=Condition.TYPE_LINEAR),
+        }
+        view._uid_to_items = {}
+        view._selection_items = []
+        view._position_before_edit = {}
+        view._dirty_positions = {}
+        view._dirty_ann_positions = {}
+        view._keyboard_move_dirty = False
+        return view
+
+    @staticmethod
+    def _annotation(annotation_type, position):
+        return BidAnnotation(
+            uid="a", annotation_type=annotation_type, position=list(position)
+        )
+
+    # ---- _should_defer_text_annotation_press_side_effects
+    def test_text_press_is_deferred_only_when_it_may_cycle_the_current_selection(self):
+        cases = (
+            (
+                "no text under cursor",
+                None,
+                {"t1"},
+                ["t1", "t2"],
+                Qt.KeyboardModifier.NoModifier,
+                False,
+            ),
+            (
+                "nothing selected",
+                "a",
+                set(),
+                ["t1", "t2"],
+                Qt.KeyboardModifier.NoModifier,
+                False,
+            ),
+            (
+                "ctrl held",
+                "a",
+                {"t1"},
+                ["t1", "t2"],
+                Qt.KeyboardModifier.ControlModifier,
+                False,
+            ),
+            (
+                "shift held",
+                "a",
+                {"t1"},
+                ["t1", "t2"],
+                Qt.KeyboardModifier.ShiftModifier,
+                False,
+            ),
+            ("single hit", "a", {"t1"}, ["t1"], Qt.KeyboardModifier.NoModifier, False),
+            (
+                "stack without selection",
+                "a",
+                {"t9"},
+                ["t1", "t2"],
+                Qt.KeyboardModifier.NoModifier,
+                False,
+            ),
+            (
+                "stack containing selection",
+                "a",
+                {"t2"},
+                ["t1", "t2"],
+                Qt.KeyboardModifier.NoModifier,
+                True,
+            ),
+        )
+        for label, text_uid, selected, hits, modifiers, expected in cases:
+            with self.subTest(label):
+                view = self._helper_view(selected)
+                view.find_takeoffs_at = lambda pos: hits
+                event = FakeMouseEvent(modifiers)
+                self.assertIs(
+                    view._should_defer_text_annotation_press_side_effects(
+                        QtCore.QPointF(0.0, 0.0), event, text_uid
+                    ),
+                    expected,
+                )
+
+    # ---- _unrotate_annotation_for_resize
+    def test_unrotating_an_unrotated_annotation_records_nothing(self):
+        view = self._helper_view()
+        annotation = self._annotation("rect", [0.0, 0.0, 10.0, 4.0])
+        view._unrotate_annotation_for_resize(annotation, "a")
+        self.assertEqual(annotation.position, [0.0, 0.0, 10.0, 4.0])
+        self.assertIsNone(view._drag_model_orig_position)
+        self.assertEqual(view._position_before_edit, {})
+
+    def test_unrotating_a_rect_rotates_its_corners_back_about_the_box_centre(self):
+        view = self._helper_view()
+        annotation = self._annotation("rect", [0.0, 0.0, 10.0, 4.0, math.pi / 2])
+        view._unrotate_annotation_for_resize(annotation, "a")
+        for actual, expected in zip(annotation.position, [3.0, 7.0, 7.0, -3.0]):
+            self.assertAlmostEqual(actual, expected, places=9)
+        self.assertEqual(len(annotation.position), 4)
+        self.assertEqual(view._drag_orig_position, annotation.position)
+        self.assertIsNot(view._drag_orig_position, annotation.position)
+        self.assertEqual(
+            view._drag_model_orig_position, [0.0, 0.0, 10.0, 4.0, math.pi / 2]
+        )
+        self.assertEqual(
+            view._position_before_edit, {"a": [0.0, 0.0, 10.0, 4.0, math.pi / 2]}
+        )
+        self.assertIs(view._drag_position_before_edit_existed, False)
+
+    def test_unrotating_averages_every_point_of_a_four_corner_box(self):
+        view = self._helper_view()
+        corners = [0.0, 0.0, 10.0, 0.0, 10.0, 4.0, 0.0, 4.0]
+        annotation = self._annotation("oval", corners + [math.pi])
+        view._unrotate_annotation_for_resize(annotation, "a")
+        expected = [10.0, 4.0, 0.0, 4.0, 0.0, 0.0, 10.0, 0.0]
+        for actual, wanted in zip(annotation.position, expected):
+            self.assertAlmostEqual(actual, wanted, places=9)
+
+    def test_unrotating_keeps_an_existing_before_edit_snapshot(self):
+        view = self._helper_view()
+        view._position_before_edit = {"a": [9.0, 9.0]}
+        annotation = self._annotation("highlight", [0.0, 0.0, 10.0, 4.0, math.pi / 2])
+        view._unrotate_annotation_for_resize(annotation, "a")
+        self.assertEqual(view._position_before_edit, {"a": [9.0, 9.0]})
+        self.assertIs(view._drag_position_before_edit_existed, True)
+
+    def test_unrotating_text_only_clears_its_rotation_slot(self):
+        view = self._helper_view()
+        annotation = self._annotation("text", [10.0, 20.0, 30.0, 40.0, 0.5])
+        view._unrotate_annotation_for_resize(annotation, "a")
+        self.assertEqual(annotation.position, [10.0, 20.0, 30.0, 40.0, 0.0])
+        self.assertEqual(view._drag_orig_position, [10.0, 20.0, 30.0, 40.0, 0.0])
+        self.assertEqual(view._drag_model_orig_position, [10.0, 20.0, 30.0, 40.0, 0.5])
+
+    # ---- ink / group translation helpers
+    def test_ink_drag_snaps_the_first_point_and_skips_the_style_prefix(self):
+        view = self._helper_view()
+        self.assertEqual(
+            view._compute_ink_drag_position([9.0, 1.0, 8.0, 11.0, 8.0], 3.0, 4.0),
+            [9.0, 5.0, 10.0, 15.0, 10.0],
+        )
+        self.assertEqual(
+            view._compute_ink_drag_position([1.0, 8.0, 11.0, 8.0], 3.0, 4.0),
+            [5.0, 10.0, 15.0, 10.0],
+        )
+        self.assertEqual(view._compute_ink_drag_position([9.0], 3.0, 4.0), [9.0])
+        self.assertEqual(view._compute_ink_drag_position([], 3.0, 4.0), [])
+        self.assertEqual(
+            view._compute_ink_drag_position([9.0, 1.0], 3.0, 4.0), [10.0, 5.0]
+        )
+
+    def test_group_translation_treats_ink_text_and_other_positions_differently(self):
+        view = self._helper_view()
+        view._current_annotations = {
+            "ink": self._annotation("ink", []),
+            "text": self._annotation("text", []),
+            "rect": self._annotation("rect", []),
+        }
+        self.assertEqual(
+            view._translate_group_plan_item_position(
+                "ink", [9.0, 1.0, 2.0, 3.0, 4.0], 10.0, 20.0
+            ),
+            [9.0, 11.0, 22.0, 13.0, 24.0],
+        )
+        self.assertEqual(
+            view._translate_group_plan_item_position(
+                "ink", [1.0, 2.0, 3.0, 4.0], 10.0, 20.0
+            ),
+            [11.0, 22.0, 13.0, 24.0],
+        )
+        self.assertEqual(
+            view._translate_group_plan_item_position(
+                "text", [1.0, 2.0, 30.0, 40.0], 10.0, 20.0
+            ),
+            [11.0, 22.0, 30.0, 40.0],
+        )
+        self.assertEqual(
+            view._translate_group_plan_item_position("text", [1.0], 10.0, 20.0), [1.0]
+        )
+        self.assertEqual(
+            view._translate_group_plan_item_position(
+                "rect", [1.0, 2.0, 3.0, 4.0, 0.5], 10.0, 20.0
+            ),
+            [11.0, 22.0, 13.0, 24.0, 0.5],
+        )
+        self.assertEqual(
+            view._translate_group_plan_item_position("unknown", [1.0, 2.0], 10.0, 20.0),
+            [11.0, 22.0],
+        )
+
+    def test_group_translation_snaps_each_axis_independently(self):
+        view = self._helper_view()
+        self.assertEqual(view._snapped_group_translation_delta(7.6, 12.4), (10.0, 10.0))
+        self.assertEqual(view._snapped_group_translation_delta(-7.6, 2.4), (-10.0, 0.0))
+
+    def test_translate_position_moves_pairs_and_leaves_trailing_values(self):
+        self.assertEqual(
+            InputHandlerMixin._translate_position(
+                [1.0, 2.0, 3.0, 4.0, 9.0], 10.0, 20.0
+            ),
+            [11.0, 22.0, 13.0, 24.0, 9.0],
+        )
+        original = [1.0, 2.0]
+        InputHandlerMixin._translate_position(original, 10.0, 20.0)
+        self.assertEqual(original, [1.0, 2.0])
+
+    def test_multi_drag_preview_delta_follows_the_snapped_position_change(self):
+        view = self._helper_view()
+        view._current_annotations = {
+            "ink": self._annotation("ink", []),
+            "rect": self._annotation("rect", []),
+        }
+        cases = (
+            ("rect", [1.0, 2.0, 3.0, 4.0], [11.0, 22.0, 13.0, 24.0], (20.0, 60.0)),
+            ("ink", [9.0, 1.0, 2.0], [9.0, 11.0, 22.0], (20.0, 60.0)),
+            ("unknown", [1.0, 2.0, 3.0], [4.0, 6.0, 3.0], (6.0, 12.0)),
+        )
+        for uid, orig, new, expected in cases:
+            with self.subTest(uid):
+                delta = view._snapped_multi_drag_scene_delta(
+                    uid, orig, new, 111.0, 222.0
+                )
+                self.assertEqual((delta.x(), delta.y()), expected)
+
+    def test_multi_drag_preview_delta_falls_back_when_positions_are_too_short(self):
+        view = self._helper_view()
+        view._current_annotations = {"ink": self._annotation("ink", [])}
+        for uid, orig, new in (
+            ("unknown", [1.0], [2.0, 3.0]),
+            ("unknown", [1.0, 2.0], [3.0]),
+            ("ink", [9.0], [9.0, 1.0, 2.0]),
+            ("unknown", [], []),
+        ):
+            with self.subTest(uid=uid, orig=orig, new=new):
+                delta = view._snapped_multi_drag_scene_delta(
+                    uid, orig, new, 111.0, 222.0
+                )
+                self.assertEqual((delta.x(), delta.y()), (111.0, 222.0))
+        delta = view._snapped_multi_drag_scene_delta(
+            "unknown", [1.0, 2.0], [3.0, 5.0], 111.0, 222.0
+        )
+        self.assertEqual((delta.x(), delta.y()), (4.0, 9.0))
+
+    def test_area_child_parent_map_terminates_on_cycles_not_involving_the_child(self):
+        view = self._helper_view()
+        view._current_takeoffs = {
+            "a": Takeoff(
+                uid="a", condition_uid="area", parent_uid="b", position=[0.0] * 6
+            ),
+            "b": Takeoff(
+                uid="b", condition_uid="area", parent_uid="a", position=[0.0] * 6
+            ),
+            "c": Takeoff(
+                uid="c", condition_uid="area", parent_uid="a", position=[0.0] * 6
+            ),
+        }
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"a", "b", "c"}
+        self.assertEqual(
+            view._area_child_parent_map({"a"}, child_uids={"c"}), {"c": "a"}
+        )
+
+    def test_area_child_parent_map_attributes_each_child_to_its_selected_ancestor(self):
+        view = self._helper_view()
+        view._current_takeoffs = {
+            "top": Takeoff(uid="top", condition_uid="area", position=[0.0] * 6),
+            "mid": Takeoff(
+                uid="mid", condition_uid="area", parent_uid="top", position=[0.0] * 6
+            ),
+            "leaf": Takeoff(
+                uid="leaf", condition_uid="area", parent_uid="mid", position=[0.0] * 6
+            ),
+            "line": Takeoff(
+                uid="line", condition_uid="line", parent_uid="top", position=[0.0] * 4
+            ),
+        }
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"mid", "leaf"}
+        self.assertEqual(
+            view._area_child_parent_map({"top", "mid"}),
+            {"mid": "top", "leaf": "top"},
+        )
+        self.assertEqual(view._area_child_parent_map({"mid"}), {"leaf": "mid"})
+        self.assertEqual(
+            view._area_child_parent_map({"top"}), {"mid": "top", "leaf": "top"}
+        )
+
+    def test_group_translation_moves_nested_children_by_the_parent_displacement(self):
+        view = self._helper_view()
+        view._current_takeoffs = {
+            "top": Takeoff(
+                uid="top",
+                condition_uid="area",
+                position=[1.0, 2.0, 11.0, 2.0, 1.0, 12.0],
+            ),
+            "mid": Takeoff(
+                uid="mid",
+                condition_uid="area",
+                parent_uid="top",
+                position=[3.0, 4.0, 5.0, 4.0, 3.0, 6.0],
+            ),
+        }
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"mid"}
+        orig = {
+            "top": [1.0, 2.0, 11.0, 2.0, 1.0, 12.0],
+            "mid": [3.0, 4.0, 5.0, 4.0, 3.0, 6.0],
+        }
+        result = view._compute_group_translation_positions(orig, 7.6, 12.4)
+        self.assertEqual(result["top"], [11.0, 12.0, 21.0, 12.0, 11.0, 22.0])
+        self.assertEqual(result["mid"], [13.0, 14.0, 15.0, 14.0, 13.0, 16.0])
+
+    def test_group_translation_skips_children_whose_parent_has_no_position(self):
+        view = self._helper_view()
+        view._current_takeoffs = {
+            "top": Takeoff(uid="top", condition_uid="area", position=[]),
+            "mid": Takeoff(
+                uid="mid", condition_uid="area", parent_uid="top", position=[3.0, 4.0]
+            ),
+        }
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"mid"}
+        view._takeoff_children_valid_for_geometry_changes = lambda positions: True
+        result = view._compute_group_translation_positions(
+            {"top": [], "mid": [3.0, 4.0]}, 5.0, 5.0
+        )
+        self.assertEqual(result, {"top": []})
+
+    def test_group_translation_is_rejected_as_a_whole_when_children_would_become_invalid(
+        self,
+    ):
+        view = self._helper_view()
+        view._takeoff_children_valid_for_geometry_changes = lambda positions: False
+        orig = {"a": [1.0, 2.0], "b": [3.0, 4.0]}
+        result = view._compute_group_translation_positions(orig, 10.0, 10.0)
+        self.assertEqual(result, orig)
+        self.assertIsNot(result["a"], orig["a"])
+
+    def test_group_translation_can_preserve_axes_that_were_not_moved(self):
+        view = self._helper_view()
+        view._current_annotations = {"ink": self._annotation("ink", [])}
+        result = view._compute_group_translation_positions(
+            {"t1": [1.0, 2.0, 3.0, 4.0], "ink": [9.0, 1.0, 2.0, 3.0, 4.0]},
+            0.0,
+            10.0,
+            preserve_zero_axes=True,
+        )
+        self.assertEqual(result["t1"], [1.0, 12.0, 3.0, 14.0])
+        self.assertEqual(result["ink"], [9.0, 1.0, 12.0, 3.0, 14.0])
+        result = view._compute_group_translation_positions(
+            {"t1": [1.0, 2.0, 3.0, 4.0]}, 10.0, 0.0, preserve_zero_axes=True
+        )
+        self.assertEqual(result["t1"], [11.0, 2.0, 13.0, 4.0])
+
+    def test_snapped_multi_drag_preview_moves_items_and_selection_outlines(self):
+        view = self._helper_view({"t1", "t2"})
+        first = QGraphicsPathItem()
+        second = QGraphicsPathItem()
+        untracked = QGraphicsPathItem()
+        outline = QGraphicsPathItem()
+        outline.setData(0, "t1")
+        other_outline = QGraphicsPathItem()
+        other_outline.setData(0, "elsewhere")
+        orphan_outline = QGraphicsPathItem()
+        for item, pos in (
+            (first, (1.0, 1.0)),
+            (second, (2.0, 2.0)),
+            (outline, (3.0, 3.0)),
+            (other_outline, (4.0, 4.0)),
+        ):
+            item.setPos(*pos)
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="line", position=[0.0, 0.0, 10.0, 0.0]
+            ),
+            "t2": Takeoff(
+                uid="t2", condition_uid="line", position=[5.0, 5.0, 15.0, 5.0]
+            ),
+        }
+        view._uid_to_items = {"t1": [first, untracked], "t2": [second]}
+        view._selection_items = [outline, other_outline, orphan_outline]
+        view._drag_multi_orig_positions = {
+            "t1": [0.0, 0.0, 10.0, 0.0],
+            "t2": [5.0, 5.0, 15.0, 5.0],
+        }
+        view._drag_item_orig_positions = {
+            id(first): first.pos(),
+            id(second): second.pos(),
+            id(outline): outline.pos(),
+            id(other_outline): other_outline.pos(),
+        }
+        changed = view._update_snapped_multi_drag_preview(111.0, 222.0, 7.6, 12.4)
+        self.assertIs(changed, True)
+        # Snapped ost delta (10, 10) -> scene delta (20, 30) for every item.
+        self.assertEqual(first.pos(), QtCore.QPointF(21.0, 31.0))
+        self.assertEqual(second.pos(), QtCore.QPointF(22.0, 32.0))
+        self.assertEqual(untracked.pos(), QtCore.QPointF(0.0, 0.0))
+        self.assertEqual(outline.pos(), QtCore.QPointF(23.0, 33.0))
+        self.assertEqual(other_outline.pos(), QtCore.QPointF(24.0, 33.0 + 1.0))
+        self.assertEqual(orphan_outline.pos(), QtCore.QPointF(0.0, 0.0))
+
+    def test_snapped_multi_drag_preview_reports_no_change_for_a_sub_increment_drag(
+        self,
+    ):
+        view = self._helper_view({"t1"})
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="line", position=[0.0, 0.0, 10.0, 0.0]
+            )
+        }
+        view._drag_multi_orig_positions = {"t1": [0.0, 0.0, 10.0, 0.0]}
+        view._drag_item_orig_positions = {}
+        self.assertIs(
+            view._update_snapped_multi_drag_preview(1.0, 1.0, 1.0, 1.0), False
+        )
+
+    def test_snapped_multi_drag_preview_reports_a_change_when_any_item_moves(self):
+        view = self._helper_view({"t1", "t2"})
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="line", position=[0.0, 0.0, 10.0, 0.0]
+            ),
+            "t2": Takeoff(
+                uid="t2", condition_uid="line", position=[5.0, 5.0, 15.0, 5.0]
+            ),
+        }
+        view._drag_multi_orig_positions = {
+            "t1": [0.0, 0.0, 10.0, 0.0],
+            "t2": [5.0, 5.0, 15.0, 5.0],
+        }
+        view._compute_group_translation_positions = lambda orig, dx, dy: {
+            "t1": [0.0, 0.0, 10.0, 0.0],
+            "t2": [6.0, 5.0, 16.0, 5.0],
+        }
+        view._drag_item_orig_positions = {}
+        self.assertIs(view._update_snapped_multi_drag_preview(1.0, 1.0, 1.0, 1.0), True)
+
+    def test_selection_outlines_move_by_their_own_delta_or_the_fallback(self):
+        view = self._helper_view()
+        own = QGraphicsPathItem()
+        own.setData(0, "t1")
+        fallback = QGraphicsPathItem()
+        fallback.setData(0, "other")
+        view._selection_items = [own, fallback]
+        view._move_selection_items_by_uid_delta(
+            {"t1": QtCore.QPointF(5.0, 6.0)}, QtCore.QPointF(1.0, 2.0)
+        )
+        self.assertEqual(own.pos(), QtCore.QPointF(5.0, 6.0))
+        self.assertEqual(fallback.pos(), QtCore.QPointF(1.0, 2.0))
+
+    # ---- keyboard moves
+    def _keyboard_view(self):
+        view = self._helper_view({"t1", "a1", "bad", "empty", "child_parent"})
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="line", position=[0.0, 0.0, 10.0, 0.0]
+            ),
+            "empty": Takeoff(uid="empty", condition_uid="line", position=[]),
+        }
+        view._current_annotations = {
+            "a1": BidAnnotation(
+                uid="a1", annotation_type="rect", position=[1.0, 1.0, 5.0, 5.0]
+            ),
+            "bad": BidAnnotation(uid="bad", annotation_type="rect", position=[7.0]),
+        }
+        self.item_t1 = QGraphicsPathItem()
+        self.item_a1 = QGraphicsPathItem()
+        self.outline_t1 = QGraphicsPathItem()
+        self.outline_t1.setData(0, "t1")
+        self.outline_other = QGraphicsPathItem()
+        self.outline_other.setData(0, "other")
+        view._uid_to_items = {"t1": [self.item_t1], "a1": [self.item_a1]}
+        view._selection_items = [self.outline_t1, self.outline_other]
+        view._selected_uids = {"t1", "a1", "bad", "empty", "ghost"}
+        return view
+
+    def test_keyboard_move_applies_the_snapped_delta_to_every_movable_selection(self):
+        view = self._keyboard_view()
+        self.assertIs(view._apply_position_keyboard_move(7.6, 12.4), True)
+        self.assertEqual(
+            view._current_takeoffs["t1"].position, [10.0, 10.0, 20.0, 10.0]
+        )
+        self.assertEqual(
+            view._current_annotations["a1"].position, [11.0, 11.0, 15.0, 15.0]
+        )
+        self.assertEqual(view._current_annotations["bad"].position, [7.0])
+        self.assertEqual(view._current_takeoffs["empty"].position, [])
+        self.assertEqual(view._dirty_positions, {"t1": [10.0, 10.0, 20.0, 10.0]})
+        self.assertEqual(
+            view._dirty_ann_positions, {"a1": ("rect", [11.0, 11.0, 15.0, 15.0])}
+        )
+        self.assertEqual(
+            view._position_before_edit,
+            {"t1": [0.0, 0.0, 10.0, 0.0], "a1": [1.0, 1.0, 5.0, 5.0]},
+        )
+        self.assertIs(view._keyboard_move_dirty, True)
+        # Scene deltas: ost (10, 10) -> (20, 30).
+        self.assertEqual(self.item_t1.pos(), QtCore.QPointF(20.0, 30.0))
+        self.assertEqual(self.item_a1.pos(), QtCore.QPointF(20.0, 30.0))
+        self.assertEqual(self.outline_t1.pos(), QtCore.QPointF(20.0, 30.0))
+        self.assertEqual(self.outline_other.pos(), QtCore.QPointF(20.0, 30.0))
+
+    def test_keyboard_move_keeps_an_existing_before_edit_snapshot(self):
+        view = self._keyboard_view()
+        view._position_before_edit = {"t1": [9.0, 9.0, 9.0, 9.0]}
+        view._apply_position_keyboard_move(7.6, 12.4)
+        self.assertEqual(view._position_before_edit["t1"], [9.0, 9.0, 9.0, 9.0])
+
+    def test_keyboard_move_below_one_increment_moves_nothing(self):
+        view = self._keyboard_view()
+        self.assertIs(view._apply_position_keyboard_move(1.0, 1.0), False)
+        self.assertIs(view._keyboard_move_dirty, False)
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(self.item_t1.pos(), QtCore.QPointF(0.0, 0.0))
+        self.assertEqual(self.outline_t1.pos(), QtCore.QPointF(0.0, 0.0))
+
+    def test_keyboard_move_along_one_axis_leaves_the_other_coordinates_alone(self):
+        view = self._keyboard_view()
+        view._apply_position_keyboard_move(10.0, 0.0)
+        self.assertEqual(view._current_takeoffs["t1"].position, [10.0, 0.0, 20.0, 0.0])
+        view = self._keyboard_view()
+        view._apply_position_keyboard_move(0.0, 10.0)
+        self.assertEqual(view._current_takeoffs["t1"].position, [0.0, 10.0, 10.0, 10.0])
+
+    def test_keyboard_move_carries_child_holes_with_a_selected_area(self):
+        view = self._helper_view({"top"})
+        view._current_takeoffs = {
+            "top": Takeoff(
+                uid="top",
+                condition_uid="area",
+                position=[0.0, 0.0, 10.0, 0.0, 0.0, 10.0],
+            ),
+            "hole": Takeoff(
+                uid="hole",
+                condition_uid="area",
+                parent_uid="top",
+                position=[1.0, 1.0, 2.0, 1.0, 1.0, 2.0],
+            ),
+        }
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"hole"}
+        hole_item = QGraphicsPathItem()
+        view._uid_to_items = {"hole": [hole_item]}
+        self.assertIs(view._apply_position_keyboard_move(10.0, 5.0), True)
+        self.assertEqual(
+            view._current_takeoffs["hole"].position, [11.0, 6.0, 12.0, 6.0, 11.0, 7.0]
+        )
+        self.assertEqual(hole_item.pos(), QtCore.QPointF(20.0, 15.0))
+        self.assertEqual(
+            view._dirty_positions["hole"], [11.0, 6.0, 12.0, 6.0, 11.0, 7.0]
+        )
+
+    def test_keyboard_move_ignores_children_without_a_position(self):
+        view = self._helper_view({"top"})
+        view._current_takeoffs = {
+            "top": Takeoff(
+                uid="top",
+                condition_uid="area",
+                position=[0.0, 0.0, 10.0, 0.0, 0.0, 10.0],
+            ),
+            "hole": Takeoff(
+                uid="hole", condition_uid="area", parent_uid="top", position=[]
+            ),
+        }
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"hole"}
+        view._takeoff_children_valid_for_geometry_changes = lambda positions: True
+        self.assertIs(view._apply_position_keyboard_move(10.0, 5.0), True)
+        self.assertEqual(view._current_takeoffs["hole"].position, [])
+        self.assertNotIn("hole", view._dirty_positions)
+
+
+class KeyboardRoutingTests(_RealViewGestureFixture):
+    def _key(
+        self,
+        key,
+        modifiers=Qt.KeyboardModifier.NoModifier,
+        press=True,
+        auto_repeat=False,
+    ):
+        event = QtGui.QKeyEvent(
+            QtCore.QEvent.Type.KeyPress if press else QtCore.QEvent.Type.KeyRelease,
+            key,
+            modifiers,
+            "",
+            auto_repeat,
+        )
+        event.setAccepted(False)
+        return event
+
+    def _keyed_view(self):
+        view = self._real_view()
+        self.emitted = []
+        for name in ("undo_requested", "redo_requested", "paste_requested"):
+            getattr(view, name).connect(
+                lambda *args, name=name: self.emitted.append(name)
+            )
+        view.copy_requested.connect(
+            lambda uids: self.emitted.append(("copy", sorted(uids)))
+        )
+        self.cursor_updates = []
+        view._update_cursor = lambda *args: self.cursor_updates.append(args)
+        view._selection_enabled = True
+        view._editing_enabled = True
+        return view
+
+    def _press(
+        self, view, key, modifiers=Qt.KeyboardModifier.NoModifier, auto_repeat=False
+    ):
+        event = self._key(key, modifiers, auto_repeat=auto_repeat)
+        view.keyPressEvent(event)
+        return event
+
+    # ---- inline text editing
+    def test_escape_cancels_an_active_inline_text_edit_without_committing(self):
+        view = self._keyed_view()
+        finished = []
+        view.is_text_annotation_inline_edit_active = lambda: True
+        view._finish_active_inline_text_edit = lambda commit: finished.append(commit)
+        event = self._press(view, Qt.Key.Key_Escape)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(finished, [False])
+
+    def test_other_keys_are_left_to_the_inline_text_editor(self):
+        view = self._keyed_view()
+        view.is_text_annotation_inline_edit_active = lambda: True
+        finished = []
+        view._finish_active_inline_text_edit = lambda commit: finished.append(commit)
+        self._press(view, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+        self._press(view, Qt.Key.Key_Control)
+        self.assertEqual(self.emitted, [])
+        self.assertEqual(finished, [])
+        self.assertFalse(view._ctrl_held)
+
+    # ---- ctrl tracking
+    def test_control_key_marks_ctrl_held_only_with_advanced_controls_and_no_repeat(
+        self,
+    ):
+        view = self._keyed_view()
+        self._press(view, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
+        self.assertIs(view._ctrl_held, True)
+        self.assertEqual(self.cursor_updates, [()])
+        view = self._keyed_view()
+        self._press(
+            view,
+            Qt.Key.Key_Control,
+            Qt.KeyboardModifier.ControlModifier,
+            auto_repeat=True,
+        )
+        self.assertFalse(view._ctrl_held)
+        self.assertEqual(self.cursor_updates, [])
+        view = self._keyed_view()
+        view._advanced_mouse_controls_enabled = False
+        self._press(view, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
+        self.assertFalse(view._ctrl_held)
+
+    # ---- undo / redo / copy / paste
+    def test_ctrl_z_and_ctrl_y_request_undo_and_redo_only_while_editing(self):
+        for key, name in (
+            (Qt.Key.Key_Z, "undo_requested"),
+            (Qt.Key.Key_Y, "redo_requested"),
+        ):
+            with self.subTest(key=key):
+                view = self._keyed_view()
+                event = self._press(view, key, Qt.KeyboardModifier.ControlModifier)
+                self.assertTrue(event.isAccepted())
+                self.assertEqual(self.emitted, [name])
+                self.emitted.clear()
+                view._editing_enabled = False
+                event = self._press(view, key, Qt.KeyboardModifier.ControlModifier)
+                self.assertEqual(self.emitted, [])
+                self.assertFalse(event.isAccepted())
+
+    def test_plain_z_or_y_do_not_request_undo_or_redo(self):
+        view = self._keyed_view()
+        self._press(view, Qt.Key.Key_Z)
+        self._press(view, Qt.Key.Key_Y)
+        self.assertEqual(self.emitted, [])
+
+    def test_ctrl_c_copies_pdf_text_before_plan_items(self):
+        view = self._keyed_view()
+        view._selected_uids = {"t1"}
+        view.copy_selected_pdf_text = lambda: True
+        event = self._press(view, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.emitted, [])
+
+    def test_ctrl_c_copies_the_selected_plan_items_when_there_is_no_pdf_text(self):
+        view = self._keyed_view()
+        view._selected_uids = {"t1", "t2"}
+        view.copy_selected_pdf_text = lambda: False
+        event = self._press(view, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.emitted, [("copy", ["t1", "t2"])])
+
+    def test_ctrl_c_with_nothing_selected_does_nothing(self):
+        view = self._keyed_view()
+        view._selected_uids = set()
+        view.copy_selected_pdf_text = lambda: False
+        event = self._press(view, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+        self.assertFalse(event.isAccepted())
+        self.assertEqual(self.emitted, [])
+
+    def test_ctrl_v_requests_a_paste_only_when_pasting_is_allowed(self):
+        view = self._keyed_view()
+        view._paste_allowed = lambda: True
+        event = self._press(view, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.emitted, ["paste_requested"])
+        self.emitted.clear()
+        view._paste_allowed = lambda: False
+        event = self._press(view, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        self.assertFalse(event.isAccepted())
+        self.assertEqual(self.emitted, [])
+
+    # ---- rotate shortcuts
+    def _rotate_view(self, selected=("t1",)):
+        view = self._keyed_view()
+        view._selected_uids = set(selected)
+        self.rotate_calls = []
+        view._create_rotate_handle = lambda uids: (
+            self.rotate_calls.append(("create", set(uids))) or self.handle_ok
+        )
+        view._create_slope_rotate_handle = lambda: (
+            self.rotate_calls.append("create_slope") or self.handle_ok
+        )
+        view._remove_rotate_handle = lambda: self.rotate_calls.append("remove")
+        view._apply_cursor_mode = lambda mode: self.rotate_calls.append(("mode", mode))
+        view._exit_place_mode = lambda: self.rotate_calls.append("exit_place")
+        view.clear_place_preview = lambda: self.rotate_calls.append("clear_preview")
+        self.handle_ok = True
+        return view
+
+    def test_ctrl_r_starts_rotate_mode_with_a_handle_for_the_selection(self):
+        view = self._rotate_view(("t1", "t2"))
+        view._rotate_handle_uid = None
+        event = self._press(view, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            self.rotate_calls,
+            ["clear_preview", ("create", {"t1", "t2"}), ("mode", CURSOR_MODE_ROTATE)],
+        )
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_ROTATE])
+
+    def test_ctrl_r_stays_out_of_rotate_mode_when_no_handle_can_be_made(self):
+        view = self._rotate_view()
+        view._rotate_handle_uid = None
+        self.handle_ok = False
+        event = self._press(view, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.rotate_calls, ["clear_preview", ("create", {"t1"})])
+        self.assertEqual(self.mode_requests, [])
+
+    def test_ctrl_r_while_rotating_leaves_rotate_mode(self):
+        view = self._rotate_view()
+        view._rotate_handle_uid = "t1"
+        event = self._press(view, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.rotate_calls, ["remove", ("mode", CURSOR_MODE_SELECT)])
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_SELECT])
+
+    def test_ctrl_r_needs_editing_selection_and_a_selected_item(self):
+        for label, change in (
+            ("no selection", lambda v: setattr(v, "_selected_uids", set())),
+            ("no selection mode", lambda v: setattr(v, "_selection_enabled", False)),
+            ("read only", lambda v: setattr(v, "_editing_enabled", False)),
+        ):
+            with self.subTest(label):
+                view = self._rotate_view()
+                change(view)
+                event = self._press(
+                    view, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier
+                )
+                self.assertEqual(self.rotate_calls, [])
+                self.assertFalse(event.isAccepted())
+
+    def test_ctrl_r_leaves_place_mode_first(self):
+        view = self._rotate_view()
+        view._rotate_handle_uid = None
+        view._cursor_mode = CURSOR_MODE_PLACE
+        self._press(view, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(self.rotate_calls[0], "exit_place")
+
+    def test_ctrl_shift_r_toggles_slope_rotate_mode(self):
+        modifiers = (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+        )
+        view = self._rotate_view()
+        view._rotate_handle_uid = None
+        event = self._press(view, Qt.Key.Key_R, modifiers)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            self.rotate_calls,
+            ["clear_preview", "create_slope", ("mode", CURSOR_MODE_SLOPE_ROTATE)],
+        )
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_SLOPE_ROTATE])
+        view = self._rotate_view()
+        self.handle_ok = False
+        self.mode_requests.clear()
+        self._press(view, Qt.Key.Key_R, modifiers)
+        self.assertEqual(self.rotate_calls, ["clear_preview", "create_slope"])
+        self.assertEqual(self.mode_requests, [])
+        view = self._rotate_view()
+        view._cursor_mode = CURSOR_MODE_SLOPE_ROTATE
+        event = self._press(view, Qt.Key.Key_R, modifiers)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.rotate_calls, ["remove", ("mode", CURSOR_MODE_SELECT)])
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_SELECT])
+
+    # ---- escape handling per mode
+    def test_escape_leaves_rotate_modes(self):
+        for mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE):
+            with self.subTest(mode=mode):
+                view = self._rotate_view()
+                self.mode_requests.clear()
+                view._cursor_mode = mode
+                event = self._press(view, Qt.Key.Key_Escape)
+                self.assertTrue(event.isAccepted())
+                self.assertEqual(
+                    self.rotate_calls, ["remove", ("mode", CURSOR_MODE_SELECT)]
+                )
+                self.assertEqual(self.mode_requests, [CURSOR_MODE_SELECT])
+
+    def test_escape_cancels_an_active_intelligent_paste(self):
+        view = self._keyed_view()
+        view._intelligent_paste_active = True
+        calls = []
+        view._cancel_active_drag_interaction = lambda restore_preview: calls.append(
+            ("cancel", restore_preview)
+        )
+        view.finish_intelligent_paste_placement = lambda: calls.append("finish")
+        event = self._press(view, Qt.Key.Key_Escape)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(calls, [("cancel", True), "finish"])
+        self.assertEqual(self.cursor_updates, [()])
+        view._intelligent_paste_active = False
+        event = self._press(view, Qt.Key.Key_Escape)
+        self.assertFalse(event.isAccepted())
+
+    def test_escape_cancels_paste_backout_and_overlay_moves(self):
+        view = self._keyed_view()
+        view._cursor_mode = CURSOR_MODE_PASTE_BACKOUT
+        cancelled = []
+        view.cancel_paste_backout = lambda: cancelled.append("backout")
+        event = self._press(view, Qt.Key.Key_Escape)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(cancelled, ["backout"])
+        for mode in (CURSOR_MODE_MOVE_OVERLAY, CURSOR_MODE_MOVE_OVERLAY_HANDLE):
+            with self.subTest(mode=mode):
+                view = self._keyed_view()
+                view._cursor_mode = mode
+                overlay = []
+                view.cancel_overlay_move_mode = lambda restore_preview: overlay.append(
+                    restore_preview
+                )
+                event = self._press(view, Qt.Key.Key_Escape)
+                self.assertTrue(event.isAccepted())
+                self.assertEqual(overlay, [True])
+
+    def test_escape_in_annotation_placement_returns_to_select_mode(self):
+        view = self._keyed_view()
+        view._annotation_place_type = "rect"
+        view._apply_cursor_mode(CURSOR_MODE_ANNOTATION_PLACE)
+        self.mode_requests.clear()
+        calls = []
+        view.finish_intelligent_paste_placement = lambda: calls.append("finish")
+        view._exit_annotation_place_mode = lambda: calls.append("exit")
+        view._apply_cursor_mode = lambda mode: calls.append(("mode", mode))
+        event = self._press(view, Qt.Key.Key_Escape)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(calls, ["finish", "exit", ("mode", CURSOR_MODE_SELECT)])
+        self.assertEqual(self.mode_requests, [CURSOR_MODE_SELECT])
+
+    def _placing_view(self, points, mouse_pos=None):
+        view = self._keyed_view()
+        view._apply_cursor_mode(CURSOR_MODE_PLACE)
+        view._place_points = list(points)
+        view._place_linear_dragging = True
+        view._place_area_rect_dragging = True
+        view._last_mouse_vp_pos = mouse_pos
+        self.placing = []
+        view.finish_intelligent_paste_placement = lambda: self.placing.append("finish")
+        view.clear_place_preview = lambda: self.placing.append("clear")
+        view.update_place_preview = lambda pos: self.placing.append(("preview", pos))
+        view._set_area_placement_in_progress = lambda flag: self.placing.append(
+            ("area", flag)
+        )
+        view.viewport().update = lambda *args: self.placing.append("viewport")
+        return view
+
+    def test_escape_while_placing_removes_the_last_point_and_refreshes_the_preview(
+        self,
+    ):
+        view = self._placing_view(
+            [(1.0, 1.0), (2.0, 2.0)], mouse_pos=QtCore.QPoint(5, 6)
+        )
+        event = self._press(view, Qt.Key.Key_Escape)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(view._place_points, [(1.0, 1.0)])
+        self.assertEqual(
+            self.placing,
+            [
+                "finish",
+                "clear",
+                ("preview", view.mapToScene(QtCore.QPoint(5, 6))),
+                "viewport",
+            ],
+        )
+        self.assertIs(view._place_linear_dragging, True)
+
+    def test_escape_while_placing_without_a_pointer_still_refreshes_the_viewport(self):
+        view = self._placing_view([(1.0, 1.0), (2.0, 2.0)], mouse_pos=None)
+        self._press(view, Qt.Key.Key_Escape)
+        self.assertEqual(self.placing, ["finish", "clear", "viewport"])
+
+    def test_escape_on_the_last_placed_point_resets_the_placement_state(self):
+        view = self._placing_view([(1.0, 1.0)], mouse_pos=QtCore.QPoint(5, 6))
+        self._press(view, Qt.Key.Key_Escape)
+        self.assertEqual(view._place_points, [])
+        self.assertIs(view._place_linear_dragging, False)
+        self.assertIs(view._place_area_rect_dragging, False)
+        self.assertEqual(self.placing, ["finish", "clear", ("area", False)])
+
+    def test_escape_without_placed_points_clears_the_preview_and_area_state(self):
+        view = self._placing_view([], mouse_pos=QtCore.QPoint(5, 6))
+        self._press(view, Qt.Key.Key_Escape)
+        self.assertIs(view._place_linear_dragging, False)
+        self.assertIs(view._place_area_rect_dragging, False)
+        self.assertEqual(self.placing, ["finish", "clear", ("area", False)])
+
+    # ---- delete / select all
+    def test_delete_removes_the_selection_only_while_editing_with_a_selection(self):
+        for label, selected, editing, expected in (
+            ("selected and editing", {"t1"}, True, ["delete"]),
+            ("nothing selected", set(), True, []),
+            ("read only", {"t1"}, False, []),
+        ):
+            with self.subTest(label):
+                view = self._keyed_view()
+                view._selected_uids = set(selected)
+                view._editing_enabled = editing
+                calls = []
+                view.delete_selected = lambda: calls.append("delete")
+                event = self._press(view, Qt.Key.Key_Delete)
+                self.assertEqual(calls, expected)
+                self.assertEqual(event.isAccepted(), bool(expected))
+
+    def test_ctrl_a_selects_everything_in_select_mode_only(self):
+        for label, selection_enabled, mode, expected in (
+            ("select mode", True, CURSOR_MODE_SELECT, ["all"]),
+            ("selection disabled", False, CURSOR_MODE_SELECT, []),
+            ("pan mode", True, CURSOR_MODE_PAN, []),
+        ):
+            with self.subTest(label):
+                view = self._keyed_view()
+                view._selection_enabled = selection_enabled
+                view._cursor_mode = mode
+                calls = []
+                view.select_all = lambda: calls.append("all")
+                event = self._press(
+                    view, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier
+                )
+                self.assertEqual(calls, expected)
+                self.assertEqual(event.isAccepted(), bool(expected))
+
+    def test_plain_a_does_not_select_everything(self):
+        view = self._keyed_view()
+        calls = []
+        view.select_all = lambda: calls.append("all")
+        self._press(view, Qt.Key.Key_A)
+        self.assertEqual(calls, [])
+
+    # ---- arrow keys
+    def _arrow_view(self, selected=("t1",), snap=5.0, mode=CURSOR_MODE_SELECT):
+        view = self._keyed_view()
+        view._selected_uids = set(selected)
+        view._snap_increments = snap
+        view._cursor_mode = mode
+        self.arrow_calls = []
+        self.lease_result = True
+        view.request_geometry_edit_lease = lambda uids: (
+            self.arrow_calls.append(("lease", set(uids))) or self.lease_result
+        )
+        self.moved_result = True
+        view._apply_position_keyboard_move = lambda dx, dy: (
+            self.arrow_calls.append(("move", dx, dy)) or self.moved_result
+        )
+        return view
+
+    def test_arrow_keys_move_the_selection_by_one_snap_step_per_axis(self):
+        for key, expected in (
+            (Qt.Key.Key_Left, (-5.0, 0.0)),
+            (Qt.Key.Key_Right, (5.0, 0.0)),
+            (Qt.Key.Key_Up, (0.0, -5.0)),
+            (Qt.Key.Key_Down, (0.0, 5.0)),
+        ):
+            with self.subTest(key=key):
+                view = self._arrow_view()
+                event = self._press(view, key)
+                self.assertTrue(event.isAccepted())
+                self.assertEqual(
+                    self.arrow_calls, [("lease", {"t1"}), ("move", *expected)]
+                )
+
+    def test_arrow_step_defaults_to_one_unit_without_a_snap_increment(self):
+        for snap in (0.0, -2.0):
+            with self.subTest(snap=snap):
+                view = self._arrow_view(snap=snap)
+                self._press(view, Qt.Key.Key_Right)
+                self.assertEqual(self.arrow_calls[-1], ("move", 1.0, 0.0))
+
+    def test_arrow_keys_stop_when_the_geometry_edit_lease_is_denied(self):
+        view = self._arrow_view()
+        self.lease_result = False
+        event = self._press(view, Qt.Key.Key_Left)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.arrow_calls, [("lease", {"t1"})])
+
+    def test_arrow_keys_that_move_nothing_reach_the_default_handler_unless_an_attachment_is_selected(
+        self,
+    ):
+        with patch.object(QtWidgets.QGraphicsView, "keyPressEvent") as base:
+            view = self._arrow_view()
+            self.moved_result = False
+            event = self._press(view, Qt.Key.Key_Left)
+            self.assertFalse(event.isAccepted())
+            self.assertEqual(base.call_count, 1)
+            view = self._arrow_view(selected=("att",))
+            self.moved_result = False
+            view._current_takeoffs = {
+                "att": Takeoff(uid="att", condition_uid="cat", position=[1.0, 1.0])
+            }
+            view._current_conditions = {
+                "cat": Condition(uid="cat", condition_type=Condition.TYPE_ATTACHMENT)
+            }
+            event = self._press(view, Qt.Key.Key_Left)
+            self.assertTrue(event.isAccepted())
+            self.assertEqual(base.call_count, 1)
+            view._current_conditions = {
+                "cat": Condition(uid="cat", condition_type=Condition.TYPE_AREA)
+            }
+            event = self._press(view, Qt.Key.Key_Left)
+            self.assertFalse(event.isAccepted())
+            self.assertEqual(base.call_count, 2)
+            view._current_takeoffs = {}
+            self._press(view, Qt.Key.Key_Left)
+            self.assertEqual(base.call_count, 3)
+
+    def test_arrow_keys_only_move_in_modes_that_allow_selection_edits(self):
+        for mode, moves in (
+            (CURSOR_MODE_SELECT, True),
+            (CURSOR_MODE_PLACE, True),
+            (CURSOR_MODE_ANNOTATION_PLACE, True),
+            (CURSOR_MODE_ROTATE, True),
+            (CURSOR_MODE_PAN, False),
+            (CURSOR_MODE_ZOOM, False),
+        ):
+            with self.subTest(mode=mode):
+                view = self._arrow_view(mode=mode)
+                self._press(view, Qt.Key.Key_Left)
+                self.assertEqual(bool(self.arrow_calls), moves)
+
+    def test_arrow_keys_need_selection_editing_access_and_a_selected_item(self):
+        for label, change in (
+            ("no selection", lambda v: setattr(v, "_selected_uids", set())),
+            ("selection disabled", lambda v: setattr(v, "_selection_enabled", False)),
+            ("read only", lambda v: setattr(v, "_editing_enabled", False)),
+        ):
+            with self.subTest(label):
+                view = self._arrow_view()
+                change(view)
+                self._press(view, Qt.Key.Key_Left)
+                self.assertEqual(self.arrow_calls, [])
+
+    # ---- key release
+    def test_arrow_release_flushes_the_keyboard_move_once(self):
+        view = self._keyed_view()
+        view._keyboard_move_dirty = True
+        flushed = []
+        view._flush_dirty_positions = lambda: flushed.append(True)
+        event = self._key(Qt.Key.Key_Left, press=False)
+        view.keyReleaseEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(flushed, [True])
+        self.assertIs(view._keyboard_move_dirty, False)
+        event = self._key(Qt.Key.Key_Left, press=False)
+        view.keyReleaseEvent(event)
+        self.assertEqual(flushed, [True])
+
+    def test_auto_repeated_arrow_release_is_swallowed_without_flushing(self):
+        view = self._keyed_view()
+        view._keyboard_move_dirty = True
+        flushed = []
+        view._flush_dirty_positions = lambda: flushed.append(True)
+        event = self._key(Qt.Key.Key_Up, press=False, auto_repeat=True)
+        view.keyReleaseEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(flushed, [])
+        self.assertIs(view._keyboard_move_dirty, True)
+
+    def test_control_release_clears_ctrl_and_cancels_a_pending_zoom_press(self):
+        view = self._keyed_view()
+        view._ctrl_held = True
+        view._zoom_press_ctrl = True
+        cancelled = []
+        view._cancel_active_drag_interaction = lambda restore_preview: cancelled.append(
+            restore_preview
+        )
+        view.keyReleaseEvent(self._key(Qt.Key.Key_Control, press=False))
+        self.assertIs(view._ctrl_held, False)
+        self.assertEqual(cancelled, [True])
+        self.assertEqual(self.cursor_updates, [()])
+
+    def test_control_release_without_a_zoom_press_only_clears_ctrl(self):
+        view = self._keyed_view()
+        view._ctrl_held = True
+        view._zoom_press_ctrl = False
+        cancelled = []
+        view._cancel_active_drag_interaction = lambda restore_preview: cancelled.append(
+            True
+        )
+        view.keyReleaseEvent(self._key(Qt.Key.Key_Control, press=False))
+        self.assertIs(view._ctrl_held, False)
+        self.assertEqual(cancelled, [])
+
+    def test_auto_repeated_control_release_is_ignored(self):
+        view = self._keyed_view()
+        view._ctrl_held = True
+        view.keyReleaseEvent(
+            self._key(Qt.Key.Key_Control, press=False, auto_repeat=True)
+        )
+        self.assertIs(view._ctrl_held, True)
+
+
+class InputHandlerStateSweepTests(_CtrlDragFixture):
+    """Class defaults, drag restore guards, wheel and band-sync details of InputHandlerMixin."""
+
+    def _tracking(self):
+        return InputHandlerMixinDragTrackingTests(
+            "test_wheel_zoom_direction_scroll_correction_and_notifications"
+        )
+
+    def test_class_level_defaults_are_inert_for_a_bare_mixin(self):
+        self.assertIs(InputHandlerMixin._use_full_window_crosshairs, False)
+        self.assertIs(InputHandlerMixin._drag_position_before_edit_existed, False)
+        mixin = InputHandlerMixin()
+        updates = []
+        mixin.viewport = lambda: SimpleNamespace(update=lambda: updates.append(True))
+        mixin._request_crosshair_repaint()
+        self.assertEqual(updates, [])
+        self.assertIs(
+            mixin.begin_intelligent_paste_drag_if_pending({"t1": [0.0]}), False
+        )
+        self.assertIs(mixin.request_geometry_edit_lease({"t1"}), True)
+        self.assertEqual(
+            mixin.apply_intelligent_paste_axis_snap(1.5, -2.5), (1.5, -2.5)
+        )
+
+    def test_ink_prefix_defaults_to_no_added_rotation(self):
+        add = input_handler_module._ink_add_prefix
+        self.assertEqual(add([9.0, 8.0], [0.5, 1.0, 2.0]), [0.5, 9.0, 8.0])
+        self.assertEqual(add([9.0, 8.0], [1.0, 2.0]), [0.0, 9.0, 8.0])
+
+    def test_clearing_with_restore_drops_the_pre_edit_position_without_a_recorded_flag(
+        self,
+    ):
+        view = self._make_view({"t1"})
+        view._current_annotations = {
+            "t1": BidAnnotation(
+                uid="t1", annotation_type="rect", position=[9.0, 9.0, 9.0, 9.0]
+            )
+        }
+        view._drag_plan_item_uid = "t1"
+        view._drag_model_orig_position = [1.0, 2.0, 3.0, 4.0]
+        view._position_before_edit = {"t1": [1.0, 2.0, 3.0, 4.0]}
+        # `_drag_position_before_edit_existed` is deliberately left at the class default.
+        view._clear_drag_tracking(restore_preview=True)
+        self.assertEqual(view._current_annotations["t1"].position, [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(view._position_before_edit, {})
+
+    def test_crosshair_repaint_updates_the_viewport_only_when_enabled_and_present(self):
+        view = self._make_view()
+        updates = []
+        view.viewport = lambda: SimpleNamespace(update=lambda: updates.append(True))
+        view._use_full_window_crosshairs = False
+        view._request_crosshair_repaint()
+        self.assertEqual(updates, [])
+        view._use_full_window_crosshairs = True
+        view._request_crosshair_repaint()
+        self.assertEqual(updates, [True])
+        view.viewport = lambda: None
+        view._request_crosshair_repaint()
+        self.assertEqual(updates, [True])
+
+    def _restore_view(self):
+        view = self._make_view({"t1"})
+        view._scene = QGraphicsScene()
+        view._takeoff_items = []
+        view._drag_plan_item_uid = "t1"
+        view._drag_multi_orig_positions = {}
+        return view
+
+    def test_restore_acts_when_only_one_kind_of_drag_state_was_recorded(self):
+        for kind in ("positions", "paths", "text states", "original items"):
+            with self.subTest(kind):
+                view = self._restore_view()
+                if kind == "text states":
+                    item = QGraphicsTextItem("Preview")
+                    original_font = QtGui.QFont("Arial", 9)
+                    view._drag_item_orig_text_states = {
+                        id(item): (
+                            "Original",
+                            40.0,
+                            5.0,
+                            QtCore.QPointF(1.0, 2.0),
+                            original_font,
+                            QColor("#112233"),
+                        )
+                    }
+                else:
+                    item = QGraphicsPathItem()
+                    item.setPos(50.0, 60.0)
+                    changed_path = QPainterPath()
+                    changed_path.addRect(0.0, 0.0, 99.0, 99.0)
+                    item.setPath(changed_path)
+                view._scene.addItem(item)
+                view._uid_to_items = {"t1": [item]}
+                original_path = QPainterPath()
+                original_path.addRect(0.0, 0.0, 10.0, 5.0)
+                if kind == "positions":
+                    view._drag_item_orig_positions = {
+                        id(item): QtCore.QPointF(1.0, 2.0)
+                    }
+                elif kind == "paths":
+                    view._drag_item_orig_paths = {id(item): original_path}
+                elif kind == "original items":
+                    replacement = QGraphicsPathItem()
+                    replacement.setPos(7.0, 8.0)
+                    view._drag_uid_orig_items = {"t1": [replacement]}
+                view._restore_drag_preview_positions()
+                if kind == "positions":
+                    self.assertEqual(item.pos(), QtCore.QPointF(1.0, 2.0))
+                elif kind == "paths":
+                    self.assertEqual(item.path(), original_path)
+                elif kind == "text states":
+                    self.assertEqual(item.toPlainText(), "Original")
+                    self.assertEqual(item.textWidth(), 40.0)
+                else:
+                    self.assertEqual(view._uid_to_items["t1"], [replacement])
+                    self.assertIsNot(item.scene(), view._scene)
+                    self.assertIs(replacement.scene(), view._scene)
+
+    def test_restore_with_nothing_recorded_leaves_items_untouched(self):
+        view = self._restore_view()
+        item = QGraphicsPathItem()
+        item.setPos(50.0, 60.0)
+        view._scene.addItem(item)
+        view._uid_to_items = {"t1": [item]}
+        view._restore_drag_preview_positions()
+        self.assertEqual(item.pos(), QtCore.QPointF(50.0, 60.0))
+        self.assertEqual(view._uid_to_items, {"t1": [item]})
+
+    def test_restore_skips_recorded_path_and_text_state_for_items_of_another_kind(self):
+        view = self._restore_view()
+        text_item = QGraphicsTextItem("keep")
+        other_text = QGraphicsTextItem("changed")
+        path_item = QGraphicsPathItem()
+        path_item.setPath(QPainterPath(QtCore.QPointF(1.0, 1.0)))
+        for item in (text_item, other_text, path_item):
+            view._scene.addItem(item)
+        view._uid_to_items = {"t1": [text_item, other_text, path_item]}
+        view._drag_item_orig_paths = {id(text_item): QPainterPath()}
+        view._drag_item_orig_text_states = {
+            id(path_item): (
+                "x",
+                1.0,
+                0.0,
+                QtCore.QPointF(),
+                QtGui.QFont(),
+                QColor("#000000"),
+            ),
+            id(other_text): (
+                "restored",
+                -1.0,
+                0.0,
+                QtCore.QPointF(),
+                QtGui.QFont(),
+                QColor("#000000"),
+            ),
+        }
+        view._drag_item_orig_positions = {id(text_item): QtCore.QPointF(0.0, 0.0)}
+        view._restore_drag_preview_positions()
+        self.assertEqual(text_item.toPlainText(), "keep")
+        self.assertEqual(other_text.toPlainText(), "restored")
+        self.assertEqual(path_item.path().elementCount(), 1)
+
+    def test_cancelling_a_drag_restores_the_preview_by_default(self):
+        view = self._make_view({"t1"})
+        overlay = view._uid_to_items["t1"][0]
+        original = overlay.pos()
+        overlay.setPos(60.0, 70.0)
+        view._drag_plan_item_uid = "t1"
+        view._drag_item_orig_positions = {id(overlay): original}
+        self.assertIs(view._cancel_active_drag_interaction(), True)
+        self.assertEqual(overlay.pos(), original)
+
+    def test_wheel_zoom_scroll_correction_uses_the_matching_axis_of_the_cursor(self):
+        helper = self._tracking()
+        view = helper._wheel_view()
+        scrolls = helper._scroll_recorders(view)
+        view._apply_wheel_zoom(FakeWheelEvent(x=10, y=40), 120.0)
+        # mapFromScene shifts by (+7, +3); each axis is corrected against its own cursor axis.
+        self.assertEqual(scrolls, {"h": [10 + 7], "v": [20 + (43 - 40)]})
+
+    def test_wheel_zoom_direction_follows_the_sign_of_small_deltas(self):
+        helper = self._tracking()
+        for delta, factor in ((0.5, 1.25), (-0.5, 0.8)):
+            with self.subTest(delta=delta):
+                view = helper._wheel_view()
+                helper._scroll_recorders(view)
+                view._apply_wheel_zoom(FakeWheelEvent(x=10, y=10), delta)
+                self.assertEqual(view.zoom_calls, [factor])
+
+    def test_wheel_without_pixel_delta_scrolls_eighty_units_per_notch(self):
+        helper = self._tracking()
+        view = helper._wheel_routing_view()
+        view.wheelEvent(helper._wheel_event(angle=240))
+        self.assertEqual(view.scrolls, {"h": [], "v": [20 - 160]})
+        view = helper._wheel_routing_view()
+        view.wheelEvent(
+            helper._wheel_event(angle=-240, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        )
+        self.assertEqual(view.scrolls, {"h": [10 + 160], "v": []})
+        self.assertEqual(view.view_changes, ["user"])
+
+    def test_rubber_band_sync_requires_the_band_and_an_origin_for_each_kind(self):
+        cases = (
+            (
+                "active select band without a band",
+                dict(
+                    _select_band_active=True,
+                    _select_band_origin=QtCore.QPointF(5.0, 6.0),
+                    _rubber_band=None,
+                ),
+            ),
+            (
+                "active select band without an origin",
+                dict(_select_band_active=True, _select_band_origin=None),
+            ),
+            (
+                "inactive select band with an origin",
+                dict(
+                    _select_band_active=False,
+                    _select_band_origin=QtCore.QPointF(5.0, 6.0),
+                ),
+            ),
+            (
+                "zoom band origin without a band",
+                dict(_rubber_band_origin=QtCore.QPointF(5.0, 6.0), _rubber_band=None),
+            ),
+        )
+        for label, attributes in cases:
+            with self.subTest(label):
+                view = self._make_view()
+                view.geometry = []
+                view._rubber_band = SimpleNamespace(setGeometry=view.geometry.append)
+                view.cursor_updates = []
+                view._update_cursor = lambda *a, view=view: view.cursor_updates.append(
+                    a
+                )
+                view._last_mouse_vp_pos = QtCore.QPoint(30, 40)
+                for name, value in attributes.items():
+                    setattr(view, name, value)
+                view._sync_rubber_band_to_viewport()
+                self.assertEqual(view.geometry, [])
+                self.assertEqual(view.cursor_updates, [()])
+
+    def test_double_click_records_the_pointer_position_before_forwarding_the_press(
+        self,
+    ):
+        view = self._make_view({"t1"})
+        view._last_mouse_vp_pos = None
+        view._selection_enabled = False
+        view.mousePressEvent = lambda event: None
+        view.mouseDoubleClickEvent(FakeMouseEvent(x=23, y=31))
+        self.assertEqual(view._last_mouse_vp_pos, QtCore.QPoint(23, 31))
+
+
+class InputHandlerPressSweepTests(_RealViewGestureFixture):
+    """mousePressEvent routing details that only show up with specific buttons and modes."""
+
+    def _hotlink_view(self, mode):
+        view = self._real_view()
+        view._apply_cursor_mode(mode)
+        view._selection_enabled = True
+        self.clicked = []
+        view.hotlink_clicked.connect(self.clicked.append)
+        self.hotlink = HotlinkDto(
+            uid="h",
+            bid_page_uid="p",
+            target_view_uid=None,
+            center_x=1.0,
+            center_y=2.0,
+            radius=3.0,
+        )
+        view.find_hotlink_at = lambda pos: self.hotlink
+        view.handle_place_press = lambda event: None
+        return view
+
+    def test_hotlinks_are_only_clicked_from_the_passive_default_mode(self):
+        view = self._hotlink_view("default")
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertEqual(self.clicked, [self.hotlink])
+        self.assertIsNone(view._select_band_origin)
+        self.assertIs(view._zoom_press_ctrl, False)
+        for mode in (CURSOR_MODE_ZOOM, CURSOR_MODE_PLACE):
+            with self.subTest(mode=mode):
+                self.clicked.clear()
+                view = self._hotlink_view(mode)
+                view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+                self.assertEqual(self.clicked, [])
+
+    def test_non_left_press_in_select_mode_does_not_start_a_selection_gesture(self):
+        view = self._real_view()
+        view._selection_enabled = True
+        view._select_band_origin = None
+        view._press_changed_selection = True
+        event = self._event(Qt.MouseButton.BackButton)
+        view.mousePressEvent(event)
+        self.assertIsNone(view._select_band_origin)
+        self.assertIs(view._press_changed_selection, True)
+        self.assertIs(view._zoom_press_ctrl, False)
+
+    def test_ctrl_press_outside_pan_mode_does_not_start_a_zoom_band(self):
+        view = self._real_view()
+        view._apply_cursor_mode("default")
+        view._ctrl_held = True
+        view.find_hotlink_at = lambda pos: None
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton))
+        self.assertIs(view._zoom_press_ctrl, False)
+        self.assertIsNone(view._select_band_origin)
+
+    def test_select_press_discards_stale_band_flags_with_or_without_ctrl_zoom(self):
+        for ctrl in (True, False):
+            with self.subTest(ctrl=ctrl):
+                view = self._real_view()
+                view._selection_enabled = True
+                view._ctrl_held = ctrl
+                view._select_band_active = True
+                view._select_band_dragged = True
+                event = self._event(Qt.MouseButton.LeftButton, pos=(15, 25))
+                view.mousePressEvent(event)
+                self.assertIs(view._select_band_active, False)
+                self.assertIs(view._select_band_dragged, False)
+                self.assertIs(view._zoom_press_ctrl, ctrl)
+                if ctrl:
+                    self.assertTrue(event.isAccepted())
+
+    def test_rotate_mode_ignores_non_left_buttons_over_the_handle(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_ROTATE)
+        view._is_over_rotate_handle = lambda pos: True
+        leases = []
+        view.request_geometry_edit_lease = lambda uids: leases.append(set(uids)) or True
+        view.mousePressEvent(self._event(Qt.MouseButton.BackButton))
+        self.assertEqual(leases, [])
+        self.assertIs(view._rotation_drag_active, False)
+
+
+class InputHandlerSelectPressSweepTests(_CtrlDragFixture):
+    """Select-mode press: handle hit testing, annotation hit rules and drag baselines."""
+
+    def _helper(self):
+        return InputHandlerMixinPressGestureTests(
+            "test_body_press_on_selected_takeoff_captures_complete_drag_baseline"
+        )
+
+    def test_press_on_a_handle_begins_the_drag_even_when_no_takeoff_is_hit(self):
+        view, _path, _text, far_handle, edge_handle, _border = (
+            self._helper()._baseline_view()
+        )
+        view.find_selected_movable_at = lambda _p: None
+        view.find_takeoff_at = lambda _p, cycle_from_uid=None: None
+        view.find_takeoffs_at = lambda _p: []
+        press = FakeMouseEvent(x=50, y=60)
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(view.lease_requests, [{"t1"}])
+        self.assertEqual(view._drag_plan_item_uid, "t1")
+        self.assertEqual(view._drag_handle_index, 1)
+
+    def test_overlapping_handles_resolve_to_the_first_one_hit(self):
+        view, *_items = self._helper()._baseline_view()
+        view._is_handle_info_at_viewport_pos = lambda info, _pos: True
+        view.mousePressEvent(FakeMouseEvent(x=50, y=60))
+        self.assertEqual(view._drag_handle_index, 0)
+
+    def test_read_only_press_on_a_handle_without_a_takeoff_is_not_a_drag_start(self):
+        helper = self._helper()
+        view = helper._recording_view(selected=("t1",))
+        handle = SimpleNamespace(item=FakeItem(5.0, 5.0))
+        view._handle_infos = [handle]
+        view._is_handle_info_at_viewport_pos = lambda info, _pos: info is handle
+        view._editing_enabled = False
+        view.find_takeoff_at = lambda _p, cycle_from_uid=None: None
+        view.find_takeoffs_at = lambda _p: []
+        press = FakeMouseEvent(x=5, y=5)
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(view.finish_calls, [1])
+        self.assertEqual(len(view.pdf_begin_calls), 1)
+        self.assertIsNone(view._drag_plan_item_uid)
+
+    def test_press_selects_an_unselected_plain_annotation_but_not_an_unselected_hotlink(
+        self,
+    ):
+        for annotation_type, selected_after, changed in (
+            ("rect", {"a1"}, True),
+            (ANNOTATION_TYPE_HOTLINK, {"t1"}, False),
+        ):
+            with self.subTest(annotation_type=annotation_type):
+                view = self._helper()._recording_view(selected=("t1",))
+                view._current_annotations = {
+                    "a1": BidAnnotation(
+                        uid="a1",
+                        annotation_type=annotation_type,
+                        position=[1.0, 2.0, 3.0, 4.0],
+                    )
+                }
+                view._uid_to_items["a1"] = [FakeItem(0.0, 0.0)]
+                view.find_takeoff_at = lambda _p, cycle_from_uid=None: "a1"
+                view.find_takeoffs_at = lambda _p: ["a1"]
+                view.find_hotlink_at = lambda _p: None
+                view.mousePressEvent(FakeMouseEvent(x=5, y=5))
+                self.assertEqual(view._selected_uids, selected_after)
+                self.assertIs(view._press_changed_selection, changed)
+
+    def test_press_hands_the_recorded_drag_origin_to_the_paste_hook(self):
+        helper = self._helper()
+        view, *_items = helper._baseline_view()
+        captured = []
+        view.begin_intelligent_paste_drag_if_pending = captured.append
+        view.mousePressEvent(FakeMouseEvent(x=5, y=5))
+        self.assertEqual(captured, [{"t1": [0.0, 0.0, 10.0, 0.0]}])
+        view = helper._recording_view(selected=("t1", "t2"))
+        captured = []
+        view.begin_intelligent_paste_drag_if_pending = captured.append
+        view.request_geometry_edit_lease = lambda uids: True
+        view.mousePressEvent(FakeMouseEvent(x=5, y=5))
+        self.assertEqual(
+            captured,
+            [{"t1": [0.0, 0.0, 10.0, 0.0], "t2": [20.0, 0.0, 30.0, 0.0]}],
+        )
+
+
+class InputHandlerMoveBandSweepTests(_RealViewGestureFixture):
+    """mouseMoveEvent with real events: band creation, early returns and pan fallthrough."""
+
+    def _move(self, view, pos=(40, 60), buttons=Qt.MouseButton.LeftButton):
+        event = self._event(
+            Qt.MouseButton.NoButton,
+            pos=pos,
+            event_type=QtCore.QEvent.Type.MouseMove,
+            buttons=buttons,
+        )
+        view.mouseMoveEvent(event)
+        return event
+
+    def _cursor_updates(self, view):
+        updates = []
+        view._update_cursor = lambda *args: updates.append(args)
+        return updates
+
+    def test_editing_restrictions_only_swallow_moves_in_editing_modes(self):
+        view = self._real_view()
+        view._editing_enabled = False
+        view._last_mouse_vp_pos = None
+        self._move(view, pos=(33, 44), buttons=Qt.MouseButton.NoButton)
+        self.assertEqual(view._last_mouse_vp_pos, QtCore.QPoint(33, 44))
+        view._apply_cursor_mode(CURSOR_MODE_ROTATE)
+        view._last_mouse_vp_pos = None
+        event = self._move(view, pos=(33, 44), buttons=Qt.MouseButton.NoButton)
+        self.assertTrue(event.isAccepted())
+        self.assertIsNone(view._last_mouse_vp_pos)
+
+    def test_press_and_release_in_a_passive_mode_are_not_swallowed_while_editing_is_off(
+        self,
+    ):
+        view = self._real_view()
+        view._editing_enabled = False
+        view._last_mouse_vp_pos = None
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton, pos=(11, 12)))
+        self.assertEqual(view._last_mouse_vp_pos, QtCore.QPoint(11, 12))
+        view._last_mouse_vp_pos = None
+        view.mouseReleaseEvent(
+            self._event(
+                Qt.MouseButton.LeftButton,
+                pos=(13, 14),
+                event_type=QtCore.QEvent.Type.MouseButtonRelease,
+                buttons=Qt.MouseButton.NoButton,
+            )
+        )
+        self.assertEqual(view._last_mouse_vp_pos, QtCore.QPoint(13, 14))
+
+    def test_ctrl_zoom_drag_creates_the_zoom_band_from_the_press_point(self):
+        view = self._real_view()
+        view._selection_enabled = True
+        view._ctrl_held = True
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton, pos=(15, 25)))
+        self.assertIsNone(view._rubber_band)
+        updates = self._cursor_updates(view)
+        event = self._move(view, pos=(60, 70))
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            view._rubber_band_origin, view.mapToScene(QtCore.QPoint(15, 25))
+        )
+        self.assertIsNone(view._select_band_origin)
+        self.assertEqual(view._rubber_band.parent(), view)
+        self.assertEqual(
+            view._rubber_band.geometry(),
+            QtCore.QRect(QtCore.QPoint(15, 25), QtCore.QPoint(60, 70)),
+        )
+        self.assertTrue(view._rubber_band.isVisibleTo(view))
+        self.assertEqual(updates, [])
+
+    def test_zoom_press_on_a_started_selection_band_keeps_the_selection_band(self):
+        view = self._real_view()
+        view._selection_enabled = True
+        view._zoom_press_ctrl = True
+        view._select_band_origin = view.mapToScene(QtCore.QPoint(15, 25))
+        view._select_band_dragged = True
+        view._select_band_active = True
+        view._rubber_band = QtWidgets.QRubberBand(
+            QtWidgets.QRubberBand.Shape.Rectangle, view
+        )
+        self._cursor_updates(view)
+        self._move(view, pos=(60, 70))
+        self.assertIsNone(view._rubber_band_origin)
+        self.assertEqual(
+            view._select_band_origin, view.mapToScene(QtCore.QPoint(15, 25))
+        )
+        self.assertEqual(
+            view._rubber_band.geometry(),
+            QtCore.QRect(QtCore.QPoint(15, 25), QtCore.QPoint(60, 70)),
+        )
+
+    def test_selection_drag_past_the_threshold_creates_and_follows_a_selection_band(
+        self,
+    ):
+        view = self._real_view()
+        view._selection_enabled = True
+        view.mousePressEvent(self._event(Qt.MouseButton.LeftButton, pos=(15, 25)))
+        self.assertIsNone(view._rubber_band)
+        updates = self._cursor_updates(view)
+        event = self._move(view, pos=(40, 60))
+        self.assertTrue(event.isAccepted())
+        self.assertIs(view._select_band_active, True)
+        self.assertEqual(view._rubber_band.parent(), view)
+        self.assertEqual(
+            view._rubber_band.geometry(),
+            QtCore.QRect(QtCore.QPoint(15, 25), QtCore.QPoint(40, 60)),
+        )
+        self.assertTrue(view._rubber_band.isVisibleTo(view))
+        first_band = view._rubber_band
+        self._move(view, pos=(10, 20))
+        self.assertIs(view._rubber_band, first_band)
+        self.assertEqual(
+            view._rubber_band.geometry(),
+            QtCore.QRect(QtCore.QPoint(15, 25), QtCore.QPoint(10, 20)).normalized(),
+        )
+        self.assertEqual(updates, [])
+
+    def test_an_active_selection_band_without_a_widget_is_ignored(self):
+        view = self._real_view()
+        view._select_band_origin = view.mapToScene(QtCore.QPoint(15, 25))
+        view._select_band_active = True
+        view._rubber_band = None
+        updates = self._cursor_updates(view)
+        self._move(view, pos=(40, 60))
+        self.assertIsNone(view._rubber_band)
+        self.assertEqual(updates, [(QtCore.QPoint(40, 60),)])
+
+    def test_zoom_band_follows_the_pointer_and_stops_the_move(self):
+        view = self._real_view()
+        view._rubber_band_origin = view.mapToScene(QtCore.QPoint(15, 25))
+        view._rubber_band = QtWidgets.QRubberBand(
+            QtWidgets.QRubberBand.Shape.Rectangle, view
+        )
+        updates = self._cursor_updates(view)
+        event = self._move(view, pos=(5, 9))
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(
+            view._rubber_band.geometry(),
+            QtCore.QRect(QtCore.QPoint(15, 25), QtCore.QPoint(5, 9)).normalized(),
+        )
+        self.assertEqual(updates, [])
+
+    def test_zoom_band_origin_without_a_band_widget_falls_through_to_the_default_move(
+        self,
+    ):
+        view = self._real_view()
+        view._rubber_band_origin = view.mapToScene(QtCore.QPoint(15, 25))
+        view._rubber_band = None
+        updates = self._cursor_updates(view)
+        self._move(view, pos=(5, 9))
+        self.assertEqual(updates, [(QtCore.QPoint(5, 9),)])
+
+    def test_pan_move_needs_both_the_panning_flag_and_a_previous_point(self):
+        for panning, last in ((False, QtCore.QPoint(1, 1)), (True, None)):
+            with self.subTest(panning=panning):
+                view = self._real_view()
+                view._panning = panning
+                view._last_pan_point = last
+                view._right_pan_active = False
+                updates = self._cursor_updates(view)
+                self._move(view, pos=(5, 9), buttons=Qt.MouseButton.LeftButton)
+                self.assertEqual(updates, [(QtCore.QPoint(5, 9),)])
+                self.assertEqual(view._last_pan_point, last)
+
+
+class InputHandlerMoveDragSweepTests(_CtrlDragFixture):
+    """mouseMoveEvent drag dispatch details with the harness view."""
+
+    def _drag(self):
+        return InputHandlerMixinMoveDragDispatchTests(
+            "test_takeoff_drag_translates_the_scene_delta_before_computing_the_position"
+        )
+
+    def _small_move(self, view):
+        # (5, 8) stays inside the five-pixel latch around the press origin (3, 7).
+        event = FakeMouseEvent(x=5, y=8)
+        view.mouseMoveEvent(event)
+        return event
+
+    def test_small_moves_are_not_drags_unless_a_plan_item_original_and_handle_exist(
+        self,
+    ):
+        for label, change in (
+            ("no uid", lambda v: setattr(v, "_drag_plan_item_uid", None)),
+            ("no original position", lambda v: setattr(v, "_drag_orig_position", [])),
+            ("below body index", lambda v: setattr(v, "_drag_handle_index", -2)),
+        ):
+            with self.subTest(label):
+                view = self._drag()._drag_view(handle_index=1, corner_count=4)
+                change(view)
+                self._small_move(view)
+                self.assertEqual(view.calls, [])
+
+    def test_drag_move_stops_after_updating_the_handles(self):
+        view = self._drag()._drag_view(handle_index=1, corner_count=4)
+        cursor_updates = []
+        view._update_cursor = lambda *args: cursor_updates.append(args)
+        event = self._small_move(view)
+        self.assertTrue(event.accepted)
+        self.assertEqual([call[0] for call in view.calls], ["compute", "update"])
+        self.assertEqual(cursor_updates, [])
+
+    def test_non_interactive_annotation_with_a_handle_uses_the_generic_position_computation(
+        self,
+    ):
+        view = self._drag()._drag_view(
+            handle_index=2, corner_count=4, position=(10.0, 10.0, 40.0, 20.0)
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {
+            "t1": BidAnnotation(
+                uid="t1", annotation_type="unknown", position=[10.0, 10.0, 40.0, 20.0]
+            )
+        }
+        self._small_move(view)
+        self.assertEqual([call[0] for call in view.calls], ["compute", "update"])
+
+    def test_body_drag_that_leaves_the_position_unchanged_is_not_a_drag(self):
+        view = self._drag()._drag_view(handle_index=-1)
+        view._select_band_dragged = False
+        view._drag_last_valid_new_pos = []
+        view.compute_new_position = lambda *args, **kwargs: [0.0, 0.0, 10.0, 0.0]
+        self._small_move(view)
+        self.assertIs(view._select_band_dragged, False)
+
+    def test_item_positions_alone_do_not_make_a_multi_drag(self):
+        view = self._drag()._drag_view(handle_index=-2)
+        view._drag_plan_item_uid = None
+        view._drag_orig_position = []
+        view._drag_multi_orig_positions = {}
+        view._drag_item_orig_positions = {1: QtCore.QPointF(0.0, 0.0)}
+        view._update_snapped_multi_drag_preview = lambda *args: self.fail(
+            "not a multi drag"
+        )
+        view._select_band_dragged = False
+        self._small_move(view)
+        self.assertIs(view._select_band_dragged, False)
+
+    def test_multi_drag_move_stops_after_updating_the_preview(self):
+        view = self._make_view({"t1", "t2"})
+        view.mapToScene = lambda point: QtCore.QPointF(point.x(), point.y())
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        view._select_band_origin = QtCore.QPointF(3.0, 7.0)
+        view._drag_multi_orig_positions = {"t1": [0.0, 0.0], "t2": [1.0, 1.0]}
+        view._drag_item_orig_positions = {1: QtCore.QPointF(0.0, 0.0)}
+        view._update_snapped_multi_drag_preview = lambda *args: True
+        view.scene_to_ost_delta = lambda dx, dy: (dx, dy)
+        cursor_updates = []
+        view._update_cursor = lambda *args: cursor_updates.append(args)
+        event = self._small_move(view)
+        self.assertTrue(event.accepted)
+        self.assertEqual(cursor_updates, [])
+
+    def test_zoom_press_with_an_active_band_does_not_restart_the_zoom_band(self):
+        view = self._drag()._drag_view(handle_index=-2)
+        view._drag_plan_item_uid = None
+        view._drag_orig_position = []
+        view._zoom_press_ctrl = True
+        view._select_band_dragged = True
+        view._select_band_active = True
+        view._rubber_band = SimpleNamespace(
+            setGeometry=lambda rect: None, show=lambda: None, hide=lambda: None
+        )
+        view._rubber_band_origin = None
+        view.mouseMoveEvent(FakeMouseEvent(x=40, y=60))
+        self.assertIsNone(view._rubber_band_origin)
+        self.assertEqual(view._select_band_origin, QtCore.QPointF(3.0, 7.0))
+
+    def test_rotation_drag_moves_handles_by_the_rotation_matrix_at_an_oblique_angle(
+        self,
+    ):
+        helper = InputHandlerMixinRotationDragTests(
+            "test_rotation_drag_snaps_to_fifteen_forty_five_or_free_degrees"
+        )
+        view = helper._rotating_view()
+        view._rotate_center_scene = QtCore.QPointF(3.0, 4.0)
+        first = FakeItem(0.0, 0.0)
+        second = FakeItem(0.0, 0.0)
+        third = FakeItem(0.0, 0.0)
+        origins = [
+            (first, QtCore.QPointF(13.0, 4.0)),
+            (second, QtCore.QPointF(3.0, 14.0)),
+            (third, QtCore.QPointF(8.0, 9.0)),
+        ]
+        view._rotation_drag_handle_origins = origins
+        radians = math.radians(30.0)
+        event = FakeMouseEvent(
+            x=3 + round(1000 * math.cos(radians)), y=4 + round(1000 * math.sin(radians))
+        )
+        view.mouseMoveEvent(event)
+        self.assertEqual(view._rotation_drag_snapped_deg, 30.0)
+        rotation = QTransform().rotate(30.0)
+        for item, origin in origins:
+            expected = rotation.map(QtCore.QPointF(origin.x() - 3.0, origin.y() - 4.0))
+            self.assertAlmostEqual(item.pos().x(), expected.x() + 3.0, places=6)
+            self.assertAlmostEqual(item.pos().y(), expected.y() + 4.0, places=6)
+
+    def test_rotation_drag_move_never_falls_through_to_selection_band_handling(self):
+        helper = InputHandlerMixinRotationDragTests(
+            "test_rotation_drag_snaps_to_fifteen_forty_five_or_free_degrees"
+        )
+        view = helper._rotating_view()
+        view._select_band_origin = QtCore.QPointF(500.0, 500.0)
+        view._select_band_dragged = False
+        view._select_band_active = False
+        view.mouseMoveEvent(FakeMouseEvent(x=1000, y=0))
+        self.assertIs(view._select_band_dragged, False)
+        self.assertIs(view._select_band_active, False)
+        self.assertIsNone(view._rubber_band)
+
+    def test_rotating_a_hole_whose_condition_is_unknown_skips_the_hole_path_update(
+        self,
+    ):
+        gap = InputHandlerMixinRotationDragGapTests(
+            "test_hole_rotation_is_validated_about_the_polygon_centroid"
+        )
+        view = gap._hole_view()
+        view._current_conditions = {}
+        gap._rotate(view, 90.0)
+        self.assertEqual(view.validated, [])
+        self.assertEqual(view.hole_paths, [])
+        self.assertEqual(view._rotation_drag_snapped_deg, 90.0)
+
+
+class InputHandlerReleaseButtonSweepTests(_RealViewGestureFixture):
+    """mouseReleaseEvent guards that depend on the released button and on stale state."""
+
+    def _release(self, view, button=Qt.MouseButton.LeftButton, pos=(25, 35)):
+        event = self._event(
+            button,
+            pos=pos,
+            event_type=QtCore.QEvent.Type.MouseButtonRelease,
+            buttons=Qt.MouseButton.NoButton,
+        )
+        view.mouseReleaseEvent(event)
+        return event
+
+    def test_right_release_without_an_active_right_pan_does_not_finish_a_pan(self):
+        view = self._real_view()
+        view._right_pan_active = False
+        view._suppress_next_context_menu = False
+        finished = []
+        view._finish_pan_interaction = lambda: finished.append(True)
+        self._release(view, Qt.MouseButton.RightButton)
+        self.assertEqual(finished, [])
+        self.assertIs(view._suppress_next_context_menu, False)
+
+    def test_rotation_drag_only_finishes_on_the_left_button(self):
+        view = self._real_view()
+        view._apply_cursor_mode(CURSOR_MODE_ROTATE)
+        view._selected_uids = {"t1"}
+        view._rotation_drag_active = True
+        view._rotation_drag_uid = "t1"
+        view._rotation_drag_snapped_deg = 30.0
+        applied = []
+        view._apply_single_rotation = lambda uid, degrees: applied.append(
+            (uid, degrees)
+        )
+        view._restore_rotation_handles_if_needed = lambda: None
+        self._release(view, Qt.MouseButton.BackButton)
+        self.assertIs(view._rotation_drag_active, True)
+        self.assertEqual(applied, [])
+        event = self._release(view)
+        self.assertTrue(event.isAccepted())
+        self.assertIs(view._rotation_drag_active, False)
+        self.assertEqual(applied, [("t1", 30.0)])
+
+    def test_rotation_is_applied_for_any_snapped_angle_above_the_tolerance(self):
+        for snapped, applies in (
+            (0.0, False),
+            (1e-9, False),
+            (1.5e-9, True),
+            (-1.5e-9, True),
+        ):
+            with self.subTest(snapped=snapped):
+                view = self._real_view()
+                view._apply_cursor_mode(CURSOR_MODE_ROTATE)
+                view._selected_uids = {"t1"}
+                view._rotation_drag_active = True
+                view._rotation_drag_snapped_deg = snapped
+                applied = []
+                view._apply_single_rotation = lambda uid, degrees: applied.append(uid)
+                view._restore_rotation_handles_if_needed = lambda: None
+                self._release(view)
+                self.assertEqual(applied, ["t1"] if applies else [])
+
+    def test_pdf_text_drag_only_finishes_on_the_left_button(self):
+        view = self._real_view()
+        view._pdf_text_drag_anchor = (0, 1)
+        calls = []
+        view._update_pdf_text_selection_drag = lambda pos: calls.append("update")
+        view._finish_pdf_text_selection_drag = lambda: calls.append("finish")
+        self._release(view, Qt.MouseButton.BackButton)
+        self.assertEqual(calls, [])
+        self._release(view)
+        self.assertEqual(calls, ["update", "finish"])
+
+    def test_selection_press_state_survives_a_non_left_release(self):
+        view = self._real_view()
+        view._select_band_origin = view.mapToScene(QtCore.QPoint(5, 5))
+        view._select_band_dragged = True
+        view._zoom_press_ctrl = True
+        self._release(view, Qt.MouseButton.BackButton)
+        self.assertEqual(view._select_band_origin, view.mapToScene(QtCore.QPoint(5, 5)))
+        self.assertIs(view._select_band_dragged, True)
+        self.assertIs(view._zoom_press_ctrl, True)
+
+    def test_zoom_rectangle_release_needs_both_the_band_and_its_origin(self):
+        for label, band, origin in (
+            ("no band", None, QtCore.QPointF(5.0, 5.0)),
+            (
+                "no origin",
+                QtWidgets.QRubberBand(QtWidgets.QRubberBand.Shape.Rectangle),
+                None,
+            ),
+        ):
+            with self.subTest(label):
+                view = self._real_view()
+                view._rubber_band = band
+                view._rubber_band_origin = origin
+                if band is not None:
+                    band.show()
+                self._release(view)
+                self.assertEqual(view._rubber_band_origin, origin)
+                self.assertEqual(self.calls, [])
+                if band is not None:
+                    self.assertFalse(band.isHidden())
+
+    def test_left_release_only_finishes_a_pan_that_is_in_progress(self):
+        view = self._real_view()
+        finished = []
+        view._finish_pan_interaction = lambda: finished.append(True)
+        view._panning = False
+        self._release(view)
+        self.assertEqual(finished, [])
+        view._panning = True
+        event = self._release(view)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(finished, [True])
+
+
+class InputHandlerReleaseGestureSweepTests(_CtrlDragFixture):
+    """mouseReleaseEvent click, band and commit decisions with the gesture harness."""
+
+    def _gesture(self):
+        return InputHandlerMixinMoveReleaseGestureTests(
+            "test_ctrl_zoom_click_zooms_in_only_for_an_undragged_press"
+        )
+
+    def _release(self, view, x=3, y=2):
+        event = FakeMouseEvent(x=x, y=y, buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(event)
+        return event
+
+    def test_ctrl_zoom_click_zooms_without_also_clicking_the_item_under_the_pointer(
+        self,
+    ):
+        view = self._gesture()._click_view(("t1",), "t1", ["t1"])
+        view.ZOOM_FACTOR = 1.25
+        zooms = []
+        view._apply_zoom = zooms.append
+        view._mark_user_view_changed_during_load = lambda: None
+        view._zoom_press_ctrl = True
+        view._select_band_dragged = False
+        self._release(view)
+        self.assertEqual(zooms, [1.25])
+        self.assertEqual(view.cycle_requests, [])
+        self.assertEqual(view.events, [])
+        self.assertEqual(view.cursor_updates, [])
+
+    def test_a_selection_band_is_only_a_band_when_it_was_dragged_and_has_a_widget(self):
+        for label, active, band in (
+            ("band widget but never dragged", False, True),
+            ("dragged but no band widget", True, False),
+        ):
+            with self.subTest(label):
+                view = self._gesture()._click_view(("t1",), "t1", ["t1"])
+                view.hidden = []
+                view._rubber_band = (
+                    SimpleNamespace(hide=lambda: view.hidden.append(True))
+                    if band
+                    else None
+                )
+                view._select_band_active = active
+                self._release(view)
+                self.assertEqual(view.hidden, [])
+                self.assertEqual(view.cycle_requests, [None])
+                self.assertEqual(view.events, ["selection_changed", "visuals"])
+
+    def test_marquee_needs_more_than_two_pixels_in_both_directions(self):
+        for release, selects in (((8, 8), True), ((7, 8), False), ((8, 7), False)):
+            with self.subTest(release=release):
+                view = self._gesture()._band_view(selected=("old",))
+                view._select_band_origin = QtCore.QPointF(6.0, 6.0)
+                self._release(view, *release)
+                self.assertEqual(view.hidden, [True])
+                self.assertEqual(
+                    view.events, ["selection_changed", "visuals"] if selects else []
+                )
+
+    def test_a_tracked_press_released_without_dragging_is_still_a_click(self):
+        view = self._gesture()._click_view(("t1",), "t1", ["t1"])
+        item = view._uid_to_items["t1"][0]
+        view._drag_plan_item_uid = "t1"
+        view._drag_orig_position = [0.0, 0.0, 10.0, 0.0]
+        view._drag_handle_index = -1
+        view._drag_item_orig_positions = {id(item): item.pos()}
+        view._select_band_dragged = False
+        event = self._release(view)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view.cycle_requests, [None])
+        self.assertEqual(view.events, ["selection_changed", "visuals"])
+        self.assertEqual(view.cursor_updates, [()])
+        self.assertIsNone(view._drag_plan_item_uid)
+        self.assertEqual(view._current_takeoffs["t1"].position, [0.0, 0.0, 10.0, 0.0])
+
+    def test_an_untracked_dragged_press_still_selects_on_release(self):
+        view = self._gesture()._click_view(("t1",), "t2", ["t2"])
+        view._select_band_dragged = True
+        self._release(view)
+        self.assertEqual(view._selected_uids, {"t2"})
+        self.assertEqual(view.events, ["selection_changed", "visuals"])
+        self.assertEqual(view.finish_calls, [])
+
+    def test_clicking_without_a_tracked_drag_leaves_recorded_preview_positions_alone(
+        self,
+    ):
+        view = self._gesture()._click_view(("t1",), "t1", ["t1"])
+        border = FakeItem(0.0, 0.0)
+        view._selection_items = [border]
+        view._drag_item_orig_positions = {id(border): QtCore.QPointF(0.0, 0.0)}
+        border.setPos(60.0, 70.0)
+        self._release(view)
+        self.assertEqual(border.pos(), QtCore.QPointF(60.0, 70.0))
+
+    def test_click_selects_a_text_toolbar_label_only_for_text_annotations(self):
+        for annotation_type, labels in (("rect", []), ("text", ["a1"])):
+            with self.subTest(annotation_type=annotation_type):
+                view = self._gesture()._click_view((), "a1", ["a1"])
+                view._current_annotations = {
+                    "a1": BidAnnotation(
+                        uid="a1",
+                        annotation_type=annotation_type,
+                        position=[1.0, 1.0, 5.0, 5.0],
+                    )
+                }
+                view.selected_text_annotation_uids = []
+                self._release(view)
+                self.assertEqual(view._selected_uids, {"a1"})
+                self.assertEqual(view.selected_text_annotation_uids, labels)
+                self.assertEqual(view.cursor_updates, [()])
+
+    def test_group_commit_does_not_depend_on_a_stale_single_item_original(self):
+        view = self._gesture()._gesture_view(("t1", "t2"))
+        view.mousePressEvent(FakeMouseEvent(x=0, y=0))
+        self.assertEqual(set(view._drag_multi_orig_positions), {"t1", "t2"})
+        view._drag_orig_position = [0.0, 0.0, 10.0, 0.0]
+        view.compute_new_position = lambda orig, *args, **kwargs: list(orig)
+        view._select_band_dragged = True
+        view.cursor_updates.clear()
+        self._release(view)
+        self.assertEqual(view._current_takeoffs["t1"].position, [3.0, 2.0, 13.0, 2.0])
+        self.assertEqual(view._current_takeoffs["t2"].position, [23.0, 2.0, 33.0, 2.0])
+        self.assertEqual(view.cursor_updates, [()])
+        self.assertEqual(view.finish_calls, [1])
+
+    def test_a_dragged_item_without_a_recorded_original_commits_nothing(self):
+        view = self._gesture()._gesture_view(("t1",))
+        view._drag_plan_item_uid = "t1"
+        view._drag_orig_position = []
+        view._drag_handle_index = -1
+        view._select_band_origin = QtCore.QPointF(0.0, 0.0)
+        view._select_band_dragged = True
+        view.compute_new_position = lambda *a, **k: self.fail("nothing to compute from")
+        event = self._release(view)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view.flushes, [({}, {}, {})])
+        self.assertEqual(view.finish_calls, [1])
+        self.assertIsNone(view._drag_plan_item_uid)
+        self.assertEqual(view._current_takeoffs["t1"].position, [0.0, 0.0, 10.0, 0.0])
+
+    def _release_annotation(self, annotation_type, handle, last_valid, position=None):
+        view, annotation = self._gesture()._annotation_gesture(
+            annotation_type, position or [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        )
+        view.mousePressEvent(FakeMouseEvent(x=0, y=0))
+        self.assertEqual(view._drag_plan_item_uid, "a1")
+        view._drag_handle_index = handle
+        view._drag_handle_corner_count = 4
+        view._drag_last_valid_new_pos = list(last_valid)
+        view._compute_ann_resize = lambda *args: [5.0, 6.0, 7.0, 8.0]
+        view.compute_new_position = lambda *args, **kwargs: [3.0, 2.0, 13.0, 2.0]
+        view._select_band_dragged = True
+        self._release(view)
+        return annotation
+
+    def test_only_polygon_and_cloud_vertex_drags_commit_the_last_valid_candidate(self):
+        stale = [9.0, 9.0, 9.0, 9.0]
+        for annotation_type, handle, last_valid, expected in (
+            ("polygon", 1, stale, stale),
+            ("cloud", 1, stale, stale),
+            ("polygon", -1, stale, [3.0, 2.0, 13.0, 2.0]),
+            ("rect", 1, stale, [5.0, 6.0, 7.0, 8.0]),
+            ("polygon", 1, [], [5.0, 6.0, 7.0, 8.0]),
+        ):
+            with self.subTest(
+                annotation_type=annotation_type, handle=handle, last=last_valid
+            ):
+                annotation = self._release_annotation(
+                    annotation_type, handle, last_valid
+                )
+                self.assertEqual(annotation.position, expected)
+
+    def test_non_interactive_annotation_with_a_handle_index_is_released_as_a_move(self):
+        view, annotation = self._gesture()._annotation_gesture(
+            "unknown", [0.0, 0.0, 10.0, 4.0]
+        )
+        view.mousePressEvent(FakeMouseEvent(x=0, y=0))
+        view._drag_handle_index = 2
+        view._drag_handle_corner_count = 4
+        view._compute_ann_resize = lambda *args: self.fail("not resizable")
+        view.compute_new_position = lambda *args, **kwargs: [7.0, 7.0, 9.0, 9.0]
+        view._select_band_dragged = True
+        self._release(view)
+        self.assertEqual(annotation.position, [7.0, 7.0, 9.0, 9.0])
+
+    def test_only_area_takeoffs_commit_the_last_valid_candidate(self):
+        view = self._gesture()._gesture_view(("t1",))
+        view._current_conditions = {
+            "c": Condition(uid="c", condition_type=Condition.TYPE_LINEAR)
+        }
+        view.mousePressEvent(FakeMouseEvent(x=0, y=0))
+        view._drag_last_valid_new_pos = [9.0, 9.0, 9.0, 9.0]
+        view._select_band_dragged = True
+        self._release(view)
+        self.assertEqual(view._current_takeoffs["t1"].position, [3.0, 2.0, 13.0, 2.0])
+
+    def test_body_drag_moves_descendants_only_with_a_known_area_condition(self):
+        for label, change in (
+            ("unknown condition", lambda v: v._current_conditions.clear()),
+            (
+                "linear condition",
+                lambda v: setattr(
+                    v._current_conditions["area"],
+                    "condition_type",
+                    Condition.TYPE_LINEAR,
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                view = self._gesture()._area_parent_view()
+                change(view)
+                hole_before = list(view._current_takeoffs["hole"].position)
+                view.mousePressEvent(FakeMouseEvent(x=0, y=0))
+                view.mouseMoveEvent(FakeMouseEvent(x=3, y=2))
+                self._release(view)
+                self.assertEqual(
+                    view._current_takeoffs["parent"].position,
+                    [3.0, 2.0, 13.0, 2.0, 13.0, 12.0, 3.0, 12.0],
+                )
+                self.assertEqual(view._current_takeoffs["hole"].position, hole_before)
+
+
+class InputHandlerFirstHalfSweepTests(_RealViewGestureFixture):
+    """Gaps left by the mouse press/move/release sweep of the first half of input_handler."""
+
+    def test_text_annotations_shorter_than_a_box_rotate_like_generic_annotations(self):
+        ann = BidAnnotation(uid="a", annotation_type="text")
+        rotated = input_handler_module._rotate_annotation(
+            ann, [10.0, 10.0, 0.5], 90.0, 0.0, 0.0
+        )
+        # Three values are not a text box (anchor + corner): the trailing 0.5 is the stored
+        # angle of the generic path, so it accumulates instead of gaining a new angle slot.
+        self.assertEqual(len(rotated), 3)
+        for actual, expected in zip(rotated, [-10.0, 10.0, 0.5 + math.pi / 2.0]):
+            self.assertAlmostEqual(actual, expected, places=9)
+
+    def test_resize_corner_count_is_recorded_for_text_only_when_it_has_a_box(self):
+        helper = InputHandlerMixinPressGestureTests(
+            "test_annotation_press_records_resize_state_by_annotation_type"
+        )
+        for annotation_type, position, corners in (
+            ("text", [10.0, 10.0, 40.0], 0),
+            ("text", [10.0, 10.0, 40.0, 20.0], 4),
+            ("rect", [0.0, 0.0, 10.0], 4),
+        ):
+            with self.subTest(annotation_type=annotation_type, length=len(position)):
+                view, _annotation = helper._annotation_press_view(
+                    annotation_type, position, False
+                )
+                view.mousePressEvent(FakeMouseEvent(x=5, y=5))
+                self.assertEqual(view._drag_plan_item_uid, "a1")
+                self.assertEqual(view._drag_handle_corner_count, corners)
+
+    def test_other_button_release_during_a_right_pan_does_not_suppress_the_context_menu(
+        self,
+    ):
+        view = self._real_view()
+        view.mousePressEvent(self._event(Qt.MouseButton.RightButton, pos=(21, 33)))
+        self.assertIs(view._right_pan_active, True)
+        view._right_pan_dragged = True
+        view._suppress_next_context_menu = False
+        event = self._event(
+            Qt.MouseButton.LeftButton,
+            pos=(30, 40),
+            event_type=QtCore.QEvent.Type.MouseButtonRelease,
+            buttons=Qt.MouseButton.NoButton,
+        )
+        view.mouseReleaseEvent(event)
+        # Only the right button ends a right pan and decides on the context menu; the left
+        # release ends the (still active) pan through the plain pan path.
+        self.assertIs(view._suppress_next_context_menu, False)
+        self.assertIs(view._right_pan_active, False)
+        self.assertIs(view._panning, False)
+
+    def test_attachment_release_with_no_last_valid_position_rechecks_the_original(self):
+        release = InputHandlerMixinReleaseCommitTests(
+            "test_attachment_release_without_a_last_valid_position_returns_to_the_original"
+        )
+        view = release._view(condition_type=Condition.TYPE_ATTACHMENT)
+        view._drag_orig_position = [1.0, 1.0]
+        view._current_takeoffs["t1"].position = [1.0, 1.0]
+        view.compute_new_position = lambda *args, **kwargs: [50.0, 50.0]
+        checked = []
+        view._attachment_position_valid = lambda takeoff, position: (
+            checked.append(list(position)) or list(position) == [1.0, 1.0]
+        )
+        release._release(view)
+        # The rejected candidate is replaced by the original position (not by an empty
+        # last-valid list) before the final validity/commit decision is made.
+        self.assertEqual(checked, [[50.0, 50.0], [1.0, 1.0]])
+        self.assertEqual(view._current_takeoffs["t1"].position, [1.0, 1.0])
+        self.assertEqual(view.flushed, [])
+
+    def test_area_release_without_a_recorded_valid_polygon_commits_the_computed_position(
+        self,
+    ):
+        release = InputHandlerMixinReleaseCommitTests(
+            "test_area_release_keeps_the_last_valid_polygon_and_moves_child_holes"
+        )
+        view = release._view(condition_type=Condition.TYPE_AREA)
+        view._drag_last_valid_new_pos = []
+        release._release(view)
+        # An empty last-valid list must not replace the computed position with nothing.
+        self.assertEqual(view._current_takeoffs["t1"].position, release.NEW)
+        self.assertEqual(view.flushed, [({"t1": release.NEW}, {})])
+
+    def test_child_takeoffs_do_not_follow_the_body_drag_of_a_non_area_parent(self):
+        release = InputHandlerMixinReleaseCommitTests(
+            "test_area_release_keeps_the_last_valid_polygon_and_moves_child_holes"
+        )
+        view = release._view(condition_type=Condition.TYPE_LINEAR)
+        child_position = [3.0, 4.0, 5.0, 4.0]
+        view._current_takeoffs["child"] = Takeoff(
+            uid="child",
+            condition_uid="c",
+            parent_uid="t1",
+            position=list(child_position),
+        )
+        view._expanded_takeoff_transform_uids = lambda uids: set(uids) | {"child"}
+        release._release(view)
+        self.assertEqual(view._current_takeoffs["t1"].position, release.NEW)
+        self.assertEqual(view._current_takeoffs["child"].position, child_position)
+        self.assertNotIn("child", view._position_before_edit)
+        self.assertEqual(view.flushed, [({"t1": release.NEW}, {})])
+
+
+class InputHandlerGroupTranslationSweepTests(_CtrlDragFixture):
+    """Group translation, keyboard move and annotation resize: axis, length and parity boundaries."""
+
+    def _helper_view(self, selected=()):
+        return InputHandlerMixinHelperGapTests(
+            "test_translate_position_moves_pairs_and_leaves_trailing_values"
+        )._helper_view(selected)
+
+    @staticmethod
+    def _annotation(uid, annotation_type, position=()):
+        return BidAnnotation(
+            uid=uid, annotation_type=annotation_type, position=list(position)
+        )
+
+    def test_text_group_translation_moves_a_bare_anchor_pair(self):
+        view = self._helper_view()
+        view._current_annotations = {"text": self._annotation("text", "text")}
+        self.assertEqual(
+            view._translate_group_plan_item_position("text", [1.0, 2.0], 10.0, 20.0),
+            [11.0, 22.0],
+        )
+
+    def test_multi_drag_delta_skips_a_prefix_only_for_odd_ink_positions(self):
+        view = self._helper_view()
+        view._current_annotations = {
+            "ink": self._annotation("ink", "ink"),
+            "rect": self._annotation("rect", "rect"),
+        }
+        # A rect keeps its trailing angle after the coordinate pairs; it has no style prefix.
+        delta = view._snapped_multi_drag_scene_delta(
+            "rect",
+            [0.0, 0.0, 10.0, 4.0, 0.5],
+            [10.0, 20.0, 20.0, 24.0, 0.5],
+            111.0,
+            222.0,
+        )
+        self.assertEqual((delta.x(), delta.y()), (20.0, 60.0))
+        # An even-length ink position has no prefix either.
+        delta = view._snapped_multi_drag_scene_delta(
+            "ink", [1.0, 2.0, 3.0, 4.0], [11.0, 22.0, 13.0, 24.0], 111.0, 222.0
+        )
+        self.assertEqual((delta.x(), delta.y()), (20.0, 60.0))
+        # A candidate that is too short once the ink prefix is removed falls back.
+        delta = view._snapped_multi_drag_scene_delta(
+            "ink", [9.0, 1.0, 2.0], [9.0, 1.0], 111.0, 222.0
+        )
+        self.assertEqual((delta.x(), delta.y()), (111.0, 222.0))
+
+    def test_area_child_map_stops_at_an_ancestor_without_a_known_condition(self):
+        view = self._helper_view()
+        view._current_takeoffs = {
+            "top": Takeoff(uid="top", condition_uid="area", position=[0.0] * 6),
+            "kid": Takeoff(
+                uid="kid", condition_uid="area", parent_uid="top", position=[0.0] * 6
+            ),
+        }
+        self.assertEqual(
+            view._area_child_parent_map({"top"}, child_uids={"kid"}), {"kid": "top"}
+        )
+        view._current_takeoffs["top"].condition_uid = "missing"
+        self.assertEqual(view._area_child_parent_map({"top"}, child_uids={"kid"}), {})
+
+    def test_zero_axis_preservation_follows_the_coordinate_parity_of_each_annotation(
+        self,
+    ):
+        view = self._helper_view()
+        view._current_annotations = {
+            "rect": self._annotation("rect", "rect"),
+            "ink": self._annotation("ink", "ink"),
+        }
+        orig = {"rect": [1.0, 2.0, 3.0, 4.0, 0.5], "ink": [1.0, 2.0, 3.0, 4.0]}
+        result = view._compute_group_translation_positions(
+            orig, 0.0, 10.0, preserve_zero_axes=True
+        )
+        self.assertEqual(result["rect"], [1.0, 12.0, 3.0, 14.0, 0.5])
+        self.assertEqual(result["ink"], [1.0, 12.0, 3.0, 14.0])
+        result = view._compute_group_translation_positions(
+            orig, 10.0, 0.0, preserve_zero_axes=True
+        )
+        self.assertEqual(result["rect"], [11.0, 2.0, 13.0, 4.0, 0.5])
+        self.assertEqual(result["ink"], [11.0, 2.0, 13.0, 4.0])
+
+    def test_nested_child_follows_a_parent_that_has_a_single_point(self):
+        view = self._helper_view()
+        view._current_takeoffs = {
+            "top": Takeoff(uid="top", condition_uid="area", position=[1.0, 2.0]),
+            "kid": Takeoff(
+                uid="kid",
+                condition_uid="area",
+                parent_uid="top",
+                position=[3.0, 4.0, 5.0, 6.0],
+            ),
+        }
+        view._takeoff_children_valid_for_geometry_changes = lambda positions: True
+        result = view._compute_group_translation_positions(
+            {"top": [1.0, 2.0], "kid": [3.0, 4.0, 5.0, 6.0]}, 10.0, 20.0
+        )
+        self.assertEqual(result, {"top": [11.0, 22.0], "kid": [13.0, 24.0, 15.0, 26.0]})
+        # A parent without even one coordinate pair gives the child nothing to follow.
+        view._current_takeoffs["top"].position = [1.0]
+        result = view._compute_group_translation_positions(
+            {"top": [1.0], "kid": [3.0, 4.0, 5.0, 6.0]}, 10.0, 20.0
+        )
+        self.assertEqual(result, {"top": [1.0]})
+
+    def test_rejected_group_preview_keeps_owned_outlines_still_and_moves_unowned_ones(
+        self,
+    ):
+        view = self._helper_view({"t1"})
+        item = QGraphicsPathItem()
+        owned = QGraphicsPathItem()
+        owned.setData(0, "t1")
+        unowned = QGraphicsPathItem()
+        unowned.setData(0, "elsewhere")
+        item.setPos(1.0, 1.0)
+        owned.setPos(3.0, 3.0)
+        unowned.setPos(4.0, 4.0)
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="line", position=[0.0, 0.0, 10.0, 0.0]
+            )
+        }
+        view._uid_to_items = {"t1": [item]}
+        view._selection_items = [owned, unowned]
+        view._drag_multi_orig_positions = {"t1": [0.0, 0.0, 10.0, 0.0]}
+        view._drag_item_orig_positions = {
+            id(item): item.pos(),
+            id(owned): owned.pos(),
+            id(unowned): unowned.pos(),
+        }
+        view._takeoff_children_valid_for_geometry_changes = lambda positions: False
+        self.assertIs(
+            view._update_snapped_multi_drag_preview(111.0, 222.0, 7.6, 12.4), False
+        )
+        # The rejected move leaves every position unchanged, so the owner's delta is zero while
+        # an outline owned by nobody follows the snapped fallback delta (10, 10) -> (20, 30).
+        self.assertEqual(item.pos(), QtCore.QPointF(1.0, 1.0))
+        self.assertEqual(owned.pos(), QtCore.QPointF(3.0, 3.0))
+        self.assertEqual(unowned.pos(), QtCore.QPointF(24.0, 34.0))
+
+    def test_keyboard_move_snaps_each_axis_and_moves_unrelated_outlines_by_the_snapped_delta(
+        self,
+    ):
+        view = self._helper_view({"t1"})
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="line", position=[0.0, 0.0, 10.0, 0.0]
+            )
+        }
+        item = QGraphicsPathItem()
+        owned = QGraphicsPathItem()
+        owned.setData(0, "t1")
+        unrelated = QGraphicsPathItem()
+        unrelated.setData(0, "other")
+        view._uid_to_items = {"t1": [item]}
+        view._selection_items = [owned, unrelated]
+        # 12.4 snaps to 10 on x while 2.4 snaps to 0 on y (increment 5); scene = (2x, 3y).
+        self.assertIs(view._apply_position_keyboard_move(12.4, 2.4), True)
+        self.assertEqual(view._current_takeoffs["t1"].position, [10.0, 0.0, 20.0, 0.0])
+        self.assertEqual(item.pos(), QtCore.QPointF(20.0, 0.0))
+        self.assertEqual(owned.pos(), QtCore.QPointF(20.0, 0.0))
+        self.assertEqual(unrelated.pos(), QtCore.QPointF(20.0, 0.0))
+        view = self._helper_view({"t1"})
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1", condition_uid="line", position=[0.0, 0.0, 10.0, 0.0]
+            )
+        }
+        unrelated = QGraphicsPathItem()
+        unrelated.setData(0, "other")
+        view._selection_items = [unrelated]
+        view._apply_position_keyboard_move(2.4, 12.4)
+        self.assertEqual(view._current_takeoffs["t1"].position, [0.0, 10.0, 10.0, 10.0])
+        self.assertEqual(unrelated.pos(), QtCore.QPointF(0.0, 30.0))
+
+
+class InputHandlerAnnotationResizeSweepTests(_CtrlDragFixture):
+    """_compute_ann_resize and the handle hit-test: text boxes, degenerate boxes and non-square handles."""
+
+    def _resize_view(self):
+        view = InputHandlerHarness()
+        view._snap_increments = 0
+        return view
+
+    def test_text_box_resize_rewrites_centre_and_size_from_the_moved_corner(self):
+        view = self._resize_view()
+        for position, expected in (
+            ([50.0, 40.0, 20.0, 10.0], [52.0, 43.0, 24.0, 16.0]),
+            ([50.0, 40.0, 20.0, 10.0, 0.25], [52.0, 43.0, 24.0, 16.0, 0.25]),
+        ):
+            with self.subTest(length=len(position)):
+                ann = BidAnnotation(
+                    uid="t", annotation_type="text", position=list(position)
+                )
+                # Box (40, 35)-(60, 45); the bottom-right corner moves by (4, 6).
+                self.assertEqual(
+                    view._compute_ann_resize(ann, position, 4.0, 6.0, 2, 4), expected
+                )
+
+    def test_text_box_dragged_past_its_opposite_edge_keeps_a_positive_size(self):
+        view = self._resize_view()
+        ann = BidAnnotation(
+            uid="t", annotation_type="text", position=[50.0, 40.0, 20.0, 10.0]
+        )
+        # The top-left corner passes the right edge: x1 = 70 > x2 = 60, y unchanged.
+        self.assertEqual(
+            view._compute_ann_resize(ann, ann.position, 30.0, 0.0, 0, 4),
+            [65.0, 40.0, 10.0, 10.0],
+        )
+        # Dragging the top edge past the bottom edge: y1 = 55 > y2 = 45.
+        self.assertEqual(
+            view._compute_ann_resize(ann, ann.position, 0.0, 20.0, 4, 4),
+            [50.0, 50.0, 20.0, 10.0],
+        )
+
+    def test_box_resize_ignores_a_collapsed_axis_down_to_the_tolerance(self):
+        view = self._resize_view()
+        for width, scales in ((0.0, False), (1e-9, False), (1.5e-9, True)):
+            with self.subTest(width=width):
+                ann = BidAnnotation(
+                    uid="r", annotation_type="rect", position=[0.0, 0.0, width, 10.0]
+                )
+                resized = view._compute_ann_resize(ann, ann.position, 5.0, 0.0, 2, 4)
+                self.assertAlmostEqual(resized[2], 5.0 if scales else 0.0, places=6)
+                self.assertEqual(resized[0], 0.0)
+                self.assertEqual(resized[1], 0.0)
+                self.assertAlmostEqual(resized[3], 10.0, places=9)
+        for height, scales in ((0.0, False), (1e-9, False), (1.5e-9, True)):
+            with self.subTest(height=height):
+                ann = BidAnnotation(
+                    uid="r", annotation_type="rect", position=[0.0, 0.0, 10.0, height]
+                )
+                resized = view._compute_ann_resize(ann, ann.position, 0.0, 5.0, 2, 4)
+                self.assertAlmostEqual(resized[3], 5.0 if scales else 0.0, places=6)
+                self.assertEqual(resized[1], 0.0)
+                self.assertAlmostEqual(resized[2], 10.0, places=9)
+
+    def test_handle_hit_test_uses_the_handle_width_on_both_axes(self):
+        view = self._make_view(set())
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        item = QGraphicsRectItem(-10.0, -2.0, 20.0, 4.0)
+        item.setPos(50.0, 60.0)
+        info = SimpleNamespace(item=item)
+        # Half width 10 plus the 2 px grace, regardless of the (smaller) height.
+        for point, hit in (
+            ((62, 60), True),
+            ((63, 60), False),
+            ((38, 60), True),
+            ((37, 60), False),
+            ((50, 72), True),
+            ((50, 73), False),
+            ((50, 48), True),
+            ((50, 47), False),
+        ):
+            with self.subTest(point=point):
+                self.assertIs(
+                    view._is_handle_info_at_viewport_pos(info, QtCore.QPoint(*point)),
+                    hit,
+                )
+
+
+class InputHandlerRotationSweepTests(_CtrlDragFixture):
+    """Rotation drag helpers: handle preview, slope selection, single/group/child rotation edge cases."""
+
+    def _gesture(self):
+        return InputHandlerMixinApplyRotationTests(
+            "test_single_annotation_rotates_around_its_element_center"
+        )
+
+    def assertPositionAlmostEqual(self, actual, expected):
+        self.assertEqual(len(actual), len(expected), (actual, expected))
+        for actual_value, expected_value in zip(actual, expected):
+            self.assertAlmostEqual(actual_value, expected_value, places=9)
+
+    def test_rotation_handle_preview_places_the_handle_on_the_snapped_angle(self):
+        view = self._make_view(set())
+        handle = QtWidgets.QGraphicsEllipseItem(-3.0, -3.0, 6.0, 6.0)
+        line = QtWidgets.QGraphicsLineItem()
+        outline = QtWidgets.QGraphicsLineItem()
+        view._rotate_handle_item = handle
+        view._rotate_line_item = line
+        view._rotate_line_outline_item = outline
+        view._rotate_center_scene = QtCore.QPointF(30.0, 40.0)
+        view._rotate_handle_radius = 10.0
+        for start_deg, snapped_deg, expected in (
+            (0.0, 90.0, (30.0, 50.0)),
+            (90.0, -90.0, (40.0, 40.0)),
+        ):
+            with self.subTest(start_deg=start_deg, snapped_deg=snapped_deg):
+                view._rotate_handle_start_angle_deg = start_deg
+                view._update_rotation_handle_preview(snapped_deg)
+                self.assertAlmostEqual(handle.pos().x(), expected[0], places=9)
+                self.assertAlmostEqual(handle.pos().y(), expected[1], places=9)
+                for segment in (line, outline):
+                    self.assertAlmostEqual(segment.line().x1(), 30.0, places=9)
+                    self.assertAlmostEqual(segment.line().y1(), 40.0, places=9)
+                    self.assertAlmostEqual(segment.line().x2(), expected[0], places=9)
+                    self.assertAlmostEqual(segment.line().y2(), expected[1], places=9)
+
+    def test_rotation_handle_preview_needs_the_handle_and_both_line_items(self):
+        for missing in (
+            "_rotate_handle_item",
+            "_rotate_line_item",
+            "_rotate_line_outline_item",
+        ):
+            with self.subTest(missing=missing):
+                view = self._make_view(set())
+                handle = QtWidgets.QGraphicsEllipseItem(-3.0, -3.0, 6.0, 6.0)
+                line = QtWidgets.QGraphicsLineItem()
+                outline = QtWidgets.QGraphicsLineItem()
+                view._rotate_handle_item = handle
+                view._rotate_line_item = line
+                view._rotate_line_outline_item = outline
+                setattr(view, missing, None)
+                view._rotate_center_scene = QtCore.QPointF(30.0, 40.0)
+                view._rotate_handle_radius = 10.0
+                view._rotate_handle_start_angle_deg = 0.0
+                view._update_rotation_handle_preview(90.0)
+                self.assertEqual(handle.pos(), QtCore.QPointF(0.0, 0.0))
+                self.assertEqual(line.line(), QtCore.QLineF())
+                self.assertEqual(outline.line(), QtCore.QLineF())
+
+    def test_slope_selection_needs_at_least_three_vertices(self):
+        for coordinates, expected in (
+            ([0, 0, 10, 0, 10], ""),
+            ([0, 0, 10, 0, 5, 5], "a1"),
+        ):
+            with self.subTest(length=len(coordinates)):
+                harness = SlopeRotationHarness()
+                harness._current_takeoffs["a1"].position = list(coordinates)
+                self.assertEqual(harness._selected_area_slope_uid(), expected)
+
+    def test_slope_handle_creation_reports_an_explicit_false_for_an_ineligible_selection(
+        self,
+    ):
+        harness = SlopeRotationHarness()
+        harness._selected_uids = {"l1"}
+        self.assertIs(harness._create_slope_rotate_handle(), False)
+
+    def test_single_annotation_without_a_centre_rotates_about_its_first_point(self):
+        view, annotation = self._gesture()._annotation_rotation_view(
+            "rect", [3.0, 7.0, 13.0, 11.0]
+        )
+        view._element_center = lambda uid, cs, mode: None
+        view._apply_single_rotation("a1", 90.0)
+        # The same box turned about its first corner (0, 0) is [-4, 10, 0, 0, 0, 10, -4, 0].
+        self.assertPositionAlmostEqual(
+            annotation.position,
+            [-1.0, 17.0, 3.0, 7.0, 3.0, 17.0, -1.0, 7.0, math.pi / 2.0],
+        )
+
+    def test_single_area_rotation_turns_its_own_polygon_about_the_centroid(self):
+        view = self._gesture()._rotation_view({"square"})
+        square = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        view._current_takeoffs["square"] = Takeoff(
+            uid="square", condition_uid="area", position=list(square)
+        )
+        view._rotation_drag_orig_positions = {"square": list(square)}
+        view._apply_single_rotation("square", 90.0)
+        self.assertPositionAlmostEqual(
+            view._current_takeoffs["square"].position,
+            [10.0, 0.0, 10.0, 10.0, 0.0, 10.0, 0.0, 0.0],
+        )
+
+    def test_single_rotation_honours_the_curve_flag_only_for_linear_takeoffs(self):
+        view = self._gesture()._rotation_view({"square"})
+        square = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        view._current_takeoffs["square"] = Takeoff(
+            uid="square",
+            condition_uid="area",
+            position=list(square),
+            curve=Takeoff.CURVE_ENABLED,
+        )
+        view._rotation_drag_orig_positions = {"square": list(square)}
+        view._apply_single_rotation("square", 90.0)
+        self.assertPositionAlmostEqual(
+            view._current_takeoffs["square"].position,
+            [10.0, 0.0, 10.0, 10.0, 0.0, 10.0, 0.0, 0.0],
+        )
+
+    def test_single_straight_linear_with_a_curve_slot_rotates_two_points_about_the_midpoint(
+        self,
+    ):
+        view = self._gesture()._rotation_view({"linear"})
+        takeoff = view._current_takeoffs["linear"]
+        takeoff.position = [0.0, 0.0, 20.0, 0.0, 10.0, 8.0, -8.0]
+        self.assertEqual(takeoff.curve, Takeoff.CURVE_DISABLED)
+        view._rotation_drag_orig_positions = {"linear": list(takeoff.position)}
+        view._apply_single_rotation("linear", 90.0)
+        self.assertPositionAlmostEqual(
+            takeoff.position, [10.0, -10.0, 10.0, 10.0, 10.0, 8.0, -8.0]
+        )
+
+    def test_single_rotation_of_a_takeoff_with_an_unknown_condition_uses_the_bounding_box_centre(
+        self,
+    ):
+        view = self._gesture()._rotation_view({"orphan"})
+        view._current_takeoffs["orphan"] = Takeoff(
+            uid="orphan",
+            condition_uid="no-such-condition",
+            position=[0.0, 0.0, 10.0, 0.0],
+        )
+        view._rotation_drag_orig_positions = {"orphan": [0.0, 0.0, 10.0, 0.0]}
+        view._apply_single_rotation("orphan", 90.0)
+        self.assertPositionAlmostEqual(
+            view._current_takeoffs["orphan"].position, [5.0, -5.0, 5.0, 5.0]
+        )
+        self.assertEqual(view._current_takeoffs["orphan"].rotation, 0.0)
+        self.assertEqual(
+            view._dirty_positions, {"orphan": view._current_takeoffs["orphan"].position}
+        )
+
+    def test_single_hole_rotation_validates_the_hole_against_its_rotated_position(self):
+        view = self._gesture()._rotation_view({"hole"})
+        hole = Takeoff(
+            uid="hole",
+            condition_uid="area",
+            parent_uid="area",
+            position=[2.0, 2.0, 4.0, 2.0, 4.0, 4.0, 2.0, 4.0],
+        )
+        view._current_takeoffs["hole"] = hole
+        view._rotation_drag_orig_positions = {"hole": list(hole.position)}
+        checked = []
+        view._validate_hole_position = lambda takeoff, position: (
+            checked.append((takeoff.uid, list(position))) or False
+        )
+        view._create_rotate_handle = lambda uid: None
+        view._apply_single_rotation("hole", 90.0)
+        self.assertEqual(len(checked), 1)
+        self.assertEqual(checked[0][0], "hole")
+        self.assertPositionAlmostEqual(
+            checked[0][1], [4.0, 2.0, 4.0, 4.0, 2.0, 4.0, 2.0, 2.0]
+        )
+
+    def test_single_rotation_validates_only_holes_that_have_a_parent(self):
+        view = self._gesture()._rotation_view({"loose"})
+        loose = Takeoff(
+            uid="loose",
+            condition_uid="area",
+            parent_uid=None,
+            position=[2.0, 2.0, 4.0, 2.0, 4.0, 4.0, 2.0, 4.0],
+        )
+        self.assertTrue(loose.is_hole)
+        view._current_takeoffs["loose"] = loose
+        view._rotation_drag_orig_positions = {"loose": list(loose.position)}
+        checked = []
+        view._validate_hole_position = (
+            lambda takeoff, position: checked.append(1) or False
+        )
+        view._apply_single_rotation("loose", 90.0)
+        self.assertEqual(checked, [])
+        self.assertPositionAlmostEqual(
+            loose.position, [4.0, 2.0, 4.0, 4.0, 2.0, 4.0, 2.0, 2.0]
+        )
+
+    def test_area_children_rotate_when_the_parent_is_a_triangle(self):
+        view = self._gesture()._rotation_view({"area"})
+        view._current_takeoffs["hole"] = Takeoff(
+            uid="hole",
+            condition_uid="area",
+            parent_uid="area",
+            position=[2.0, 2.0, 4.0, 2.0, 4.0, 4.0, 2.0, 4.0],
+        )
+        # Triangle (0, 0), (6, 0), (0, 6) has its centroid at (2, 2).
+        view._rotate_area_children("area", [0.0, 0.0, 6.0, 0.0, 0.0, 6.0], 90.0)
+        self.assertPositionAlmostEqual(
+            view._current_takeoffs["hole"].position,
+            [2.0, 2.0, 2.0, 4.0, 0.0, 4.0, 0.0, 2.0],
+        )
+
+    def test_area_child_with_an_unknown_condition_is_moved_but_not_re_oriented(self):
+        view = self._gesture()._rotation_view({"area"})
+        view._current_takeoffs["stray"] = Takeoff(
+            uid="stray",
+            condition_uid="no-such-condition",
+            parent_uid="area",
+            position=[2.0, 2.0, 4.0, 2.0],
+            rotation=0.75,
+        )
+        view._rotate_area_children("area", [0.0, 0.0, 6.0, 0.0, 0.0, 6.0], 90.0)
+        stray = view._current_takeoffs["stray"]
+        self.assertPositionAlmostEqual(stray.position, [2.0, 2.0, 2.0, 4.0])
+        self.assertEqual(stray.rotation, 0.75)
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertEqual(view._rotation_before_edit, {})
+
+    def test_group_candidates_skip_selected_takeoffs_without_a_recorded_origin(self):
+        view = self._gesture()._multi_rotation_view({"linear", "count"})
+        del view._rotation_drag_orig_positions["count"]
+        positions, rotations = view._multi_rotation_takeoff_candidates(90.0)
+        self.assertEqual(set(positions), {"linear"})
+        self.assertEqual(rotations, {})
+
+    def test_group_candidates_orient_only_point_and_attachment_takeoffs(self):
+        view = self._gesture()._multi_rotation_view({"linear", "count", "attachment"})
+        positions, rotations = view._multi_rotation_takeoff_candidates(90.0)
+        self.assertEqual(set(positions), {"linear", "count", "attachment"})
+        self.assertEqual(set(rotations), {"count", "attachment"})
+        self.assertAlmostEqual(rotations["count"], math.radians(32.0) + math.pi / 2.0)
+        self.assertAlmostEqual(
+            rotations["attachment"], math.radians(25.0) + math.pi / 2.0
+        )
+
+    def test_group_candidates_carry_unselected_children_and_orient_only_point_children(
+        self,
+    ):
+        view = self._gesture()._multi_rotation_view({"area"})
+        for uid in ("count", "linear"):
+            view._current_takeoffs[uid].parent_uid = "area"
+        view._current_takeoffs["stray"] = Takeoff(
+            uid="stray",
+            condition_uid="no-such-condition",
+            parent_uid="area",
+            position=[1.0, 1.0],
+        )
+        positions, rotations = view._multi_rotation_takeoff_candidates(90.0)
+        self.assertEqual(set(positions), {"area", "count", "linear", "stray"})
+        self.assertEqual(set(rotations), {"count"})
+        self.assertAlmostEqual(rotations["count"], math.radians(32.0) + math.pi / 2.0)
+        # (1, 1) about the group centre (20, 5): dx=-19, dy=-4 -> (20 + 4, 5 - 19).
+        self.assertPositionAlmostEqual(positions["stray"], [24.0, -14.0])
+
+    def test_group_rotation_ignores_selected_takeoffs_without_a_recorded_origin(self):
+        view = self._gesture()._multi_rotation_view({"linear", "count"})
+        del view._rotation_drag_orig_positions["count"]
+        count_position = list(view._current_takeoffs["count"].position)
+        view._apply_multi_rotation(90.0)
+        self.assertEqual(view._current_takeoffs["count"].position, count_position)
+        self.assertEqual(len(view.flushed_transform_groups), 1)
+        self.assertEqual(
+            {uid for uid, _old, _new in view.flushed_transform_groups[0][0]}, {"linear"}
+        )
+
+    def test_group_rotation_moves_a_takeoff_with_an_unknown_condition_without_orienting_it(
+        self,
+    ):
+        view = self._gesture()._multi_rotation_view({"linear"})
+        view._selected_uids = {"orphan"}
+        view._current_takeoffs = {
+            "orphan": Takeoff(
+                uid="orphan",
+                condition_uid="no-such-condition",
+                position=[0.0, 0.0, 10.0, 0.0],
+                rotation=0.5,
+            )
+        }
+        view._rotation_drag_orig_positions = {"orphan": [0.0, 0.0, 10.0, 0.0]}
+        view._rotation_drag_orig_rotations = {"orphan": 0.5}
+        view._apply_multi_rotation(90.0)
+        orphan = view._current_takeoffs["orphan"]
+        self.assertPositionAlmostEqual(orphan.position, [25.0, -15.0, 25.0, -5.0])
+        self.assertEqual(orphan.rotation, 0.5)
+        self.assertEqual(len(view.flushed_transform_groups), 1)
+        position_changes, rotation_changes = view.flushed_transform_groups[0]
+        self.assertEqual([uid for uid, _old, _new in position_changes], ["orphan"])
+        self.assertEqual(rotation_changes, [])
+
+
+class InputHandlerTransformSweepTests(_CtrlDragFixture):
+    """Toolbar rotate/flip helpers: selection filtering, area expansion, blank and unknown-condition children."""
+
+    def assertPositionAlmostEqual(self, actual, expected):
+        self.assertEqual(len(actual), len(expected), (actual, expected))
+        for actual_value, expected_value in zip(actual, expected):
+            self.assertAlmostEqual(actual_value, expected_value, places=9)
+
+    def test_transform_selection_keeps_only_positioned_takeoffs(self):
+        view = self._make_transform_view({"linear", "blank", "ghost"})
+        view._current_takeoffs["blank"] = Takeoff(
+            uid="blank", condition_uid="linear", position=[]
+        )
+        self.assertEqual(view._selected_takeoff_uids_for_transform(), {"linear"})
+        view._editing_enabled = False
+        result = view._selected_takeoff_uids_for_transform()
+        self.assertIsNotNone(result)
+        self.assertEqual(result, set())
+
+    def test_transform_expansion_follows_only_area_parents(self):
+        view = self._make_transform_view({"area"})
+        view._current_takeoffs["linear"].parent_uid = "area"
+        view._current_takeoffs["count"].parent_uid = "linear"
+        self.assertEqual(
+            view._expanded_takeoff_transform_uids({"area"}), {"area", "linear", "count"}
+        )
+        # A linear takeoff is not an area, so its own children are not carried along.
+        self.assertEqual(view._expanded_takeoff_transform_uids({"linear"}), {"linear"})
+
+    def _area_with_children(self):
+        view = self._make_transform_view({"area"})
+        seen = []
+        view._takeoff_children_valid_for_geometry_changes = (
+            lambda positions, rotations=None: (
+                seen.append((dict(positions), dict(rotations or {}))) or True
+            )
+        )
+        view._current_takeoffs["blank"] = Takeoff(
+            uid="blank", condition_uid="area", parent_uid="area", position=[]
+        )
+        view._current_takeoffs["stray"] = Takeoff(
+            uid="stray",
+            condition_uid="no-such-condition",
+            parent_uid="area",
+            position=[3.0, 4.0],
+            rotation=0.75,
+        )
+        return view, seen
+
+    def test_rotating_an_area_carries_unknown_condition_children_and_skips_blank_ones(
+        self,
+    ):
+        view, seen = self._area_with_children()
+        left, top, right, bottom = self._rendered_takeoff_selection_bounds(
+            view, {"area"}
+        )
+        pivot_x, pivot_y = (left + right) / 2.0, (top + bottom) / 2.0
+        view.rotate_selected_takeoffs(90.0)
+        # (3, 4) turned a quarter about the pivot: (px - (4 - py), py + (3 - px)).
+        self.assertPositionAlmostEqual(
+            view._current_takeoffs["stray"].position,
+            [pivot_x - (4.0 - pivot_y), pivot_y + (3.0 - pivot_x)],
+        )
+        self.assertEqual(view._current_takeoffs["stray"].rotation, 0.75)
+        self.assertEqual(view._current_takeoffs["blank"].position, [])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(set(seen[0][0]), {"area", "stray"})
+        self.assertEqual(seen[0][1], {})
+        self.assertEqual(len(view.flushed_transform_groups), 1)
+        flushed_uids = {uid for uid, _old, _new in view.flushed_transform_groups[0][0]}
+        self.assertEqual(flushed_uids, {"area", "stray"})
+        self.assertEqual(view.flushed_transform_groups[0][1], [])
+
+    def test_flipping_an_area_carries_unknown_condition_children_and_skips_blank_ones(
+        self,
+    ):
+        view, seen = self._area_with_children()
+        left, top, right, bottom = self._rendered_takeoff_selection_bounds(
+            view, {"area"}
+        )
+        pivot_x = (left + right) / 2.0
+        view.flip_selected_takeoffs(True)
+        self.assertPositionAlmostEqual(
+            view._current_takeoffs["stray"].position, [2.0 * pivot_x - 3.0, 4.0]
+        )
+        self.assertEqual(view._current_takeoffs["stray"].rotation, 0.75)
+        self.assertEqual(view._current_takeoffs["blank"].position, [])
+        self.assertEqual(set(seen[0][0]), {"area", "stray"})
+        self.assertEqual(seen[0][1], {})
+        flushed_uids = {uid for uid, _old, _new in view.flushed_transform_groups[0][0]}
+        self.assertEqual(flushed_uids, {"area", "stray"})
+
+    def test_flip_mirrors_the_sagitta_only_for_curved_linear_takeoffs(self):
+        position = [0.0, 0.0, 20.0, 0.0, 10.0, 8.0, -8.0]
+        for curve, sagitta in (
+            (Takeoff.CURVE_DISABLED, -8.0),
+            (Takeoff.CURVE_ENABLED, 8.0),
+        ):
+            with self.subTest(curve=curve):
+                view = self._make_transform_view({"linear"})
+                takeoff = view._current_takeoffs["linear"]
+                takeoff.position = list(position)
+                takeoff.curve = curve
+                view.flip_selected_takeoffs(False)
+                self.assertEqual(len(takeoff.position), 7)
+                self.assertAlmostEqual(takeoff.position[6], sagitta, places=9)
+        # A curve flag on a non-linear takeoff does not make it a curved linear.
+        view = self._make_transform_view({"area"})
+        square = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        view._current_takeoffs["area"] = Takeoff(
+            uid="area",
+            condition_uid="area",
+            position=list(square),
+            curve=Takeoff.CURVE_ENABLED,
+        )
+        left, top, right, bottom = self._rendered_takeoff_selection_bounds(
+            view, {"area"}
+        )
+        pivot_x = (left + right) / 2.0
+        view.flip_selected_takeoffs(True)
+        self.assertPositionAlmostEqual(
+            view._current_takeoffs["area"].position,
+            [
+                2.0 * pivot_x - x if index % 2 == 0 else x
+                for index, x in enumerate(square)
+            ],
+        )
+
+
+class InputHandlerKeyboardSweepTests(_RealViewGestureFixture):
+    """keyPressEvent/keyReleaseEvent: each shortcut reacts to its own key only."""
+
+    def setUp(self):
+        self.kb = KeyboardRoutingTests("test_plain_a_does_not_select_everything")
+        self.kb.mode_requests = []
+
+    def _keyed_view(self):
+        return self.kb._keyed_view()
+
+    def _press(self, view, key, modifiers=Qt.KeyboardModifier.NoModifier):
+        event = self.kb._key(key, modifiers)
+        view.keyPressEvent(event)
+        return event
+
+    def test_only_the_c_key_copies_pdf_text(self):
+        for key in (Qt.Key.Key_X, Qt.Key.Key_Q, Qt.Key.Key_Return):
+            with self.subTest(key=key):
+                view = self._keyed_view()
+                view._selected_uids = set()
+                copies = []
+                view.copy_selected_pdf_text = lambda: copies.append("pdf") or True
+                event = self._press(view, key, Qt.KeyboardModifier.ControlModifier)
+                self.assertEqual(copies, [])
+                self.assertFalse(event.isAccepted())
+        view = self._keyed_view()
+        copies = []
+        view.copy_selected_pdf_text = lambda: copies.append("pdf") or True
+        event = self._press(view, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(copies, ["pdf"])
+        self.assertTrue(event.isAccepted())
+
+    def test_only_escape_cancels_an_intelligent_paste(self):
+        view = self._keyed_view()
+        view._intelligent_paste_active = True
+        calls = []
+        view._cancel_active_drag_interaction = lambda restore_preview: calls.append(
+            "cancel"
+        )
+        view.finish_intelligent_paste_placement = lambda: calls.append("finish")
+        event = self._press(view, Qt.Key.Key_X)
+        self.assertEqual(calls, [])
+        self.assertFalse(event.isAccepted())
+        event = self._press(view, Qt.Key.Key_Escape)
+        self.assertEqual(calls, ["cancel", "finish"])
+        self.assertTrue(event.isAccepted())
+
+    def test_only_escape_cancels_paste_backout_and_overlay_moves(self):
+        for mode, attribute in (
+            (CURSOR_MODE_PASTE_BACKOUT, "cancel_paste_backout"),
+            (CURSOR_MODE_MOVE_OVERLAY, "cancel_overlay_move_mode"),
+            (CURSOR_MODE_MOVE_OVERLAY_HANDLE, "cancel_overlay_move_mode"),
+        ):
+            for key, cancels in ((Qt.Key.Key_X, False), (Qt.Key.Key_Escape, True)):
+                with self.subTest(mode=mode, key=key):
+                    view = self._keyed_view()
+                    view._cursor_mode = mode
+                    cancelled = []
+                    setattr(
+                        view, attribute, lambda *args, **kwargs: cancelled.append(True)
+                    )
+                    event = self._press(view, key)
+                    self.assertEqual(cancelled, [True] if cancels else [])
+                    self.assertEqual(event.isAccepted(), cancels)
+
+    def _arrow_view(self, **kwargs):
+        return self.kb._arrow_view(**kwargs)
+
+    def test_non_arrow_keys_never_move_the_selection(self):
+        for key in (Qt.Key.Key_X, Qt.Key.Key_Space, Qt.Key.Key_Return):
+            with self.subTest(key=key):
+                view = self._arrow_view()
+                event = self._press(view, key)
+                self.assertEqual(self.kb.arrow_calls, [])
+                self.assertFalse(event.isAccepted())
+
+    def test_arrow_step_follows_a_fractional_snap_increment(self):
+        for snap in (0.5, 0.25):
+            with self.subTest(snap=snap):
+                view = self._arrow_view(snap=snap)
+                self._press(view, Qt.Key.Key_Right)
+                self.assertEqual(self.kb.arrow_calls[-1], ("move", snap, 0.0))
+
+    def test_arrow_keys_are_accepted_when_any_selected_takeoff_is_an_attachment(self):
+        view = self._arrow_view(selected=("att", "line"))
+        view._current_takeoffs = {
+            "att": Takeoff(uid="att", condition_uid="attachment", position=[1.0, 1.0]),
+            "line": Takeoff(
+                uid="line", condition_uid="linear", position=[1.0, 1.0, 5.0, 1.0]
+            ),
+        }
+        view._current_conditions = {
+            "attachment": Condition(
+                uid="attachment", condition_type=Condition.TYPE_ATTACHMENT
+            ),
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
+        }
+        view._apply_position_keyboard_move = lambda dx, dy: False
+        with patch.object(QtWidgets.QGraphicsView, "keyPressEvent") as base:
+            event = self._press(view, Qt.Key.Key_Left)
+            self.assertTrue(event.isAccepted())
+            self.assertEqual(base.call_count, 0)
+            view._current_conditions["attachment"].condition_type = (
+                Condition.TYPE_LINEAR
+            )
+            event = self._press(view, Qt.Key.Key_Left)
+            self.assertFalse(event.isAccepted())
+            self.assertEqual(base.call_count, 1)
+
+    def test_releasing_other_keys_leaves_the_ctrl_state_alone(self):
+        view = self._keyed_view()
+        view._ctrl_held = True
+        view.keyReleaseEvent(self.kb._key(Qt.Key.Key_A, press=False))
+        self.assertIs(view._ctrl_held, True)
+        self.assertEqual(self.kb.cursor_updates, [])
+        view.keyReleaseEvent(self.kb._key(Qt.Key.Key_Control, press=False))
+        self.assertIs(view._ctrl_held, False)
+        self.assertEqual(self.kb.cursor_updates, [()])
+
+
+class InputHandlerCursorSweepTests(_CtrlDragFixture):
+    """_resolve_cursor and _is_over_rotate_handle: offsets, indices and missing pointers."""
+
+    def _cursor_helper(self):
+        return InputHandlerMixinCursorResolutionTests(
+            "test_select_mode_without_pointer_uses_arrow"
+        )
+
+    def _cursor_view(self, mode="select"):
+        return self._cursor_helper()._cursor_view(mode)
+
+    def test_panning_without_a_right_pan_shows_the_closed_hand_even_with_ctrl(self):
+        view = self._cursor_view()
+        view._panning = True
+        view._ctrl_held = True
+        view._right_pan_active = False
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(100, 100)),
+            Qt.CursorShape.ClosedHandCursor,
+        )
+
+    def test_overlay_handle_mode_keeps_the_arrow_away_from_the_handle_even_with_ctrl(
+        self,
+    ):
+        view = self._cursor_view("move_overlay_handle")
+        view._ctrl_held = True
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(100, 100)), Qt.CursorShape.ArrowCursor
+        )
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(1, 1)), view._move_overlay_cursor
+        )
+
+    def test_handle_cursor_index_must_address_an_existing_handle(self):
+        helper = self._cursor_helper()
+        view = helper._cursor_view()
+        handles = [QGraphicsRectItem(-4.0, -4.0, 8.0, 8.0) for _ in range(2)]
+        for handle in handles:
+            handle.setPos(300.0, 300.0)
+        view._handle_infos = [
+            SimpleNamespace(item=handles[0], cursor=Qt.CursorShape.SizeFDiagCursor),
+            SimpleNamespace(item=handles[1], cursor=Qt.CursorShape.SizeVerCursor),
+        ]
+        view._select_band_origin = QtCore.QPointF(0.0, 0.0)
+        off_item = QtCore.QPoint(100, 100)
+        with helper._buttons(Qt.MouseButton.LeftButton):
+            for index, expected in (
+                (0, Qt.CursorShape.SizeFDiagCursor),
+                (1, Qt.CursorShape.SizeVerCursor),
+                (2, Qt.CursorShape.ArrowCursor),
+                (-2, Qt.CursorShape.ArrowCursor),
+            ):
+                with self.subTest(index=index):
+                    view._drag_handle_index = index
+                    self.assertEqual(view._resolve_cursor(off_item), expected)
+
+    def test_ctrl_zoom_cursor_never_replaces_an_active_press_cursor(self):
+        helper = self._cursor_helper()
+        view = helper._cursor_view()
+        view._ctrl_held = True
+        view._select_band_origin = QtCore.QPointF(0.0, 0.0)
+        view._drag_handle_index = -2
+        with helper._buttons(Qt.MouseButton.LeftButton):
+            self.assertEqual(
+                view._resolve_cursor(QtCore.QPoint(100, 100)),
+                Qt.CursorShape.ArrowCursor,
+            )
+
+    def test_inline_text_and_named_view_editing_use_the_text_cursor_only_with_a_pointer(
+        self,
+    ):
+        for attribute, contains in (
+            (
+                "_editing_text_annotation_uid",
+                "_inline_text_annotation_box_contains_scene_point",
+            ),
+            ("_editing_named_view_uid", "_named_view_label_contains_scene_point"),
+        ):
+            with self.subTest(attribute=attribute):
+                view = self._cursor_view()
+                setattr(view, attribute, "a1")
+                setattr(view, contains, lambda *args: True)
+                self.assertEqual(
+                    view._resolve_cursor(QtCore.QPoint(100, 100)),
+                    Qt.CursorShape.IBeamCursor,
+                )
+                self.assertEqual(view._resolve_cursor(None), Qt.CursorShape.ArrowCursor)
+
+    def test_unknown_modes_fall_back_to_the_arrow_over_a_selected_item(self):
+        view = self._cursor_view("some-other-mode")
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(1, 1)), Qt.CursorShape.ArrowCursor
+        )
+        self.assertEqual(
+            self._cursor_view("select")._resolve_cursor(QtCore.QPoint(1, 1)),
+            Qt.CursorShape.SizeAllCursor,
+        )
+
+    def test_rotate_handle_hit_test_measures_each_axis_against_the_handle_position(
+        self,
+    ):
+        view = self._cursor_view("rotate")
+        view._rotate_handle_item = FakeItem(100.0, 40.0)
+        for point, hit in (
+            (QtCore.QPoint(100, 40), True),
+            (QtCore.QPoint(116, 40), True),
+            (QtCore.QPoint(117, 40), False),
+            (QtCore.QPoint(84, 40), True),
+            (QtCore.QPoint(100, 56), True),
+            (QtCore.QPoint(100, 57), False),
+            (QtCore.QPoint(100, 24), True),
+            (QtCore.QPoint(40, 100), False),
+            (QtCore.QPoint(40, 40), False),
+        ):
+            with self.subTest(point=(point.x(), point.y())):
+                self.assertIs(view._is_over_rotate_handle(point), hit)
+
+
+class _RecordingMenu(CapturingMenu):
+    """Menu double that logs action texts and separators in the order they are added."""
+
+    log = []
+    chooser = None
+
+    def addAction(self, text):
+        _RecordingMenu.log.append(str(text))
+        return super().addAction(text)
+
+    def addSeparator(self):
+        _RecordingMenu.log.append("sep")
+
+    def exec(self, _pos):
+        chooser = _RecordingMenu.chooser
+        return chooser(self) if chooser is not None else None
+
+
+class InputHandlerTakeoffContextMenuSweepTests(_CtrlDragFixture):
+    """contextMenuEvent for takeoffs: menu layout, routing precedence and stale-choice guards."""
+
+    def setUp(self):
+        _RecordingMenu.log = []
+        _RecordingMenu.chooser = None
+        CapturingMenu.instances = []
+        self.cm = InputHandlerMixinContextMenuActionTests(
+            "test_takeoff_menu_shows_only_the_actions_for_the_selected_geometry"
+        )
+
+    def _logged_view(self, selected=(), **options):
+        view = self.cm._menu_view(set(selected), **options)
+        log = _RecordingMenu.log
+        view._add_common_context_submenus = lambda menu: (
+            log.append("submenus"),
+            (0, None, None),
+        )[1]
+        view._add_context_clipboard_actions = lambda menu: log.append("clipboard")
+        view._add_context_page_actions = lambda menu, **kw: log.append(("page", kw))
+        view.reset_ctrl_held = lambda: log.append("reset_ctrl")
+        return view, log
+
+    def _show(self, view, reassign=None, choose=None, event=None):
+        _RecordingMenu.chooser = choose
+        event = FakeContextMenuEvent(-100, -100) if event is None else event
+        log = _RecordingMenu.log
+
+        def add_reassign(*args, **kwargs):
+            log.append("reassign")
+            return reassign
+
+        with patch.object(input_handler_module, "QMenu", _RecordingMenu):
+            with patch.object(
+                input_handler_module, "add_reassign_condition_submenu", add_reassign
+            ):
+                view.contextMenuEvent(event)
+        return event
+
+    @staticmethod
+    def _pick(text):
+        return lambda menu: next(
+            action
+            for action in menu.actions
+            if isinstance(action, QAction) and action.text() == text
+        )
+
+    def test_takeoff_menu_is_laid_out_in_a_fixed_order_with_separators(self):
+        view, log = self._logged_view({"linear1"})
+        event = self._show(view)
+        self.assertEqual(
+            log,
+            [
+                "Set as Curved Segment",
+                "Assign to Current Area",
+                "Count as Negative Quantity",
+                "sep",
+                "submenus",
+                "reassign",
+                "sep",
+                "clipboard",
+                "sep",
+                ("page", {}),
+                "reset_ctrl",
+            ],
+        )
+        self.assertTrue(event.accepted)
+
+    def test_takeoff_menu_without_property_actions_starts_with_the_common_submenus(
+        self,
+    ):
+        view = self.cm._make_area_control_point_view({"hole1"}, include_hole=True)
+        for name in self.cm.SIGNALS:
+            setattr(view, name, FakeSignal())
+        view._context_menu_action_state = lambda _key: {"enabled": True}
+        log = _RecordingMenu.log
+        view._add_common_context_submenus = lambda menu: (
+            log.append("submenus"),
+            (0, None, None),
+        )[1]
+        view._add_context_clipboard_actions = lambda menu: log.append("clipboard")
+        view._add_context_page_actions = lambda menu, **kw: log.append("page")
+        view.reset_ctrl_held = lambda: log.append("reset_ctrl")
+        self._show(view)
+        self.assertEqual(
+            log,
+            ["submenus", "reassign", "sep", "clipboard", "sep", "page", "reset_ctrl"],
+        )
+
+    def test_any_single_property_action_earns_the_leading_separator(self):
+        for label, flags, control_points, text in (
+            ("add control point", {}, ("add", None), None),
+            ("subtract control point", {}, (None, "subtract"), None),
+            ("curved", {"show_curved": True}, (None, None), "Set as Curved Segment"),
+            ("assign", {"show_assign": True}, (None, None), "Assign to Current Area"),
+            (
+                "negative",
+                {"show_negative": True},
+                (None, None),
+                "Count as Negative Quantity",
+            ),
+        ):
+            with self.subTest(label):
+                _RecordingMenu.log.clear()
+                view, log = self._logged_view({"linear1"})
+                state = dict(
+                    takeoff_uids=["linear1"],
+                    show_curved=False,
+                    all_curved=False,
+                    show_assign=False,
+                    show_negative=False,
+                    all_negative=False,
+                    reassign_geometry_type=None,
+                )
+                state.update(flags)
+                view._selected_takeoff_context_state = (
+                    lambda state=state: SimpleNamespace(**state)
+                )
+                view._add_polygon_control_point_context_action = (
+                    lambda menu, target, cp=control_points: (
+                        log.append("control_point"),
+                        cp,
+                    )[1]
+                )
+                self._show(view)
+                self.assertEqual(
+                    log,
+                    ["control_point"]
+                    + ([text] if text else [])
+                    + [
+                        "sep",
+                        "submenus",
+                        "sep",
+                        "clipboard",
+                        "sep",
+                        ("page", {}),
+                        "reset_ctrl",
+                    ],
+                )
+
+    def test_takeoff_selection_wins_over_selected_annotations_and_pdf_text(self):
+        view, log = self._logged_view({"linear1"})
+        routed = []
+        view._selected_annotation_style_context_state = lambda: SimpleNamespace(
+            annotation_uids=["a1"]
+        )
+        view._show_annotation_context_menu = lambda *args: routed.append("annotation")
+        view.has_selected_pdf_text = lambda: True
+        view._show_pdf_text_context_menu = lambda event: routed.append("pdf")
+        view._show_background_context_menu = lambda event: routed.append("background")
+        event = self._show(view)
+        self.assertEqual(routed, [])
+        self.assertIn("Assign to Current Area", log)
+        self.assertTrue(event.accepted)
+
+    def test_pdf_text_menu_is_shown_once_and_accepted(self):
+        view, log = self._logged_view(set())
+        view.has_selected_pdf_text = lambda: True
+        shown = []
+        view._show_pdf_text_context_menu = lambda event: shown.append("pdf")
+        view._show_background_context_menu = lambda event: shown.append("background")
+        event = self._show(view)
+        self.assertEqual(shown, ["pdf"])
+        self.assertTrue(event.accepted)
+
+    def test_background_menu_is_shown_once_and_accepted(self):
+        view, log = self._logged_view(set())
+        view.has_selected_pdf_text = lambda: False
+        shown = []
+        view._show_pdf_text_context_menu = lambda event: shown.append("pdf")
+        view._show_background_context_menu = lambda event: shown.append("background")
+        event = self._show(view)
+        self.assertEqual(shown, ["background"])
+        self.assertTrue(event.accepted)
+
+    def test_a_choice_made_after_the_page_changed_is_dropped_and_the_event_accepted(
+        self,
+    ):
+        view, log = self._logged_view({"linear1"})
+
+        def replace_page_then_pick(menu):
+            view._current_page = Page(uid="page-1", name="Replacement")
+            return self._pick("Assign to Current Area")(menu)
+
+        event = self._show(view, choose=replace_page_then_pick)
+        self.assertEqual(view.assign_to_area_requested.emitted, [])
+        self.assertTrue(event.accepted)
+
+    def test_a_choice_made_after_edit_access_was_lost_is_dropped_and_the_event_accepted(
+        self,
+    ):
+        view, log = self._logged_view({"linear1"})
+        access = {"enabled": True}
+        view._context_menu_action_state = lambda _key: {"enabled": access["enabled"]}
+
+        def revoke_then_pick(menu):
+            access["enabled"] = False
+            return self._pick("Assign to Current Area")(menu)
+
+        event = self._show(view, choose=revoke_then_pick)
+        self.assertEqual(view.assign_to_area_requested.emitted, [])
+        self.assertTrue(event.accepted)
+
+    def test_replacing_any_one_selected_takeoff_drops_the_choice(self):
+        view, log = self._logged_view({"area1", "linear1"})
+
+        def replace_one_then_pick(menu):
+            original = view._current_takeoffs["linear1"]
+            view._current_takeoffs["linear1"] = Takeoff(
+                uid="linear1",
+                condition_uid="linear",
+                page_uid="page-1",
+                position=list(original.position),
+            )
+            return self._pick("Assign to Current Area")(menu)
+
+        self._show(view, choose=replace_one_then_pick)
+        self.assertEqual(view.assign_to_area_requested.emitted, [])
+
+    def test_overlay_choice_is_accepted_without_reaching_the_property_actions(self):
+        view, log = self._logged_view({"linear1"})
+        overlay_action = QAction("Show Overlay Image")
+        view._add_common_context_submenus = lambda menu: (0, overlay_action, None)
+        resolved = []
+        view._resolve_context_overlay_action = (
+            lambda *args: resolved.append(args) or True
+        )
+        event = self._show(view, choose=lambda menu: overlay_action)
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0][0], overlay_action)
+        self.assertTrue(event.accepted)
+        for name in self.cm.SIGNALS:
+            self.assertEqual(getattr(view, name).emitted, [])
+
+    def test_an_unrelated_action_triggers_no_takeoff_request(self):
+        view, log = self._logged_view({"linear1"})
+        view._add_context_clipboard_actions = lambda menu: menu.addAction("Copy")
+        reassign = SimpleNamespace(actions={QAction("Other Condition"): "other"})
+        event = self._show(view, reassign=reassign, choose=self._pick("Copy"))
+        for name in self.cm.SIGNALS:
+            self.assertEqual(getattr(view, name).emitted, [], name)
+        self.assertTrue(event.accepted)
+
+    def test_property_choices_are_not_taken_for_a_reassign_submenu_choice(self):
+        view, log = self._logged_view({"linear1"})
+        reassign = SimpleNamespace(actions={QAction("Other Condition"): "other"})
+        self._show(view, reassign=reassign, choose=self._pick("Assign to Current Area"))
+        self.assertEqual(view.assign_to_area_requested.emitted, [(["linear1"],)])
+        self.assertEqual(view.reassign_condition_requested.emitted, [])
+
+    def test_control_point_choices_apply_only_their_own_target(self):
+        target = SimpleNamespace(plan_item_uid="linear1", kind="edge")
+        for kind, texts in (
+            ("add", ("Add Control Point", None)),
+            ("subtract", (None, "Subtract Control Point")),
+        ):
+            with self.subTest(kind=kind):
+                _RecordingMenu.log.clear()
+                view, log = self._logged_view({"linear1"})
+                applied = []
+                view._apply_polygon_control_point_target = (
+                    lambda t: applied.append(t) or True
+                )
+                view.polygon_control_point_target_at = lambda pos: target
+                view._selected_uids = {"linear1"}
+
+                def control_point_actions(menu, tgt, texts=texts):
+                    return tuple(
+                        None if text is None else menu.addAction(text) for text in texts
+                    )
+
+                view._add_polygon_control_point_context_action = control_point_actions
+                self._show(view, choose=self._pick("Assign to Current Area"))
+                self.assertEqual(applied, [])
+                self.assertEqual(
+                    view.assign_to_area_requested.emitted, [(["linear1"],)]
+                )
+                view.assign_to_area_requested.emitted.clear()
+                chosen = texts[0] or texts[1]
+                self._show(view, choose=self._pick(chosen))
+                self.assertEqual(applied, [target])
+                self.assertEqual(view.assign_to_area_requested.emitted, [])
+
+
+class InputHandlerAnnotationContextMenuSweepTests(_CtrlDragFixture):
+    """Annotation context menu: layout, style callbacks, stale-choice guards and control-point routing."""
+
+    def setUp(self):
+        _RecordingMenu.log = []
+        _RecordingMenu.chooser = None
+        CapturingMenu.instances = []
+        self.cm = InputHandlerMixinContextMenuActionTests(
+            "test_takeoff_menu_shows_only_the_actions_for_the_selected_geometry"
+        )
+
+    def _annotation_view(self, **options):
+        view = self.cm._menu_view(set(), **options)
+        self.annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[0.0, 0.0, 10.0, 4.0],
+            color="#112233",
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {"a1": self.annotation}
+        view._selected_uids = {"a1"}
+        log = _RecordingMenu.log
+        view._add_common_context_submenus = lambda menu: (
+            log.append("submenus"),
+            (3, "overlay-action", "original-action"),
+        )[1]
+        view._add_context_clipboard_actions = lambda menu: log.append("clipboard")
+        view._add_context_page_actions = lambda menu, **kw: log.append(("page", kw))
+        view.reset_ctrl_held = lambda: log.append("reset_ctrl")
+        return view, log
+
+    def _show(
+        self,
+        view,
+        *,
+        control_points=(None, None),
+        color=False,
+        widths=False,
+        choose=None,
+    ):
+        _RecordingMenu.chooser = choose
+        log = _RecordingMenu.log
+        self.style_kwargs = []
+        self.resolved = []
+        self.applied = []
+        view._add_polygon_control_point_context_action = lambda menu, target: (
+            log.append("control_point"),
+            control_points,
+        )[1]
+        view._apply_polygon_control_point_target = (
+            lambda target: self.applied.append(target) or True
+        )
+        view._resolve_context_overlay_action = (
+            lambda *args: self.resolved.append(args) or True
+        )
+
+        def add_style_actions(menu, state, **kwargs):
+            log.append("style")
+            self.style_kwargs.append(kwargs)
+            return SimpleNamespace(
+                color_action="color" if color else None,
+                width_actions={1.0: "w"} if widths else {},
+            )
+
+        event = FakeContextMenuEvent(-100, -100)
+        state = SimpleNamespace(annotation_uids=["a1"])
+        self.target = SimpleNamespace(plan_item_uid="a1", kind="edge")
+        with patch.object(input_handler_module, "QMenu", _RecordingMenu):
+            with patch.object(
+                input_handler_module,
+                "add_selected_annotation_style_actions",
+                add_style_actions,
+            ):
+                view._show_annotation_context_menu(event, state, self.target)
+        return event
+
+    def test_annotation_menu_separates_control_points_style_and_common_sections(self):
+        for cp_label, control_points in (
+            ("none", (None, None)),
+            ("add", ("add", None)),
+            ("subtract", (None, "sub")),
+        ):
+            for style_label, color, widths in (
+                ("none", False, False),
+                ("color", True, False),
+                ("widths", False, True),
+                ("both", True, True),
+            ):
+                with self.subTest(control_point=cp_label, style=style_label):
+                    _RecordingMenu.log.clear()
+                    view, log = self._annotation_view()
+                    event = self._show(
+                        view, control_points=control_points, color=color, widths=widths
+                    )
+                    expected = ["control_point"]
+                    if cp_label != "none":
+                        expected.append("sep")
+                    expected.append("style")
+                    if color or widths:
+                        expected.append("sep")
+                    expected += [
+                        "submenus",
+                        "sep",
+                        "clipboard",
+                        "sep",
+                        ("page", {}),
+                        "reset_ctrl",
+                    ]
+                    self.assertEqual(log, expected)
+                    self.assertTrue(event.accepted)
+
+    def test_style_callbacks_reach_the_owned_color_and_width_commands(self):
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                _RecordingMenu.log.clear()
+                view, log = self._annotation_view(edit_enabled=enabled)
+                calls = []
+                view._select_context_annotation_color = (
+                    lambda owner, annotations: calls.append(
+                        ("color", owner, dict(annotations))
+                    )
+                )
+                view._apply_context_annotation_width = (
+                    lambda owner, annotations, width: calls.append(
+                        ("width", owner, dict(annotations), width)
+                    )
+                )
+                self._show(view, color=True, widths=True)
+                kwargs = self.style_kwargs[0]
+                self.assertIs(kwargs["enabled"], enabled)
+                owner = view._context_menu_owner()
+                kwargs["select_color_callback"]()
+                kwargs["line_width_callback"](3.5)
+                self.assertEqual(
+                    calls,
+                    [
+                        ("color", owner, {"a1": self.annotation}),
+                        ("width", owner, {"a1": self.annotation}, 3.5),
+                    ],
+                )
+
+    def test_dismissed_annotation_menu_accepts_the_event_without_dispatching(self):
+        view, log = self._annotation_view()
+        event = self._show(view, control_points=("add", None), choose=lambda menu: None)
+        self.assertTrue(event.accepted)
+        self.assertEqual((self.applied, self.resolved), ([], []))
+
+    def test_annotation_choice_is_dropped_when_the_owner_or_annotation_changed(self):
+        for label, change in (
+            (
+                "page replaced",
+                lambda view: setattr(
+                    view, "_current_page", Page(uid="page-1", name="Other")
+                ),
+            ),
+            (
+                "annotation object replaced",
+                lambda view: view._current_annotations.__setitem__(
+                    "a1",
+                    BidAnnotation(
+                        uid="a1", annotation_type="rect", position=[0.0, 0.0, 10.0, 4.0]
+                    ),
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                _RecordingMenu.log.clear()
+                view, log = self._annotation_view()
+
+                def change_then_choose(menu, view=view, change=change):
+                    change(view)
+                    return "add"
+
+                event = self._show(
+                    view, control_points=("add", None), choose=change_then_choose
+                )
+                self.assertTrue(event.accepted)
+                self.assertEqual((self.applied, self.resolved), ([], []))
+
+    def test_control_point_choices_apply_their_target_only_while_editing_is_allowed(
+        self,
+    ):
+        for label, control_points, choice in (
+            ("add", ("add", None), "add"),
+            ("subtract", (None, "sub"), "sub"),
+        ):
+            for enabled, applied in ((True, True), (False, False)):
+                with self.subTest(choice=label, enabled=enabled):
+                    _RecordingMenu.log.clear()
+                    view, log = self._annotation_view()
+                    access = {"enabled": True}
+                    view._context_menu_action_state = lambda _key, access=access: {
+                        "enabled": access["enabled"]
+                    }
+
+                    def choose(menu, choice=choice, access=access, enabled=enabled):
+                        access["enabled"] = enabled
+                        return choice
+
+                    event = self._show(
+                        view, control_points=control_points, choose=choose
+                    )
+                    self.assertEqual(self.applied, [self.target] if applied else [])
+                    self.assertEqual(self.resolved, [])
+                    self.assertTrue(event.accepted)
+
+    def test_other_choices_go_to_the_overlay_resolver_even_when_control_points_exist(
+        self,
+    ):
+        for control_points in (("add", None), (None, "sub"), (None, None)):
+            with self.subTest(control_points=control_points):
+                _RecordingMenu.log.clear()
+                view, log = self._annotation_view()
+                event = self._show(
+                    view, control_points=control_points, choose=lambda menu: "other"
+                )
+                self.assertEqual(self.applied, [])
+                self.assertEqual(
+                    self.resolved, [("other", 3, "overlay-action", "original-action")]
+                )
+                self.assertTrue(event.accepted)
+
+
+class InputHandlerContextMenuHelperSweepTests(_CtrlDragFixture):
+    """Context-menu helpers: owner checks, section builders, overlay resolution and annotation commands."""
+
+    def setUp(self):
+        _RecordingMenu.log = []
+        _RecordingMenu.chooser = None
+        CapturingMenu.instances = []
+        self.cm = InputHandlerMixinContextMenuActionTests(
+            "test_takeoff_menu_shows_only_the_actions_for_the_selected_geometry"
+        )
+
+    def _owned(self, annotations=None):
+        """A real top-level plan double with the owned-command helpers of the mixin."""
+        window = QtWidgets.QWidget()
+        self.addCleanup(window.deleteLater)
+        view = _OwnedPlanMenuHarness(window)
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view._current_page = Page(uid="page-1", name="Page")
+        view._current_annotations = dict(annotations or {})
+        view._selected_uids = set(view._current_annotations)
+        view.applied = []
+        view.apply_annotation_style_to_selection = lambda **kwargs: view.applied.append(
+            kwargs
+        )
+        return view
+
+    def test_menu_owner_is_current_only_for_the_same_bid_page_and_selection(self):
+        view = self._owned()
+        owner = view._context_menu_owner()
+        self.assertIs(view._context_menu_owner_is_current(owner), True)
+        view._current_bid_ref = BidRef("db.mdb", "bid-2")
+        self.assertIs(view._context_menu_owner_is_current(owner), False)
+        view._current_bid_ref = owner[0]
+        view._current_page = Page(uid="page-1", name="Page")
+        self.assertIs(view._context_menu_owner_is_current(owner), False)
+        view._current_page = owner[1]
+        view._selected_uids = {"other"}
+        self.assertIs(view._context_menu_owner_is_current(owner), False)
+        view._selected_uids = set()
+        view._is_cleaning_up = True
+        self.assertIs(view._context_menu_owner_is_current(owner), False)
+
+    def test_context_annotations_must_match_the_selection_and_the_live_objects(self):
+        first = BidAnnotation(
+            uid="a1", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0]
+        )
+        second = BidAnnotation(
+            uid="a2", annotation_type="rect", position=[0.0, 0.0, 2.0, 2.0]
+        )
+        view = self._owned({"a1": first, "a2": second})
+        owner = view._context_menu_owner()
+        self.assertIs(
+            view._context_annotations_are_current(owner, {"a1": first, "a2": second}),
+            True,
+        )
+        # Same uids but one object was replaced by a different (equal-looking) annotation.
+        replacement = BidAnnotation(
+            uid="a2", annotation_type="rect", position=[0.0, 0.0, 2.0, 2.0]
+        )
+        self.assertIs(
+            view._context_annotations_are_current(
+                owner, {"a1": first, "a2": replacement}
+            ),
+            False,
+        )
+        # A missing or an extra uid no longer describes the selection.
+        self.assertIs(
+            view._context_annotations_are_current(owner, {"a1": first}), False
+        )
+        view._current_annotations["a3"] = BidAnnotation(
+            uid="a3", annotation_type="rect", position=[0.0] * 4
+        )
+        self.assertIs(
+            view._context_annotations_are_current(
+                owner,
+                {"a1": first, "a2": second, "a3": view._current_annotations["a3"]},
+            ),
+            False,
+        )
+        # A stale owner invalidates an otherwise identical set.
+        view._current_annotations.pop("a3")
+        view._current_page = Page(uid="page-1", name="Replacement")
+        self.assertIs(
+            view._context_annotations_are_current(owner, {"a1": first, "a2": second}),
+            False,
+        )
+
+    def test_plan_item_edit_actions_follow_the_delete_command_state(self):
+        view = self._owned()
+        view._context_menu_action_state = None
+        self.assertIs(view._plan_item_edit_actions_enabled(), False)
+        view._context_menu_action_state = lambda key: {"enabled": True}
+        self.assertIs(view._plan_item_edit_actions_enabled(), True)
+        view._context_menu_action_state = lambda key: {"enabled": False}
+        self.assertIs(view._plan_item_edit_actions_enabled(), False)
+
+    def _color_view(self):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[0.0, 0.0, 10.0, 4.0],
+            color="#112233",
+        )
+        view = self._owned({"a1": annotation})
+        view.annotation = annotation
+        return view
+
+    def _pick_color(self, view, result, during=None):
+        calls = []
+
+        def get_color(initial, parent=None):
+            calls.append((initial.name(), parent))
+            if during is not None:
+                during()
+            return result
+
+        with patch.object(input_handler_module.QColorDialog, "getColor", get_color):
+            view._select_context_annotation_color(
+                view._context_menu_owner(), {"a1": view.annotation}
+            )
+        return calls
+
+    def test_color_choice_starts_from_the_annotation_color_and_applies_a_valid_pick(
+        self,
+    ):
+        view = self._color_view()
+        calls = self._pick_color(view, QColor("#445566"))
+        self.assertEqual(calls, [("#112233", view)])
+        self.assertEqual(view.applied, [{"color": "#445566"}])
+
+    def test_color_choice_ignores_a_cancelled_dialog(self):
+        view = self._color_view()
+        self._pick_color(view, QColor())
+        self.assertEqual(view.applied, [])
+
+    def test_color_dialog_is_not_opened_for_stale_empty_or_read_only_menus(self):
+        for label, change in (
+            ("selection changed", lambda v: setattr(v, "_selected_uids", {"other"})),
+            (
+                "edits disabled",
+                lambda v: setattr(
+                    v, "_context_menu_action_state", lambda key: {"enabled": False}
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                view = self._color_view()
+                change(view)
+                self.assertEqual(self._pick_color(view, QColor("#445566")), [])
+                self.assertEqual(view.applied, [])
+        view = self._owned({})
+        opened = []
+        with patch.object(
+            input_handler_module.QColorDialog,
+            "getColor",
+            lambda *a, **k: opened.append(1),
+        ):
+            view._select_context_annotation_color(view._context_menu_owner(), {})
+        self.assertEqual(opened, [])
+
+    def test_color_pick_is_discarded_when_the_menu_goes_stale_during_the_dialog(self):
+        for label, change in (
+            ("selection changed", lambda v: setattr(v, "_selected_uids", {"other"})),
+            (
+                "annotation replaced",
+                lambda v: v._current_annotations.__setitem__(
+                    "a1",
+                    BidAnnotation(uid="a1", annotation_type="rect", position=[0.0] * 4),
+                ),
+            ),
+            (
+                "edits disabled",
+                lambda v: setattr(
+                    v, "_context_menu_action_state", lambda key: {"enabled": False}
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                view = self._color_view()
+                calls = self._pick_color(
+                    view, QColor("#445566"), during=lambda v=view, c=change: c(v)
+                )
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(view.applied, [])
+
+    def test_color_pick_is_discarded_when_the_plan_was_deleted_during_the_dialog(self):
+        view = self._color_view()
+        state = {"valid": True}
+        real_is_valid = input_handler_module.isValid
+
+        def fake_is_valid(obj):
+            return state["valid"] and real_is_valid(obj)
+
+        with patch.object(input_handler_module, "isValid", fake_is_valid):
+            calls = self._pick_color(
+                view, QColor("#445566"), during=lambda: state.update(valid=False)
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(view.applied, [])
+
+    def test_width_choice_applies_only_to_the_current_editable_annotations(self):
+        view = self._color_view()
+        owner = view._context_menu_owner()
+        view._apply_context_annotation_width(owner, {"a1": view.annotation}, 2.5)
+        self.assertEqual(view.applied, [{"width": 2.5}])
+        view._context_menu_action_state = lambda key: {"enabled": False}
+        view._apply_context_annotation_width(owner, {"a1": view.annotation}, 3.5)
+        view._context_menu_action_state = lambda key: {"enabled": True}
+        view._selected_uids = {"other"}
+        view._apply_context_annotation_width(owner, {"a1": view.annotation}, 4.5)
+        self.assertEqual(view.applied, [{"width": 2.5}])
+
+    def test_common_submenus_report_the_page_image_mode_and_overlay_availability(self):
+        view = self._owned()
+        captured = []
+
+        def fake_submenus(menu, current_mode, callback, state, *, has_overlay_image):
+            captured.append((menu, current_mode, callback, state, has_overlay_image))
+            return "overlay-action", "original-action"
+
+        for page, mode, has_overlay in (
+            (None, 0, False),
+            (
+                Page(
+                    uid="p",
+                    name="P",
+                    image_show_mode=2,
+                    overlay_image_path="overlay.png",
+                ),
+                2,
+                True,
+            ),
+            (
+                Page(uid="p", name="P", image_show_mode=1, overlay_image_path=""),
+                1,
+                False,
+            ),
+        ):
+            with self.subTest(mode=mode, has_overlay=has_overlay):
+                captured.clear()
+                view._current_page = page
+                menu = object()
+                with patch.object(
+                    input_handler_module, "add_common_context_submenus", fake_submenus
+                ):
+                    result = InputHandlerMixin._add_common_context_submenus(view, menu)
+                self.assertEqual(result, (mode, "overlay-action", "original-action"))
+                self.assertEqual(len(captured), 1)
+                self.assertIs(captured[0][0], menu)
+                self.assertEqual(captured[0][1], mode)
+                self.assertIs(captured[0][3], view._context_menu_action_state)
+                self.assertIs(captured[0][4], has_overlay)
+        # The callback runs owned commands for the page that was current when the menu was built.
+        view._current_page = Page(uid="page-1", name="Page")
+        with patch.object(
+            input_handler_module, "add_common_context_submenus", fake_submenus
+        ):
+            InputHandlerMixin._add_common_context_submenus(view, object())
+        captured[-1][2]("paste")
+        self.assertEqual(view.commands, ["paste"])
+
+    def test_clipboard_and_page_sections_forward_owned_commands_and_the_delete_layout(
+        self,
+    ):
+        view = self._owned()
+        captured = {}
+        for name, call in (
+            (
+                "add_context_clipboard_actions",
+                lambda menu: InputHandlerMixin._add_context_clipboard_actions(
+                    view, menu
+                ),
+            ),
+            (
+                "add_context_page_actions",
+                lambda menu: InputHandlerMixin._add_context_page_actions(view, menu),
+            ),
+        ):
+            with self.subTest(name):
+
+                def fake(menu, callback, state, **kwargs):
+                    captured.update(
+                        menu=menu, callback=callback, state=state, kwargs=kwargs
+                    )
+
+                menu = object()
+                with patch.object(input_handler_module, name, fake):
+                    call(menu)
+                self.assertIs(captured["menu"], menu)
+                self.assertIs(captured["state"], view._context_menu_action_state)
+                captured["callback"]("copy")
+                self.assertEqual(view.commands[-1], "copy")
+        self.assertEqual(captured["kwargs"], {"separate_delete": False})
+        with patch.object(input_handler_module, "add_context_page_actions", fake):
+            InputHandlerMixin._add_context_page_actions(
+                view, object(), separate_delete=True
+            )
+        self.assertEqual(captured["kwargs"], {"separate_delete": True})
+
+    def test_overlay_resolution_reports_whether_the_action_was_an_overlay_choice(self):
+        view = self._owned()
+        overlay_action, original_action = QAction("overlay"), QAction("original")
+        for resolved, action, handled, command in (
+            (None, QAction("other"), False, None),
+            (2, overlay_action, True, None),
+            (1, overlay_action, True, input_handler_module.ACTION_SHOW_OVERLAY_IMAGE),
+            (0, original_action, True, input_handler_module.ACTION_SHOW_ORIGINAL_IMAGE),
+        ):
+            with self.subTest(resolved=resolved, action=action.text()):
+                view.commands.clear()
+                with patch.object(
+                    input_handler_module,
+                    "resolve_overlay_menu_action",
+                    lambda *args: resolved,
+                ):
+                    result = InputHandlerMixin._resolve_context_overlay_action(
+                        view, action, 2, overlay_action, original_action
+                    )
+                self.assertIs(result, handled)
+                self.assertEqual(view.commands, [command] if command else [])
+
+    def test_common_menu_layout_and_choice_handling(self):
+        view = self.cm._menu_view(set())
+        log = _RecordingMenu.log
+        view._add_common_context_submenus = lambda menu: (
+            log.append("submenus"),
+            (0, None, None),
+        )[1]
+        view._add_context_clipboard_actions = lambda menu: log.append("clipboard")
+        view._add_context_page_actions = lambda menu, **kw: log.append(("page", kw))
+        view.reset_ctrl_held = lambda: log.append("reset_ctrl")
+        resolved = []
+        view._resolve_context_overlay_action = (
+            lambda *args: resolved.append(args) or True
+        )
+        _RecordingMenu.chooser = None
+        event = FakeContextMenuEvent(0, 0)
+        with patch.object(input_handler_module, "QMenu", _RecordingMenu):
+            InputHandlerMixin._show_common_context_menu(
+                view, event, lambda menu: log.append("clipboard_callback")
+            )
+        self.assertEqual(
+            log,
+            [
+                "submenus",
+                "sep",
+                "clipboard_callback",
+                "sep",
+                ("page", {"separate_delete": True}),
+                "reset_ctrl",
+            ],
+        )
+        self.assertEqual(resolved, [])
+        for label, stale in (("current", False), ("page replaced", True)):
+            with self.subTest(label):
+                resolved.clear()
+
+                def choose(menu, stale=stale):
+                    if stale:
+                        view._current_page = Page(uid="page-1", name="Replacement")
+                    return "chosen"
+
+                _RecordingMenu.chooser = choose
+                with patch.object(input_handler_module, "QMenu", _RecordingMenu):
+                    InputHandlerMixin._show_common_context_menu(
+                        view, event, lambda menu: None
+                    )
+                self.assertEqual(len(resolved), 0 if stale else 1)
+
+    def test_pdf_text_copy_is_dropped_when_the_menu_owner_changed(self):
+        view = self.cm._menu_view(set())
+        view.has_selected_pdf_text = lambda: True
+        selection = object()
+        view._selected_pdf_text_selection = selection
+        copied = []
+        view.copy_selected_pdf_text = lambda: copied.append(1) or True
+        actions = self.cm._run_menu(view)
+        actions["Copy"].trigger()
+        self.assertEqual(copied, [1])
+        view._current_page = Page(uid="page-1", name="Replacement")
+        actions["Copy"].trigger()
+        self.assertEqual(copied, [1])
+
+
+class InputHandlerPolygonControlPointPositionSweepTests(_CtrlDragFixture):
+    """_polygon_control_point_position: eligibility, edge/vertex bounds and hole-containment checks."""
+
+    def _edge(self, uid="area1", index=0, point=(50.0, 0.0)):
+        return PolygonControlPointTarget(
+            plan_item_uid=uid, kind="edge", edge_index=index, insert_point=point
+        )
+
+    def test_a_triangle_accepts_an_added_control_point(self):
+        view = self._make_area_control_point_view()
+        view._current_takeoffs["area1"].position = [0.0, 0.0, 100.0, 0.0, 0.0, 100.0]
+        self.assertEqual(
+            view._polygon_control_point_position(self._edge()),
+            [0.0, 0.0, 50.0, 0.0, 100.0, 0.0, 0.0, 100.0],
+        )
+
+    def test_takeoffs_that_are_not_areas_have_no_control_points(self):
+        view = self._make_area_control_point_view()
+        self.assertIsNone(
+            view._polygon_control_point_position(self._edge("linear1", 0, (250.0, 0.0)))
+        )
+
+    def test_an_edge_target_needs_an_insert_point_and_an_existing_edge(self):
+        view = self._make_area_control_point_view()
+        for label, target in (
+            (
+                "no insert point",
+                PolygonControlPointTarget(
+                    plan_item_uid="area1", kind="edge", edge_index=0
+                ),
+            ),
+            ("edge past the end", self._edge(index=4)),
+            ("negative edge", self._edge(index=-1)),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(view._polygon_control_point_position(target))
+        self.assertEqual(
+            view._polygon_control_point_position(
+                self._edge(index=3, point=(0.0, 50.0))
+            ),
+            [0.0, 0.0, 100.0, 0.0, 100.0, 100.0, 0.0, 100.0, 0.0, 50.0],
+        )
+
+    def test_hole_containment_is_checked_only_for_parents_that_have_child_holes(self):
+        view = self._make_area_control_point_view()
+        checked = []
+        view._validate_parent_contains_holes = (
+            lambda uid, position: checked.append(uid) or False
+        )
+        self.assertIsNotNone(view._polygon_control_point_position(self._edge()))
+        self.assertEqual(checked, [])
+        view = self._make_area_control_point_view(include_hole=True)
+        view._validate_parent_contains_holes = (
+            lambda uid, position: checked.append(uid) or False
+        )
+        self.assertIsNone(view._polygon_control_point_position(self._edge()))
+        self.assertEqual(checked, ["area1"])
+        view._validate_parent_contains_holes = (
+            lambda uid, position: checked.append(uid) or True
+        )
+        self.assertIsNotNone(view._polygon_control_point_position(self._edge()))
+
+    def test_annotation_polygons_never_check_hole_containment(self):
+        view, _annotation = self._make_annotation_control_point_view("polygon")
+        view._has_child_holes = lambda uid: True
+        checked = []
+        view._validate_parent_contains_holes = (
+            lambda uid, position: checked.append(uid) or False
+        )
+        self.assertIsNotNone(
+            view._polygon_control_point_position(
+                self._edge("polygon1", 0, (450.0, 0.0))
+            )
+        )
+        self.assertEqual(checked, [])
+
+
+class _SizedViewport:
+    """Delegates to the real viewport but reports a chosen size."""
+
+    def __init__(self, real, size):
+        self._real = real
+        self._size = size
+
+    def size(self):
+        return self._size
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class InputHandlerWidgetEventSweepTests(_RealViewGestureFixture):
+    """show/resize/focus/leave/palette handlers: each step runs only for the state that calls for it."""
+
+    def _scheduled(self, view):
+        scheduled = []
+        view._apply_pending_visible_view_state = lambda: scheduled.append("pending")
+        patcher = patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            lambda delay, callback: scheduled.append((delay, callback)),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return scheduled
+
+    def test_show_applies_the_pending_view_and_queues_the_page_load_only_until_it_is_applied(
+        self,
+    ):
+        view = self._real_view()
+        scheduled = self._scheduled(view)
+        view._load_view_applied = False
+        view.showEvent(QtGui.QShowEvent())
+        self.assertEqual(
+            scheduled, ["pending", (0, view._finalize_queued_page_load_if_valid)]
+        )
+        scheduled.clear()
+        view._load_view_applied = True
+        view.showEvent(QtGui.QShowEvent())
+        self.assertEqual(scheduled, ["pending"])
+
+    def test_resize_queues_the_page_load_only_when_every_visibility_condition_holds(
+        self,
+    ):
+        valid = QtCore.QSize(200, 100)
+        for label, waiting, applied, visible, size, queued in (
+            ("all conditions", True, False, True, valid, True),
+            ("not waiting", False, False, True, valid, False),
+            ("already applied", True, True, True, valid, False),
+            ("hidden", True, False, False, valid, False),
+            ("empty viewport", True, False, True, QtCore.QSize(-1, -1), False),
+        ):
+            with self.subTest(label):
+                view = self._real_view()
+                scheduled = self._scheduled(view)
+                view._load_waiting_for_visibility = waiting
+                view._load_view_applied = applied
+                view.isVisible = lambda visible=visible: visible
+                real_viewport = view.viewport()
+                view.viewport = lambda size=size, real=real_viewport: _SizedViewport(
+                    real, size
+                )
+                view.resizeEvent(
+                    QtGui.QResizeEvent(QtCore.QSize(10, 10), QtCore.QSize(5, 5))
+                )
+                expected = ["pending"] + (
+                    [(0, view._finalize_queued_page_load_if_valid)] if queued else []
+                )
+                self.assertEqual(scheduled, expected)
+
+    def test_focus_loss_cancels_drag_interactions_and_restores_their_preview(self):
+        view = self._real_view()
+        cancelled = []
+        view._cancel_active_drag_interaction = lambda restore_preview: cancelled.append(
+            restore_preview
+        )
+        view._cancel_rotation_drag_interaction = lambda: cancelled.append("rotation")
+        view.reset_ctrl_held = lambda: cancelled.append("ctrl")
+        view.focusOutEvent(QtGui.QFocusEvent(QtCore.QEvent.Type.FocusOut))
+        self.assertEqual(cancelled, ["rotation", True, "ctrl"])
+
+    def test_leaving_the_view_cancels_an_unfinished_drag_only_without_a_held_left_button(
+        self,
+    ):
+        for buttons, cancels in (
+            (Qt.MouseButton.NoButton, True),
+            (Qt.MouseButton.LeftButton, False),
+        ):
+            with self.subTest(buttons=buttons):
+                view = self._real_view()
+                cancelled = []
+                updates = []
+                cursors = []
+                view._cancel_active_drag_interaction = (
+                    lambda restore_preview: cancelled.append(restore_preview)
+                )
+                view.viewport = lambda: SimpleNamespace(
+                    update=lambda: updates.append(1),
+                    unsetCursor=lambda: cursors.append(1),
+                )
+                view._cursor_mode = CURSOR_MODE_SELECT
+                view._selection_enabled = True
+                view._last_mouse_vp_pos = QtCore.QPoint(3, 4)
+                with patch.object(
+                    input_handler_module,
+                    "QApplication",
+                    SimpleNamespace(mouseButtons=lambda b=buttons: b),
+                ):
+                    view.leaveEvent(QtCore.QEvent(QtCore.QEvent.Type.Leave))
+                self.assertEqual(cancelled, [True] if cancels else [])
+                self.assertEqual(updates, [1])
+                self.assertEqual(cursors, [1])
+                self.assertIsNone(view._last_mouse_vp_pos)
+
+    def test_leaving_the_view_keeps_the_tool_cursor_outside_select_mode(self):
+        view = self._real_view()
+        cursors = []
+        view.viewport = lambda: SimpleNamespace(
+            update=lambda: None, unsetCursor=lambda: cursors.append(1)
+        )
+        view._cancel_active_drag_interaction = lambda restore_preview: None
+        view._cursor_mode = CURSOR_MODE_ZOOM
+        view.leaveEvent(QtCore.QEvent(QtCore.QEvent.Type.Leave))
+        self.assertEqual(cursors, [])
+
+    def test_only_a_palette_change_refreshes_the_background(self):
+        for event_type, refreshes in (
+            (QtCore.QEvent.Type.PaletteChange, 1),
+            (QtCore.QEvent.Type.EnabledChange, 0),
+        ):
+            with self.subTest(event_type=event_type):
+                view = self._real_view()
+                refreshed = []
+                view._set_palette_background = lambda: refreshed.append(1)
+                view.changeEvent(QtCore.QEvent(event_type))
+                self.assertEqual(len(refreshed), refreshes)
+
+
+class InputHandlerReleaseTextMoveSweepTests(_CtrlDragFixture):
+    """mouseReleaseEvent: only a body drag of a text annotation moves just its anchor pair."""
+
+    def test_text_release_without_a_body_handle_moves_every_pair(self):
+        release = InputHandlerMixinReleaseCommitTests(
+            "test_text_annotation_body_release_moves_only_the_first_pair"
+        )
+        for handle_index, only_first_pair in ((-1, True), (-2, False)):
+            with self.subTest(handle_index=handle_index):
+                view = release._view()
+                view._current_takeoffs = {}
+                view._current_annotations = {
+                    "t1": BidAnnotation(
+                        uid="t1", annotation_type="text", position=[0.0, 0.0, 10.0, 4.0]
+                    )
+                }
+                view._drag_orig_position = [0.0, 0.0, 10.0, 4.0]
+                view._drag_handle_index = handle_index
+                release._release(view)
+                self.assertIs(
+                    view.compute_calls[0][1]["move_only_first_pair"], only_first_pair
+                )

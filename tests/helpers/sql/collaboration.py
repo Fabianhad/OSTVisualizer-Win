@@ -1,4 +1,5 @@
 import json
+import queue
 import threading
 import time
 import unittest
@@ -7,6 +8,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    COLLABORATION_LOCK_SECONDS,
+    COLLABORATION_STALE_SECONDS,
     AuthoritativeMutationResult,
     ChangeOperation,
     CollaborationMutationType,
@@ -439,19 +442,25 @@ class _RaisingReconciliation(_Reconciliation):
 
 class _DeferredProjectionReconciliation(_Reconciliation):
     def __init__(self):
+        super().__init__()
         self.token = None
 
     def apply(self, _batch, projection_barrier=None, *, local_completion=False):
+        self.batches.append(_batch)
+        self.projection_barriers.append(projection_barrier)
         self.token = projection_barrier.register("test-plan")
         return ReconciliationResult(applied=True)
 
 
 class _FailFirstLocalProjectionReconciliation(_Reconciliation):
     def __init__(self):
+        super().__init__()
         self.token = None
         self.local_projection_started = threading.Event()
 
     def apply(self, _batch, projection_barrier=None, *, local_completion=False):
+        self.batches.append(_batch)
+        self.projection_barriers.append(projection_barrier)
         if local_completion and self.token is None:
             self.token = projection_barrier.register("test-plan")
             self.local_projection_started.set()
@@ -892,3 +901,285 @@ def _batch(
         ),
         changes=changes,
     )
+
+
+class _FakeSqlServerState:
+    """In-memory model of one database's ostv.Sessions/ostv.Locks tables.
+    It models what SqlCollaborationStore relies on the SERVER for: every
+    timestamp is the server UTC clock (`now`, advanced only by tests and never
+    supplied by a client); a session is active only while it is not disconnected
+    and its last heartbeat is within COLLABORATION_STALE_SECONDS; a lock row is
+    live only until its server-side expiry and is exclusive per
+    (resource type, resource id) across sessions whatever the Bid context is;
+    acquisition is all-or-nothing in sorted order and re-acquiring an owned row
+    returns its existing token. It is only a fake: no T-SQL, isolation levels,
+    sp_getapplock waits or deadlocks are involved, so it proves coordinator
+    behaviour against the store contract, never SQL Server behaviour.
+    """
+
+    def __init__(self):
+        self.guard = threading.RLock()
+        self.now = 1_000_000.0
+        self.sessions = {}
+        self.locks = {}
+        self.acquire_orders = []
+        self.closed_reasons = []
+
+    def advance(self, seconds):
+        with self.guard:
+            self.now += seconds
+
+    def _session_is_active(self, session_id):
+        session = self.sessions.get(session_id)
+        return (
+            session is not None
+            and not session["disconnected"]
+            and session["heartbeat"] >= self.now - COLLABORATION_STALE_SECONDS
+        )
+
+    @staticmethod
+    def _expired_error(message):
+        return SqlInfrastructureError(
+            SqlErrorDetails(SqlErrorCode.SESSION_EXPIRED, message)
+        )
+
+    def start(self, session_id):
+        with self.guard:
+            self.sessions[session_id] = {
+                "heartbeat": self.now,
+                "disconnected": False,
+            }
+
+    def heartbeat(self, session_id):
+        with self.guard:
+            if not self._session_is_active(session_id):
+                raise self._expired_error(
+                    "The SQL collaboration session expired. Reconnecting is "
+                    "required before editing."
+                )
+            self.sessions[session_id]["heartbeat"] = self.now
+
+    def disconnect(self, session_id, reason):
+        with self.guard:
+            self.closed_reasons.append((session_id, reason))
+            if session_id in self.sessions:
+                self.sessions[session_id]["disconnected"] = True
+            for key in [
+                key for key, lock in self.locks.items() if lock["owner"] == session_id
+            ]:
+                del self.locks[key]
+
+    def _live_locks(self):
+        return {
+            key: lock for key, lock in self.locks.items() if lock["expires"] > self.now
+        }
+
+    def live_lock_tokens(self):
+        with self.guard:
+            return {key: lock["token"] for key, lock in self._live_locks().items()}
+
+    def list_locks(self, excluding_session_id, bid_uid):
+        with self.guard:
+            return tuple(
+                lock["resource"]
+                for _key, lock in sorted(self._live_locks().items())
+                if lock["owner"] != excluding_session_id
+                and (bid_uid is None or lock["resource"].bid_uid == bid_uid)
+            )
+
+    def acquire(self, session_id, resources):
+        ordered = tuple(sorted(set(resources)))
+        with self.guard:
+            self.acquire_orders.append(
+                tuple(resource.lease_identity for resource in ordered)
+            )
+            if not self._session_is_active(session_id):
+                raise self._expired_error(
+                    "The SQL collaboration session expired. Reconnect before editing."
+                )
+            live = self._live_locks()
+            for resource in ordered:
+                held = live.get(resource.lease_identity)
+                if held is not None and held["owner"] != session_id:
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.LOCKED,
+                            f"{resource.resource_type} {resource.resource_id} "
+                            "is being edited by another session.",
+                        )
+                    )
+            granted = []
+            for resource in ordered:
+                key = resource.lease_identity
+                held = live.get(key)
+                if held is None:
+                    held = {
+                        "resource": resource,
+                        "owner": session_id,
+                        "token": str(uuid.uuid4()),
+                    }
+                    self.locks[key] = held
+                held["expires"] = self.now + COLLABORATION_LOCK_SECONDS
+                granted.append((resource, held["token"]))
+            return tuple(granted)
+
+    def renew(self, session_id, lock_token):
+        with self.guard:
+            if not self._session_is_active(session_id):
+                raise self._expired_error(
+                    "The SQL collaboration session expired. Reconnect before editing."
+                )
+            for lock in self._live_locks().values():
+                if lock["token"] == lock_token and lock["owner"] == session_id:
+                    lock["expires"] = self.now + COLLABORATION_LOCK_SECONDS
+                    return lock["resource"]
+            raise self._expired_error(
+                "The edit lock expired and can no longer be renewed."
+            )
+
+    def release(self, session_id, lock_token):
+        with self.guard:
+            for key, lock in list(self.locks.items()):
+                if lock["token"] == lock_token and lock["owner"] == session_id:
+                    del self.locks[key]
+                    return True
+            return False
+
+
+class _ServerBackedStore(_CollaborationStore):
+    """_CollaborationStore whose sessions and locks live in _FakeSqlServerState.
+    Unlike _LockingStore it enforces cross-session exclusivity, unique tokens,
+    sorted all-or-nothing acquisition, server-side lease expiry and stale-session
+    rejection with the same SqlInfrastructureError codes as the real store.
+    """
+
+    def __init__(self, state=None):
+        super().__init__()
+        self.state = state if state is not None else _FakeSqlServerState()
+        self.acquire_requests = []
+        self.heartbeats = []
+        self.renewals = []
+
+    def start_session(self, database_id, session_id, *args, **kwargs):
+        self.state.start(session_id)
+        return super().start_session(database_id, session_id, *args, **kwargs)
+
+    def heartbeat(
+        self, database_id, session_id, acknowledged_version, bid_uid, page_uid, mode
+    ):
+        self.state.heartbeat(session_id)
+        self.heartbeats.append((session_id, acknowledged_version, bid_uid, page_uid))
+        return super().heartbeat(
+            database_id, session_id, acknowledged_version, bid_uid, page_uid, mode
+        )
+
+    def close_session(self, database_id, session_id, reason):
+        self.state.disconnect(session_id, reason)
+        super().close_session(database_id, session_id, reason)
+
+    def list_locks(self, database_id, excluding_session_id, bid_uid=None):
+        return tuple(
+            ResourceLock(database_id, resource, "foreign-token")
+            for resource in self.state.list_locks(excluding_session_id, bid_uid)
+        )
+
+    def acquire_locks(self, database_id, session_id, resources, operation_description):
+        self.acquire_requests.append(tuple(resources))
+        return tuple(
+            ResourceLock(database_id, resource, token)
+            for resource, token in self.state.acquire(session_id, resources)
+        )
+
+    def renew_lock(self, database_id, session_id, lock_token):
+        resource = self.state.renew(session_id, lock_token)
+        self.renewals.append((session_id, lock_token))
+        return ResourceLock(database_id, resource, lock_token)
+
+    def release_lock(self, database_id, session_id, lock_token):
+        return self.state.release(session_id, lock_token)
+
+
+class _UiThreadDispatcher:
+    """IThreadCallbackBridge model: dispatch() only queues the callback.
+    Callbacks run exclusively when the thread that created the dispatcher (the
+    test thread, standing in for the Qt UI thread) calls pump_until(), so a
+    callback that production runs directly on a worker thread instead of
+    crossing the bridge is observable through `executed_on`.
+    """
+
+    def __init__(self):
+        self.ui_thread = threading.get_ident()
+        self._queue = queue.Queue()
+        self.dispatched_from = []
+        self.executed_on = []
+
+    def dispatch(self, callback, payload=()):
+        self.dispatched_from.append(threading.get_ident())
+        self._queue.put((callback, payload))
+
+    def pump_until(self, predicate, timeout=5.0):
+        if threading.get_ident() != self.ui_thread:
+            raise AssertionError("The UI dispatcher must be pumped on its own thread")
+        deadline = time.monotonic() + timeout
+        while not predicate():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                callback, payload = self._queue.get(timeout=min(remaining, 0.02))
+            except queue.Empty:
+                continue
+            self.executed_on.append((callback.__name__, threading.get_ident()))
+            callback(payload)
+        return True
+
+    def pump_idle(self, is_busy=None, max_callbacks=200, timeout=10.0):
+        """Run queued callbacks until the queue is empty and no collaboration
+        drain thread (or other `is_busy()` work) is still running, then return the
+        number of callbacks run. `max_callbacks` is the runaway guard: a feedback
+        loop that keeps scheduling work stops there instead of spinning, and the
+        caller asserts the returned count stayed below it. Work that never goes
+        idle (a busy thread that schedules no callbacks) fails after `timeout`."""
+        if threading.get_ident() != self.ui_thread:
+            raise AssertionError("The UI dispatcher must be pumped on its own thread")
+        if is_busy is None:
+
+            def is_busy():
+                return any(
+                    thread.name.startswith("SqlCollaborationDrain-")
+                    and thread.is_alive()
+                    for thread in threading.enumerate()
+                )
+
+        executed = 0
+        deadline = time.monotonic() + timeout
+        while executed < max_callbacks:
+            try:
+                callback, payload = self._queue.get(timeout=0.02)
+            except queue.Empty:
+                if is_busy():
+                    if time.monotonic() > deadline:
+                        raise AssertionError(
+                            f"The UI dispatcher was still busy after {timeout} s"
+                        )
+                    continue
+                try:
+                    callback, payload = self._queue.get_nowait()
+                except queue.Empty:
+                    return executed
+            self.executed_on.append((callback.__name__, threading.get_ident()))
+            callback(payload)
+            executed += 1
+        return executed
+
+
+class _ThreadRecordingEventBus(_EventBus):
+    """_EventBus that records the thread each event was published on."""
+
+    def __init__(self):
+        super().__init__()
+        self.publish_threads = []
+
+    def publish(self, event, **payload):
+        self.publish_threads.append((event, threading.get_ident()))
+        super().publish(event, **payload)

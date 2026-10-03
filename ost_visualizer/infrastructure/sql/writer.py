@@ -9,16 +9,19 @@ from dataclasses import dataclass, field
 from typing import Callable, Generator, Optional, Sequence, TypeVar
 import pyodbc
 from ...application.dtos.collaboration_dtos import (
+    BID_LOCKED_MESSAGE,
     COLLABORATION_STALE_SECONDS,
     ChangeOperation,
     ConcurrencyToken,
     DatabaseMutationRequest,
     DatabaseMutationResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     PlanTakeoffOwnership,
     ResourceRef,
     SynchronizationConflict,
     SynchronizationConflictKind,
+    resource_lock_sort_key,
 )
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceType,
@@ -127,6 +130,14 @@ class _OptimisticConflict(SqlInfrastructureError):
         self.resource = resource
         self.expected = expected
         self.actual = actual
+
+
+class _BidLockedRefusal(SqlInfrastructureError):
+    """The write touches a child resource of a locked Bid: refused, not conflicted.
+    Raised before the operation runs, so the transaction rolls back untouched."""
+
+    def __init__(self) -> None:
+        super().__init__(SqlErrorDetails(SqlErrorCode.LOCKED, BID_LOCKED_MESSAGE))
 
 
 @dataclass
@@ -411,6 +422,13 @@ class SqlProjectWriter(MdbWriter):
     ) -> DatabaseMutationResult[T]:
         try:
             return self._execute_mutation_transaction(request, operation)
+        except _BidLockedRefusal as exc:
+            self.logger.warning("SQL write refused: %s", exc)
+            return DatabaseMutationResult(
+                operation_id=request.operation_id,
+                outcome_status=MutationOutcomeStatus.REJECTED,
+                rejection_reason=MutationRejectionReason.BID_LOCKED,
+            )
         except SqlInfrastructureError as exc:
             if exc.details.code not in {
                 SqlErrorCode.CONFLICT,
@@ -594,18 +612,7 @@ class SqlProjectWriter(MdbWriter):
                     lock_modes[resource] = "Exclusive"
             ordered_locks = tuple(
                 (resource, lock_modes[resource])
-                for resource in sorted(
-                    lock_modes,
-                    key=lambda item: (
-                        (
-                            0
-                            if item.resource_type == CollaborationResourceType.BID.value
-                            else 1
-                        ),
-                        item.resource_type,
-                        item.resource_id,
-                    ),
-                )
+                for resource in sorted(lock_modes, key=resource_lock_sort_key)
             )
             acquire_resource_transaction_locks(cursor, ordered_locks)
             self._validate_mutation_locks(state, cursor, resources)
@@ -729,7 +736,13 @@ class SqlProjectWriter(MdbWriter):
             "LEFT JOIN [ostv].[EntityVersions] versions WITH (UPDLOCK, HOLDLOCK) "
             "ON versions.[ResourceType]=expected.[ResourceType] AND "
             "versions.[ResourceId]=expected.[ResourceId] WHERE "
-            "versions.[Token] IS NULL OR versions.[Token]<>expected.[ExpectedToken]) "
+            "versions.[Token] IS NULL OR versions.[Token]<>expected.[ExpectedToken] "
+            "UNION ALL SELECT -1, N'bid_locked', NULL, NULL, NULL FROM "
+            "@MutationResources resources JOIN [dbo].[Bids] bids ON "
+            "bids.[UID]=resources.[BidUID] JOIN [dbo].[JobStatuses] statuses ON "
+            "statuses.[UID]=bids.[JobStatusUID] WHERE ?=0 AND "
+            "resources.[ResourceType]<>N'bid' AND resources.[BidUID] IS NOT NULL "
+            "AND (statuses.[Locked] IS NULL OR statuses.[Locked]=1)) "
             "SELECT TOP (1) [Kind], [Owner], [ExpectedOrdinal], [ActualToken] "
             "FROM Violations ORDER BY [Priority]",
             resource_payload,
@@ -745,11 +758,14 @@ class SqlProjectWriter(MdbWriter):
             state.request.session_id,
             state.request.session_id,
             state.request.session_id,
+            state.request.bid_lock_exempt,
         )
         violation = cursor.fetchone()
         if violation is None:
             return
         kind = str(violation[0])
+        if kind == "bid_locked":
+            raise _BidLockedRefusal()
         if kind == "rowversion":
             ordinal = int(violation[2])
             if ordinal < 0 or ordinal >= len(expected_versions):

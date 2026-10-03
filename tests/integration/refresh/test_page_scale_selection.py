@@ -118,12 +118,18 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         coordinator._tab_widget = SimpleNamespace(
             currentIndex=lambda: TAB_INDEX_TAKEOFF
         )
-        coordinator._viewer = SimpleNamespace(clear_plan_view=lambda: None)
+        cleared_plan_views = []
+        coordinator._viewer = SimpleNamespace(
+            clear_plan_view=lambda: cleared_plan_views.append(True),
+            cleared=cleared_plan_views,
+        )
+        select_mode_resets = []
+        coordinator._reset_to_select_mode = lambda: select_mode_resets.append(True)
+        coordinator.select_mode_resets = select_mode_resets
         coordinator._status_panel = None
         coordinator._nav = Nav()
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
         coordinator._is_condition_placeable = lambda _uid: False
-        coordinator._reset_to_select_mode = lambda: None
         coordinator._load_takeoff_sidebar = lambda _bid_ref: page_combo.load_bid(
             refreshed_bid
         )
@@ -173,6 +179,8 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         self.assertEqual(projected[0][1].scale_factor1, 0.25)
         self.assertEqual(page_combo.get_active_page_uid(), authoritative.uid)
         self.assertEqual(coordinator._selected_takeoff_uids, ("takeoff-1",))
+        # The active page is unchanged, so the Plan is not cleared and rebuilt.
+        self.assertEqual(coordinator._viewer.cleared, [])
 
     def test_changed_active_page_projects_once_without_duplicate_reload(self) -> None:
         original = Page(uid="page-1", name="A101")
@@ -187,6 +195,8 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         coordinator._finish_refresh()
         self.assertEqual(projected, [(replacement.uid, replacement)])
         self.assertEqual(page_combo.get_active_page_uid(), replacement.uid)
+        # The original active page no longer exists, so the Plan is cleared once.
+        self.assertEqual(coordinator._viewer.cleared, [True])
 
     def test_scale_refresh_rebinds_reconstructed_conditions_without_select_reset(
         self,
@@ -200,12 +210,10 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         )
         self.addCleanup(page_combo.close)
         accepted_reconstruction = []
-        select_resets = []
         coordinator._nav.refresh_snapshot.place_condition_uid = "condition-1"
         coordinator._nav.refresh_snapshot.place_condition_uids = ["condition-1"]
         coordinator.project_data.get_bid_conditions = lambda: {"condition-1": object()}
         coordinator._is_condition_placeable = lambda uid: uid == "condition-1"
-        coordinator._set_plan_select_mode = lambda: select_resets.append(True)
         coordinator._tab_widget = None
 
         class Placement:
@@ -221,34 +229,47 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         coordinator._placement = Placement()
         coordinator._finish_refresh(accept_reconstructed_placement_conditions=True)
         self.assertEqual(accepted_reconstruction, [True])
-        self.assertEqual(select_resets, [])
+        self.assertEqual(coordinator.select_mode_resets, [])
         self.assertEqual(
             coordinator._pending_takeoff_place_condition_uid,
             "condition-1",
         )
 
     def test_select_mode_remains_select_during_scale_refresh(self) -> None:
-        page = Page(uid="page-1", name="A101", scale_factor1=0.25)
-        coordinator, page_combo, _projected = self._make_refresh_coordinator(
-            initial_pages=[page],
-            refreshed_pages=[page],
-            selected_page_uids=[page.uid],
-            active_page_uid=page.uid,
-        )
-        self.addCleanup(page_combo.close)
-        reconcile_calls = []
+        # Scenario A: the refresh snapshot holds no placement condition. Scenario B:
+        # a snapshot condition is present but placement is no longer active.
+        for snapshot_condition in (None, "condition-1"):
+            with self.subTest(snapshot_condition=snapshot_condition):
+                page = Page(uid="page-1", name="A101", scale_factor1=0.25)
+                coordinator, page_combo, _projected = self._make_refresh_coordinator(
+                    initial_pages=[page],
+                    refreshed_pages=[page],
+                    selected_page_uids=[page.uid],
+                    active_page_uid=page.uid,
+                )
+                self.addCleanup(page_combo.close)
+                coordinator._nav.refresh_snapshot.place_condition_uid = (
+                    snapshot_condition
+                )
+                coordinator._nav.refresh_snapshot.place_condition_uids = (
+                    [snapshot_condition] if snapshot_condition else []
+                )
+                reconcile_calls = []
 
-        class Placement:
-            is_active = False
+                class Placement:
+                    is_active = False
 
-            @staticmethod
-            def reconcile_authoritative_conditions(
-                *, accept_reconstructed_conditions=False
-            ):
-                reconcile_calls.append(accept_reconstructed_conditions)
-                return True
+                    @staticmethod
+                    def reconcile_authoritative_conditions(
+                        *, accept_reconstructed_conditions=False
+                    ):
+                        reconcile_calls.append(accept_reconstructed_conditions)
+                        return True
 
-        coordinator._placement = Placement()
-        coordinator._finish_refresh(accept_reconstructed_placement_conditions=True)
-        self.assertEqual(reconcile_calls, [])
-        self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)
+                coordinator._placement = Placement()
+                coordinator._finish_refresh(
+                    accept_reconstructed_placement_conditions=True
+                )
+                self.assertEqual(reconcile_calls, [])
+                self.assertEqual(coordinator.select_mode_resets, [])
+                self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)

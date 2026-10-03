@@ -712,3 +712,450 @@ class SchemaValidatorNormalizationTests(unittest.TestCase):
         self.assertFalse(_matches_default("((1))", "0"))
         self.assertFalse(_matches_default("((0))", None))
         self.assertFalse(_matches_default("", "0"))
+
+
+class SchemaValidatorConstraintDriftTests(unittest.TestCase):
+    """Survivors of the second-pass mutation sweep over schema_validator.py.
+    Every case starts from the canonical inventory (zero problems) and applies
+    ONE change, so the exact label proves which comparison produced it.
+    """
+
+    def setUp(self):
+        self.validator = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema)
+        self.canonical = _canonical_inventory()
+
+    def _problems(self, inventory):
+        return self.validator.validate(inventory).problems
+
+    @staticmethod
+    def _swap(items, old, new):
+        return tuple(new if item is old else item for item in items)
+
+    @staticmethod
+    def _without(items, old):
+        return tuple(item for item in items if item is not old)
+
+    def _core_index(self):
+        # a core table index: dbo, non-primary, with columns
+        return next(
+            i
+            for i in self.canonical.indexes
+            if i.schema_name == "dbo" and not i.primary_key
+        )
+
+    def test_report_and_inventory_values_are_immutable(self):
+        import dataclasses
+
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            SqlSchemaValidationReport().problems = ("x",)
+
+    def test_database_requirements_and_change_tracking_only_apply_when_the_schema_asks(
+        self,
+    ):
+        bad = replace(
+            self.canonical,
+            snapshot_isolation_enabled=False,
+            change_tracking_retention_days=1,
+            change_tracking_auto_cleanup=False,
+            change_tracking_enabled=False,
+            change_tracking_tables=frozenset(),
+        )
+        bare = replace(
+            SQL_SCHEMA_V1, canonical_database_requirements=(), change_tracking_tables=()
+        )
+        self.assertEqual(
+            SqlSchemaValidator._validate_database_requirements(bad, bare), []
+        )
+        self.assertEqual(SqlSchemaValidator._validate_change_tracking(bad, bare), [])
+        # each requirement is individually switchable
+        for requirement, label in (
+            ("ALLOW_SNAPSHOT_ISOLATION=ON", "database.snapshot_isolation"),
+            ("CHANGE_TRACKING_RETENTION=7 DAYS", "database.change_tracking_retention"),
+            (
+                "CHANGE_TRACKING_AUTO_CLEANUP=ON",
+                "database.change_tracking_auto_cleanup",
+            ),
+        ):
+            with self.subTest(requirement=requirement):
+                only = replace(bare, canonical_database_requirements=(requirement,))
+                self.assertEqual(
+                    SqlSchemaValidator._validate_database_requirements(bad, only),
+                    [label],
+                )
+        self.assertEqual(
+            SqlSchemaValidator._validate_change_tracking(
+                bad,
+                replace(bare, change_tracking_tables=(("ostv", "ChangeTransactions"),)),
+            ),
+            ["database.change_tracking", "ostv.ChangeTransactions.change_tracking"],
+        )
+
+    def test_a_missing_core_table_reports_the_table_not_each_of_its_columns(self):
+        canonical = self.canonical
+        problems = self._problems(
+            replace(
+                canonical,
+                tables=canonical.tables - {("dbo", "Bids")},
+                columns=tuple(c for c in canonical.columns if c.table_name != "Bids"),
+            )
+        )
+        self.assertIn("dbo.Bids", problems)
+        self.assertNotIn("dbo.Bids.JobName", problems)
+        self.assertNotIn("dbo.Bids.UID", problems)
+
+    def test_core_primary_key_must_have_the_canonical_columns(self):
+        canonical = self.canonical
+        primary = next(
+            i
+            for i in canonical.indexes
+            if (i.schema_name, i.table_name, i.primary_key) == ("dbo", "Bids", True)
+        )
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    indexes=self._swap(
+                        canonical.indexes, primary, replace(primary, columns=("Other",))
+                    ),
+                )
+            ),
+            ("dbo.Bids.primary_key",),
+        )
+
+    def test_a_core_index_matches_by_name_or_by_content_but_never_across_schema_table_or_shape(
+        self,
+    ):
+        canonical = self.canonical
+        index = self._core_index()
+        label = f"dbo.{index.table_name}.{index.index_name}"
+        renamed = replace(index, index_name="IX_legacy_name")
+        # same columns/uniqueness/no filter under another name is accepted
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical, indexes=self._swap(canonical.indexes, index, renamed)
+                )
+            ),
+            (),
+        )
+        refused = {
+            "other schema": replace(renamed, schema_name="other"),
+            "other table": replace(renamed, table_name="OtherTable"),
+            "other columns": replace(renamed, columns=("Different",)),
+            "uniqueness flipped": replace(renamed, unique=not index.unique),
+            "filtered": replace(renamed, filter_expression="[X] IS NOT NULL"),
+        }
+        for case, candidate in refused.items():
+            with self.subTest(case=case):
+                self.assertEqual(
+                    self._problems(
+                        replace(
+                            canonical,
+                            indexes=self._swap(canonical.indexes, index, candidate),
+                        )
+                    ),
+                    (label,),
+                )
+        # a name hit with different uniqueness is refused too
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    indexes=self._swap(
+                        canonical.indexes,
+                        index,
+                        replace(index, unique=not index.unique),
+                    ),
+                )
+            ),
+            (label,),
+        )
+
+    def test_a_core_foreign_key_matches_by_name_or_by_endpoints_ignoring_case(self):
+        canonical = self.canonical
+        key = next(k for k in canonical.foreign_keys if k.child_schema == "dbo")
+        label = f"dbo.{key.child_table}.{key.name}"
+        renamed = replace(key, name="FK_legacy_name")
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    foreign_keys=self._swap(canonical.foreign_keys, key, renamed),
+                )
+            ),
+            (),
+        )
+        shouting = replace(
+            renamed,
+            child_table=key.child_table.upper(),
+            child_column=key.child_column.upper(),
+            parent_table=key.parent_table.upper(),
+            parent_column=key.parent_column.upper(),
+        )
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    foreign_keys=self._swap(canonical.foreign_keys, key, shouting),
+                )
+            ),
+            (),
+        )
+        for case, candidate in {
+            "other parent": replace(renamed, parent_table="OtherParent"),
+            "other child column": replace(renamed, child_column="OtherColumn"),
+            "other parent column": replace(renamed, parent_column="OtherColumn"),
+            "other child schema": replace(renamed, child_schema="other"),
+        }.items():
+            with self.subTest(case=case):
+                self.assertEqual(
+                    self._problems(
+                        replace(
+                            canonical,
+                            foreign_keys=self._swap(
+                                canonical.foreign_keys, key, candidate
+                            ),
+                        )
+                    ),
+                    (label,),
+                )
+
+    def test_every_ostv_column_property_is_compared(self):
+        canonical = self.canonical
+        column = next(
+            c
+            for c in canonical.columns
+            if (c.schema_name, c.table_name, c.column_name)
+            == ("ostv", "Sessions", "DisplayName")
+        )
+        label = "ostv.Sessions.DisplayName"
+        drifts = {
+            "type": replace(column, data_type="int", max_length=4),
+            "length": replace(column, max_length=column.max_length + 2),
+            "nullability": replace(column, nullable=not column.nullable),
+            "identity": replace(column, identity=True),
+            "computed": replace(column, computed=True),
+            "default": replace(column, default_definition="(N'unexpected')"),
+            "whitespace default": replace(column, default_definition=" "),
+        }
+        for case, drifted in drifts.items():
+            with self.subTest(case=case):
+                self.assertEqual(
+                    self._problems(
+                        replace(
+                            canonical,
+                            columns=self._swap(canonical.columns, column, drifted),
+                        )
+                    ),
+                    (label,),
+                )
+
+    def test_ostv_primary_key_and_unique_constraints_compare_columns_uniqueness_and_filters(
+        self,
+    ):
+        canonical = self.canonical
+        ostv = lambda index: index.schema_name == "ostv"  # noqa: E731
+        sessions_pk = next(
+            i
+            for i in canonical.indexes
+            if ostv(i) and i.table_name == "Sessions" and i.primary_key
+        )
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    indexes=self._swap(
+                        canonical.indexes,
+                        sessions_pk,
+                        replace(sessions_pk, columns=("Other",)),
+                    ),
+                )
+            ),
+            ("ostv.Sessions.primary_key",),
+        )
+        # a primary key of the same table name in ANOTHER schema does not count
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    indexes=self._swap(
+                        canonical.indexes,
+                        sessions_pk,
+                        replace(sessions_pk, schema_name="dbo"),
+                    ),
+                )
+            ),
+            ("ostv.Sessions.primary_key",),
+        )
+        unique = next(
+            i
+            for i in canonical.indexes
+            if ostv(i) and i.index_name == "UQ_ostv_Locks_Resource"
+        )
+        label = "ostv.Locks.UQ_ostv_Locks_Resource"
+        cases = {
+            "missing": self._without(canonical.indexes, unique),
+            "other columns": self._swap(
+                canonical.indexes, unique, replace(unique, columns=("ResourceId",))
+            ),
+            "not unique": self._swap(
+                canonical.indexes, unique, replace(unique, unique=False)
+            ),
+            "filtered": self._swap(
+                canonical.indexes,
+                unique,
+                replace(unique, filter_expression="[X] IS NULL"),
+            ),
+        }
+        for case, indexes in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(
+                    self._problems(replace(canonical, indexes=indexes)), (label,)
+                )
+        index = next(
+            i
+            for i in canonical.indexes
+            if ostv(i) and i.index_name == "IX_ostv_Sessions_ClientHeartbeat"
+        )
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    indexes=self._swap(
+                        canonical.indexes,
+                        index,
+                        replace(index, columns=("ClientInstanceId",)),
+                    ),
+                )
+            ),
+            ("ostv.Sessions.IX_ostv_Sessions_ClientHeartbeat",),
+        )
+
+    def test_ostv_foreign_keys_and_checks_are_scoped_to_their_own_schema_and_table(
+        self,
+    ):
+        canonical = self.canonical
+        key = next(
+            k
+            for k in canonical.foreign_keys
+            if k.name == "FK_ostv_Sessions_DatabaseMetadata"
+        )
+        label = "ostv.Sessions.FK_ostv_Sessions_DatabaseMetadata"
+        for case, moved in {
+            "other child schema": replace(key, child_schema="dbo"),
+            "other child table": replace(key, child_table="OtherTable"),
+        }.items():
+            with self.subTest(case=case):
+                self.assertEqual(
+                    self._problems(
+                        replace(
+                            canonical,
+                            foreign_keys=self._swap(canonical.foreign_keys, key, moved),
+                        )
+                    ),
+                    (label,),
+                )
+        check = next(
+            c
+            for c in canonical.check_constraints
+            if c.name == "CK_ostv_Presence_ActivityMode"
+        )
+        check_label = "ostv.Presence.CK_ostv_Presence_ActivityMode"
+        for case, moved in {
+            "other schema": replace(check, schema_name="dbo"),
+            "other table": replace(check, table_name="OtherTable"),
+        }.items():
+            with self.subTest(case=case):
+                self.assertEqual(
+                    self._problems(
+                        replace(
+                            canonical,
+                            check_constraints=self._swap(
+                                canonical.check_constraints, check, moved
+                            ),
+                        )
+                    ),
+                    (check_label,),
+                )
+
+    def test_ostv_index_filters_and_columns_are_both_compared(self):
+        canonical = self.canonical
+        heartbeat = next(
+            i for i in canonical.indexes if i.index_name == "IX_ostv_Sessions_Heartbeat"
+        )
+        self.assertEqual(
+            self._problems(
+                replace(
+                    canonical,
+                    indexes=self._swap(
+                        canonical.indexes,
+                        heartbeat,
+                        replace(heartbeat, columns=("Other",)),
+                    ),
+                )
+            ),
+            ("ostv.Sessions.IX_ostv_Sessions_Heartbeat",),
+        )
+
+    def test_parenthesis_normalisation_only_strips_a_matching_outer_pair_of_characters(
+        self,
+    ):
+        for value, expected in (
+            ("([A]=1)", "[a]=1"),
+            ("(([A]=1))", "[a]=1"),
+            ("([A]=1", "([a]=1"),  # unbalanced: leading only
+            ("[A]=1)", "[a]=1)"),  # unbalanced: trailing only
+            ("  ( [A] = 1 )  ", "[a]=1"),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(_normalize_filter(value), expected)
+        from ost_visualizer.infrastructure.sql.schema_validator import (
+            _normalize_default,
+        )
+
+        for value, expected in (
+            ("((0))", "0"),
+            ("(1", "(1"),
+            ("1)", "1)"),
+            ("(N'X')", "n'x'"),
+        ):
+            with self.subTest(default=value):
+                self.assertEqual(_normalize_default(value), expected)
+
+    def test_type_matcher_answers_with_real_booleans(self):
+        column = SqlColumnInventory("dbo", "T", "C", "int", 4, 0, False, False, False)
+        self.assertIs(_matches_type(column, "int"), True)
+        self.assertIs(_matches_type(column, "bigint"), False)
+        self.assertIs(_matches_type(column, "nvarchar(10)"), False)
+        self.assertIs(_matches_type(column, "datetime2(3)"), False)
+        self.assertIs(_matches_type(column, "rowversion"), False)
+
+
+class SchemaValidatorRenamedIndexCandidateTests(unittest.TestCase):
+    """Survivors L167: the content match must skip decoys with a different shape."""
+
+    def test_a_renamed_core_index_is_found_past_decoys_that_differ_in_one_property(
+        self,
+    ):
+        canonical = _canonical_inventory()
+        validator = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema)
+        index = next(
+            i for i in canonical.indexes if i.schema_name == "dbo" and not i.primary_key
+        )
+        renamed = replace(index, index_name="IX_legacy_name")
+        decoys = {
+            "other columns": replace(
+                index, index_name="IX_decoy", columns=("Different",)
+            ),
+            "unique": replace(index, index_name="IX_decoy", unique=True),
+            "filtered": replace(
+                index, index_name="IX_decoy", filter_expression="[X] IS NULL"
+            ),
+        }
+        for label, decoy in decoys.items():
+            with self.subTest(decoy=label):
+                others = tuple(i for i in canonical.indexes if i is not index)
+                # decoys come first, so a content match that ignores a property
+                # would settle on the decoy and report a false problem
+                inventory = replace(canonical, indexes=(decoy, renamed, *others))
+                self.assertEqual(validator.validate(inventory).problems, ())

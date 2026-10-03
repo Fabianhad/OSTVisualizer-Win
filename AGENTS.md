@@ -129,7 +129,10 @@ Threading and events:
   surface use its real top-level widget as their transient owner; a child
   `QWidgetWindow` is not a valid top-level owner. Clipboard payloads remain
   detached data, and database ownership comparisons use canonical path
-  normalization. Delayed insert, paste, geometry/property-save, and delete
+  normalization: Access paths in events, local-write `database_id` values and
+  Plan surface contexts (SQL descriptor ids published by the collaboration
+  coordinator are opaque and compare exactly). Delayed insert, paste,
+  geometry/property-save, and delete
   selection belongs to the originating Plan surface's selection revision.
   Result-owned annotation tool reactivation validates both selection and the
   Plan-local tool revision. Cursor mode, annotation type, and placement Condition
@@ -160,7 +163,10 @@ Threading and events:
   they must not substitute a Boolean for a task's structured result. Duplicate
   Bid uses `WriteReloadResult` from service through presentation completion, so
   write failure, refresh failure, and success remain distinct and only the
-  presentation owner emits the user-visible error.
+  presentation owner emits the user-visible error. Access Bid paste and Access
+  OST/OSP import decide their outcome from that worker result only: a dialog
+  rejected after the result arrived cannot turn a committed paste or import into
+  a failure or skip the cut commit or the import refresh.
 - Plan Undo/Redo entries use database/Bid/Page-scoped Takeoff identity and typed
   annotation identity; a raw UID or scene key is never durable history identity.
   Mixed geometry and property replay is one application mutation on both MDB and
@@ -184,6 +190,9 @@ Threading and events:
   restore map can reactivate them with new UIDs. A later entity reusing a deleted
   UID is a different history lifetime. Separately deleted Backouts retain their
   parent's history target as a dependency, not an implicit mutation target.
+  A deleted, pasted or placed Hot Link likewise retains its external Named View as
+  a dependency and follows that view's new UID only when an accepted restore map
+  reactivated it; otherwise the restore is refused with a warning, never guessed.
   Committed Bid Area deletion invalidates
   that Bid's Main and detached Plan history before the Area UID can be reused.
   Forward completions check their original history generation before recording
@@ -647,7 +656,8 @@ Persistence:
   without `Settings.NextBidNo` remains readable, but bid creation, import, and
   duplication must reject it instead of allocating an undurable default number.
   `BidPageSettings` may contain multiple inactive rows, but only one positive
-  selected row per page is canonical. Preserve inactive rows when changing or
+  selected row per page is canonical; blank, `0` and the importer's `NULL`
+  page UIDs are one no-page group. Preserve inactive rows when changing or
   clearing the page filter, and use precedence `BidAreaSelected DESC, UID DESC`
   during reconstruction, import, duplication, and malformed-row normalization.
   Page, Condition, and area deletion catalogs must stay aligned with the same
@@ -682,7 +692,12 @@ Database backends:
   the handle passes the connection health probe. Connection-class errors, failed
   rollback, and failed cursor cleanup mark only that physical handle unhealthy;
   a failed close remains owned and must be retried before the handle can be used
-  again. Cache and path-lock identity is absolute and Windows case-normalized.
+  again. A failed cursor cleanup, connection-class error, failed rollback, or
+  failed health probe inside a nested lease of the shared handle condemns it at
+  once (no further nested lease) but closes it once, when the outermost lease
+  ends; a failed close is never attempted a second time in the same release.
+  Cache and path-lock identity is absolute and Windows
+  case-normalized.
 
 - A saved SQL descriptor's `DatabaseGuid` is the logical database identity.
   Exactly one `DatabaseMetadata` row for OST Visualizer must exist and identify
@@ -764,6 +779,19 @@ Database backends:
   runtime and session generations. Trust loss invalidates the exact draft owners,
   while database-wide interaction cancellation belongs to the collaboration-state
   transition so delayed losses cannot cancel work acquired after reconnect.
+  The restored (HEALTHY) state, writer-session registration and permission
+  re-probe are announced once per session generation, independent of whether a
+  remote batch already marked the runtime healthy.
+  A worker that ended (session expired, credentials or write permission needed,
+  failed open) stays stopped until an explicit `DATABASE_CAPABILITIES_CHANGED`
+  re-probe; the coordinator's own state changes never restart it, and re-probe
+  restarts follow `reconnect_backoff_seconds` until a HEALTHY session or local close.
+  `DATABASE_REFRESHED` (also published after routine reloads, compaction and external
+  reconciliation) restarts an ended worker through the same backoff only for a
+  recoverable end (an operation-marker lookup blocked by another session's lock, a
+  transient failed first open), never a live one; session expiry, credentials,
+  permission or schema trust and other errors need an explicit Reconnect or
+  credential re-entry.
 - SQL database/session bootstrap remains on the collaboration worker, while
   explicit bid/page navigation reads use `NavigationLoadService`: prepare an
   immutable result off the Qt thread, reject stale database/bid generations,
@@ -781,6 +809,9 @@ Database backends:
   cancel matching deferred page settings and workspace writes before a deleted
   and recreated UID can receive stale state; unrelated page and layer writes are
   retained. Other deferred project settings retain strict failure handling.
+  SQL layer visibility display may briefly show a stale value for layers
+  outside the scope of an older in-flight bulk write; the final display always
+  converges to the authoritative model.
 - Long-lived SQL edit leases are requested and released through the coordinator's
   worker command queue; presentation code must not call the collaboration store
   or wait for SQL on the Qt thread. Access receives an immediate local grant.
@@ -800,12 +831,12 @@ Database backends:
   owner, and temporary action blocking returns control to the canonical toolbar
   projection instead of restoring a captured enabled state.
 - SQL mutations must use `DatabaseMutationRequest`: validate the active session,
-  acquire sorted resource application locks, verify owned edit-lock tokens and
+  acquire sorted resource application locks (Bid resources first, one shared `ordered_lock_resources` order for the store and the writer), verify owned edit-lock tokens and
   expected entity versions, change core rows, advance `EntityVersions`, and add
   operation-specific `ChangeLog` records plus exactly one `ChangeTransactions`
   marker in one transaction. Change Tracking commit versions on the marker table
   are the only durable feed checkpoints; `ChangeLog.Sequence` is diagnostic row
-  order only. Each poll validates the feed epoch and minimum valid version,
+  order only. Each poll validates the feed epoch and minimum valid version (checkpoint 0 is a real checkpoint, never skipped),
   captures its high-water version, enumerates markers, and hydrates their complete
   payloads in one SQL `SNAPSHOT` transaction. Checkpoints advance only after a
   successful main-thread reconciliation. All presentation-triggered SQL project,
@@ -837,10 +868,24 @@ Database backends:
   rejects the whole local operation. A committed projection failure
   enters one idempotent controlled-recovery request; presentation callbacks must
   wait for the recovered completion instead of showing a premature failure or
-  compensating committed data. Recovered authoritative results may project while
+  compensating committed data; the queued page delete keeps its staged
+  post-delete Page selection through those interim results and consumes it only
+  on the terminal result. A terminal callback acts once per operation: a duplicate
+  or stale terminal result must not clear, restore or overwrite state that belongs
+  to a newer operation. One operation ID reports at most one terminal status
+  (COMMITTED, REJECTED, CONFLICT, FAILED_BEFORE_COMMIT or
+  CANCELLED_BEFORE_START), only after any interim COMMIT_STATUS_UNKNOWN or
+  COMMITTED_PROJECTION_FAILED results; a COMMITTED whose callback failed is
+  re-delivered as COMMITTED by recovery, never as another status. Recovered
+  authoritative results may project while
   editing remains disabled during catch-up, and only a failed recovery may remain
   refresh-required. Access mutation execution preserves the existing MDB behavior
   and creates no collaboration session.
+  A resubmitted pending operation ID is rejected without touching the original
+  submission's pending entry or journal record, and a mutation refused by
+  another session's lock fails only that mutation: only retryable,
+  session-expired, credential, read-only or OS-level failures end the
+  collaboration worker.
 - Canonical SQL validation uses parameterized set-based batches for permission/context checks,
   ordered application locks, edit-lock and rowversion validation, entity versions,
   `ChangeLog`, and the durable marker. Successfully consumed edit leases are
@@ -1003,7 +1048,7 @@ State and identity:
   Layer-visibility suspension retains the exact Bid and Condition owners of the
   interrupted tool as well; showing a layer must not resume interaction against
   a replacement object that merely reuses those UIDs.
-- Plan View scene bands live in `presentation/scene/plan_view_z_order.py`.
+- Plan View scene bands live in `presentation/scene/plan_view_z_order.py`. Placement previews take their z-values from that module (takeoff previews from the takeoff body band above every placed takeoff, annotation previews from the same band as the placed annotation) so a preview stacks against annotations exactly as the placed item does; do not hard-code a second z-value for a preview. Placement handles and validity outlines are interaction affordances and stay above the bands.
   Overlay-only imagery owns the primary page-image band, while Show Both may
   project its overlay into the foreground-image band. Base, overlay, composite,
   high-resolution, and overlay-move preview imagery must all remain below paper
@@ -1136,7 +1181,7 @@ License-required:
 - Imports/exports.
 - Bid, condition, page, cover-sheet, and master-data edits.
 
-Bid lock state also blocks bid-internal editing through `ActiveBidWriteGuard`; do not rely only on disabled UI controls.
+Bid lock state also blocks bid-internal editing through `ActiveBidWriteGuard`; do not rely only on disabled UI controls. This covers the composite Access plan commands (`execute_plan_*_local`) as well as the legacy single-purpose commands; `DatabaseMutationResult` carries a value only for a `COMMITTED` outcome (the DTO rejects any other), and write commands must still check `outcome_status` before using it. Condition commands (create, update of any field, move, delete, duplicate and paste, renumber, and folder create, rename and delete) obey the same rule on both backends: Access returns a failed result and every SQL `queue_condition*` entry point raises `ActiveBidLockedError` at submission, except the database-wide Condition-type save, which neither backend guards (the handler only logs it; a Condition or folder rename also refreshes the sidebar); the Bid-owned Layer commands (insert, delete, reorder, rename, show, show all, page Area selection) and the Bid Areas save follow the same rule (`queue_layer_*`, `queue_all_layers_show`, `queue_bid_areas_save`, the `layer_show` and `area` page settings; the dialogs treat the refusal as a silent not-started save and keep their draft and lease), as do every page setting kind (`queue_page_settings`) and the plan commands (`queue_plan_geometry`, `queue_plan_properties`, `queue_plan_items_delete`, `queue_plan_items_paste`; their callers, including history replay, log one warning and restore the preview, selection and pending state without a dialog, and `queue_takeoff_placement` is rejected when the queued work runs), and the Cover Sheet save (`queue_cover_sheet_save`, keyed on the saved Bid) and Page deletion (`queue_pages_delete`, keyed on each owning Bid of the pages and refused as a whole when any is the locked active Bid; their callers log one warning with no dialog, keep the dialog draft and lease and clear the staged selection), while the default (template) Layer commands are never Bid-lock-blocked on either backend; the SQL writer transaction is the server-side check: after the operation-marker check and the sorted application locks, and before the operation, it refuses a write whose resources include a non-`bid` resource carrying the UID of a locked Bid (`REJECTED` with `rejection_reason` `bid_locked`, never `CONFLICT`; nothing is written, the transaction consumes no edit lease, and a committed retry is still recovered, not refused), while status change, delete, duplicate, move, master-data and import writes stay allowed by resource shape, and only `ProjectWriteService.queue_cancelled_placement_cleanup_delete` (the cleanup of a cancelled placement's provisional takeoffs; `DatabaseMutationRequest.bid_lock_exempt`, outside the request hash) is exempt; a NULL `JobStatuses.Locked` means locked and a dangling or NULL `JobStatusUID` means unlocked, matching the client, and the check reads without locking `JobStatuses`, so a Job Status `Locked` flag edited concurrently is an accepted race; older builds, raw DML and administrators stay out of scope, and the T-SQL of this check is not verified against a live server in this repository. Any other exception a plan queue entry point raises at submission (RuntimeError, ValueError, KeyError, ...) is never swallowed: the main-plan handler and the detached window first free the pending marks, the deferred selection, an unconsumed edit lease and the forward-mutation token and restore the preview like a rejected write, then re-raise the same exception object. A writer-side `bid_locked` refusal that reaches a queued callback (a write queued on a stale lock flag) is handled like a queue-time refusal: the callback reverts its optimistic state, a history entry stays `READY` (never `CONFLICTED`), no dialog opens, and the coordinator's `BID_LOCKED_REJECTION` notice logs one warning per refusal and re-resolves the active Bid's lock once per burst; the cancelled-placement cleanup calls the exempt entry, so a locked Bid never refuses it. The UI mirrors this for the Condition folder write controls (New Folder, rename and delete folder, Cut, paste of a cut, drag-move): `Feature.EDIT_CONDITION_STRUCTURE` is lock-blocked, while Copy and navigation (expand, collapse, select) stay enabled. Project-tree structure stays allowed on a locked Bid except moving, trashing or restoring the ACTIVE locked Bid itself and deleting its project (the move/trash/Restore/cut-paste commands of other Bids stay allowed): Access `move_bids` and `delete_projects` fail and SQL `queue_bids_move` and `queue_projects_delete` raise `ActiveBidLockedError` (permanent `delete_bids` is unguarded on both), their callers log one warning with no dialog, and the UI disables the matching controls for that Bid (`can_edit_bid_structure`, `can_delete_bids`, `can_delete_projects`, cut-paste).
 
 ## Documentation Maintenance
 

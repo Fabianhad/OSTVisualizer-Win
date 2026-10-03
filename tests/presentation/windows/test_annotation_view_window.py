@@ -74,3 +74,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 for spec in _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs
             ],
         )
+
+    def test_annotation_window_config_is_editable_select_window_with_scale(self):
+        config = _ANNOTATION_WINDOW_CONFIG
+        self.assertEqual(config.window_title, "Annotation Window")
+        self.assertTrue(config.show_scale_combo)
+        self.assertTrue(config.show_select_tool)
+        self.assertEqual(config.default_cursor_mode, "select")
+        self.assertTrue(config.allow_annotation_editing)
+        self.assertEqual(config.dropdown_state_key, "annotation")

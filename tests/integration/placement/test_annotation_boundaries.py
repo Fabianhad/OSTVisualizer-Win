@@ -36,6 +36,12 @@ class DimensionLifecycleTests(_family_support__PlanFixture, unittest.TestCase):
             )
             self.assertTrue(view._commit_annotation_placement("dimension", preview))
             self.assertEqual(created, [("dimension", preview, "p1")])
+            # The committed drag is exactly one snap increment (1/64) long at the
+            # snapped angle, independent of what the preview code returned.
+            self.assertAlmostEqual(preview[0], 10.0)
+            self.assertAlmostEqual(preview[1], 10.0)
+            self.assertAlmostEqual(preview[2], 10 + math.cos(0.3) / 64)
+            self.assertAlmostEqual(preview[3], 10 + math.sin(0.3) / 64)
 
 
 class BoxPlacementBoundaryTests(_family_support__PlanFixture, unittest.TestCase):
@@ -45,11 +51,18 @@ class BoxPlacementBoundaryTests(_family_support__PlanFixture, unittest.TestCase)
                 view = self.make_view()
                 view._snap_increments = 1 / 25.4
                 view.activate_annotation_placement(kind)
-                self.assertTrue(
-                    view._commit_annotation_placement(
-                        kind, [10.0, 10.0, 10 + 1 / 25.4, 10 + 1 / 25.4]
-                    )
+                created = []
+                view.annotation_created.connect(
+                    lambda kind, position, page: created.append((kind, position))
                 )
+                position = [10.0, 10.0, 10 + 1 / 25.4, 10 + 1 / 25.4]
+                self.assertTrue(view._commit_annotation_placement(kind, position))
+                if kind in ("text", "namedview"):
+                    # Text-like boxes open an inline draft instead of emitting.
+                    self.assertTrue(view.is_text_annotation_inline_edit_active())
+                    self.assertEqual(created, [])
+                else:
+                    self.assertEqual(created, [(kind, position)])
                 view._finish_active_inline_text_edit(commit=False)
 
     def test_zero_and_below_minimum_placements_remain_rejected(self):
@@ -73,6 +86,39 @@ class BoxPlacementBoundaryTests(_family_support__PlanFixture, unittest.TestCase)
                             kind, [10.0, 10.0, 10.0 + distance, 10.0 + distance]
                         )
                     )
+
+    def test_placement_minimum_boundary_tracks_the_snap_increment(self):
+        # Snap increment 1.0: linear kinds need a drag length of at least 1.0
+        # (0.70 diagonal = 0.990, 0.71 diagonal = 1.004); box kinds need at
+        # least 1.0 on each axis independently.
+        linear = ("line", "arrow", "dimension", "ink")
+        boxes = ("rect", "oval", "highlight", "text", "namedview")
+        for kind, distance, expected in (
+            *((kind, 0.70, False) for kind in linear),
+            *((kind, 0.71, True) for kind in linear),
+            *((kind, 0.99, False) for kind in boxes),
+            *((kind, 1.0, True) for kind in boxes),
+        ):
+            with self.subTest(kind=kind, distance=distance):
+                view = self.make_view()
+                view._snap_increments = 1.0
+                created = []
+                view.annotation_created.connect(
+                    lambda kind, position, page: created.append((kind, position))
+                )
+                position = [10.0, 10.0, 10.0 + distance, 10.0 + distance]
+                self.assertEqual(
+                    view._commit_annotation_placement(kind, position), expected
+                )
+                if kind in ("text", "namedview"):
+                    # Accepted text-like boxes open a draft; nothing is emitted yet.
+                    self.assertEqual(created, [])
+                    self.assertEqual(
+                        view.is_text_annotation_inline_edit_active(), expected
+                    )
+                    view._finish_active_inline_text_edit(commit=False)
+                else:
+                    self.assertEqual(created, [(kind, position)] if expected else [])
 
     def test_polygon_box_release_accepts_minimum_fractional_box(self):
         from PySide6.QtGui import QMouseEvent
@@ -119,6 +165,43 @@ class BoxPlacementBoundaryTests(_family_support__PlanFixture, unittest.TestCase)
                         ]
                     ],
                 )
+
+    def test_polygon_box_release_rejects_either_axis_below_minimum(self):
+        from PySide6.QtGui import QMouseEvent
+
+        minimum = 1 / 25.4
+        for kind in ("polygon", "cloud"):
+            for end in (
+                (10 + minimum, 10 + minimum / 2),
+                (10 + minimum / 2, 10 + minimum),
+            ):
+                with self.subTest(kind=kind, end=end):
+                    view = self.make_view()
+                    view._snap_increments = minimum
+                    view.activate_annotation_placement(kind)
+                    view._annotation_place_points = [(10.0, 10.0)]
+                    view._annotation_area_rect_dragging = True
+                    view._placement_snap_from_scene = lambda _, end=end: (
+                        *end,
+                        0,
+                        0,
+                        0,
+                    )
+                    created = []
+                    view.annotation_created.connect(
+                        lambda kind, position, page: created.append(list(position))
+                    )
+                    event = QMouseEvent(
+                        QtCore.QEvent.Type.MouseButtonRelease,
+                        QtCore.QPointF(50, 50),
+                        QtCore.QPointF(50, 50),
+                        QtCore.Qt.MouseButton.LeftButton,
+                        QtCore.Qt.MouseButton.NoButton,
+                        QtCore.Qt.KeyboardModifier.NoModifier,
+                    )
+                    self.assertTrue(view.handle_annotation_place_release(event))
+                    self.assertEqual(created, [])
+                    self.assertFalse(view._annotation_area_rect_dragging)
 
 
 class AnnotationPlacementEventTests(_family_support__PlanFixture, unittest.TestCase):
@@ -182,6 +265,28 @@ class AnnotationPlacementEventTests(_family_support__PlanFixture, unittest.TestC
             PLACEABLE_ANNOTATION_TYPES,
         )
 
+        # Positive control: without Escape the same gesture completes and emits,
+        # so the empty result below is caused by the cancel, not by the harness.
+        for kind in ("line", "arrow", "dimension", "rect", "oval", "highlight"):
+            with self.subTest(control=kind):
+                view = self.make_view()
+                created = []
+                view.annotation_created.connect(
+                    lambda kind, position, page: created.append((kind, position))
+                )
+                view.activate_annotation_placement(kind)
+                QTest.mousePress(
+                    view.viewport(),
+                    QtCore.Qt.MouseButton.LeftButton,
+                    pos=QtCore.QPoint(100, 100),
+                )
+                QTest.mouseMove(view.viewport(), QtCore.QPoint(150, 125))
+                QTest.mouseRelease(
+                    view.viewport(),
+                    QtCore.Qt.MouseButton.LeftButton,
+                    pos=QtCore.QPoint(150, 125),
+                )
+                self.assertEqual([item[0] for item in created], [kind])
         for kind in sorted(PLACEABLE_ANNOTATION_TYPES - {"hotlink"}):
             with self.subTest(kind=kind):
                 view = self.make_view()

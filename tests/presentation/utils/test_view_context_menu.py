@@ -20,6 +20,13 @@ from ost_visualizer.presentation.utils.annotation_defaults import (
     get_annotation_style_for_tool,
     set_annotation_style_for_tool,
 )
+from ost_visualizer.presentation.actions.action_ids import (
+    ACTION_COPY,
+    ACTION_CUT,
+    ACTION_DELETE,
+    ACTION_DELETE_PAGE,
+    ACTION_PASTE,
+)
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.condition import Condition
@@ -155,11 +162,9 @@ class ViewContextMenuTests(unittest.TestCase):
             }
             self.assertEqual(colors["red"].name(), "#ff0000")
             self.assertEqual(colors["green"].name(), "#00ff00")
-            self.assertEqual(
-                (colors["hidden"].red(), colors["hidden"].green()),
-                (colors["hidden"].green(), colors["hidden"].blue()),
-            )
-            self.assertNotEqual(colors["hidden"].name(), "#ff0000")
+            # Hidden layers use the luminance gray of the red fill:
+            # int(0.299 * 255) == 76 == 0x4c on every channel.
+            self.assertEqual(colors["hidden"].name(), "#4c4c4c")
         finally:
             menu.deleteLater()
 
@@ -470,10 +475,22 @@ class ViewContextMenuTests(unittest.TestCase):
         self.assertFalse(state_for("p").all_negative)
 
     def test_selected_hole_takeoffs_hide_assign_and_negative_actions(self):
-        conditions = {"area": Condition(uid="area", condition_type=Condition.TYPE_AREA)}
+        conditions = {
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
+        }
         parent = Takeoff(uid="parent", condition_uid="area")
         hole = Takeoff(uid="hole", condition_uid="area", parent_uid="parent")
-        every = {"parent": parent, "hole": hole}
+        linear = Takeoff(uid="linear-1", condition_uid="linear")
+        linear_hole = Takeoff(
+            uid="linear-hole", condition_uid="linear", parent_uid="linear-1"
+        )
+        every = {
+            "parent": parent,
+            "hole": hole,
+            "linear-1": linear,
+            "linear-hole": linear_hole,
+        }
 
         def state_for(*uids):
             return build_selected_takeoff_context_state(
@@ -491,6 +508,10 @@ class ViewContextMenuTests(unittest.TestCase):
         only_parent = state_for("parent")
         self.assertTrue(only_parent.show_assign)
         self.assertTrue(only_parent.show_negative)
+        # The curved toggle needs exactly one selected takeoff: a linear
+        # takeoff selected together with its hole does not offer it.
+        self.assertTrue(state_for("linear-1").show_curved)
+        self.assertFalse(state_for("linear-1", "linear-hole").show_curved)
 
     def test_plan_tools_context_submenu_uses_shared_tool_registry(self):
         menu, tools_menu = _build_tools_context_menu()
@@ -574,16 +595,21 @@ class ViewContextMenuTests(unittest.TestCase):
             context_command_state(lambda _key: None, "key", "Fallback")["enabled"],
             False,
         )
+        coerced = context_command_state(
+            lambda key: {"text": "", "enabled": 1, "checked": 1}, "key", "Fallback"
+        )
         self.assertEqual(
-            context_command_state(
-                lambda key: {"text": "", "enabled": 1, "checked": 1}, "key", "Fallback"
-            ),
+            coerced,
             {
                 "text": "Fallback",
                 "enabled": True,
                 "checkable": False,
                 "checked": True,
             },
+        )
+        # 1 == True, so pin that the flags are real bools, not truthy values.
+        self.assertTrue(
+            all(type(value) is bool for key, value in coerced.items() if key != "text")
         )
 
     def test_clipboard_and_page_actions_trigger_their_action_keys(self):
@@ -595,18 +621,21 @@ class ViewContextMenuTests(unittest.TestCase):
             )
             self.assertEqual(
                 [action.text() for action in menu.actions()],
-                [label for label, _key in CONTEXT_CLIPBOARD_ACTIONS],
+                ["Cut", "Copy", "Paste", "Delete"],
             )
+            # The action key also selects each command's icon.
+            self.assertTrue(all(not a.icon().isNull() for a in menu.actions()))
             for action in menu.actions():
                 action.trigger()
             self.assertEqual(
-                triggered, [key for _label, key in CONTEXT_CLIPBOARD_ACTIONS]
+                triggered, [ACTION_CUT, ACTION_COPY, ACTION_PASTE, ACTION_DELETE]
             )
             page_menu = QtWidgets.QMenu()
+            page_triggered = []
             try:
                 add_context_page_actions(
                     page_menu,
-                    lambda _key: None,
+                    page_triggered.append,
                     lambda _key: {"enabled": True},
                     separate_delete=True,
                 )
@@ -617,6 +646,10 @@ class ViewContextMenuTests(unittest.TestCase):
                     ],
                     [("Rename Page...", False), ("", True), ("Delete Page", False)],
                 )
+                for action in page_menu.actions():
+                    if not action.isSeparator():
+                        action.trigger()
+                self.assertEqual(page_triggered, ["rename_page", ACTION_DELETE_PAGE])
                 plain_menu = QtWidgets.QMenu()
                 try:
                     add_context_page_actions(

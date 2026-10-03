@@ -9,6 +9,8 @@ from ost_visualizer.presentation.scene.plan_view_z_order import (
     PDF_TEXT_SELECTION_Z,
     TAKEOFF_BODY_Z,
     TAKEOFF_LABEL_Z,
+    TAKEOFF_PREVIEW_BODY_Z,
+    takeoff_z_value,
 )
 from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
 from PySide6.QtCore import QRectF, Qt
@@ -138,6 +140,25 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         self.assertLess(newer_body.zValue(), PDF_TEXT_SELECTION_Z)
         self.assertIs(older_body.scene(), scene)
         self.assertIs(newer_body.scene(), scene)
+
+    def test_placed_takeoff_z_values_come_from_the_shared_draw_order_source(self):
+        _scene, _renderer, uid_to_items = self._build_scene(
+            [
+                Takeoff(uid="30", condition_uid="c1"),
+                Takeoff(uid="4", condition_uid="c1"),
+                Takeoff(uid="500", condition_uid="c1"),
+            ]
+        )
+        for draw_index, uid in enumerate(("4", "30", "500")):
+            body, label = uid_to_items[uid]
+            with self.subTest(uid=uid):
+                self.assertEqual(
+                    body.zValue(), takeoff_z_value(TAKEOFF_BODY_Z, draw_index)
+                )
+                self.assertEqual(
+                    label.zValue(), takeoff_z_value(TAKEOFF_LABEL_Z, draw_index)
+                )
+                self.assertLess(body.zValue(), TAKEOFF_PREVIEW_BODY_Z)
 
     def test_numeric_uid_draw_order_is_not_lexicographic(self):
         _scene, renderer, uid_to_items = self._build_scene(

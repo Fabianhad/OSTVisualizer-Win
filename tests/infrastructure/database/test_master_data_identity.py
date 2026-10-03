@@ -146,3 +146,53 @@ class MasterDataCandidateTests(unittest.TestCase):
         require_unambiguous_incoming_identities(
             [{"UID": 1, "Name": "Wall"}, {"UID": 1, "Name": "Wall"}], key, "type"
         )
+
+    def test_uidless_incoming_rows_are_named_by_their_one_based_source_row(self):
+        with self.assertRaisesRegex(
+            AmbiguousMasterDataIdentityError,
+            r"Imported master-data identity is ambiguous for type: "
+            r"matching UIDs source row 1, source row 2\.",
+        ):
+            require_unambiguous_incoming_identities(
+                [{"Name": "Wall"}, {"Name": "Wall"}], lambda row: row["Name"], "type"
+            )
+        with self.assertRaisesRegex(
+            AmbiguousMasterDataIdentityError, r"matching UIDs 5, source row 3\."
+        ):
+            require_unambiguous_incoming_identities(
+                [{"UID": 5, "Name": "Wall"}, {"Name": "Floor"}, {"Name": "Wall"}],
+                lambda row: row["Name"],
+                "type",
+            )
+        # Empty-string UIDs are as anonymous as missing ones.
+        with self.assertRaisesRegex(
+            AmbiguousMasterDataIdentityError,
+            r"matching UIDs source row 1, source row 2",
+        ):
+            require_unambiguous_incoming_identities(
+                [{"UID": "", "Name": "Wall"}, {"UID": None, "Name": "Wall"}],
+                lambda row: row["Name"],
+                "type",
+            )
+
+    def test_ignoring_empty_identities_still_rejects_duplicate_real_ones(self):
+        rows = [{"Name": ""}, {"Name": "Wall"}, {"Name": ""}, {"Name": "Wall"}]
+        with self.assertRaises(AmbiguousMasterDataIdentityError):
+            require_unambiguous_incoming_identities(
+                rows, lambda row: row["Name"], "type", ignore_empty=True
+            )
+        require_unambiguous_incoming_identities(
+            [{"Name": ""}, {"Name": "Wall"}, {"Name": ""}, {"Name": "Floor"}],
+            lambda row: row["Name"],
+            "type",
+            ignore_empty=True,
+        )
+
+    def test_duplicate_uid_message_names_the_table_and_the_physical_uid(self):
+        with self.assertRaisesRegex(
+            DuplicateMasterDataUidError,
+            r"^CdnTypes contains duplicate UID 3; "
+            r"authoritative master-data UIDs must be unique\.$",
+        ):
+            require_unique_master_data_uids([1, 3, "3"], "CdnTypes")
+        require_unique_master_data_uids([], "CdnTypes")

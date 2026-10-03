@@ -1,7 +1,7 @@
 import unittest
 from copy import deepcopy
 from dataclasses import replace
-from unittest.mock import Mock
+from unittest.mock import create_autospec
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseChangePollResult,
@@ -10,11 +10,29 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ResourceRef,
 )
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.interfaces.i_collaboration_store import (
+    ICollaborationStore,
+)
+from ost_visualizer.application.interfaces.i_database_descriptor_registry import (
+    IDatabaseDescriptorRegistry,
+)
+from ost_visualizer.application.interfaces.i_database_session_registry import (
+    IDatabaseSessionRegistry,
+)
+from ost_visualizer.application.interfaces.i_remote_change_reader import (
+    IRemoteChangeReader,
+)
+from ost_visualizer.application.services.database_capability_service import (
+    DatabaseCapabilityService,
+)
 from ost_visualizer.application.services.conflict_resolution_service import (
     ConflictResolutionService,
 )
 from ost_visualizer.application.services.remote_change_reconciliation_service import (
     RemoteChangeReconciliationService,
+)
+from ost_visualizer.application.services.sql_workspace_state_service import (
+    SqlWorkspaceStateService,
 )
 from ost_visualizer.application.services.sql_collaboration_coordinator import (
     _DatabaseRuntime,
@@ -23,12 +41,15 @@ from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,
     PreparedBidLoad,
 )
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyFileEntry,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.services.file_manager_service import FileManager
+from ost_visualizer.domain.services.uom_service import UOM_LINEAR_FEET, UOM_M
 import tests.integration.navigation.test_page_folder_ownership as test_page_folder_ownership
 from tests.helpers.sql.collaboration import (
     _batch,
@@ -50,18 +71,18 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
         self.tokens, drafts = _token_service()
         self.events = _EventBus()
         self.dispatcher = _DelayedReconciliationDispatcher()
-        self.store = Mock()
+        self.store = create_autospec(ICollaborationStore, instance=True)
         reconciliation = RemoteChangeReconciliationService(
             self.data, self.events, self.tokens, drafts, ConflictResolutionService()
         )
         self.coordinator = _coordinator(
-            Mock(),
+            create_autospec(IDatabaseDescriptorRegistry, instance=True),
             self.store,
-            Mock(),
+            create_autospec(IRemoteChangeReader, instance=True),
             self.dispatcher,
             reconciliation,
-            Mock(),
-            Mock(),
+            create_autospec(DatabaseCapabilityService, instance=True),
+            create_autospec(IDatabaseSessionRegistry, instance=True),
             self.tokens,
             drafts,
             self.events,
@@ -75,6 +96,14 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
     def cleanup_coordinator(self):
         self.coordinator._runtimes.clear()
         _shutdown_coordinator(self.coordinator)
+
+    @staticmethod
+    def file_manager():
+        return create_autospec(FileManager, instance=True)
+
+    @staticmethod
+    def workspace():
+        return create_autospec(SqlWorkspaceStateService, instance=True)
 
     def queue_snapshot(self, version):
         batch = _batch(
@@ -109,7 +138,11 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
             {},
         )
         use_case = LoadBidUseCase(
-            self.fixture.model, self.data, Mock(), self.tokens, Mock()
+            self.fixture.model,
+            self.data,
+            self.file_manager(),
+            self.tokens,
+            self.workspace(),
         )
         use_case.apply_prepared(
             self.fixture.bid_ref, PreparedBidLoad(self.fixture.read(), None)
@@ -135,7 +168,11 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
                 {},
             )
             LoadBidUseCase(
-                self.fixture.model, self.data, Mock(), self.tokens, Mock()
+                self.fixture.model,
+                self.data,
+                self.file_manager(),
+                self.tokens,
+                self.workspace(),
             ).apply_prepared(
                 BidRef("database", "9"), PreparedBidLoad(BidLoadResult(), None)
             )
@@ -316,7 +353,11 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
             {},
         )
         use_case = LoadBidUseCase(
-            self.fixture.model, self.data, Mock(), self.tokens, Mock()
+            self.fixture.model,
+            self.data,
+            self.file_manager(),
+            self.tokens,
+            self.workspace(),
         )
         use_case.apply_prepared(
             BidRef("database", "9"), PreparedBidLoad(BidLoadResult(), None)
@@ -396,3 +437,61 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
         self.assertTrue(self.runtime.ready_event.is_set())
         self.assertEqual(self.runtime.acknowledged_version, 0)
         self.assertFalse(self.coordinator.resume_controlled_recovery("database"))
+
+
+class RemoteBatchActiveBidProjectionTests(unittest.TestCase):
+    """Second-pass addition: a delivered remote snapshot refreshes the ACTIVE Bid in place.
+    Same real collaborators and fakes as RemoteBatchNavigationHandoffTests (reused
+    helpers, not re-run tests); the SQL leg is the same autospec'd store, so only the
+    client-side projection of an accepted snapshot is proven here.
+    """
+
+    setUp = RemoteBatchNavigationHandoffTests.setUp
+    cleanup_coordinator = RemoteBatchNavigationHandoffTests.cleanup_coordinator
+    file_manager = staticmethod(RemoteBatchNavigationHandoffTests.file_manager)
+    workspace = staticmethod(RemoteBatchNavigationHandoffTests.workspace)
+    queue_snapshot = RemoteBatchNavigationHandoffTests.queue_snapshot
+    load_newer_navigation = RemoteBatchNavigationHandoffTests.load_newer_navigation
+
+    def test_accepted_snapshot_refreshes_every_property_of_the_active_bid(self):
+        self.load_newer_navigation()
+        model = self.fixture.model
+        bid = model.current_bid
+        condition = Condition(
+            uid="k1", name="Length", calc_type1=0, uom1=UOM_LINEAR_FEET
+        )
+        model.bid_conditions["k1"] = condition
+        fresh = {
+            "name": "Remote name",
+            "bid_no": 4711,
+            "bid_date": "2026-01-02",
+            "notes": "Remote notes",
+            "job_id": "J-9",
+            "status": "Won",
+            "status_uid": "5",
+            "estimator": "Remote Estimator",
+            "condition_count": 12,
+            "measure_base": 1,
+            "takeoff_increments": 0.25,
+            "orig_bid_project_uid": "77",
+            "copy_from_bid_no": 3,
+            "copy_timestamp": "2026-01-03",
+        }
+        for field_name, value in fresh.items():
+            self.assertNotEqual(getattr(bid, field_name), value, field_name)
+            setattr(self.fixture.info, field_name, value)
+        self.fixture.info.folders["10"].name = "Remote folder"
+        self.assertNotEqual(bid.folders["10"].name, "Remote folder")
+        self.assertEqual(condition.uom1, UOM_LINEAR_FEET)
+        self.queue_snapshot(3)
+        self.dispatcher.deliver_pending()
+        self.assertEqual(self.runtime.acknowledged_version, 3)
+        self.assertIs(model.current_bid, bid)
+        for field_name, value in fresh.items():
+            self.assertEqual(getattr(bid, field_name), value, field_name)
+        self.assertEqual(bid.folders["10"].name, "Remote folder")
+        folder_pages = bid.folders["10"].pages
+        self.assertEqual([page.uid for page in folder_pages], ["1", "4"])
+        for page in folder_pages:
+            self.assertIs(page, model.get_page(page.uid))
+        self.assertEqual(condition.uom1, UOM_M)

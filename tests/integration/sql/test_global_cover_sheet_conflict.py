@@ -94,7 +94,22 @@ class GlobalCoverSheetConflictTests(unittest.TestCase):
         ]
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0]["draft_id"], draft.draft_id)
-        self.assertIn("reload", notifications[0]["allowed_actions"])
+        self.assertEqual(
+            {
+                key: notifications[0][key]
+                for key in ("database_id", "resource_type", "resource_id", "bid_uid")
+            },
+            {
+                "database_id": "database",
+                "resource_type": "cover_sheet",
+                "resource_id": "database",
+                "bid_uid": "",
+            },
+        )
+        self.assertEqual(
+            notifications[0]["allowed_actions"],
+            ["reload", "discard_draft", "cancel_read_only"],
+        )
         self.assertEqual(drafts.get(draft.draft_id).state, LocalDraftState.CONFLICTED)
         self.assertEqual(runtime.acknowledged_version, 0)
         self.assertTrue(runtime.pending_delivery)

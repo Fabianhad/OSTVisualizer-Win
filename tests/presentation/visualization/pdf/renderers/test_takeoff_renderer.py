@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.entities import pattern as pattern_values
+from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -25,7 +26,8 @@ def _app():
 
 
 class FakeCoordinateSystem:
-    page_info = {"view_scale": 1.0}
+    def __init__(self):
+        self.page_info = {"view_scale": 1.0}
 
     def update_page_info(self, page_info):
         self.page_info.update(page_info)
@@ -134,6 +136,10 @@ class TakeoffRendererConditionBehaviorTests(unittest.TestCase):
             inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         self.assertEqual([uid for uid, _item in rendered], ["t1"])
+        item = rendered[0][1]
+        self.assertIsInstance(item, QGraphicsPathItem)
+        self.assertFalse(item.path().isEmpty())
+        self.assertEqual((item.data(0), item.data(1)), ("t1", "c1"))
 
     @classmethod
     def setUpClass(cls):
@@ -364,18 +370,31 @@ class TakeoffRendererConditionBehaviorTests(unittest.TestCase):
             {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
             inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
+        self.assertEqual([uid for uid, _item in rendered], ["parent", "backout"])
         items = rendered[0][1]
         items = items if isinstance(items, list) else [items]
         area_item = items[0]
         self.assertIsInstance(area_item, QGraphicsPathItem)
         self.assertFalse(area_item.path().contains(QtCore.QPointF(10.0, 10.0)))
+        self.assertTrue(area_item.path().contains(QtCore.QPointF(4.0, 4.0)))
+        self.assertTrue(area_item.path().contains(QtCore.QPointF(16.0, 16.0)))
         self.assertNotEqual(area_item.brush().style(), Qt.BrushStyle.NoBrush)
+        # The backout itself stays addressable as an invisible hole carrier.
+        hole_item = rendered[1][1]
+        self.assertEqual(hole_item.data(0), "backout")
+        self.assertEqual(hole_item.pen().style(), Qt.PenStyle.NoPen)
+        self.assertEqual(hole_item.brush().style(), Qt.BrushStyle.NoBrush)
+        self.assertTrue(hole_item.path().contains(QtCore.QPointF(10.0, 10.0)))
 
     def test_area_path_rejects_odd_coordinate_count(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
         self.assertIsNone(
             renderer._create_area_path([0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 5.0])
         )
+        self.assertIsNone(renderer._create_area_path([0.0, 0.0, 10.0, 0.0]))
+        triangle = renderer._create_area_path([0.0, 0.0, 10.0, 0.0, 10.0, 10.0])
+        self.assertIsNotNone(triangle)
+        self.assertEqual(triangle.boundingRect(), QtCore.QRectF(0.0, 0.0, 10.0, 10.0))
 
     def test_area_with_hole_uses_anchor_inside_visible_fill(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
@@ -465,6 +484,41 @@ class TakeoffRendererConditionBehaviorTests(unittest.TestCase):
             dimension_label.boundingRect().center()
         )
         self.assertEqual(dimension_center, negative_box.pos())
+        self.assertAlmostEqual(negative_box.pos().x(), 6.0)
+        self.assertAlmostEqual(negative_box.pos().y(), 6.0)
+        indicator_items = [
+            item
+            for item in items
+            if isinstance(item, QGraphicsPathItem)
+            and item.flags()
+            & QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations
+        ]
+        self.assertEqual(len(indicator_items), 2)
+        positive = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        positive_rendered = positive.create_all_path_items(
+            [
+                Takeoff(
+                    uid="t2",
+                    condition_uid="c1",
+                    position=[0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0],
+                )
+            ],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        positive_items = positive_rendered[0][1]
+        positive_items = (
+            positive_items if isinstance(positive_items, list) else [positive_items]
+        )
+        self.assertFalse(
+            [
+                item
+                for item in positive_items
+                if isinstance(item, QGraphicsPathItem)
+                and item.brush().color() == Qt.GlobalColor.red
+            ]
+        )
 
     def test_condition_label_style_fields_render_after_overlay_rebuild(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
@@ -486,11 +540,11 @@ class TakeoffRendererConditionBehaviorTests(unittest.TestCase):
             dimension_font_size=24,
             dimension_font_bold=True,
             dimension_font_italic=True,
-            dimension_font_underline=True,
+            dimension_font_underline=False,
             name_font_name="Calibri",
             name_font_color=0x665544,
             name_font_size=18,
-            name_font_bold=True,
+            name_font_bold=False,
             name_font_italic=False,
             name_font_underline=True,
         )
@@ -518,10 +572,291 @@ class TakeoffRendererConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(dimension_label.font().pointSize(), 24)
         self.assertTrue(dimension_label.font().bold())
         self.assertTrue(dimension_label.font().italic())
-        self.assertTrue(dimension_label.font().underline())
+        self.assertFalse(dimension_label.font().underline())
         self.assertEqual(name_label.defaultTextColor().name(), "#445566")
         self.assertEqual(name_label.font().family(), "Calibri")
         self.assertEqual(name_label.font().pointSize(), 18)
-        self.assertTrue(name_label.font().bold())
+        self.assertFalse(name_label.font().bold())
         self.assertFalse(name_label.font().italic())
         self.assertTrue(name_label.font().underline())
+
+    def test_area_with_concave_outline_anchors_label_inside_visible_fill(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        # A "C" opening to the right: its vertex centroid (8.5, 10.0) lies in
+        # the opening, outside the fill.
+        outline = [
+            (0.0, 0.0),
+            (20.0, 0.0),
+            (20.0, 5.0),
+            (5.0, 5.0),
+            (5.0, 15.0),
+            (20.0, 15.0),
+            (20.0, 20.0),
+            (0.0, 20.0),
+        ]
+        path = QPainterPath()
+        path.moveTo(*outline[0])
+        for point in outline[1:]:
+            path.lineTo(*point)
+        path.closeSubpath()
+        preferred = renderer._calculate_polygon_centroid(outline)
+        self.assertEqual(preferred, (8.5, 10.0))
+        self.assertFalse(path.contains(QtCore.QPointF(*preferred)))
+        anchor = renderer._path_centroid(path)
+        self.assertTrue(path.contains(QtCore.QPointF(*anchor)))
+        # The fallback picks the interior point nearest the centroid: inside the
+        # vertical bar (x < 5), vertically near the centroid.
+        self.assertLess(anchor[0], 5.0)
+        self.assertLess(math.hypot(anchor[0] - 8.5, anchor[1] - 10.0), 4.5)
+
+    def test_path_centroid_rejects_paths_with_fewer_than_three_vertices(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        segment = QPainterPath()
+        segment.moveTo(0.0, 0.0)
+        segment.lineTo(10.0, 10.0)
+        self.assertIsNone(renderer._path_centroid(segment))
+        self.assertIsNone(renderer._create_negative_indicator(segment))
+
+    def test_area_grid_lines_follow_grid_sizes_and_condition_gap(self):
+        def grid_lines(**overrides):
+            fields = dict(
+                uid="c1",
+                condition_type=Condition.TYPE_AREA,
+                color_fill=0,
+                pattern=0,
+                spacing=0.0,
+                grid=True,
+                grid_size1=3.0,
+                grid_size2=3.0,
+            )
+            fields.update(overrides)
+            condition = Condition(**fields)
+            takeoff = Takeoff(
+                uid="t1",
+                condition_uid="c1",
+                position=[0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0],
+            )
+            items = self._render_takeoff_items(condition, takeoff)
+            horizontal, vertical = [], []
+            for item in self._line_path_items(items[1:]):
+                path = item.path()
+                first, second = path.elementAt(0), path.elementAt(1)
+                if abs(first.y - second.y) < 1e-9:
+                    horizontal.append(
+                        (first.y, min(first.x, second.x), max(first.x, second.x))
+                    )
+                else:
+                    self.assertAlmostEqual(first.x, second.x)
+                    vertical.append(
+                        (first.x, min(first.y, second.y), max(first.y, second.y))
+                    )
+            return sorted(horizontal), sorted(vertical)
+
+        horizontal, vertical = grid_lines()
+        self.assertEqual(
+            horizontal, [(3.0, 0.0, 12.0), (6.0, 0.0, 12.0), (9.0, 0.0, 12.0)]
+        )
+        self.assertEqual(
+            vertical, [(3.0, 0.0, 12.0), (6.0, 0.0, 12.0), (9.0, 0.0, 12.0)]
+        )
+        # grid_size1 spaces the vertical lines, grid_size2 the horizontal ones.
+        horizontal, vertical = grid_lines(grid_size1=4.0, grid_size2=6.0)
+        self.assertEqual([line[0] for line in horizontal], [6.0])
+        self.assertEqual([line[0] for line in vertical], [4.0, 8.0])
+        # The condition gap widens both configured spacings.
+        horizontal, vertical = grid_lines(gap=1.0)
+        self.assertEqual([line[0] for line in horizontal], [4.0, 8.0])
+        self.assertEqual([line[0] for line in vertical], [4.0, 8.0])
+
+    def test_grid_spacing_falls_back_to_condition_spacing_without_gap_inflation(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        cases = (
+            (dict(grid_size1=3.0, grid_size2=5.0, gap=0.0, spacing=9.0), (3.0, 5.0)),
+            (dict(grid_size1=3.0, grid_size2=5.0, gap=1.0, spacing=9.0), (4.0, 6.0)),
+            (dict(grid_size1=0.0, grid_size2=5.0, gap=1.0, spacing=9.0), (9.0, 6.0)),
+            (dict(grid_size1=-2.0, grid_size2=0.0, gap=2.0, spacing=0.0), (4.0, 4.0)),
+        )
+        for fields, expected in cases:
+            with self.subTest(**fields):
+                self.assertEqual(
+                    renderer._grid_spacing(SimpleNamespace(**fields)), expected
+                )
+
+    def test_linear_thickness_scales_with_view_scale_and_has_a_minimum(self):
+        def bounds(thickness, view_scale):
+            renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+            condition = Condition(
+                uid="c1",
+                condition_type=Condition.TYPE_LINEAR,
+                color_fill=0,
+                pattern=1,
+                thickness=thickness,
+            )
+            takeoff = Takeoff(
+                uid="t1", condition_uid="c1", position=[0.0, 0.0, 20.0, 0.0]
+            )
+            rendered = renderer.create_all_path_items(
+                [takeoff],
+                {"c1": condition},
+                {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+                page_info={"view_scale": view_scale},
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            )
+            item = rendered[0][1]
+            return (item[0] if isinstance(item, list) else item).path().boundingRect()
+
+        plain = bounds(8.0, 1.0)
+        zoomed = bounds(8.0, 2.0)
+        thin = bounds(0.5, 1.0)
+        self.assertEqual((plain.width(), plain.height()), (20.0, 8.0))
+        self.assertEqual((zoomed.width(), zoomed.height()), (20.0, 16.0))
+        # Sub-pixel thickness is raised to the minimum rendered thickness.
+        self.assertEqual((thin.width(), thin.height()), (20.0, 2.0))
+
+    def test_count_takeoff_is_centered_and_has_a_minimum_rendered_size(self):
+        def bounds(size):
+            renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+            condition = Condition(
+                uid="c1",
+                condition_type=Condition.TYPE_COUNT,
+                shape=shapes.SQUARE,
+                width=size,
+                depth=size,
+                display_size=100.0,
+            )
+            takeoff = Takeoff(uid="t1", condition_uid="c1", position=[50.0, 60.0])
+            rendered = renderer.create_all_path_items(
+                [takeoff],
+                {"c1": condition},
+                {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            )
+            item = rendered[0][1]
+            return (item[0] if isinstance(item, list) else item).path().boundingRect()
+
+        self.assertEqual(bounds(20.0), QtCore.QRectF(40.0, 50.0, 20.0, 20.0))
+        self.assertEqual(bounds(2.0), QtCore.QRectF(46.0, 56.0, 8.0, 8.0))
+
+    def test_linear_display_name_is_centered_below_the_rendered_path(self):
+        condition = Condition(
+            uid="c1",
+            name="Linear Label",
+            condition_type=Condition.TYPE_LINEAR,
+            color_fill=0,
+            pattern=1,
+            thickness=8.0,
+            display_name=True,
+        )
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[0.0, 0.0, 20.0, 0.0])
+        items = self._render_takeoff_items(condition, takeoff)
+        self.assertEqual(len(items), 2)
+        path_bounds = items[0].path().boundingRect()
+        label = items[1]
+        self.assertIsInstance(label, QGraphicsTextItem)
+        self.assertEqual(label.data(3), "display_name")
+        self.assertEqual(label.toPlainText(), "Linear Label")
+        # Position derives from the label's own metrics, not a fixed font size.
+        self.assertAlmostEqual(label.pos().y(), path_bounds.bottom() + 4.0)
+        self.assertAlmostEqual(
+            label.pos().x() + label.boundingRect().width() / 2.0,
+            path_bounds.center().x(),
+        )
+        hidden_name = Condition(
+            uid="c1",
+            name="Linear Label",
+            condition_type=Condition.TYPE_LINEAR,
+            color_fill=0,
+            pattern=1,
+            thickness=8.0,
+            display_name=False,
+        )
+        self.assertFalse(
+            [
+                item
+                for item in self._render_takeoff_items(hidden_name, takeoff)
+                if isinstance(item, QGraphicsTextItem)
+            ]
+        )
+
+    def test_takeoffs_without_a_condition_or_color_entry_are_skipped(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        condition = Condition(
+            uid="c1", condition_type=Condition.TYPE_LINEAR, color_fill=0, pattern=1
+        )
+        takeoffs = [
+            Takeoff(uid="ok", condition_uid="c1", position=[0.0, 0.0, 10.0, 0.0]),
+            Takeoff(
+                uid="no-condition", condition_uid="gone", position=[0.0, 0.0, 10.0, 0.0]
+            ),
+            Takeoff(uid="short", condition_uid="c1", position=[0.0, 0.0]),
+        ]
+        rendered = renderer.create_all_path_items(
+            takeoffs,
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        self.assertEqual([uid for uid, _item in rendered], ["ok"])
+        no_color = renderer.create_all_path_items(
+            takeoffs[:1],
+            {"c1": condition},
+            {},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        self.assertEqual(no_color, [])
+
+    def test_label_style_defaults_to_condition_color_and_default_point_size(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        condition = Condition(
+            uid="c1",
+            name="Plain Label",
+            condition_type=Condition.TYPE_AREA,
+            display_name=True,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0],
+        )
+        rendered = renderer.create_all_path_items(
+            [takeoff],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        items = rendered[0][1]
+        items = items if isinstance(items, list) else [items]
+        label = next(item for item in items if isinstance(item, QGraphicsTextItem))
+        self.assertEqual(label.defaultTextColor().name(), "#123456")
+        self.assertEqual(label.font().pointSize(), 9)
+        self.assertFalse(label.font().bold())
+        self.assertFalse(label.font().italic())
+        self.assertFalse(label.font().underline())
+        self.assertTrue(
+            label.flags() & QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable
+        )
+
+    def test_linear_patterns_follow_the_direction_of_a_non_diagonal_linear(self):
+        for pattern, offset in (
+            (pattern_values.HORIZONTAL, 0.0),
+            (pattern_values.VERTICAL, math.pi / 2.0),
+        ):
+            with self.subTest(pattern=pattern):
+                condition = Condition(
+                    uid="c1",
+                    condition_type=Condition.TYPE_LINEAR,
+                    color_fill=0,
+                    pattern=pattern,
+                    spacing=2.0,
+                    thickness=8.0,
+                )
+                takeoff = Takeoff(
+                    uid="t1",
+                    condition_uid="c1",
+                    position=[0.0, 0.0, 30.0, 10.0],
+                )
+                items = self._render_takeoff_items(condition, takeoff)
+                self._assert_parallel_angle(
+                    self._path_line_angle(items[1]),
+                    math.atan2(10.0, 30.0) + offset,
+                )

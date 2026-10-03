@@ -82,14 +82,20 @@ class PlanNamedViewHotlinkDeleteTests(unittest.TestCase):
         confirm.assert_called_once_with(linked_view)
 
     def test_hotlink_without_target_does_not_count_as_link(self):
-        view = named_view("v")
-        blank_target = hotlink("h", "")
-        confirm = Mock()
-        result = plan_named_view_hotlink_delete(
-            [view], lambda _uids: [blank_target], confirm
-        )
-        self.assertEqual(result.annotations_to_delete, [view])
-        confirm.assert_not_called()
+        # A blank target reads as None ("" or "0" are blank markers). Views
+        # whose uid equals the stringified blank are the only ones a missing
+        # guard could key a link to, which is what makes the guard observable.
+        for view_uid, target in (("v", ""), ("None", ""), ("0", "0")):
+            with self.subTest(view_uid=view_uid, target=target):
+                view = named_view(view_uid)
+                blank_target = hotlink("h", target)
+                confirm = Mock()
+                result = plan_named_view_hotlink_delete(
+                    [view], lambda _uids: [blank_target], confirm
+                )
+                self.assertEqual(result.annotations_to_delete, [view])
+                self.assertEqual(result.skipped_named_view_uids, set())
+                confirm.assert_not_called()
 
     def test_unlinked_view_does_not_require_confirmation(self):
         view = named_view("v")

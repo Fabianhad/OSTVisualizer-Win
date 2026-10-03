@@ -43,7 +43,7 @@ class EmployeeNestedContinuationTests(unittest.TestCase):
                         return True
 
                     parent = EmployeeDetailDialog(
-                        Mock(),
+                        _master_data_support_FakeIconProvider(),
                         [
                             EmployeeRecord(
                                 "1",
@@ -65,8 +65,10 @@ class EmployeeNestedContinuationTests(unittest.TestCase):
                         pay_classes=[PayClass("p", "Old"), PayClass("q", "Other")],
                         pay_classes_save_async_fn=queue,
                     )
+                    executed = []
 
                     def exercise(child):
+                        executed.append(child)
                         child.tree.setCurrentItem(child.tree.topLevelItem(0))
                         child.tree.currentItem().setText(0, "Saved")
                         child.accept()
@@ -97,6 +99,7 @@ class EmployeeNestedContinuationTests(unittest.TestCase):
                         ) as rebuild:
                             with patch.object(PayrollClassListDialog, "exec", exercise):
                                 parent._open_payroll_class_dialog()
+                            self.assertEqual(len(executed), 1)
                             self.assertEqual(
                                 parent.combo_pay_class.currentData(),
                                 "p" if transition == "current" and success else "q",
@@ -149,8 +152,8 @@ class EmployeePayClassSaveWorkflowTests(unittest.TestCase):
                     0,
                     make_workspace_state_model(),
                     pay_classes=[
-                        PayClass(uid="pay-a", name="Regular"),
                         PayClass(uid="sibling", name="Regular"),
+                        PayClass(uid="pay-a", name="Regular"),
                     ],
                     pay_classes_save_fn=save,
                     pay_classes_save_async_fn=queue if asynchronous else None,
@@ -220,6 +223,7 @@ class EmployeePayClassSaveWorkflowTests(unittest.TestCase):
                     asynchronous=asynchronous, deletion_succeeds=deletion_succeeds
                 ):
                     persisted = [
+                        PayClass(uid="pay-0", name="Overtime"),
                         PayClass(uid="pay-a", name="Regular"),
                         PayClass(uid="pay-b", name="Regular"),
                     ]
@@ -298,6 +302,11 @@ class EmployeePayClassSaveWorkflowTests(unittest.TestCase):
                         if errors:
                             raise errors[0]
                         self.assertEqual(len(writes), 1)
+                        self.assertEqual(writes[0]["deleted_uids"], ["pay-b"])
+                        expected_rows = [
+                            ("pay-0", "Overtime"),
+                            ("pay-a", "Regular"),
+                        ] + ([] if deletion_succeeds else [("pay-b", "Regular")])
                         self.assertEqual(
                             [
                                 (
@@ -306,7 +315,10 @@ class EmployeePayClassSaveWorkflowTests(unittest.TestCase):
                                 )
                                 for i in range(parent.combo_pay_class.count())
                             ],
-                            [(pc.uid, pc.name) for pc in persisted],
+                            expected_rows,
+                        )
+                        self.assertEqual(
+                            [(pc.uid, pc.name) for pc in persisted], expected_rows
                         )
                         self.assertEqual(parent.combo_pay_class.currentData(), "pay-a")
                         self.assertEqual(

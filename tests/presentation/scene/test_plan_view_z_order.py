@@ -3,12 +3,21 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.presentation.scene.plan_view_z_order import (
+    ANNOTATION_BODY_Z,
     FOREGROUND_OVERLAY_Z,
     PAGE_IMAGE_Z,
     PAGE_VISIBLE_FRAME_Z,
     PAPER_HIGHLIGHT_Z,
+    PDF_TEXT_SELECTION_Z,
     TAKEOFF_BODY_Z,
+    TAKEOFF_DRAW_ORDER_STEP,
+    TAKEOFF_LABEL_Z,
+    TAKEOFF_PREVIEW_BODY_Z,
+    TAKEOFF_PREVIEW_DRAW_INDEX,
+    TAKEOFF_PREVIEW_INDICATOR_Z,
+    TAKEOFF_PREVIEW_OUTLINE_Z,
     overlay_visual_z,
+    takeoff_z_value,
 )
 from ost_visualizer.presentation.utils.image_show_mode import (
     SHOW_ORIGINAL,
@@ -84,3 +93,43 @@ class PlanViewZOrderCompositionTests(unittest.TestCase):
                 ),
                 PAGE_IMAGE_Z,
             )
+
+
+class TakeoffPreviewZOrderTests(unittest.TestCase):
+    def test_takeoff_z_value_adds_one_draw_step_per_slot(self):
+        self.assertEqual(takeoff_z_value(TAKEOFF_BODY_Z, 0), TAKEOFF_BODY_Z)
+        self.assertAlmostEqual(
+            takeoff_z_value(TAKEOFF_BODY_Z, 7),
+            TAKEOFF_BODY_Z + 7 * TAKEOFF_DRAW_ORDER_STEP,
+            places=12,
+        )
+        self.assertLess(
+            takeoff_z_value(TAKEOFF_LABEL_Z, 3), takeoff_z_value(TAKEOFF_LABEL_Z, 4)
+        )
+
+    def test_preview_body_is_derived_from_the_takeoff_body_band(self):
+        self.assertEqual(
+            TAKEOFF_PREVIEW_BODY_Z,
+            takeoff_z_value(TAKEOFF_BODY_Z, TAKEOFF_PREVIEW_DRAW_INDEX),
+        )
+        self.assertEqual(
+            TAKEOFF_PREVIEW_OUTLINE_Z,
+            takeoff_z_value(TAKEOFF_BODY_Z, TAKEOFF_PREVIEW_DRAW_INDEX + 1),
+        )
+        self.assertEqual(
+            TAKEOFF_PREVIEW_INDICATOR_Z,
+            takeoff_z_value(TAKEOFF_BODY_Z, TAKEOFF_PREVIEW_DRAW_INDEX + 2),
+        )
+
+    def test_preview_stacks_above_every_placed_takeoff_body_and_below_annotations(
+        self,
+    ):
+        last_placed_body = takeoff_z_value(
+            TAKEOFF_BODY_Z, TAKEOFF_PREVIEW_DRAW_INDEX - 1
+        )
+        self.assertGreater(TAKEOFF_PREVIEW_BODY_Z, last_placed_body)
+        self.assertLess(TAKEOFF_PREVIEW_BODY_Z, TAKEOFF_PREVIEW_OUTLINE_Z)
+        self.assertLess(TAKEOFF_PREVIEW_OUTLINE_Z, TAKEOFF_PREVIEW_INDICATOR_Z)
+        self.assertLess(TAKEOFF_PREVIEW_INDICATOR_Z, PDF_TEXT_SELECTION_Z)
+        self.assertLess(TAKEOFF_PREVIEW_INDICATOR_Z, ANNOTATION_BODY_Z)
+        self.assertLess(ANNOTATION_BODY_Z, TAKEOFF_LABEL_Z)

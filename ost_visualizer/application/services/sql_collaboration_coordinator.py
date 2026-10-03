@@ -8,7 +8,9 @@ import random
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from typing import Callable, Optional
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..dtos.application_info import APPLICATION_VERSION
@@ -28,6 +30,7 @@ from ..dtos.collaboration_dtos import (
     EditLeaseResult,
     MutationExecutionResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     PendingMutationState,
     PendingSqlOperationRecord,
     PresenceMode,
@@ -39,6 +42,7 @@ from ..dtos.collaboration_dtos import (
     ResourceRef,
     SynchronizationState,
     queued_takeoff_preview_uid,
+    rejection_reason_message,
 )
 from ..dtos.collaboration_resource_catalog import (
     parse_annotation_resource_id,
@@ -68,11 +72,30 @@ _DATABASE_DRAIN_GRACE_SECONDS = 5.0
 _MAX_QUEUED_MUTATIONS = 64
 
 
+class _WorkerEndReason(Enum):
+    SESSION_EXPIRED = "session_expired"
+    CREDENTIAL_REQUIRED = "credential_required"
+    READ_ONLY_REQUIRED = "read_only_required"
+    NON_RETRYABLE_ERROR = "non_retryable_error"
+    INTERNAL_ERROR = "internal_error"
+    MARKER_LOOKUP_BLOCKED = "marker_lookup_blocked"
+    TRANSIENT_OPEN_FAILURE = "transient_open_failure"
+
+
+_RECOVERABLE_END_REASONS = frozenset(
+    {
+        _WorkerEndReason.MARKER_LOOKUP_BLOCKED,
+        _WorkerEndReason.TRANSIENT_OPEN_FAILURE,
+    }
+)
+
+
 @dataclass
 class _DatabaseRuntime:
     database_id: str
     generation: int
     session_generation: int = 0
+    restored_session_generation: int = -1
     retry_initial_failure: bool = True
     initial_open_callback: Optional[Callable[[bool, str], None]] = None
     stop_event: threading.Event = field(default_factory=threading.Event)
@@ -107,6 +130,8 @@ class _DatabaseRuntime:
     mode: PresenceMode = PresenceMode.VIEWING
     close_reason: str = "closed"
     thread: Optional[threading.Thread] = None
+    end_reason: Optional[_WorkerEndReason] = None
+    marker_lookup_blocked: bool = False
     poll_count: int = 0
     poll_duration_seconds: float = 0.0
     transaction_count: int = 0
@@ -116,6 +141,10 @@ class _DatabaseRuntime:
     retention_gap_count: int = 0
     reconnect_count: int = 0
     cleanup_errors: list[str] = field(default_factory=list)
+
+
+class _OwnPublicationGuard(threading.local):
+    depth = 0
 
 
 @dataclass(frozen=True)
@@ -151,6 +180,7 @@ class SqlCollaborationCoordinator:
         *,
         pending_mutations: PendingMutationRegistry,
         operation_journal: IPendingSqlOperationRepository,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._registry = descriptor_registry
         self._store = store
@@ -177,6 +207,10 @@ class SqlCollaborationCoordinator:
         ] = {}
         self._supported_schema_version = supported_schema_version
         self._polling_policy = polling_policy
+        self._clock = clock
+        self._own_publication = _OwnPublicationGuard()
+        self._restart_steps: dict[str, int] = {}
+        self._restart_not_before: dict[str, float] = {}
         self._client_instance_id = str(uuid.uuid4())
         self._runtimes: dict[str, _DatabaseRuntime] = {}
         self._lock = threading.Lock()
@@ -220,6 +254,23 @@ class SqlCollaborationCoordinator:
             self._capabilities.collaboration_status(file_path).conflicted_resources
         )
         self._capabilities.clear_collaboration_conflicts(file_path)
+        if self._worker_has_ended(runtime):
+            recoverable = runtime.end_reason in _RECOVERABLE_END_REASONS
+            if had_resource_conflicts:
+                if recoverable:
+                    self._event_bus.publish(
+                        AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                        file_path=file_path,
+                    )
+                else:
+                    with self._publishing_own_event():
+                        self._event_bus.publish(
+                            AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                            file_path=file_path,
+                        )
+            elif recoverable:
+                self._restart_ended_worker(file_path)
+            return
         if self.resume_controlled_recovery(file_path):
             return
         if had_resource_conflicts:
@@ -246,19 +297,54 @@ class SqlCollaborationCoordinator:
         return True
 
     def _on_database_capabilities_changed(self, file_path: str, **_event_data) -> None:
-        runtime = self._runtime(file_path)
-        if runtime is None:
+        if self._own_publication.depth:
             return
+        runtime = self._runtime(file_path)
+        if runtime is None or not self._worker_has_ended(runtime):
+            return
+        self._restart_ended_worker(file_path)
+
+    @staticmethod
+    def _worker_has_ended(runtime: _DatabaseRuntime) -> bool:
         thread = runtime.thread
-        if thread is None or thread.is_alive() or thread.ident is None:
+        return thread is not None and thread.ident is not None and not thread.is_alive()
+
+    def _restart_ended_worker(self, database_id: str) -> None:
+        if not self._admit_reprobe_restart(database_id):
             return
         self.stop_database_async(
-            file_path,
+            database_id,
             "reconfigured",
             lambda success, _message: (
-                self.start_database(file_path) if success else None
+                self.start_database(database_id) if success else None
             ),
         )
+
+    def _admit_reprobe_restart(self, database_id: str) -> bool:
+        now = self._clock()
+        with self._lock:
+            if now < self._restart_not_before.get(database_id, 0.0):
+                return False
+            step = self._restart_steps.get(database_id, 0)
+            self._restart_not_before[database_id] = now + self._reconnect_delay(step)
+            self._restart_steps[database_id] = min(
+                step + 1, len(self._polling_policy.reconnect_backoff_seconds) - 1
+            )
+        return True
+
+    def _clear_restart_backoff(self, database_id: str) -> None:
+        with self._lock:
+            self._restart_steps.pop(database_id, None)
+            self._restart_not_before.pop(database_id, None)
+
+    @contextmanager
+    def _publishing_own_event(self):
+        depth = self._own_publication.depth
+        self._own_publication.depth = depth + 1
+        try:
+            yield
+        finally:
+            self._own_publication.depth = depth
 
     def start_database(
         self,
@@ -310,6 +396,8 @@ class SqlCollaborationCoordinator:
         reason: str = "closed",
         callback: Optional[Callable[[bool, str], None]] = None,
     ) -> None:
+        if reason in _LOCAL_DETACH_REASONS:
+            self._clear_restart_backoff(database_id)
         runtime = self._detach_runtime(database_id, reason)
         if runtime is None:
             finalize_local_detach = False
@@ -534,6 +622,7 @@ class SqlCollaborationCoordinator:
                 request.operation_id,
                 callback,
                 str(exc),
+                owns_pending_entry=False,
             )
         try:
             self._save_operation_record(PendingSqlOperationRecord.from_request(request))
@@ -721,20 +810,33 @@ class SqlCollaborationCoordinator:
         operation_id: str,
         callback: Callable[[QueuedMutationResult], None],
         message: str,
+        *,
+        owns_pending_entry: bool = True,
     ) -> int:
         runtime = self._runtime(database_id)
         generation = runtime.generation if runtime is not None else 0
-        self._dispatch_mutation_result(
-            callback,
-            QueuedMutationResult(
-                database_id=database_id,
-                runtime_generation=generation,
-                operation_id=operation_id,
-                outcome_status=MutationOutcomeStatus.REJECTED,
-                message=message,
-            ),
+        result = QueuedMutationResult(
+            database_id=database_id,
+            runtime_generation=generation,
+            operation_id=operation_id,
+            outcome_status=MutationOutcomeStatus.REJECTED,
+            message=message,
         )
+        if owns_pending_entry:
+            self._dispatch_mutation_result(callback, result)
+        else:
+            self._dispatcher.dispatch(
+                self._complete_unregistered_rejection, (callback, result)
+            )
         return -1
+
+    @staticmethod
+    def _complete_unregistered_rejection(payload) -> None:
+        callback, result = payload
+        try:
+            callback(result)
+        except Exception:
+            logger.exception("SQL rejected-submission completion callback failed")
 
     def _save_operation_record(self, record: PendingSqlOperationRecord) -> None:
         self._operation_journal.save(record)
@@ -1022,6 +1124,7 @@ class SqlCollaborationCoordinator:
                 "SQL collaboration worker stopped after an unexpected %s.",
                 type(exc).__name__,
             )
+            runtime.end_reason = _WorkerEndReason.INTERNAL_ERROR
             try:
                 self._handle_worker_failure(
                     runtime,
@@ -1145,7 +1248,13 @@ class SqlCollaborationCoordinator:
                         and runtime.acknowledged_version
                         >= runtime.observed_high_water_version
                     )
-                    needs_restored_event = caught_up and not runtime.healthy
+                    needs_restored_event = (
+                        caught_up
+                        and runtime.restored_session_generation
+                        != runtime.session_generation
+                    )
+                    if needs_restored_event:
+                        runtime.restored_session_generation = runtime.session_generation
                     runtime.healthy = caught_up
                     active_session = runtime.session
                     active_session_generation = runtime.session_generation
@@ -1156,10 +1265,12 @@ class SqlCollaborationCoordinator:
                             "SQL edit permissions or schema trust changed.",
                             SynchronizationState.READ_ONLY,
                         )
+                        runtime.end_reason = _WorkerEndReason.READ_ONLY_REQUIRED
                         break
                     with runtime.lock:
                         runtime.established = True
                         runtime.recovery_attempted = False
+                    self._clear_restart_backoff(runtime.database_id)
                     self._sessions.register(
                         runtime.database_id, active_session.session_id
                     )
@@ -1190,6 +1301,7 @@ class SqlCollaborationCoordinator:
                 if not exc.retryable or (
                     failed_before_establishment and not runtime.retry_initial_failure
                 ):
+                    runtime.end_reason = self._catalog_end_reason(runtime, exc)
                     break
                 delay = self._reconnect_delay(reconnect_attempt)
                 with runtime.lock:
@@ -1205,6 +1317,7 @@ class SqlCollaborationCoordinator:
                 failed_before_establishment = not runtime.established
                 self._handle_worker_failure(runtime, str(exc))
                 if failed_before_establishment and not runtime.retry_initial_failure:
+                    runtime.end_reason = _WorkerEndReason.TRANSIENT_OPEN_FAILURE
                     break
                 delay = self._reconnect_delay(reconnect_attempt)
                 with runtime.lock:
@@ -1222,6 +1335,22 @@ class SqlCollaborationCoordinator:
                     self._on_reconciliation_required,
                     (runtime.database_id, runtime.generation, str(exc)),
                 )
+
+    @staticmethod
+    def _catalog_end_reason(
+        runtime: _DatabaseRuntime, exc: DatabaseCatalogError
+    ) -> _WorkerEndReason:
+        if exc.session_expired:
+            return _WorkerEndReason.SESSION_EXPIRED
+        if exc.credential_required:
+            return _WorkerEndReason.CREDENTIAL_REQUIRED
+        if exc.read_only_required:
+            return _WorkerEndReason.READ_ONLY_REQUIRED
+        if exc.retryable:
+            return _WorkerEndReason.TRANSIENT_OPEN_FAILURE
+        if runtime.marker_lookup_blocked:
+            return _WorkerEndReason.MARKER_LOOKUP_BLOCKED
+        return _WorkerEndReason.NON_RETRYABLE_ERROR
 
     @staticmethod
     def _install_session(
@@ -1429,9 +1558,14 @@ class SqlCollaborationCoordinator:
                         created_resource_ids=created_resource_ids,
                         authoritative_result=work_result.authoritative_result,
                         outcome_status=work_result.outcome_status,
-                        message=work_result.message,
+                        message=(
+                            rejection_reason_message(work_result.rejection_reason)
+                            if work_result.rejection_reason is not None
+                            else work_result.message
+                        ),
                         conflict=work_result.conflict,
                         commit_attempted=work_result.commit_attempted,
+                        rejection_reason=work_result.rejection_reason,
                     )
                     if (
                         work_result.outcome_status
@@ -1529,7 +1663,8 @@ class SqlCollaborationCoordinator:
                             commit_attempted=True,
                         )
             except (DatabaseCatalogError, OSError) as exc:
-                failure = exc
+                if not self._is_plain_denial(exc):
+                    failure = exc
                 result = QueuedMutationResult(
                     database_id=request.database_id,
                     runtime_generation=request.runtime_generation,
@@ -1625,6 +1760,15 @@ class SqlCollaborationCoordinator:
         finally:
             if not runtime.mutation_requests.empty():
                 runtime.command_event.set()
+
+    @staticmethod
+    def _is_plain_denial(error: BaseException) -> bool:
+        return isinstance(error, DatabaseCatalogError) and not (
+            error.retryable
+            or error.session_expired
+            or error.credential_required
+            or error.read_only_required
+        )
 
     def _validated_mutation_edit_lease(
         self,
@@ -1976,6 +2120,12 @@ class SqlCollaborationCoordinator:
                         or "A lifecycle-critical SQL mutation did not complete."
                     )
         self._complete_mutation_drain_if_ready(result.database_id)
+        if result.rejection_reason == MutationRejectionReason.BID_LOCKED:
+            self._event_bus.publish(
+                AppEvents.BID_LOCKED_REJECTION,
+                database_id=result.database_id,
+                operation_id=result.operation_id,
+            )
         if result.conflict is not None and trusted:
             publish_synchronization_conflict(self._event_bus, result.conflict)
 
@@ -2040,12 +2190,7 @@ class SqlCollaborationCoordinator:
                 self._deny_edit_request(
                     request, draft_id, callback, session, acquired, str(exc)
                 )
-                if (
-                    exc.retryable
-                    or exc.session_expired
-                    or exc.credential_required
-                    or exc.read_only_required
-                ):
+                if not self._is_plain_denial(exc):
                     raise
                 continue
             except OSError as exc:
@@ -2393,7 +2538,7 @@ class SqlCollaborationCoordinator:
                 ),
             )
             return
-        if acknowledged and (
+        if (
             acknowledged < batch.minimum_valid_version
             or acknowledged > batch.high_water_version
         ):
@@ -2443,10 +2588,19 @@ class SqlCollaborationCoordinator:
             if record.database_id == runtime.database_id
         )
         for record in records:
-            durable = self._store.query_operation(
-                runtime.database_id,
-                record.operation_id,
-            )
+            try:
+                durable = self._store.query_operation(
+                    runtime.database_id,
+                    record.operation_id,
+                )
+            except DatabaseCatalogError as exc:
+                runtime.marker_lookup_blocked = not (
+                    exc.retryable
+                    or exc.session_expired
+                    or exc.credential_required
+                    or exc.read_only_required
+                )
+                raise
             if not durable.found:
                 with self._lock:
                     callback_entry = self._uncertain_callbacks.get(record.operation_id)
@@ -3109,10 +3263,11 @@ class SqlCollaborationCoordinator:
             locked_resources,
             current_status.conflicted_resources,
         )
-        self._event_bus.publish(
-            AppEvents.DATABASE_CAPABILITIES_CHANGED,
-            file_path=database_id,
-        )
+        with self._publishing_own_event():
+            self._event_bus.publish(
+                AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                file_path=database_id,
+            )
 
     def _set_state(
         self, database_id: str, state: SynchronizationState, message: str = ""
@@ -3143,16 +3298,17 @@ class SqlCollaborationCoordinator:
     def _publish_state(
         self, database_id: str, state: SynchronizationState, message: str = ""
     ) -> None:
-        self._event_bus.publish(
-            AppEvents.COLLABORATION_STATE_CHANGED,
-            database_id=database_id,
-            state=state.value,
-            message=message,
-        )
-        self._event_bus.publish(
-            AppEvents.DATABASE_CAPABILITIES_CHANGED,
-            file_path=database_id,
-        )
+        with self._publishing_own_event():
+            self._event_bus.publish(
+                AppEvents.COLLABORATION_STATE_CHANGED,
+                database_id=database_id,
+                state=state.value,
+                message=message,
+            )
+            self._event_bus.publish(
+                AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                file_path=database_id,
+            )
 
     def _runtime(
         self, database_id: str, generation: Optional[int] = None

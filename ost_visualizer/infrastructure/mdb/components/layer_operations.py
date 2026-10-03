@@ -9,6 +9,20 @@ from .constants import LAYER_REFERENCE_TABLES
 from .identity_allocation import AccessIdentityAllocationMixin
 
 
+def _default_layer_update_matched(
+    cursor, assignment: str, value, layer_uid: int
+) -> bool:
+    if cursor.rowcount >= 0:
+        return bool(cursor.rowcount)
+    cursor.execute(
+        "SELECT [UID] FROM [BidLayers] "
+        f"WHERE [UID] = ? AND [IsTemplate] <> 0 AND {assignment}",
+        layer_uid,
+        value,
+    )
+    return cursor.fetchone() is not None
+
+
 class LayerOperationsMixin(AccessIdentityAllocationMixin):
     def update_layer_show(self, db_path: str, layer_uid: str, show: bool) -> bool:
         show_value = -1 if show else 0
@@ -41,7 +55,9 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                 show_value,
                 int(layer_uid),
             )
-            return bool(cursor.rowcount)
+            return _default_layer_update_matched(
+                cursor, "[Show] = ?", show_value, int(layer_uid)
+            )
 
     def insert_layer(
         self, db_path: str, bid_uid: str, name: str, after_sequence: int
@@ -360,7 +376,9 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                 name,
                 int(layer_uid),
             )
-            return bool(cursor.rowcount)
+            return _default_layer_update_matched(
+                cursor, "[Name] = ?", name, int(layer_uid)
+            )
 
     def swap_layer_sequence(
         self, db_path: str, layer_uid_a: str, layer_uid_b: str

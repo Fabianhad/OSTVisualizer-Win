@@ -1,3 +1,4 @@
+import threading
 import unittest
 from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
@@ -10,6 +11,7 @@ from ost_visualizer.application.dtos.local_draft_dtos import (
     LocalDraftState,
 )
 from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
+from tests.helpers.lock_guard import guard_mapping
 from tests.helpers.sql.collaboration import _change
 
 
@@ -387,3 +389,297 @@ class LocalDraftLifecycleTests(unittest.TestCase):
             registry.get(draft.draft_id).base_tokens,
             ((condition, initial), (takeoff, current)),
         )
+
+
+class LocalDraftRegistryOwnershipTests(unittest.TestCase):
+    def _begin(self, registry, affected, dependencies=(), database="database", **extra):
+        return registry.begin(
+            draft_type="editor",
+            database_id=database,
+            bid_uid=8,
+            page_uid=3,
+            owning_surface="surface",
+            affected_resources=affected,
+            dependency_resources=dependencies,
+            **extra,
+        )
+
+    def test_begin_records_pending_ownership_exactly_as_requested(self):
+        registry = LocalDraftRegistry()
+        first = ResourceRef("takeoff", "1", 8)
+        token = ConcurrencyToken(b"\x00" * 7 + b"\x05")
+        named = self._begin(
+            registry, (first,), base_tokens=((first, token),), operation_id="op-name"
+        )
+        unnamed = self._begin(
+            registry, (ResourceRef("takeoff", "2", 8),), database="other"
+        )
+        self.assertEqual(
+            (
+                named.database_id,
+                named.bid_uid,
+                named.page_uid,
+                named.owning_surface,
+                named.draft_type,
+                named.operation_id,
+                named.state,
+                named.runtime_generation,
+                named.leases,
+                named.base_tokens,
+                named.dependency_resources,
+            ),
+            (
+                "database",
+                8,
+                3,
+                "surface",
+                "editor",
+                "op-name",
+                LocalDraftState.PENDING,
+                0,
+                (),
+                ((first, token),),
+                (),
+            ),
+        )
+        self.assertEqual(unnamed.operation_id, "editor")
+        self.assertEqual(unnamed.base_tokens, ())
+        self.assertNotEqual(named.draft_id, unnamed.draft_id)
+        self.assertIs(registry.get(named.draft_id), named)
+        self.assertIs(registry.get(unnamed.draft_id), unnamed)
+
+    def test_disjoint_drafts_coexist_and_every_overlap_shape_is_refused(self):
+        a = ResourceRef("takeoff", "1", 8)
+        b = ResourceRef("takeoff", "2", 8)
+        c = ResourceRef("condition", "9", 8)
+        d = ResourceRef("condition", "10", 8)
+        registry = LocalDraftRegistry()
+        first = self._begin(registry, (a,), (c,))
+        second = self._begin(registry, (b,), (d,))
+        elsewhere = self._begin(registry, (a,), (c,), database="other")
+        for draft in (first, second, elsewhere):
+            self.assertIs(registry.get(draft.draft_id), draft)
+        page = ResourceRef("page", "7", 8)
+        for name, affected, dependencies in (
+            ("affected vs affected", (a,), ()),
+            ("affected vs dependency", (c,), ()),
+            ("dependency vs affected", (page,), (b,)),
+            ("dependency vs dependency", (page,), (d,)),
+        ):
+            with self.subTest(overlap=name):
+                with self.assertRaisesRegex(ValueError, "already owns"):
+                    self._begin(registry, affected, dependencies)
+        free = self._begin(registry, (page,))
+        for draft in (first, second, elsewhere, free):
+            self.assertIs(registry.get(draft.draft_id), draft)
+
+    def test_base_token_is_scoped_to_the_owning_database_and_resource(self):
+        resource = ResourceRef("takeoff", "1", 8)
+        other_resource = ResourceRef("takeoff", "2", 8)
+        token = ConcurrencyToken(b"\x00" * 7 + b"\x07")
+        registry = LocalDraftRegistry()
+        self._begin(
+            registry,
+            (resource, other_resource),
+            base_tokens=((resource, token),),
+        )
+        self.assertEqual(registry.base_token("database", resource), token)
+        self.assertIsNone(registry.base_token("database", other_resource))
+        self.assertIsNone(registry.base_token("other", resource))
+        self.assertIsNone(
+            registry.base_token("database", ResourceRef("takeoff", "3", 8))
+        )
+
+    def test_local_versions_only_touch_drafts_of_their_database_that_own_the_resource(
+        self,
+    ):
+        resource = ResourceRef("takeoff", "1", 8)
+        sibling = ResourceRef("takeoff", "2", 8)
+        old = ConcurrencyToken(b"\x00" * 7 + b"\x01")
+        new = ConcurrencyToken(b"\x00" * 7 + b"\x02")
+        registry = LocalDraftRegistry()
+        owner = self._begin(registry, (resource,), base_tokens=((resource, old),))
+        bystander = self._begin(
+            registry, (sibling,), base_tokens=((sibling, new), (resource, old))
+        )
+        elsewhere = self._begin(
+            registry, (resource,), database="other", base_tokens=((resource, old),)
+        )
+        registry.apply_local_versions("database", {resource: new})
+        self.assertEqual(registry.get(owner.draft_id).base_tokens, ((resource, new),))
+        self.assertIs(registry.get(bystander.draft_id), bystander)
+        self.assertIs(registry.get(elsewhere.draft_id), elsewhere)
+        self.assertEqual(elsewhere.base_tokens, ((resource, old),))
+
+    def test_every_public_operation_touches_the_table_only_while_locked(self):
+        registry = LocalDraftRegistry()
+        registry._drafts = guard_mapping(registry._lock, registry._drafts)
+        resource = ResourceRef("takeoff", "1", 8)
+        token = ConcurrencyToken(b"\x00" * 7 + b"\x01")
+        draft = self._begin(registry, (resource,), base_tokens=((resource, token),))
+        registry.activate(draft.draft_id, (), runtime_generation=2)
+        registry.get(draft.draft_id)
+        registry.base_token("database", resource)
+        registry.apply_local_versions("database", {resource: token})
+        registry.set_base_tokens(draft.draft_id, ((resource, token),))
+        registry.conflicts_for_changes("database", (_change("database", resource, 2),))
+        with self.assertRaises(ValueError):
+            self._begin(registry, (resource,))
+        registry.finish(draft.draft_id)
+        registry.finish(draft.draft_id)
+        with self.assertRaises(ValueError):
+            registry.activate(draft.draft_id, (), runtime_generation=2)
+        with self.assertRaisesRegex(AssertionError, "without the lock"):
+            registry._drafts.get(draft.draft_id)
+
+    def test_racing_begins_for_one_resource_admit_exactly_one_owner(self):
+        registry = LocalDraftRegistry()
+        resource = ResourceRef("takeoff", "1", 8)
+        racers = 8
+        start = threading.Barrier(racers)
+        outcomes = []
+
+        def race():
+            start.wait(10.0)
+            try:
+                outcomes.append(self._begin(registry, (resource,)))
+            except ValueError as error:
+                outcomes.append(str(error))
+
+        threads = [threading.Thread(target=race) for _ in range(racers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10.0)
+            self.assertFalse(thread.is_alive())
+        owners = [item for item in outcomes if not isinstance(item, str)]
+        self.assertEqual(len(owners), 1)
+        self.assertEqual(
+            [item for item in outcomes if isinstance(item, str)],
+            ["A local edit already owns one of the requested resources."]
+            * (racers - 1),
+        )
+        self.assertIs(registry.get(owners[0].draft_id), owners[0])
+
+
+class DraftConflictScopeTests(unittest.TestCase):
+    def _active_draft(self, registry, affected, dependencies=(), bid_uid=8):
+        draft = registry.begin(
+            draft_type="editor",
+            database_id="database",
+            bid_uid=bid_uid,
+            page_uid=None,
+            owning_surface="surface",
+            affected_resources=affected,
+            dependency_resources=dependencies,
+        )
+        registry.activate(draft.draft_id, (), runtime_generation=1)
+        return registry.get(draft.draft_id)
+
+    def _conflicting_ids(self, registry, incoming):
+        return [
+            conflict.draft_id
+            for conflict in registry.conflicts_for_changes(
+                "database", (_change("database", incoming),)
+            )
+        ]
+
+    def test_collection_change_without_bid_context_reaches_drafts_in_every_bid(self):
+        for bid in (8, 9):
+            with self.subTest(bid=bid):
+                registry = LocalDraftRegistry()
+                draft = self._active_draft(
+                    registry, (ResourceRef("annotation", "rect/3", bid),), bid_uid=bid
+                )
+                incoming = ResourceRef("annotations_collection", "any", None)
+                self.assertEqual(
+                    self._conflicting_ids(registry, incoming), [draft.draft_id]
+                )
+        registry = LocalDraftRegistry()
+        draft = self._active_draft(registry, (ResourceRef("annotation", "rect/3", 8),))
+        self.assertEqual(
+            self._conflicting_ids(
+                registry, ResourceRef("annotations_collection", "9", 9)
+            ),
+            [],
+        )
+        self.assertEqual(registry.get(draft.draft_id).state, LocalDraftState.ACTIVE)
+
+    def test_bid_less_collection_dependency_reaches_members_of_every_bid(self):
+        for bid in (8, 9):
+            with self.subTest(bid=bid):
+                registry = LocalDraftRegistry()
+                draft = self._active_draft(
+                    registry,
+                    (ResourceRef("cover_sheet", "8", 8),),
+                    (ResourceRef("areas_collection", "any", None),),
+                )
+                self.assertEqual(
+                    self._conflicting_ids(registry, ResourceRef("area", "5", bid)),
+                    [draft.draft_id],
+                )
+        registry = LocalDraftRegistry()
+        self._active_draft(
+            registry,
+            (ResourceRef("cover_sheet", "8", 8),),
+            (ResourceRef("areas_collection", "8", 8),),
+        )
+        self.assertEqual(
+            self._conflicting_ids(registry, ResourceRef("area", "5", 9)), []
+        )
+
+    def test_database_level_collections_conflict_only_on_exact_identity(self):
+        for held, collection, member in (
+            (
+                ResourceRef("project", "9"),
+                ResourceRef("projects_collection", "database"),
+                ResourceRef("project", "10"),
+            ),
+            (
+                ResourceRef("condition_type", "5"),
+                ResourceRef("condition_types_collection", "database"),
+                ResourceRef("condition_type", "6"),
+            ),
+            (
+                ResourceRef("job_status", "5"),
+                ResourceRef("job_statuses_collection", "database"),
+                ResourceRef("job_status", "6"),
+            ),
+        ):
+            with self.subTest(collection=collection.resource_type):
+                registry = LocalDraftRegistry()
+                draft = self._active_draft(registry, (held,), bid_uid=None)
+                self.assertEqual(self._conflicting_ids(registry, collection), [])
+                self.assertEqual(self._conflicting_ids(registry, member), [])
+                self.assertEqual(
+                    self._conflicting_ids(registry, held), [draft.draft_id]
+                )
+                registry = LocalDraftRegistry()
+                draft = self._active_draft(registry, (held,), (collection,), None)
+                self.assertEqual(self._conflicting_ids(registry, member), [])
+                self.assertEqual(
+                    self._conflicting_ids(registry, collection), [draft.draft_id]
+                )
+        registry = LocalDraftRegistry()
+        self._active_draft(
+            registry,
+            (ResourceRef("cover_sheet", "8", 8),),
+            (ResourceRef("projects_collection", "database"),),
+        )
+        self.assertEqual(
+            self._conflicting_ids(registry, ResourceRef("bid", "8", 8)), []
+        )
+
+    def test_one_change_conflicts_with_every_overlapping_draft(self):
+        registry = LocalDraftRegistry()
+        shared = ResourceRef("conditions_collection", "8", 8)
+        first = self._active_draft(
+            registry, (ResourceRef("cover_sheet", "8", 8),), (shared,)
+        )
+        second = self._active_draft(registry, (ResourceRef("condition", "5", 8),))
+        unrelated = self._active_draft(registry, (ResourceRef("page", "5", 8),))
+        self.assertEqual(
+            sorted(self._conflicting_ids(registry, shared)),
+            sorted([first.draft_id, second.draft_id]),
+        )
+        self.assertEqual(registry.get(unrelated.draft_id).state, LocalDraftState.ACTIVE)

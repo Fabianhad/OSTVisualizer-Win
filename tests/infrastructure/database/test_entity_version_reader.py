@@ -1,5 +1,7 @@
 import contextlib
+import sqlite3
 import unittest
+from types import SimpleNamespace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ConcurrencyToken,
     ResourceRef,
@@ -14,6 +16,7 @@ from ost_visualizer.infrastructure.database.descriptor_registry import (
 from ost_visualizer.infrastructure.database.entity_version_reader import (
     DatabaseEntityVersionReader,
 )
+from ost_visualizer.infrastructure.sql.connection_manager import SqlConnectionManager
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 
 
@@ -140,3 +143,82 @@ class EntityVersionReaderCollaborationTests(unittest.TestCase):
         reader = DatabaseEntityVersionReader(descriptors, _CredentialStore(), manager)
         with self.assertRaisesRegex(ValueError, "invalid rowversion"):
             reader.read_database_versions(descriptor.database_id)
+
+    def test_default_connection_manager_is_a_real_sql_connection_manager(self):
+        reader = DatabaseEntityVersionReader(
+            DatabaseDescriptorRegistry(), _CredentialStore()
+        )
+        self.assertIsInstance(reader._connections, SqlConnectionManager)
+        explicit = _RecordingConnectionManager([])
+        self.assertIs(
+            DatabaseEntityVersionReader(
+                DatabaseDescriptorRegistry(), _CredentialStore(), explicit
+            )._connections,
+            explicit,
+        )
+
+    def test_scope_predicate_text_selects_only_the_requested_scope(self):
+        # The recording fake above returns the same rows whatever the WHERE
+        # clause says. Here the production statement itself is evaluated (on
+        # sqlite, with the ostv schema attached) so the predicate text matters:
+        # a database-scope read returns only unscoped rows, a Bid-scope read
+        # only that Bid's rows.
+        stored = sqlite3.connect(":memory:")
+        stored.execute("ATTACH DATABASE ':memory:' AS ostv")
+        stored.execute(
+            "CREATE TABLE ostv.EntityVersions (ResourceType TEXT, ResourceId TEXT, "
+            "BidUID INTEGER, Token BLOB)"
+        )
+        tokens = [(index).to_bytes(8, "big") for index in range(1, 5)]
+        stored.executemany(
+            "INSERT INTO ostv.EntityVersions VALUES (?, ?, ?, ?)",
+            [
+                ("project", "1", None, tokens[0]),
+                ("bid", "8", 8, tokens[1]),
+                ("condition", "42", 8, tokens[2]),
+                ("condition", "99", 9, tokens[3]),
+            ],
+        )
+
+        class _SqliteCursor:
+            def __init__(self):
+                self._rows = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def execute(self, sql, *params):
+                self._rows = stored.execute(sql, params).fetchall()
+
+            def fetchall(self):
+                return self._rows
+
+        class _SqliteManager:
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                yield SimpleNamespace(cursor=_SqliteCursor)
+
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        reader = DatabaseEntityVersionReader(
+            descriptors, _CredentialStore(), _SqliteManager()
+        )
+        self.assertEqual(
+            reader.read_database_versions(descriptor.database_id),
+            {ResourceRef("project", "1", None): ConcurrencyToken(tokens[0])},
+        )
+        self.assertEqual(
+            reader.read_bid_versions(descriptor.database_id, "8"),
+            {
+                ResourceRef("bid", "8", 8): ConcurrencyToken(tokens[1]),
+                ResourceRef("condition", "42", 8): ConcurrencyToken(tokens[2]),
+            },
+        )
+        self.assertEqual(reader.read_bid_versions(descriptor.database_id, "77"), {})

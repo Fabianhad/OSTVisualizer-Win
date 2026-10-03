@@ -45,11 +45,15 @@ class ConfirmDeleteConditionsChoiceTests(unittest.TestCase):
         self.addCleanup(owner.deleteLater)
         remaining_choices = iter(choices)
         offered = []
+        self.titles = []
+        self.default_buttons = []
         selected = {}
         standard = QtWidgets.QMessageBox.StandardButton
 
         def pick(box):
             offered.append([button.text().replace("&", "") for button in box.buttons()])
+            self.titles.append(box.windowTitle())
+            self.default_buttons.append(box.standardButton(box.defaultButton()))
             choice = next(remaining_choices)
             for button in box.buttons():
                 if choice == "all" and button.text() == "Yes to all":
@@ -71,6 +75,11 @@ class ConfirmDeleteConditionsChoiceTests(unittest.TestCase):
         self.assertEqual(result, ["u0", "u2"])
         self.assertEqual(len(offered), 3)
         self.assertEqual(unused, [])
+        self.assertEqual(
+            self.titles, ['Delete "Zero" ?', 'Delete "One" ?', 'Delete "Two" ?']
+        )
+        no = QtWidgets.QMessageBox.StandardButton.No
+        self.assertEqual(self.default_buttons, [no, no, no])
 
     def test_declining_every_condition_deletes_nothing(self):
         result, offered, _unused = self._confirm(["no", "no", "no"])
@@ -97,9 +106,13 @@ class ConfirmMultiDeleteTests(unittest.TestCase):
         with patch.object(QtWidgets.QMessageBox, "question", return_value=yes) as ask:
             result = confirm_multi_delete(None, "Delete", self.ITEMS, {"1"})
         self.assertEqual(result, [("Free", "2")])
-        message = ask.call_args.args[2]
-        self.assertIn('Cannot delete "Used" because it is in use.', message)
-        self.assertIn("Delete the other 1 item(s)?", message)
+        self.assertEqual(ask.call_args.args[1], "Delete")
+        self.assertEqual(
+            ask.call_args.args[2],
+            'Cannot delete "Used" because it is in use.\n\n'
+            "Delete the other 1 item(s)?",
+        )
+        self.assertEqual(ask.call_args.args[4], QtWidgets.QMessageBox.StandardButton.No)
 
     def test_declining_mixed_delete_returns_none(self):
         no = QtWidgets.QMessageBox.StandardButton.No
@@ -114,7 +127,12 @@ class ConfirmMultiDeleteTests(unittest.TestCase):
         self.assertIsNone(result)
         ask.assert_not_called()
         warn.assert_called_once()
-        self.assertIn('"Free"', warn.call_args.args[2])
+        self.assertEqual(warn.call_args.args[1], "Delete")
+        self.assertEqual(
+            warn.call_args.args[2],
+            'Cannot delete "Used" because it is in use.\n'
+            'Cannot delete "Free" because it is in use.',
+        )
 
     def test_unused_items_ask_with_count_and_yes_returns_all(self):
         yes = QtWidgets.QMessageBox.StandardButton.Yes
@@ -122,6 +140,7 @@ class ConfirmMultiDeleteTests(unittest.TestCase):
             result = confirm_multi_delete(None, "Delete", self.ITEMS, set())
         self.assertEqual(result, self.ITEMS)
         self.assertEqual(ask.call_args.args[2], "Delete 2 item(s)?")
+        self.assertEqual(ask.call_args.args[4], QtWidgets.QMessageBox.StandardButton.No)
 
 
 class ConfirmSaveDiscardCancelTests(unittest.TestCase):
@@ -135,8 +154,14 @@ class ConfirmSaveDiscardCancelTests(unittest.TestCase):
             with self.subTest(reply=reply):
                 with patch.object(
                     QtWidgets.QMessageBox, "question", return_value=reply
-                ):
+                ) as ask:
                     self.assertIs(
                         confirm_save_discard_cancel(None, "Title", "Message"),
                         expected,
                     )
+                self.assertEqual(ask.call_args.args[1:3], ("Title", "Message"))
+                self.assertEqual(
+                    ask.call_args.args[3], buttons.Yes | buttons.No | buttons.Cancel
+                )
+                # Cancel is the safe default so Enter never discards or saves.
+                self.assertEqual(ask.call_args.args[4], buttons.Cancel)

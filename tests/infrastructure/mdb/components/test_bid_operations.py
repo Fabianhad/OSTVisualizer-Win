@@ -2517,3 +2517,37 @@ class BidOperationsRelationshipTests(unittest.TestCase):
             [(row["UID"], row["BidPageUID"]) for row in writer.inserted],
             [(100, "120"), (101, "120"), (102, "120")],
         )
+
+
+class BidOperationsLockedStatusInheritanceTests(unittest.TestCase):
+    """Decision B6 (risk 2): the duplicate of a Bid copies every column except the
+    identity and timestamp overrides, so the copy keeps the source's Job Status: a copy
+    of a status-locked Bid is itself locked (a locked Bid can be duplicated and the copy
+    is locked too). Fake: sqlite stand-in schema of the duplicate operations helper; the
+    Access/SQL engines are not involved."""
+
+    def test_the_duplicate_keeps_the_job_status_of_the_source(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
+        conn.execute("INSERT INTO Settings VALUES (12)")
+        conn.execute(
+            "CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, GUID TEXT, "
+            "JobStatusUID INTEGER, EstimatorUID INTEGER, PrManagerUID INTEGER, "
+            "JobSiteManagerUID INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO Bids VALUES (?, ?, ?, ?, NULL, NULL, NULL)",
+            ((7, 11, "{LOCKED}", 8), (9, 3, "{OTHER}", 4)),
+        )
+        conn.execute("CREATE TABLE JobStatuses (UID INTEGER)")
+        conn.executemany("INSERT INTO JobStatuses VALUES (?)", ((8,), (4,)))
+        conn.execute("CREATE TABLE Employees (UID INTEGER)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        new_uid = _SqliteDuplicateOps(conn).duplicate_bid("locked.mdb", "7")
+        self.assertEqual(new_uid, "10")
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidNo, JobStatusUID FROM Bids ORDER BY UID"
+            ).fetchall(),
+            [(7, 11, 8), (9, 3, 4), (10, 12, 8)],
+        )

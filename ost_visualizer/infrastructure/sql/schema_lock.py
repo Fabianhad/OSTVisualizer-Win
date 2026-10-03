@@ -80,6 +80,7 @@ def acquire_operation_transaction_lock(cursor, operation_id: str) -> None:
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.LOCKED,
-                "Another session is resolving the same SQL operation.",
+                "Another session is resolving the same SQL operation. "
+                "Reconnect to the database to finish resolving it.",
             )
         )

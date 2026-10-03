@@ -1,4 +1,7 @@
+import inspect
+import logging
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from ost_visualizer.application.dtos.user_workspace_state_dtos import (
@@ -91,9 +94,9 @@ class _MemoryRepository:
                 raise TimeoutError("test did not release blocked workspace write")
 
 
-class SqlWorkspaceStateServiceTests(unittest.TestCase):
-    def _service(self, repository):
-        service = SqlWorkspaceStateService(_Registry(), repository)
+class _WorkspaceFixture(unittest.TestCase):
+    def _service(self, repository, logger=None):
+        service = SqlWorkspaceStateService(_Registry(), repository, logger)
         self.addCleanup(self._close, service, repository)
         return service
 
@@ -110,6 +113,8 @@ class SqlWorkspaceStateServiceTests(unittest.TestCase):
         self.assertTrue(idle)
         self.assertTrue(stopped)
 
+
+class SqlWorkspaceStateServiceTests(_WorkspaceFixture):
     def test_active_page_and_precise_view_are_persisted_asynchronously(self):
         repository = _MemoryRepository()
         service = self._service(repository)
@@ -367,3 +372,153 @@ class SqlWorkspaceStateServiceTests(unittest.TestCase):
             UserBidWorkspaceState("101", {"101": UserPageViewState(2.0, 3.0, 4.0)}),
         )
         self.assertEqual(len(repository.attempts), 2)
+
+
+class SqlWorkspaceStateLifecycleBoundaryTests(_WorkspaceFixture):
+    WORKSPACE_LOGGER = "ost_visualizer.application.services.sql_workspace_state_service"
+
+    def _blocked_service(self, logger=None):
+        repository = _MemoryRepository()
+        repository.block = True
+        service = self._service(repository, logger)
+        service.save_active_page("sql-db", "7", "101")
+        self.assertTrue(repository.started.wait(1.0))
+        return repository, service
+
+    def test_injected_logger_receives_failures_with_traceback_and_per_key_generation(
+        self,
+    ):
+        logger = logging.getLogger("test.workspace.injected")
+        repository = _MemoryRepository()
+        repository.fail = True
+        service = self._service(repository, logger)
+        with self.assertNoLogs(self.WORKSPACE_LOGGER, level="WARNING"):
+            with self.assertLogs(logger, level="WARNING") as logged:
+                service.save_active_page("sql-db", "7", "101")
+                self.assertTrue(service.wait_for_idle(1.0))
+                service.save_active_page("sql-db", "7", "102")
+                self.assertTrue(service.wait_for_idle(1.0))
+                service.save_page_view("sql-db", "7", "101", 1.0, 0.0, 0.0)
+                self.assertTrue(service.wait_for_idle(1.0))
+                repository.fail_read = True
+                self.assertEqual(
+                    service.load_bid_state("sql-db", "7"), UserBidWorkspaceState()
+                )
+        self.assertEqual(len(logged.records), 4)
+        for record in logged.records:
+            self.assertIsInstance(record.exc_info[1], OSError)
+        self.assertEqual(
+            [record.getMessage() for record in logged.records[:3]],
+            [
+                "Per-user SQL workspace write failed for "
+                "('active_page', 'sql-db', '7') generation 1",
+                "Per-user SQL workspace write failed for "
+                "('active_page', 'sql-db', '7') generation 2",
+                "Per-user SQL workspace write failed for "
+                "('page_view', 'sql-db', '7', '101') generation 1",
+            ],
+        )
+        self.assertIn("database sql-db bid 7", logged.records[3].getMessage())
+
+    def test_nonpositive_wait_returns_immediately_while_a_write_is_in_flight(self):
+        repository, service = self._blocked_service()
+        started = time.monotonic()
+        self.assertIs(service.wait_for_idle(0), False)
+        self.assertIs(service.wait_for_idle(-5.0), False)
+        self.assertLess(time.monotonic() - started, 0.8)
+        repository.release.set()
+        self.assertIs(service.wait_for_idle(1.0), True)
+        self.assertIs(service.wait_for_idle(0), True)
+
+    def test_waiter_is_woken_when_the_inflight_write_finishes(self):
+        repository, service = self._blocked_service()
+        outcome = []
+
+        def wait():
+            begun = time.monotonic()
+            outcome.append((service.wait_for_idle(4.0), time.monotonic() - begun))
+
+        waiter = threading.Thread(target=wait)
+        waiter.start()
+        time.sleep(0.05)
+        repository.release.set()
+        waiter.join(6.0)
+        self.assertFalse(waiter.is_alive())
+        self.assertIs(outcome[0][0], True)
+        self.assertLess(outcome[0][1], 2.0)
+
+    def test_repeated_cleanup_keeps_reporting_the_stuck_write_without_relogging(self):
+        repository, service = self._blocked_service()
+        service.save_active_page("sql-db", "7", "105")
+        self.assertEqual(
+            inspect.signature(service.cleanup).parameters["timeout_seconds"].default,
+            1.0,
+        )
+        with self.assertLogs(self.WORKSPACE_LOGGER, level="WARNING") as first:
+            self.assertIs(service.cleanup(0), False)
+        self.assertIn("1 queued write(s) abandoned", first.output[0])
+        self.assertIn("1 active write(s)", first.output[0])
+        self.assertEqual((len(service._pending), len(service._keys)), (0, 0))
+        with self.assertNoLogs(self.WORKSPACE_LOGGER, level="WARNING"):
+            self.assertIs(service.cleanup(0), False)
+        repository.release.set()
+        self.assertIs(service.wait_for_idle(1.0), True)
+        self.assertIs(service.cleanup(0), True)
+        service._thread.join(1.0)
+        self.assertFalse(service._thread.is_alive())
+        self.assertEqual(repository.attempts, [("active", "sql-db", "7", "101")])
+
+    def test_shutdown_is_quiet_and_joins_the_worker_with_a_small_bound(self):
+        repository = _MemoryRepository()
+        service = self._service(repository)
+        service.save_active_page("sql-db", "7", "101")
+        self.assertTrue(service.wait_for_idle(1.0))
+        real_join = service._thread.join
+        joins = []
+
+        def join(timeout=None):
+            joins.append(timeout)
+            return real_join(timeout)
+
+        with patch.object(service._thread, "join", join), patch.object(
+            threading, "excepthook"
+        ) as excepthook:
+            self.assertIs(service.cleanup(1.0), True)
+            real_join(1.0)
+        excepthook.assert_not_called()
+        self.assertEqual(len(joins), 1)
+        self.assertIsNotNone(joins[0])
+        self.assertTrue(0 < joins[0] <= 0.5)
+        self.assertFalse(service._thread.is_alive())
+        self.assertTrue(service._thread.daemon)
+        self.assertEqual(service._thread.name, "SqlWorkspaceState")
+
+    def test_stuck_shutdown_leaves_no_worker_exception_after_release(self):
+        repository, service = self._blocked_service()
+        service.save_active_page("sql-db", "7", "105")
+        with patch.object(threading, "excepthook") as excepthook:
+            with self.assertLogs(self.WORKSPACE_LOGGER, level="WARNING"):
+                self.assertIs(service.cleanup(0), False)
+            repository.release.set()
+            self.assertTrue(service.wait_for_idle(1.0))
+            service._thread.join(1.0)
+            self.assertFalse(service._thread.is_alive())
+        excepthook.assert_not_called()
+
+    def test_queue_holds_one_entry_per_key_while_the_connection_is_stuck(self):
+        repository, service = self._blocked_service()
+        for index in range(50):
+            service.save_page_view("sql-db", "7", "101", 1.0 + index, 0.0, 0.0)
+            service.save_active_page("sql-db", "7", str(200 + index))
+        self.assertEqual(len(service._keys), 2)
+        self.assertEqual(len(service._pending), 2)
+        repository.release.set()
+        self.assertTrue(service.wait_for_idle(1.0))
+        self.assertEqual(
+            repository.attempts,
+            [
+                ("active", "sql-db", "7", "101"),
+                ("view", "sql-db", "7", "101", UserPageViewState(50.0, 0.0, 0.0)),
+                ("active", "sql-db", "7", "249"),
+            ],
+        )

@@ -11,6 +11,9 @@ import os
 from unittest.mock import patch
 from shiboken6 import delete
 from ost_visualizer.presentation.components.plan_view.components import placement_mode
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    TAKEOFF_PREVIEW_BODY_Z,
+)
 import math
 from types import SimpleNamespace
 from ost_visualizer.domain.entities import shape as shapes
@@ -1386,7 +1389,7 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual(item.pen().color(), QColor("#123456"))
         self.assertEqual(item.pen().widthF(), 2.0)
         self.assertTrue(item.pen().isCosmetic())
-        self.assertEqual(item.zValue(), 10)
+        self.assertEqual(item.zValue(), TAKEOFF_PREVIEW_BODY_Z)
 
     def test_linear_preview_uses_pattern_even_without_display_pattern_flag(self):
         harness = _snap_support_PlacementHarness()
@@ -1413,7 +1416,8 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual(len(harness._place_preview_items), 2)
         self.assertIs(harness._place_preview_items[0], item)
         self.assertEqual(
-            [preview.zValue() for preview in harness._place_preview_items], [10, 10]
+            [preview.zValue() for preview in harness._place_preview_items],
+            [TAKEOFF_PREVIEW_BODY_Z, TAKEOFF_PREVIEW_BODY_Z],
         )
 
     def test_area_pattern_preview_never_receives_line_orientation(self):

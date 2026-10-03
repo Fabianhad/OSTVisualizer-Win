@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import sys
 from pathlib import Path
 import pyodbc
 
@@ -82,6 +83,14 @@ def main() -> int:
         / "OSTVisualizer"
         / "SqlIntegrationBackups"
     )
+    if not backup_root.is_dir():
+        print(
+            f"The SQL integration backup directory {backup_root} is missing or "
+            "is not a directory; run scripts/setup-sql-development.ps1 to create "
+            "it. The audit does not create directories.",
+            file=sys.stderr,
+        )
+        return 1
     backup_count = sum(1 for path in backup_root.iterdir() if path.is_file())
     result = {
         "version": str(row[0]),

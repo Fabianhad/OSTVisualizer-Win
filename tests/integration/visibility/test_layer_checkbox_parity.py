@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.entities.layer import BidLayer
@@ -47,8 +48,10 @@ class LayerCheckboxParityTests(unittest.TestCase):
     def test_layers_dialog_and_sidebar_checkbox_state_stay_synchronized(self):
         sidebar = BidLayersSidebar(None)
         sidebar.load_layers([self._layer("layer-1", "Layer 1", 1, show=True)])
+        requests = []
 
         def update_show(layer_uid, show):
+            requests.append((layer_uid, show))
             sidebar.set_layer_visible(layer_uid, show)
             return True
 
@@ -62,6 +65,9 @@ class LayerCheckboxParityTests(unittest.TestCase):
             dialog.show()
             sidebar.show()
             self.app.processEvents()
+            # Both surfaces start checked, so the clicks below change something.
+            self.assertTrue(dialog._checkboxes[0].isChecked())
+            self.assertTrue(sidebar._checkboxes[0].isChecked())
             self._click_checkbox(dialog._checkboxes[0])
             self.assertFalse(dialog._checkboxes[0].isChecked())
             self.assertFalse(dialog._layers[0].show)
@@ -78,6 +84,44 @@ class LayerCheckboxParityTests(unittest.TestCase):
                 layer for layer in sidebar.get_layers() if layer.uid == "layer-1"
             )
             self.assertTrue(layer.show)
+            self.assertEqual(requests, [("layer-1", False), ("layer-1", True)])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_rejected_visibility_update_reverts_dialog_and_leaves_sidebar(self):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1, show=True)])
+        requests = []
+
+        def update_show(layer_uid, show):
+            requests.append((layer_uid, show))
+            return False
+
+        dialog = _master_data_support_MasterLayersDialog(
+            _master_data_support_FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1, show=True)],
+            reload_fn=lambda: [self._layer("layer-1", "Layer 1", 1, show=True)],
+            update_show_fn=update_show,
+        )
+        try:
+            dialog.show()
+            sidebar.show()
+            self.app.processEvents()
+            self.assertTrue(dialog._checkboxes[0].isChecked())
+            with patch(
+                "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
+            ) as warning:
+                self._click_checkbox(dialog._checkboxes[0])
+            # The write was attempted, refused, reported and rolled back.
+            self.assertEqual(requests, [("layer-1", False)])
+            self.assertEqual(warning.call_count, 1)
+            self.assertTrue(dialog._checkboxes[0].isChecked())
+            self.assertTrue(dialog._layers[0].show)
+            self.assertTrue(sidebar._checkboxes[0].isChecked())
         finally:
             dialog.close()
             dialog.cleanup()

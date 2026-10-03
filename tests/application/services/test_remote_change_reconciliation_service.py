@@ -10,6 +10,9 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ResourceRef,
     queued_takeoff_preview_uid,
 )
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    SUPPORTED_REMOTE_RESOURCE_TYPES,
+)
 from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
 )
@@ -332,7 +335,7 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                                 2,
                                 (_change("database", resource, 2),),
                             ),
-                            **payload
+                            **payload,
                         )
                     )
                 self.assertEqual(result, ReconciliationResult(applied=False))
@@ -2168,3 +2171,914 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         self.assertEqual(
             tokens.expected_versions(database_id, (resource,))[0].expected, initial
         )
+
+
+class RemoteReconciliationBoundaryTests(unittest.TestCase):
+    """Second-pass contracts: completeness gates, mixed-batch ownership flags and
+    resource scoping, each against the real token service, draft registry and bus."""
+
+    @staticmethod
+    def _fixture(data_database="database"):
+        data = _ProjectData(data_database)
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            data, events, tokens, drafts, ConflictResolutionService()
+        )
+        return service, data, events, tokens, drafts
+
+    @staticmethod
+    def _chg(
+        resource_type,
+        resource_id,
+        bid=8,
+        fields=(),
+        operation=ChangeOperation.UPDATE,
+        database="database",
+        sequence=1,
+    ):
+        return _change(
+            database,
+            ResourceRef(resource_type, resource_id, bid),
+            sequence,
+            changed_fields=fields,
+            operation=operation,
+        )
+
+    @classmethod
+    def _hydrated(cls, changes, database="database", **content):
+        changes = tuple(
+            replace(change, sequence=index, commit_version=index)
+            for index, change in enumerate(changes, start=1)
+        )
+        return HydratedDatabaseChangeBatch(
+            _batch(database, "epoch", 1, len(changes), changes), **content
+        )
+
+    @staticmethod
+    def _barrier(aliases=None):
+        return RemoteProjectionBarrier(
+            database_id="database",
+            runtime_generation=4,
+            is_runtime_current=lambda *_args: True,
+            on_complete=lambda _success: None,
+            resource_uid_aliases_by_family=aliases,
+        )
+
+    @staticmethod
+    def _names(events):
+        return [event for event, _payload in events.published]
+
+    @staticmethod
+    def _payload(events, event_type):
+        payloads = [p for event, p in events.published if event is event_type]
+        assert len(payloads) == 1, payloads
+        return payloads[0]
+
+    MALFORMED = ReconciliationResult(
+        applied=False, failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD
+    )
+
+    def _draft(self, drafts, tokens, resource, bid_uid):
+        return drafts.begin(
+            draft_type="test",
+            database_id="database",
+            bid_uid=bid_uid,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(resource,),
+            base_tokens=tokens.tokens_for_resources("database", (resource,)),
+        )
+
+    def test_local_draft_conflict_rejects_the_whole_batch_even_when_it_is_complete(
+        self,
+    ):
+        resource = ResourceRef("condition", "42", 8)
+        initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
+        tokens, drafts = _token_service(_TokenReader({resource: initial}))
+        tokens.load_bid("database", "8")
+        data = _ProjectData("database")
+        original = {"42": Condition(uid="42", name="Local")}
+        data.conditions = original
+        events = _EventBus()
+        service = RemoteChangeReconciliationService(
+            data, events, tokens, drafts, ConflictResolutionService()
+        )
+        draft = self._draft(drafts, tokens, resource, 8)
+        hydrated = self._hydrated(
+            [
+                self._chg("condition", "42", fields=("name",)),
+                self._chg("area", "6"),
+            ],
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Remote")}},
+            condition_folders_by_bid={8: {}},
+            areas_by_bid={
+                8: (
+                    BidArea(uid="6", bid_uid="8", parent_uid="0", name="A", sequence=1),
+                )
+            },
+        )
+        # Positive control: the same payload is complete and applies without a draft.
+        control, control_data, _e, _t, _d = self._fixture()
+        self.assertTrue(control.apply(hydrated).applied)
+        self.assertEqual(control_data.conditions["42"].name, "Remote")
+        result = service.apply(hydrated)
+        self.assertEqual(result, ReconciliationResult(applied=False))
+        self.assertIsNone(result.failure_kind)
+        self.assertIs(data.conditions, original)
+        self.assertEqual((data.merges, data.areas), ([], ()))
+        self.assertEqual(self._names(events), [AppEvents.SYNCHRONIZATION_CONFLICT])
+        payload = events.published[0][1]
+        self.assertEqual(payload["draft_id"], draft.draft_id)
+        self.assertEqual(payload["resource_id"], "42")
+        self.assertEqual(
+            tokens.expected_versions("database", (resource,))[0].expected, initial
+        )
+
+    def test_conflict_for_a_database_level_resource_reports_an_empty_bid(self):
+        resource = ResourceRef("default_layers_collection", "database")
+        tokens, drafts = _token_service(
+            _TokenReader({resource: ConcurrencyToken(b"\x00" * 8)})
+        )
+        tokens.load_database("database")
+        events = _EventBus()
+        service = RemoteChangeReconciliationService(
+            _ProjectData("database"),
+            events,
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        self._draft(drafts, tokens, resource, None)
+        change = _change("database", resource, 2)
+        result = service.apply(
+            HydratedDatabaseChangeBatch(_batch("database", "epoch", 1, 2, (change,)))
+        )
+        self.assertEqual(result, ReconciliationResult(applied=False))
+        payload = events.published[0][1]
+        self.assertEqual(
+            (payload["resource_type"], payload["resource_id"], payload["bid_uid"]),
+            ("default_layers_collection", "database", ""),
+        )
+
+    def test_resource_types_outside_the_supported_set_are_rejected_untouched(self):
+        service, data, events, tokens, _drafts = self._fixture()
+        layer = ResourceRef("layer", "7", 8)
+        hydrated = self._hydrated(
+            [self._chg("layer", "7")],
+            bid_data_by_bid={
+                8: BidLoadResult(bid_layers=[BidLayer("7", "8", "L", True, 1)])
+            },
+        )
+        supported = SUPPORTED_REMOTE_RESOURCE_TYPES
+        with patch(
+            "ost_visualizer.application.services.remote_change_reconciliation_service."
+            "SUPPORTED_REMOTE_RESOURCE_TYPES",
+            supported - {"layer"},
+        ):
+            self.assertEqual(service.apply(hydrated), self.MALFORMED)
+        self.assertEqual((data.merges, data.layers, events.published), ([], [], []))
+        self.assertEqual(tokens.expected_versions("database", (layer,)), ())
+        self.assertTrue(service.apply(hydrated).applied)
+        self.assertEqual(self._names(events), [AppEvents.REMOTE_BID_CONTENT_CHANGED])
+
+    def test_batch_is_rejected_when_required_hydration_is_missing(self):
+        bid_data = BidLoadResult(
+            bid_takeoffs=[Takeoff(uid="30", page_uid="20", condition_uid="10")],
+            pages={"20": Page(uid="20", name="Sheet")},
+        )
+        area = (BidArea(uid="6", bid_uid="8", parent_uid="0", name="A", sequence=1),)
+        conditions = {8: {"10": Condition(uid="10")}}
+        folders = {8: {}}
+        hierarchy = HierarchyFileEntry(file_path="database", display_name="SQL")
+        cases = (
+            (
+                "area without area family",
+                [self._chg("area", "6")],
+                {},
+                {"areas_by_bid": {8: area}},
+            ),
+            (
+                "takeoff without bid content",
+                [self._chg("takeoff", "30")],
+                {"conditions_by_bid": conditions, "condition_folders_by_bid": folders},
+                {
+                    "conditions_by_bid": conditions,
+                    "condition_folders_by_bid": folders,
+                    "bid_data_by_bid": {8: bid_data},
+                },
+            ),
+            (
+                "condition without folders",
+                [self._chg("condition", "10")],
+                {"conditions_by_bid": conditions},
+                {"conditions_by_bid": conditions, "condition_folders_by_bid": folders},
+            ),
+            (
+                "condition without conditions",
+                [self._chg("condition", "10")],
+                {"condition_folders_by_bid": folders},
+                {"conditions_by_bid": conditions, "condition_folders_by_bid": folders},
+            ),
+            (
+                "hierarchy without settings defaults",
+                [self._chg("database", "database", bid=None)],
+                {"hierarchy_file": hierarchy},
+                {"hierarchy_file": hierarchy, "settings_defaults": {"next_bid_no": 1}},
+            ),
+            (
+                "two master data kinds with one missing",
+                [
+                    self._chg("job_statuses_collection", "database", bid=None),
+                    self._chg("employees_collection", "database", bid=None),
+                ],
+                {
+                    "job_statuses": (),
+                    "used_job_status_uids": frozenset(),
+                    "used_employee_uids": frozenset(),
+                },
+                {
+                    "job_statuses": (),
+                    "employees": (),
+                    "used_job_status_uids": frozenset(),
+                    "used_employee_uids": frozenset(),
+                },
+            ),
+            (
+                "page without delete-content set",
+                [self._chg("page", "20")],
+                {"bid_data_by_bid": {8: bid_data}},
+                {
+                    "bid_data_by_bid": {8: bid_data},
+                    "page_delete_content_uids_by_bid": {8: frozenset()},
+                },
+            ),
+            (
+                "cover sheet without cover sheet snapshot",
+                [self._chg("cover_sheet", "8")],
+                {"page_delete_content_uids_by_bid": {8: frozenset()}},
+                {
+                    "cover_sheet_by_bid": {8: _cover_sheet()},
+                    "page_delete_content_uids_by_bid": {8: frozenset()},
+                },
+            ),
+        )
+        for label, changes, incomplete, complete in cases:
+            with self.subTest(case=label):
+                service, data, events, tokens, _drafts = self._fixture()
+                data.conditions = {"10": Condition(uid="10")}
+                resources = tuple(change.resource for change in changes)
+                self.assertEqual(
+                    service.apply(self._hydrated(changes, **incomplete)), self.MALFORMED
+                )
+                self.assertEqual(data.merges, [])
+                self.assertEqual(data.database_settings, {})
+                self.assertEqual((data.hierarchy, events.published), ({}, []))
+                self.assertEqual(tokens.expected_versions("database", resources), ())
+                self.assertEqual(
+                    service.apply(self._hydrated(changes, **complete)),
+                    ReconciliationResult(applied=True),
+                )
+                self.assertEqual(
+                    len(tokens.expected_versions("database", resources)), len(resources)
+                )
+
+    def test_inactive_database_batches_need_no_active_bid_hydration(self):
+        service, data, events, tokens, _drafts = self._fixture("other-database")
+        resource = ResourceRef("condition", "42", 8)
+        self.assertEqual(
+            service.apply(self._hydrated([self._chg("condition", "42")])),
+            ReconciliationResult(applied=True),
+        )
+        self.assertEqual((data.merges, events.published), ([], []))
+        self.assertEqual(len(tokens.expected_versions("database", (resource,))), 1)
+
+    def test_inactive_database_settings_and_hierarchy_projection_contracts(self):
+        service, data, events, tokens, _drafts = self._fixture("other-database")
+        hierarchy = HierarchyFileEntry(file_path="database", display_name="SQL")
+        hydrated = self._hydrated(
+            [self._chg("default_layers_collection", "database", bid=None)],
+            default_layers=(BidLayer("5", "", "Default", True, 1, is_template=True),),
+        )
+        self.assertTrue(service.apply(hydrated).applied)
+        self.assertEqual(
+            data.database_settings["database"]["default_layers"],
+            hydrated.default_layers,
+        )
+        self.assertEqual(
+            events.published,
+            [
+                (
+                    AppEvents.REMOTE_MASTER_DATA_CHANGED,
+                    {"database_id": "database", "families": ["default_layers"]},
+                )
+            ],
+        )
+        events.published.clear()
+        types_only = self._hydrated(
+            [
+                self._chg("condition_type", "5", bid=None, fields=("name",)),
+                self._chg("condition_types_collection", "database", bid=None),
+            ],
+            hierarchy_file=hierarchy,
+            cdn_types={"5": CdnType(uid="5", name="Concrete")},
+            settings_defaults={"next_bid_no": 1},
+        )
+        self.assertTrue(service.apply(types_only, self._barrier()).applied)
+        self.assertEqual(data.hierarchy["database"][0], hierarchy)
+        self.assertEqual(events.published, [])
+        structural = self._hydrated(
+            [self._chg("database", "database", bid=None)],
+            hierarchy_file=hierarchy,
+            settings_defaults={"next_bid_no": 1},
+        )
+        self.assertTrue(service.apply(structural, self._barrier()).applied)
+        self.assertEqual(
+            events.published,
+            [
+                (
+                    AppEvents.REMOTE_HIERARCHY_CHANGED,
+                    {"database_id": "database", "defer_plan_projection": True},
+                )
+            ],
+        )
+
+    def test_unrelated_batches_do_not_touch_database_settings(self):
+        service, data, events, _tokens, _drafts = self._fixture()
+        self.assertTrue(
+            service.apply(
+                self._hydrated(
+                    [self._chg("condition", "42")],
+                    conditions_by_bid={8: {"42": Condition(uid="42")}},
+                    condition_folders_by_bid={8: {}},
+                )
+            ).applied
+        )
+        self.assertEqual(data.settings_replacements, [])
+        self.assertEqual(self._names(events), [AppEvents.CONDITIONS_CHANGED])
+
+    def test_condition_type_change_mixed_with_a_condition_publishes_one_catalog_aware_event(
+        self,
+    ):
+        service, data, events, _tokens, _drafts = self._fixture()
+        hydrated = self._hydrated(
+            [
+                self._chg("condition_type", "5", bid=None, fields=("name",)),
+                self._chg("condition", "42", fields=("name",)),
+            ],
+            hierarchy_file=HierarchyFileEntry(file_path="database", display_name="SQL"),
+            cdn_types={"5": CdnType(uid="5", name="Concrete")},
+            settings_defaults={"next_bid_no": 1},
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Remote")}},
+            condition_folders_by_bid={8: {}},
+        )
+        self.assertTrue(service.apply(hydrated, self._barrier()).applied)
+        self.assertEqual(
+            self._names(events),
+            [AppEvents.CONDITIONS_CHANGED, AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED],
+        )
+        payload = events.published[0][1]
+        self.assertEqual(payload["changed_fields"], ["condition_type_catalog", "name"])
+        self.assertEqual(payload["condition_uids"], ["42"])
+        self.assertEqual(payload["change_operations"], ["update"])
+        self.assertIs(payload["defer_plan_projection"], True)
+        self.assertEqual(data.conditions["42"].name, "Remote")
+
+    def test_condition_type_only_event_is_never_deferred_and_carries_no_conditions(
+        self,
+    ):
+        service, _data, events, _tokens, _drafts = self._fixture()
+        hydrated = self._hydrated(
+            [self._chg("condition_type", "5", bid=None, fields=("name",))],
+            hierarchy_file=HierarchyFileEntry(file_path="database", display_name="SQL"),
+            cdn_types={"5": CdnType(uid="5", name="Concrete")},
+            settings_defaults={"next_bid_no": 1},
+        )
+        for barrier in (None, self._barrier()):
+            events.published.clear()
+            self.assertTrue(service.apply(hydrated, barrier).applied)
+            payload = self._payload(events, AppEvents.CONDITIONS_CHANGED)
+            self.assertIs(payload["defer_plan_projection"], False)
+            self.assertEqual(payload["condition_uids"], [])
+            self.assertEqual(payload["change_operations"], [])
+            self.assertIs(payload["invalidates_undo"], False)
+
+    def test_hierarchy_event_defers_projection_only_with_a_barrier(self):
+        service, _data, events, _tokens, _drafts = self._fixture()
+        hydrated = self._hydrated(
+            [self._chg("database", "database", bid=None)],
+            hierarchy_file=HierarchyFileEntry(file_path="database", display_name="SQL"),
+            settings_defaults={"next_bid_no": 1},
+        )
+        for barrier, deferred in ((None, False), (self._barrier(), True)):
+            events.published.clear()
+            self.assertTrue(service.apply(hydrated, barrier).applied)
+            payload = self._payload(events, AppEvents.REMOTE_HIERARCHY_CHANGED)
+            self.assertIs(payload["defer_plan_projection"], deferred)
+            self.assertIs(payload["condition_family_projected"], False)
+
+    def test_condition_family_projection_requires_both_conditions_and_folders(self):
+        areas = (BidArea(uid="6", bid_uid="8", parent_uid="0", name="A", sequence=1),)
+        takeoff = Takeoff(uid="30", page_uid="20", condition_uid="10")
+        bid_data = BidLoadResult(
+            bid_takeoffs=[takeoff],
+            pages={"20": Page(uid="20", name="Sheet", takeoffs=[takeoff])},
+        )
+        for label, extra, projected in (
+            (
+                "conditions only",
+                {"conditions_by_bid": {8: {"10": Condition(uid="10")}}},
+                False,
+            ),
+            ("folders only", {"condition_folders_by_bid": {8: {}}}, False),
+            (
+                "both",
+                {
+                    "conditions_by_bid": {8: {"10": Condition(uid="10")}},
+                    "condition_folders_by_bid": {8: {}},
+                },
+                True,
+            ),
+        ):
+            with self.subTest(case=label):
+                service, data, events, _tokens, _drafts = self._fixture()
+                data.conditions = {"10": Condition(uid="10")}
+                original = data.conditions
+                self.assertTrue(
+                    service.apply(
+                        self._hydrated(
+                            [self._chg("area", "6")], areas_by_bid={8: areas}, **extra
+                        )
+                    ).applied
+                )
+                names = self._names(events)
+                area = self._payload(events, AppEvents.REMOTE_AREAS_CHANGED)
+                self.assertIs(area["summary_refresh_required"], not projected)
+                self.assertEqual(
+                    names.count(AppEvents.CONDITIONS_CHANGED), 1 if projected else 0
+                )
+                self.assertIs(data.conditions is original, not projected)
+                events.published.clear()
+                self.assertTrue(
+                    service.apply(
+                        self._hydrated(
+                            [self._chg("takeoff", "30")],
+                            bid_data_by_bid={8: bid_data},
+                            **extra,
+                        )
+                    ).applied
+                )
+                content = self._payload(events, AppEvents.REMOTE_BID_CONTENT_CHANGED)
+                self.assertIs(content["condition_family_projected"], projected)
+
+    def test_hierarchy_event_reports_condition_family_only_when_both_halves_are_projected(
+        self,
+    ):
+        for label, extra, projected in (
+            ("conditions only", {"conditions_by_bid": {8: {}}}, False),
+            ("folders only", {"condition_folders_by_bid": {8: {}}}, False),
+            (
+                "both",
+                {"conditions_by_bid": {8: {}}, "condition_folders_by_bid": {8: {}}},
+                True,
+            ),
+        ):
+            with self.subTest(case=label):
+                service, _data, events, _tokens, _drafts = self._fixture()
+                self.assertTrue(
+                    service.apply(
+                        self._hydrated(
+                            [self._chg("database", "database", bid=None)],
+                            hierarchy_file=HierarchyFileEntry(
+                                file_path="database", display_name="SQL"
+                            ),
+                            settings_defaults={"next_bid_no": 1},
+                            **extra,
+                        )
+                    ).applied
+                )
+                payload = self._payload(events, AppEvents.REMOTE_HIERARCHY_CHANGED)
+                self.assertIs(payload["condition_family_projected"], projected)
+
+    def test_changes_for_other_bids_never_claim_mesh_or_texture_stability(self):
+        service, _data, events, _tokens, _drafts = self._fixture()
+        area = BidArea(uid="6", bid_uid="8", parent_uid="0", name="A", sequence=1)
+        self.assertTrue(
+            service.apply(
+                self._hydrated(
+                    [self._chg("area", "6", bid=9)], areas_by_bid={8: (area,)}
+                ),
+                self._barrier(),
+            ).applied
+        )
+        projection = self._payload(events, AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED)
+        self.assertIs(projection["mesh_scene_unchanged"], False)
+        self.assertIs(projection["page_texture_only"], False)
+        self.assertEqual(projection["families"], ())
+
+    def test_changes_without_bid_scope_never_demand_per_bid_snapshots(self):
+        service, data, events, tokens, _drafts = self._fixture("other-database")
+        resources = (
+            ResourceRef("cover_sheet", "8"),
+            ResourceRef("page", "20"),
+        )
+        changes = [
+            self._chg("cover_sheet", "8", bid=None),
+            self._chg("page", "20", bid=None),
+        ]
+        self.assertEqual(
+            service.apply(self._hydrated(changes)), ReconciliationResult(applied=True)
+        )
+        self.assertEqual((data.cover_sheets, data.page_delete_content), ({}, {}))
+        self.assertEqual(events.published, [])
+        self.assertEqual(len(tokens.expected_versions("database", resources)), 2)
+
+    def test_content_merge_runs_only_for_changed_bid_content_families(self):
+        service, data, _events, _tokens, _drafts = self._fixture()
+        self.assertTrue(
+            service.apply(
+                self._hydrated(
+                    [self._chg("condition", "42")],
+                    conditions_by_bid={8: {"42": Condition(uid="42")}},
+                    condition_folders_by_bid={8: {}},
+                    bid_data_by_bid={8: BidLoadResult()},
+                )
+            ).applied
+        )
+        self.assertEqual(data.merges, [("conditions", BidRef("database", "8"))])
+
+    def test_transient_takeoff_aliases_are_removed_only_with_a_takeoff_family_change(
+        self,
+    ):
+        service, data, events, _tokens, _drafts = self._fixture()
+        preview = Takeoff(uid="preview-1", page_uid="20", condition_uid="10")
+        data.takeoffs = [preview]
+        data.transient_takeoffs = {"preview-1": preview}
+        barrier = self._barrier({"takeoffs": ("preview-1",)})
+        layer = BidLayer("7", "8", "Walls", True, 1)
+        hydrated = self._hydrated(
+            [self._chg("layer", "7", fields=("show",))],
+            bid_data_by_bid={8: BidLoadResult(bid_layers=[layer])},
+        )
+        self.assertTrue(service.apply(hydrated, barrier).applied)
+        self.assertEqual(data.removed_transient_takeoff_uids, [])
+        self.assertEqual(data.transient_takeoffs, {"preview-1": preview})
+        content = self._payload(events, AppEvents.REMOTE_BID_CONTENT_CHANGED)
+        self.assertEqual(content["resource_uids_by_family"], {"layers": ["7"]})
+        projection = self._payload(events, AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED)
+        self.assertEqual(projection["resource_uids_by_family"], {"layers": ("7",)})
+
+    def test_resource_uids_and_families_are_scoped_to_their_own_resource_kind(self):
+        service, data, events, _tokens, _drafts = self._fixture()
+        data.conditions = {"10": Condition(uid="10")}
+        takeoff = Takeoff(uid="30", page_uid="20", condition_uid="10")
+        layer = BidLayer("7", "8", "Walls", True, 1)
+        hydrated = self._hydrated(
+            [
+                self._chg("layer", "7", fields=("show",)),
+                self._chg("takeoff", "30"),
+                self._chg("takeoffs_collection", "8"),
+                self._chg("page", "20", fields=("scale",)),
+            ],
+            bid_data_by_bid={
+                8: BidLoadResult(
+                    bid_layers=[layer],
+                    bid_takeoffs=[takeoff],
+                    pages={"20": Page(uid="20", name="Sheet", takeoffs=[takeoff])},
+                )
+            },
+            page_delete_content_uids_by_bid={8: frozenset()},
+        )
+        self.assertTrue(service.apply(hydrated).applied)
+        content = self._payload(events, AppEvents.REMOTE_BID_CONTENT_CHANGED)
+        self.assertEqual(content["families"], ["layers", "pages", "takeoffs"])
+        self.assertEqual(
+            content["resource_uids_by_family"],
+            {"layers": ["7"], "pages": ["20"], "takeoffs": ["30"]},
+        )
+
+    def test_takeoff_page_ownership_is_scoped_to_the_changed_takeoffs(self):
+        for label, changes, expected in (
+            ("moved takeoff", [self._chg("takeoff", "30")], ("20", "22")),
+            (
+                "collection plus takeoff",
+                [self._chg("takeoffs_collection", "8"), self._chg("takeoff", "30")],
+                ("20", "21", "22"),
+            ),
+            (
+                "deleted takeoff without a page",
+                [self._chg("takeoff", "32", operation=ChangeOperation.DELETE)],
+                (),
+            ),
+        ):
+            with self.subTest(case=label):
+                service, data, events, _tokens, _drafts = self._fixture()
+                data.conditions = {"10": Condition(uid="10")}
+                data.takeoffs = [
+                    Takeoff(uid="30", page_uid="20", condition_uid="10"),
+                    Takeoff(uid="31", page_uid="21", condition_uid="10"),
+                    Takeoff(uid="32", page_uid="", condition_uid="10"),
+                ]
+                authoritative = [
+                    Takeoff(uid="30", page_uid="22", condition_uid="10"),
+                    Takeoff(uid="31", page_uid="21", condition_uid="10"),
+                ]
+                self.assertTrue(
+                    service.apply(
+                        self._hydrated(
+                            changes,
+                            bid_data_by_bid={
+                                8: BidLoadResult(
+                                    bid_takeoffs=authoritative,
+                                    pages={
+                                        "21": Page(uid="21", name="B"),
+                                        "22": Page(uid="22", name="C"),
+                                    },
+                                )
+                            },
+                        )
+                    ).applied
+                )
+                content = self._payload(events, AppEvents.REMOTE_BID_CONTENT_CHANGED)
+                self.assertEqual(
+                    content["affected_page_uids_by_family"], {"takeoffs": expected}
+                )
+
+    def test_annotation_changes_next_to_a_collection_change_stay_conservative(self):
+        service, data, events, _tokens, _drafts = self._fixture()
+        data.annotations = [
+            BidAnnotation(uid="42", annotation_type="text", page_uid="20")
+        ]
+        updated = [BidAnnotation(uid="42", annotation_type="text", page_uid="21")]
+        self.assertTrue(
+            service.apply(
+                self._hydrated(
+                    [
+                        self._chg("annotation", "text/42"),
+                        self._chg("annotations_collection", "8"),
+                    ],
+                    bid_data_by_bid={8: BidLoadResult(bid_annotations=updated)},
+                )
+            ).applied
+        )
+        content = self._payload(events, AppEvents.REMOTE_BID_CONTENT_CHANGED)
+        self.assertEqual(content["affected_page_uids_by_family"], {})
+        self.assertEqual(
+            content["resource_uids_by_family"], {"annotations": ["text/42"]}
+        )
+
+    def _classification(self, changes, layers_before=(), layers_after=None):
+        service, data, events, _tokens, _drafts = self._fixture()
+        data.conditions = {"10": Condition(uid="10")}
+        data.layers = list(layers_before)
+        takeoff = Takeoff(uid="30", page_uid="20", condition_uid="10")
+        bid_data = BidLoadResult(
+            bid_layers=list(layers_before if layers_after is None else layers_after),
+            bid_takeoffs=[takeoff],
+            pages={"20": Page(uid="20", name="Sheet", takeoffs=[takeoff])},
+        )
+        barrier = self._barrier()
+        self.assertTrue(
+            service.apply(
+                self._hydrated(
+                    changes,
+                    bid_data_by_bid={8: bid_data},
+                    page_delete_content_uids_by_bid={8: frozenset()},
+                ),
+                barrier,
+            ).applied
+        )
+        content = self._payload(events, AppEvents.REMOTE_BID_CONTENT_CHANGED)
+        projection = self._payload(events, AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED)
+        self.assertEqual(
+            projection["mesh_scene_unchanged"], content["mesh_scene_unchanged"]
+        )
+        self.assertEqual(projection["page_texture_only"], content["page_texture_only"])
+        self.assertIs(content["defer_plan_projection"], True)
+        return (
+            content["mesh_scene_unchanged"],
+            content["image_sources_unchanged"],
+            content["page_texture_only"],
+        )
+
+    def test_mixed_batches_never_inherit_a_single_change_classification(self):
+        walls = [BidLayer("7", "8", "Walls", True, 1)]
+        renamed = [BidLayer("7", "8", "Partitions", True, 1)]
+        layer_rename = self._chg("layer", "7", fields=("name",))
+        cases = (
+            # label, changes, layers before, layers after, (mesh, image, texture)
+            ("layer rename alone", [layer_rename], walls, renamed, (True, True, False)),
+            (
+                "layer rename plus takeoff",
+                [layer_rename, self._chg("takeoff", "30")],
+                walls,
+                renamed,
+                (False, False, False),
+            ),
+            (
+                "layer rename plus takeoff update touching only the name",
+                [layer_rename, self._chg("takeoff", "30", fields=("name",))],
+                walls,
+                renamed,
+                (False, False, False),
+            ),
+            (
+                "layer rename plus page overlay",
+                [layer_rename, self._chg("page", "20", fields=("overlay_image",))],
+                walls,
+                renamed,
+                (False, False, False),
+            ),
+            (
+                "takeoff named like a layer rename",
+                [self._chg("takeoff", "30", fields=("name",))],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "layer creation touching only the name",
+                [
+                    self._chg(
+                        "layer", "7", fields=("name",), operation=ChangeOperation.CREATE
+                    )
+                ],
+                walls,
+                renamed,
+                (False, False, False),
+            ),
+            (
+                "layer deletion with no remaining layers",
+                [self._chg("layer", "7", operation=ChangeOperation.DELETE)],
+                [],
+                [],
+                (False, False, False),
+            ),
+            (
+                "page texture plus layer visibility",
+                [
+                    self._chg("page", "20", fields=("show_mode",)),
+                    self._chg("layer", "7", fields=("show",)),
+                ],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "texture-like fields on a takeoff",
+                [self._chg("takeoff", "30", fields=("show_mode",))],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "page texture deletion",
+                [
+                    self._chg(
+                        "page",
+                        "20",
+                        fields=("show_mode",),
+                        operation=ChangeOperation.DELETE,
+                    )
+                ],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "page texture alone",
+                [self._chg("page", "20", fields=("show_mode", "invert"))],
+                walls,
+                walls,
+                (False, True, True),
+            ),
+            (
+                "page rename plus layer visibility",
+                [
+                    self._chg("page", "20", fields=("name",)),
+                    self._chg("layer", "7", fields=("show",)),
+                ],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "page creation touching only the name",
+                [
+                    self._chg(
+                        "page", "20", fields=("name",), operation=ChangeOperation.CREATE
+                    )
+                ],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "scale plus overlay image on pages",
+                [
+                    self._chg("page", "20", fields=("scale",)),
+                    self._chg("page", "21", fields=("overlay_image",)),
+                ],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "scale on a page plus a takeoff update",
+                [
+                    self._chg("page", "20", fields=("scale",)),
+                    self._chg("takeoff", "30"),
+                ],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+            (
+                "scale-like fields on a takeoff",
+                [self._chg("takeoff", "30", fields=("scale",))],
+                walls,
+                walls,
+                (False, False, False),
+            ),
+        )
+        for label, changes, before, after, expected in cases:
+            with self.subTest(case=label):
+                self.assertEqual(self._classification(changes, before, after), expected)
+
+    def test_plan_projection_follows_condition_impact_and_area_changes(self):
+        for label, fields, requested in (
+            ("catalog-only metadata", ("notes",), False),
+            ("plan-relevant field", ("z_value",), True),
+        ):
+            with self.subTest(case=label):
+                service, _data, events, _tokens, _drafts = self._fixture()
+                self.assertTrue(
+                    service.apply(
+                        self._hydrated(
+                            [self._chg("condition", "42", fields=fields)],
+                            conditions_by_bid={8: {"42": Condition(uid="42")}},
+                            condition_folders_by_bid={8: {}},
+                        ),
+                        self._barrier(),
+                    ).applied
+                )
+                self.assertEqual(
+                    AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED in self._names(events),
+                    requested,
+                )
+        service, _data, events, _tokens, _drafts = self._fixture()
+        area = BidArea(uid="6", bid_uid="8", parent_uid="0", name="A", sequence=1)
+        self.assertTrue(
+            service.apply(
+                self._hydrated([self._chg("area", "6")], areas_by_bid={8: (area,)}),
+                self._barrier(),
+            ).applied
+        )
+        projection = self._payload(events, AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED)
+        self.assertIs(projection["areas_changed"], True)
+        self.assertEqual(projection["families"], ())
+        self.assertEqual(projection["condition_uids"], ())
+        self.assertIsNone(projection["condition_changed_fields"])
+
+    def test_collection_change_next_to_a_classified_condition_projects_only_that_condition(
+        self,
+    ):
+        service, _data, events, _tokens, _drafts = self._fixture()
+        self.assertTrue(
+            service.apply(
+                self._hydrated(
+                    [
+                        self._chg("conditions_collection", "8"),
+                        self._chg("condition", "42", fields=("z_value",)),
+                    ],
+                    conditions_by_bid={
+                        8: {"42": Condition(uid="42"), "10": Condition(uid="10")}
+                    },
+                    condition_folders_by_bid={8: {}},
+                ),
+                self._barrier(),
+            ).applied
+        )
+        projection = self._payload(events, AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED)
+        self.assertEqual(projection["condition_uids"], ("42",))
+        self.assertEqual(projection["condition_changed_fields"], ("z_value",))
+
+    def test_hole_takeoff_is_accepted_when_its_parent_is_authoritative(self):
+        service, data, _events, _tokens, _drafts = self._fixture()
+        data.conditions = {"10": Condition(uid="10")}
+        parent = Takeoff(uid="30", page_uid="20", condition_uid="10")
+        hole = Takeoff(uid="31", page_uid="20", condition_uid="10", parent_uid="30")
+        self.assertTrue(
+            service.apply(
+                self._hydrated(
+                    [self._chg("takeoffs_collection", "8")],
+                    bid_data_by_bid={
+                        8: BidLoadResult(
+                            bid_takeoffs=[parent, hole],
+                            pages={"20": Page(uid="20", name="Sheet")},
+                        )
+                    },
+                )
+            ).applied
+        )
+        self.assertEqual(data.takeoffs, [parent, hole])

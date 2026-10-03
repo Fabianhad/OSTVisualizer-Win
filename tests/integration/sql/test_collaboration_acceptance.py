@@ -57,6 +57,11 @@ from tests.helpers.sql.integration_support import (
 )
 
 
+def _require_marked_server(configuration: DisposableSqlConfiguration) -> None:
+    """Refuse to create server-level objects on an unmarked server."""
+    DisposableSqlDatabase(configuration)._verify_server_marker()
+
+
 class _RuntimeCredentialStore:
     def __init__(self, password: str) -> None:
         self._password = password
@@ -103,12 +108,13 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
     def test_two_users_store_independent_workspace_without_feed_records(self):
         configuration = DisposableSqlConfiguration.from_environment()
         with DisposableSqlDatabase(configuration) as database:
-            clients = tuple(
-                self._create_test_client(database, configuration, label)
-                for label in ("WORKSPACE_A", "WORKSPACE_B")
-            )
-            for _descriptor, _registry, _credentials, admin, master, login in clients:
-                self.addCleanup(self._drop_test_login, admin, master, login)
+            clients = []
+            for label in ("WORKSPACE_A", "WORKSPACE_B"):
+                client = self._create_test_client(database, configuration, label)
+                # Register cleanup per login so a failure creating the second
+                # client still drops the first.
+                self.addCleanup(self._drop_test_login, *client[3:])
+                clients.append(client)
             request = SqlConnectionRequest(
                 database.location, password=configuration.password
             )
@@ -500,6 +506,8 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(inventory.schema_version, SQL_SCHEMA_V1.version)
             self.assertEqual(inventory.schema_checksum, SQL_SCHEMA_V1.checksum)
+            self.assertTrue(database._database_exists())
+        self.assertFalse(database._database_exists())
 
     def test_two_clients_conflict_on_every_shared_editor_resource_family(self):
         configuration = DisposableSqlConfiguration.from_environment()
@@ -636,9 +644,16 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                                     (resource,),
                                     "conflicting integration test",
                                 )
-                            self.assertNotIn(
-                                configuration.password, str(conflict.exception)
-                            )
+                            # assertNotIn would echo a leaked password on failure.
+                            for password in (
+                                configuration.password,
+                                credentials.read_password(""),
+                            ):
+                                self.assertTrue(password)
+                                self.assertFalse(
+                                    password in str(conflict.exception),
+                                    "A lock conflict error exposed a password.",
+                                )
                             operation_ran = []
                             mutation = writers[1].execute(
                                 DatabaseMutationRequest(
@@ -717,6 +732,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
 
     def test_two_sessions_place_and_converge_with_same_session_suppression(self):
         configuration = DisposableSqlConfiguration.from_environment()
+        _require_marked_server(configuration)
         login = f"OSTV_IT_TMP_CONVERGENCE_{secrets.token_hex(6).upper()}"
         password = secrets.token_urlsafe(32)
         admin = SqlConnectionManager()
@@ -1514,6 +1530,8 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def _create_test_client(database, configuration, label):
+        # Every server-level login is created only on a server proven disposable.
+        database._verify_server_marker()
         login = f"OSTV_IT_TMP_{label}_{secrets.token_hex(6).upper()}"
         password = secrets.token_urlsafe(32)
         admin = SqlConnectionManager()
@@ -1576,6 +1594,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
 
     def test_mutation_presents_owned_lock_across_bid_context_variants(self):
         configuration = DisposableSqlConfiguration.from_environment()
+        _require_marked_server(configuration)
         login = f"OSTV_IT_TMP_MUTATION_{secrets.token_hex(6).upper()}"
         password = secrets.token_urlsafe(32)
         admin = SqlConnectionManager()

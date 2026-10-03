@@ -37,6 +37,10 @@ class ColorSwatchPreferenceTests(unittest.TestCase):
         self.assertEqual(image.pixelColor(1, 1).alpha(), 255)
         self.assertEqual(image.pixelColor(22, 22).alpha(), 255)
         self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
+        # The inset is symmetric: the last row/column stay transparent too.
+        self.assertEqual(image.pixelColor(23, 23).alpha(), 0)
+        self.assertEqual(image.pixelColor(23, 12).alpha(), 0)
+        self.assertEqual(image.pixelColor(12, 23).alpha(), 0)
 
     def test_swatch_pixmap_has_requested_square_size(self):
         pixmap = rounded_color_swatch(QtGui.QColor("#123456"), 18)

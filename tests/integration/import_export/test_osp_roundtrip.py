@@ -41,6 +41,9 @@ class OspRoundtripRelationshipTests(unittest.TestCase):
     def test_osp_export_import_preserves_valid_selected_page_reference(self):
         connection = sqlite3.connect(":memory:")
         _import_export_support__create_import_schema(connection)
+        # The shared schema stand-in has no drawing column; the roundtrip must
+        # show where each imported page's drawing ends up.
+        connection.execute("ALTER TABLE BidPages ADD COLUMN ImagePath TEXT")
         writer = _import_export_support__SqliteMdbWriter(connection)
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -58,7 +61,7 @@ class OspRoundtripRelationshipTests(unittest.TestCase):
                 bid_row={"UID": "1", "JobName": "Imported"},
                 bid_tables={
                     "BidSettings": [
-                        {"UID": "2", "BidUID": "1", "BidPageSelectedUID": "3"}
+                        {"UID": "2", "BidUID": "1", "BidPageSelectedUID": "4"}
                     ],
                     "BidPages": [
                         {
@@ -105,8 +108,21 @@ class OspRoundtripRelationshipTests(unittest.TestCase):
                     )
                 )
             page_uid = connection.execute(
-                "SELECT UID FROM BidPages WHERE Name='Sheet One'"
+                "SELECT UID FROM BidPages WHERE Name='Sheet Two'"
             ).fetchone()[0]
+            page_drawings = {
+                name: Path(image_path)
+                for name, image_path in connection.execute(
+                    "SELECT Name, ImagePath FROM BidPages"
+                )
+            }
+            self.assertEqual(set(page_drawings), {"Sheet One", "Sheet Two"})
+            self.assertEqual(page_drawings["Sheet One"].read_bytes(), b"%PDF-1.4 first")
+            self.assertEqual(
+                page_drawings["Sheet Two"].read_bytes(), b"%PDF-1.4 second"
+            )
+            for drawing in page_drawings.values():
+                self.assertEqual(drawing.parent, working_dir / "Roundtrip")
             imported_drawings = sorted((working_dir / "Roundtrip").glob("*.pdf"))
             self.assertEqual(len(imported_drawings), 2)
             self.assertEqual(

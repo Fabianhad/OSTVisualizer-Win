@@ -1,10 +1,30 @@
 import unittest
 from tests.paths import REPO_ROOT
 
+_MCP_SERVER_MODULES = {
+    "bridge_client.py",
+    "internal_server.py",
+    "main.py",
+    "output_artifacts.py",
+    "registry.py",
+    "serializers.py",
+    "server.py",
+}
+
 
 class McpProductionHardeningTests(unittest.TestCase):
     def setUp(self):
         self.root = REPO_ROOT
+
+    def _mcp_server_sources(self):
+        files = sorted((self.root / "ost_visualizer" / "mcp_server").glob("*.py"))
+        # Positive control: the glob must reach the real MCP modules, otherwise
+        # every token scan would pass over an empty file list.
+        self.assertTrue(
+            _MCP_SERVER_MODULES <= {path.name for path in files},
+            sorted(path.name for path in files),
+        )
+        return files
 
     def test_helper_entrypoint_routes_to_canonical_main(self):
         text = (self.root / "McpServer.py").read_text(encoding="utf-8")
@@ -13,7 +33,7 @@ class McpProductionHardeningTests(unittest.TestCase):
 
     def test_helper_path_does_not_import_qt_or_presentation(self):
         files = [self.root / "McpServer.py"]
-        files.extend((self.root / "ost_visualizer" / "mcp_server").glob("*.py"))
+        files.extend(self._mcp_server_sources())
         forbidden = (
             "PySide6",
             "ost_visualizer.presentation",
@@ -60,6 +80,10 @@ class McpProductionHardeningTests(unittest.TestCase):
     def test_obsolete_mcp_dependency_files_are_removed(self):
         requirements_name = "-".join(("requirements", "mcp")) + ".txt"
         setup_name = "-".join(("setup", "mcp")) + ".ps1"
+        # Positive control: the probed directories are the real repository
+        # root and scripts folder (their sibling MCP build files exist).
+        self.assertTrue((self.root / "McpServer.py").is_file())
+        self.assertTrue((self.root / "scripts" / "build-mcp.ps1").is_file())
         self.assertFalse((self.root / requirements_name).exists())
         self.assertFalse((self.root / "scripts" / setup_name).exists())
 
@@ -69,7 +93,7 @@ class McpProductionHardeningTests(unittest.TestCase):
             self.root / "scripts" / "build.ps1",
             self.root / "scripts" / "build-mcp.ps1",
         ]
-        paths.extend((self.root / "ost_visualizer" / "mcp_server").glob("*.py"))
+        paths.extend(self._mcp_server_sources())
         forbidden = (
             "Fast" + "MCP",
             "mcp" + "[cli]",

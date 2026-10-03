@@ -121,15 +121,22 @@ class AnnotationDragPreviewTests(unittest.TestCase):
         view._scene.addItem(item)
         view._current_annotations = {"oval": annotation}
         view._uid_to_items = {"oval": [item]}
+        self.assertAlmostEqual(item.rotation(), 45.0)
         view._snap_increments = 1.0
         view._drag_handle_index = 2
         view._unrotate_annotation_for_resize(annotation, "oval")
         candidate = view._compute_ann_resize(
             annotation, list(annotation.position), 0.0, 10.0, 2, 4
         )
+        # Independent oracle for the resize itself: the unrotated 40x20 box
+        # grows by the 10-unit handle drag along y.
+        self.assertEqual(len(candidate), 4)
+        for actual, expected in zip(candidate, [10.0, 10.0, 50.0, 40.0]):
+            self.assertAlmostEqual(actual, expected)
         view.update_drag_handle_positions(candidate, "oval", 0.0, 10.0)
         reconstructed = BidAnnotation("oval", "oval", position=candidate)
         after, _ = renderer.create_all_annotation_items([("oval", reconstructed)])
+        self.assertAlmostEqual(item.rotation(), 0.0)
         self.assertEqual(item.rotation(), after[0][0].rotation())
         self.assertEqual(
             item.mapToScene(item.path()), after[0][0].mapToScene(after[0][0].path())
@@ -188,3 +195,61 @@ class AnnotationDragPreviewTests(unittest.TestCase):
                     for item in items:
                         self.assertEqual(item.pos(), origins[id(item)] + expected)
                     self.assertEqual(view._drag_last_valid_new_pos, candidate)
+
+    def test_body_preview_of_boxed_and_polygon_kinds_uses_snapped_candidate(self):
+        from ost_visualizer.presentation.utils.annotation_paste import (
+            translate_annotation_position,
+        )
+        from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+            AnnotationItemRenderer,
+        )
+
+        for kind in (
+            "text",
+            "rect",
+            "oval",
+            "highlight",
+            "polygon",
+            "cloud",
+            "namedview",
+            "hotlink",
+        ):
+            with self.subTest(kind=kind):
+                view = self.make_view()
+                cs = view._scene_builder.get_coordinate_system()
+                view._snap_increments = 1.0
+                ann = BidAnnotation(
+                    "a",
+                    kind,
+                    page_uid="p1",
+                    position=list(
+                        _family_support_AnnotationFamilyGeometry.POSITIONS[kind]
+                    ),
+                    properties={"Text": "Example"},
+                )
+                rendered, _ = AnnotationItemRenderer(cs).create_all_annotation_items(
+                    [("a", ann)]
+                )
+                items = [item for item, _ in rendered]
+                self.assertTrue(items)
+                for item in items:
+                    view._scene.addItem(item)
+                view._current_annotations = {"a": ann}
+                view._uid_to_items = {"a": items}
+                view._drag_orig_position = list(ann.position)
+                view._drag_handle_index = -1
+                origins = {id(item): item.pos() for item in items}
+                view._drag_item_orig_positions = origins
+                # The mouse moved 0.6 units; the snapped candidate moved 1.0.
+                candidate = translate_annotation_position(ann, 1.0, 0.0)
+                raw = view.ost_to_scene_delta(0.6, 0.0)
+                snapped = QtCore.QPointF(*view.ost_to_scene_delta(1.0, 0.0))
+                self.assertNotAlmostEqual(raw[0], snapped.x())
+                view.update_drag_handle_positions(candidate, "a", *raw)
+                for item in items:
+                    self.assertAlmostEqual(
+                        item.pos().x(), origins[id(item)].x() + snapped.x()
+                    )
+                    self.assertAlmostEqual(
+                        item.pos().y(), origins[id(item)].y() + snapped.y()
+                    )

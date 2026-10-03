@@ -64,15 +64,22 @@ class PageAreaSelectionRelationshipTests(unittest.TestCase):
         page_uid = connection.execute(
             "SELECT UID FROM BidPages WHERE Name='Sheet'"
         ).fetchone()[0]
-        selected_count = connection.execute(
-            "SELECT COUNT(*) FROM BidPageSettings "
-            "WHERE BidPageUID=? AND BidAreaSelected > 0",
-            (page_uid,),
-        ).fetchone()[0]
-        area_uid = connection.execute(
-            "SELECT UID FROM BidAreas WHERE Name='Area 2'"
-        ).fetchone()[0]
-        self.assertEqual(selected_count, 1)
+        area_uids = dict(connection.execute("SELECT Name, UID FROM BidAreas"))
+        self.assertEqual(set(area_uids), {"Area 1", "Area 2"})
+
+        def selected_areas():
+            return connection.execute(
+                "SELECT BidAreaUID, BidAreaSelected FROM BidPageSettings "
+                "WHERE BidPageUID=? AND BidAreaSelected > 0",
+                (page_uid,),
+            ).fetchall()
+
+        # Two selected rows (ranks 1 and 2) collapse to the highest-ranked one,
+        # remapped to the imported Area 2 identity.
+        self.assertEqual(selected_areas(), [(area_uids["Area 2"], 2)])
+        # The imported state must remain editable: moving the selection to the
+        # other area succeeds and leaves exactly one selected row.
         self.assertTrue(
-            writer.save_page_area("target.mdb", str(page_uid), str(area_uid))
+            writer.save_page_area("target.mdb", str(page_uid), str(area_uids["Area 1"]))
         )
+        self.assertEqual(selected_areas(), [(area_uids["Area 1"], 2)])

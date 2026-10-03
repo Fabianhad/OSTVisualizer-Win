@@ -2,6 +2,7 @@ from __future__ import annotations
 import io
 import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -10,6 +11,13 @@ from tests.paths import REPO_ROOT
 from sql_server.python.ostv_sql_admin import admin, common, host_state
 
 SQL_SERVER_ROOT = REPO_ROOT / "sql_server"
+# The real permission checks (0600/0700 and st_uid == 0) need POSIX file modes AND a root
+# account: the deployment tooling runs as root. On a non-root POSIX account they do not
+# skip, they fail ("must be owned by root"), so the gate asks for the effective user too.
+RUNS_AS_POSIX_ROOT = os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0
+POSIX_ROOT_REASON = (
+    "needs POSIX file modes and a root account (the tooling runs as root)"
+)
 
 
 def _environment_text(state_root: Path) -> str:
@@ -42,3 +50,24 @@ def _environment_text(state_root: Path) -> str:
         "OSTV_SQL_CONTAINER_ADDRESS": "172.29.240.10",
     }
     return "".join(f"{key}={value}\n" for key, value in values.items())
+
+
+def windows_safe_replace() -> "patch":
+    """Patcher making os.replace retry the transient Windows sharing violation.
+    A freshly written file can be locked for a few milliseconds by the search
+    indexer or antivirus, which makes the tooling's atomic temp-file rename
+    fail with WinError 32. The retry only applies on Windows; POSIX behaviour
+    (and every other error) is unchanged.
+    """
+    real_replace = os.replace
+
+    def replace(source, target, *args, **kwargs):
+        for attempt in range(40):
+            try:
+                return real_replace(source, target, *args, **kwargs)
+            except PermissionError:
+                if os.name != "nt" or attempt == 39:
+                    raise
+                time.sleep(0.05)
+
+    return patch.object(os, "replace", replace)

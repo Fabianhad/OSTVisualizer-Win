@@ -13,12 +13,16 @@ class SmallSnappedDragTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = fixtures._app()
 
-    def test_real_qt_one_pixel_one_inch_drag_keeps_preview_after_release(self):
+    def drag_area(self, *, pixels, zoom_percent=None):
+        """Press on a selected 200 x 200 area and move `pixels` right without
+        releasing; returns the objects needed to inspect and then release."""
         fixture = keyboard_fixtures.AnnotationPlacementKeyboardTests()
         fixture.app = self.app
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         view = fixture.make_view()
+        if zoom_percent is not None:
+            view.set_zoom_percent(zoom_percent)
         view._current_conditions = {
             "area": Condition("area", condition_type=Condition.TYPE_AREA)
         }
@@ -56,21 +60,48 @@ class SmallSnappedDragTests(unittest.TestCase):
         )
         self.assertEqual(view._drag_plan_item_uid, "area")
         self.assertEqual(view._drag_handle_index, -1)
-        end = start + QPoint(1, 0)
+        end = start + QPoint(pixels, 0)
         deliver(
             QEvent.Type.MouseMove,
             end,
             Qt.MouseButton.NoButton,
             Qt.MouseButton.LeftButton,
         )
+
+        def release():
+            deliver(
+                QEvent.Type.MouseButtonRelease,
+                end,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+            )
+
+        return view, takeoff, item, original, changes, release
+
+    def test_real_qt_one_pixel_one_inch_drag_keeps_preview_after_release(self):
+        view, takeoff, item, original, changes, release = self.drag_area(pixels=1)
         candidate = list(view._drag_last_valid_new_pos)
-        self.assertEqual(candidate[0] - original[0], 1.0)
-        self.assertEqual(item.pos(), QPointF(1, 0))
-        deliver(
-            QEvent.Type.MouseButtonRelease,
-            end,
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.NoButton,
+        # One pixel at 100% zoom is one inch on the snap grid: a pure +x shift.
+        self.assertEqual(
+            candidate, [901.0, 900.0, 1101.0, 900.0, 1101.0, 1100.0, 901.0, 1100.0]
         )
+        self.assertEqual(item.pos(), QPointF(1, 0))
+        release()
         self.assertEqual(takeoff.position, candidate)
         self.assertEqual(changes, [([("area", original, candidate)], [])])
+
+    def test_sub_increment_drag_snaps_to_the_whole_increment(self):
+        # At 125% zoom one pixel is about 0.8 scene units; the 1 inch snap grid must
+        # turn that into exactly one increment, in the preview and the commit.
+        view, takeoff, item, original, changes, release = self.drag_area(
+            pixels=1, zoom_percent=125
+        )
+        raw_shift = 1.0 / view.transform().m11()
+        self.assertGreater(raw_shift, 0.5)
+        self.assertLess(raw_shift, 0.95)
+        shifted = [901.0, 900.0, 1101.0, 900.0, 1101.0, 1100.0, 901.0, 1100.0]
+        self.assertEqual(list(view._drag_last_valid_new_pos), shifted)
+        self.assertEqual(item.pos(), QPointF(1, 0))
+        release()
+        self.assertEqual(takeoff.position, shifted)
+        self.assertEqual(changes, [([("area", original, shifted)], [])])

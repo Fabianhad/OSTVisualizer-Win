@@ -121,13 +121,23 @@ class AnnotationFamilyAccessTests(unittest.TestCase):
                         self.assertEqual(loaded[kind].position, pos)
                         self.assertEqual(loaded[kind].page_uid, page)
                         self.assertEqual(loaded[kind].color.upper(), "#123456")
-                updates = [
-                    (loaded[kind].uid, kind, list(pos))
+                # Move every annotation: the saved positions differ from the
+                # inserted ones, so a no-op save cannot satisfy the comparison.
+                moved = {
+                    kind: (
+                        normalize_named_view_position([round(v + 5.5, 6) for v in pos])
+                        if kind == "namedview"
+                        else [round(v + 5.5, 6) for v in pos]
+                    )
                     for kind, pos in expected.items()
+                }
+                self.assertTrue(all(moved[k] != expected[k] for k in expected))
+                updates = [
+                    (loaded[kind].uid, kind, list(pos)) for kind, pos in moved.items()
                 ]
                 self.assertTrue(writer.save_annotation_positions(str(path), updates))
                 self.assertEqual(
-                    {kind: a.position for kind, a in reload().items()}, expected
+                    {kind: a.position for kind, a in reload().items()}, moved
                 )
                 # Missing member must reject the entire transaction.
                 self.assertFalse(
@@ -144,7 +154,7 @@ class AnnotationFamilyAccessTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(
-                    {kind: a.position for kind, a in reload().items()}, expected
+                    {kind: a.position for kind, a in reload().items()}, moved
                 )
                 keys = [(a.uid, a.annotation_type) for a in loaded.values()]
                 self.assertTrue(writer.delete_annotations(str(path), keys))

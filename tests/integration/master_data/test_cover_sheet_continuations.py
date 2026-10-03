@@ -8,6 +8,9 @@ from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesD
 from PySide6 import QtWidgets
 from shiboken6 import delete
 from tests.helpers.workspace_state import make_workspace_state_model
+from tests.presentation.dialogs.master_data_support import (
+    FakeIconProvider as _master_data_support_FakeIconProvider,
+)
 
 
 class NestedParentCompletionTests(unittest.TestCase):
@@ -31,7 +34,7 @@ class NestedParentCompletionTests(unittest.TestCase):
                         reload_employees = Mock(return_value=(employees, []))
                         reload_statuses = Mock(return_value=statuses)
                         parent = CoverSheetDialog(
-                            Mock(),
+                            _master_data_support_FakeIconProvider(),
                             None,
                             CoverSheetData(
                                 "bid",
@@ -52,11 +55,19 @@ class NestedParentCompletionTests(unittest.TestCase):
                             reload_job_statuses_fn=reload_statuses,
                         )
                         parent.edit_project_name.setText("Parent draft")
+                        draft_combo = (
+                            parent.combo_estimator
+                            if kind == "employee"
+                            else parent.combo_job_status
+                        )
+                        draft_combo.setEditText("Typed draft")
                         child_type = (
                             EmployeesDialog if kind == "employee" else JobStatusesDialog
                         )
+                        executed = []
 
                         def exercise(child):
+                            executed.append(child)
                             child.tree.setCurrentItem(child.tree.topLevelItem(0))
                             if kind == "employee":
                                 child._employees[0].first_name = "Edited"
@@ -88,6 +99,7 @@ class NestedParentCompletionTests(unittest.TestCase):
                                         parent._open_employees_dialog()
                                     else:
                                         parent._open_job_statuses_dialog()
+                                self.assertEqual(len(executed), 1)
                                 reload_fn = (
                                     reload_employees
                                     if kind == "employee"
@@ -109,6 +121,18 @@ class NestedParentCompletionTests(unittest.TestCase):
                                 self.assertEqual(
                                     parent.edit_project_name.text(), "Parent draft"
                                 )
+                                if not closed:
+                                    # A cancelled nested dialog restores the typed
+                                    # combo draft; an accepted one replaces it
+                                    # with the dialog's selection.
+                                    if success:
+                                        self.assertNotEqual(
+                                            draft_combo.currentText(), "Typed draft"
+                                        )
+                                    else:
+                                        self.assertEqual(
+                                            draft_combo.currentText(), "Typed draft"
+                                        )
                         finally:
                             parent.reject()
                             delete(parent)
@@ -121,7 +145,7 @@ class NestedParentCompletionTests(unittest.TestCase):
             for accepted in (False, True):
                 with self.subTest(closed=closed, accepted=accepted):
                     parent = CoverSheetDialog(
-                        Mock(),
+                        _master_data_support_FakeIconProvider(),
                         None,
                         CoverSheetData("bid", "1", "Job", "", "", "", "", ""),
                         make_workspace_state_model(),
@@ -143,8 +167,10 @@ class NestedParentCompletionTests(unittest.TestCase):
 
                     refresh_spy = Mock(side_effect=refresh)
                     parent._refresh_fn = refresh_spy
+                    executed = []
 
                     def exercise(child):
+                        executed.append(child)
                         child.tree.topLevelItem(0).setText(0, "Saved Area")
                         self.assertTrue(child.flush_pending_save())
                         self.assertTrue(child.has_saved_changes())
@@ -160,6 +186,7 @@ class NestedParentCompletionTests(unittest.TestCase):
                     try:
                         with patch.object(BidAreasDialog, "exec", exercise):
                             parent._open_bid_areas_dialog()
+                        self.assertEqual(len(executed), 1)
                         self.assertEqual(
                             parent.edit_project_name.text(),
                             "Newer draft" if closed else "Reloaded",

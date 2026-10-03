@@ -200,9 +200,7 @@ class UseCaseBuilder:
     ) -> None:
         write_logger = self.logger.getChild("Write")
         ann_logger = self.logger.getChild("Annotation")
-        bid_write_guard = ActiveBidWriteGuard(
-            project_data_service, write_logger.getChild("ActiveBidWriteGuard")
-        )
+        bid_write_guard = ActiveBidWriteGuard(project_data_service)
         delete_bids_uc = DeleteBidsUseCase(
             mdb_writer, write_logger.getChild("DeleteBids")
         )

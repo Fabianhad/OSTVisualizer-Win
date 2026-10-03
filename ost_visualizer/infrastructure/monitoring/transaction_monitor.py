@@ -35,6 +35,7 @@ class TransactionMonitor:
         self._debounce_lock = threading.Lock()
         self._state = MonitorState.INITIAL
         self._status_online = False
+        self._status_published = False
         self._notifier = message_notifier
         self._ost_status_callback: Optional[Callable[[bool], None]] = None
 
@@ -47,9 +48,11 @@ class TransactionMonitor:
                 return False
             self._status_event = self._open_status_event()
             self._sync_status_state()
+            self._publish_stale_offline()
             self._handle_connection_established()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error("Exception connecting to the OST events: %s", e, exc_info=True)
             self._reset_events()
             self._handle_connection_failed()
             return False
@@ -77,10 +80,25 @@ class TransactionMonitor:
         ):
             if self._status_online:
                 self._show_available_message()
-                if self._ost_status_callback:
-                    self._ost_status_callback(True)
+                self._publish_status(True)
+        elif previous_state == MonitorState.INITIAL and self._status_online:
+            self._publish_status(True)
+
+    def _publish_status(self, active: bool) -> None:
+        if self._ost_status_callback:
+            self._ost_status_callback(active)
+        self._status_published = active
+
+    def _publish_stale_offline(self) -> None:
+        if not self._status_published or self._status_online:
+            return
+        try:
+            self._publish_status(False)
+        except Exception as e:
+            logger.error("Exception in OST status callback: %s", e, exc_info=True)
 
     def _handle_connection_failed(self) -> None:
+        self._publish_stale_offline()
         if self._state == MonitorState.INITIAL:
             if ost_winevent.is_process_running("Ost.exe"):
                 self._state = MonitorState.DLL_NOT_LOADED
@@ -101,7 +119,10 @@ class TransactionMonitor:
     def _post_message(self, title: str, message: str, severity: str = "info") -> None:
         if self._notifier is None:
             return
-        self._notifier.post_message(title, message, severity)
+        try:
+            self._notifier.post_message(title, message, severity)
+        except Exception as e:
+            logger.error("Exception in message notifier: %s", e, exc_info=True)
 
     def _show_dll_not_loaded_message(self) -> None:
         self._post_message(
@@ -164,21 +185,24 @@ class TransactionMonitor:
                 self._reset_events()
             elif result == ost_winevent.WAIT_TIMEOUT:
                 if self._pending_callback:
+                    callback = None
                     with self._debounce_lock:
                         elapsed = time.time() - self._last_signal_time
                         if elapsed >= self.DEBOUNCE_SECONDS:
                             self._pending_callback = False
-                            if self._callback:
-                                try:
-                                    self._callback()
-                                except Exception as e:
-                                    logger.error(
-                                        "Exception in transaction monitor callback: %s",
-                                        e,
-                                        exc_info=True,
-                                    )
+                            callback = self._callback
+                    if callback:
+                        try:
+                            callback()
+                        except Exception as e:
+                            logger.error(
+                                "Exception in transaction monitor callback: %s",
+                                e,
+                                exc_info=True,
+                            )
             else:
                 logger.warning("Unexpected wait result: %s", result)
+                self._reset_events()
         except Exception as e:
             logger.error("Exception processing events: %s", e, exc_info=True)
             self._reset_events()
@@ -235,8 +259,7 @@ class TransactionMonitor:
             current_status = wait_result == ost_winevent.WAIT_OBJECT_0
             if current_status != self._status_online:
                 self._status_online = current_status
-                if self._ost_status_callback:
-                    self._ost_status_callback(self._status_online)
+                self._publish_status(current_status)
                 if not self._status_online and self._state == MonitorState.CONNECTED:
                     self._state = MonitorState.DISCONNECTED
                     self._post_message(

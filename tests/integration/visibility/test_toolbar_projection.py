@@ -50,6 +50,18 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
         self.assertIsNotNone(result)
         return result
 
+    def assert_only_hidden_items_are_invisible(self, hidden):
+        # Exact oracle for every catalog item: hidden ones are gone and, as the
+        # positive control, every other item is still visible.
+        self.assertEqual(
+            {
+                spec.key: self.item(spec.key).isVisible()
+                for spec in TAKEOFF_TOOLBAR_ITEMS
+            },
+            {spec.key: spec.key not in hidden for spec in TAKEOFF_TOOLBAR_ITEMS},
+        )
+        self.assertFalse(self.toolbar.isHidden())
+
     def test_navigation_replacement_clear_and_view_refresh_retain_visibility(self):
         hidden = ("line_annotation_tool", PAGE_SETTINGS_ITEM, ZOOM_SELECTOR_ITEM)
         self.controller.apply_hidden_items(hidden)
@@ -68,7 +80,7 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
                 self.bundle.view_stack.setCurrentIndex(1)
                 self.bundle.view_stack.setCurrentIndex(0)
                 self.app.processEvents()
-                self.assertTrue(all(not self.item(key).isVisible() for key in hidden))
+                self.assert_only_hidden_items_are_invisible(hidden)
 
     def test_access_and_tool_refresh_keep_visibility_independent(self):
         access = state_tests._SelectiveAccess(
@@ -96,12 +108,76 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
         access.allowed.clear()
         coordinator.refresh()
         self.assertFalse(line.isEnabled())
-        self.assertFalse(self.item("line_annotation_tool").isVisible())
+        self.assert_only_hidden_items_are_invisible(("line_annotation_tool",))
         self.controller.apply_hidden_items(())
+        self.assert_only_hidden_items_are_invisible(())
         self.assertFalse(line.isEnabled())
         access.allowed.update({Feature.PLACE_ANNOTATIONS, Feature.SELECT_PLAN_ITEMS})
         coordinator.refresh()
         self.assertTrue(line.isEnabled())
+
+    def test_hiding_every_item_hides_the_toolbar_and_any_item_restores_it(self):
+        every_key = tuple(spec.key for spec in TAKEOFF_TOOLBAR_ITEMS)
+        self.controller.apply_hidden_items(every_key)
+        self.assertTrue(self.toolbar.isHidden())
+        self.assertTrue(all(not self.item(key).isVisible() for key in every_key))
+        self.controller.apply_hidden_items(every_key[:-1])
+        self.assertFalse(self.toolbar.isHidden())
+        self.assertTrue(self.item(every_key[-1]).isVisible())
+        self.controller.apply_hidden_items(())
+        self.assert_only_hidden_items_are_invisible(())
+
+    def test_navigation_spacer_needs_visible_items_on_both_sides(self):
+        spacer = self.controller._navigation_spacer
+        group = "Page navigation"
+        navigation = tuple(s.key for s in TAKEOFF_TOOLBAR_ITEMS if s.group == group)
+        others = tuple(s.key for s in TAKEOFF_TOOLBAR_ITEMS if s.group != group)
+        self.assertTrue(navigation and others)
+        self.assertTrue(spacer.isVisible())
+        self.controller.apply_hidden_items(navigation)
+        self.assertFalse(spacer.isVisible())
+        self.controller.apply_hidden_items(others)
+        self.assertFalse(spacer.isVisible())
+        self.controller.apply_hidden_items(navigation[:-1] + others[:-1])
+        self.assertTrue(spacer.isVisible())
+
+    @staticmethod
+    def held_widgets(action):
+        held = action.createdWidgets()
+        if action.defaultWidget() is not None:
+            held.append(action.defaultWidget())
+        return held
+
+    def widget_states(self):
+        return {
+            spec.key: tuple(
+                widget.isEnabled() for widget in self.held_widgets(self.item(spec.key))
+            )
+            for spec in TAKEOFF_TOOLBAR_ITEMS
+        }
+
+    def test_hiding_and_showing_keeps_widget_level_disabled_state(self):
+        # A plain widget action and an overflow action: the widget itself, not
+        # the action, is disabled and must come back disabled, while the enabled
+        # state of every other item is untouched by the cycle.
+        baseline = self.widget_states()
+        for key in ("page_selector", "line_annotation_tool"):
+            with self.subTest(item=key):
+                widget = self.held_widgets(self.item(key))[0]
+                self.assertTrue(baseline[key][0])
+                widget.setEnabled(False)
+                self.controller.apply_hidden_items((key,))
+                self.assertFalse(self.item(key).isVisible())
+                self.controller.apply_hidden_items(())
+                self.assertTrue(self.item(key).isVisible())
+                states = self.widget_states()
+                self.assertFalse(widget.isEnabled())
+                self.assertEqual(
+                    {k: v for k, v in states.items() if k != key},
+                    {k: v for k, v in baseline.items() if k != key},
+                )
+                widget.setEnabled(True)
+                self.assertEqual(self.widget_states(), baseline)
 
     def test_deferred_remote_projection_retains_hidden_widgets(self):
         bridge = remote_tests._QueuedBridge()
@@ -140,4 +216,4 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
         self.assertEqual(completed, [True])
-        self.assertTrue(all(not self.item(key).isVisible() for key in hidden))
+        self.assert_only_hidden_items_are_invisible(hidden)

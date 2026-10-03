@@ -2,6 +2,9 @@ import math
 import unittest
 import tests.presentation.handlers.test_plan_view_action_handler as action_fixtures
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.presentation.handlers import (
+    plan_view_action_handler as handler_module,
+)
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
 from unittest.mock import patch
 
@@ -133,7 +136,38 @@ class TextAnnotationHistoryTests(unittest.TestCase):
                         self.assertEqual(data.annotations, [reused])
                         data.annotations.clear()
 
+    def test_delete_undo_restores_annotation_at_current_page_scale(self):
+        for sql in (False, True):
+            with self.subTest(sql=sql):
+                handler, data, writer, write, undo = self.make_handler(sql)
+                handler.on_elements_deleted(["a1"])
+                if sql:
+                    data.remove_annotations_by_keys([("a1", "text")])
+                    write.queued_deletes[-1][-1](self.committed())
+                self.assertEqual(data.annotations, [])
+                # The page is recalibrated 1:1 -> 1:2 after the delete; the
+                # restore must follow the page, not the geometry at delete time.
+                data.pages["p1"].scale_factor2 = 2.0
+                undo.undo()
+                specs = (
+                    write.queued_pastes[-1][1].annotation_specs
+                    if sql
+                    else writer.insert_calls[-1][2]
+                )
+                self.assertEqual([spec.position for spec in specs], [[20, 20, 160, 48]])
+                self.assertEqual(specs[0].properties["Text"], "Before")
+
     def test_late_sql_edit_completion_does_not_recreate_cleared_history(self):
+        # Positive control: an undisturbed completion does record history.
+        control, control_data, _writer, control_write, control_undo = self.make_handler(
+            True
+        )
+        control.on_annotation_text_properties_flushed(
+            [("a1", "text", {"Text": "Before"}, {"Text": "After"})]
+        )
+        self.assertFalse(control_undo.can_undo())
+        self.complete_edit("text", control_data, control_write)
+        self.assertTrue(control_undo.can_undo())
         handler, data, _writer, write, undo = self.make_handler(True)
         handler.on_annotation_text_properties_flushed(
             [("a1", "text", {"Text": "Before"}, {"Text": "After"})]
@@ -262,12 +296,18 @@ class DetachedTextHistoryTests(unittest.TestCase):
         f.refresh()
 
     def test_late_sql_text_completion_cannot_recreate_invalidated_history(self):
-        self.window._queue_sql_annotation_properties(
+        queue = lambda: self.window._queue_sql_annotation_properties(
             self.fixture.bid_ref.file_path,
             "annotation_text",
             [("text", "text", {"Text": "Before"}, {"Text": "After"})],
             lambda: None,
         )
+        # Positive control: an undisturbed completion does record history.
+        queue()
+        self.write.queued_properties[-1][-1](TextAnnotationHistoryTests.committed())
+        self.assertTrue(self.history.can_undo())
+        self.history.clear()
+        queue()
         self.history.clear()
         self.write.queued_properties[-1][-1](TextAnnotationHistoryTests.committed())
         self.assertFalse(self.history.can_undo())
@@ -457,13 +497,709 @@ class AnnotationDeletionScopeTests(unittest.TestCase):
             command.redo,
             annotation_targets=tuple(binding.targets.values()),
         )
+        # The restore inserts the Named View first and its dependents second, so
+        # the fake allocator must hand out one UID per inserted annotation.
+        allocated = []
+        record_insert = writer.insert_annotations
+
+        def allocate(*args, **kwargs):
+            specs = args[2]
+            record_insert(*args, **kwargs)
+            return [allocated.pop(0) for _ in specs]
+
+        writer.insert_annotations = allocate
         for cycle in range(2):
-            writer.next_uids = [f"view-{cycle}", f"link-{cycle}"]
+            allocated[:] = [f"view-{cycle}", f"link-{cycle}"]
             undo.undo()
             self.assertEqual(len(data.annotations), 2)
             link = next(
                 item for item in data.annotations if item.annotation_type == "hotlink"
             )
             self.assertEqual(str(link.properties["BidPageViewUID"]), f"view-{cycle}")
+            # The history targets follow each family's own restored identity.
+            self.assertEqual(
+                {t.annotation_type: t.uid for t in binding.targets.values()},
+                {"namedview": f"view-{cycle}", "hotlink": f"link-{cycle}"},
+            )
+            self.assertTrue(all(t.available for t in binding.targets.values()))
+            undo.redo()
+            self.assertFalse(any(t.available for t in binding.targets.values()))
+            self.assertEqual(data.annotations, [])
+
+
+class HotlinkViewLifetimeHistoryTests(unittest.TestCase):
+    """A deleted Hot Link follows its Named View when an accepted restore map
+    reactivates it, on every history path that retains the Hot Link's spec."""
+
+    def setUp(self):
+        # A refused restore reports through this dialog; it must not block the run.
+        patcher = patch.object(handler_module, "show_warning")
+        self.warning = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def make(self, sql=False):
+        handler, data, writer, write, undo = TextAnnotationHistoryTests().make_handler(
+            sql
+        )
+        self.view = BidAnnotation(
+            uid="view",
+            annotation_type="namedview",
+            page_uid="p1",
+            position=[0, 0, 10, 10],
+            properties={"Text": "View"},
+        )
+        self.link = BidAnnotation(
+            uid="link",
+            annotation_type="hotlink",
+            page_uid="p1",
+            position=[20, 20],
+            properties={"BidPageViewUID": "view"},
+        )
+        data.annotations = [self.view, self.link]
+        self.bid = action_fixtures.FakeUiState().get_selected_bid_ref()
+        return handler, data, writer, write, undo
+
+    @staticmethod
+    def delete_history(handler, data, item):
+        data.annotations.remove(item)
+        handler._push_mdb_delete_history(
+            handler._ui_state.get_selected_bid_ref(),
+            [],
+            [item],
+            {},
+            [],
+            [(item.uid, item.annotation_type)],
+            (),
+        )
+
+    @staticmethod
+    def restored_target(writer):
+        specs = writer.insert_calls[-1][2]
+        return specs[0].properties["BidPageViewUID"]
+
+    def test_mdb_delete_history_hotlink_follows_restored_named_view(self):
+        handler, data, writer, _write, undo = self.make()
+        self.delete_history(handler, data, self.link)
+        self.delete_history(handler, data, self.view)
+        for cycle in range(2):
+            view_uid = f"view-{cycle}"
+            writer.next_uids = [view_uid]
+            undo.undo()
+            self.assertEqual([a.uid for a in data.annotations], [view_uid])
+            writer.next_uids = [f"link-{cycle}"]
+            undo.undo()
+            self.assertEqual(self.restored_target(writer), view_uid)
+            links = [a for a in data.annotations if a.annotation_type == "hotlink"]
+            self.assertEqual(
+                [(a.uid, a.properties["BidPageViewUID"]) for a in links],
+                [(f"link-{cycle}", view_uid)],
+            )
+            undo.redo()
             undo.redo()
             self.assertEqual(data.annotations, [])
+        self.warning.assert_not_called()
+
+    def test_mdb_delete_history_refuses_hotlink_when_named_view_was_not_restored(
+        self,
+    ):
+        handler, data, writer, _write, undo = self.make()
+        self.delete_history(handler, data, self.link)
+        # The Named View is deleted by another history owner and never restored
+        # here, then an unrelated Named View takes over its UID.
+        data.annotations.clear()
+        undo.invalidate_deleted_annotation_lifetimes(
+            self.bid.file_path, self.bid.bid_uid, {("p1", "namedview", "view")}, "other"
+        )
+        data.annotations.append(
+            BidAnnotation(
+                uid="view",
+                annotation_type="namedview",
+                page_uid="p1",
+                position=[0, 0, 10, 10],
+                properties={"Text": "Unrelated"},
+            )
+        )
+        undo.undo()
+        self.warning.assert_called_once()
+        self.assertIn("Named View", self.warning.call_args.args[2])
+        self.assertEqual(writer.insert_calls, [])
+        self.assertEqual([a.uid for a in data.annotations], ["view"])
+        self.assertTrue(undo.can_undo())
+
+    @staticmethod
+    def sql_result(payload=None, new_uids=()):
+        maps = ()
+        if payload is not None:
+            maps = (
+                (
+                    "annotations",
+                    tuple(zip(payload.annotation_source_uids, new_uids)),
+                ),
+            )
+        return action_fixtures.QueuedMutationResult(
+            database_id="bid.mdb",
+            runtime_generation=1,
+            operation_id=str(action_fixtures.uuid.uuid4()),
+            outcome_status=action_fixtures.MutationOutcomeStatus.COMMITTED,
+            authoritative_result=action_fixtures.AuthoritativeMutationResult(
+                created_uid_maps=maps
+            ),
+        )
+
+    def restore_view_through_sql_undo(self, data, write, undo, new_uid):
+        undo.undo()
+        _db, payload, _options, callback = write.queued_pastes[-1]
+        self.assertEqual(
+            [spec.annotation_type for spec in payload.annotation_specs], ["namedview"]
+        )
+        data.annotations.append(
+            BidAnnotation(
+                uid=new_uid,
+                annotation_type="namedview",
+                page_uid="p1",
+                position=[0, 0, 10, 10],
+                properties={"Text": "View"},
+            )
+        )
+        callback(self.sql_result(payload, [new_uid]))
+
+    def test_sql_delete_history_hotlink_follows_restored_named_view(self):
+        handler, data, _writer, write, undo = self.make(sql=True)
+        for item in (self.link, self.view):
+            data.annotations.remove(item)
+            handler._push_sql_delete_history(
+                self.bid, [], [item], {}, [], [(item.uid, item.annotation_type)]
+            )
+        self.restore_view_through_sql_undo(data, write, undo, "view-2")
+        undo.undo()
+        payload = write.queued_pastes[-1][1]
+        self.assertEqual(
+            [spec.annotation_type for spec in payload.annotation_specs], ["hotlink"]
+        )
+        self.assertEqual(
+            payload.annotation_specs[0].properties["BidPageViewUID"], "view-2"
+        )
+        self.warning.assert_not_called()
+
+    def test_sql_paste_history_redo_hotlink_follows_restored_named_view(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            PlanItemsPastePayload,
+        )
+        from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+            annotation_resource_id,
+        )
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+
+        handler, data, _writer, write, undo = self.make(sql=True)
+        source = annotation_resource_id("hotlink", "placed")
+        payload = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            annotation_source_uids=(source,),
+            annotation_specs=(
+                InsertAnnotationSpec(
+                    page_uid="p1",
+                    annotation_type="hotlink",
+                    position=[30.0, 30.0],
+                    color="#ff0000",
+                    width=1.0,
+                    properties={"BidPageViewUID": "view"},
+                ),
+            ),
+        )
+        handler._push_sql_paste_history(self.bid, payload, {}, {source: "link"})
+        data.annotations.remove(self.view)
+        handler._push_sql_delete_history(
+            self.bid, [], [self.view], {}, [], [("view", "namedview")]
+        )
+        self.restore_view_through_sql_undo(data, write, undo, "view-2")
+        # Undo the placement (a delete), then redo it onto the restored view.
+        undo.undo()
+        write.queued_deletes[-1][-1](self.sql_result())
+        pastes_before = len(write.queued_pastes)
+        undo.redo()
+        self.assertEqual(len(write.queued_pastes), pastes_before + 1)
+        spec = write.queued_pastes[-1][1].annotation_specs[0]
+        self.assertEqual(spec.properties["BidPageViewUID"], "view-2")
+        # The retained placement spec itself is untouched, so later restores
+        # resolve from the original target again.
+        self.assertEqual(
+            payload.annotation_specs[0].properties["BidPageViewUID"], "view"
+        )
+        self.warning.assert_not_called()
+
+
+class DetachedHotlinkViewHistoryTests(unittest.TestCase):
+    """The detached Plan window's annotation history follows a restored Named
+    View exactly like the main Plan handler does."""
+
+    def setUp(self):
+        DetachedTextHistoryTests.setUp(self)
+        from ost_visualizer.presentation.windows.components import (
+            window as window_module,
+        )
+
+        # A refused restore reports through this dialog; it must not block the run.
+        patcher = patch.object(window_module, "show_warning")
+        self.warning = patcher.start()
+        self.addCleanup(patcher.stop)
+        f = self.fixture
+        self.writer = action_fixtures.FakeAnnotationWriteService()
+        self.window._ann_write_svc = self.writer
+        self.write.annotation_write_service = self.writer
+        from ost_visualizer.presentation.services.annotation_write_coordinator import (
+            AnnotationWriteCoordinator,
+        )
+
+        self.window._annotation_write_coordinator = AnnotationWriteCoordinator(
+            self.writer, f.data, f.bus
+        )
+        self.window._editing_enabled = lambda: True
+        self.page = f.data.page.uid
+        self.view = BidAnnotation(
+            uid="view",
+            annotation_type="namedview",
+            page_uid=self.page,
+            position=[0, 0, 10, 10],
+            properties={"Text": "View"},
+        )
+        self.link = BidAnnotation(
+            uid="link",
+            annotation_type="hotlink",
+            page_uid=self.page,
+            position=[20, 20],
+            properties={"BidPageViewUID": "view"},
+        )
+        f.data.annotations = [self.view, self.link]
+        f.refresh()
+
+    def link_targets(self):
+        return [
+            (a.uid, a.properties["BidPageViewUID"])
+            for a in self.fixture.data.annotations
+            if a.annotation_type == "hotlink"
+        ]
+
+    def test_local_delete_history_hotlink_follows_restored_named_view(self):
+        data = self.fixture.data
+        self.window._on_elements_deleted(["link"])
+        self.window._on_elements_deleted(["view"])
+        self.assertEqual(data.annotations, [])
+        for cycle in range(2):
+            self.writer.next_uids = [f"view-{cycle}"]
+            self.history.undo()
+            self.assertEqual([a.uid for a in data.annotations], [f"view-{cycle}"])
+            self.writer.next_uids = [f"link-{cycle}"]
+            self.history.undo()
+            self.assertEqual(self.link_targets(), [(f"link-{cycle}", f"view-{cycle}")])
+            self.history.redo()
+            self.history.redo()
+            self.assertEqual(data.annotations, [])
+        self.warning.assert_not_called()
+
+    def test_local_delete_history_refuses_hotlink_for_unrelated_reused_uid(self):
+        data = self.fixture.data
+        self.window._on_elements_deleted(["link"])
+        data.annotations.remove(self.view)
+        self.history.invalidate_deleted_annotation_lifetimes(
+            self.fixture.bid_ref.file_path,
+            self.fixture.bid_ref.bid_uid,
+            {(self.page, "namedview", "view")},
+            "another-window",
+        )
+        data.annotations.append(
+            BidAnnotation(
+                uid="view",
+                annotation_type="namedview",
+                page_uid=self.page,
+                position=[0, 0, 10, 10],
+                properties={"Text": "Unrelated"},
+            )
+        )
+        inserts_before = len(self.writer.insert_calls)
+        self.history.undo()
+        self.warning.assert_called_once()
+        self.assertIn("Named View", self.warning.call_args.args[2])
+        self.assertEqual(len(self.writer.insert_calls), inserts_before)
+        self.assertEqual(self.link_targets(), [])
+        self.assertTrue(self.history.can_undo())
+
+    def place_link_through_dialog(self, target):
+        from types import SimpleNamespace
+        from PySide6 import QtWidgets
+        from ost_visualizer.presentation.windows.components import (
+            window as window_module,
+        )
+
+        class AcceptingDialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def result_data(self):
+                return SimpleNamespace(create_new=False, named_view_uid=target)
+
+        self.window._annotation_placement_enabled = lambda: True
+        with (
+            patch.object(window_module, "SelectNamedViewDialog", AcceptingDialog),
+            patch.object(window_module, "isValid", return_value=True),
+            patch.object(window_module, "delete_later_if_valid"),
+        ):
+            self.window._on_hotlink_placement_requested([30.0, 30.0], self.page)
+
+    def test_local_placement_redo_hotlink_follows_named_view_restored_by_cascade(
+        self,
+    ):
+        from ost_visualizer.presentation.windows.components import (
+            window as window_module,
+        )
+
+        data = self.fixture.data
+        data.annotations.remove(self.link)
+        self.fixture.refresh()
+        self.writer.next_uids = ["placed"]
+        self.place_link_through_dialog("view")
+        self.assertEqual(self.link_targets(), [("placed", "view")])
+        self.window._linked_hotlink_resolver = lambda uids: [
+            a
+            for a in data.annotations
+            if a.annotation_type == "hotlink" and a.properties["BidPageViewUID"] in uids
+        ]
+        with patch.object(window_module, "confirm", return_value=True) as confirm:
+            self.window._on_elements_deleted(["view"])
+        confirm.assert_called_once()
+        self.assertEqual(data.annotations, [])
+        # The cascade restore inserts the Named View first and its link second.
+        allocated = ["view-2", "link-2"]
+        record_insert = self.writer.insert_annotations
+
+        def allocate(*args, **kwargs):
+            record_insert(*args, **kwargs)
+            return [allocated.pop(0) for _ in args[2]]
+
+        self.writer.insert_annotations = allocate
+        self.history.undo()
+        self.assertEqual(self.link_targets(), [("link-2", "view-2")])
+        # Undo the placement, then redo it: it must follow the restored view.
+        self.history.undo()
+        self.assertEqual(self.link_targets(), [])
+        self.writer.insert_annotations = record_insert
+        self.writer.next_uids = ["placed-2"]
+        self.history.redo()
+        self.assertEqual(
+            self.writer.insert_calls[-1][2][0].properties,
+            {"BidPageViewUID": "view-2"},
+        )
+        self.assertEqual(self.link_targets(), [("placed-2", "view-2")])
+        self.warning.assert_not_called()
+
+    def restore_view_through_sql_undo(self, new_uid):
+        data = self.fixture.data
+        self.history.undo()
+        _db, payload, _options, callback = self.write.queued_pastes[-1]
+        self.assertEqual(
+            [spec.annotation_type for spec in payload.annotation_specs], ["namedview"]
+        )
+        data.annotations.append(
+            BidAnnotation(
+                uid=new_uid,
+                annotation_type="namedview",
+                page_uid=self.page,
+                position=[0, 0, 10, 10],
+                properties={"Text": "View"},
+            )
+        )
+        callback(HotlinkViewLifetimeHistoryTests.sql_result(payload, [new_uid]))
+
+    def test_sql_delete_history_hotlink_follows_restored_named_view(self):
+        data = self.fixture.data
+        bid = self.fixture.bid_ref
+        for item in (self.link, self.view):
+            data.annotations.remove(item)
+            self.window._push_sql_annotation_delete_history(bid, [item])
+        self.restore_view_through_sql_undo("view-2")
+        self.history.undo()
+        payload = self.write.queued_pastes[-1][1]
+        self.assertEqual(
+            [spec.annotation_type for spec in payload.annotation_specs], ["hotlink"]
+        )
+        self.assertEqual(
+            payload.annotation_specs[0].properties["BidPageViewUID"], "view-2"
+        )
+        self.warning.assert_not_called()
+
+    def test_sql_insert_history_redo_hotlink_follows_restored_named_view(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            PlanItemsPastePayload,
+        )
+        from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+            annotation_resource_id,
+        )
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+
+        data = self.fixture.data
+        bid = self.fixture.bid_ref
+        source = annotation_resource_id("hotlink", "placed")
+        payload = PlanItemsPastePayload(
+            source_bid_uid=str(bid.bid_uid),
+            destination_bid_uid=str(bid.bid_uid),
+            annotation_source_uids=(source,),
+            annotation_specs=(
+                InsertAnnotationSpec(
+                    page_uid=self.page,
+                    annotation_type="hotlink",
+                    position=[30.0, 30.0],
+                    color="#ff0000",
+                    width=1.0,
+                    properties={"BidPageViewUID": "view"},
+                ),
+            ),
+        )
+        placed = BidAnnotation(
+            uid="placed",
+            annotation_type="hotlink",
+            page_uid=self.page,
+            position=[30.0, 30.0],
+            properties={"BidPageViewUID": "view"},
+        )
+        data.annotations.append(placed)
+        self.window._push_sql_annotation_insert_history(
+            bid, payload, {source: "placed"}
+        )
+        data.annotations.remove(self.view)
+        self.window._push_sql_annotation_delete_history(bid, [self.view])
+        self.restore_view_through_sql_undo("view-2")
+        # Undo the placement (a delete), then redo it onto the restored view.
+        self.history.undo()
+        data.annotations.remove(placed)
+        self.write.queued_deletes[-1][-1](HotlinkViewLifetimeHistoryTests.sql_result())
+        pastes_before = len(self.write.queued_pastes)
+        self.history.redo()
+        self.assertEqual(len(self.write.queued_pastes), pastes_before + 1)
+        spec = self.write.queued_pastes[-1][1].annotation_specs[0]
+        self.assertEqual(spec.properties["BidPageViewUID"], "view-2")
+        self.warning.assert_not_called()
+
+    def test_local_paste_redo_hotlink_follows_named_view_restored_by_cascade(self):
+        from ost_visualizer.presentation.services.selection_clipboard_service import (
+            SelectionClipboardService,
+        )
+        from ost_visualizer.presentation.windows.components import (
+            window as window_module,
+        )
+
+        data = self.fixture.data
+        bid = self.fixture.bid_ref
+        self.window._annotation_placement_enabled = lambda: True
+        self.window._annotation_clipboard_svc = SelectionClipboardService()
+        self.window._annotation_clipboard_svc.copy(
+            [],
+            [self.link],
+            source_bid_uid=bid.bid_uid,
+            source_file_path=bid.file_path,
+        )
+        self.writer.next_uids = ["pasted"]
+        self.window._on_paste_requested()
+        self.assertEqual(
+            sorted(self.link_targets()), [("link", "view"), ("pasted", "view")]
+        )
+        self.window._linked_hotlink_resolver = lambda uids: [
+            a
+            for a in data.annotations
+            if a.annotation_type == "hotlink" and a.properties["BidPageViewUID"] in uids
+        ]
+        with patch.object(window_module, "confirm", return_value=True):
+            self.window._on_elements_deleted(["view"])
+        self.assertEqual(data.annotations, [])
+        allocated = ["view-2", "link-2", "pasted-2"]
+        record_insert = self.writer.insert_annotations
+
+        def allocate(*args, **kwargs):
+            record_insert(*args, **kwargs)
+            return [allocated.pop(0) for _ in args[2]]
+
+        self.writer.insert_annotations = allocate
+        self.history.undo()
+        self.assertEqual(
+            sorted(self.link_targets()), [("link-2", "view-2"), ("pasted-2", "view-2")]
+        )
+        self.history.undo()
+        self.assertEqual(self.link_targets(), [("link-2", "view-2")])
+        self.writer.insert_annotations = record_insert
+        self.writer.next_uids = ["pasted-3"]
+        self.history.redo()
+        self.assertEqual(
+            sorted(self.link_targets()), [("link-2", "view-2"), ("pasted-3", "view-2")]
+        )
+        self.warning.assert_not_called()
+
+
+class HotlinkViewDependencyHelperTests(unittest.TestCase):
+    """capture_/resolve_hotlink_view_targets: which Hot Links retain a Named
+    View dependency, and when a restore may follow it."""
+
+    BID = action_fixtures.FakeUiState().get_selected_bid_ref()
+
+    def data(self, *annotations, bid=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            get_all_annotations=lambda: list(annotations),
+            get_current_bid_ref=lambda: bid or self.BID,
+        )
+
+    @staticmethod
+    def view(uid, page="p1"):
+        return BidAnnotation(
+            uid=uid,
+            annotation_type="namedview",
+            page_uid=page,
+            position=[0, 0, 10, 10],
+        )
+
+    @staticmethod
+    def link(uid, target, kind="hotlink"):
+        return BidAnnotation(
+            uid=uid,
+            annotation_type=kind,
+            page_uid="p1",
+            position=[1, 1],
+            properties={"BidPageViewUID": target},
+        )
+
+    def capture(self, data, items, batch=()):
+        from ost_visualizer.presentation.services.annotation_history import (
+            capture_hotlink_view_dependencies,
+        )
+
+        return capture_hotlink_view_dependencies(data, self.BID, items, batch)
+
+    def test_capture_retains_one_shared_target_per_live_external_named_view(self):
+        data = self.data(self.view("5"), self.view("6", "p2"))
+        items = [self.link("a", "5"), self.link("b", "5"), self.link("c", "6")]
+        first, second, third = self.capture(data, items)
+        self.assertIs(first, second)
+        self.assertEqual(
+            (first.bid_ref, first.page_uid, first.annotation_type, first.uid),
+            (self.BID, "p1", "namedview", "5"),
+        )
+        self.assertTrue(first.available)
+        self.assertEqual(
+            (third.page_uid, third.annotation_type, third.uid),
+            ("p2", "namedview", "6"),
+        )
+        from ost_visualizer.presentation.services.annotation_history import (
+            retained_hotlink_view_targets,
+        )
+
+        self.assertEqual(
+            retained_hotlink_view_targets((first, None, second, third)), (first, third)
+        )
+
+    def test_capture_skips_everything_that_is_not_an_external_live_view_link(self):
+        data = self.data(self.view("5"), self.view("7"))
+        items = [
+            self.link("same-batch", "7"),
+            self.link("missing-view", "99"),
+            self.link("no-target", None),
+            self.link("zero-target", "0"),
+            self.link("empty-target", ""),
+            self.link("not-a-hotlink", "5", kind="rect"),
+        ]
+        self.assertEqual(self.capture(data, items, batch={"7"}), (None,) * 6)
+
+    def test_resolve_points_links_at_the_current_uid_without_mutating_the_spec(self):
+        from ost_visualizer.presentation.services.annotation_history import (
+            resolve_hotlink_view_targets,
+        )
+
+        data = self.data(self.view("5"))
+        original = self.link("a", "5")
+        other = self.link("b", "5", kind="rect")
+        dependencies = self.capture(data, [original])
+        (target,) = dependencies
+        # An accepted restore map rebinds the target to the Named View's new uid.
+        target.uid = "10"
+        data = self.data(self.view("10"))
+        resolved = resolve_hotlink_view_targets(data, [original, other], (target, None))
+        self.assertEqual(resolved[0].properties["BidPageViewUID"], "10")
+        self.assertEqual(original.properties["BidPageViewUID"], "5")
+        self.assertIs(resolved[1], other)
+        self.assertEqual(resolve_hotlink_view_targets(data, [original], ()), [original])
+
+    def test_resolve_refuses_instead_of_guessing(self):
+        from ost_visualizer.domain.entities.identity_refs import BidRef
+        from ost_visualizer.presentation.services.annotation_history import (
+            AnnotationHistoryDependencyError,
+            resolve_hotlink_view_targets,
+        )
+
+        item = self.link("a", "5")
+        (target,) = self.capture(self.data(self.view("5")), [item])
+
+        def resolve(data):
+            return resolve_hotlink_view_targets(data, [item], (target,))
+
+        # Control: live, available, same Bid and Page resolves.
+        self.assertEqual(resolve(self.data(self.view("5")))[0].uid, "a")
+        with self.assertRaises(AnnotationHistoryDependencyError):
+            resolve(self.data())
+        with self.assertRaises(AnnotationHistoryDependencyError):
+            resolve(self.data(self.view("5", "p2")))
+        with self.assertRaises(AnnotationHistoryDependencyError):
+            resolve(self.data(self.view("5"), bid=BidRef("other.mdb", "9")))
+        target.available = False
+        with self.assertRaises(AnnotationHistoryDependencyError):
+            resolve(self.data(self.view("5")))
+
+    def test_binding_from_specs_excludes_named_views_of_its_own_batch(self):
+        from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+            annotation_resource_id,
+        )
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+        from ost_visualizer.presentation.services.annotation_write_coordinator import (
+            AnnotationWriteCoordinator,
+        )
+
+        coordinator = AnnotationWriteCoordinator(None, self.data(self.view("5")), None)
+        specs = [
+            InsertAnnotationSpec(
+                page_uid="p1",
+                annotation_type="hotlink",
+                position=[1.0, 1.0],
+                color="#ff0000",
+                width=1.0,
+                properties={"BidPageViewUID": "5"},
+            )
+        ]
+
+        def dependencies(source_uids):
+            binding = coordinator.history_from_specs(
+                self.BID,
+                specs,
+                ["new"],
+                None,
+                captured_scales={},
+                source_uids=source_uids,
+            )
+            return binding.view_dependencies, binding.history_targets()
+
+        # Control: the live view 5 is an external dependency of the new link.
+        (external,), targets = dependencies(())
+        self.assertEqual((external.annotation_type, external.uid), ("namedview", "5"))
+        self.assertEqual(len(targets), 2)
+        # The same view named as a source of the batch is remapped by the write.
+        sources = [
+            annotation_resource_id("namedview", "5"),
+            annotation_resource_id("hotlink", "src"),
+        ]
+        self.assertEqual(dependencies(sources)[0], (None,))
+        self.assertEqual(len(dependencies(sources)[1]), 1)

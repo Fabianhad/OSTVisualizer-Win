@@ -52,6 +52,9 @@ class DimensionLifecycleTests(_family_support__PlanFixture, unittest.TestCase):
                     position = rescale_annotation_position_between_page_scales(
                         "dimension", position, (1, 48), (1, 96)
                     )
+                    # Positive control: 1:48 to 1:96 doubles every coordinate, so
+                    # the label checks below are about a genuinely rescaled line.
+                    self.assertEqual(position, [2 * v for v in original])
                     geometry = calculate_dimension_geometry(ann, position, list)
                     self.assertEqual(
                         geometry["label"],
@@ -65,6 +68,29 @@ class DimensionLifecycleTests(_family_support__PlanFixture, unittest.TestCase):
                         "dimension", position, (1, 96), (1, 48)
                     )
                 self.assertEqual(position, original)
+
+    def test_dimension_label_follows_exact_length_and_page_scale(self):
+        # (length in inches along +x, label at 1:48, label after the 1:96 rescale
+        # doubles the stored length), written out independently of the formatter.
+        cases = (
+            (1, '1"', '2"'),
+            (12, "1' - 0\"", "2' - 0\""),
+            (100000.125, "8333' - 4 1/8\"", "16666' - 8 1/4\""),
+        )
+        for length, label, scaled_label in cases:
+            with self.subTest(length=length):
+                ann = BidAnnotation("1", "dimension", position=[-12.0, -7.0])
+                position = [-12.0, -7.0, -12.0 + length, -7.0]
+                self.assertEqual(
+                    calculate_dimension_geometry(ann, position, list)["label"], label
+                )
+                scaled = rescale_annotation_position_between_page_scales(
+                    "dimension", position, (1, 48), (1, 96)
+                )
+                self.assertEqual(
+                    calculate_dimension_geometry(ann, scaled, list)["label"],
+                    scaled_label,
+                )
 
 
 class AnnotationFamilyGeometryTests(
@@ -85,12 +111,39 @@ class AnnotationFamilyGeometryTests(
                     self.assertEqual(moved[rotation], position[rotation])
                 if kind == "text":
                     self.assertEqual(moved[2:], position[2:])
+                # Independent oracle: which stored values a translation moves for
+                # this kind (text moves only its anchor; ink skips its leading
+                # rotation; every other kind moves each x/y pair, not rotation).
+                if kind == "text":
+                    moved_indices = {0: 1 / 64, 1: -1 / 32}
+                else:
+                    first = 1 if kind == "ink" else 0
+                    last = len(position) - (len(position) - first) % 2
+                    moved_indices = {
+                        i: (1 / 64 if (i - first) % 2 == 0 else -1 / 32)
+                        for i in range(first, last)
+                    }
+                self.assertEqual(
+                    moved,
+                    [
+                        value + moved_indices.get(index, 0.0)
+                        for index, value in enumerate(position)
+                    ],
+                )
                 annotation.position = moved
                 self.assertEqual(
                     translate_annotation_position(annotation, -1 / 64, 1 / 32), position
                 )
                 scaled = rescale_annotation_position_between_page_scales(
                     kind, position, (1, 48), (1, 96)
+                )
+                # 1:48 to 1:96 doubles every coordinate except the rotation value.
+                self.assertEqual(
+                    scaled,
+                    [
+                        value if index == rotation else 2 * value
+                        for index, value in enumerate(position)
+                    ],
                 )
                 if rotation is not None:
                     self.assertEqual(scaled[rotation], position[rotation])

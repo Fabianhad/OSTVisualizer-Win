@@ -2,11 +2,13 @@ import json
 import logging
 import sqlite3
 import unittest
+import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
+    ChangeOperation,
     ConcurrencyToken,
     DatabaseMutationResult,
     DurableOperationResult,
@@ -207,6 +209,8 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
     ):
         result = self.run_duplicate()
         self.assertTrue(result.success)
+        # BidConditions held UIDs 20 and 21, so the duplicate is the next row.
+        self.assertEqual(result.value, ["22"])
         new_uid = int(result.value[0])
         self.assertEqual(
             self.rows(), [(1, 10, new_uid), (2, 10, new_uid), (3, 11, 20), (4, 10, 21)]
@@ -225,6 +229,15 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.assertEqual(self.writer.connection.commits, 1)
         self.service._reload_database.assert_called_once()
         self.service._event_bus.publish.assert_called_once()
+        event_args = self.service._event_bus.publish.call_args
+        self.assertEqual(
+            (
+                event_args.kwargs["condition_uids"],
+                event_args.kwargs["change_operations"],
+                event_args.kwargs["bid_uid"],
+            ),
+            (["22"], ["create"], "7"),
+        )
 
     def test_duplicate_reassign_preserves_unselected_child_from_other_condition(self):
         self.db.execute("ALTER TABLE BidTakeoffs ADD COLUMN ParentUID INTEGER")
@@ -285,6 +298,7 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
     ):
         result = self.run_duplicate(sql=True)
         self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(result.authoritative_result.created_resource_ids, ("22",))
         new_uid = int(result.authoritative_result.created_resource_ids[0])
         self.assertEqual(
             self.rows(), [(1, 10, new_uid), (2, 10, new_uid), (3, 11, 20), (4, 10, 21)]
@@ -295,6 +309,29 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.assertEqual(result.authoritative_result.affected_page_uids, ("10",))
         self.assertEqual(self.writer.connection.commits, 1)
         self.assertEqual(len(self.provider.requests), 1)
+        # The recorder (what SQL collaboration broadcasts) sees the reassigned
+        # takeoffs, the new condition and its collection exactly once each.
+        reassigned = ("condition",)
+        self.assertEqual(
+            self.writer.changes,
+            [
+                call(
+                    ResourceRef("takeoff", "1", 7),
+                    ChangeOperation.UPDATE,
+                    changed_fields=reassigned,
+                ),
+                call(
+                    ResourceRef("takeoff", "2", 7),
+                    ChangeOperation.UPDATE,
+                    changed_fields=reassigned,
+                ),
+                call(ResourceRef("condition", "22", 7), ChangeOperation.CREATE),
+                call(
+                    ResourceRef("conditions_collection", "7", 7),
+                    ChangeOperation.UPDATE,
+                ),
+            ],
+        )
         self.service._reload_database.assert_not_called()
         self.service._event_bus.publish.assert_not_called()
 
@@ -333,6 +370,7 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.db.commit()
         result = self.run_duplicate()
         self.assertFalse(result.write_success)
+        self.assertIn("changed Page or Condition", result.failure_reason)
         self.assertEqual(
             self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
         )
@@ -346,7 +384,7 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         )
         self.db.execute("UPDATE BidTakeoffs SET BidConditionUID=21 WHERE UID=2")
         self.db.commit()
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(RuntimeError, "changed Page or Condition"):
             self.provider.requests[0][1]()
         self.assertEqual(
             self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
@@ -354,6 +392,25 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.assertEqual(
             self.rows(), [(1, 10, 20), (2, 10, 21), (3, 11, 20), (4, 10, 21)]
         )
+
+    def test_deleted_captured_takeoff_rejects_local_and_queued_duplicate(self):
+        self.service.queue_conditions_duplicate(
+            "database", "7", ["20"], Mock(), reassign_takeoffs=self.assignment
+        )
+        self.db.execute("DELETE FROM BidTakeoffs WHERE UID=2")
+        self.db.commit()
+        expected_rows = [(1, 10, 20), (3, 11, 20), (4, 10, 21)]
+        with self.assertRaisesRegex(RuntimeError, "deleted or replaced"):
+            self.provider.requests[0][1]()
+        self.assertEqual(self.rows(), expected_rows)
+        local = self.run_duplicate()
+        self.assertFalse(local.write_success)
+        self.assertIn("no longer authoritative", local.failure_reason)
+        self.assertEqual(self.rows(), expected_rows)
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
+        )
+        self.assertEqual(self.writer.connection.commits, 0)
 
     def test_queued_work_retains_submission_versions_across_remote_projection(self):
         self.service.queue_conditions_duplicate(
@@ -408,7 +465,9 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
             """CREATE TRIGGER reject_reassign BEFORE UPDATE ON BidTakeoffs
             BEGIN SELECT RAISE(ABORT, 'Rejected assignment'); END;"""
         )
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(
+            RuntimeError, "plan property update was incomplete"
+        ):
             self.run_duplicate(sql=True)
         self.assertEqual(
             self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
@@ -440,7 +499,181 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         recovered = SqlCollaborationCoordinator._recovered_authoritative_result(
             request, durable
         )
-        self.assertEqual(recovered.created_resource_ids, result.created_resource_ids)
+        self.assertEqual(result.created_resource_ids, ("22",))
+        self.assertEqual(recovered.created_resource_ids, ("22",))
         self.assertEqual(set(recovered.affected_families), {"conditions", "takeoffs"})
         self.assertEqual(recovered.affected_page_uids, ("10",))
         self.assertEqual(len(self.provider.requests), 1)
+
+    def test_plain_duplicate_returns_the_new_uids_and_leaves_takeoffs_alone(self):
+        self.assertEqual(
+            self.service.duplicate_conditions("database", "7", ["20"]), ["22"]
+        )
+        self.assertEqual(
+            self.rows(), [(1, 10, 20), (2, 10, 20), (3, 11, 20), (4, 10, 21)]
+        )
+        self.assertEqual(self.writer.connection.commits, 1)
+        self.service._reload_database.assert_called_once()
+
+    def test_plain_duplicate_failure_returns_no_uids(self):
+        self.db.executescript(
+            """CREATE TRIGGER reject_duplicate BEFORE INSERT ON BidConditions
+            BEGIN SELECT RAISE(ABORT, 'Rejected duplicate'); END;"""
+        )
+        self.assertEqual(self.service.duplicate_conditions("database", "7", ["20"]), [])
+        self.assertEqual(self.writer.connection.commits, 0)
+        self.service._reload_database.assert_not_called()
+
+    def test_a_blocked_bid_refuses_the_duplicate_before_any_database_work(self):
+        guard = self.service._bid_write_guard.blocks_active_locked_bid_write
+        guard.return_value = True
+        result = self.run_duplicate()
+        self.assertFalse(result.write_success)
+        self.assertFalse(result.reload_success)
+        guard.assert_called_once_with("database", "7")
+        self.assertEqual(
+            self.rows(), [(1, 10, 20), (2, 10, 20), (3, 11, 20), (4, 10, 21)]
+        )
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
+        )
+        self.assertEqual(self.writer.connection.commits, 0)
+        self.service._reload_database.assert_not_called()
+
+    def test_a_mutation_that_is_not_committed_reports_failure_without_reload(self):
+        rejected = DatabaseMutationResult(
+            str(uuid.uuid4()), MutationOutcomeStatus.REJECTED
+        )
+        with patch.object(self.writer, "execute", return_value=rejected):
+            result = self.run_duplicate()
+        self.assertFalse(result.write_success)
+        self.assertFalse(result.reload_success)
+        self.assertEqual(result.value, [])
+        self.service._reload_database.assert_not_called()
+        self.service._event_bus.publish.assert_not_called()
+
+    def test_an_incomplete_identity_map_from_the_duplicate_rolls_everything_back(self):
+        for label, returned in (("empty", []), ("none", None)):
+            with self.subTest(label):
+                self.setUp()
+                with patch.object(
+                    DuplicateConditionsUseCase, "execute", return_value=returned
+                ):
+                    result = self.run_duplicate()
+                self.assertFalse(result.write_success)
+                self.assertIn("incomplete identity map", result.failure_reason)
+                self.assertEqual(
+                    self.rows(), [(1, 10, 20), (2, 10, 20), (3, 11, 20), (4, 10, 21)]
+                )
+                self.assertEqual(self.writer.connection.rollbacks, 1)
+                self.service._reload_database.assert_not_called()
+
+    def queue_with_target_changes(self, update_result):
+        calls = []
+
+        class _UpdateCondition:
+            def execute(inner, database_id, bid_uid, condition_uid, updates):
+                calls.append(
+                    (database_id, bid_uid, condition_uid, updates.get_changes())
+                )
+                return update_result
+
+        self.service._update_condition = _UpdateCondition()
+        self.service.queue_conditions_duplicate(
+            "database",
+            "7",
+            ["20"],
+            Mock(),
+            target_changes={"folder_uid": "9", "cdn_type_uid": "4", "name": "Copy"},
+        )
+        return self.provider.requests[-1], calls
+
+    def test_target_changes_are_applied_to_the_duplicate_in_the_same_transaction(self):
+        from ost_visualizer.application.dtos.update_condition_dto import (
+            UpdateConditionResultDto,
+        )
+
+        (request, execute, _callback), calls = self.queue_with_target_changes(
+            UpdateConditionResultDto(success=True)
+        )
+        dependencies = set(request.dependency_resources)
+        self.assertIn(ResourceRef("condition_folder", "9", 7), dependencies)
+        self.assertIn(ResourceRef("condition_type", "4"), dependencies)
+        self.assertIn(
+            ResourceRef("condition_types_collection", "database"), dependencies
+        )
+        result = execute()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "database",
+                    "7",
+                    "22",
+                    {"folder_uid": "9", "cdn_type_uid": "4", "name": "Copy"},
+                )
+            ],
+        )
+        self.assertEqual(
+            json.loads(request.payload.values_json)["target_changes"],
+            {"folder_uid": "9", "cdn_type_uid": "4", "name": "Copy"},
+        )
+        self.assertEqual(self.writer.connection.commits, 1)
+
+    def test_a_target_change_that_fails_rolls_the_duplicate_back(self):
+        from ost_visualizer.application.dtos.update_condition_dto import (
+            UpdateConditionResultDto,
+        )
+
+        for error, expected in (
+            ("Folder is locked.", "Folder is locked."),
+            (None, "The duplicated condition target update was incomplete."),
+        ):
+            with self.subTest(error=error):
+                self.setUp()
+                (_request, execute, _callback), _calls = self.queue_with_target_changes(
+                    UpdateConditionResultDto(success=False, error=error)
+                )
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    execute()
+                self.assertEqual(
+                    self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0],
+                    2,
+                )
+                self.assertEqual(self.writer.connection.rollbacks, 1)
+
+    def test_the_captured_page_and_condition_must_belong_to_the_bid(self):
+        for label, statement in (
+            ("page", "UPDATE BidPages SET BidUID=8 WHERE UID=10"),
+            ("condition", "UPDATE BidConditions SET BidUID=8 WHERE UID=20"),
+        ):
+            with self.subTest(label):
+                self.setUp()
+                self.db.execute(statement)
+                self.db.commit()
+                result = self.run_duplicate()
+                self.assertFalse(result.write_success)
+                self.assertEqual(
+                    self.rows(), [(1, 10, 20), (2, 10, 20), (3, 11, 20), (4, 10, 21)]
+                )
+                self.assertEqual(
+                    self.db.execute(
+                        "SELECT COUNT(*) FROM BidConditions WHERE BidUID=7"
+                    ).fetchone()[0],
+                    1 if label == "condition" else 2,
+                )
+                self.service._reload_database.assert_not_called()
+
+    def test_missing_takeoff_columns_are_reported_by_name_before_any_change(self):
+        captured = self.takeoffs()
+        self.service._project_data.get_all_takeoffs = lambda: captured
+        self.db.execute("ALTER TABLE BidTakeoffs DROP COLUMN BidPageUID")
+        self.db.commit()
+        result = self.run_duplicate()
+        self.assertFalse(result.write_success)
+        self.assertEqual(result.failure_reason, "Missing BidTakeoffs.BidPageUID")
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
+        )
+        self.assertEqual(self.writer.connection.commits, 0)

@@ -1,7 +1,11 @@
 from ...application.dtos.plan_items_paste import prepare_plan_items_paste_payload
 from ..services.annotation_history import (
+    AnnotationHistoryDependencyError,
     capture_annotation_targets,
+    capture_hotlink_view_dependencies,
     resolve_annotation_updates,
+    resolve_hotlink_view_targets,
+    retained_hotlink_view_targets,
 )
 import logging
 import uuid
@@ -12,11 +16,16 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable, List, Optional
 from PySide6 import QtWidgets
 from shiboken6 import isValid
+from ...application.dtos.active_bid_locked_error import (
+    ActiveBidLockedError,
+    locked_bid_refusal_result,
+)
 from ...application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseLoss,
     MutationExecutionResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     PlanItemsPastePayload,
     QueuedMutationResult,
     ResourceRef,
@@ -30,6 +39,9 @@ from ...application.dtos.collaboration_resource_catalog import (
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ...application.dtos.queue_submission_failure import (
+    queue_submission_failure_result,
+)
 from ...application.events.app_events import AppEvents
 from ...domain.entities.annotation import (
     ANNOTATION_TYPE_HOTLINK,
@@ -175,6 +187,56 @@ class PlanViewActionHandler:
     def _mark_sql_completion_applied(self, result: QueuedMutationResult) -> None:
         if result.outcome_status == MutationOutcomeStatus.COMMITTED:
             self._completed_sql_mutation_ids.add(result.operation_id)
+
+    def _unwind_failed_submission(
+        self,
+        complete: Callable[[QueuedMutationResult], None],
+        database_id: str,
+        error: Exception,
+        *,
+        history_token=None,
+        lease_handle: Optional[EditLeaseHandle] = None,
+    ) -> None:
+        def finish_token() -> None:
+            if self._undo_svc.is_forward_mutation_current(history_token):
+                self._undo_svc.finish_forward_mutation(history_token)
+
+        steps = []
+        if lease_handle is not None:
+            steps.append(lambda: self._write_svc.end_plan_edit_lease(lease_handle))
+        steps.append(
+            lambda: complete(queue_submission_failure_result(database_id, error))
+        )
+        steps.append(finish_token)
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                logger.exception(
+                    "Failed to release plan state after a queue submission error"
+                )
+
+    def _unwind_failed_preparation(
+        self,
+        bid_ref: BidRef,
+        plan_uids: set[str],
+        takeoff_uids: set[str],
+        annotation_identities: set[tuple[str, str]],
+        history_token,
+    ) -> None:
+        steps = (
+            lambda: self._set_plan_items_pending(
+                bid_ref, plan_uids, takeoff_uids, False, annotation_identities
+            ),
+            lambda: self._undo_svc.finish_forward_mutation(history_token),
+        )
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                logger.exception(
+                    "Failed to release plan state after a queue submission error"
+                )
 
     def _set_plan_items_pending(
         self,
@@ -1049,7 +1111,10 @@ class PlanViewActionHandler:
             if rotation_changes:
                 handler._plan_view.restore_flushed_rotations(rotation_changes)
 
+        failure_delivered = False
+
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal failure_delivered
             handler = handler_ref()
             if handler is None:
                 return
@@ -1060,6 +1125,10 @@ class PlanViewActionHandler:
                 MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
             }:
                 return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if failure_delivered:
+                    return
+                failure_delivered = True
             handler._set_plan_items_pending(
                 bid_ref,
                 plan_uids,
@@ -1125,8 +1194,19 @@ class PlanViewActionHandler:
                 dependency_resources=dependencies,
                 edit_lease_handle=edit_lease_handle,
             )
-        except Exception:
-            self._undo_svc.finish_forward_mutation(history_token)
+        except ActiveBidLockedError:
+            logger.warning("SQL plan geometry blocked: the active bid is locked")
+            if edit_lease_handle is not None:
+                self._write_svc.end_plan_edit_lease(edit_lease_handle)
+            complete(locked_bid_refusal_result(bid_ref.file_path))
+        except Exception as error:
+            self._unwind_failed_submission(
+                complete,
+                bid_ref.file_path,
+                error,
+                history_token=history_token,
+                lease_handle=edit_lease_handle,
+            )
             raise
 
     def _push_sql_geometry_history(
@@ -1228,6 +1308,11 @@ class PlanViewActionHandler:
                 page_uids=page_uids,
                 dependency_resources=dependency_resources,
             )
+        except ActiveBidLockedError:
+            logger.warning(
+                "SQL plan property %s blocked: the active bid is locked", property_kind
+            )
+            abort()
         except Exception:
             abort()
             raise
@@ -1251,20 +1336,26 @@ class PlanViewActionHandler:
     ):
         self._release_geometry_edit_lease()
         history_token = self._undo_svc.begin_forward_mutation(bid_ref)
-        page_identities = self._capture_page_identities(page_uids)
-        prior_selection = (
-            self._plan_identities_for_keys(set(self._plan_view.get_selected_uids()))
-            if preserve_selection
-            else None
-        )
-        self._set_plan_items_pending(
-            bid_ref,
-            plan_uids,
-            takeoff_uids,
-            True,
-            annotation_identities,
-        )
-        selection_revision = self._plan_view.begin_deferred_selection()
+        try:
+            page_identities = self._capture_page_identities(page_uids)
+            prior_selection = (
+                self._plan_identities_for_keys(set(self._plan_view.get_selected_uids()))
+                if preserve_selection
+                else None
+            )
+            self._set_plan_items_pending(
+                bid_ref,
+                plan_uids,
+                takeoff_uids,
+                True,
+                annotation_identities,
+            )
+            selection_revision = self._plan_view.begin_deferred_selection()
+        except Exception:
+            self._unwind_failed_preparation(
+                bid_ref, plan_uids, takeoff_uids, annotation_identities, history_token
+            )
+            raise
         handler_ref = weakref.ref(self)
         terminal_delivered = False
 
@@ -1488,6 +1579,37 @@ class PlanViewActionHandler:
                     or source_uid in external_parent_sources
                 )
             ],
+        )
+
+    def _hotlink_view_dependencies(self, bid_ref, items, named_view_uids=()):
+        return capture_hotlink_view_dependencies(
+            self._data_svc, bid_ref, items, named_view_uids
+        )
+
+    def _payload_hotlink_view_dependencies(self, bid_ref, payload):
+        sources = (
+            parse_annotation_resource_id(source)
+            for source in payload.annotation_source_uids
+        )
+        return self._hotlink_view_dependencies(
+            bid_ref,
+            payload.annotation_specs,
+            {uid for kind, uid in sources if kind == ANNOTATION_TYPE_NAMED_VIEW},
+        )
+
+    def _items_with_hotlink_views(self, items, dependencies):
+        try:
+            return resolve_hotlink_view_targets(self._data_svc, items, dependencies)
+        except AnnotationHistoryDependencyError as error:
+            show_warning(self._plan_view, "Hot Link History", str(error))
+            raise
+
+    def _payload_with_hotlink_views(self, payload, dependencies):
+        return replace(
+            payload,
+            annotation_specs=tuple(
+                self._items_with_hotlink_views(payload.annotation_specs, dependencies)
+            ),
         )
 
     def _specs_with_history_parents(self, specs, parents):
@@ -2553,9 +2675,9 @@ class PlanViewActionHandler:
             MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
         }:
             return
-        completion_matches = (
-            result.database_id == pending.database_id
-            and result.runtime_generation == pending.runtime_generation
+        completion_matches = result.database_id == pending.database_id and (
+            pending.runtime_generation is None
+            or result.runtime_generation == pending.runtime_generation
         )
         if not completion_matches:
             return
@@ -2591,10 +2713,11 @@ class PlanViewActionHandler:
                     list(pending.pending_uids),
                     condition_uids,
                 )
-            logger.warning(
-                "SQL takeoff placement failed: %s",
-                result.message or "The database rejected the placement.",
-            )
+            if result.rejection_reason != MutationRejectionReason.BID_LOCKED:
+                logger.warning(
+                    "SQL takeoff placement failed: %s",
+                    result.message or "The database rejected the placement.",
+                )
             self._undo_svc.finish_forward_mutation(pending.history_token)
             return
         new_uids = list(result.created_resource_ids)
@@ -2623,11 +2746,15 @@ class PlanViewActionHandler:
             if pending_uid in pending.deleted_pending_uids
         ]
         if deleted_created_uids:
-            self._queue_cancelled_takeoff_placement_delete(
-                pending,
-                deleted_created_uids,
-                deleted_specs,
-            )
+            try:
+                self._queue_cancelled_takeoff_placement_delete(
+                    pending,
+                    deleted_created_uids,
+                    deleted_specs,
+                )
+            except Exception:
+                self._undo_svc.finish_forward_mutation(pending.history_token)
+                raise
         retained = [
             (uid, spec)
             for uid, spec, pending_uid in zip(
@@ -2766,8 +2893,10 @@ class PlanViewActionHandler:
                 True,
             )
         handler_ref = weakref.ref(self)
+        failure_delivered = False
 
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal failure_delivered
             handler = handler_ref()
             if handler is None or handler._sql_completion_was_applied(result):
                 return
@@ -2776,6 +2905,10 @@ class PlanViewActionHandler:
                 MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
             }:
                 return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if failure_delivered:
+                    return
+                failure_delivered = True
             if project_pending_state:
                 handler._set_plan_items_pending(
                     BidRef(pending.database_id, pending.bid_uid),
@@ -2801,15 +2934,18 @@ class PlanViewActionHandler:
                     selection_revision=pending.selection_revision,
                 )
 
-        self._write_svc.queue_plan_items_delete(
-            pending.database_id,
-            pending.bid_uid,
-            takeoff_uids,
-            [],
-            complete,
-            page_uids=page_uids,
-            dependency_resources=dependencies,
-        )
+        try:
+            self._write_svc.queue_cancelled_placement_cleanup_delete(
+                pending.database_id,
+                pending.bid_uid,
+                takeoff_uids,
+                complete,
+                page_uids=page_uids,
+                dependency_resources=dependencies,
+            )
+        except Exception as error:
+            self._unwind_failed_submission(complete, pending.database_id, error)
+            raise
 
     def _push_sql_takeoff_placement_history(
         self,
@@ -3241,6 +3377,9 @@ class PlanViewActionHandler:
                 complete,
                 dependency_resources=tuple(sorted(dependencies)),
             )
+        except ActiveBidLockedError:
+            logger.warning("SQL annotation insert blocked: the active bid is locked")
+            complete(locked_bid_refusal_result(bid_ref.file_path))
         except Exception:
             self._undo_svc.finish_forward_mutation(history_token)
             raise
@@ -3263,6 +3402,7 @@ class PlanViewActionHandler:
             [(uid, spec.annotation_type) for uid, spec in zip(new_uids, current_specs)],
         )
         suspended = ()
+        hotlink_views = self._hotlink_view_dependencies(bid_ref, current_specs)
         current_specs_scales = self._capture_annotation_spec_scales(current_specs)
         selection_owner_is_current = self._history_selection_owner(
             bid_ref,
@@ -3288,6 +3428,7 @@ class PlanViewActionHandler:
             redone_specs = self._annotation_specs_for_current_scales(
                 current_specs, current_specs_scales
             )
+            redone_specs = self._items_with_hotlink_views(redone_specs, hotlink_views)
             redone_uids = self._insert_annotations_fast(bid_ref, redone_specs)
             if len(redone_uids) != len(current_specs):
                 return False
@@ -3309,7 +3450,12 @@ class PlanViewActionHandler:
             return True
 
         self._undo_svc.push_local(
-            _undo_insert, _redo_insert, annotation_targets=tuple(targets.values())
+            _undo_insert,
+            _redo_insert,
+            annotation_targets=(
+                *targets.values(),
+                *retained_hotlink_view_targets(hotlink_views),
+            ),
         )
         return list(new_uids)
 
@@ -3758,6 +3904,11 @@ class PlanViewActionHandler:
                 self._plan_view.set_selected_uids(set(uids))
                 return
             suspended = self._undo_svc.suspend_deleted_annotations(bid_ref, targets)
+            hotlink_views = self._hotlink_view_dependencies(
+                bid_ref,
+                current_annotations,
+                {item.uid for item in current_annotations if item.is_namedview},
+            )
             selection_owner_is_current = self._history_selection_owner(
                 bid_ref,
                 tuple(annotation.page_uid for annotation in current_annotations),
@@ -3767,6 +3918,9 @@ class PlanViewActionHandler:
                 nonlocal current_annotations, current_annotation_scales
                 restore_annotations = self._saved_annotations_for_current_scales(
                     current_annotations, current_annotation_scales
+                )
+                restore_annotations = self._items_with_hotlink_views(
+                    restore_annotations, hotlink_views
                 )
                 restored = self._insert_saved_annotations_fast(
                     bid_ref, restore_annotations
@@ -3812,7 +3966,10 @@ class PlanViewActionHandler:
             self._undo_svc.push_local(
                 _undo_annotation_delete,
                 _redo_annotation_delete,
-                annotation_targets=targets,
+                annotation_targets=(
+                    *targets,
+                    *retained_hotlink_view_targets(hotlink_views),
+                ),
             )
             self._select_skipped_named_views(skipped_selection_keys)
             return
@@ -3938,8 +4095,10 @@ class PlanViewActionHandler:
         self._plan_view.set_selected_uids(set(skipped_selection_keys))
         selection_revision = self._plan_view.begin_deferred_selection()
         handler_ref = weakref.ref(self)
+        failure_delivered = False
 
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal failure_delivered
             handler = handler_ref()
             if handler is None:
                 return
@@ -3950,6 +4109,10 @@ class PlanViewActionHandler:
                 MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
             }:
                 return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if failure_delivered:
+                    return
+                failure_delivered = True
             handler._set_plan_items_pending(
                 bid_ref,
                 plan_uids,
@@ -4019,8 +4182,13 @@ class PlanViewActionHandler:
                 page_uids=page_uids,
                 dependency_resources=tuple(sorted(dependencies)),
             )
-        except Exception:
-            self._undo_svc.finish_forward_mutation(history_token)
+        except ActiveBidLockedError:
+            logger.warning("SQL plan item delete blocked: the active bid is locked")
+            complete(locked_bid_refusal_result(bid_ref.file_path))
+        except Exception as error:
+            self._unwind_failed_submission(
+                complete, bid_ref.file_path, error, history_token=history_token
+            )
             raise
 
     @staticmethod
@@ -4104,6 +4272,7 @@ class PlanViewActionHandler:
                 for uid, kind in deleted_annotations
             },
         )
+        hotlink_views = self._payload_hotlink_view_dependencies(bid_ref, payload)
         current = {
             "suspended_annotations": self._undo_svc.suspend_deleted_annotations(
                 bid_ref, tuple(annotation_targets.values())
@@ -4129,6 +4298,9 @@ class PlanViewActionHandler:
             )
             restore_payload = self._paste_payload_with_history_parents(
                 restore_payload, parents
+            )
+            restore_payload = self._payload_with_hotlink_views(
+                restore_payload, hotlink_views
             )
             result = self._write_svc.execute_plan_items_paste_local(
                 bid_ref.file_path,
@@ -4201,7 +4373,10 @@ class PlanViewActionHandler:
             undo,
             redo,
             takeoff_targets=(*targets.values(), *parents.values()),
-            annotation_targets=tuple(annotation_targets.values()),
+            annotation_targets=(
+                *annotation_targets.values(),
+                *retained_hotlink_view_targets(hotlink_views),
+            ),
         )
 
     @staticmethod
@@ -4265,6 +4440,7 @@ class PlanViewActionHandler:
                 for uid, kind in deleted_annotations
             },
         )
+        hotlink_views = self._payload_hotlink_view_dependencies(bid_ref, paste_payload)
         current = {
             "suspended_annotations": self._undo_svc.suspend_deleted_annotations(
                 bid_ref, tuple(annotation_targets.values())
@@ -4291,11 +4467,14 @@ class PlanViewActionHandler:
 
             self._write_svc.queue_plan_items_paste(
                 bid_ref.file_path,
-                self._paste_payload_with_history_parents(
-                    self._paste_payload_for_current_scales(
-                        paste_payload, takeoff_scales, annotation_scales
+                self._payload_with_hotlink_views(
+                    self._paste_payload_with_history_parents(
+                        self._paste_payload_for_current_scales(
+                            paste_payload, takeoff_scales, annotation_scales
+                        ),
+                        parents,
                     ),
-                    parents,
+                    hotlink_views,
                 ),
                 completed,
             )
@@ -4338,7 +4517,10 @@ class PlanViewActionHandler:
             undo_submit,
             redo_submit,
             takeoff_targets=(*targets.values(), *parents.values()),
-            annotation_targets=tuple(annotation_targets.values()),
+            annotation_targets=(
+                *annotation_targets.values(),
+                *retained_hotlink_view_targets(hotlink_views),
+            ),
         )
 
     @staticmethod
@@ -4551,6 +4733,7 @@ class PlanViewActionHandler:
         annotation_targets = self._annotation_restore_history_targets(
             bid_ref, payload, annotation_map
         )
+        hotlink_views = self._payload_hotlink_view_dependencies(bid_ref, payload)
         current = {
             "suspended_targets": (),
             "suspended_annotations": (),
@@ -4605,6 +4788,7 @@ class PlanViewActionHandler:
             redo_payload = self._paste_payload_with_history_parents(
                 redo_payload, parents
             )
+            redo_payload = self._payload_with_hotlink_views(redo_payload, hotlink_views)
             result = self._write_svc.execute_plan_items_paste_local(
                 bid_ref.file_path,
                 redo_payload,
@@ -4646,7 +4830,10 @@ class PlanViewActionHandler:
             undo,
             redo,
             takeoff_targets=(*targets.values(), *parents.values()),
-            annotation_targets=tuple(annotation_targets.values()),
+            annotation_targets=(
+                *annotation_targets.values(),
+                *retained_hotlink_view_targets(hotlink_views),
+            ),
         )
 
     def _project_mdb_plan_items_paste(
@@ -4878,8 +5065,13 @@ class PlanViewActionHandler:
                 complete,
                 dependency_resources=dependencies,
             )
-        except Exception:
-            self._undo_svc.finish_forward_mutation(history_token)
+        except ActiveBidLockedError:
+            logger.warning("SQL plan item paste blocked: the active bid is locked")
+            complete(locked_bid_refusal_result(bid_ref.file_path))
+        except Exception as error:
+            self._unwind_failed_submission(
+                complete, bid_ref.file_path, error, history_token=history_token
+            )
             raise
 
     def _prepare_plan_items_paste(
@@ -5045,6 +5237,7 @@ class PlanViewActionHandler:
         annotation_targets = self._annotation_restore_history_targets(
             bid_ref, payload, annotation_map
         )
+        hotlink_views = self._payload_hotlink_view_dependencies(bid_ref, payload)
         current = {
             "suspended_targets": (),
             "suspended_annotations": (),
@@ -5112,6 +5305,7 @@ class PlanViewActionHandler:
             redo_payload = self._paste_payload_with_history_parents(
                 redo_payload, parents
             )
+            redo_payload = self._payload_with_hotlink_views(redo_payload, hotlink_views)
             self._write_svc.queue_plan_items_paste(
                 bid_ref.file_path,
                 redo_payload,
@@ -5123,7 +5317,10 @@ class PlanViewActionHandler:
             undo_submit,
             redo_submit,
             takeoff_targets=(*targets.values(), *parents.values()),
-            annotation_targets=tuple(annotation_targets.values()),
+            annotation_targets=(
+                *annotation_targets.values(),
+                *retained_hotlink_view_targets(hotlink_views),
+            ),
         )
 
     def _paste_translation(

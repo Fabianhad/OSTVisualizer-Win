@@ -13,6 +13,9 @@ from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
 from PySide6 import QtWidgets
 from shiboken6 import delete
 from tests.helpers.workspace_state import make_workspace_state_model
+from tests.presentation.dialogs.master_data_support import (
+    FakeIconProvider as _master_data_support_FakeIconProvider,
+)
 
 
 class EmployeeNestedProjectionTests(unittest.TestCase):
@@ -25,7 +28,7 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
         classes = [PayClass("1", "Old"), PayClass("2", "New")]
         reload_classes = Mock(side_effect=lambda: list(classes))
         parent = EmployeesDialog(
-            Mock(),
+            _master_data_support_FakeIconProvider(),
             make_workspace_state_model(),
             employees=[Employee("employee", first_name="Name", pay_class_uid="1")],
             pay_classes=list(classes),
@@ -33,8 +36,10 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
             database_id="db",
             reload_pay_classes_fn=reload_classes,
         )
+        executed = []
 
         def exercise(detail):
+            executed.append(detail)
             detail.edit_first_name.setText("Unsaved name")
             with patch.object(
                 detail,
@@ -64,6 +69,17 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
                     families=["pay_classes"],
                 )
                 self.assertEqual(detail.combo_pay_class.currentText(), "Draft")
+                # A change announced for another database is ignored entirely.
+                reloads_before = reload_classes.call_count
+                classes[0] = PayClass("1", "Foreign")
+                bus.publish(
+                    AppEvents.REMOTE_MASTER_DATA_CHANGED,
+                    database_id="other-db",
+                    families=["pay_classes"],
+                )
+                self.assertEqual(reload_classes.call_count, reloads_before)
+                self.assertEqual(detail.combo_pay_class.currentText(), "Draft")
+                classes[0] = PayClass("1", "Newest")
                 detail._select_pay_class_by_uid("1")
                 classes.pop(0)
                 bus.publish(
@@ -85,20 +101,23 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
                 parent._on_change()
                 rebuild.assert_not_called()
                 self.assertIs(parent.tree.currentItem(), item)
+            self.assertEqual(len(executed), 1)
         finally:
             parent.cleanup()
             delete(parent)
 
     def test_open_pay_class_editor_merges_remote_labels_without_overwriting_draft(self):
         parent = EmployeeDetailDialog(
-            Mock(),
+            _master_data_support_FakeIconProvider(),
             [],
             0,
             make_workspace_state_model(),
             pay_classes=[PayClass("1", "Old"), PayClass("2", "Sibling")],
         )
+        executed = []
 
         def exercise(child):
+            executed.append(child)
             rows = {
                 str(
                     child.tree.topLevelItem(i).data(0, child._UID_ROLE)
@@ -122,6 +141,7 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
         try:
             with patch.object(PayrollClassListDialog, "exec", exercise):
                 parent._open_payroll_class_dialog()
+            self.assertEqual(len(executed), 1)
         finally:
             parent.cleanup()
             delete(parent)
@@ -142,7 +162,7 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
         classes = [PayClass("p1", "Same"), PayClass("p2", "Same")]
         reload_employees = Mock(side_effect=lambda: (list(employees), list(classes)))
         parent = EmployeesDialog(
-            Mock(),
+            _master_data_support_FakeIconProvider(),
             make_workspace_state_model(),
             employees=list(employees),
             pay_classes=classes,
@@ -150,8 +170,10 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
             database_id="db",
             reload_employees_fn=reload_employees,
         )
+        executed = []
 
         def exercise(detail):
+            executed.append(detail)
             detail.edit_first_name.setText("Draft")
             classes.pop(0)
             employees[0] = Employee(
@@ -222,6 +244,7 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
             ) as rebuild:
                 parent._on_change()
                 rebuild.assert_not_called()
+            self.assertEqual(len(executed), 1)
             self.assertEqual(parent.tree.topLevelItemCount(), 1)
             self.assertIsNone(parent.tree.currentItem())
         finally:

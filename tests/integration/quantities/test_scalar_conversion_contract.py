@@ -30,6 +30,13 @@ class UnitDimensionConversionContractTests(unittest.TestCase):
                 self.assertEqual(inches_to_mm(inches), millimetres)
                 self.assertEqual(mm_to_inches(millimetres), inches)
                 self.assertIsInstance(inches_to_mm(int(inches)), float)
+        # Literal anchors, independent of any multiplication in the test itself.
+        self.assertEqual(inches_to_mm(1.0), 25.4)
+        self.assertAlmostEqual(inches_to_mm(1234.5), 31356.3)
+        self.assertEqual(mm_to_inches(25.4), 1.0)
+        # One square/cubic inch in metres: 645.16 mm2 and 16387.064 mm3.
+        self.assertAlmostEqual(convert_to_uom(1.0, UOM_M2), 0.00064516)
+        self.assertAlmostEqual(convert_to_uom(1.0, UOM_M3), 0.000016387064)
         expected = {
             UOM_MM: 25.4,
             UOM_M: 0.0254,

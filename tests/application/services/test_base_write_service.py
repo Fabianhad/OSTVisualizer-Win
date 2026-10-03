@@ -1,5 +1,7 @@
 import logging
+import re
 import unittest
+import uuid
 from ost_visualizer.application.services.base_write_service import (
     BaseWriteService,
     DatabaseMutationWriteService,
@@ -15,6 +17,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ResourceRef,
     SynchronizationConflict,
     SynchronizationConflictKind,
+    canonical_mutation_request_hash,
 )
 from ost_visualizer.application.events.app_events import AppEvents
 from tests.application.services.write_access_support import (
@@ -85,7 +88,7 @@ class DatabaseMutationConnectionFailureTests(_BoundaryFixture):
 
 
 class BaseWriteServiceCollaborationTests(_BoundaryFixture):
-    def _conflict(self, resource, reason, kind, *, publish=True):
+    def _conflict(self, resource, reason, kind, *, publish=None):
         fixture = self
 
         class UnlockedEventBus(_EventBus):
@@ -101,12 +104,13 @@ class BaseWriteServiceCollaborationTests(_BoundaryFixture):
             status=MutationOutcomeStatus.CONFLICT,
             conflict=SynchronizationConflict("database", resource, reason, kind=kind),
         )
+        options = {} if publish is None else {"publish_conflict_event": publish}
         result = self.service()._execute_database_mutation(
             "database",
             (resource,),
             self.forbidden_operation,
             operation_id=OPERATION_ID,
-            publish_conflict_event=publish,
+            **options,
         )
         self.assertEqual(result.outcome_status, MutationOutcomeStatus.CONFLICT)
         self.assertIs(result.conflict, self.executor.conflict)
@@ -141,6 +145,7 @@ class BaseWriteServiceCollaborationTests(_BoundaryFixture):
             ResourceRef("database", "database"),
             "session expired",
             SynchronizationConflictKind.SESSION,
+            publish=True,
         )
         self.assertEqual(
             self.events.published,
@@ -368,9 +373,141 @@ class BaseWriteRefreshTests(unittest.TestCase):
                     reload, events, logging.getLogger("test.reload")
                 )
                 if raises:
-                    with self.assertLogs("test.reload", level="WARNING"):
-                        self.assertFalse(service.reload_and_notify("db.mdb"))
+                    with self.assertLogs("test.reload", level="WARNING") as logged:
+                        self.assertIs(service.reload_and_notify("db.mdb"), False)
+                        self.assertIs(service.reload_database("db.mdb"), False)
+                    self.assertTrue(all(r.exc_info for r in logged.records))
+                    self.assertEqual(len(logged.records), 2)
                 else:
-                    self.assertFalse(service.reload_and_notify("db.mdb"))
-                self.assertEqual(calls, ["db.mdb"])
+                    self.assertIs(service.reload_and_notify("db.mdb"), False)
+                    self.assertIs(service.reload_database("db.mdb"), False)
+                self.assertEqual(calls, ["db.mdb", "db.mdb"])
                 self.assertEqual(events.published, [])
+
+    def test_default_refresh_flags_request_a_full_projection(self):
+        for notify in (
+            lambda service: service.reload_and_notify("db.mdb"),
+            lambda service: service.notify_database_refreshed("db.mdb"),
+        ):
+            events = _EventBus()
+            notify(BaseWriteService(lambda _path: True, events))
+            self.assertEqual(
+                events.published,
+                [
+                    (
+                        AppEvents.DATABASE_REFRESHED,
+                        {
+                            "file_path": "db.mdb",
+                            "image_sources_unchanged": False,
+                            "mesh_scene_unchanged": False,
+                            "page_scale_uids": (),
+                        },
+                    )
+                ],
+            )
+
+    def test_reload_failure_uses_module_logger_when_none_is_injected(self):
+        service = BaseWriteService(lambda _path: False, _EventBus())
+
+        def raising(_path):
+            raise OSError("read failed")
+
+        raising_service = BaseWriteService(raising, _EventBus())
+        self.assertIs(
+            service.logger,
+            logging.getLogger("ost_visualizer.application.services.base_write_service"),
+        )
+        with self.assertLogs(
+            "ost_visualizer.application.services.base_write_service", level="WARNING"
+        ) as logged:
+            self.assertIs(raising_service.reload_database("db.mdb"), False)
+        self.assertIn("Failed to reload database", logged.output[0])
+        self.assertIn("OSError: read failed", logged.output[0])
+
+
+class MutationRequestConstructionTests(_BoundaryFixture):
+    def _submit(self, resources, **options):
+        self.service()._execute_database_mutation(
+            "sql-db", resources, lambda _recorder: True, **options
+        )
+        return self.executor.requests[-1]
+
+    def test_defaults_generate_distinct_operation_ids_and_content_hash(self):
+        first, second = (
+            ResourceRef("condition", "41", 7),
+            ResourceRef("condition", "42", 7),
+        )
+        one = self._submit((first,))
+        two = self._submit((first,))
+        other_resources = self._submit((first, second))
+        other_type = self._submit((first,), mutation_type="takeoff_placement")
+        for request in (one, two, other_resources, other_type):
+            self.assertEqual(
+                str(uuid.UUID(request.operation_id, version=4)), request.operation_id
+            )
+            self.assertRegex(request.request_hash, r"^[0-9a-f]{64}$")
+            self.assertEqual(request.session_id, SESSION_ID)
+            self.assertFalse(request.block_bid_child_locks)
+            self.assertFalse(request.block_bid_active_editors)
+        self.assertEqual(one.mutation_type, "project_write")
+        self.assertEqual(one.result_format_version, 1)
+        self.assertEqual(other_type.mutation_type, "takeoff_placement")
+        self.assertEqual(len({r.operation_id for r in (one, two, other_resources)}), 3)
+        # The hash identifies the request content, not the attempt.
+        self.assertEqual(one.request_hash, two.request_hash)
+        self.assertEqual(
+            len(
+                {
+                    one.request_hash,
+                    other_resources.request_hash,
+                    other_type.request_hash,
+                }
+            ),
+            3,
+        )
+        self.assertEqual(
+            one.request_hash,
+            canonical_mutation_request_hash(
+                {
+                    "mutation_type": "project_write",
+                    "resources": (first,),
+                    "result_format_version": 1,
+                }
+            ),
+        )
+
+    def test_explicit_identity_is_forwarded_unchanged_to_executor_and_result(self):
+        resource = ResourceRef("condition", "41", 7)
+        result = self.service()._execute_database_mutation(
+            "sql-db",
+            (resource,),
+            lambda _recorder: "value",
+            operation_id=OPERATION_ID,
+            request_hash="b" * 64,
+            mutation_type="takeoff_placement",
+            result_format_version=1,
+        )
+        request = self.executor.requests[0]
+        self.assertEqual(
+            (
+                request.operation_id,
+                request.request_hash,
+                request.mutation_type,
+                request.result_format_version,
+            ),
+            (OPERATION_ID, "b" * 64, "takeoff_placement", 1),
+        )
+        self.assertEqual(result.operation_id, OPERATION_ID)
+
+    def test_versions_and_lock_tokens_are_requested_for_the_exact_database_and_resources(
+        self,
+    ):
+        first = ResourceRef("condition", "41", 7)
+        second = ResourceRef("condition", "42", 7)
+        self._submit((first, second))
+        self.assertEqual(self.tokens.loaded, [("sql-db", (first, second))])
+        self.assertEqual(self.tokens.expected_requests, [("sql-db", (first, second))])
+        self.assertEqual(
+            self.sessions.requests,
+            [("session", "sql-db"), ("locks", "sql-db", (first, second))],
+        )

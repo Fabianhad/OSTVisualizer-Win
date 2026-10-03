@@ -1,11 +1,16 @@
 import unittest
 import uuid
+from ost_visualizer.application.dtos.active_bid_locked_error import (
+    ActiveBidLockedError,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
+    MutationRejectionReason,
     QueuedMutationResult,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.services.undo_redo_service import (
+    MutationHistoryState,
     TakeoffHistoryTarget,
     UndoRedoService,
 )
@@ -632,3 +637,246 @@ class AnnotationDeletionScopeTests(unittest.TestCase):
         history.clear()
         history.rebind_restored_annotations(bid, {("p1", "text", "1"): "55"}, suspended)
         self.assertEqual((text.uid, text.available), ("1", False))
+
+
+class UndoRedoServiceStaleCompletionTests(unittest.TestCase):
+    """A duplicate terminal delivery of an earlier history transition must not
+    release the in-flight guard of a newer transition."""
+
+    @staticmethod
+    def _result(status):
+        return QueuedMutationResult(
+            database_id="database",
+            runtime_generation=1,
+            operation_id=str(uuid.uuid4()),
+            outcome_status=status,
+        )
+
+    def test_duplicate_terminal_of_a_finished_transition_does_not_unblock_the_next(
+        self,
+    ):
+        history = UndoRedoService()
+        history.set_active_bid(BidRef("database", "7"))
+        submitted = []
+        for label in ("first", "second"):
+            history.push(
+                lambda complete, label=label: submitted.append(
+                    (label, "undo", complete)
+                ),
+                lambda complete, label=label: submitted.append(
+                    (label, "redo", complete)
+                ),
+            )
+        history.undo()
+        label, kind, complete_second_undo = submitted[-1]
+        self.assertEqual((label, kind), ("second", "undo"))
+        complete_second_undo(self._result(MutationOutcomeStatus.COMMITTED))
+        # The next transition (undo of the first entry) is now in flight.
+        history.undo()
+        self.assertEqual(
+            [item[:2] for item in submitted], [("second", "undo"), ("first", "undo")]
+        )
+        # A duplicate terminal delivery of the second entry's undo arrives late.
+        complete_second_undo(self._result(MutationOutcomeStatus.REJECTED))
+        # The first entry's undo is still in flight: nothing else may start.
+        history.redo()
+        self.assertEqual(len(submitted), 2)
+        self.assertFalse(history.can_redo())
+        self.assertFalse(history.can_undo())
+        # Its own completion releases the guard exactly once.
+        submitted[1][2](self._result(MutationOutcomeStatus.COMMITTED))
+        history.redo()
+        self.assertEqual([item[:2] for item in submitted][-1], ("first", "redo"))
+
+
+class UndoRedoServiceLockedBidRefusalTests(unittest.TestCase):
+    """Decision P2: a history replay whose queued write is refused with
+    ActiveBidLockedError (the Bid was locked after the entry was recorded) is a silent
+    refusal: one warning (not the error log of an unexpected failure), no exception,
+    the in-flight guard is released, the entry stays on its stack in the READY state and
+    can be replayed once the Bid is unlocked."""
+
+    def setUp(self):
+        self.history = UndoRedoService()
+        self.history.set_active_bid(BidRef("database", "7"))
+        self.locked = True
+        self.submitted = []
+        self.changes = 0
+        self.history.set_change_callback(self._changed)
+
+    def _changed(self):
+        self.changes += 1
+
+    def _submit(self, label):
+        def submit(complete):
+            if self.locked:
+                raise ActiveBidLockedError()
+            self.submitted.append((label, complete))
+
+        return submit
+
+    @staticmethod
+    def _committed():
+        return QueuedMutationResult(
+            database_id="database",
+            runtime_generation=1,
+            operation_id=str(uuid.uuid4()),
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+        )
+
+    def test_a_refused_undo_replay_is_silent_and_replayable(self):
+        self.history.push(self._submit("undo"), self._submit("redo"))
+        changes_before = self.changes
+        with self.assertLogs(self.history.logger, "WARNING") as logged:
+            self.history.undo()
+        self.assertEqual(
+            [(record.levelname, record.getMessage()) for record in logged.records],
+            [("WARNING", "History mutation blocked: the active bid is locked")],
+        )
+        self.assertIsNone(logged.records[0].exc_info)
+        # One notification when the replay started, one when it was refused.
+        self.assertEqual(self.changes - changes_before, 2)
+        self.assertTrue(self.history.can_undo())
+        self.assertFalse(self.history.can_redo())
+        self.assertEqual(self.submitted, [])
+        self.locked = False
+        self.history.undo()
+        self.assertEqual([label for label, _complete in self.submitted], ["undo"])
+        self.submitted[0][1](self._committed())
+        self.assertTrue(self.history.can_redo())
+        self.assertFalse(self.history.can_undo())
+
+    def test_a_refused_redo_replay_is_silent_and_replayable(self):
+        self.locked = False
+        self.history.push(self._submit("undo"), self._submit("redo"))
+        self.history.undo()
+        self.submitted[0][1](self._committed())
+        self.assertTrue(self.history.can_redo())
+        self.locked = True
+        with self.assertLogs(self.history.logger, "WARNING") as logged:
+            self.history.redo()
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            ["History mutation blocked: the active bid is locked"],
+        )
+        self.assertTrue(self.history.can_redo())
+        self.assertFalse(self.history.can_undo())
+        self.locked = False
+        self.history.redo()
+        self.assertEqual(
+            [label for label, _complete in self.submitted], ["undo", "redo"]
+        )
+
+    def test_another_replay_failure_is_still_logged_as_an_error(self):
+        # Scope pin: only the lock refusal is silent; any other submit failure keeps
+        # the error log with its traceback and the same state reset.
+        def failing(_complete):
+            raise RuntimeError("submit failed")
+
+        self.history.push(failing, failing)
+        with self.assertLogs(self.history.logger, "ERROR") as logged:
+            self.history.undo()
+        self.assertEqual(
+            logged.records[0].getMessage(), "Error while submitting history mutation"
+        )
+        self.assertTrue(self.history.can_undo())
+
+
+class UndoRedoServiceBidLockedRejectionTests(unittest.TestCase):
+    """Decision B4: a history replay whose queued write the SQL writer then refused
+    with REJECTED / bid_locked (the lock flag was stale when the replay was queued) is
+    a plain refusal, like the queue-time ActiveBidLockedError: the entry returns to
+    READY on the stack it came from (not CONFLICTED, not moved, still replayable once
+    the Bid is unlocked), the in-flight guard is released and nothing is logged by the
+    service (the coordinator's hook logs the one warning). A CONFLICT outcome still
+    marks the entry CONFLICTED."""
+
+    def setUp(self):
+        self.history = UndoRedoService()
+        self.history.set_active_bid(BidRef("database", "7"))
+        self.submitted = []
+        self.changes = 0
+        self.history.set_change_callback(self._changed)
+
+    def _changed(self):
+        self.changes += 1
+
+    def _submit(self, label):
+        def submit(complete):
+            self.submitted.append((label, complete))
+
+        return submit
+
+    @staticmethod
+    def _result(status, reason=None):
+        return QueuedMutationResult(
+            database_id="database",
+            runtime_generation=1,
+            operation_id=str(uuid.uuid4()),
+            outcome_status=status,
+            rejection_reason=reason,
+        )
+
+    def _bid_locked(self):
+        return self._result(
+            MutationOutcomeStatus.REJECTED, MutationRejectionReason.BID_LOCKED
+        )
+
+    def test_a_bid_locked_undo_rejection_keeps_the_entry_ready_and_replayable(self):
+        self.history.push(self._submit("undo"), self._submit("redo"))
+        entry = self.history._undo_stack[-1]
+        self.history.undo()
+        self.assertEqual(entry.state, MutationHistoryState.UNDO_PENDING)
+        changes_before = self.changes
+        refusal = self._bid_locked()
+        with self.assertNoLogs(self.history.logger, "WARNING"):
+            self.submitted[0][1](refusal)
+            self.submitted[0][1](refusal)
+        self.assertEqual(self.changes - changes_before, 1)
+        self.assertEqual(entry.state, MutationHistoryState.READY)
+        self.assertIs(self.history._undo_stack[-1], entry)
+        self.assertTrue(self.history.can_undo())
+        self.assertFalse(self.history.can_redo())
+        # the in-flight guard is released: the same entry replays once unlocked
+        self.history.undo()
+        self.assertEqual([label for label, _ in self.submitted], ["undo", "undo"])
+        self.submitted[1][1](self._result(MutationOutcomeStatus.COMMITTED))
+        self.assertEqual(entry.state, MutationHistoryState.READY)
+        self.assertTrue(self.history.can_redo())
+        self.assertFalse(self.history.can_undo())
+
+    def test_a_bid_locked_redo_rejection_keeps_the_entry_ready_and_replayable(self):
+        self.history.push(self._submit("undo"), self._submit("redo"))
+        self.history.undo()
+        self.submitted[0][1](self._result(MutationOutcomeStatus.COMMITTED))
+        entry = self.history._redo_stack[-1]
+        self.history.redo()
+        self.assertEqual(entry.state, MutationHistoryState.REDO_PENDING)
+        with self.assertNoLogs(self.history.logger, "WARNING"):
+            self.submitted[1][1](self._bid_locked())
+        self.assertEqual(entry.state, MutationHistoryState.READY)
+        self.assertIs(self.history._redo_stack[-1], entry)
+        self.assertTrue(self.history.can_redo())
+        self.assertFalse(self.history.can_undo())
+        self.history.redo()
+        self.assertEqual(
+            [label for label, _ in self.submitted], ["undo", "redo", "redo"]
+        )
+
+    def test_a_conflict_outcome_still_marks_the_entry_conflicted(self):
+        # negative control: only the refusal reason is a plain refusal
+        self.history.push(self._submit("undo"), self._submit("redo"))
+        entry = self.history._undo_stack[-1]
+        self.history.undo()
+        self.submitted[0][1](self._result(MutationOutcomeStatus.CONFLICT))
+        self.assertEqual(entry.state, MutationHistoryState.CONFLICTED)
+        self.history.undo()
+        self.assertEqual(len(self.submitted), 1)
+
+    def test_a_rejection_without_a_reason_is_also_a_plain_refusal(self):
+        self.history.push(self._submit("undo"), self._submit("redo"))
+        entry = self.history._undo_stack[-1]
+        self.history.undo()
+        self.submitted[0][1](self._result(MutationOutcomeStatus.REJECTED))
+        self.assertEqual(entry.state, MutationHistoryState.READY)
+        self.assertTrue(self.history.can_undo())

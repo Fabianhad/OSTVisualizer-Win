@@ -25,11 +25,16 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.file_manager_service import FileManager
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.presentation.components import conditions_sidebar as sidebar_module
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.components.project_tree_view import ProjectView
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
@@ -39,6 +44,7 @@ from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
 from ost_visualizer.presentation.managers.ui_access_manager import (
     MAIN_PLAN_SURFACE_ID,
     PlanSurfaceAccessState,
+    UIAccessManager,
 )
 from PySide6 import QtWidgets
 from shiboken6 import delete, isValid
@@ -93,7 +99,7 @@ class ConditionObjectSelectionTests(unittest.TestCase):
                 self.takeoff("5", "elsewhere", "p2"),
             ],
         )
-        self.model = OstAggregate(Mock())
+        self.model = OstAggregate(Mock(spec=FileManager))
         self.model.current_bid_ref = self.bid_ref
         self.model.current_bid = Bid(uid="bid", name="Bid")
         self.model.set_hierarchy(
@@ -137,7 +143,7 @@ class ConditionObjectSelectionTests(unittest.TestCase):
             self.state.highlighted_condition_uids = set(uids)
 
         self.state.set_highlighted_conditions = set_highlighted_conditions
-        self.access = Mock()
+        self.access = Mock(spec=UIAccessManager)
         self.access.get_plan_surface_access.return_value = PlanSurfaceAccessState(
             can_select_plan_items=True
         )
@@ -152,7 +158,7 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.coordinator._placement = SimpleNamespace(
             is_active=False, condition_uid=None
         )
-        self.coordinator._toolbar = Mock()
+        self.coordinator._toolbar = Mock(spec=ToolbarStateCoordinator)
         self.coordinator._toolbar.is_takeoff_2d_view_active.return_value = True
         self.coordinator._tab_widget = SimpleNamespace(
             currentIndex=lambda: TAB_INDEX_TAKEOFF
@@ -161,7 +167,7 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.coordinator._selection_projected_condition_uids = set()
         self.coordinator.opengl_viewer = None
         self.coordinator._mesh_window = None
-        project_view = Mock()
+        project_view = Mock(spec=ProjectView)
         project_view.get_selected_node_state.return_value = {
             "kind": "bid",
             "bid_uid": "bid",
@@ -326,14 +332,17 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.coordinator._toolbar.refresh.assert_called()
 
     def test_right_click_does_not_use_later_current_or_multiselected_condition(self):
-        self.sidebar.highlight_conditions({"target", "other"})
+        for highlighted in ({"target", "other"}, {"other"}, {"other", "unused"}):
+            with self.subTest(highlighted=sorted(highlighted)):
+                self.plan.clear_selection()
+                self.sidebar.highlight_conditions(highlighted)
 
-        def invoke(action):
-            self.sidebar.highlight_conditions({"other"})
-            action.trigger()
+                def invoke(action):
+                    self.sidebar.highlight_conditions({"other"})
+                    action.trigger()
 
-        self.open_menu(during_menu=invoke)
-        self.assertEqual(self.plan.get_selected_takeoff_uids(), ["1", "2"])
+                self.open_menu(during_menu=invoke)
+                self.assertEqual(self.plan.get_selected_takeoff_uids(), ["1", "2"])
 
     def test_unchanged_selection_reclaims_sidebar_projection(self):
         self.plan.set_selected_uids({"1", "2"})
@@ -488,6 +497,69 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.open_menu(during_menu=lambda action: action.trigger())
         self.assertEqual(self.plan.get_selected_uids(), ["1", "2"])
         self.assertEqual(detached.get_selected_uids(), ["5"])
+
+    def assert_interference_rejects_action(self, interfere):
+        # Positive control: the identical gesture selects when nothing changes.
+        self.open_menu(during_menu=lambda action: action.trigger())
+        self.assertEqual(self.plan.get_selected_uids(), ["1", "2"])
+        self.assertEqual(self.events, [["1", "2"]])
+        self.plan.clear_selection()
+        self.events.clear()
+
+        def invoke(action):
+            interfere()
+            action.trigger()
+
+        self.open_menu(during_menu=invoke)
+        self.assertEqual(self.plan.get_selected_uids(), [])
+        self.assertEqual(self.events, [])
+
+    def test_coordinator_cleanup_rejects_action(self):
+        def interfere():
+            self.coordinator._is_cleaning_up = True
+
+        self.assert_interference_rejects_action(interfere)
+
+    def test_replaced_main_plan_surface_rejects_action(self):
+        replacement = self.make_plan()
+        self.load_page(replacement, self.page)
+
+        def interfere():
+            self.coordinator.plan_view = replacement
+
+        self.assert_interference_rejects_action(interfere)
+        self.assertEqual(replacement.get_selected_uids(), [])
+
+    def test_selected_bid_change_rejects_action(self):
+        other_bid = BidRef(self.bid_ref.file_path, "other-bid")
+
+        def interfere():
+            self.state.get_selected_bid_ref = lambda: other_bid
+
+        self.assert_interference_rejects_action(interfere)
+
+    def test_unloaded_bid_disables_action(self):
+        self.assertTrue(self.open_menu())
+        self.model.current_bid = None
+        self.assertFalse(self.open_menu())
+        self.assertEqual(self.plan.get_selected_uids(), [])
+
+    def test_takeoffs_displayed_for_another_page_disable_action(self):
+        self.assertTrue(self.open_menu())
+        moved = [replace(takeoff, page_uid="p2") for takeoff in self.page.takeoffs]
+        self.assertTrue(
+            self.plan.load_page(
+                self.page,
+                moved,
+                self.conditions,
+                {uid: "#000000" for uid in self.conditions},
+                bid_ref=self.bid_ref,
+            )
+        )
+        self.assertIsNotNone(self.plan.get_takeoff("1"))
+        self.assertEqual(self.plan.get_takeoff("1").page_uid, "p2")
+        self.assertFalse(self.open_menu())
+        self.assertEqual(self.plan.get_selected_uids(), [])
 
 
 if __name__ == "__main__":

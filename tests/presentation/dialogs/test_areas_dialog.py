@@ -752,3 +752,81 @@ class AreaDialogEditingTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_bid_areas_synchronously_completed_failed_save_stays_pending_for_retry(
+        self,
+    ):
+        # Reachability of the deferred-save "change during save" defect: the Qt
+        # callback bridge delivers on the main thread synchronously, so an
+        # immediately rejected queued save completes BEFORE the dialog's own
+        # async submit returns True. The real ModalEditLeaseSession then
+        # re-acquires the lease (synchronously here) and calls the dialog's
+        # completion with failure from inside the controller's flush; the retry
+        # marker that completion sets must survive the "started" success return.
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            EditLeaseHandle,
+            EditLeaseResult,
+            ResourceRef,
+        )
+        from ost_visualizer.infrastructure.events.event_bus import EventBus
+        from ost_visualizer.presentation.services.modal_edit_lease_session import (
+            ModalEditLeaseSession,
+        )
+
+        def lease():
+            return EditLeaseHandle(
+                database_id="test.mdb",
+                draft_id="draft",
+                runtime_generation=1,
+                operation_id="BidAreasDialog",
+                owning_surface="main-window-dialog",
+                resources=(ResourceRef("areas_collection", "7", 7),),
+            )
+
+        class Owner:
+            @staticmethod
+            def request_collaboration_edit(_db, _resources, callback, **_options):
+                callback(EditLeaseResult(True, handle=lease()))
+
+            @staticmethod
+            def end_collaboration_edit(_handle):
+                pass
+
+        submits = []
+
+        def rejected_immediately(_handle, mutation_completed):
+            submits.append("submit")
+            mutation_completed(False, None)
+            return True
+
+        session = ModalEditLeaseSession(
+            Owner(),
+            "test.mdb",
+            (ResourceRef("areas_collection", "7", 7),),
+            "BidAreasDialog",
+            event_bus=EventBus(),
+        )
+        session.request_initial(lambda result: None)
+        dialog = _master_data_support_MasterBidAreasDialog(
+            _master_data_support_FakeIconProvider(),
+            bid_areas=[],
+            save_async_fn=lambda changes, completed: session.submit_mutation(
+                rejected_immediately, completed
+            ),
+        )
+        session.bind_dialog(dialog)
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog._set_item_name(item, "Area 2")
+            dialog._on_item_changed(item, 0)
+            self.assertTrue(dialog._save_controller.pending)
+            dialog.flush_pending_save()
+            self.assertEqual(submits, ["submit"])
+            self.assertTrue(dialog._save_controller.pending)
+            self.assertTrue(dialog.btn_new.isEnabled())
+        finally:
+            session.close()
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()

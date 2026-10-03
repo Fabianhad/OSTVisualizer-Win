@@ -2,6 +2,7 @@ import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
@@ -37,6 +38,15 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
             QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
 
+    def setUp(self):
+        # Exceptions raised inside Qt slots reach sys.excepthook and would otherwise
+        # be swallowed; fail the test if any occur.
+        errors = []
+        hook = patch("sys.excepthook", side_effect=lambda *error: errors.append(error))
+        hook.start()
+        self.addCleanup(hook.stop)
+        self.addCleanup(lambda: self.assertEqual(errors, []))
+
     def tearDown(self):
         self.app.processEvents()
 
@@ -58,6 +68,9 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         self.assertTrue(dialog.isVisible())
         self.assertFalse(apply_button.isEnabled())
         self.assertTrue(aggregate.disable_high_resolution_images)
+        # The repository (the persistence boundary) received exactly one save.
+        self.assertEqual(len(repo.saved), 1)
+        self.assertIs(repo.saved[0]["disable_high_resolution_images"], True)
         self.assertEqual(
             event_bus.events,
             [
@@ -73,12 +86,21 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         event_bus = _preferences_support_FakeEventBus()
         service = ConfigService(aggregate, event_bus)
+        callback_configs = []
+
+        def apply_callback(config):
+            callback_configs.append(config)
+            return service.update_app_options(config)
+
         dialog = OptionsDialog(
             service.get_config_snapshot(),
-            apply_callback=service.update_app_options,
+            apply_callback=apply_callback,
         )
         dialog._apply_pending_changes()
+        # The dialog itself skips the callback when nothing was edited.
+        self.assertEqual(callback_configs, [])
         self.assertEqual(event_bus.events, [])
+        self.assertEqual(repo.saved, [])
         self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
         dialog.close()
 
@@ -101,10 +123,23 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         self.assertFalse(aggregate.snapshot().elevation_callout_include_top)
         self.assertEqual(aggregate.snapshot().html_elevation_callout_color, "#123456")
         self.assertEqual(aggregate.snapshot().pdf_elevation_callout_color, "#abcdef")
+        self.assertEqual(len(repo.saved), 1)
+        saved = repo.saved[0]
+        self.assertEqual(
+            (
+                saved["html_elevation_callouts_enabled"],
+                saved["pdf_elevation_callouts_enabled"],
+                saved["elevation_callout_include_top"],
+                saved["html_elevation_callout_color"],
+                saved["pdf_elevation_callout_color"],
+            ),
+            (False, True, False, "#123456", "#abcdef"),
+        )
         dialog._html_elevation_callouts_check.setChecked(True)
         dialog._pdf_elevation_callouts_check.setChecked(False)
         dialog._elevation_callout_top_check.setChecked(True)
         dialog.reject()
+        self.assertEqual(len(repo.saved), 1)
         self.assertFalse(aggregate.snapshot().html_elevation_callouts_enabled)
         self.assertTrue(aggregate.snapshot().pdf_elevation_callouts_enabled)
         self.assertFalse(aggregate.snapshot().elevation_callout_include_top)
@@ -126,9 +161,14 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         config = aggregate.snapshot()
         self.assertTrue(config.pdf_annotation_captions_enabled)
         self.assertNotIn("volume", config.pdf_annotation_caption_ids)
+        self.assertEqual(config.pdf_annotation_caption_ids, ("area",))
+        self.assertEqual(len(repo.saved), 1)
+        self.assertIs(repo.saved[0]["pdf_annotation_captions_enabled"], True)
+        self.assertEqual(repo.saved[0]["pdf_annotation_caption_ids"], ["area"])
         dialog._caption_checks[AnnotationCaptionId.AREA].setChecked(False)
         dialog.reject()
-        self.assertIn("area", aggregate.snapshot().pdf_annotation_caption_ids)
+        self.assertEqual(aggregate.snapshot().pdf_annotation_caption_ids, ("area",))
+        self.assertEqual(len(repo.saved), 1)
         dialog.close()
 
     def test_menu_grayscale_toggle_uses_general_app_config_update_path(self):
@@ -141,6 +181,8 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         result = controller._toggle_takeoff_grayscale()
         self.assertTrue(result)
         self.assertTrue(aggregate.grayscale_enabled)
+        self.assertEqual(len(repo.saved), 1)
+        self.assertIs(repo.saved[0]["grayscale_enabled"], True)
         self.assertEqual(
             event_bus.events,
             [_preferences_support__app_config_event({"grayscale_enabled": True})],
@@ -162,6 +204,7 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         dialog._hotlink_main_radio.setChecked(True)
         _preferences_support__apply_button(dialog).click()
         self.assertEqual(aggregate.hotlink_target, "main")
+        self.assertEqual([item["hotlink_target"] for item in repo.saved], ["main"])
         self.assertEqual(
             event_bus.events,
             [_preferences_support__app_config_event({"hotlink_target": "main"})],
@@ -178,6 +221,11 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         controller._set_takeoff_display_mode_3d(Config.DISPLAY_MODE_TRANSPARENT)
         self.assertEqual(aggregate.display_mode_3d, Config.DISPLAY_MODE_TRANSPARENT)
         self.assertEqual(aggregate.display_mode_2d, Config.DISPLAY_MODE_TRANSPARENT)
+        self.assertEqual(len(repo.saved), 1)
+        self.assertEqual(
+            (repo.saved[0]["display_mode_3d"], repo.saved[0]["display_mode_2d"]),
+            (Config.DISPLAY_MODE_TRANSPARENT, Config.DISPLAY_MODE_TRANSPARENT),
+        )
         self.assertEqual(
             event_bus.events,
             [
@@ -209,6 +257,7 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         result = controller._reset_all_settings()
         self.assertEqual(result, Config())
         self.assertEqual(service.get_config_snapshot(), Config())
+        self.assertEqual(repo.saved, [Config().to_dict()])
         self.assertEqual(workspace_resets, ["reset"])
         self.assertEqual(
             event_bus.events,
@@ -223,7 +272,17 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         )
 
     def test_options_dialog_ok_saves_implemented_preferences(self):
-        repo = _preferences_support_FakeConfigRepository()
+        # Seed non-default values for the controls whose edited value equals the
+        # default (Original display mode, grayscale off, toolbar text on), so those
+        # edits are real changes rather than no-ops.
+        repo = _preferences_support_FakeConfigRepository(
+            Config(
+                display_mode_3d=Config.DISPLAY_MODE_TRANSPARENT,
+                display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
+                grayscale_enabled=True,
+                show_toolbar_text=False,
+            )
+        )
         aggregate = ConfigAggregate(repo)
         event_bus = _preferences_support_FakeEventBus()
         service = ConfigService(aggregate, event_bus)
@@ -276,6 +335,13 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         dialog.accept()
         changed = service.update_app_options(dialog.get_config())
         self.assertIn("roping_selection_method", changed)
+        for key in (
+            "display_mode_3d",
+            "display_mode_2d",
+            "grayscale_enabled",
+            "show_toolbar_text",
+        ):
+            self.assertIn(key, changed)
         self.assertEqual(aggregate.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)
         self.assertEqual(aggregate.display_mode_2d, Config.DISPLAY_MODE_ORIGINAL)
         self.assertFalse(aggregate.grayscale_enabled)
@@ -295,6 +361,34 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         self.assertEqual(aggregate.mouse_pressed_snap_angle, 45)
         _preferences_support__assert_snap_pref_update_applied(self, aggregate)
         self.assertEqual(aggregate.default_auto_zoom_level, 125)
+        # What reached the repository matches the dialog edits (not just the model).
+        saved = repo.saved[-1]
+        self.assertEqual(
+            (
+                saved["display_mode_3d"],
+                saved["grayscale_enabled"],
+                saved["show_toolbar_text"],
+                saved["roping_selection_method"],
+                saved["hotlink_target"],
+                saved["crosshair_color"],
+                saved["crosshair_line_thickness"],
+                saved["mouse_unpressed_snap_angle"],
+                saved["mouse_pressed_snap_angle"],
+                saved["default_auto_zoom_level"],
+            ),
+            (
+                Config.DISPLAY_MODE_ORIGINAL,
+                False,
+                True,
+                "inclusive",
+                "view",
+                "#123456",
+                4,
+                30,
+                45,
+                125,
+            ),
+        )
         self.assertEqual(event_bus.events[0][0], AppEvents.APP_CONFIG_UPDATED)
         dialog.close()
 
@@ -320,6 +414,8 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         )
         self.assertEqual(finished_results, [QtWidgets.QDialog.DialogCode.Accepted])
         self.assertTrue(aggregate.disable_high_resolution_images)
+        self.assertEqual(len(repo.saved), 1)
+        self.assertIs(repo.saved[0]["disable_high_resolution_images"], True)
         self.assertEqual(
             event_bus.events,
             [
@@ -359,6 +455,9 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
         dialog.reject()
         self.assertTrue(aggregate.display_page_index_with_sheet_name)
         self.assertFalse(aggregate.grayscale_enabled)
+        self.assertEqual(len(repo.saved), 1)
+        self.assertIs(repo.saved[0]["display_page_index_with_sheet_name"], True)
+        self.assertIs(repo.saved[0]["grayscale_enabled"], False)
         dialog.close()
 
     def test_options_dialog_color_settings_publish_same_app_config_payload(self):
@@ -375,6 +474,11 @@ class SaveWorkflowsPreferenceTests(unittest.TestCase):
             changed,
             ["display_mode_3d", "display_mode_2d", "grayscale_enabled"],
         )
+        self.assertEqual(len(repo.saved), 1)
+        self.assertEqual(
+            repo.saved[0]["display_mode_3d"], Config.DISPLAY_MODE_TRANSPARENT
+        )
+        self.assertIs(repo.saved[0]["grayscale_enabled"], True)
         self.assertEqual(
             event_bus.events,
             [

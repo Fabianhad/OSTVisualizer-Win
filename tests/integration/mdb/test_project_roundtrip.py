@@ -196,6 +196,34 @@ class CrossSystemMdbWorkflowTests(unittest.TestCase):
             self.assertEqual(len(before[1]), 5)
             self.assertEqual(before[4][page_a], area)
             self.assertEqual(sum(t.parent_uid == root for t in before[1]), 2)
+            # Values read back from Access equal the specs written above.
+            self.assertEqual(
+                sorted(
+                    (before[3][t.page_uid].name, tuple(t.position)) for t in before[1]
+                ),
+                sorted(
+                    [
+                        (
+                            "Plan A",
+                            (0.25, 0.25, 96.25, 0.25, 96.25, 96.25, 0.25, 96.25),
+                        ),
+                        ("Plan A", (4, 4, 8, 4, 8, 8, 4, 8)),
+                        ("Plan A", (48.25, 48.25)),
+                        ("Plan A", (0.25, 110.5, 24.25, 110.5)),
+                        ("Plan B", (12.25, 18.5)),
+                    ]
+                ),
+            )
+            self.assertEqual(
+                {a.annotation_type: a.properties.get("Text") for a in before[6]},
+                {
+                    "text": "Room café / Ã©\n  end ",
+                    "callout": "Entrée",
+                    "dimension": None,
+                    "polygon": None,
+                    "line": None,
+                },
+            )
             self.assert_summary(before)
             page_b_before = self.semantic_snapshot(before, only_page=page_b)
             self.assertTrue(writer.save_page_scale(source, page_a, 1, 24))
@@ -224,6 +252,7 @@ class CrossSystemMdbWorkflowTests(unittest.TestCase):
             self.assertTrue(writer.save_page_name(source, page_a, "Plan A revised"))
             edited = reload()
             self.assertEqual(edited[0][conditions["Opening"]].width, 3)
+            self.assertEqual(edited[0][conditions["Opening"]].notes, "Résumé / 東京")
             self.assertEqual(edited[3][page_a].name, "Plan A revised")
             self.assert_summary(edited)
             # A rejected mixed geometry batch cannot alter the successful member.

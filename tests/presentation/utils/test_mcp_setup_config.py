@@ -103,6 +103,15 @@ class McpSetupConfigTests(unittest.TestCase):
         )
         self.assertEqual(len(text.splitlines()), 3)
 
+    def test_codex_config_escapes_backspace_formfeed_and_carriage_return(self):
+        text = build_codex_config_toml(Path("C:/Tools/a\bb\fc\rd/ostv-mcp.exe"))
+        self.assertEqual(
+            text,
+            '[mcp_servers."ost-visualizer"]\n'
+            'command = "C:\\\\Tools\\\\a\\bb\\fc\\rd\\\\ostv-mcp.exe"\n'
+            "args = []",
+        )
+
     def test_codex_command_doubles_single_quotes_in_helper_path(self):
         command = build_codex_mcp_add_command(
             Path(r"C:\Users\O'Neil\ostv-mcp.exe"), codex_command="codex.cmd"

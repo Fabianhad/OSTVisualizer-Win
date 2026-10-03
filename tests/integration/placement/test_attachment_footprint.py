@@ -13,7 +13,7 @@ from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanVie
 
 
 class TakeoffLifecyclePlacementTests(unittest.TestCase):
-    def test_attachment_only_paste_keeps_full_rotated_footprint(self):
+    def _attachment_paste_view(self, rotation):
         view = self.harness(Condition.TYPE_AREA, (0, 0), (1, 1), backout=True)
         condition = Condition(
             uid="attachment",
@@ -38,17 +38,31 @@ class TakeoffLifecyclePlacementTests(unittest.TestCase):
             condition_uid=condition.uid,
             parent_uid="old-parent",
             position=[5, 5],
-            rotation=math.pi / 2,
+            rotation=rotation,
         )
         self.assertTrue(
             TakeoffPlanView.begin_paste_backout(view, [attachment], {}, "7")
         )
-        self.assertEqual(
-            view._paste_backout_validate_all([[5, 5]]), ([("parent", True)], True)
-        )
-        self.assertEqual(
-            view._paste_backout_validate_all([[5, 9]]), ([("", False)], False)
-        )
+        return view
+
+    def test_attachment_only_paste_keeps_full_rotated_footprint(self):
+        # Parent is the 10 x 10 square at the origin. The attachment is 4 wide
+        # (x, half 2) by 2 deep (y, half 1) before rotation; a quarter turn swaps
+        # the half extents. A footprint corner/edge outside the parent rejects.
+        accepted = ([("parent", True)], True)
+        rejected = ([("", False)], False)
+        for rotation, centre, expected in (
+            (math.pi / 2, [5, 5], accepted),
+            (math.pi / 2, [5, 9], rejected),  # y spans 7..11 once rotated
+            (math.pi / 2, [9, 5], accepted),  # x spans 8..10 once rotated
+            (math.pi / 2, [9.5, 5], rejected),
+            (0, [5, 9], accepted),  # y spans 8..10 unrotated
+            (0, [9, 5], rejected),  # x spans 7..11 unrotated
+            (0, [5, 9.5], rejected),
+        ):
+            with self.subTest(rotation=rotation, centre=centre):
+                view = self._attachment_paste_view(rotation)
+                self.assertEqual(view._paste_backout_validate_all([centre]), expected)
 
     @classmethod
     def setUpClass(cls):

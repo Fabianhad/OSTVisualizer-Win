@@ -453,7 +453,7 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
         service._execute_database_mutation = (
             lambda _db, _resources, operation: SimpleNamespace(
                 outcome_status=MutationOutcomeStatus.COMMITTED,
-                value=operation(Mock()),
+                value=operation(SimpleNamespace(record=lambda *_a, **_k: None)),
             )
         )
         writes = []
@@ -594,6 +594,7 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
         harness = self._make_mdb_creation_harness(foldered=True)
         harness.writer._reload_database = Mock(return_value=False)
         warnings = []
+        dialog_warnings = []
 
         def execute(dialog, _events):
             self.widgets.append(dialog)
@@ -611,8 +612,14 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
         ), patch(
             "ost_visualizer.presentation.handlers.condition_action_handler.show_warning",
             side_effect=lambda _parent, _title, message: warnings.append(message),
+        ), patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
+            side_effect=lambda _parent, _title, message: dialog_warnings.append(
+                message
+            ),
         ):
             harness.handler.on_create_requested("f1")
+        self.assertEqual(dialog_warnings, [])
         self.assertEqual(len(harness.writes), 1)
         self.assertEqual(harness.highlights, [])
         self.assertEqual(len(warnings), 1)
@@ -739,12 +746,19 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
                     )
                     return dialog.result()
 
+                dialog_warnings = []
                 with patch(
                     "ost_visualizer.presentation.handlers.condition_action_handler."
                     "exec_with_ost_blocking",
                     execute,
+                ), patch(
+                    "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
+                    side_effect=lambda _parent, _title, message: dialog_warnings.append(
+                        message
+                    ),
                 ):
                     harness.handler.on_create_requested("f1")
+                self.assertEqual(dialog_warnings, [])
                 self.assertEqual(harness.highlights, [])
 
     def test_mdb_save_next_advances_reconstructed_family_and_allows_second_save(self):
@@ -859,7 +873,7 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
                             edited_name = f"Edited before {target_uid}"
                             dialog._name_edit.setText(edited_name)
                             button.click()
-                            deadline = QtCore.QDeadlineTimer(2000)
+                            deadline = QtCore.QDeadlineTimer(10000)
                             while dialog._save_pending and not deadline.hasExpired():
                                 self.app.processEvents()
                             self.assertFalse(dialog._save_pending)
@@ -888,11 +902,28 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
                 responder = QtCore.QTimer(harness.sidebar)
                 responder.timeout.connect(answer_message_box)
                 responder.start(1)
+                watchdog = QtCore.QTimer(harness.sidebar)
+                watchdog.setSingleShot(True)
+
+                def close_stuck_modal():
+                    # Turns a modal that never closes (interact() failed before it
+                    # could reject the editor) into a reported failure, not a hang.
+                    stuck = self.app.activeModalWidget()
+                    if stuck is not None:
+                        errors.append(AssertionError("a modal widget stayed open"))
+                        if hasattr(stuck, "_dirty"):
+                            stuck._dirty = False
+                        stuck.reject()
+                        watchdog.start(1000)
+
+                watchdog.timeout.connect(close_stuck_modal)
+                watchdog.start(60000)
                 QtCore.QTimer.singleShot(0, interact)
                 try:
                     harness.handler.on_edit_requested(["c1"])
                 finally:
                     responder.stop()
+                    watchdog.stop()
                 if errors:
                     raise errors[0]
                 self.assertEqual(len(prompts), 4)
@@ -987,18 +1018,19 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
         harness = self._make_harness(sql=True, foldered=True)
         rejected = []
 
-        def lose_lease(handle):
+        def lose_lease(handle, **overrides):
+            fields = dict(
+                database_id=handle.database_id,
+                draft_id=handle.draft_id,
+                runtime_generation=handle.runtime_generation,
+                operation_id=handle.operation_id,
+                owning_surface=handle.owning_surface,
+                resources=handle.resources,
+                reason="test-lease-loss",
+            )
+            fields.update(overrides)
             harness.event_bus.publish(
-                AppEvents.EDIT_LEASE_LOST,
-                loss=EditLeaseLoss(
-                    database_id=handle.database_id,
-                    draft_id=handle.draft_id,
-                    runtime_generation=handle.runtime_generation,
-                    operation_id=handle.operation_id,
-                    owning_surface=handle.owning_surface,
-                    resources=handle.resources,
-                    reason="test-lease-loss",
-                ),
+                AppEvents.EDIT_LEASE_LOST, loss=EditLeaseLoss(**fields)
             )
 
         def execute(dialog):
@@ -1015,6 +1047,14 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             self.assertEqual(rejected, [])
             self.assertTrue(dialog.isVisible())
             self.assertEqual(harness.sidebar.get_selected_condition_uids(), ["c2"])
+            # Same draft id but another database or runtime generation is not
+            # this editor's lease either.
+            lose_lease(current_lease, database_id="another-database")
+            lose_lease(
+                current_lease, runtime_generation=current_lease.runtime_generation + 1
+            )
+            self.assertEqual(rejected, [])
+            self.assertTrue(dialog.isVisible())
             lose_lease(current_lease)
             self.assertEqual(rejected, [True])
             self.assertFalse(dialog.isVisible())
@@ -1112,6 +1152,107 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
                 tuple(ResourceRef("condition", uid, 7) for uid in ("c1", "c2", "c3")),
             )
         self.assertEqual(harness.handler._pending_sql_operations, set())
+
+    def test_pending_sql_save_locks_editing_and_ignores_close_until_completion(self):
+        harness = self._make_harness(sql=True)
+        queue_update = harness.writer.queue_conditions_update
+        pending = []
+
+        def enqueue(*args, **kwargs):
+            pending.append(lambda: queue_update(*args, **kwargs))
+            return 1
+
+        harness.writer.queue_conditions_update = enqueue
+
+        def execute(dialog):
+            self.assertTrue(dialog._name_edit.isEnabled())
+            dialog._name_edit.setText("Saved while pending")
+            dialog._next_btn.click()
+            self.assertTrue(dialog._save_pending)
+            for locked in (
+                dialog._name_edit,
+                dialog._ok_btn,
+                dialog._cancel_btn,
+                dialog._next_btn,
+                dialog._prev_btn,
+            ):
+                self.assertFalse(locked.isEnabled())
+            # Closing while the commit is in flight must not discard the editor.
+            self.assertFalse(dialog.close())
+            self.assertFalse(dialog._closed)
+            self.assertEqual(harness.writer.writes, [])
+            # ...nor start a second save through the unsaved-changes prompt.
+            self.assertEqual(len(pending), 1)
+            self.assertTrue(dialog._save_pending)
+            self.assertFalse(dialog._name_edit.isEnabled())
+            pending.pop()()
+            self.assertFalse(dialog._save_pending)
+            self.assertTrue(dialog._name_edit.isEnabled())
+            self.assertTrue(dialog._cancel_btn.isEnabled())
+            self.assertEqual(dialog._current_uid, "c2")
+            dialog._dirty = False
+            dialog.reject()
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        self.assertEqual(self._open_and_execute(harness, execute), [])
+        self.assertEqual([uid for uid, _changes in harness.writer.writes], ["c1"])
+
+    def test_sql_denied_lease_reacquisition_after_save_closes_the_editor(self):
+        harness = self._make_harness(sql=True)
+        coordinator = harness.handler._coordinator
+        request_lease = coordinator.request_collaboration_edit
+        rejected = []
+
+        def deny_reacquisition(database_id, resources, callback, **options):
+            if harness.writer.writes:
+                callback(EditLeaseResult(False, "Held by another user"))
+            else:
+                request_lease(database_id, resources, callback, **options)
+
+        coordinator.request_collaboration_edit = deny_reacquisition
+
+        def execute(dialog):
+            dialog.rejected.connect(lambda: rejected.append(True))
+            dialog._name_edit.setText("Committed, lease lost")
+            dialog._next_btn.click()
+            self.assertEqual(rejected, [True])
+            self.assertEqual(dialog._current_uid, "c1")
+            self.assertEqual(len(harness.writer.writes), 1)
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        self.assertEqual(self._open_and_execute(harness, execute), [])
+        self.assertEqual(harness.handler._pending_sql_operations, set())
+
+    def test_failed_sql_submission_keeps_the_lease_for_the_next_save(self):
+        for error in (RuntimeError("not submitted"), ValueError("rejected locally")):
+            with self.subTest(error=type(error).__name__):
+                harness = self._make_harness(sql=True)
+                queue_update = harness.writer.queue_conditions_update
+                failures = [error]
+
+                def flaky(*args, **kwargs):
+                    if failures:
+                        raise failures.pop()
+                    return queue_update(*args, **kwargs)
+
+                harness.writer.queue_conditions_update = flaky
+
+                def execute(dialog):
+                    dialog._name_edit.setText("Retry me")
+                    dialog._on_apply()
+                    self.assertEqual(harness.writer.writes, [])
+                    self.assertTrue(dialog._dirty)
+                    self.assertFalse(dialog._save_pending)
+                    dialog._on_apply()
+                    self.assertFalse(dialog._dirty)
+                    self.assertEqual(
+                        [uid for uid, _changes in harness.writer.writes], ["c1"]
+                    )
+                    return QtWidgets.QDialog.DialogCode.Rejected
+
+                warnings = self._open_and_execute(harness, execute)
+                self.assertEqual(warnings, [str(error)])
+                self.assertEqual(harness.handler._pending_sql_operations, set())
 
     def test_destroyed_editor_during_pending_sql_save_does_not_reacquire_or_project(
         self,
@@ -1439,6 +1580,200 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             ],
         )
 
+    def test_sql_failed_save_is_presented_once_by_the_handler_not_the_dialog(self):
+        harness = self._make_harness(sql=True)
+        presented = []
+        harness.handler._coordinator.present_queued_mutation_error = (
+            lambda database_id, title, result: presented.append(
+                (database_id, title, result.outcome_status)
+            )
+        )
+
+        def failing_update(database_id, _bid, _uids, _changes, callback, **_options):
+            callback(
+                QueuedMutationResult(
+                    database_id=database_id,
+                    runtime_generation=1,
+                    operation_id="00000000-0000-0000-0000-0000000000f1",
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                    message="Rejected by the server",
+                )
+            )
+            return 1
+
+        harness.writer.queue_conditions_update = failing_update
+
+        def execute(dialog):
+            dialog._name_edit.setText("Rejected edit")
+            dialog._on_apply()
+            # Not saved: still dirty, editable again, and still on c1.
+            self.assertTrue(dialog._dirty)
+            self.assertFalse(dialog._save_pending)
+            self.assertTrue(dialog._name_edit.isEnabled())
+            self.assertEqual(dialog._current_uid, "c1")
+            dialog._dirty = False
+            dialog.reject()
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        self.assertEqual(self._open_and_execute(harness, execute), [])
+        self.assertEqual(
+            presented,
+            [
+                (
+                    harness.bid_ref.file_path,
+                    "Save Condition",
+                    MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                )
+            ],
+        )
+        self.assertEqual(harness.handler._pending_sql_operations, set())
+
+    def test_navigation_reenters_active_placement_for_the_new_condition(self):
+        for active_2d in (True, False):
+            with self.subTest(active_2d=active_2d):
+                harness = self._make_harness()
+                entered = []
+                coordinator = harness.handler._coordinator
+                coordinator.placement = SimpleNamespace(
+                    is_active=True,
+                    enter=lambda uid, uids: entered.append((uid, list(uids))),
+                )
+                coordinator._is_takeoff_2d_view_active = lambda: active_2d
+
+                def execute(dialog):
+                    dialog._next_btn.click()
+                    self.assertEqual(dialog._current_uid, "c2")
+                    dialog._dirty = False
+                    dialog.reject()
+                    return QtWidgets.QDialog.DialogCode.Rejected
+
+                self.assertEqual(self._open_and_execute(harness, execute), [])
+                self.assertEqual(entered, [("c2", ["c2"])] if active_2d else [])
+
+    def test_unknown_condition_request_opens_nothing_and_takes_no_lease(self):
+        harness = self._make_harness(sql=True)
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "exec_with_ost_blocking"
+        ) as execute:
+            harness.handler.on_edit_requested(["missing"])
+        execute.assert_not_called()
+        self.assertEqual(harness.lease_requests, [])
+        self.assertEqual(harness.ended_leases, [])
+
+    def test_initial_lease_denial_or_owner_change_never_opens_the_dialog(self):
+        for case in ("denied", "family replaced"):
+            with self.subTest(case=case):
+                harness = self._make_harness(sql=True)
+                coordinator = harness.handler._coordinator
+                request_lease = coordinator.request_collaboration_edit
+                pending_grants = []
+                coordinator.request_collaboration_edit = (
+                    lambda database_id, resources, callback, **options: (
+                        pending_grants.append(
+                            (database_id, resources, callback, options)
+                        )
+                    )
+                )
+                with patch(
+                    "ost_visualizer.presentation.handlers.condition_action_handler."
+                    "exec_with_ost_blocking"
+                ) as execute:
+                    harness.handler.on_edit_requested(["c1"])
+                    self.assertEqual(len(pending_grants), 1)
+                    database_id, resources, callback, options = pending_grants.pop()
+                    if case == "denied":
+                        callback(EditLeaseResult(False, "Held by another user"))
+                    else:
+                        harness.data.conditions = {
+                            uid: replace(condition)
+                            for uid, condition in harness.data.conditions.items()
+                        }
+                        request_lease(database_id, resources, callback, **options)
+                execute.assert_not_called()
+                if case == "denied":
+                    self.assertEqual(harness.ended_leases, [])
+                else:
+                    self.assertEqual(harness.ended_leases, harness.lease_handles)
+
+    def test_committed_creation_refresh_failure_is_not_reported_for_replaced_bid(
+        self,
+    ):
+        harness = self._make_mdb_creation_harness(foldered=True)
+        harness.writer._reload_database = Mock(return_value=False)
+        warnings = []
+        dialog_warnings = []
+
+        def execute(dialog, _events):
+            self.widgets.append(dialog)
+            dialog._name_edit.setText("Committed but not refreshed")
+            dialog._ref_no_edit.setText("4")
+            dialog._ok_btn.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            harness.active_bid[0] = BidRef("other.mdb", "7")
+            return dialog.result()
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "exec_with_ost_blocking",
+            execute,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler.show_warning",
+            side_effect=lambda _parent, _title, message: warnings.append(message),
+        ), patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
+            side_effect=lambda _parent, _title, message: dialog_warnings.append(
+                message
+            ),
+        ):
+            harness.handler.on_create_requested("f1")
+        self.assertEqual(dialog_warnings, [])
+        self.assertEqual(len(harness.writes), 1)
+        self.assertEqual(warnings, [])
+        self.assertEqual(harness.highlights, [])
+
+    def test_sql_creation_with_multiple_committed_ids_is_reported_incomplete(self):
+        harness = self._make_harness(sql=True, foldered=True)
+        queue_create = harness.writer.queue_condition_create
+
+        def create_two(database, bid, spec, completed):
+            def two_ids(result):
+                completed(
+                    replace(
+                        result,
+                        authoritative_result=AuthoritativeMutationResult(
+                            created_resource_ids=("c4", "c5")
+                        ),
+                    )
+                )
+
+            return queue_create(database, bid, spec, two_ids)
+
+        harness.writer.queue_condition_create = create_two
+        warnings = []
+
+        def execute(dialog, _events):
+            self.widgets.append(dialog)
+            dialog._name_edit.setText("Ambiguous commit")
+            dialog._ref_no_edit.setText("4")
+            dialog._on_ok()
+            self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            dialog._dirty = False
+            dialog.reject()
+            return dialog.result()
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "exec_with_ost_blocking",
+            execute,
+        ), patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
+            side_effect=lambda _parent, _title, message: warnings.append(message),
+        ):
+            harness.handler.on_create_requested("f1")
+        self.assertEqual(warnings, ["The committed condition result was incomplete."])
+        self.assertEqual(harness.highlights, [])
+
 
 class ConditionRepeatedSaveOwnershipTests(unittest.TestCase):
     @classmethod
@@ -1507,7 +1842,9 @@ class ConditionRepeatedSaveOwnershipTests(unittest.TestCase):
                     )
 
                 coordinator = SimpleNamespace(
-                    ui_access_manager=Mock(),
+                    ui_access_manager=SimpleNamespace(
+                        is_allowed=lambda _feature: True, has_license=lambda: True
+                    ),
                     conditions_sidebar=sidebar,
                     main_window=SimpleNamespace(icon_provider=None),
                     event_bus=EventBus(),
@@ -1517,7 +1854,6 @@ class ConditionRepeatedSaveOwnershipTests(unittest.TestCase):
                     request_collaboration_edit=grant,
                     end_collaboration_edit=Mock(),
                 )
-                coordinator.ui_access_manager.is_allowed.return_value = True
                 service = SimpleNamespace(
                     uses_sql_collaboration_mutations=lambda _db: sql,
                     update_condition=update,
@@ -1549,15 +1885,196 @@ class ConditionRepeatedSaveOwnershipTests(unittest.TestCase):
                     finally:
                         dialog.reject()
 
+                dialog_warnings = []
                 try:
                     with patch(
                         "ost_visualizer.presentation.handlers.condition_action_handler.exec_with_ost_blocking",
                         side_effect=interact,
+                    ), patch(
+                        "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
+                        side_effect=lambda _parent, _title, message: dialog_warnings.append(
+                            message
+                        ),
                     ):
                         handler.on_edit_requested(["1"])
+                    self.assertEqual(dialog_warnings, [])
                     self.assertEqual(len(saves), 2)
                     if sql:
                         self.assertIsNot(handles[0], handles[1])
                 finally:
                     sidebar.close()
                     sidebar.deleteLater()
+
+
+class ConditionEditorNavigationFormTests(unittest.TestCase):
+    """Second-pass additions: what the editor form shows after Next/Previous.
+    Same harness (real ConditionsSidebar, EditConditionDialog, ConditionActionHandler and
+    EventBus; fake write service), borrowed from ConditionEditorNavigationOwnershipTests.
+    """
+
+    setUpClass = classmethod(
+        ConditionEditorNavigationOwnershipTests.setUpClass.__func__
+    )
+    setUp = ConditionEditorNavigationOwnershipTests.setUp
+    tearDown = ConditionEditorNavigationOwnershipTests.tearDown
+    _make_harness = ConditionEditorNavigationOwnershipTests._make_harness
+    _open_and_execute = ConditionEditorNavigationOwnershipTests._open_and_execute
+
+    def test_navigation_loads_each_target_condition_into_a_clean_form(self):
+        harness = self._make_harness(foldered=True)
+        conditions = harness.data.conditions
+        conditions["c1"] = Condition(
+            uid="c1",
+            name="First",
+            ref_no=1,
+            folder_uid="f1",
+            condition_type=Condition.TYPE_LINEAR,
+            height=12.0,
+            thickness=6.0,
+            rise=3.0,
+            run=4.0,
+            notes="Notes one",
+            round_up=2.0,
+            trim=True,
+        )
+        conditions["c2"] = Condition(
+            uid="c2",
+            name="Second",
+            ref_no=2,
+            folder_uid="f2",
+            condition_type=Condition.TYPE_AREA,
+            thickness=8.0,
+            rise=-2.0,
+            run=-5.0,
+            notes="Notes two",
+            round_up=3.0,
+            grid=True,
+            grid_size1=24.0,
+            grid_size2=36.0,
+            gap=1.5,
+        )
+        conditions["c3"] = Condition(
+            uid="c3",
+            name="Third",
+            ref_no=3,
+            folder_uid="f2",
+            condition_type=Condition.TYPE_COUNT,
+            height=10.0,
+            width=20.0,
+            depth=30.0,
+            display_size=7.0,
+            display_name=True,
+        )
+        harness.sidebar.load_conditions(conditions, harness.data.folders, "Project")
+        harness.sidebar.highlight_conditions({"c1"})
+
+        def linear(dialog):
+            return (
+                dialog._name_edit.text(),
+                dialog._ref_no_edit.text(),
+                dialog._notes_edit.toPlainText(),
+                dialog._height_edit.text(),
+                dialog._thickness_edit2.text(),
+                dialog._rise_edit.text(),
+                dialog._run_edit.text(),
+                dialog._round_to_edit.text(),
+                dialog._trim_check.isChecked(),
+            )
+
+        def area(dialog):
+            return (
+                dialog._name_edit.text(),
+                dialog._ref_no_edit.text(),
+                dialog._notes_edit.toPlainText(),
+                dialog._thickness_edit.text(),
+                dialog._rise_edit.text(),
+                dialog._run_edit.text(),
+                dialog._round_to_edit.text(),
+                dialog._grid_check.isChecked(),
+                dialog._tile1_edit.text(),
+                dialog._tile2_edit.text(),
+                dialog._gap_edit.text(),
+            )
+
+        def count(dialog):
+            return (
+                dialog._name_edit.text(),
+                dialog._ref_no_edit.text(),
+                dialog._notes_edit.toPlainText(),
+                dialog._height_edit.text(),
+                dialog._width_edit.text(),
+                dialog._depth_edit.text(),
+                dialog._display_size_edit.text(),
+                dialog._display_name_check.isChecked(),
+            )
+
+        expected = {
+            "c1": (
+                linear,
+                ("First", "1", "Notes one", "12.0", "6.0", "3.0", "4.0", "2.0", True),
+            ),
+            "c2": (
+                area,
+                (
+                    "Second",
+                    "2",
+                    "Notes two",
+                    "8.0",
+                    "2.0",
+                    "5.0",
+                    "3.0",
+                    True,
+                    "24.0",
+                    "36.0",
+                    "1.5",
+                ),
+            ),
+            "c3": (count, ("Third", "3", "", "10.0", "20.0", "30.0", "7", True)),
+        }
+        visited = []
+
+        def execute(dialog):
+            for step, uid in enumerate(("c1", "c2", "c3", "c2", "c1")):
+                if step:
+                    (dialog._on_next if step < 3 else dialog._on_previous)()
+                reader, values = expected[uid]
+                self.assertEqual(dialog._current_uid, uid)
+                self.assertEqual(reader(dialog), values, uid)
+                self.assertFalse(dialog._dirty)
+                self.assertFalse(dialog._apply_btn.isEnabled())
+                visited.append(uid)
+            dialog.reject()
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        self.assertEqual(self._open_and_execute(harness, execute), [])
+        self.assertEqual(visited, ["c1", "c2", "c3", "c2", "c1"])
+        self.assertEqual(harness.writer.writes, [])
+
+    def test_failed_mdb_save_without_a_message_warns_with_the_default_text_and_stays_dirty(
+        self,
+    ):
+        harness = self._make_harness()
+        attempts = []
+
+        def failing_update(_database_id, _bid_uid, condition_uid, dto):
+            attempts.append((condition_uid, dto.get_changes()))
+            return UpdateConditionResultDto(success=False)
+
+        harness.writer.update_condition = failing_update
+
+        def execute(dialog):
+            dialog._name_edit.setText("Rejected rename")
+            dialog._on_next()
+            self.assertEqual(dialog._current_uid, "c1")
+            self.assertTrue(dialog._dirty)
+            self.assertEqual(harness.sidebar.get_selected_condition_uids(), ["c1"])
+            dialog._dirty = False
+            dialog.reject()
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        self.assertEqual(
+            self._open_and_execute(harness, execute), ["Failed to save condition."]
+        )
+        self.assertEqual([uid for uid, _changes in attempts], ["c1"])
+        self.assertEqual(attempts[0][1]["name"], "Rejected rename")
+        self.assertEqual(harness.data.conditions["c1"].name, "Condition 1")

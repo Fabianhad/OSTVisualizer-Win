@@ -61,8 +61,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(entry["color"], "#996633")
         self.assertTrue(entry["visible"])
         self.assertFalse(entry["is_negative"])
-        self.assertEqual(len(entry["rings"]), 1)
-        self.assertGreaterEqual(len(entry["rings"][0]), 3)
+        self.assertEqual(entry["name"], "Slab")
+        self.assertEqual(entry["opacity"], 1.0)
+        # 1 OST unit is 1 inch at scale ratio 1, i.e. 72 pt, with no y flip.
+        self.assertEqual(entry["rings"], [[[0.0, 0.0], [72.0, 0.0], [72.0, 72.0]]])
         self.assertEqual(callouts, [])
 
     def test_two_d_takeoff_export_resolves_callout_in_same_geometry_pass(self):
@@ -106,13 +108,12 @@ class ThreejsExportLayerTests(unittest.TestCase):
         group_takeoffs.assert_called_once_with([takeoff], {"condition-1": condition})
         self.assertEqual(len(entries), 1)
         self.assertEqual(len(callouts), 1)
-        ring = entries[0]["rings"][0]
-        center_x = (
-            min(point[0] for point in ring) + max(point[0] for point in ring)
-        ) / 2.0
-        center_y = (
-            min(point[1] for point in ring) + max(point[1] for point in ring)
-        ) / 2.0
+        # 100 x 125 OST units are 7200 x 9000 pt; the callout sits on the center
+        # of the outer ring's bounds.
+        self.assertEqual(
+            entries[0]["rings"],
+            [[[0.0, 0.0], [7200.0, 0.0], [7200.0, 9000.0], [0.0, 9000.0]]],
+        )
         self.assertEqual(
             callouts[0],
             {
@@ -120,8 +121,8 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "condition_uid": "condition-1",
                 "area_uid": "area-1",
                 "layer_uid": "layer-1",
-                "x": center_x,
-                "y": center_y,
+                "x": 3600.0,
+                "y": 4500.0,
                 "lines": ["F9", "410' - 3\"", "406' - 3\"", "12.86 CY"],
                 "color": "#abcdef",
             },
@@ -185,7 +186,9 @@ class ThreejsExportLayerTests(unittest.TestCase):
             "ost_visualizer.presentation.visualization.renderers.threejs."
             "two_d_takeoff_processor"
         )
-        with patch(f"{processor_module}.resolve_elevation_callout") as resolver:
+        with patch(
+            f"{processor_module}.resolve_elevation_callout", autospec=True
+        ) as resolver:
             entries, callouts = process_takeoffs_2d_for_threejs(
                 {condition.uid: condition},
                 [takeoff],
@@ -219,9 +222,15 @@ class ThreejsExportLayerTests(unittest.TestCase):
             area_uid="0",
             position=[1.0, 1.0],
         )
+        assigned = Takeoff(
+            uid="takeoff-2",
+            condition_uid="condition-1",
+            area_uid="area-1",
+            position=[1.0, 1.0],
+        )
         entries, callouts = process_takeoffs_2d_for_threejs(
             {"condition-1": condition},
-            [takeoff],
+            [takeoff, assigned],
             ColorService(),
             _export_support__TakeoffService(),
             {
@@ -233,7 +242,16 @@ class ThreejsExportLayerTests(unittest.TestCase):
             include_elevation_callouts=False,
             inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
-        self.assertEqual(entries[0]["area_uid"], "")
+        self.assertEqual(
+            [(entry["takeoff_uid"], entry["area_uid"]) for entry in entries],
+            [("takeoff-1", ""), ("takeoff-2", "area-1")],
+        )
+        self.assertEqual(entries[0]["kind"], "count")
+        # Count footprint: 1 inch (72 pt) square centered on (72, 72).
+        self.assertEqual(
+            entries[0]["rings"],
+            [[[36.0, 36.0], [108.0, 36.0], [108.0, 108.0], [36.0, 108.0]]],
+        )
         self.assertEqual(callouts, [])
 
     def test_split_display_modes_control_3d_and_2d_opacity_independently(self):
@@ -296,25 +314,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
         )
         self.assertEqual(entries[0]["opacity"], 0.5)
         self.assertEqual(callouts, [])
-
-    def test_original_2d_display_mode_uses_2d_pattern_opacity(self):
-        condition = Condition(
-            uid="condition-1",
-            condition_type=Condition.TYPE_AREA,
-            color_fill=0x336699,
-            pattern=2,
-        )
-        takeoff = Takeoff(
-            uid="takeoff-1",
-            condition_uid="condition-1",
-            page_uid="page-1",
-            position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
-        )
-        entries, callouts = process_takeoffs_2d_for_threejs(
+        solid_entries, _ = process_takeoffs_2d_for_threejs(
             {"condition-1": condition},
             [takeoff],
-            ColorService(),
-            _export_support__TakeoffService(),
+            color_service,
+            takeoff_service,
             {
                 "scale_factor1": 1.0,
                 "scale_factor2": 1.0,
@@ -323,8 +327,298 @@ class ThreejsExportLayerTests(unittest.TestCase):
             },
             include_elevation_callouts=False,
             inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
-            display_mode=Config.DISPLAY_MODE_ORIGINAL,
+            display_mode=Config.DISPLAY_MODE_SOLID,
             grayscale_enabled=False,
         )
-        self.assertEqual(entries[0]["opacity"], 0.0)
+        self.assertEqual(solid_entries[0]["opacity"], 1.0)
+
+    def test_original_2d_display_mode_uses_2d_pattern_opacity(self):
+        # Solid fills stay opaque, line patterns are drawn as hatching so their
+        # fill is transparent, and the transparent pattern is half opacity.
+        for pattern, expected_opacity in ((1, 1.0), (2, 0.0), (8, 0.5)):
+            with self.subTest(pattern=pattern):
+                condition = Condition(
+                    uid="condition-1",
+                    condition_type=Condition.TYPE_AREA,
+                    color_fill=0x336699,
+                    pattern=pattern,
+                )
+                takeoff = Takeoff(
+                    uid="takeoff-1",
+                    condition_uid="condition-1",
+                    page_uid="page-1",
+                    position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+                )
+                entries, callouts = process_takeoffs_2d_for_threejs(
+                    {"condition-1": condition},
+                    [takeoff],
+                    ColorService(),
+                    _export_support__TakeoffService(),
+                    {
+                        "scale_factor1": 1.0,
+                        "scale_factor2": 1.0,
+                        "width": 72.0,
+                        "height": 72.0,
+                    },
+                    include_elevation_callouts=False,
+                    inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                    display_mode=Config.DISPLAY_MODE_ORIGINAL,
+                    grayscale_enabled=False,
+                )
+                self.assertEqual(entries[0]["opacity"], expected_opacity)
+                self.assertEqual(callouts, [])
+
+
+class _HoleTakeoffService(_export_support__TakeoffService):
+    def __init__(self, holes_by_takeoff_uid):
+        self.holes_by_takeoff_uid = holes_by_takeoff_uid
+
+    def group_area_takeoffs_with_holes(self, takeoffs, _conditions):
+        hole_uids = {
+            hole.uid for holes in self.holes_by_takeoff_uid.values() for hole in holes
+        }
+        outer = [takeoff for takeoff in takeoffs if takeoff.uid not in hole_uids]
+        return outer, self.holes_by_takeoff_uid
+
+
+_UNIT_PAGE = {"scale_factor1": 1.0, "scale_factor2": 1.0, "width": 72.0, "height": 72.0}
+
+
+class TwoDTakeoffRingTests(unittest.TestCase):
+    def process(self, conditions, takeoffs, service=None, **overrides):
+        options = {
+            "include_elevation_callouts": False,
+            "inactive_object_color": Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            "grayscale_enabled": False,
+        }
+        options.update(overrides)
+        return process_takeoffs_2d_for_threejs(
+            {condition.uid: condition for condition in conditions},
+            takeoffs,
+            ColorService(),
+            service or _export_support__TakeoffService(),
+            _UNIT_PAGE,
+            **options,
+        )
+
+    def test_area_holes_become_inner_rings_after_the_outer_ring(self):
+        condition = Condition(
+            uid="condition-1", condition_type=Condition.TYPE_AREA, color_fill=0
+        )
+        outer = Takeoff(
+            uid="outer",
+            condition_uid="condition-1",
+            position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0, 0.0, 4.0],
+        )
+        hole = Takeoff(
+            uid="hole",
+            condition_uid="condition-1",
+            parent_uid="outer",
+            position=[1.0, 1.0, 2.0, 1.0, 2.0, 2.0],
+        )
+        too_short = Takeoff(
+            uid="short",
+            condition_uid="condition-1",
+            parent_uid="outer",
+            position=[1.0, 1.0, 2.0, 1.0],
+        )
+        entries, _ = self.process(
+            [condition],
+            [outer, hole, too_short],
+            _HoleTakeoffService({"outer": [hole, too_short]}),
+        )
+        self.assertEqual([entry["takeoff_uid"] for entry in entries], ["outer"])
+        self.assertEqual(
+            entries[0]["rings"],
+            [
+                [[0.0, 0.0], [288.0, 0.0], [288.0, 288.0], [0.0, 288.0]],
+                [[72.0, 72.0], [144.0, 72.0], [144.0, 144.0]],
+            ],
+        )
+
+    def test_straight_linear_ring_is_a_thickness_wide_rectangle(self):
+        condition = Condition(
+            uid="condition-1", condition_type=Condition.TYPE_LINEAR, thickness=0.5
+        )
+        horizontal = Takeoff(
+            uid="h", condition_uid="condition-1", position=[0.0, 0.0, 2.0, 0.0]
+        )
+        vertical = Takeoff(
+            uid="v", condition_uid="condition-1", position=[0.0, 0.0, 0.0, 2.0]
+        )
+        entries, _ = self.process([condition], [horizontal, vertical])
+        self.assertEqual([entry["kind"] for entry in entries], ["linear", "linear"])
+        self.assertEqual(
+            entries[0]["rings"],
+            [[[0.0, 18.0], [0.0, -18.0], [144.0, -18.0], [144.0, 18.0]]],
+        )
+        self.assertEqual(
+            entries[1]["rings"],
+            [[[-18.0, 0.0], [18.0, 0.0], [18.0, 144.0], [-18.0, 144.0]]],
+        )
+
+    def test_linear_thickness_defaults_to_one_unit_and_has_a_visible_minimum(self):
+        unset = Condition(uid="unset", condition_type=Condition.TYPE_LINEAR)
+        hairline = Condition(
+            uid="hairline", condition_type=Condition.TYPE_LINEAR, thickness=0.01
+        )
+        takeoffs = [
+            Takeoff(
+                uid="t-unset", condition_uid="unset", position=[0.0, 0.0, 2.0, 0.0]
+            ),
+            Takeoff(
+                uid="t-hairline",
+                condition_uid="hairline",
+                position=[0.0, 0.0, 2.0, 0.0],
+            ),
+        ]
+        entries, _ = self.process([unset, hairline], takeoffs)
+        by_uid = {entry["takeoff_uid"]: entry["rings"] for entry in entries}
+        # No thickness: 1 unit = 72 pt wide. 0.01 unit = 0.72 pt is widened to the
+        # 2 pt rendering minimum.
+        self.assertEqual(
+            by_uid["t-unset"],
+            [[[0.0, 36.0], [0.0, -36.0], [144.0, -36.0], [144.0, 36.0]]],
+        )
+        self.assertEqual(
+            by_uid["t-hairline"],
+            [[[0.0, 1.0], [0.0, -1.0], [144.0, -1.0], [144.0, 1.0]]],
+        )
+
+    def test_callout_quantity_excludes_holes_and_sits_on_the_outer_ring(self):
+        condition = Condition(
+            uid="condition-1",
+            name="F9 @T 410' 3\"",
+            condition_type=Condition.TYPE_AREA,
+            thickness=48.0,
+            z_value=4923.0,
+            is_top=True,
+        )
+        outer = Takeoff(
+            uid="outer",
+            condition_uid="condition-1",
+            position=[0.0, 0.0, 100.0, 0.0, 100.0, 125.0, 0.0, 125.0],
+        )
+        hole = Takeoff(
+            uid="hole",
+            condition_uid="condition-1",
+            parent_uid="outer",
+            position=[10.0, 10.0, 20.0, 10.0, 20.0, 20.0, 10.0, 20.0],
+        )
+        _, callouts = self.process(
+            [condition],
+            [outer, hole],
+            _HoleTakeoffService({"outer": [hole]}),
+            include_elevation_callouts=True,
+        )
+        self.assertEqual(len(callouts), 1)
+        # (100 * 125 - 10 * 10) units^2 * 48 / 46656 cubic yards = 12.757 -> 12.76,
+        # and the callout stays centered on the outer ring, not the hole.
+        self.assertEqual(callouts[0]["lines"][-1], "12.76 CY")
+        self.assertEqual((callouts[0]["x"], callouts[0]["y"]), (3600.0, 4500.0))
+
+    def test_callout_without_any_selected_content_is_omitted_but_entry_is_kept(self):
+        condition = Condition(
+            uid="condition-1",
+            name="F9 @T 10' 0\"",
+            condition_type=Condition.TYPE_AREA,
+            thickness=24.0,
+            z_value=120.0,
+            is_top=True,
+        )
+        takeoff = Takeoff(
+            uid="t",
+            condition_uid="condition-1",
+            position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+        )
+        empty_settings = ElevationCalloutSettings(
+            include_condition=False,
+            include_top=False,
+            include_bottom=False,
+            include_cubic_yards=False,
+        )
+        entries, callouts = self.process(
+            [condition],
+            [takeoff],
+            include_elevation_callouts=True,
+            elevation_callout_settings=empty_settings,
+        )
+        self.assertEqual([entry["takeoff_uid"] for entry in entries], ["t"])
         self.assertEqual(callouts, [])
+        _, default_callouts = self.process(
+            [condition], [takeoff], include_elevation_callouts=True
+        )
+        self.assertEqual(len(default_callouts), 1)
+
+    def test_takeoffs_without_condition_or_enough_position_are_omitted(self):
+        area = Condition(uid="area", condition_type=Condition.TYPE_AREA)
+        linear = Condition(uid="linear", condition_type=Condition.TYPE_LINEAR)
+        takeoffs = [
+            Takeoff(uid="orphan", condition_uid="foreign", position=[0, 0, 1, 0, 1, 1]),
+            Takeoff(uid="two-points", condition_uid="area", position=[0, 0, 1, 0]),
+            Takeoff(uid="one-point-line", condition_uid="linear", position=[0, 0]),
+            Takeoff(uid="empty", condition_uid="area", position=[]),
+            Takeoff(uid="ok", condition_uid="area", position=[0, 0, 1, 0, 1, 1]),
+        ]
+        entries, callouts = self.process([area, linear], takeoffs)
+        self.assertEqual([entry["takeoff_uid"] for entry in entries], ["ok"])
+        self.assertEqual(callouts, [])
+
+    def test_entry_metadata_name_negative_flag_and_inactive_color(self):
+        named = Condition(
+            uid="named",
+            name="Slab",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0x336699,
+        )
+        unnamed = Condition(
+            uid="unnamed", condition_type=Condition.TYPE_AREA, color_fill=0x336699
+        )
+        triangle = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0]
+        takeoffs = [
+            Takeoff(
+                uid="t-named",
+                condition_uid="named",
+                page_uid="p1",
+                area_uid="area-b",
+                position=triangle,
+                is_negative=True,
+            ),
+            Takeoff(
+                uid="t-unnamed",
+                condition_uid="unnamed",
+                page_uid="p1",
+                area_uid="area-a",
+                position=triangle,
+            ),
+        ]
+        entries, _ = self.process(
+            [named, unnamed],
+            takeoffs,
+            page_area_selections={"p1": "area-a"},
+            inactive_object_color="#010203",
+        )
+        by_uid = {entry["takeoff_uid"]: entry for entry in entries}
+        self.assertEqual(by_uid["t-named"]["name"], "Slab")
+        self.assertEqual(by_uid["t-unnamed"]["name"], "Takeoff t-unnamed")
+        self.assertTrue(by_uid["t-named"]["is_negative"])
+        self.assertFalse(by_uid["t-unnamed"]["is_negative"])
+        # Only the takeoff outside the page's selected Area is recolored.
+        self.assertEqual(by_uid["t-named"]["color"], "#010203")
+        self.assertEqual(by_uid["t-unnamed"]["color"], "#996633")
+
+    def test_grayscale_default_desaturates_entry_colors(self):
+        condition = Condition(
+            uid="condition-1",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0x336699,
+        )
+        takeoff = Takeoff(
+            uid="t",
+            condition_uid="condition-1",
+            position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+        )
+        grayscale, _ = self.process([condition], [takeoff], grayscale_enabled=True)
+        colored, _ = self.process([condition], [takeoff], grayscale_enabled=False)
+        self.assertEqual(grayscale[0]["color"], "#6f6f6f")
+        self.assertEqual(colored[0]["color"], "#996633")

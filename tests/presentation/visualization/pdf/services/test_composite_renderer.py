@@ -3,6 +3,7 @@ from ost_visualizer.presentation.visualization.pdf.services.composite_renderer i
     CompositeRenderer,
 )
 from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+from ost_visualizer.presentation.visualization.utils.image_effects import tint_image
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.application.render_quality import (
@@ -93,6 +94,15 @@ class _SignaturePageCache(_FramePageCache):
     def get_tinted_page(self, *_args, **_kwargs):
         self.tinted_calls += 1
         return _image()
+
+
+class _RasterOverlayPageCache(_SignaturePageCache):
+    def __init__(self):
+        super().__init__()
+        self.signatures["overlay.tif"] = (1, 300)
+
+    def get_page(self, *_args, **_kwargs):
+        return _image(200, 200)
 
 
 class _BlockingContainsDict(OrderedDict):
@@ -732,6 +742,10 @@ class CompositeRendererTests(unittest.TestCase):
         from dataclasses import replace
 
         cache = _SignaturePageCache()
+        # The replacement paths carry the same signatures as the originals so
+        # only the path text can separate their keys, not the signature.
+        cache.signatures["other-base.pdf"] = cache.signatures["base.pdf"]
+        cache.signatures["other.pdf"] = cache.signatures["overlay.pdf"]
         renderer = CompositeRenderer(cache)
         page = _page()
         bid = BidRef("bid.mdb", "bid-1")
@@ -748,13 +762,23 @@ class CompositeRendererTests(unittest.TestCase):
             ("overlay path", replace(page, overlay_image_path="other.pdf"), bid),
         ):
             with self.subTest(name):
-                self.assertIsNot(
-                    renderer.render_composite(other_page, other_bid, 1.0, 0), image
-                )
+                other = renderer.render_composite(other_page, other_bid, 1.0, 0)
+                self.assertIsNotNone(other)
+                self.assertIsNot(other, image)
+        cache.signatures["overlay.pdf"] = (1, 201)
+        self.assertIsNot(renderer.render_composite(page, bid, 1.0, 0), image)
+        cache.signatures["overlay.pdf"] = (1, 200)
+        self.assertIs(renderer.render_composite(page, bid, 1.0, 0), image)
         cache.signatures["base.pdf"] = (2, 100)
         self.assertIsNot(renderer.render_composite(page, bid, 1.0, 0), image)
 
     def test_every_cancellation_checkpoint_discards_the_result_uncached(self):
+        def tif_page():
+            return _page(overlay_image_path="overlay.tif")
+
+        # (name, cache, render, cancellation checks, rendering work, direct):
+        # direct scenarios call the source renderer that get_composite wraps,
+        # so its own last checkpoint is observable without the cache's check.
         scenarios = (
             (
                 "composite",
@@ -763,6 +787,18 @@ class CompositeRendererTests(unittest.TestCase):
                     _page(), None, 1.0, 0, cancelled_check=cancelled
                 ),
                 6,
+                ["tinted", "tinted", "composite"],
+                False,
+            ),
+            (
+                "composite sources",
+                _SignaturePageCache,
+                lambda renderer, cancelled: renderer._render_composite_sources(
+                    _page(), 1.0, 0, cancelled, True
+                ),
+                4,
+                ["tinted", "tinted", "composite"],
+                True,
             ),
             (
                 "pdf frame",
@@ -771,28 +807,127 @@ class CompositeRendererTests(unittest.TestCase):
                     _page(), 1.0, 0.0, 0.0, 100.0, 100.0, 0, cancelled_check=cancelled
                 ),
                 5,
+                ["frame", "tint", "pdf overlay", "frame", "tint"],
+                False,
+            ),
+            (
+                "pdf frame sources",
+                _SignaturePageCache,
+                lambda renderer, cancelled: renderer._render_composite_frame_sources(
+                    _page(), 1.0, 0.0, 0.0, 100.0, 100.0, 0, cancelled, True
+                ),
+                3,
+                ["frame", "tint", "pdf overlay", "frame", "tint"],
+                True,
+            ),
+            (
+                "raster frame",
+                _RasterOverlayPageCache,
+                lambda renderer, cancelled: renderer.render_composite_frame(
+                    tif_page(),
+                    1.0,
+                    0.0,
+                    0.0,
+                    100.0,
+                    100.0,
+                    0,
+                    cancelled_check=cancelled,
+                ),
+                5,
+                ["frame", "tint", "raster overlay", "page", "tint"],
+                False,
+            ),
+            (
+                "raster frame sources",
+                _RasterOverlayPageCache,
+                lambda renderer, cancelled: renderer._render_composite_frame_sources(
+                    tif_page(), 1.0, 0.0, 0.0, 100.0, 100.0, 0, cancelled, True
+                ),
+                4,
+                ["frame", "tint", "raster overlay", "page", "tint"],
+                True,
             ),
         )
-        for name, make_cache, render, minimum_checks in scenarios:
+        module = (
+            "ost_visualizer.presentation.visualization.pdf.services.composite_renderer"
+        )
+        for name, make_cache, render, minimum_checks, full_work, direct in scenarios:
 
             def run(fire_at):
-                cache = make_cache()
+                events = []
+
+                class LoggingCache(make_cache):
+                    def get_tinted_page(self, *args, **kwargs):
+                        events.append("tinted")
+                        return super().get_tinted_page(*args, **kwargs)
+
+                    def get_frame(self, *args, **kwargs):
+                        events.append("frame")
+                        return super().get_frame(*args, **kwargs)
+
+                    def get_page(self, *args, **kwargs):
+                        events.append("page")
+                        return super().get_page(*args, **kwargs)
+
+                def logged(label, original):
+                    def wrapper(*args, **kwargs):
+                        events.append(label)
+                        return original(*args, **kwargs)
+
+                    return wrapper
+
+                cache = LoggingCache()
                 checks = [0]
 
                 def cancelled():
                     checks[0] += 1
+                    if checks[0] == fire_at:
+                        events.append("CANCELLED")
                     return fire_at is not None and checks[0] >= fire_at
 
-                return render(CompositeRenderer(cache), cancelled), checks[0], cache
+                with patch.object(
+                    CompositeRenderer,
+                    "_composite_images",
+                    logged("composite", CompositeRenderer._composite_images),
+                ), patch.object(
+                    CompositeRenderer,
+                    "_draw_overlay_pdf_frame",
+                    logged("pdf overlay", CompositeRenderer._draw_overlay_pdf_frame),
+                ), patch.object(
+                    CompositeRenderer,
+                    "_draw_overlay_raster_frame",
+                    logged(
+                        "raster overlay", CompositeRenderer._draw_overlay_raster_frame
+                    ),
+                ), patch(
+                    f"{module}.tint_image",
+                    logged("tint", tint_image),
+                ):
+                    result = render(CompositeRenderer(cache), cancelled)
+                return result, checks[0], cache, events
 
-            image, total_checks, _cache = run(None)
+            result, total_checks, _cache, events = run(None)
+            image = result[0] if direct else result
             self.assertIsNotNone(image, name)
+            if direct:
+                self.assertTrue(result[1], name)
             self.assertGreaterEqual(total_checks, minimum_checks, name)
+            self.assertEqual(events, full_work, name)
             for fire_at in range(1, total_checks + 1):
                 with self.subTest(scenario=name, cancelled_at_check=fire_at):
-                    image, _checks, cache = run(fire_at)
-                    self.assertIsNone(image)
+                    result, _checks, cache, events = run(fire_at)
+                    if direct:
+                        self.assertEqual(result, (None, False))
+                    else:
+                        self.assertIsNone(result)
                     self.assertEqual(len(cache._composite_cache), 0)
+                    # A fired checkpoint must stop all further rendering work,
+                    # not merely leave the final cache check to drop the result.
+                    fired_at = events.index("CANCELLED")
+                    self.assertEqual(events[fired_at + 1 :], [])
+                    self.assertEqual(
+                        events[:fired_at], full_work[: len(events[:fired_at])]
+                    )
 
     def test_frame_requests_are_clipped_to_the_page_before_rendering_sources(self):
         for frame, expected in (
@@ -820,6 +955,24 @@ class CompositeRendererTests(unittest.TestCase):
             )
         )
         self.assertEqual(cache.calls, [])
+
+    def test_equivalent_clipped_pdf_frames_share_one_cached_composite(self):
+        renderer = CompositeRenderer(_SignaturePageCache())
+        page = _page()
+        clipped = renderer.render_composite_frame(page, 1.0, 0.0, 0.0, 50.0, 50.0, 0)
+        self.assertIsNotNone(clipped)
+        # Requests that clip to the same page rectangle must hit one cache entry.
+        self.assertIs(
+            renderer.render_composite_frame(page, 1.0, -10.0, -10.0, 60.0, 60.0, 0),
+            clipped,
+        )
+        self.assertIsNot(
+            renderer.render_composite_frame(page, 1.0, 0.0, 0.0, 51.0, 50.0, 0),
+            clipped,
+        )
+        self.assertIsNone(
+            renderer.render_composite_frame(page, 1.0, 200.0, 200.0, 10.0, 10.0, 0)
+        )
 
 
 class CompositeRendererPreferenceTests(unittest.TestCase):

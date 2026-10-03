@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -35,6 +36,13 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
         _toolbar_visibility_support_register_test_fonts()
 
     def setUp(self):
+        # Exceptions raised inside Qt slots reach sys.excepthook and would otherwise
+        # be swallowed; fail the test if any occur.
+        errors = []
+        hook = patch("sys.excepthook", side_effect=lambda *error: errors.append(error))
+        hook.start()
+        self.addCleanup(hook.stop)
+        self.addCleanup(lambda: self.assertEqual(errors, []))
         self.bundle, self.zoom = self._main_components()
         self.controller = self.bundle.takeoff_toolbar_visibility
         self.toolbar = self.controller.parent()
@@ -87,7 +95,17 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
             self.assertTrue(self.item("line_annotation_tool").isVisible())
             dialog._apply_button.click()
             self.assertFalse(self.item("line_annotation_tool").isVisible())
+            # Only the unchecked tool is hidden; its neighbours stay visible.
+            self.assertTrue(self.item("arrow_annotation_tool").isVisible())
             self.assertEqual(refresh_required, [False])
+            # The saved file (under the temporary directory) holds the literal
+            # hidden list that the recreated toolbar is later restored from.
+            self.assertEqual(
+                json.loads(path.read_text(encoding="utf-8"))[
+                    "hidden_takeoff_toolbar_items"
+                ],
+                ["line_annotation_tool"],
+            )
             dialog.reject()
             self.assertNotIn(
                 "hidden_takeoff_toolbar_items",

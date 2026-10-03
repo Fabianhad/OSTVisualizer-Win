@@ -166,14 +166,15 @@ class ImportHandler:
                 parent=self.window,
             )
             try:
-                rc = dialog.exec()
+                dialog.exec()
+                worker_result = dialog.result
                 worker_error = dialog.error
             finally:
                 dialog.cleanup()
                 delete_later_if_valid(dialog)
             if not isValid(self.window):
                 return
-            if rc == QtWidgets.QDialog.DialogCode.Accepted:
+            if worker_result:
                 if self._import_service.reload_and_notify(target_db):
                     show_info(
                         self.window,

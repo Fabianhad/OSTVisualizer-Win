@@ -19,6 +19,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.managers.ui_access_manager import (
     _DATABASE_EDIT_FEATURES,
+    _LOCK_BLOCKED,
     MAIN_PLAN_SURFACE_ID,
     Feature,
     UIAccessManager,
@@ -259,7 +260,10 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
         project_data.locked = True
         self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
-        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+        # Decision H1: the Condition folder commands (create/rename/delete folder,
+        # cut/paste-move, drag-move) are writes the service guard already rejects on a
+        # locked active Bid, so the UI permission blocks them as well.
+        self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
         self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION))
         self.assertFalse(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
         self.assertFalse(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
@@ -277,6 +281,184 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.DELETE_BID))
         self.assertTrue(manager.is_allowed(Feature.DUPLICATE_BID))
+
+    def test_bid_lock_blocks_condition_structure_writes_but_not_read_only_features(
+        self,
+    ):
+        project_data = _permissions__ProjectData()
+        manager = self._access_manager(project_data)
+        read_only_features = (
+            Feature.COPY_CONDITION,
+            Feature.COPY_BID,
+            Feature.EXPORT,
+            Feature.EXPORT_BID_FILE,
+            Feature.VIEW_2D,
+            Feature.VIEW_3D,
+            Feature.UNLOAD_FILE,
+        )
+        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+        for feature in read_only_features:
+            with self.subTest(unlocked=feature):
+                self.assertTrue(manager.is_allowed(feature))
+        project_data.locked = True
+        self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+        self.assertFalse(
+            manager.is_allowed(
+                Feature.EDIT_CONDITION_STRUCTURE,
+                ResourceRef(
+                    "conditions_collection",
+                    str(project_data.bid_ref.bid_uid),
+                    int(project_data.bid_ref.bid_uid),
+                ),
+            )
+        )
+        for feature in read_only_features:
+            with self.subTest(locked=feature):
+                self.assertTrue(manager.is_allowed(feature))
+        project_data.locked = False
+        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+
+    def test_condition_structure_permission_matrix_by_role_is_unchanged_by_lock(self):
+        # Editor (editable database) is blocked only by the lock; viewer (read-only
+        # database) is blocked locked or not; the lock never grants anything.
+        for editable, locked, expected in (
+            (True, False, True),
+            (True, True, False),
+            (False, False, False),
+            (False, True, False),
+        ):
+            with self.subTest(editable=editable, locked=locked):
+                project_data = _permissions__ProjectData()
+                project_data.locked = locked
+                manager = self._access_manager(
+                    project_data,
+                    capability=_permissions__DatabaseCapability(editable=editable),
+                )
+                self.assertEqual(
+                    manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE), expected
+                )
+                self.assertEqual(manager.is_allowed(Feature.COPY_CONDITION), True)
+
+    def test_lock_blocked_features_are_bid_contents_never_project_tree_structure(self):
+        # Decision P4: the Bid status lock covers the Bid's own contents; project-level
+        # structure (projects, folders, Bid placement) is not in the lock set.
+        self.assertEqual(
+            _LOCK_BLOCKED,
+            frozenset(
+                {
+                    Feature.EDIT_CONDITION_STRUCTURE,
+                    Feature.EDIT_PAGE_SETTINGS,
+                    Feature.SELECT_PLAN_ITEMS,
+                    Feature.EDIT_PLAN_ITEMS,
+                    Feature.PLACE_PLAN_ITEMS,
+                    Feature.PLACE_ANNOTATIONS,
+                    Feature.DUPLICATE_CONDITION,
+                    Feature.DELETE_CONDITION,
+                    Feature.EDIT_CONDITION,
+                    Feature.EDIT_ANNOTATION_TEXT,
+                }
+            ),
+        )
+        self.assertNotIn(Feature.EDIT_PROJECT_TREE_STRUCTURE, _LOCK_BLOCKED)
+
+    def test_project_tree_structure_permission_matrix_by_role_is_unchanged_by_lock(
+        self,
+    ):
+        # Decision P4: every project-level use of EDIT_PROJECT_TREE_STRUCTURE (menu New
+        # Project/Folder, New Bid, drag-move/restore Bids, rename/delete project,
+        # database maintenance) is decided by the database role only. Editor: allowed
+        # locked or not; viewer: denied locked or not; the lock never changes it.
+        # Decision Q1 changes the contract for exactly three rows: moving/restoring,
+        # trashing and deleting the project of the ACTIVE locked Bid itself are also
+        # denied for an editor while it is locked (checked after the role matrix).
+        for editable, locked in (
+            (True, False),
+            (True, True),
+            (False, False),
+            (False, True),
+        ):
+            with self.subTest(editable=editable, locked=locked):
+                project_data = _permissions__ProjectData()
+                project_data.locked = locked
+                manager = self._access_manager(
+                    project_data,
+                    capability=_permissions__DatabaseCapability(editable=editable),
+                )
+                database_id = project_data.bid_ref.file_path
+                decisions = {
+                    "is_allowed": manager.is_allowed(
+                        Feature.EDIT_PROJECT_TREE_STRUCTURE
+                    ),
+                    "can_create_project_tree_items": (
+                        manager.can_create_project_tree_items(True)
+                    ),
+                    "can_create_bid_in_project": manager.can_create_bid(
+                        database_id, "project-1"
+                    ),
+                    "can_create_bid_orphan": manager.can_create_bid(database_id, None),
+                    "can_create_project": manager.can_create_project(database_id),
+                    "can_edit_bid_structure": manager.can_edit_bid_structure(
+                        [BidRef(database_id, "8")]
+                    ),
+                    "can_edit_project": manager.can_edit_project(database_id, "2"),
+                    "can_delete_projects": manager.can_delete_projects(
+                        database_id, ["2"]
+                    ),
+                    "can_maintain_database": manager.can_maintain_database(database_id),
+                }
+                self.assertEqual(decisions, {name: editable for name in decisions})
+                active_bid_rows = {
+                    "can_edit_bid_structure": manager.can_edit_bid_structure(
+                        [project_data.bid_ref]
+                    ),
+                    "can_delete_bids": manager.can_delete_bids([project_data.bid_ref]),
+                    "can_delete_projects": manager.can_delete_projects(
+                        database_id, [project_data.project_uid]
+                    ),
+                }
+                self.assertEqual(
+                    active_bid_rows,
+                    {name: editable and not locked for name in active_bid_rows},
+                )
+                # Contrast: a Bid-contents feature is blocked by the lock alone.
+                self.assertEqual(
+                    manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE),
+                    editable and not locked,
+                )
+
+    def test_project_tree_structure_permission_ignores_lock_of_other_database(self):
+        # The active Bid is locked in test.mdb. Project-tree structure of another
+        # database follows only that database's capability (resource kinds pinned).
+        project_data = _permissions__ProjectData()
+        project_data.locked = True
+        checks = []
+
+        class _TargetCapability:
+            def is_editable(self, locator, resource=None):
+                checks.append((locator, resource))
+                return locator == "C:/jobs/target.mdb"
+
+        manager = self._access_manager(project_data, capability=_TargetCapability())
+        target = "C:/jobs/target.mdb"
+        self.assertTrue(manager.can_edit_project(target, "9"))
+        self.assertTrue(manager.can_create_project(target))
+        self.assertTrue(manager.can_edit_bid_structure([BidRef(target, "5")]))
+        self.assertEqual(
+            checks,
+            [
+                (target, ResourceRef("project", "9", 9)),
+                (target, ResourceRef("projects_collection", "database")),
+                (target, ResourceRef("bid", "5", 5)),
+            ],
+        )
+        # Negative control: the locked Bid's own database is denied by its capability
+        # (editable only for the target), proving the answers above come from the
+        # capability and not from the lock.
+        self.assertFalse(manager.can_edit_project("C:/jobs/test.mdb", "9"))
+        self.assertFalse(manager.can_edit_bid_structure([project_data.bid_ref]))
+        project_data.locked = False
+        self.assertTrue(manager.can_edit_project(target, "9"))
+        self.assertFalse(manager.can_edit_project("C:/jobs/test.mdb", "9"))
 
     def test_annotation_layer_visibility_blocks_only_annotation_placement(self):
         project_data = _permissions__ProjectData()
@@ -392,6 +574,145 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
         self.assertFalse(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
+
+
+class ActiveLockedBidTreeActionPermissionTests(unittest.TestCase):
+    """Decision Q1: moving, trashing, restoring and cut/paste-moving the status-locked
+    ACTIVE Bid, and deleting the project that contains it, are disabled (the services
+    refuse them on both backends); every other Bid, project and project-level action
+    stays enabled, a locked Bid of another database blocks nothing, and permanent delete
+    of a Bid already in 'Deleted Bids' stays allowed (Access delete_bids is unguarded).
+    Fake: shared project-data double (active Bid 7 of C:/jobs/test.mdb in project-1),
+    capability fake; roles are the editable flag."""
+
+    DATABASE = "C:/jobs/test.mdb"
+
+    def _manager(self, project_data, editable=True):
+        return UIAccessManager(
+            _permissions__EventBus(),
+            _permissions__License(),
+            _permissions__TransactionMonitor(),
+            project_data,
+            _permissions__UiState(project_data.bid_ref),
+            _permissions__DatabaseCapability(editable=editable),
+        )
+
+    def _locked(self, editable=True):
+        project_data = _permissions__ProjectData()
+        project_data.locked = True
+        return project_data, self._manager(project_data, editable)
+
+    def test_bid_move_and_restore_predicate_blocks_only_the_active_locked_bid(self):
+        project_data, manager = self._locked()
+        active = BidRef(self.DATABASE, "7")
+        other = BidRef(self.DATABASE, "8")
+        self.assertFalse(manager.can_edit_bid_structure([active]))
+        self.assertFalse(manager.can_edit_bid_structure([other, active]))
+        self.assertFalse(manager.can_edit_bid_structure([active, other]))
+        self.assertTrue(manager.can_edit_bid_structure([other]))
+        # Same Bid uid in another database is a different Bid (Access compares the
+        # database too); a differently spelled path of the active database is the same.
+        self.assertTrue(
+            manager.can_edit_bid_structure([BidRef("C:/jobs/other.mdb", "7")])
+        )
+        self.assertFalse(
+            manager.can_edit_bid_structure([BidRef("C:/jobs/./test.mdb", "7")])
+        )
+        project_data.locked = False
+        self.assertTrue(manager.can_edit_bid_structure([active]))
+        self.assertTrue(manager.can_edit_bid_structure([other, active]))
+
+    def test_bid_move_predicate_ignores_a_lock_in_another_database(self):
+        project_data = _permissions__ProjectData()
+        project_data.locked = True
+        project_data.bid_ref = BidRef("C:/jobs/other.mdb", "7")
+        manager = self._manager(project_data)
+        self.assertTrue(manager.can_edit_bid_structure([BidRef(self.DATABASE, "7")]))
+        self.assertTrue(manager.can_delete_bids([BidRef(self.DATABASE, "7")]))
+        self.assertTrue(
+            manager.can_delete_projects(self.DATABASE, [project_data.project_uid])
+        )
+        self.assertFalse(manager.can_edit_bid_structure([project_data.bid_ref]))
+
+    def test_trash_and_cut_predicate_blocks_the_active_locked_bid_outside_deleted_bids(
+        self,
+    ):
+        project_data, manager = self._locked()
+        active = BidRef(self.DATABASE, "7")
+        other = BidRef(self.DATABASE, "8")
+        self.assertFalse(manager.can_delete_bids([active]))
+        self.assertFalse(manager.can_delete_bids([other, active]))
+        self.assertTrue(manager.can_delete_bids([other]))
+        # The active Bid already in 'Deleted Bids': its permanent delete is a plain
+        # delete_bids on both backends (unguarded), so the command stays enabled.
+        project_data.project_uid = "1"
+        self.assertTrue(manager.can_delete_bids([active]))
+        project_data.project_uid = "project-1"
+        project_data.locked = False
+        self.assertTrue(manager.can_delete_bids([active]))
+        self.assertFalse(manager.can_delete_bids([]))
+
+    def test_cut_paste_move_predicate_blocks_the_active_locked_bid_but_not_copy_paste(
+        self,
+    ):
+        project_data, manager = self._locked()
+        active = BidRef(self.DATABASE, "7")
+        other = BidRef(self.DATABASE, "8")
+        move = Feature.DELETE_BID
+        copy = Feature.DUPLICATE_BID
+        self.assertFalse(
+            manager.is_project_bid_clipboard_allowed(move, self.DATABASE, [active], "3")
+        )
+        self.assertFalse(
+            manager.is_project_bid_clipboard_allowed(
+                move, self.DATABASE, [other, active], "3"
+            )
+        )
+        self.assertTrue(
+            manager.is_project_bid_clipboard_allowed(move, self.DATABASE, [other], "3")
+        )
+        # Paste of a copy duplicates the Bid; Access duplicate_bid is not guarded.
+        self.assertTrue(
+            manager.is_project_bid_clipboard_allowed(copy, self.DATABASE, [active], "3")
+        )
+        project_data.locked = False
+        self.assertTrue(
+            manager.is_project_bid_clipboard_allowed(move, self.DATABASE, [active], "3")
+        )
+
+    def test_project_delete_predicate_blocks_only_the_project_of_the_active_locked_bid(
+        self,
+    ):
+        project_data, manager = self._locked()
+        active_project = project_data.project_uid
+        self.assertFalse(manager.can_delete_projects(self.DATABASE, [active_project]))
+        self.assertFalse(
+            manager.can_delete_projects(self.DATABASE, ["2", active_project])
+        )
+        self.assertTrue(manager.can_delete_projects(self.DATABASE, ["2"]))
+        project_data.locked = False
+        self.assertTrue(manager.can_delete_projects(self.DATABASE, [active_project]))
+
+    def test_other_project_level_actions_stay_enabled_on_the_locked_bid(self):
+        project_data, manager = self._locked()
+        self.assertTrue(manager.can_create_project_tree_items(True))
+        self.assertTrue(manager.can_create_bid(self.DATABASE, "project-1"))
+        self.assertTrue(manager.can_create_bid(self.DATABASE, None))
+        self.assertTrue(manager.can_create_project(self.DATABASE))
+        self.assertTrue(manager.can_edit_project(self.DATABASE, "project-1"))
+        self.assertTrue(manager.can_maintain_database(self.DATABASE))
+        self.assertTrue(manager.can_duplicate_bid(project_data.bid_ref))
+
+    def test_viewer_is_denied_move_trash_and_project_delete_whatever_the_lock(self):
+        for locked in (False, True):
+            with self.subTest(locked=locked):
+                project_data = _permissions__ProjectData()
+                project_data.locked = locked
+                manager = self._manager(project_data, editable=False)
+                other = BidRef(self.DATABASE, "8")
+                self.assertFalse(manager.can_edit_bid_structure([other]))
+                self.assertFalse(manager.can_delete_bids([other]))
+                self.assertFalse(manager.can_delete_projects(self.DATABASE, ["2"]))
 
 
 class PlanSurfaceAccessTests(unittest.TestCase):
@@ -794,3 +1115,94 @@ class ExplicitTargetAccessTests(unittest.TestCase):
         self.license.valid = False
         self.assertTrue(self.manager.can_close_database("project.mdb"))
         self.assertFalse(self.manager.can_edit_project("project.mdb", "3"))
+
+
+class PlanSurfaceContextPathIdentityTests(unittest.TestCase):
+    """Decision S2: a plan surface context is consistent when its database path and its
+    Bid's path name the same database (normalize_path, like the manager's other path
+    comparisons); a context for another database still fails closed."""
+
+    DISPLAYED = "C:\\Jobs\\Bid.mdb"
+    ALIASES = (
+        ("lower case with slashes", "c:/jobs/bid.mdb"),
+        ("upper case", "C:\\JOBS\\BID.MDB"),
+        ("doubled separator", "C:\\Jobs\\\\Bid.mdb"),
+        ("current-directory segment", "C:\\Jobs\\.\\Bid.mdb"),
+        ("parent-directory segment", "C:\\Jobs\\Sub\\..\\Bid.mdb"),
+        ("trailing separator", "C:\\Jobs\\Bid.mdb\\"),
+    )
+    OTHERS = (
+        ("other file name", "C:\\Jobs\\Other.mdb"),
+        ("other folder", "C:\\Jobs2\\Bid.mdb"),
+        ("longer file name", "C:\\Jobs\\Bid.mdb.bak"),
+        ("other drive", "D:\\Jobs\\Bid.mdb"),
+    )
+
+    def _manager(self, bid_ref):
+        self.capabilities = _surface_access_support__Capabilities()
+        manager = UIAccessManager(
+            _surface_access_support__EventBus(),
+            _surface_access_support__License(),
+            _surface_access_support__TransactionMonitor(),
+            _surface_access_support__ProjectData(bid_ref),
+            _surface_access_support__UiState(bid_ref),
+            self.capabilities,
+        )
+        self.addCleanup(manager.cleanup)
+        return manager
+
+    @staticmethod
+    def _context(bid_ref, database_id):
+        return PlanSurfaceAccessContext(
+            surface_id="detached-plan",
+            database_id=database_id,
+            bid_ref=bid_ref,
+            page_uid="page-a",
+            annotation_layer_visible=True,
+        )
+
+    def test_a_context_whose_database_path_is_another_spelling_of_the_bids_is_valid(
+        self,
+    ):
+        for label, alias in self.ALIASES:
+            for side, bid_path, database_id in (
+                ("context path", self.DISPLAYED, alias),
+                ("bid path", alias, self.DISPLAYED),
+            ):
+                with self.subTest(label, side=side):
+                    bid_ref = BidRef(bid_path, "7")
+                    manager = self._manager(bid_ref)
+                    state = manager.get_plan_surface_access(
+                        self._context(bid_ref, database_id)
+                    )
+                    self.assertTrue(state.can_edit_page_settings)
+                    self.assertTrue(state.can_place_annotations)
+                    self.assertEqual(
+                        [
+                            request
+                            for request in self.capabilities.requests
+                            if request[1] is not None
+                            and request[1].resource_type == "page"
+                        ],
+                        [(database_id, ResourceRef("page", "page-a", 7))],
+                    )
+
+    def test_a_context_for_another_database_still_fails_closed(self):
+        bid_ref = BidRef(self.DISPLAYED, "7")
+        for label, other in self.OTHERS + (("empty path", ""),):
+            with self.subTest(label):
+                manager = self._manager(bid_ref)
+                self.assertEqual(
+                    manager.get_plan_surface_access(self._context(bid_ref, other)),
+                    PlanSurfaceAccessState(),
+                )
+                self.assertEqual(self.capabilities.requests, [])
+
+    def test_an_aliased_database_path_still_needs_the_current_bid(self):
+        bid_ref = BidRef(self.DISPLAYED, "7")
+        manager = self._manager(BidRef(self.DISPLAYED, "8"))
+        self.assertEqual(
+            manager.get_plan_surface_access(self._context(bid_ref, "c:/jobs/bid.mdb")),
+            PlanSurfaceAccessState(),
+        )
+        self.assertEqual(self.capabilities.requests, [])

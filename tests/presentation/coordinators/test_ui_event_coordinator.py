@@ -249,7 +249,7 @@ from tests.presentation.coordinators.hotlink_navigation_support import (
     FakeHotlinkViewer as _detached_support_FakeHotlinkViewer,
 )
 from unittest.mock import Mock
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, call
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
@@ -2571,6 +2571,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
             database_id="sql-database",
             outcome_status=MutationOutcomeStatus.CONFLICT,
             message="conflict",
+            rejection_reason=None,
         )
         coordinator._is_cleaning_up = False
         coordinator._sidebar = SimpleNamespace(
@@ -2613,6 +2614,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
             database_id="sql-database",
             outcome_status=MutationOutcomeStatus.CONFLICT,
             message="conflict",
+            rejection_reason=None,
         )
         coordinator._is_cleaning_up = False
         coordinator._on_queued_layer_write_complete(committed)
@@ -2662,6 +2664,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
             database_id="sql-database",
             outcome_status=MutationOutcomeStatus.CONFLICT,
             message="conflict",
+            rejection_reason=None,
         )
 
         def queue_delete(_database_id, _bid_uid, _layer_uid, callback):
@@ -2732,7 +2735,9 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
 
         def outcome(status, message=""):
-            return SimpleNamespace(outcome_status=status, message=message)
+            return SimpleNamespace(
+                outcome_status=status, message=message, rejection_reason=None
+            )
 
         with (
             patch.object(ui_event_coordinator, "show_warning") as warning,
@@ -6212,7 +6217,7 @@ class UIEventCoordinatorOnFileUnloadedTests(_UIEventCoordinatorTakeoffsChangedFi
         clipboard.cut([BidRef("C:/jobs/other.mdb", "bid-1")])
         coordinator._bid_clipboard = clipboard
         coordinator._on_file_unloaded(
-            file_path="C:\jobs\active.mdb",
+            file_path="C:\\jobs\\active.mdb",
             active_context_removed=False,
         )
         self.assertTrue(clipboard.has_content())
@@ -6567,8 +6572,10 @@ class UIEventCoordinatorHandlePageSelectionTests(
         coordinator._placement = SimpleNamespace()
         coordinator._nav = SimpleNamespace(start_refresh=lambda *_args, **_kwargs: True)
         coordinator._do_file_refresh = lambda: None
-        coordinator._finish_refresh = lambda: coordinator._update_page_selection(
-            ["page-a"]
+        finished_refreshes = []
+        coordinator._finish_refresh = lambda: (
+            finished_refreshes.append(True),
+            coordinator._update_page_selection(["page-a"]),
         )
         bus = EventBus()
         bus.subscribe(AppEvents.DATABASE_REFRESHED, coordinator._on_database_refreshed)
@@ -6584,6 +6591,8 @@ class UIEventCoordinatorHandlePageSelectionTests(
         service._save_page_name = SimpleNamespace(execute=lambda *_args: True)
         service._project_data = SimpleNamespace(get_page=lambda _uid: None)
         self.assertTrue(service.save_page_name(bid_ref.file_path, "page-a", "Renamed"))
+        # Positive control: the Page-name refresh really reached the coordinator.
+        self.assertEqual(finished_refreshes, [True])
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
         self.assertEqual(embedded.clear_calls, 0)
         self.assertEqual(detached.clear_calls, 0)
@@ -6611,8 +6620,10 @@ class UIEventCoordinatorHandlePageSelectionTests(
         coordinator._placement = SimpleNamespace()
         coordinator._nav = SimpleNamespace(start_refresh=lambda *_args, **_kwargs: True)
         coordinator._do_file_refresh = lambda: None
-        coordinator._finish_refresh = lambda: coordinator._update_page_selection(
-            ["page-a"]
+        finished_refreshes = []
+        coordinator._finish_refresh = lambda: (
+            finished_refreshes.append(True),
+            coordinator._update_page_selection(["page-a"]),
         )
         bus = EventBus()
         bus.subscribe(AppEvents.DATABASE_REFRESHED, coordinator._on_database_refreshed)
@@ -6639,6 +6650,8 @@ class UIEventCoordinatorHandlePageSelectionTests(
         self.assertTrue(
             service.update_layer_name(bid_ref.file_path, "layer-1", "Renamed walls")
         )
+        # Positive control: the Layer-name refresh really reached the coordinator.
+        self.assertEqual(finished_refreshes, [True])
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
         self.assertEqual(embedded.clear_calls, 0)
         self.assertEqual(detached.clear_calls, 0)
@@ -7536,6 +7549,22 @@ class UIEventCoordinatorOnViewStackChangedTests(
         coordinator.ui_state_manager = None
         coordinator.plan_view = None
         coordinator._on_view_stack_changed(0)
+        for index in (0, 1, 2):
+            ignored = UIEventCoordinator.__new__(UIEventCoordinator)
+            ignored._is_cleaning_up = True
+            ignored.ui_state_manager = FakeUiState()
+            ignored.project_data = FakeProjectData()
+            ignored._placement = FakePlacement()
+            ignored._toolbar = FakeToolbar()
+            ignored._sidebar = FakeSidebar()
+            ignored.plan_view = None
+            ignored.opengl_viewer = None
+            ignored._sync_page_info_status = lambda: self.fail("must not run")
+            ignored._on_view_stack_changed(index)
+            self.assertEqual(ignored._placement.force_exit_count, 0)
+            self.assertEqual(ignored._toolbar.refreshes, 0)
+            self.assertEqual(ignored._toolbar.select_checked, 0)
+            self.assertEqual(ignored._sidebar.quantity_updates, 0)
 
 
 class UIEventCoordinatorOnNativeSceneUpdatedTests(
@@ -9240,6 +9269,349 @@ class UIEventCoordinatorDeleteCurrentPageTests(
             reported, [("sql-database", "Delete Page", failed, {"critical": True})]
         )
 
+    def _sql_page_delete_harness(self):
+        """A coordinator that queued a SQL delete of p1 (staging p2) and can then
+        run the real remote PAGES projection that consumes the staged selection."""
+        bid_ref = BidRef("sql-database", "7")
+        pages = {
+            uid: Page(uid=uid, name=uid, sequence=index)
+            for index, uid in enumerate(("p1", "p2", "p3"), start=1)
+        }
+        queued = []
+        reported = []
+
+        class UiState:
+            active_page_uid = "p1"
+            selected_page_uids = ["p1"]
+
+            @staticmethod
+            def get_selected_bid_ref():
+                return bid_ref
+
+            def set_page_selection(self, page_uids):
+                self.selected_page_uids = list(page_uids)
+
+        class ProjectData:
+            @staticmethod
+            def get_page(page_uid):
+                return pages.get(page_uid)
+
+            @staticmethod
+            def get_all_pages():
+                return list(pages.values())
+
+            @staticmethod
+            def get_page_takeoffs(_uid):
+                return []
+
+            @staticmethod
+            def get_page_annotations(_uid):
+                return []
+
+            @staticmethod
+            def get_page_delete_content_snapshot(*_args):
+                return set()
+
+            @staticmethod
+            def select_pages(page_uids):
+                return list(page_uids)
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_file_path):
+                return True
+
+            @staticmethod
+            def queue_pages_delete(file_path, bid_uid, page_uids, callback):
+                queued.append((file_path, bid_uid, list(page_uids), callback))
+                return 9
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator._project_write_service = WriteService()
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["p1", "p2", "p3"],
+            restore_selection=lambda *_args: False,
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.main_window = FakeMainWindow()
+        coordinator.main_window.is_takeoff_tab_active = lambda: True
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._pending_takeoff_active_page_uid = None
+        coordinator._pending_takeoff_selected_area_uid = ""
+        coordinator._pending_takeoff_place_condition_uid = None
+        coordinator._pending_takeoff_place_condition_uids = []
+
+        class Deferred(FakeDeferredPersistence):
+            @staticmethod
+            def reproject_newer_page_visual_revisions(*_args):
+                return None
+
+        coordinator._deferred_persistence = Deferred()
+        coordinator.project_operations = ImmediateNavigationOperations()
+        coordinator._status_panel = _CollaborationStatusPanel()
+        coordinator._tab_widget = FakeTabWidget(index=TAB_INDEX_SUMMARY)
+        coordinator._view_stack = FakeViewStack(index=1)
+        coordinator._undo_service = None
+        coordinator._selected_takeoff_uids = ()
+        coordinator._plan_view_handler = None
+        coordinator.plan_view = None
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=None,
+            load_takeoff_sidebar_from_memory=lambda *_args: None,
+            update_conditions_quantities=lambda: None,
+        )
+        coordinator._bid_data_cache = {}
+        coordinator._page_settings_bar = object()
+        coordinator._update_page_settings_bar = lambda _page_uid: None
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._sync_navigation_for_active_page = lambda *_args: None
+        coordinator._load_condition_summary = lambda: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+        coordinator.present_queued_mutation_error = (
+            lambda database_id, title, result, **options: reported.append(
+                (database_id, title, result.outcome_status, options)
+            )
+        )
+
+        def project_pages_changed():
+            coordinator._on_remote_bid_content_changed(
+                database_id=bid_ref.file_path,
+                bid_uid=bid_ref.bid_uid,
+                families=[CollaborationResourceFamily.PAGES.value],
+                resource_uids_by_family={
+                    CollaborationResourceFamily.PAGES.value: ["p1"]
+                },
+                affected_page_uids_by_family={
+                    CollaborationResourceFamily.PAGES.value: ["p1"]
+                },
+                defer_plan_projection=True,
+                local_completion=True,
+            )
+
+        coordinator.delete_current_page()
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0][:3], ("sql-database", "7", ["p1"]))
+        self.assertEqual(coordinator._pending_takeoff_page_uids, ["p2"])
+        self.assertEqual(coordinator._pending_takeoff_active_page_uid, "p2")
+        return coordinator, queued[0][3], pages, reported, project_pages_changed
+
+    def _assert_staged_selection(self, coordinator, page_uids, active_uid):
+        self.assertEqual(coordinator._pending_takeoff_page_uids, page_uids)
+        self.assertEqual(coordinator._pending_takeoff_active_page_uid, active_uid)
+
+    def test_sql_page_delete_staged_selection_survives_interim_unknown_until_recovered_commit(
+        self,
+    ):
+        coordinator, callback, pages, reported, project = (
+            self._sql_page_delete_harness()
+        )
+        callback(
+            SimpleNamespace(outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN)
+        )
+        # Interim, non-terminal: the coordinator re-delivers the recovered result.
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        self.assertEqual(reported, [])
+        callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.COMMITTED))
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        self.assertEqual(reported, [])
+        del pages["p1"]
+        project()
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, ["p2"])
+        self._assert_staged_selection(coordinator, None, None)
+        # Consumed once: a later projection keeps the user's own selection.
+        coordinator.ui_state_manager.active_page_uid = "p3"
+        coordinator.ui_state_manager.selected_page_uids = ["p3"]
+        project()
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p3")
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, ["p3"])
+
+    def test_sql_page_delete_staged_selection_survives_projection_failed_until_recovered_commit(
+        self,
+    ):
+        coordinator, callback, pages, reported, project = (
+            self._sql_page_delete_harness()
+        )
+        callback(
+            SimpleNamespace(
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+            )
+        )
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        self.assertEqual(reported, [])
+        callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.COMMITTED))
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        self.assertEqual(reported, [])
+        del pages["p1"]
+        project()
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, ["p2"])
+        self._assert_staged_selection(coordinator, None, None)
+
+    def test_sql_page_delete_staged_selection_survives_both_interim_results_then_commit(
+        self,
+    ):
+        coordinator, callback, pages, reported, project = (
+            self._sql_page_delete_harness()
+        )
+        for status in (
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED,
+            MutationOutcomeStatus.COMMITTED,
+        ):
+            callback(SimpleNamespace(outcome_status=status))
+            self._assert_staged_selection(coordinator, ["p2"], "p2")
+        self.assertEqual(reported, [])
+        del pages["p1"]
+        project()
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, ["p2"])
+        self._assert_staged_selection(coordinator, None, None)
+        # A duplicate terminal delivery after consumption is harmless.
+        callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.COMMITTED))
+        self._assert_staged_selection(coordinator, None, None)
+        self.assertEqual(reported, [])
+
+    def test_sql_page_delete_terminal_failures_clear_the_staged_selection_and_report(
+        self,
+    ):
+        for status in (
+            MutationOutcomeStatus.REJECTED,
+            MutationOutcomeStatus.CONFLICT,
+            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            MutationOutcomeStatus.CANCELLED_BEFORE_START,
+        ):
+            with self.subTest(status=status):
+                coordinator, callback, pages, reported, project = (
+                    self._sql_page_delete_harness()
+                )
+                callback(SimpleNamespace(outcome_status=status))
+                self._assert_staged_selection(coordinator, None, None)
+                self.assertEqual(
+                    reported,
+                    [("sql-database", "Delete Page", status, {"critical": True})],
+                )
+                # Not applied: the (still existing) p1 selection is untouched.
+                project()
+                self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p1")
+                self.assertEqual(
+                    coordinator.ui_state_manager.selected_page_uids, ["p1"]
+                )
+
+    def test_sql_page_delete_failure_after_interim_unknown_clears_without_applying(
+        self,
+    ):
+        coordinator, callback, pages, reported, project = (
+            self._sql_page_delete_harness()
+        )
+        callback(
+            SimpleNamespace(outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN)
+        )
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.REJECTED))
+        self._assert_staged_selection(coordinator, None, None)
+        self.assertEqual(
+            reported,
+            [
+                (
+                    "sql-database",
+                    "Delete Page",
+                    MutationOutcomeStatus.REJECTED,
+                    {"critical": True},
+                )
+            ],
+        )
+        callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.REJECTED))
+        self._assert_staged_selection(coordinator, None, None)
+        project()
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, ["p1"])
+
+    @staticmethod
+    def _queue_second_page_delete(coordinator):
+        second = []
+        coordinator._project_write_service.queue_pages_delete = (
+            lambda file_path, bid_uid, page_uids, callback: second.append(
+                (file_path, bid_uid, list(page_uids), callback)
+            )
+            or 10
+        )
+        coordinator.delete_current_page()
+        return second
+
+    def test_sql_page_delete_duplicate_failure_cannot_clear_a_newer_delete_staging(
+        self,
+    ):
+        coordinator, first_callback, pages, reported, project = (
+            self._sql_page_delete_harness()
+        )
+        rejected = SimpleNamespace(outcome_status=MutationOutcomeStatus.REJECTED)
+        first_callback(rejected)
+        self._assert_staged_selection(coordinator, None, None)
+        # p1 still exists, so the user deletes it again and stages the same p2.
+        second = self._queue_second_page_delete(coordinator)
+        self.assertEqual(len(second), 1)
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        first_callback(rejected)
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        self.assertEqual(len(reported), 1)
+        second[0][3](SimpleNamespace(outcome_status=MutationOutcomeStatus.COMMITTED))
+        del pages["p1"]
+        project()
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, ["p2"])
+        self._assert_staged_selection(coordinator, None, None)
+
+    def test_sql_page_delete_failure_of_a_superseded_delete_keeps_the_newer_staging_and_reports(
+        self,
+    ):
+        coordinator, first_callback, pages, reported, project = (
+            self._sql_page_delete_harness()
+        )
+        second = self._queue_second_page_delete(coordinator)
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        first_callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.CONFLICT))
+        self._assert_staged_selection(coordinator, ["p2"], "p2")
+        self.assertEqual(
+            reported,
+            [
+                (
+                    "sql-database",
+                    "Delete Page",
+                    MutationOutcomeStatus.CONFLICT,
+                    {"critical": True},
+                )
+            ],
+        )
+        second[0][3](SimpleNamespace(outcome_status=MutationOutcomeStatus.COMMITTED))
+        del pages["p1"]
+        project()
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, ["p2"])
+
+    def test_sql_page_delete_failure_cannot_clear_a_selection_staged_by_another_flow(
+        self,
+    ):
+        coordinator, callback, _pages, reported, _project = (
+            self._sql_page_delete_harness()
+        )
+        coordinator._stage_takeoff_restore(page_uids=["p3"], active_page_uid="p3")
+        callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.REJECTED))
+        self._assert_staged_selection(coordinator, ["p3"], "p3")
+        self.assertEqual(len(reported), 1)
+
+    def test_sql_page_delete_duplicate_terminal_failure_reports_once(self):
+        coordinator, callback, _pages, reported, _project = (
+            self._sql_page_delete_harness()
+        )
+        for _ in range(3):
+            callback(SimpleNamespace(outcome_status=MutationOutcomeStatus.REJECTED))
+        self.assertEqual(len(reported), 1)
+        self._assert_staged_selection(coordinator, None, None)
+
 
 class UIEventCoordinatorFinishRefreshTests(_UIEventCoordinatorTakeoffsChangedFixture):
     """UIEventCoordinator._finish_refresh."""
@@ -9775,6 +10147,10 @@ class UIEventCoordinatorFinishRefreshTests(_UIEventCoordinatorTakeoffsChangedFix
 
 
 class SummaryTabCoordinatorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
     def test_condition_layer_visibility_path_updates_summary_without_reload(self):
         conditions = {
             "c1": Condition(uid="c1", name="A", layer_uid="layer-a"),
@@ -12494,9 +12870,16 @@ class DialogLifecycleTests(unittest.TestCase):
         )
         self.assertIn("viewer", calls)
         self.assertEqual(len(coordinator._subscriptions), 1)
+        # The failed subscription keeps the bus alive so it can be retried.
+        self.assertIsNotNone(coordinator.event_bus)
         coordinator.cleanup()
         self.assertEqual(coordinator._subscriptions, [])
         self.assertIsNone(coordinator.event_bus)
+        unsubscribes = [call for call in calls if call.startswith("unsubscribe:")]
+        license_event = f"unsubscribe:{AppEvents.LICENSE_STATUS_CHANGED.__name__}"
+        file_event = f"unsubscribe:{AppEvents.FILE_OPENED.__name__}"
+        # The retry unsubscribes exactly the subscription that failed.
+        self.assertEqual(unsubscribes, [license_event, file_event, license_event])
 
 
 class BidLockPermissionTests(unittest.TestCase):
@@ -12801,7 +13184,7 @@ class PageScaleProjectionTests(unittest.TestCase):
         coordinator._request_or_defer_mesh_refresh = lambda uids: calls.append(
             ("mesh", tuple(uids))
         )
-        coordinator._sidebar = Mock()
+        coordinator._sidebar = Mock(spec=SidebarCoordinator)
         coordinator._is_summary_tab_active = lambda: False
         coordinator._on_page_metadata_changed("scale.mdb", "7", ("42",), ("scale",))
         self.assertEqual(
@@ -12953,6 +13336,9 @@ class RefreshScopeTests(unittest.TestCase):
         coordinator._update_export_menu_state = Mock()
         coordinator._on_database_refreshed("other.mdb")
         coordinator._do_file_refresh.assert_called_once_with()
+        # The other database still refreshes the global Project Tree and shell.
+        coordinator._restore_project_tree_bid_selection_if_needed.assert_called_once_with()
+        coordinator._update_export_menu_state.assert_called_once_with()
         coordinator._nav.start_refresh.assert_not_called()
         coordinator._finish_refresh.assert_not_called()
         coordinator._clear_mesh_views_for_scene_update.assert_not_called()
@@ -12963,17 +13349,37 @@ class RefreshScopeTests(unittest.TestCase):
             get_selected_bid_ref=lambda: self.fixture.bid_ref
         )
         coordinator.project_data = self.fixture.data
-        coordinator.takeoff_sidebar = Mock()
-        coordinator._sync_page_info_status = Mock()
+        coordinator.takeoff_sidebar = Mock(spec=["refresh_page_labels"])
+        synced = []
+        coordinator._sync_page_info_status = lambda: synced.append(True)
         coordinator._is_summary_tab_active = lambda: False
-        coordinator._viewer = Mock()
+        coordinator._viewer = Mock(spec=ViewerSyncCoordinator)
         coordinator._request_or_defer_mesh_refresh = Mock()
         coordinator._on_page_metadata_changed("test.mdb", "7", ("42",), ("name",))
         coordinator.takeoff_sidebar.refresh_page_labels.assert_called_once_with(
             [self.fixture.original]
         )
+        self.assertEqual(synced, [True])
         self.assertEqual(coordinator._viewer.mock_calls, [])
         coordinator._request_or_defer_mesh_refresh.assert_not_called()
+        # Positive control: the same doubles do record canvas and mesh projection
+        # as soon as a field other than the name changes.
+        coordinator.ui_state_manager.active_page_uid = "42"
+        coordinator.project_data = SimpleNamespace(
+            get_page=self.fixture.data.get_page,
+            get_selected_page_uids=lambda: ["42"],
+        )
+        coordinator._update_page_settings_bar = lambda _uid: None
+        coordinator._apply_pending_hotlink_named_view_focus = lambda **_kwargs: None
+        coordinator._sidebar = Mock(spec=SidebarCoordinator)
+        coordinator._on_page_metadata_changed(
+            "test.mdb", "7", ("42",), ("name", "scale")
+        )
+        self.assertEqual(
+            coordinator._viewer.mock_calls,
+            [call.update_plan_view("42", force_overlay_refresh=True)],
+        )
+        coordinator._request_or_defer_mesh_refresh.assert_called_once_with(["42"])
 
 
 class TargetedRefreshOwnershipTests(unittest.TestCase):
@@ -12992,10 +13398,12 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
         main = UIEventCoordinator.__new__(UIEventCoordinator)
         main.ui_state_manager = fixture.coordinator.ui_state_manager
         main.project_data = fixture.data
-        main._page_settings_bar = Mock()
-        main._sidebar = Mock()
-        main._undo_service = Mock()
+        main._page_settings_bar = Mock(spec=["get_selected_area_uid", "load_bid_areas"])
+        main._sidebar = Mock(spec=SidebarCoordinator)
+        main._undo_service = Mock(spec=["clear"])
         main._request_or_defer_mesh_refresh = Mock()
+        main._refresh_takeoff_dependent_page_controls = Mock()
+        main.plan_view = None
         main._is_summary_tab_active = lambda: True
         main._on_remote_areas_changed(
             "test.mdb", "7", local_completion=True, page_controls_projected=True
@@ -13004,6 +13412,14 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
         main._sidebar.load_condition_summary_from_memory.assert_called_once_with()
         main._request_or_defer_mesh_refresh.assert_called_once()
         main._undo_service.clear.assert_not_called()
+        # Positive control: a remote change (not local completion) with the picker
+        # not yet projected does reload the picker and clear the undo history.
+        main._on_remote_areas_changed(
+            "test.mdb", "7", local_completion=False, page_controls_projected=False
+        )
+        main._page_settings_bar.load_bid_areas.assert_called_once()
+        main._undo_service.clear.assert_called_once_with()
+        main._refresh_takeoff_dependent_page_controls.assert_called_once()
 
 
 class SharedDoubleContractTests(unittest.TestCase):
@@ -13176,3 +13592,21362 @@ class UIEventCoordinatorChaosTests(unittest.TestCase):
         visualization = harness.coordinator.visualization_service
         self.assertEqual(visualization.mesh_pages, [[]])
         self.assertEqual(visualization.cancelled_mesh_refreshes, 0)
+
+
+class SecondPassSqlProjectionGuardTests(unittest.TestCase):
+    """Second-pass guards for SQL refresh, capability and state projection."""
+
+    def test_refresh_stops_when_navigation_refuses_to_start(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda _file_path: True
+        )
+        coordinator._nav = SimpleNamespace(
+            start_refresh=lambda *_args, **_kwargs: calls.append("start") or False
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_area_uid="",
+            selected_page_uids=[],
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._placement = SimpleNamespace()
+        coordinator._do_file_refresh = lambda: calls.append("refresh")
+        coordinator._finish_refresh = lambda: calls.append("finish")
+        coordinator._on_database_refreshed(file_path="a.mdb")
+        self.assertEqual(calls, ["start"])
+
+    def _capability_coordinator(self, selected_file_path, editable, calls):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=selected_file_path
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            refresh=lambda: calls.append("refresh"),
+            is_database_editable=lambda: editable,
+        )
+        coordinator._deferred_persistence = SimpleNamespace(
+            cancel_for_file=lambda file_path: calls.append(("cancel", file_path))
+        )
+        coordinator._mesh_window = None
+        coordinator._update_menu_state = lambda: calls.append("menu")
+        return coordinator
+
+    def test_capability_change_without_database_id_applies_to_selected_database(self):
+        calls = []
+        coordinator = self._capability_coordinator("sql-db-1", False, calls)
+        coordinator._on_database_capabilities_changed()
+        self.assertEqual(calls, ["refresh", ("cancel", "sql-db-1"), "menu"])
+
+    def test_capability_change_without_selected_database_never_cancels_deferred_state(
+        self,
+    ):
+        calls = []
+        coordinator = self._capability_coordinator(None, False, calls)
+        coordinator._on_database_capabilities_changed()
+        self.assertEqual(calls, ["refresh", "menu"])
+
+    def test_every_non_recovering_state_cancels_work_for_the_selected_database(self):
+        recovering = {
+            SynchronizationState.HEALTHY,
+            SynchronizationState.CATCHING_UP,
+        }
+        failing_states = [
+            state for state in SynchronizationState if state not in recovering
+        ]
+        self.assertGreaterEqual(len(failing_states), 3)
+        for state in failing_states:
+            with self.subTest(state=state):
+                cancelled = []
+                exits = []
+                hidden = []
+                coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+                coordinator.ui_state_manager = SimpleNamespace(
+                    selected_file_path="sql-database-id"
+                )
+                coordinator._status_panel = None
+                coordinator._deferred_persistence = SimpleNamespace(
+                    cancel_for_file=cancelled.append
+                )
+                coordinator._placement = SimpleNamespace(
+                    force_exit=lambda exits=exits: exits.append(True)
+                )
+                coordinator._plan_view_handler = SimpleNamespace(
+                    hide_pending_takeoff_placement_previews=(
+                        lambda hidden=hidden: hidden.append(True)
+                    )
+                )
+                coordinator._on_collaboration_state_changed(
+                    database_id="sql-database-id", state=state.value, message=""
+                )
+                self.assertEqual(cancelled, ["sql-database-id"])
+                self.assertEqual(exits, [True])
+                self.assertEqual(hidden, [True])
+
+
+from ost_visualizer.application.dtos.active_bid_locked_error import (
+    ActiveBidLockedError,
+)
+from ost_visualizer.application.services.project_write_service import BatchWriteResult
+from ost_visualizer.domain.entities.area import BidAreaChangeset
+from ost_visualizer.infrastructure.events.event_bus import (
+    EventBus as _LockedBidEventBus,
+)
+from ost_visualizer.presentation.services.modal_edit_lease_session import (
+    ModalEditLeaseSession,
+)
+from tests.presentation.dialogs.master_data_support import (
+    FakeIconProvider as _locked_bid_FakeIconProvider,
+    MasterBidAreasDialog as _locked_bid_MasterBidAreasDialog,
+)
+
+_COORDINATOR_LOGGER = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+
+
+class UIEventCoordinatorLockedBidLayerAreaTests(unittest.TestCase):
+    """Decisions H2 and H3 at the coordinator: the Layer sidebar commands and the Bid
+    Areas save react to the write service's refusal of a status-locked active Bid
+    (Access: a failed result, SQL: ActiveBidLockedError at submission) the same way,
+    with no queued-mutation error and no new dialog. The Access failure paths already
+    reload the sidebar (and the Layer delete also opens a critical dialog: accepted
+    difference, lock-arrives-while-open race only); the SQL refusal logs and reloads
+    the stored Layers instead. The Access move leaves the sidebar alone."""
+
+    LAYER_OPERATIONS = ("insert", "delete", "rename", "move")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    # Sidebar reload on the Access failure path (database) and its SQL equivalent
+    # (memory), per operation; None where Access does not reload.
+    ACCESS_RELOAD = {
+        "insert": "database",
+        "delete": "database",
+        "rename": "database",
+        "move": None,
+    }
+
+    def _coordinator(self, *, sql):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        record = SimpleNamespace(writes=[], reloads=[], errors=[])
+
+        def blocked(name):
+            def queue(*args, **_kwargs):
+                record.writes.append(name)
+                raise ActiveBidLockedError()
+
+            return queue
+
+        def failed(name, result):
+            def write(*_args, **_kwargs):
+                record.writes.append(name)
+                return result
+
+            return write
+
+        if sql:
+            service = SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: True,
+                queue_layer_insert=blocked("insert"),
+                queue_layer_delete=blocked("delete"),
+                queue_layer_rename=blocked("rename"),
+                queue_layer_reorder=blocked("move"),
+            )
+        else:
+            service = SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                insert_layer_result=failed(
+                    "insert", WriteReloadResult(None, False, False)
+                ),
+                delete_layer=failed("delete", False),
+                update_layer_name=failed("rename", False),
+                swap_layer_sequence=failed("move", False),
+            )
+        bid_ref = BidRef("database", "8")
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.project_data = SimpleNamespace(get_bid=lambda _ref: object())
+        coordinator.main_window = "window"
+        coordinator._project_write_service = service
+        coordinator._flush_deferred_for_file = lambda _database_id: True
+        coordinator._is_cleaning_up = False
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=SimpleNamespace(get_neighbor_uid=lambda _d: "41"),
+            load_bid_layers_sidebar=lambda: record.reloads.append("database"),
+            load_bid_layers_sidebar_from_memory=lambda: record.reloads.append("memory"),
+        )
+        coordinator.present_queued_mutation_error = lambda *args: record.errors.append(
+            args
+        )
+        return coordinator, record
+
+    @staticmethod
+    def _run(coordinator, operation):
+        if operation == "insert":
+            coordinator._on_layer_added("Streets", 1)
+        elif operation == "delete":
+            coordinator._on_layer_deleted("40")
+        elif operation == "rename":
+            coordinator._on_layer_renamed("40", "Streets")
+        else:
+            coordinator._on_layer_moved("40", 1)
+
+    def test_layer_sidebar_commands_refuse_a_locked_bid_like_the_access_failure(self):
+        for operation in self.LAYER_OPERATIONS:
+            for sql in (False, True):
+                with self.subTest(operation=operation, sql=sql):
+                    coordinator, record = self._coordinator(sql=sql)
+                    with (
+                        patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+                        patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+                        patch(f"{_COORDINATOR_LOGGER}.logger.warning") as log,
+                    ):
+                        self._run(coordinator, operation)
+                    # The write service was reached exactly once.
+                    self.assertEqual(record.writes, [operation])
+                    self.assertEqual(record.errors, [])
+                    warning.assert_not_called()
+                    access_reload = self.ACCESS_RELOAD[operation]
+                    if sql:
+                        self.assertEqual(
+                            record.reloads,
+                            [] if access_reload is None else ["memory"],
+                        )
+                        critical.assert_not_called()
+                        self.assertEqual(log.call_count, 1)
+                    else:
+                        self.assertEqual(
+                            record.reloads,
+                            [] if access_reload is None else [access_reload],
+                        )
+                        # Accepted difference: the Access Layer delete failure dialog.
+                        self.assertEqual(
+                            critical.call_count, 1 if operation == "delete" else 0
+                        )
+
+    def test_a_cleaning_up_coordinator_does_not_reload_the_sidebar_on_a_block(self):
+        coordinator, record = self._coordinator(sql=True)
+        coordinator._is_cleaning_up = True
+        with self.assertLogs(_COORDINATOR_LOGGER, level="WARNING"):
+            coordinator._on_layer_renamed("40", "Streets")
+        self.assertEqual((record.writes, record.reloads), (["rename"], []))
+
+    def _area_coordinator(self, *, locked):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        record = SimpleNamespace(saves=[], errors=[])
+
+        def queue(*args, **kwargs):
+            record.saves.append((args[:-1], sorted(kwargs)))
+            if locked:
+                raise ActiveBidLockedError()
+            raise RuntimeError("The SQL mutation queue is full.")
+
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.main_window = "window"
+        coordinator._project_write_service = SimpleNamespace(queue_bid_areas_save=queue)
+        coordinator.present_queued_mutation_error = lambda *args: record.errors.append(
+            args
+        )
+        return coordinator, record
+
+    def test_bid_area_save_blocked_by_a_locked_bid_is_not_started_and_silent(self):
+        bid_ref = BidRef("sql-database", "8")
+        for handle in (None, object()):
+            with self.subTest(lease=handle is not None):
+                coordinator, record = self._area_coordinator(locked=True)
+                completed = []
+                options = {} if handle is None else {"edit_lease_handle": handle}
+                with (
+                    patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+                    patch(f"{_COORDINATOR_LOGGER}.logger.warning") as log,
+                ):
+                    started = coordinator._save_bid_areas_async(
+                        bid_ref,
+                        object(),
+                        lambda *args: completed.append(args),
+                        **options,
+                    )
+                self.assertIs(started, False)
+                self.assertEqual(len(record.saves), 1)
+                self.assertEqual(completed, [])
+                self.assertEqual(record.errors, [])
+                warning.assert_not_called()
+                self.assertEqual(log.call_count, 1)
+
+    def test_other_queue_rejections_of_a_bid_area_save_still_warn(self):
+        # Scope pin: only the locked-Bid refusal became silent.
+        coordinator, record = self._area_coordinator(locked=False)
+        with patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning:
+            started = coordinator._save_bid_areas_async(
+                BidRef("sql-database", "8"), object(), lambda *_args: None
+            )
+        self.assertIs(started, False)
+        warning.assert_called_once_with(
+            "window", "Bid Areas", "The SQL mutation queue is full."
+        )
+
+    def test_areas_dialog_keeps_its_draft_and_lease_after_a_locked_bid_refusal(self):
+        # Real BidAreasDialog + real ModalEditLeaseSession + the real coordinator save
+        # method; only the write service (raising the lock refusal) and the lease owner
+        # are fakes.
+        coordinator, record = self._area_coordinator(locked=True)
+        handle = EditLeaseHandle(
+            database_id="sql-database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="BidAreasDialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("areas_collection", "8", 8),),
+        )
+        ended = []
+
+        class Owner:
+            @staticmethod
+            def request_collaboration_edit(_db, _resources, callback, **_options):
+                callback(EditLeaseResult(True, handle=handle))
+
+            @staticmethod
+            def end_collaboration_edit(ended_handle):
+                ended.append(ended_handle)
+
+        session = ModalEditLeaseSession(
+            Owner(),
+            "sql-database",
+            (ResourceRef("areas_collection", "8", 8),),
+            "BidAreasDialog",
+            event_bus=_LockedBidEventBus(),
+        )
+        session.request_initial(lambda _result: None)
+        bid_ref = BidRef("sql-database", "8")
+        dialog = _locked_bid_MasterBidAreasDialog(
+            _locked_bid_FakeIconProvider(),
+            bid_areas=[],
+            save_async_fn=lambda changes, completed: session.submit_mutation(
+                lambda lease, lease_completed: coordinator._save_bid_areas_async(
+                    bid_ref, changes, lease_completed, edit_lease_handle=lease
+                ),
+                completed,
+            ),
+        )
+        session.bind_dialog(dialog)
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog._set_item_name(item, "Area 2")
+            with (
+                patch(f"{_COORDINATOR_LOGGER}.show_warning") as coordinator_warning,
+                patch(
+                    "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+                ) as dialog_warning,
+                patch(f"{_COORDINATOR_LOGGER}.logger.warning"),
+            ):
+                dialog._on_item_changed(item, 0)
+                self.assertFalse(dialog.flush_pending_save())
+            coordinator_warning.assert_not_called()
+            dialog_warning.assert_not_called()
+            self.assertEqual(record.errors, [])
+            self.assertEqual(len(record.saves), 1)
+            # The draft survives for a retry; the dialog is usable again.
+            self.assertTrue(dialog._save_controller.pending)
+            self.assertEqual(dialog.tree.currentItem().text(0), "Area 2")
+            self.assertIn(
+                dialog.tree.currentItem().data(0, dialog._UID_ROLE), dialog._new_uids
+            )
+            self.assertTrue(dialog.btn_new.isEnabled())
+            self.assertFalse(dialog._save_in_progress)
+            # The lease handle was handed back to the session: still held, not ended.
+            self.assertIs(session._handle, handle)
+            self.assertEqual(ended, [])
+        finally:
+            session.close()
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+        self.assertEqual(ended, [handle])
+
+
+from ost_visualizer.presentation.dialogs.adjust_images_dialog import (
+    AdjustImagesDialog,
+    ImageAdjustmentSettings,
+)
+from ost_visualizer.presentation.dialogs.rename_page_dialog import (
+    PageRenameTarget,
+    RenamePageDialog,
+)
+from ost_visualizer.presentation.dialogs.set_scale_dialog import (
+    ScaleSettings,
+    SetScaleDialog,
+)
+
+
+class UIEventCoordinatorLockedBidPageSettingTests(unittest.TestCase):
+    """Decision P2 at the coordinator: the page-setting writes (Set Scale, Adjust
+    Images, Rename Page, overlay image, rotate/flip, the scale handler) react to the
+    write service's refusal of a status-locked active Bid with no new dialog: the
+    queue_page_setting_if_sql callers see False (their existing 'could not queue'
+    path), the direct queue_page_settings callers catch ActiveBidLockedError before
+    their RuntimeError dialog and report 'not started', so the modal dialogs stay
+    interactive with their draft and the edit lease is handed back."""
+
+    BID_REF = BidRef("sql-database", "8")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def _coordinator(self, error=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        record = SimpleNamespace(queued=[], errors=[], bar_updates=[], dialogs=[])
+
+        def queue_page_settings(*args, **kwargs):
+            record.queued.append(args[2])
+            raise error if error is not None else ActiveBidLockedError()
+
+        page = SimpleNamespace(
+            uid="20",
+            name="Sheet 1",
+            rotation=0,
+            flip_x=False,
+            flip_y=False,
+            invert=False,
+            bitonal=False,
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID_REF, active_page_uid="20"
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda _uid: page)
+        coordinator.main_window = "window"
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: True,
+            queue_page_settings=queue_page_settings,
+            queue_page_setting_if_sql=lambda *args, **kwargs: record.queued.append(
+                args[2]
+            )
+            or False,
+        )
+        coordinator._flush_deferred_for_file = lambda _database_id: True
+        coordinator._save_current_page_view_state = lambda **_kwargs: None
+        coordinator._update_page_settings_bar = lambda uid: record.bar_updates.append(
+            uid
+        )
+        coordinator._page_dialog_context_is_current = lambda *_args: True
+        coordinator._page_setting_uids = lambda page_uid, _all: [page_uid]
+        coordinator.present_queued_mutation_error = lambda *args: record.errors.append(
+            args
+        )
+        return coordinator, record, page
+
+    def _entry_points(self, coordinator):
+        bid_ref = self.BID_REF
+        scale = ScaleSettings(1.0, 96.5, False)
+        adjustments = ImageAdjustmentSettings(90, True, False, False, False, False)
+        return (
+            (
+                "Set Scale",
+                "scale",
+                lambda completed, handle: coordinator._save_scale_settings_async(
+                    bid_ref, "20", scale, completed, edit_lease_handle=handle
+                ),
+            ),
+            (
+                "Adjust Images",
+                "image_adjustments",
+                lambda completed, handle: coordinator._save_image_adjustments_async(
+                    bid_ref, "20", adjustments, completed, edit_lease_handle=handle
+                ),
+            ),
+            (
+                "Rename Page",
+                "name",
+                lambda completed, handle: coordinator._save_page_name_async(
+                    bid_ref, "20", "Sheet 2", completed, edit_lease_handle=handle
+                ),
+            ),
+        )
+
+    def test_async_page_setting_saves_report_a_locked_bid_as_not_started_and_silent(
+        self,
+    ):
+        for index in range(3):
+            coordinator, record, _page = self._coordinator()
+            title, kind, entry = self._entry_points(coordinator)[index]
+            with self.subTest(entry=title):
+                completed = []
+                with (
+                    patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+                    patch(f"{_COORDINATOR_LOGGER}.logger.warning") as log,
+                ):
+                    started = entry(completed.append, object())
+                self.assertIs(started, False)
+                self.assertEqual(record.queued, [kind])
+                self.assertEqual(completed, [])
+                self.assertEqual(record.errors, [])
+                warning.assert_not_called()
+                self.assertEqual(log.call_count, 1)
+
+    def test_other_queue_rejections_of_a_page_setting_save_still_warn(self):
+        # Scope pin: only the locked-Bid refusal became silent.
+        for index in range(3):
+            coordinator, record, _page = self._coordinator(
+                RuntimeError("The SQL mutation queue is full.")
+            )
+            title, _kind, entry = self._entry_points(coordinator)[index]
+            with self.subTest(entry=title):
+                with patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning:
+                    started = entry(lambda _success: None, object())
+                self.assertIs(started, False)
+                warning.assert_called_once_with(
+                    "window", title, "The SQL mutation queue is full."
+                )
+
+    def test_sync_sql_page_setting_saves_report_a_locked_bid_as_failed_quietly(self):
+        coordinator, record, page = self._coordinator()
+        with (
+            patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+            patch(f"{_COORDINATOR_LOGGER}.logger.warning") as log,
+            patch(f"{_COORDINATOR_LOGGER}.logger.exception") as exception_log,
+        ):
+            scale_saved = coordinator._save_scale_settings(
+                self.BID_REF, "20", page, ScaleSettings(1.0, 96.5, False)
+            )
+            adjustments_saved = coordinator._save_image_adjustments(
+                self.BID_REF,
+                "20",
+                page,
+                ImageAdjustmentSettings(90, True, False, False, False, False),
+            )
+        self.assertEqual((scale_saved, adjustments_saved), (False, False))
+        self.assertEqual(record.queued, ["scale", "image_adjustments"])
+        warning.assert_not_called()
+        exception_log.assert_not_called()
+        self.assertEqual(log.call_count, 2)
+
+    def test_if_sql_callers_treat_a_refused_page_setting_as_could_not_queue(self):
+        coordinator, record, page = self._coordinator()
+        with (
+            patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+        ):
+            # Scale handler: the page settings bar is refreshed (reverts the edit).
+            coordinator._on_page_scale_changed("sql-database", "20", 1.0, 96.5)
+            self.assertEqual(record.bar_updates, ["20"])
+            # Rename: the save reports failure to the dialog's own failure path.
+            saved = coordinator._save_page_name(
+                self.BID_REF, "20", page, {"20": page}, "20", "Sheet 2"
+            )
+            self.assertIs(saved, False)
+            # Rotate/flip and overlay image have no optimistic state to revert.
+            coordinator.rotate_image_right()
+            coordinator._save_page_overlay_image("sql-database", "20", "C:/o.png")
+        self.assertEqual(
+            record.queued, ["scale", "name", "image_adjustments", "overlay_image"]
+        )
+        warning.assert_not_called()
+        critical.assert_not_called()
+        self.assertEqual(record.errors, [])
+
+    def _dialog_session(self, coordinator):
+        handle = EditLeaseHandle(
+            database_id="sql-database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="PageSettingDialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("page", "20", 8),),
+        )
+        ended = []
+
+        class Owner:
+            @staticmethod
+            def request_collaboration_edit(_db, _resources, callback, **_options):
+                callback(EditLeaseResult(True, handle=handle))
+
+            @staticmethod
+            def end_collaboration_edit(ended_handle):
+                ended.append(ended_handle)
+
+        session = ModalEditLeaseSession(
+            Owner(),
+            "sql-database",
+            (ResourceRef("page", "20", 8),),
+            "PageSettingDialog",
+            event_bus=_LockedBidEventBus(),
+        )
+        session.request_initial(lambda _result: None)
+        return session, handle, ended
+
+    def test_page_setting_dialogs_keep_their_draft_and_lease_after_a_locked_refusal(
+        self,
+    ):
+        for title in ("Set Scale", "Adjust Images", "Rename Page"):
+            with self.subTest(dialog=title):
+                coordinator, record, page = self._coordinator()
+                session, handle, ended = self._dialog_session(coordinator)
+                bid_ref = self.BID_REF
+                if title == "Set Scale":
+                    dialog = SetScaleDialog(
+                        _locked_bid_FakeIconProvider(),
+                        None,
+                        1.0,
+                        1.0,
+                        save_fn=lambda _settings: True,
+                        save_async_fn=lambda settings, completed: (
+                            session.submit_mutation(
+                                lambda lease, done: coordinator._save_scale_settings_async(
+                                    bid_ref,
+                                    "20",
+                                    settings,
+                                    lambda success: done(success, None),
+                                    edit_lease_handle=lease,
+                                ),
+                                lambda success, _value: completed(success),
+                            )
+                        ),
+                    )
+                    dialog_module = (
+                        "ost_visualizer.presentation.dialogs.set_scale_dialog"
+                    )
+                elif title == "Adjust Images":
+                    dialog = AdjustImagesDialog(
+                        _locked_bid_FakeIconProvider(),
+                        None,
+                        0,
+                        False,
+                        False,
+                        False,
+                        False,
+                        save_fn=lambda _settings: True,
+                        save_async_fn=lambda settings, completed: (
+                            session.submit_mutation(
+                                lambda lease, done: coordinator._save_image_adjustments_async(
+                                    bid_ref,
+                                    "20",
+                                    settings,
+                                    lambda success: done(success, None),
+                                    edit_lease_handle=lease,
+                                ),
+                                lambda success, _value: completed(success),
+                            )
+                        ),
+                    )
+                    dialog_module = (
+                        "ost_visualizer.presentation.dialogs.adjust_images_dialog"
+                    )
+                else:
+                    dialog = RenamePageDialog(
+                        _locked_bid_FakeIconProvider(),
+                        None,
+                        [PageRenameTarget(uid="20", name="Sheet 1")],
+                        "20",
+                        save_fn=lambda _uid, _name: True,
+                        save_async_fn=lambda uid, name, completed: (
+                            session.submit_mutation(
+                                lambda lease, done: coordinator._save_page_name_async(
+                                    bid_ref,
+                                    uid,
+                                    name,
+                                    lambda success: done(success, None),
+                                    edit_lease_handle=lease,
+                                ),
+                                lambda success, _value: completed(success),
+                            )
+                        ),
+                    )
+                    dialog_module = (
+                        "ost_visualizer.presentation.dialogs.rename_page_dialog"
+                    )
+                session.bind_dialog(dialog)
+                try:
+                    with (
+                        patch(
+                            f"{_COORDINATOR_LOGGER}.show_warning"
+                        ) as coordinator_warning,
+                        patch(f"{dialog_module}.show_warning") as dialog_warning,
+                        patch(f"{_COORDINATOR_LOGGER}.logger.warning"),
+                    ):
+                        if title == "Rename Page":
+                            dialog._new_name_edit.setText("Sheet 2")
+                            dialog._on_ok()
+                        else:
+                            dialog._dirty = True
+                            self.assertFalse(dialog._apply_changes())
+                    coordinator_warning.assert_not_called()
+                    dialog_warning.assert_not_called()
+                    self.assertEqual(record.errors, [])
+                    self.assertEqual(len(record.queued), 1)
+                    # The dialog is interactive again and keeps its draft.
+                    self.assertFalse(dialog._save_pending)
+                    if title == "Rename Page":
+                        self.assertEqual(dialog._new_name_edit.text(), "Sheet 2")
+                        self.assertTrue(dialog._new_name_edit.isEnabled())
+                    else:
+                        self.assertTrue(dialog._dirty)
+                        self.assertTrue(dialog._interactive_enabled)
+                    # The lease handle was handed back to the session, not ended.
+                    self.assertIs(session._handle, handle)
+                    self.assertEqual(ended, [])
+                finally:
+                    session.close()
+                    dialog.close()
+                    dialog.deleteLater()
+                self.assertEqual(ended, [handle])
+
+
+class UIEventCoordinatorLockedBidPageDeleteTests(unittest.TestCase):
+    """Decision Q2 at the coordinator: Delete Page over SQL reacts to the write
+    service's refusal of a status-locked active Bid (queue_pages_delete raises
+    ActiveBidLockedError at submission) with one warning log and no dialog: the
+    selection staged for the deletion is cleared (nothing was queued, so no completion
+    will ever clear it) and the delete can be retried after the lock is gone. Every
+    other queue failure still propagates unchanged."""
+
+    BID_REF = BidRef("sql-database", "7")
+
+    def _coordinator(self, error):
+        record = SimpleNamespace(queued=[], errors=[], error=error)
+        pages = {uid: Page(uid=uid, name=uid) for uid in ("p1", "p2")}
+
+        def queue_pages_delete(file_path, bid_uid, page_uids, callback):
+            record.queued.append((file_path, bid_uid, list(page_uids), callback))
+            if record.error is not None:
+                raise record.error
+            return 9
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="p1", get_selected_bid_ref=lambda: self.BID_REF
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=pages.get,
+            get_page_takeoffs=lambda _uid: [],
+            get_page_annotations=lambda _uid: [],
+            get_page_delete_content_snapshot=lambda *_args: set(),
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: True,
+            queue_pages_delete=queue_pages_delete,
+        )
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["p1", "p2"]
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.main_window = SimpleNamespace(is_takeoff_tab_active=lambda: True)
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._pending_takeoff_active_page_uid = None
+        coordinator._pending_takeoff_selected_area_uid = ""
+        coordinator._pending_takeoff_place_condition_uid = None
+        coordinator._pending_takeoff_place_condition_uids = []
+        coordinator._deferred_persistence = FakeDeferredPersistence()
+        coordinator.present_queued_mutation_error = lambda *args, **kwargs: (
+            record.errors.append((args, kwargs))
+        )
+        return coordinator, record
+
+    def test_a_locked_bid_refusal_clears_the_staged_selection_without_a_dialog(self):
+        coordinator, record = self._coordinator(ActiveBidLockedError())
+        with (
+            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+            self.assertLogs(_COORDINATOR_LOGGER, "WARNING") as logs,
+        ):
+            self.assertIsNone(coordinator.delete_current_page())
+        self.assertEqual(
+            [entry[:3] for entry in record.queued], [("sql-database", "7", ["p1"])]
+        )
+        critical.assert_not_called()
+        warning.assert_not_called()
+        self.assertEqual(record.errors, [])
+        self.assertEqual(
+            logs.output,
+            [
+                f"WARNING:{_COORDINATOR_LOGGER}:"
+                "Delete Page blocked: the active bid is locked"
+            ],
+        )
+        # Nothing was queued, so no completion will clear the staging: the refusal does.
+        self.assertIsNone(coordinator._pending_takeoff_page_uids)
+        self.assertIsNone(coordinator._pending_takeoff_active_page_uid)
+        self.assertIsNone(coordinator._page_delete_stage_token)
+
+    def test_the_delete_can_be_retried_after_a_locked_bid_refusal(self):
+        coordinator, record = self._coordinator(ActiveBidLockedError())
+        with patch(f"{_COORDINATOR_LOGGER}.logger.warning"):
+            coordinator.delete_current_page()
+        record.error = None
+        coordinator.delete_current_page()
+        self.assertEqual(len(record.queued), 2)
+        self.assertEqual(coordinator._pending_takeoff_page_uids, ["p2"])
+        self.assertEqual(coordinator._pending_takeoff_active_page_uid, "p2")
+        self.assertIsNotNone(coordinator._page_delete_stage_token)
+
+    def test_other_queue_failures_still_propagate(self):
+        for error in (RuntimeError("queue closed"), ValueError("no pages")):
+            with self.subTest(error=type(error).__name__):
+                coordinator, record = self._coordinator(error)
+                with patch(f"{_COORDINATOR_LOGGER}.logger.warning") as log:
+                    with self.assertRaises(type(error)):
+                        coordinator.delete_current_page()
+                log.assert_not_called()
+                self.assertEqual(len(record.queued), 1)
+
+
+from ost_visualizer.application.dtos.active_bid_locked_error import (
+    locked_bid_refusal_result,
+)
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    BID_LOCKED_MESSAGE,
+    MutationRejectionReason,
+)
+
+
+def _bid_locked_rejection(
+    database_id="sql-database", operation_id="00000000-0000-4000-8000-000000000001"
+):
+    return QueuedMutationResult(
+        database_id=database_id,
+        runtime_generation=3,
+        operation_id=operation_id,
+        outcome_status=MutationOutcomeStatus.REJECTED,
+        message=BID_LOCKED_MESSAGE,
+        rejection_reason=MutationRejectionReason.BID_LOCKED,
+    )
+
+
+class UIEventCoordinatorBidLockedRejectionTests(unittest.TestCase):
+    """Decision B4 at the coordinator: a queued write that the SQL writer refused with
+    REJECTED / bid_locked (it passed the client queue-time gate on a stale lock flag)
+    is handled like the queue-time refusal: present_queued_mutation_error shows no
+    dialog and does not reset the plan interaction, the coordinator's
+    BID_LOCKED_REJECTION handler logs ONE warning per refusal and re-resolves the
+    active Bid's lock flag once per burst (deferred to the next event-loop turn,
+    after the callbacks reverted their state), then refreshes access state and menus
+    the way _on_remote_hierarchy_changed does; a rejection without the reason keeps
+    its dialog. Real UIEventCoordinator methods and a real Qt event loop; the project
+    data, write service, access manager and main window are small fakes."""
+
+    DATABASE = "sql-database"
+    BID_REF = BidRef("sql-database", "7")
+
+    def setUp(self):
+        _app()
+        self.calls = []
+        self.locked = False
+        self.active_bid = self.BID_REF
+        self.snapshot_locked = True
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator._bid_lock_reverify_scheduled = set()
+        coordinator._bid_lock_watch = set()
+        coordinator.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: self.active_bid,
+            get_current_file_path=lambda: self.DATABASE,
+            get_bid=lambda ref: SimpleNamespace(status_uid="2"),
+            get_job_status_snapshot=self._snapshot,
+            set_current_bid_locked=self._set_locked,
+            is_current_bid_locked=lambda: self.locked,
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: True
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            refresh=lambda: self.calls.append("access.refresh")
+        )
+        coordinator.main_window = SimpleNamespace(
+            menu_controller=SimpleNamespace(
+                update_menu_states=lambda: self.calls.append("menu.update")
+            )
+        )
+        coordinator._reset_to_select_mode = lambda: self.calls.append("reset")
+        coordinator._prepare_plan_for_authoritative_refresh = lambda: (
+            self.calls.append("prepare")
+        )
+        coordinator._plan_view_handler = None
+        coordinator.plan_view = None
+        self.coordinator = coordinator
+
+    def _snapshot(self, _database_id):
+        self.calls.append("snapshot")
+        return [SimpleNamespace(uid="2", locked=self.snapshot_locked)]
+
+    def _set_locked(self, locked):
+        self.calls.append(("set_current_bid_locked", locked))
+        self.locked = locked
+
+    @staticmethod
+    def _spin():
+        app = QtWidgets.QApplication.instance()
+        for _ in range(3):
+            app.processEvents()
+
+    def _deliver(self, count=1, database_id=None):
+        for index in range(count):
+            self.coordinator._on_bid_locked_rejection(
+                database_id=database_id or self.DATABASE, operation_id=f"op-{index}"
+            )
+
+    # --- dialog -----------------------------------------------------------------
+    def test_a_bid_locked_rejection_shows_no_dialog_and_resets_nothing(self):
+        for critical in (False, True):
+            with self.subTest(critical=critical):
+                self.calls.clear()
+                with (
+                    patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+                    patch(f"{_COORDINATOR_LOGGER}.show_critical") as show_critical,
+                ):
+                    self.coordinator.present_queued_mutation_error(
+                        self.DATABASE,
+                        "Layer Update",
+                        _bid_locked_rejection(),
+                        critical=critical,
+                    )
+                warning.assert_not_called()
+                show_critical.assert_not_called()
+                self.assertEqual(self.calls, [])
+
+    def test_the_queue_time_refusal_result_is_silent_too(self):
+        with (
+            patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+        ):
+            self.coordinator.present_queued_mutation_error(
+                self.DATABASE, "Cover Sheet", locked_bid_refusal_result(self.DATABASE)
+            )
+        warning.assert_not_called()
+        critical.assert_not_called()
+
+    def test_a_rejection_without_the_reason_keeps_its_dialog(self):
+        for critical, shown in ((False, "show_warning"), (True, "show_critical")):
+            with self.subTest(critical=critical):
+                self.calls.clear()
+                plain = QueuedMutationResult(
+                    database_id=self.DATABASE,
+                    runtime_generation=3,
+                    operation_id="00000000-0000-4000-8000-000000000002",
+                    outcome_status=MutationOutcomeStatus.REJECTED,
+                    message="busy",
+                )
+                with (
+                    patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+                    patch(f"{_COORDINATOR_LOGGER}.show_critical") as show_critical,
+                ):
+                    self.coordinator.present_queued_mutation_error(
+                        self.DATABASE, "Layer Update", plain, critical=critical
+                    )
+                expected = {"show_warning": warning, "show_critical": show_critical}[
+                    shown
+                ]
+                expected.assert_called_once_with(
+                    self.coordinator.main_window, "Layer Update", "busy"
+                )
+                self.assertEqual(self.calls, ["reset", "prepare"])
+
+    # --- warning and re-resolve ---------------------------------------------------
+    def test_one_rejection_logs_one_warning_and_reresolves_the_lock_once(self):
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING") as logs:
+            self._deliver()
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(logs.records[0].levelname, "WARNING")
+        self.assertIn("the active bid is locked", logs.records[0].getMessage())
+        # deferred: nothing happens before the callbacks finished reverting
+        self.assertEqual(self.calls, [])
+        self._spin()
+        self.assertEqual(
+            self.calls,
+            [
+                "snapshot",
+                ("set_current_bid_locked", True),
+                "access.refresh",
+                "menu.update",
+            ],
+        )
+        self.assertTrue(self.locked)
+
+    def test_a_burst_of_rejections_re_resolves_once_but_logs_every_refusal(self):
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING") as logs:
+            self._deliver(count=5)
+        self.assertEqual(len(logs.records), 5)
+        self._spin()
+        self.assertEqual(self.calls.count("snapshot"), 1)
+        self.assertEqual(self.calls.count("access.refresh"), 1)
+        self.assertEqual(self.calls.count("menu.update"), 1)
+        # a later burst re-resolves again
+        self.calls.clear()
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver(count=2)
+        self._spin()
+        self.assertEqual(self.calls.count("snapshot"), 1)
+
+    def test_a_stale_snapshot_that_still_says_unlocked_keeps_watching(self):
+        self.snapshot_locked = False
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver()
+        self._spin()
+        self.assertFalse(self.locked)
+        self.assertIn(("set_current_bid_locked", False), self.calls)
+        self.assertIn(self.DATABASE, self.coordinator._bid_lock_watch)
+
+    def test_the_watch_is_cleared_once_the_lock_is_resolved(self):
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver()
+        self.assertIn(self.DATABASE, self.coordinator._bid_lock_watch)
+        self._spin()
+        self.assertNotIn(self.DATABASE, self.coordinator._bid_lock_watch)
+
+    def test_a_job_status_change_while_watching_resolves_the_lock_again(self):
+        self.snapshot_locked = False
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver()
+        self._spin()
+        self.calls.clear()
+        # another client flagged the Job Status as locked: the remote batch refreshed
+        # the snapshot and published REMOTE_MASTER_DATA_CHANGED
+        self.snapshot_locked = True
+        self.coordinator._on_remote_master_data_changed(
+            database_id=self.DATABASE, families=["job_statuses"]
+        )
+        self.assertEqual(
+            self.calls,
+            [
+                "snapshot",
+                ("set_current_bid_locked", True),
+                "access.refresh",
+                "menu.update",
+            ],
+        )
+        self.assertNotIn(self.DATABASE, self.coordinator._bid_lock_watch)
+
+    def test_master_data_changes_do_not_resolve_the_lock_without_a_rejection(self):
+        self.coordinator._on_remote_master_data_changed(
+            database_id=self.DATABASE, families=["job_statuses"]
+        )
+        self.coordinator._bid_lock_watch.add(self.DATABASE)
+        self.coordinator._on_remote_master_data_changed(
+            database_id=self.DATABASE, families=["employees"]
+        )
+        self.coordinator._on_remote_master_data_changed(
+            database_id="other-database", families=["job_statuses"]
+        )
+        self.assertEqual(self.calls, [])
+
+    def test_a_rejection_for_another_database_or_without_an_active_bid_resolves_nothing(
+        self,
+    ):
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver(database_id="other-database")
+        self._spin()
+        self.assertEqual(self.calls, [])
+        self.active_bid = None
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver()
+        self._spin()
+        self.assertEqual(self.calls, [])
+
+    def test_a_cleaned_up_coordinator_ignores_the_rejection(self):
+        self.coordinator._is_cleaning_up = True
+        with self.assertNoLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver()
+        self._spin()
+        self.assertEqual(self.calls, [])
+        # also when cleanup starts between scheduling and running
+        self.coordinator._is_cleaning_up = False
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver()
+        self.coordinator._is_cleaning_up = True
+        self._spin()
+        self.assertEqual(self.calls, [])
+
+    def test_the_access_path_resolves_through_the_read_service(self):
+        self.coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
+        )
+        self.coordinator._project_read_service = SimpleNamespace(
+            is_bid_locked=lambda file_path, status_uid: (
+                self.calls.append(("read_service", file_path, status_uid)) or True
+            )
+        )
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING"):
+            self._deliver()
+        self._spin()
+        self.assertEqual(
+            self.calls,
+            [
+                ("read_service", self.DATABASE, "2"),
+                ("set_current_bid_locked", True),
+                "access.refresh",
+                "menu.update",
+            ],
+        )
+
+    def test_the_coordinator_subscribes_to_the_rejection_and_master_data_events(self):
+        subscriptions = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.event_bus = SimpleNamespace(
+            subscribe=lambda event, callback: subscriptions.append((event, callback))
+        )
+        coordinator._subscriptions = []
+        coordinator._setup_event_subscriptions()
+        self.assertIn(
+            (AppEvents.BID_LOCKED_REJECTION, coordinator._on_bid_locked_rejection),
+            subscriptions,
+        )
+        self.assertIn(
+            (
+                AppEvents.REMOTE_MASTER_DATA_CHANGED,
+                coordinator._on_remote_master_data_changed,
+            ),
+            subscriptions,
+        )
+        self.assertEqual(subscriptions, coordinator._subscriptions)
+
+
+class UIEventCoordinatorBidLockedRejectionCallbackTests(unittest.TestCase):
+    """Decision B4 for the callbacks of the coordinator's own queued writes: when the
+    SQL writer refused the write with REJECTED / bid_locked every callback reverts its
+    optimistic state exactly as it does for any rejected write, shows no dialog (the
+    real present_queued_mutation_error stays silent for the reason), logs nothing
+    itself (the BID_LOCKED_REJECTION hook logs the one warning) and a second delivery
+    changes nothing; a rejection WITHOUT the reason keeps its dialog (and its own log).
+    Real coordinator methods on a __new__ coordinator; the sidebar, the write service
+    and the dialog layer are fakes."""
+
+    DATABASE = "sql-database"
+    BID_REF = BidRef("sql-database", "8")
+    BID_OWNER = object()
+
+    def _coordinator(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        record = SimpleNamespace(
+            reloads=[], prepared=[], page_bar=[], completed=[], queued=[], cleared=0
+        )
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = "window"
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID_REF, active_page_uid="p1"
+        )
+        coordinator.project_data = SimpleNamespace(get_bid=lambda _ref: self.BID_OWNER)
+        coordinator._prepare_for_modal_mutation_error = record.prepared.append
+        sidebar = SimpleNamespace(
+            set_pending_selection=lambda _uid: None,
+        )
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=sidebar,
+            load_bid_layers_sidebar_from_memory=lambda: record.reloads.append("memory"),
+        )
+        coordinator._update_page_settings_bar = record.page_bar.append
+        coordinator._clear_staged_takeoff_restore = lambda: setattr(
+            record, "cleared", record.cleared + 1
+        )
+        coordinator._page_delete_stage_token = None
+        return coordinator, record, sidebar
+
+    @staticmethod
+    def _rejection(bid_locked=True):
+        return QueuedMutationResult(
+            database_id="sql-database",
+            runtime_generation=2,
+            operation_id="00000000-0000-4000-8000-0000000000bb",
+            outcome_status=MutationOutcomeStatus.REJECTED,
+            message="The active bid is locked" if bid_locked else "busy",
+            rejection_reason=(
+                MutationRejectionReason.BID_LOCKED if bid_locked else None
+            ),
+        )
+
+    def _deliver(self, callback, result, times=2):
+        with (
+            patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+        ):
+            for _ in range(times):
+                callback(result)
+        return warning, critical
+
+    def test_a_rejected_layer_update_or_delete_reloads_the_sidebar_silently(self):
+        for title, name in (
+            ("Layer Update", "_on_queued_layer_write_complete"),
+            ("Delete Layer", "_on_queued_layer_delete_complete"),
+        ):
+            with self.subTest(title=title):
+                coordinator, record, _sidebar = self._coordinator()
+                with self.assertNoLogs(_COORDINATOR_LOGGER, "WARNING"):
+                    warning, critical = self._deliver(
+                        getattr(coordinator, name), self._rejection()
+                    )
+                warning.assert_not_called()
+                critical.assert_not_called()
+                # the sidebar shows the stored layers again (once per delivery of the
+                # failure: the callback is a plain function without a once-guard)
+                self.assertEqual(record.reloads, ["memory", "memory"])
+                self.assertEqual(record.prepared, [])
+
+    def test_a_rejected_layer_insertion_reloads_the_sidebar_silently(self):
+        coordinator, record, sidebar = self._coordinator()
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        with self.assertNoLogs(_COORDINATOR_LOGGER, "WARNING"):
+            warning, critical = self._deliver(
+                lambda result: coordinator._on_queued_layer_insert_complete(
+                    sidebar, self.BID_REF, self.BID_OWNER, result
+                ),
+                self._rejection(),
+            )
+        warning.assert_not_called()
+        critical.assert_not_called()
+        self.assertEqual(record.reloads, ["memory", "memory"])
+        self.assertEqual(record.prepared, [])
+
+    def test_a_layer_write_rejected_for_another_reason_keeps_its_log_and_dialog(self):
+        coordinator, record, sidebar = self._coordinator()
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING") as logged:
+            warning, critical = self._deliver(
+                coordinator._on_queued_layer_write_complete,
+                self._rejection(bid_locked=False),
+                times=1,
+            )
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            ["Queued SQL layer update failed: busy"],
+        )
+        warning.assert_called_once_with("window", "Layer Update", "busy")
+        self.assertEqual(record.reloads, ["memory"])
+        with self.assertLogs(_COORDINATOR_LOGGER, "WARNING") as logged:
+            warning, _critical = self._deliver(
+                lambda result: coordinator._on_queued_layer_insert_complete(
+                    sidebar, self.BID_REF, self.BID_OWNER, result
+                ),
+                self._rejection(bid_locked=False),
+                times=1,
+            )
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            ["Queued SQL layer insertion failed: busy"],
+        )
+        warning.assert_called_once_with("window", "Layer Creation", "busy")
+
+    def test_a_rejected_scale_write_reverts_the_settings_bar_without_a_dialog(self):
+        coordinator, record, _sidebar = self._coordinator()
+        callbacks = []
+        coordinator._flush_deferred_for_file = lambda _database_id: True
+        coordinator._project_write_service = SimpleNamespace(
+            queue_page_setting_if_sql=lambda *args, callback, **kwargs: (
+                callbacks.append(callback) or True
+            )
+        )
+        coordinator._on_page_scale_changed(self.DATABASE, "p1", 1.0, 2.0)
+        self.assertEqual(len(callbacks), 1)
+        warning, critical = self._deliver(callbacks[0], self._rejection())
+        warning.assert_not_called()
+        critical.assert_not_called()
+        self.assertEqual(record.page_bar, ["p1", "p1"])
+
+    def test_a_rejected_rename_page_completes_false_without_a_dialog(self):
+        coordinator, record, _sidebar = self._coordinator()
+        coordinator._flush_deferred_for_file = lambda _database_id: True
+        callbacks = []
+        coordinator._project_write_service = SimpleNamespace(
+            queue_page_settings=lambda *args, **kwargs: callbacks.append(args[-1])
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        started = coordinator._save_page_name_async(
+            self.BID_REF,
+            "p1",
+            "New",
+            lambda success: record.completed.append(success),
+            edit_lease_handle=object(),
+        )
+        self.assertTrue(started)
+        warning, critical = self._deliver(callbacks[0], self._rejection())
+        warning.assert_not_called()
+        critical.assert_not_called()
+        self.assertEqual(record.completed, [False, False])
+        self.assertEqual(record.prepared, [])
+
+    def test_a_rejected_page_delete_clears_the_staged_restore_silently_once(self):
+        coordinator, record, _sidebar = self._coordinator()
+        stage = object()
+        coordinator._page_delete_stage_token = stage
+        failure_handled = []
+
+        def on_complete(result):
+            if not failure_handled and coordinator._on_queued_page_delete_complete(
+                self.DATABASE, result, stage
+            ):
+                failure_handled.append(True)
+
+        warning, critical = self._deliver(on_complete, self._rejection())
+        warning.assert_not_called()
+        critical.assert_not_called()
+        self.assertEqual(record.cleared, 1)
+        self.assertEqual(record.prepared, [])
+
+    def test_a_page_delete_rejected_for_another_reason_still_shows_its_dialog(self):
+        coordinator, record, _sidebar = self._coordinator()
+        stage = object()
+        coordinator._page_delete_stage_token = stage
+        warning, critical = self._deliver(
+            lambda result: coordinator._on_queued_page_delete_complete(
+                self.DATABASE, result, stage
+            ),
+            self._rejection(bid_locked=False),
+            times=1,
+        )
+        critical.assert_called_once_with("window", "Delete Page", "busy")
+        warning.assert_not_called()
+        self.assertEqual(record.prepared, [self.DATABASE])
+        self.assertEqual(record.cleared, 1)
+
+    def test_a_rejected_page_image_change_shows_no_dialog(self):
+        coordinator, record, _sidebar = self._coordinator()
+        warning, critical = self._deliver(
+            lambda result: coordinator._on_queued_page_image_complete(
+                result, "Adjust Images"
+            ),
+            self._rejection(),
+        )
+        warning.assert_not_called()
+        critical.assert_not_called()
+        self.assertEqual(record.prepared, [])
+
+    def test_a_rejected_master_data_save_completes_false_without_a_dialog(self):
+        coordinator, record, _sidebar = self._coordinator()
+        callbacks = []
+        outcome = []
+        started = coordinator._save_master_data_async(
+            self.DATABASE,
+            "Employees",
+            lambda _database_id, _changes, finish: callbacks.append(finish),
+            [],
+            lambda success, value: outcome.append((success, value)),
+            "employees",
+        )
+        self.assertTrue(started)
+        warning, critical = self._deliver(callbacks[0], self._rejection())
+        warning.assert_not_called()
+        critical.assert_not_called()
+        self.assertEqual(outcome, [(False, None), (False, None)])
+        self.assertEqual(record.prepared, [])
+
+
+class UIEventCoordinatorBidLockedRejectionDialogTests(unittest.TestCase):
+    """Decision B4: the Bid Areas dialog (real BidAreasDialog, real
+    ModalEditLeaseSession, real coordinator save and present methods) after the SQL
+    writer refused its queued save with REJECTED / bid_locked: no dialog, the draft
+    stays, the dialog is usable again, the consumed lease is not ended a second time
+    and a freshly acquired lease is held for the retry, which the queue-time guard
+    then refuses silently once the lock flag was re-resolved."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def test_areas_dialog_keeps_its_draft_and_gets_a_lease_after_a_rejection(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        prepared = []
+        saves = []
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = "window"
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator._prepare_for_modal_mutation_error = prepared.append
+        coordinator._project_write_service = SimpleNamespace(
+            queue_bid_areas_save=lambda *args, **kwargs: saves.append((args, kwargs))
+            or 1
+        )
+
+        def lease(name):
+            return EditLeaseHandle(
+                database_id="sql-database",
+                draft_id=name,
+                runtime_generation=1,
+                operation_id="BidAreasDialog",
+                owning_surface="main-window-dialog",
+                resources=(ResourceRef("areas_collection", "8", 8),),
+            )
+
+        first, second = lease("draft-1"), lease("draft-2")
+        granted = [first, second]
+        ended = []
+
+        class Owner:
+            @staticmethod
+            def request_collaboration_edit(_db, _resources, callback, **_options):
+                callback(EditLeaseResult(True, handle=granted.pop(0)))
+
+            @staticmethod
+            def end_collaboration_edit(ended_handle):
+                ended.append(ended_handle)
+
+        session = ModalEditLeaseSession(
+            Owner(),
+            "sql-database",
+            (ResourceRef("areas_collection", "8", 8),),
+            "BidAreasDialog",
+            event_bus=_LockedBidEventBus(),
+        )
+        session.request_initial(lambda _result: None)
+        bid_ref = BidRef("sql-database", "8")
+        dialog = _locked_bid_MasterBidAreasDialog(
+            _locked_bid_FakeIconProvider(),
+            bid_areas=[],
+            save_async_fn=lambda changes, completed: session.submit_mutation(
+                lambda lease_handle, lease_completed: coordinator._save_bid_areas_async(
+                    bid_ref, changes, lease_completed, edit_lease_handle=lease_handle
+                ),
+                completed,
+            ),
+        )
+        session.bind_dialog(dialog)
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog._set_item_name(item, "Area 2")
+            dialog._on_item_changed(item, 0)
+            dialog.flush_pending_save()
+            self.assertEqual(len(saves), 1)
+            self.assertIs(saves[0][1]["edit_lease_handle"], first)
+            callback = saves[0][0][-1]
+            with (
+                patch(f"{_COORDINATOR_LOGGER}.show_warning") as coordinator_warning,
+                patch(f"{_COORDINATOR_LOGGER}.show_critical") as coordinator_critical,
+                patch(
+                    "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+                ) as dialog_warning,
+            ):
+                callback(_bid_locked_rejection())
+                callback(_bid_locked_rejection())
+                self.app.processEvents()
+            coordinator_warning.assert_not_called()
+            coordinator_critical.assert_not_called()
+            dialog_warning.assert_not_called()
+            self.assertEqual(prepared, [])
+            self.assertTrue(dialog._save_controller.pending)
+            self.assertEqual(dialog.tree.currentItem().text(0), "Area 2")
+            self.assertFalse(dialog._save_in_progress)
+            self.assertTrue(dialog.btn_new.isEnabled())
+            self.assertEqual(ended, [])
+            self.assertIs(session._handle, second)
+        finally:
+            session.close()
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+        self.assertEqual(ended, [second])
+
+
+class UIEventCoordinatorCoverSheetStatusFlipTests(unittest.TestCase):
+    """Decision B6 (risk 3), client side: a Cover Sheet save of an UNLOCKED Bid that
+    changes its Job Status to a locked one commits in one transaction. Real
+    CoverSheetHandler save, real UIEventCoordinator._on_remote_hierarchy_changed and
+    _resolve_bid_lock_state, real UIAccessManager: the queue accepts the save (the Bid
+    is not locked yet), the commit completes True with no dialog and no refusal, and the
+    hierarchy event that follows the commit re-resolves the lock flag so the access
+    manager disables the Bid-content edits. Fakes: the write service (records the
+    callback), the project data (a mutable status) and the main window."""
+
+    DATABASE = "C:/jobs/test.mdb"
+    MODULE = "ost_visualizer.presentation.handlers.cover_sheet_handler"
+
+    def test_the_flip_commits_and_the_reresolve_after_the_commit_locks_the_ui(self):
+        from tests.application.services.write_permission_support import (
+            _DatabaseCapability,
+            _EventBus,
+            _ProjectData,
+            _TransactionMonitor,
+        )
+        from tests.presentation.managers.permission_support import (
+            _License,
+            _UiState,
+        )
+        from ost_visualizer.presentation.handlers.cover_sheet_handler import (
+            CoverSheetHandler,
+        )
+
+        bid_ref = BidRef(self.DATABASE, "7")
+        resolves = []
+
+        class ProjectData(_ProjectData):
+            def __init__(self):
+                super().__init__()
+                self.status_uid = "1"
+                self.bid_ref = bid_ref
+
+            def get_bid(self, requested):
+                if requested != bid_ref:
+                    return None
+                return SimpleNamespace(uid="7", status_uid=self.status_uid)
+
+            def get_job_status_snapshot(self, _database_id):
+                resolves.append(self.status_uid)
+                return [
+                    JobStatus(uid="1", name="Open", locked=False),
+                    JobStatus(uid="2", name="Awarded", locked=True),
+                ]
+
+            def set_current_bid_locked(self, locked):
+                self.locked = locked
+
+            def get_current_file_path(self):
+                return bid_ref.file_path
+
+        project_data = ProjectData()
+        access = UIAccessManager(
+            _EventBus(),
+            _License(),
+            _TransactionMonitor(),
+            project_data,
+            _UiState(bid_ref),
+            _DatabaseCapability(),
+        )
+        menu_updates = []
+        project_view = FakeProjectView()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(
+            project_view=project_view, refresh_window_title=lambda: None
+        )
+        coordinator.project_data = project_data
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=bid_ref.file_path,
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator._sidebar = SimpleNamespace(
+            refresh_conditions_from_memory=lambda: None
+        )
+        coordinator._viewer = SimpleNamespace(update_plan_view_for_active=lambda: None)
+        coordinator.ui_access_manager = access
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: True
+        )
+        coordinator._update_menu_state = lambda: menu_updates.append(True)
+        coordinator._do_file_refresh = lambda: None
+        coordinator._resolve_bid_lock_state(bid_ref)
+        self.assertFalse(project_data.locked)
+        self.assertTrue(access.is_allowed(Feature.EDIT_CONDITION))
+        self.assertTrue(access.is_allowed(Feature.PLACE_PLAN_ITEMS))
+        queued = []
+
+        class WriteService:
+            @staticmethod
+            def queue_cover_sheet_save(database_id, bid_uid, updates, callback, **kw):
+                queued.append((updates, callback))
+                return 1
+
+        handler = CoverSheetHandler(
+            window="window",
+            icon_provider=object(),
+            project_data_service=project_data,
+            project_read_service=object(),
+            project_write_service=WriteService(),
+            infrastructure_provider=object(),
+            event_bus=object(),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            ui_access_manager=access,
+            deferred_persistence_manager=object(),
+            workspace_state_model=object(),
+        )
+        handler.set_ui_event_coordinator(coordinator)
+        completed = []
+        updates = {"job_status_uid": "2", "job_name": "Locked by this save"}
+        with (
+            patch(f"{self.MODULE}.show_critical") as handler_critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+        ):
+            started = handler._save_cover_sheet_async(
+                bid_ref, updates, completed.append
+            )
+            self.assertTrue(started)
+            self.assertEqual(len(queued), 1)
+            self.assertEqual(queued[0][0], updates)
+            # the commit: the reconciliation replaced the hierarchy (new Bid status)
+            project_data.status_uid = "2"
+            queued[0][1](
+                QueuedMutationResult(
+                    database_id=bid_ref.file_path,
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                    commit_attempted=True,
+                )
+            )
+            self.assertEqual(completed, [True])
+            coordinator._on_remote_hierarchy_changed(bid_ref.file_path)
+        for dialog in (handler_critical, critical, warning):
+            dialog.assert_not_called()
+        self.assertEqual(resolves, ["1", "2"])
+        self.assertTrue(project_data.locked)
+        self.assertFalse(access.is_allowed(Feature.EDIT_CONDITION))
+        self.assertFalse(access.is_allowed(Feature.PLACE_PLAN_ITEMS))
+        self.assertEqual(menu_updates, [True])
+        # a later write on the now locked Bid is refused by the same flag
+        self.assertTrue(access.is_allowed(Feature.EDIT_BID_JOB_STATUS))
+
+
+import dataclasses
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    SynchronizationConflict,
+)
+from ost_visualizer.application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
+)
+from ost_visualizer.domain.entities.file_state import (
+    normalize_path,
+)
+from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+    SidebarCoordinator,
+)
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    _SuspendedLayerTool,
+)
+from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
+    ViewerSyncCoordinator,
+)
+from ost_visualizer.presentation.dialogs.areas_dialog import (
+    BidAreasDialog,
+)
+from ost_visualizer.presentation.dialogs.condition_types_dialog import (
+    ConditionTypesDialog,
+)
+from ost_visualizer.presentation.dialogs.employees_dialog import (
+    EmployeesDialog,
+)
+from ost_visualizer.presentation.dialogs.job_statuses_dialog import (
+    JobStatusesDialog,
+)
+from ost_visualizer.presentation.dialogs.layers_dialog import (
+    LayersDialogMode,
+)
+from ost_visualizer.presentation.managers.app_config_presentation_manager import (
+    AppConfigPresentationManager,
+)
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    PlanSurfaceAccessState,
+)
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+)
+from ost_visualizer.presentation.utils.messagebox import (
+    DB_LOCKED_HINT,
+)
+
+_COORDINATOR = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+
+
+class Sp3a5aDataclassTests(unittest.TestCase):
+    def test_suspended_tool_and_mesh_publication_are_immutable(self):
+        tool = _SuspendedLayerTool(
+            layer_uid="layer",
+            mode="place",
+            bid_ref=BidRef("db", "1"),
+            bid_owner=object(),
+            tool_revision=3,
+        )
+        publication = _MeshScenePublication(
+            vertices=[],
+            normals=[],
+            indices=[],
+            colors=[],
+            scene_identity=MeshSceneIdentity(BidRef("db", "1"), ("p1",), 1),
+            page_floor_elevations={},
+            condition_uids=[],
+            takeoff_uids=[],
+        )
+        for value, field in ((tool, "layer_uid"), (publication, "vertices")):
+            with self.subTest(type=type(value).__name__):
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    setattr(value, field, "changed")
+
+
+class Sp3a5aConstructionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _build(self, main_window=None):
+        access = Mock(
+            spec=[
+                "set_placement_coordinator",
+                "subscribe_access_state_changed",
+                "is_allowed",
+            ]
+        )
+        services = {
+            "main_window": main_window,
+            "ui_state_manager": SimpleNamespace(name="ui_state"),
+            "ui_access_manager": access,
+            "event_bus": EventBus(),
+            "project_data_service": SimpleNamespace(name="project_data"),
+            "project_operations_service": SimpleNamespace(name="operations"),
+            "visualization_service": SimpleNamespace(name="visualization"),
+            "color_service": SimpleNamespace(name="color"),
+            "icon_provider": SimpleNamespace(name="icons"),
+            "project_write_service": SimpleNamespace(name="write"),
+            "project_read_service": SimpleNamespace(name="read"),
+            "deferred_persistence_manager": SimpleNamespace(name="deferred"),
+            "sql_collaboration_coordinator": SimpleNamespace(name="sql"),
+            "plan_update_callback_bridge": SimpleNamespace(name="bridge"),
+            "workspace_state_model": SimpleNamespace(name="workspace"),
+        }
+        return UIEventCoordinator(**services), services
+
+    def test_constructor_stores_each_collaborator_under_its_attribute(self):
+        coordinator, s = self._build()
+        self.assertIs(coordinator.main_window, s["main_window"])
+        self.assertIs(coordinator.ui_state_manager, s["ui_state_manager"])
+        self.assertIs(coordinator.ui_access_manager, s["ui_access_manager"])
+        self.assertIs(coordinator.event_bus, s["event_bus"])
+        self.assertIs(coordinator.project_data, s["project_data_service"])
+        self.assertIs(coordinator.project_operations, s["project_operations_service"])
+        self.assertIs(coordinator.visualization_service, s["visualization_service"])
+        self.assertIs(coordinator._color_service, s["color_service"])
+        self.assertIs(coordinator._icon_provider, s["icon_provider"])
+        self.assertIs(coordinator._project_write_service, s["project_write_service"])
+        self.assertIs(coordinator._project_read_service, s["project_read_service"])
+        self.assertIs(
+            coordinator._deferred_persistence, s["deferred_persistence_manager"]
+        )
+        self.assertIs(
+            coordinator._sql_collaboration, s["sql_collaboration_coordinator"]
+        )
+        self.assertIs(coordinator._workspace_state_model, s["workspace_state_model"])
+
+    def test_constructor_builds_the_sub_coordinators_from_the_same_services(self):
+        coordinator, s = self._build()
+        self.assertIsInstance(coordinator._nav, NavigationStateMachine)
+        self.assertIsInstance(coordinator._sidebar, SidebarCoordinator)
+        self.assertIs(
+            coordinator._sidebar._project_read_service, s["project_read_service"]
+        )
+        self.assertIs(coordinator._sidebar._ui_state, s["ui_state_manager"])
+        self.assertIs(coordinator._sidebar._project_data, s["project_data_service"])
+        self.assertIsInstance(coordinator._viewer, ViewerSyncCoordinator)
+        self.assertIs(coordinator._viewer._ui_state, s["ui_state_manager"])
+        self.assertIs(coordinator._viewer._access, s["ui_access_manager"])
+        self.assertIs(coordinator._viewer._color_service, s["color_service"])
+        self.assertIs(coordinator._viewer._project_data, s["project_data_service"])
+        self.assertIsInstance(coordinator._toolbar, ToolbarStateCoordinator)
+        self.assertIs(coordinator._toolbar._ui_state, s["ui_state_manager"])
+        self.assertIs(coordinator._toolbar._access, s["ui_access_manager"])
+        self.assertIs(coordinator._toolbar._project_data, s["project_data_service"])
+        self.assertIsInstance(
+            coordinator._app_config_presentation, AppConfigPresentationManager
+        )
+        placement = coordinator._placement
+        self.assertIsInstance(placement, PlacementCoordinator)
+        self.assertIs(placement._ui_state, s["ui_state_manager"])
+        self.assertIs(placement._access, s["ui_access_manager"])
+        self.assertIs(placement._color_service, s["color_service"])
+        self.assertIs(placement._project_data, s["project_data_service"])
+        self.assertIs(placement._nav, coordinator._nav)
+        s["ui_access_manager"].set_placement_coordinator.assert_called_once_with(
+            placement
+        )
+        handler = coordinator._condition_handler
+        self.assertIsInstance(handler, ConditionActionHandler)
+        self.assertIs(handler._coordinator, coordinator)
+
+    def test_constructor_starts_idle_with_no_surfaces_attached(self):
+        coordinator, s = self._build()
+        for name in (
+            "_plan_texture_provider",
+            "conditions_sidebar",
+            "condition_summary_tab",
+            "takeoff_sidebar",
+            "opengl_viewer",
+            "plan_view",
+            "_bid_clipboard",
+            "_view_stack",
+            "_status_panel",
+            "_tab_widget",
+            "_page_settings_bar",
+            "_undo_service",
+            "_suspended_layer_tool",
+            "_mesh_window",
+            "_mesh_window_action",
+            "_last_mesh_scene",
+            "_plan_view_handler",
+            "_takeoff_workspace_bid_ref",
+            "_pending_takeoff_page_uids",
+            "_pending_takeoff_active_page_uid",
+            "_pending_takeoff_place_condition_uid",
+            "_page_delete_stage_token",
+            "_pending_hotlink_page_uid",
+            "_pending_hotlink_named_view",
+        ):
+            with self.subTest(attribute=name):
+                self.assertIs(getattr(coordinator, name), None)
+        self.assertEqual(coordinator._bid_data_cache, {})
+        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_bid, {})
+        self.assertIs(coordinator._mesh_scene_dirty, False)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, set())
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, False)
+        self.assertIs(coordinator._is_cleaning_up, False)
+        self.assertEqual(coordinator._pending_takeoff_selected_area_uid, "")
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uids, [])
+        self.assertEqual(coordinator._selected_takeoff_uids, ())
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(coordinator._bid_lock_reverify_scheduled, set())
+        self.assertEqual(coordinator._bid_lock_watch, set())
+
+    def test_constructor_subscribes_once_and_records_every_subscription(self):
+        coordinator, s = self._build()
+        self.assertGreater(len(coordinator._subscriptions), 20)
+        for event_name, callback in coordinator._subscriptions:
+            with self.subTest(event=event_name):
+                registered = [
+                    cb for cb, _token in s["event_bus"]._subscribers[event_name]
+                ]
+                self.assertIn(callback, registered)
+        self.assertEqual(
+            len(coordinator._subscriptions),
+            len(set(coordinator._subscriptions)),
+        )
+
+    def test_signalers_run_their_coordinator_callbacks_on_the_qt_thread(self):
+        parent = QtWidgets.QWidget()
+        coordinator, s = self._build(main_window=parent)
+        try:
+            self.assertIs(coordinator._plan_view_signaler.parent(), parent)
+            self.assertIs(coordinator._menu_state_signaler.parent(), parent)
+            calls = []
+            coordinator._update_plan_view_for_active = lambda: calls.append("plan")
+            coordinator._update_menu_state = lambda: calls.append("menu")
+            coordinator._plan_view_signaler.set_callback(
+                coordinator._update_plan_view_for_active
+            )
+            coordinator._menu_state_signaler.set_callback(
+                coordinator._update_menu_state
+            )
+            coordinator._plan_view_signaler.request()
+            coordinator._menu_state_signaler.request()
+            self.app.processEvents()
+            self.assertEqual(calls, ["plan", "menu"])
+        finally:
+            parent.deleteLater()
+
+    def test_constructed_signalers_are_bound_to_the_real_methods(self):
+        parent = QtWidgets.QWidget()
+        coordinator, s = self._build(main_window=parent)
+        try:
+            self.assertEqual(
+                coordinator._plan_view_signaler._callback.__func__,
+                UIEventCoordinator._update_plan_view_for_active,
+            )
+            self.assertEqual(
+                coordinator._menu_state_signaler._callback.__func__,
+                UIEventCoordinator._update_menu_state,
+            )
+            self.assertIs(
+                coordinator._plan_view_signaler._callback.__self__, coordinator
+            )
+            self.assertIs(
+                coordinator._menu_state_signaler._callback.__self__, coordinator
+            )
+        finally:
+            parent.deleteLater()
+
+
+class _Sig:
+    def __init__(self):
+        self.callbacks = []
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+
+
+def _bare():
+    coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+    coordinator._toolbar = Mock(spec=ToolbarStateCoordinator)
+    coordinator._sidebar = Mock(spec=SidebarCoordinator)
+    return coordinator
+
+
+def _calls(mock):
+    return [(call[0], call[1]) for call in mock.mock_calls]
+
+
+class Sp3a5aToolbarDelegationTests(unittest.TestCase):
+    ACTION_SETTERS = (
+        "set_copy_action",
+        "set_cut_action",
+        "set_paste_action",
+        "set_delete_action",
+        "set_undo_action",
+        "set_redo_action",
+        "set_duplicate_action",
+        "set_select_action",
+        "set_select_all_action",
+        "set_move_overlay_action",
+        "set_cover_sheet_button",
+        "set_place_action",
+    )
+
+    def test_each_action_setter_hands_the_widget_to_the_toolbar_then_refreshes_it(self):
+        for name in self.ACTION_SETTERS:
+            with self.subTest(setter=name):
+                coordinator = _bare()
+                widget = object()
+                getattr(coordinator, name)(widget)
+                self.assertEqual(
+                    _calls(coordinator._toolbar),
+                    [(name, (widget,)), ("refresh", ())],
+                )
+
+    def test_annotation_tool_actions_are_forwarded_before_the_refresh(self):
+        coordinator = _bare()
+        actions = [object(), object()]
+        coordinator.set_annotation_tool_actions(actions)
+        self.assertEqual(
+            _calls(coordinator._toolbar),
+            [("set_annotation_tool_actions", (actions,)), ("refresh", ())],
+        )
+
+    def test_bid_clipboard_is_kept_and_forwarded_before_the_refresh(self):
+        coordinator = _bare()
+        clipboard = object()
+        coordinator.set_bid_clipboard(clipboard)
+        self.assertIs(coordinator._bid_clipboard, clipboard)
+        self.assertEqual(
+            _calls(coordinator._toolbar),
+            [("set_bid_clipboard", (clipboard,)), ("refresh", ())],
+        )
+
+    def test_backout_action_wires_its_toggle_and_refreshes_only_the_backout_state(self):
+        _app()
+        coordinator = _bare()
+        toggled = []
+        coordinator._on_backout_toggled = toggled.append
+        action = QtGui.QAction("Backout")
+        action.setCheckable(True)
+        coordinator.set_backout_action(action)
+        self.assertEqual(
+            _calls(coordinator._toolbar),
+            [("set_backout_action", (action,)), ("refresh_backout_action", ())],
+        )
+        self.assertEqual(toggled, [])
+        action.setChecked(True)
+        action.setChecked(False)
+        self.assertEqual(toggled, [True, False])
+
+    def test_refresh_backout_action_only_refreshes_the_backout_state(self):
+        coordinator = _bare()
+        coordinator.refresh_backout_action()
+        self.assertEqual(_calls(coordinator._toolbar), [("refresh_backout_action", ())])
+
+    def test_quantity_refresh_is_delegated_to_the_sidebar_coordinator(self):
+        coordinator = _bare()
+        coordinator.update_conditions_quantities()
+        self.assertEqual(
+            _calls(coordinator._sidebar), [("update_conditions_quantities", ())]
+        )
+
+    def test_refresh_toolbar_refreshes_then_updates_the_detached_window_access(self):
+        coordinator = _bare()
+        order = []
+        coordinator._is_cleaning_up = False
+        coordinator._toolbar.refresh.side_effect = lambda: order.append("toolbar")
+        coordinator._refresh_mesh_window_access = lambda: order.append("mesh")
+        coordinator.refresh_toolbar()
+        self.assertEqual(order, ["toolbar", "mesh"])
+
+    def test_refresh_toolbar_does_nothing_while_cleaning_up_or_without_a_toolbar(self):
+        coordinator = _bare()
+        coordinator._refresh_mesh_window_access = Mock()
+        coordinator._is_cleaning_up = True
+        coordinator.refresh_toolbar()
+        coordinator._toolbar.refresh.assert_not_called()
+        coordinator._is_cleaning_up = False
+        toolbar = coordinator._toolbar
+        coordinator._toolbar = None
+        coordinator.refresh_toolbar()
+        coordinator._refresh_mesh_window_access.assert_not_called()
+        coordinator._toolbar = toolbar
+        coordinator.refresh_toolbar()
+        toolbar.refresh.assert_called_once_with()
+        coordinator._refresh_mesh_window_access.assert_called_once_with()
+
+
+class Sp3a5aSurfaceRegistrationTests(unittest.TestCase):
+    def test_page_settings_bar_is_kept_forwarded_and_its_signals_are_wired(self):
+        coordinator = _bare()
+        bar = SimpleNamespace(
+            scale_change_requested=_Sig(),
+            custom_scale_requested=_Sig(),
+            area_change_requested=_Sig(),
+        )
+        coordinator.set_page_settings_bar(bar)
+        self.assertIs(coordinator._page_settings_bar, bar)
+        coordinator._toolbar.set_page_settings_bar.assert_called_once_with(bar)
+        self.assertEqual(
+            bar.scale_change_requested.callbacks, [coordinator._on_page_scale_changed]
+        )
+        self.assertEqual(
+            bar.custom_scale_requested.callbacks, [coordinator.open_set_scale_dialog]
+        )
+        self.assertEqual(
+            bar.area_change_requested.callbacks, [coordinator._on_page_area_changed]
+        )
+
+    def test_clearing_the_page_settings_bar_wires_nothing(self):
+        coordinator = _bare()
+        coordinator._page_settings_bar = object()
+        coordinator.set_page_settings_bar(None)
+        self.assertIsNone(coordinator._page_settings_bar)
+        coordinator._toolbar.set_page_settings_bar.assert_called_once_with(None)
+
+    def test_conditions_sidebar_is_registered_and_every_signal_reaches_its_handler(
+        self,
+    ):
+        coordinator = _bare()
+        signal_to_handler = {
+            "create_requested": "on_create_requested",
+            "duplicate_requested": "on_duplicate_requested",
+            "paste_requested": "on_paste_requested",
+            "delete_requested": "on_delete_requested",
+            "edit_requested": "on_edit_requested",
+            "condition_renamed": "on_condition_renamed",
+            "create_folder_requested": "on_create_folder_requested",
+            "folder_renamed": "on_folder_renamed",
+            "folder_delete_requested": "on_folder_delete_requested",
+            "condition_folder_move_requested": "on_move_condition_to_folder",
+            "condition_layer_change_requested": "on_condition_layer_change_requested",
+            "condition_type_change_requested": "on_condition_type_change_requested",
+        }
+        handler = SimpleNamespace(
+            **{name: object() for name in signal_to_handler.values()}
+        )
+        coordinator._condition_handler = handler
+        sidebar = SimpleNamespace(
+            set_select_objects_command_factory=Mock(),
+            set_duplicate_reassign_command_factory=Mock(),
+            condition_selected=_Sig(),
+            **{signal: _Sig() for signal in signal_to_handler},
+        )
+        coordinator.set_conditions_sidebar(sidebar)
+        self.assertIs(coordinator.conditions_sidebar, sidebar)
+        self.assertIs(coordinator._sidebar.conditions_sidebar, sidebar)
+        coordinator._toolbar.set_conditions_sidebar.assert_called_once_with(sidebar)
+        sidebar.set_select_objects_command_factory.assert_called_once_with(
+            coordinator.prepare_condition_object_selection
+        )
+        sidebar.set_duplicate_reassign_command_factory.assert_called_once_with(
+            coordinator.prepare_condition_duplicate_reassignment
+        )
+        self.assertEqual(
+            sidebar.condition_selected.callbacks, [coordinator._on_condition_selected]
+        )
+        for signal, handler_name in signal_to_handler.items():
+            with self.subTest(signal=signal):
+                self.assertEqual(
+                    getattr(sidebar, signal).callbacks,
+                    [getattr(handler, handler_name)],
+                )
+        coordinator._toolbar.refresh.assert_called_once_with()
+
+    def test_clearing_the_conditions_sidebar_wires_nothing_and_does_not_refresh(self):
+        coordinator = _bare()
+        coordinator.conditions_sidebar = object()
+        coordinator.set_conditions_sidebar(None)
+        self.assertIsNone(coordinator.conditions_sidebar)
+        self.assertIsNone(coordinator._sidebar.conditions_sidebar)
+        coordinator._toolbar.set_conditions_sidebar.assert_called_once_with(None)
+        coordinator._toolbar.refresh.assert_not_called()
+
+    def test_summary_tab_is_registered_with_delete_state_and_grouping_hooks(self):
+        coordinator = _bare()
+        coordinator._condition_handler = SimpleNamespace(on_delete_requested=object())
+        tab = SimpleNamespace(
+            delete_requested=_Sig(),
+            summary_action_state_changed=_Sig(),
+            set_grouping_rebuild_callback=Mock(),
+        )
+        coordinator.set_condition_summary_tab(tab)
+        self.assertIs(coordinator.condition_summary_tab, tab)
+        self.assertIs(coordinator._sidebar.condition_summary_tab, tab)
+        coordinator._toolbar.set_condition_summary_tab.assert_called_once_with(tab)
+        self.assertEqual(
+            tab.delete_requested.callbacks,
+            [coordinator._condition_handler.on_delete_requested],
+        )
+        self.assertEqual(
+            tab.summary_action_state_changed.callbacks, [coordinator._toolbar.refresh]
+        )
+        tab.set_grouping_rebuild_callback.assert_called_once_with(
+            coordinator._sidebar.set_condition_summary_grouping
+        )
+        coordinator._toolbar.refresh.assert_called_once_with()
+
+    def test_clearing_the_summary_tab_still_refreshes_the_toolbar_once(self):
+        coordinator = _bare()
+        coordinator.set_condition_summary_tab(None)
+        self.assertIsNone(coordinator.condition_summary_tab)
+        self.assertIsNone(coordinator._sidebar.condition_summary_tab)
+        coordinator._toolbar.set_condition_summary_tab.assert_called_once_with(None)
+        coordinator._toolbar.refresh.assert_called_once_with()
+
+    def test_layers_sidebar_is_registered_and_every_signal_reaches_its_slot(self):
+        coordinator = _bare()
+        coordinator.project_data = SimpleNamespace(
+            get_layer_uids_in_use=lambda: {"u1", "u2"}
+        )
+        sidebar = SimpleNamespace(
+            set_toggle_callback=Mock(),
+            layer_added=_Sig(),
+            layer_deleted=_Sig(),
+            layer_usage_refresh_requested=_Sig(),
+            layers_show_all=_Sig(),
+            layer_moved=_Sig(),
+            layer_renamed=_Sig(),
+            set_used_layer_uids=Mock(),
+        )
+        coordinator.set_bid_layers_sidebar(sidebar)
+        self.assertIs(coordinator._sidebar.bid_layers_sidebar, sidebar)
+        coordinator._toolbar.set_bid_layers_sidebar.assert_called_once_with(sidebar)
+        sidebar.set_toggle_callback.assert_called_once_with(
+            coordinator._on_layer_visibility_toggled
+        )
+        self.assertEqual(sidebar.layer_added.callbacks, [coordinator._on_layer_added])
+        self.assertEqual(
+            sidebar.layer_deleted.callbacks, [coordinator._on_layer_deleted]
+        )
+        self.assertEqual(
+            sidebar.layers_show_all.callbacks, [coordinator._on_layers_show_all]
+        )
+        self.assertEqual(sidebar.layer_moved.callbacks, [coordinator._on_layer_moved])
+        self.assertEqual(
+            sidebar.layer_renamed.callbacks, [coordinator._on_layer_renamed]
+        )
+        (refresh,) = sidebar.layer_usage_refresh_requested.callbacks
+        sidebar.set_used_layer_uids.assert_not_called()
+        refresh()
+        sidebar.set_used_layer_uids.assert_called_once_with({"u1", "u2"})
+
+    def test_clearing_the_layers_sidebar_wires_nothing(self):
+        coordinator = _bare()
+        coordinator.set_bid_layers_sidebar(None)
+        self.assertIsNone(coordinator._sidebar.bid_layers_sidebar)
+        coordinator._toolbar.set_bid_layers_sidebar.assert_called_once_with(None)
+
+    def test_undo_service_is_kept_forwarded_and_refreshes_the_toolbar_on_change(self):
+        coordinator = _bare()
+        undo = Mock(spec=["set_change_callback"])
+        coordinator.set_undo_service(undo)
+        self.assertIs(coordinator._undo_service, undo)
+        coordinator._toolbar.set_undo_service.assert_called_once_with(undo)
+        undo.set_change_callback.assert_called_once_with(coordinator._toolbar.refresh)
+        coordinator._toolbar.refresh.assert_called_once_with()
+
+    def test_clearing_the_undo_service_refreshes_without_a_callback(self):
+        coordinator = _bare()
+        coordinator._undo_service = object()
+        coordinator.set_undo_service(None)
+        self.assertIsNone(coordinator._undo_service)
+        coordinator._toolbar.set_undo_service.assert_called_once_with(None)
+        coordinator._toolbar.refresh.assert_called_once_with()
+
+    def test_takeoff_sidebar_is_shared_with_the_sidebar_coordinator(self):
+        coordinator = _bare()
+        sidebar = object()
+        coordinator.set_takeoff_sidebar(sidebar)
+        self.assertIs(coordinator.takeoff_sidebar, sidebar)
+        self.assertIs(coordinator._sidebar.takeoff_sidebar, sidebar)
+
+    def test_view_stack_is_shared_and_its_index_change_is_wired(self):
+        coordinator = _bare()
+        stack = SimpleNamespace(currentChanged=_Sig())
+        coordinator.set_view_stack(stack)
+        self.assertIs(coordinator._view_stack, stack)
+        coordinator._sidebar.set_view_stack.assert_called_once_with(stack)
+        coordinator._toolbar.set_view_stack.assert_called_once_with(stack)
+        self.assertEqual(
+            stack.currentChanged.callbacks, [coordinator._on_view_stack_changed]
+        )
+        coordinator._toolbar.refresh_backout_action.assert_called_once_with()
+
+    def test_plan_view_handler_is_kept_and_forwarded_to_the_toolbar(self):
+        coordinator = _bare()
+        handler = object()
+        coordinator.set_plan_view_handler(handler)
+        self.assertIs(coordinator._plan_view_handler, handler)
+        coordinator._toolbar.set_plan_view_handler.assert_called_once_with(handler)
+
+    def test_plan_texture_provider_reaches_every_native_view(self):
+        coordinator = _bare()
+        viewer = Mock(spec=["set_plan_texture_provider"])
+        window = Mock(spec=["set_plan_texture_provider"])
+        coordinator.opengl_viewer = viewer
+        coordinator._mesh_window = window
+        provider = object()
+        coordinator.set_plan_texture_provider(provider)
+        self.assertIs(coordinator._plan_texture_provider, provider)
+        viewer.set_plan_texture_provider.assert_called_once_with(provider)
+        window.set_plan_texture_provider.assert_called_once_with(provider)
+
+    def test_mesh_window_accessor_and_action_registration_sync_the_checked_state(
+        self,
+    ):
+        _app()
+        coordinator = _bare()
+        coordinator._mesh_window = None
+        action = QtGui.QAction("3D")
+        action.setCheckable(True)
+        action.setChecked(True)
+        coordinator.set_mesh_window_action(action)
+        self.assertIs(coordinator._mesh_window_action, action)
+        self.assertFalse(action.isChecked())
+        window = object()
+        coordinator._mesh_window = window
+        coordinator.set_mesh_window_action(action)
+        self.assertTrue(action.isChecked())
+        self.assertIs(coordinator.get_mesh_window(), window)
+
+
+class Sp3a5aLoadConditionSummaryTests(unittest.TestCase):
+    def _coordinator(self, bid_ref, sql):
+        coordinator = _bare()
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda file_path: (
+                sql.append(file_path) or True
+            )
+        )
+        return coordinator
+
+    def test_sql_bid_loads_the_summary_from_memory_only(self):
+        sql = []
+        coordinator = self._coordinator(BidRef("sql-db", "3"), sql)
+        coordinator._load_condition_summary()
+        self.assertEqual(sql, ["sql-db"])
+        self.assertEqual(
+            _calls(coordinator._sidebar), [("load_condition_summary_from_memory", ())]
+        )
+
+    def test_non_sql_bid_reloads_the_summary_from_storage(self):
+        coordinator = _bare()
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("a.mdb", "3")
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
+        )
+        coordinator._load_condition_summary()
+        self.assertEqual(_calls(coordinator._sidebar), [("load_condition_summary", ())])
+
+    def test_without_a_selected_bid_the_storage_summary_is_loaded_and_sql_is_not_asked(
+        self,
+    ):
+        sql = []
+        coordinator = self._coordinator(None, sql)
+        coordinator._load_condition_summary()
+        self.assertEqual(sql, [])
+        self.assertEqual(_calls(coordinator._sidebar), [("load_condition_summary", ())])
+
+    def test_without_a_sidebar_nothing_is_loaded(self):
+        sql = []
+        coordinator = self._coordinator(BidRef("sql-db", "3"), sql)
+        coordinator._sidebar = None
+        coordinator._load_condition_summary()
+        self.assertEqual(sql, [])
+
+
+class _TargetPlan(QtCore.QObject):
+    def __init__(self, bid_ref, page):
+        super().__init__()
+        self.bid_ref = bid_ref
+        self.page = page
+        self.selection = object()
+        self.owner = (bid_ref, page, self.selection)
+        self.owner_current = True
+        self.owner_checks = []
+        self.owner_queries = 0
+        self.selection_revision = 4
+        self.tool_revision = 9
+        self.displayed = {}
+        self.cursor_modes = []
+        self.selected = []
+
+    def _context_menu_owner(self):
+        self.owner_queries += 1
+        return self.owner
+
+    def _context_menu_owner_is_current(self, owner):
+        self.owner_checks.append(owner)
+        return self.owner_current
+
+    def get_takeoff(self, uid):
+        return self.displayed.get(uid)
+
+    def set_cursor_mode(self, mode):
+        self.cursor_modes.append(mode)
+
+    def select_takeoff_uids(self, uids):
+        self.selected.append(set(uids))
+
+
+class _TargetFixture:
+    def __init__(self):
+        self.bid_ref = BidRef("db", "7")
+        self.bid = object()
+        self.page = SimpleNamespace(uid="page-1")
+        self.condition = SimpleNamespace(uid="cond-1")
+        self.plan = _TargetPlan(self.bid_ref, self.page)
+        self.takeoffs = [
+            SimpleNamespace(uid="t1", condition_uid="cond-1", page_uid="page-1"),
+            SimpleNamespace(uid="t2", condition_uid="cond-1", page_uid="page-1"),
+            SimpleNamespace(uid="t3", condition_uid="other", page_uid="page-1"),
+        ]
+        for takeoff in self.takeoffs:
+            self.plan.displayed[takeoff.uid] = SimpleNamespace(
+                page_uid=takeoff.page_uid, condition_uid=takeoff.condition_uid
+            )
+        self.selected_bid_ref = self.bid_ref
+        self.active_page_uid = "page-1"
+        self.current_bid = self.bid
+        self.current_page = self.page
+        self.current_condition = self.condition
+        self.access = PlanSurfaceAccessState(
+            can_select_plan_items=True, can_edit_plan_items=True
+        )
+        self.allowed = {Feature.DUPLICATE_CONDITION, Feature.EDIT_PLAN_ITEMS}
+        self.access_contexts = []
+        self.view_active = True
+        self.annotation_layer_visible = True
+        self.reassignable = True
+        self.reassign_checks = []
+        self.bid_queries = []
+        self.duplicate_requests = []
+        self.coordinator = self._build()
+
+    def _build(self):
+        coordinator = _bare()
+        coordinator._is_cleaning_up = False
+        coordinator.plan_view = self.plan
+        coordinator._toolbar.is_takeoff_2d_view_active.side_effect = (
+            lambda: self.view_active
+        )
+        fixture = self
+
+        class UiState:
+            active_page_uid = property(lambda _self: fixture.active_page_uid)
+
+            @staticmethod
+            def get_selected_bid_ref():
+                return fixture.selected_bid_ref
+
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = SimpleNamespace(
+            get_bid=lambda ref: (
+                self.bid_queries.append(ref)
+                or (self.current_bid if ref == self.bid_ref else None)
+            ),
+            get_page=lambda uid: self.current_page if uid == "page-1" else None,
+            get_condition=lambda uid: (
+                self.current_condition if uid == "cond-1" else None
+            ),
+            get_page_takeoffs=lambda uid: list(self.takeoffs),
+            is_annotation_layer_visible=lambda: self.annotation_layer_visible,
+        )
+
+        def get_access(context):
+            self.access_contexts.append(context)
+            return self.access
+
+        coordinator.ui_access_manager = SimpleNamespace(
+            get_plan_surface_access=get_access,
+            is_allowed=lambda feature: feature in self.allowed,
+        )
+        coordinator._plan_view_handler = SimpleNamespace(
+            can_reassign_takeoffs=lambda uids: (
+                self.reassign_checks.append(set(uids)) or self.reassignable
+            )
+        )
+        coordinator._condition_handler = SimpleNamespace(
+            on_duplicate_requested=lambda *args, **kwargs: (
+                self.duplicate_requests.append((args, kwargs))
+            )
+        )
+        return coordinator
+
+    def prepare(self, **options):
+        return self.coordinator._prepare_condition_takeoff_target(
+            self.condition, **options
+        )
+
+
+class Sp3a5aConditionTakeoffTargetTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def test_matching_uids_are_the_condition_takeoffs_the_plan_displays(self):
+        fixture = _TargetFixture()
+        matching = fixture.prepare()
+        self.assertEqual(matching(), {"t1", "t2"})
+        context = fixture.access_contexts[-1]
+        self.assertEqual(context.surface_id, MAIN_PLAN_SURFACE_ID)
+        self.assertEqual(context.database_id, "db")
+        self.assertEqual(context.bid_ref, fixture.bid_ref)
+        self.assertEqual(context.page_uid, "page-1")
+        self.assertIs(context.annotation_layer_visible, True)
+        self.assertIn(fixture.plan.owner, fixture.plan.owner_checks)
+        fixture.annotation_layer_visible = False
+        matching()
+        self.assertIs(fixture.access_contexts[-1].annotation_layer_visible, False)
+
+    def test_takeoffs_the_plan_does_not_display_correctly_are_left_out(self):
+        fixture = _TargetFixture()
+        del fixture.plan.displayed["t2"]
+        self.assertEqual(fixture.prepare()(), {"t1"})
+        fixture = _TargetFixture()
+        fixture.plan.displayed["t2"].page_uid = "elsewhere"
+        self.assertEqual(fixture.prepare()(), {"t1"})
+        fixture = _TargetFixture()
+        fixture.plan.displayed["t2"].condition_uid = "moved"
+        self.assertEqual(fixture.prepare()(), {"t1"})
+
+    def test_no_displayed_match_means_no_target(self):
+        fixture = _TargetFixture()
+        fixture.plan.displayed.clear()
+        self.assertIsNone(fixture.prepare())
+
+    def test_no_target_while_cleaning_up_or_without_a_valid_plan_and_the_plan_is_not_asked(
+        self,
+    ):
+        fixture = _TargetFixture()
+        fixture.coordinator._is_cleaning_up = True
+        self.assertIsNone(fixture.prepare())
+        self.assertEqual(fixture.plan.owner_queries, 0)
+        fixture = _TargetFixture()
+        fixture.coordinator.plan_view = None
+        self.assertIsNone(fixture.prepare())
+        self.assertEqual(fixture.plan.owner_queries, 0)
+        fixture = _TargetFixture()
+        delete(fixture.plan)
+        self.assertIsNone(fixture.prepare())
+        self.assertEqual(fixture.plan.owner_queries, 0)
+        fixture = _TargetFixture()
+        self.assertIsNotNone(fixture.prepare())
+        self.assertEqual(fixture.plan.owner_queries, 1)
+
+    def test_no_target_without_a_context_menu_bid_or_page_and_no_bid_lookup(self):
+        fixture = _TargetFixture()
+        fixture.plan.owner = (None, fixture.page, object())
+        self.assertIsNone(fixture.prepare())
+        fixture.plan.owner = (fixture.bid_ref, None, object())
+        self.assertIsNone(fixture.prepare())
+        self.assertEqual(fixture.bid_queries, [])
+
+    def test_no_target_when_the_bid_is_not_loaded(self):
+        fixture = _TargetFixture()
+        fixture.current_bid = None
+        self.assertIsNone(fixture.prepare())
+
+    def test_each_staleness_check_empties_the_prepared_target(self):
+        def cleaning(fixture):
+            fixture.coordinator._is_cleaning_up = True
+
+        def view_inactive(fixture):
+            fixture.view_active = False
+
+        def plan_replaced(fixture):
+            fixture.coordinator.plan_view = _TargetPlan(fixture.bid_ref, fixture.page)
+
+        def plan_deleted(fixture):
+            delete(fixture.plan)
+
+        def owner_stale(fixture):
+            fixture.plan.owner_current = False
+
+        def selection_changed(fixture):
+            fixture.plan.selection_revision += 1
+
+        def bid_selection_changed(fixture):
+            fixture.selected_bid_ref = BidRef("db", "8")
+
+        def page_changed(fixture):
+            fixture.active_page_uid = "page-2"
+
+        def bid_replaced(fixture):
+            fixture.current_bid = object()
+
+        def page_replaced(fixture):
+            fixture.current_page = SimpleNamespace(uid="page-1")
+
+        def condition_replaced(fixture):
+            fixture.current_condition = SimpleNamespace(uid="cond-1")
+
+        def cannot_select(fixture):
+            fixture.access = PlanSurfaceAccessState(can_select_plan_items=False)
+
+        for stale in (
+            cleaning,
+            view_inactive,
+            plan_replaced,
+            plan_deleted,
+            owner_stale,
+            selection_changed,
+            bid_selection_changed,
+            page_changed,
+            bid_replaced,
+            page_replaced,
+            condition_replaced,
+            cannot_select,
+        ):
+            with self.subTest(change=stale.__name__):
+                fixture = _TargetFixture()
+                matching = fixture.prepare()
+                self.assertEqual(matching(), {"t1", "t2"})
+                stale(fixture)
+                self.assertEqual(matching(), set())
+
+    def test_require_edit_needs_edit_access_both_features_and_every_takeoff_shown(
+        self,
+    ):
+        fixture = _TargetFixture()
+        self.assertEqual(fixture.prepare(require_edit=True)(), {"t1", "t2"})
+        for name, change in (
+            (
+                "no edit access",
+                lambda f: setattr(
+                    f,
+                    "access",
+                    PlanSurfaceAccessState(
+                        can_select_plan_items=True, can_edit_plan_items=False
+                    ),
+                ),
+            ),
+            (
+                "no duplicate feature",
+                lambda f: f.allowed.discard(Feature.DUPLICATE_CONDITION),
+            ),
+            ("no edit feature", lambda f: f.allowed.discard(Feature.EDIT_PLAN_ITEMS)),
+            ("takeoff not shown", lambda f: f.plan.displayed.pop("t2")),
+        ):
+            with self.subTest(change=name):
+                fixture = _TargetFixture()
+                matching = fixture.prepare(require_edit=True)
+                change(fixture)
+                self.assertEqual(matching(), set())
+        fixture = _TargetFixture()
+        fixture.access = PlanSurfaceAccessState(
+            can_select_plan_items=True, can_edit_plan_items=False
+        )
+        fixture.allowed.clear()
+        del fixture.plan.displayed["t2"]
+        self.assertEqual(fixture.prepare()(), {"t1"})
+        self.assertIsNone(fixture.prepare(require_edit=True))
+
+
+class Sp3a5aConditionObjectSelectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def test_the_prepared_command_switches_to_select_mode_and_selects_the_takeoffs(
+        self,
+    ):
+        fixture = _TargetFixture()
+        command = fixture.coordinator.prepare_condition_object_selection(
+            fixture.condition
+        )
+        self.assertEqual(fixture.plan.cursor_modes, [])
+        command()
+        self.assertEqual(fixture.plan.cursor_modes, [CURSOR_MODE_SELECT])
+        self.assertEqual(fixture.plan.selected, [{"t1", "t2"}])
+
+    def test_no_command_without_a_target(self):
+        fixture = _TargetFixture()
+        fixture.plan.displayed.clear()
+        self.assertIsNone(
+            fixture.coordinator.prepare_condition_object_selection(fixture.condition)
+        )
+
+    def test_the_command_does_nothing_after_the_tool_changed_or_the_target_went_stale(
+        self,
+    ):
+        fixture = _TargetFixture()
+        command = fixture.coordinator.prepare_condition_object_selection(
+            fixture.condition
+        )
+        fixture.plan.tool_revision += 1
+        command()
+        self.assertEqual((fixture.plan.cursor_modes, fixture.plan.selected), ([], []))
+        fixture = _TargetFixture()
+        command = fixture.coordinator.prepare_condition_object_selection(
+            fixture.condition
+        )
+        fixture.plan.owner_current = False
+        command()
+        self.assertEqual((fixture.plan.cursor_modes, fixture.plan.selected), ([], []))
+
+    def test_the_command_selects_nothing_when_the_target_vanishes_after_the_mode_switch(
+        self,
+    ):
+        fixture = _TargetFixture()
+        command = fixture.coordinator.prepare_condition_object_selection(
+            fixture.condition
+        )
+        original = fixture.plan.set_cursor_mode
+
+        def switch(mode):
+            original(mode)
+            fixture.plan.displayed.clear()
+
+        fixture.plan.set_cursor_mode = switch
+        command()
+        self.assertEqual(fixture.plan.cursor_modes, [CURSOR_MODE_SELECT])
+        self.assertEqual(fixture.plan.selected, [])
+
+
+class Sp3a5aConditionDuplicateReassignmentTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _prepare(self, fixture):
+        return fixture.coordinator.prepare_condition_duplicate_reassignment(
+            fixture.condition
+        )
+
+    def test_the_command_requests_a_duplicate_that_reassigns_the_sorted_takeoffs(self):
+        fixture = _TargetFixture()
+        fixture.plan.owner = (fixture.bid_ref, fixture.page, fixture.plan.selection)
+        command = self._prepare(fixture)
+        self.assertEqual(fixture.duplicate_requests, [])
+        command()
+        ((args, kwargs),) = fixture.duplicate_requests
+        self.assertEqual(args, (["cond-1"],))
+        self.assertEqual(
+            kwargs["reassign_takeoffs"],
+            ConditionTakeoffReassignment("cond-1", "page-1", ("t1", "t2")),
+        )
+        self.assertEqual(set(kwargs), {"reassign_takeoffs", "context_is_current"})
+        self.assertIs(kwargs["context_is_current"](), True)
+        del fixture.plan.displayed["t2"]
+        fixture.takeoffs[1].condition_uid = "other"
+        self.assertIs(kwargs["context_is_current"](), False)
+
+    def test_the_reassignment_page_is_the_context_menu_page_not_the_bid_or_selection(
+        self,
+    ):
+        fixture = _TargetFixture()
+        command = self._prepare(fixture)
+        command()
+        ((_args, kwargs),) = fixture.duplicate_requests
+        self.assertEqual(kwargs["reassign_takeoffs"].page_uid, fixture.page.uid)
+
+    def test_without_edit_access_a_plain_selection_target_is_not_enough(self):
+        fixture = _TargetFixture()
+        fixture.access = PlanSurfaceAccessState(
+            can_select_plan_items=True, can_edit_plan_items=False
+        )
+        self.assertIsNone(self._prepare(fixture))
+        self.assertIsNotNone(
+            fixture.coordinator.prepare_condition_object_selection(fixture.condition)
+        )
+
+    def test_no_command_without_a_plan_view_handler_or_target(self):
+        fixture = _TargetFixture()
+        fixture.coordinator._plan_view_handler = None
+        self.assertIsNone(self._prepare(fixture))
+        fixture = _TargetFixture()
+        fixture.plan.displayed.clear()
+        self.assertIsNone(self._prepare(fixture))
+
+    def test_no_command_when_the_takeoffs_cannot_be_reassigned(self):
+        fixture = _TargetFixture()
+        fixture.reassignable = False
+        self.assertIsNone(self._prepare(fixture))
+        self.assertEqual(fixture.reassign_checks, [{"t1", "t2"}])
+
+    def test_the_command_does_nothing_after_the_tool_or_reassignability_changed(self):
+        fixture = _TargetFixture()
+        command = self._prepare(fixture)
+        fixture.plan.tool_revision += 1
+        command()
+        self.assertEqual(fixture.duplicate_requests, [])
+        fixture = _TargetFixture()
+        command = self._prepare(fixture)
+        fixture.reassignable = False
+        command()
+        self.assertEqual(fixture.duplicate_requests, [])
+        fixture = _TargetFixture()
+        command = self._prepare(fixture)
+        fixture.reassign_checks.clear()
+        fixture.plan.displayed.clear()
+        command()
+        self.assertEqual(fixture.duplicate_requests, [])
+        self.assertEqual(fixture.reassign_checks, [])
+
+
+class Sp3a5aViewStackChangedTests(unittest.TestCase):
+    def _coordinator(self, log, *, plan_view=True, viewer=True):
+        coordinator = _bare()
+        coordinator._is_cleaning_up = False
+        coordinator.ui_state_manager = SimpleNamespace(
+            clear_place_condition=lambda: log.append("clear_place")
+        )
+        coordinator._placement = SimpleNamespace(
+            force_exit=lambda: log.append("force_exit")
+        )
+        coordinator._toolbar.set_select_checked.side_effect = lambda: log.append(
+            "select_checked"
+        )
+        coordinator._toolbar.refresh.side_effect = lambda: log.append("refresh")
+        coordinator._sidebar.update_conditions_quantities.side_effect = (
+            lambda: log.append("quantities")
+        )
+        coordinator.plan_view = (
+            SimpleNamespace(reset_ctrl_held=lambda: log.append("reset_ctrl"))
+            if plan_view
+            else None
+        )
+        coordinator.opengl_viewer = object() if viewer else None
+        coordinator._mesh_scene_dirty = False
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator._flush_dirty_mesh_refresh_if_needed = lambda: log.append("flush")
+        coordinator._replay_mesh_if_current = lambda surface: log.append(
+            ("replay", surface)
+        )
+        coordinator._sync_page_info_status = lambda: log.append("page_info")
+        return coordinator
+
+    def test_leaving_the_2d_page_view_exits_placement_before_refreshing_everything(
+        self,
+    ):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_view_stack_changed(2)
+        self.assertEqual(
+            log,
+            [
+                "force_exit",
+                "clear_place",
+                "select_checked",
+                "quantities",
+                "page_info",
+                "refresh",
+            ],
+        )
+
+    def test_leaving_without_a_placement_coordinator_changes_nothing(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._placement = None
+        coordinator._on_view_stack_changed(2)
+        self.assertEqual(log, [])
+
+    def test_the_plan_view_index_resets_the_ctrl_state_only_when_a_plan_exists(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_view_stack_changed(1)
+        self.assertEqual(log, ["quantities", "reset_ctrl", "page_info", "refresh"])
+        log.clear()
+        coordinator = self._coordinator(log, plan_view=False)
+        coordinator._on_view_stack_changed(1)
+        self.assertEqual(log, ["quantities", "page_info", "refresh"])
+
+    def test_the_3d_index_flushes_dirty_meshes_then_replays_the_cached_scene(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_view_stack_changed(0)
+        self.assertEqual(
+            log,
+            [
+                "force_exit",
+                "clear_place",
+                "select_checked",
+                "quantities",
+                "flush",
+                ("replay", coordinator.opengl_viewer),
+                "page_info",
+                "refresh",
+            ],
+        )
+
+    def test_the_3d_index_skips_the_replay_when_a_refresh_is_dirty_or_pending_or_no_viewer(
+        self,
+    ):
+        for name, setup in (
+            ("dirty", lambda c: setattr(c, "_mesh_scene_dirty", True)),
+            ("pending", lambda c: setattr(c, "_pending_dirty_mesh_refresh", True)),
+            ("no viewer", lambda c: setattr(c, "opengl_viewer", None)),
+        ):
+            with self.subTest(reason=name):
+                log = []
+                coordinator = self._coordinator(log)
+                setup(coordinator)
+                coordinator._on_view_stack_changed(0)
+                self.assertIn("flush", log)
+                self.assertFalse(any(isinstance(entry, tuple) for entry in log))
+                self.assertEqual(log[-2:], ["page_info", "refresh"])
+
+    def test_nothing_runs_while_cleaning_up_or_without_collaborators(self):
+        for name, setup in (
+            ("cleaning up", lambda c: setattr(c, "_is_cleaning_up", True)),
+            ("no toolbar", lambda c: setattr(c, "_toolbar", None)),
+            ("no sidebar", lambda c: setattr(c, "_sidebar", None)),
+            ("no ui state", lambda c: setattr(c, "ui_state_manager", None)),
+        ):
+            with self.subTest(reason=name):
+                log = []
+                coordinator = self._coordinator(log)
+                setup(coordinator)
+                coordinator._on_view_stack_changed(2)
+                coordinator._on_view_stack_changed(1)
+                self.assertEqual(log, [])
+
+
+class _EmbeddedViewer:
+    def __init__(self, log):
+        self.log = log
+        self.mesh_clicked = _Sig()
+        self.overlay_display_mode_requested = _Sig()
+
+    def set_plan_texture_provider(self, provider):
+        self.log.append(("texture_provider", provider))
+
+    def set_negative_check_fn(self, fn):
+        self.log.append(("negative", fn))
+
+    def set_curved_check_fn(self, fn):
+        self.log.append(("curved", fn))
+
+    def set_selected_context_state_fn(self, fn):
+        self.log.append(("context_state", fn))
+
+    def set_context_menu_conditions_fn(self, fn):
+        self.log.append(("menu_conditions", fn))
+
+    def set_pending_mutation_uids(self, uids):
+        self.log.append(("pending_uids", set(uids)))
+
+
+class Sp3a5aOpenGlViewerRegistrationTests(unittest.TestCase):
+    BID_REF = BidRef("db", "7")
+
+    def _coordinator(self, log, *, provider=None, view_3d=True):
+        coordinator = _bare()
+        coordinator._plan_texture_provider = provider
+        coordinator._pending_3d_takeoff_uids_by_bid = {self.BID_REF: {"t1", "t2"}}
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID_REF, active_page_uid="page-9"
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: [],
+            get_selected_page_uids=lambda: ["page-9", "page-10"],
+        )
+        coordinator._viewer = SimpleNamespace(
+            update_license_plan_state=lambda: log.append("license_state")
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: (log.append(("allowed", feature)) or view_3d)
+        )
+        coordinator._sync_overlay_display_mode = lambda uid: log.append(
+            ("overlay_mode", uid)
+        )
+        coordinator._request_or_defer_mesh_refresh = lambda uids: log.append(
+            ("mesh_refresh", list(uids))
+        )
+        coordinator._sync_embedded_renderer_exposure = lambda: log.append("exposure")
+        return coordinator
+
+    def test_viewer_is_registered_with_pending_uids_callbacks_and_a_mesh_refresh(self):
+        log = []
+        provider = object()
+        coordinator = self._coordinator(log, provider=provider)
+        viewer = _EmbeddedViewer(log)
+        coordinator.set_opengl_viewer(viewer)
+        self.assertIs(coordinator.opengl_viewer, viewer)
+        self.assertIs(coordinator._toolbar.opengl_viewer, viewer)
+        self.assertEqual(
+            viewer.mesh_clicked.callbacks, [coordinator._on_3d_mesh_clicked]
+        )
+        self.assertEqual(
+            viewer.overlay_display_mode_requested.callbacks,
+            [coordinator._on_overlay_display_mode_requested],
+        )
+        self.assertEqual(
+            log,
+            [
+                ("pending_uids", {"t1", "t2"}),
+                ("texture_provider", provider),
+                ("negative", coordinator._check_takeoffs_all_negative),
+                ("curved", coordinator._check_takeoffs_curved_state),
+                ("context_state", coordinator._selected_takeoff_context_state),
+                ("menu_conditions", coordinator.project_data.get_bid_conditions),
+                ("overlay_mode", "page-9"),
+                "license_state",
+                ("allowed", Feature.VIEW_3D),
+                ("mesh_refresh", ["page-9", "page-10"]),
+                "exposure",
+            ],
+        )
+
+    def test_without_a_provider_or_3d_access_those_steps_are_skipped(self):
+        log = []
+        coordinator = self._coordinator(log, provider=None, view_3d=False)
+        coordinator.set_opengl_viewer(_EmbeddedViewer(log))
+        self.assertFalse(
+            any(
+                entry[0] == "texture_provider"
+                for entry in log
+                if isinstance(entry, tuple)
+            )
+        )
+        self.assertFalse(
+            any(entry[0] == "mesh_refresh" for entry in log if isinstance(entry, tuple))
+        )
+        self.assertIn(("allowed", Feature.VIEW_3D), log)
+        self.assertEqual(log[-1], "exposure")
+
+
+class _MeshWindowFake:
+    instances = []
+
+    def __init__(self, **options):
+        self.options = options
+        self.log = []
+        self.visible = True
+        for name in (
+            "destroyed",
+            "mesh_clicked",
+            "elements_deleted",
+            "assign_to_area_requested",
+            "reassign_condition_requested",
+            "set_negative_requested",
+            "set_curved_requested",
+            "overlay_display_mode_requested",
+            "undo_requested",
+            "redo_requested",
+        ):
+            setattr(self, name, _Sig())
+        _MeshWindowFake.instances.append(self)
+
+    def set_initial_window_state(self, geometry, maximized):
+        self.log.append(("initial_state", geometry, maximized))
+
+    def set_context_menu_command_handlers(self, trigger, state):
+        self.log.append(("menu_handlers", trigger, state))
+
+    def set_pending_mutation_uids(self, uids):
+        self.log.append(("pending_uids", set(uids)))
+
+    def set_pick_enabled(self, enabled):
+        self.log.append(("pick", enabled))
+
+    def set_editing_enabled(self, enabled):
+        self.log.append(("editing", enabled))
+
+    def set_plan_texture_provider(self, provider):
+        self.log.append(("texture_provider", provider))
+
+    def show_initial_window(self):
+        self.log.append("show")
+
+    def prepare_scene_refresh(self, bid_ref, page_uids):
+        self.log.append(("prepare", bid_ref, tuple(page_uids)))
+
+    def close(self):
+        self.log.append("close")
+
+    def isVisible(self):
+        return self.visible
+
+
+class Sp3a5aMeshWindowOpenTests(unittest.TestCase):
+    BID_REF = BidRef("db", "7")
+
+    def setUp(self):
+        _MeshWindowFake.instances.clear()
+        patcher = patch(f"{_COORDINATOR}.MeshViewWindow", _MeshWindowFake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _coordinator(self, *, handler=True, menu=True, provider=None, replay=False):
+        coordinator = _bare()
+        self.log = log = []
+        coordinator._mesh_window = None
+        coordinator._icon_provider = "icons"
+        coordinator._color_service = "colors"
+        coordinator._plan_texture_provider = provider
+        coordinator._pending_3d_takeoff_uids_by_bid = {self.BID_REF: {"t9"}}
+        coordinator._mesh_scene_dirty = False
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator._last_mesh_scene = None
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: [],
+            get_selected_page_uids=lambda: ["page-2", "page-1"],
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID_REF, active_page_uid="page-1"
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.SELECT_PLAN_ITEMS
+        )
+        undo = SimpleNamespace(undo=object(), redo=object())
+        coordinator._plan_view_handler = (
+            SimpleNamespace(
+                on_elements_deleted=object(),
+                on_assign_to_area=object(),
+                on_reassign_condition=object(),
+                on_set_negative=object(),
+                on_set_curved=object(),
+                _undo_svc=undo,
+            )
+            if handler
+            else None
+        )
+        self.menu = SimpleNamespace(
+            trigger_menu_action=object(), get_menu_action_state=object()
+        )
+        coordinator.main_window = SimpleNamespace(
+            menu_controller=self.menu if menu else None
+        )
+        coordinator._sync_overlay_display_mode = lambda uid: log.append(
+            ("overlay_mode", uid)
+        )
+        coordinator._sync_mesh_window_action = lambda visible: log.append(
+            ("action", visible)
+        )
+        coordinator._replay_mesh_if_current = lambda window: (
+            log.append(("replay", window)) or replay
+        )
+        coordinator._flush_dirty_mesh_refresh_if_needed = lambda: log.append("flush")
+        coordinator._request_or_defer_mesh_refresh = lambda uids: log.append(
+            ("mesh_refresh", list(uids))
+        )
+        coordinator.visualization_service = SimpleNamespace(
+            get_pending_mesh_scene_identity=lambda: None
+        )
+        return coordinator
+
+    def test_opening_builds_the_window_from_the_coordinator_callbacks(self):
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertIs(coordinator._mesh_window, window)
+        self.assertEqual(
+            window.options,
+            {
+                "icon_provider": "icons",
+                "color_service": "colors",
+                "negative_check_fn": coordinator._check_takeoffs_all_negative,
+                "curved_check_fn": coordinator._check_takeoffs_curved_state,
+                "selected_context_state_fn": coordinator._selected_takeoff_context_state,
+                "context_menu_conditions_fn": coordinator.project_data.get_bid_conditions,
+            },
+        )
+
+    def test_opening_connects_every_window_signal_to_its_handler(self):
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        handler = coordinator._plan_view_handler
+        self.assertEqual(
+            window.mesh_clicked.callbacks, [coordinator._on_mesh_window_clicked]
+        )
+        self.assertEqual(
+            window.elements_deleted.callbacks, [handler.on_elements_deleted]
+        )
+        self.assertEqual(
+            window.assign_to_area_requested.callbacks, [handler.on_assign_to_area]
+        )
+        self.assertEqual(
+            window.reassign_condition_requested.callbacks,
+            [handler.on_reassign_condition],
+        )
+        self.assertEqual(
+            window.set_negative_requested.callbacks, [handler.on_set_negative]
+        )
+        self.assertEqual(window.set_curved_requested.callbacks, [handler.on_set_curved])
+        self.assertEqual(
+            window.overlay_display_mode_requested.callbacks,
+            [coordinator._on_overlay_display_mode_requested],
+        )
+        self.assertEqual(window.undo_requested.callbacks, [handler._undo_svc.undo])
+        self.assertEqual(window.redo_requested.callbacks, [handler._undo_svc.redo])
+        self.assertEqual(len(window.destroyed.callbacks), 1)
+
+    def test_opening_without_a_plan_view_handler_connects_only_the_click_signal(self):
+        coordinator = self._coordinator(handler=False)
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertEqual(
+            window.mesh_clicked.callbacks, [coordinator._on_mesh_window_clicked]
+        )
+        for name in (
+            "elements_deleted",
+            "assign_to_area_requested",
+            "reassign_condition_requested",
+            "set_negative_requested",
+            "set_curved_requested",
+            "overlay_display_mode_requested",
+            "undo_requested",
+            "redo_requested",
+        ):
+            with self.subTest(signal=name):
+                self.assertEqual(getattr(window, name).callbacks, [])
+
+    def test_opening_hands_over_the_menu_command_handlers_in_order(self):
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertIn(
+            (
+                "menu_handlers",
+                self.menu.trigger_menu_action,
+                self.menu.get_menu_action_state,
+            ),
+            window.log,
+        )
+        coordinator = self._coordinator(menu=False)
+        coordinator.set_mesh_window_visible(True)
+        window = _MeshWindowFake.instances[-1]
+        self.assertFalse(
+            any(isinstance(e, tuple) and e[0] == "menu_handlers" for e in window.log)
+        )
+
+    def test_opening_passes_the_initial_window_state_only_when_a_geometry_is_given(
+        self,
+    ):
+        geometry = QtCore.QByteArray(b"geometry")
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(True)
+        self.assertFalse(
+            any(
+                isinstance(e, tuple) and e[0] == "initial_state"
+                for e in _MeshWindowFake.instances[-1].log
+            )
+        )
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(True, initial_geometry=geometry)
+        self.assertIn(
+            ("initial_state", geometry, True), _MeshWindowFake.instances[-1].log
+        )
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(
+            True, initial_geometry=geometry, initial_is_maximized=False
+        )
+        self.assertIn(
+            ("initial_state", geometry, False), _MeshWindowFake.instances[-1].log
+        )
+
+    def test_opening_initialises_the_window_before_showing_it_and_syncing_the_scene(
+        self,
+    ):
+        provider = object()
+        coordinator = self._coordinator(provider=provider)
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertEqual(
+            window.log,
+            [
+                (
+                    "menu_handlers",
+                    self.menu.trigger_menu_action,
+                    self.menu.get_menu_action_state,
+                ),
+                ("pending_uids", {"t9"}),
+                ("pick", True),
+                ("editing", False),
+                ("texture_provider", provider),
+                "show",
+            ],
+        )
+        self.assertEqual(
+            self.log,
+            [
+                ("overlay_mode", "page-1"),
+                ("action", True),
+                ("replay", window),
+                ("mesh_refresh", ["page-1", "page-2"]),
+            ],
+        )
+
+    def test_opening_without_a_texture_provider_sets_none(self):
+        coordinator = self._coordinator(provider=None)
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertFalse(
+            any(isinstance(e, tuple) and e[0] == "texture_provider" for e in window.log)
+        )
+
+    def test_a_replayed_current_scene_ends_the_open_without_a_refresh(self):
+        coordinator = self._coordinator(replay=True)
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertEqual(
+            self.log,
+            [("overlay_mode", "page-1"), ("action", True), ("replay", window)],
+        )
+
+    def test_opening_an_already_open_window_only_resyncs_the_action(self):
+        coordinator = self._coordinator()
+        existing = _MeshWindowFake()
+        _MeshWindowFake.instances.clear()
+        coordinator._mesh_window = existing
+        coordinator.set_mesh_window_visible(True)
+        self.assertEqual(self.log, [("action", True)])
+        self.assertEqual(_MeshWindowFake.instances, [])
+        self.assertIs(coordinator._mesh_window, existing)
+
+    def test_a_destroyed_signal_for_the_open_window_clears_it_but_a_stale_one_does_not(
+        self,
+    ):
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        (destroyed,) = window.destroyed.callbacks
+        self.log.clear()
+        coordinator._mesh_window = object()
+        destroyed(None)
+        self.assertEqual(self.log, [])
+        coordinator._mesh_window = window
+        destroyed(None)
+        self.assertIsNone(coordinator._mesh_window)
+        self.assertEqual(self.log, [("action", False)])
+
+    def test_pending_scene_for_the_same_bid_and_pages_prepares_the_window_and_stops(
+        self,
+    ):
+        coordinator = self._coordinator()
+        coordinator.visualization_service = SimpleNamespace(
+            get_pending_mesh_scene_identity=lambda: MeshSceneIdentity(
+                self.BID_REF, ("page-1", "page-2"), 5
+            )
+        )
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertIn(("prepare", self.BID_REF, ("page-1", "page-2")), window.log)
+        self.assertNotIn(("mesh_refresh", ["page-1", "page-2"]), self.log)
+
+    def test_a_pending_scene_for_another_bid_or_pages_does_not_prepare_the_window(
+        self,
+    ):
+        for identity in (
+            MeshSceneIdentity(BidRef("db", "8"), ("page-1", "page-2"), 5),
+            MeshSceneIdentity(self.BID_REF, ("page-1",), 5),
+        ):
+            with self.subTest(identity=identity):
+                _MeshWindowFake.instances.clear()
+                coordinator = self._coordinator()
+                coordinator.visualization_service = SimpleNamespace(
+                    get_pending_mesh_scene_identity=lambda: identity
+                )
+                coordinator.set_mesh_window_visible(True)
+                (window,) = _MeshWindowFake.instances
+                self.assertFalse(
+                    any(e[0] == "prepare" for e in window.log if isinstance(e, tuple))
+                )
+                self.assertIn(("mesh_refresh", ["page-1", "page-2"]), self.log)
+
+    def test_without_a_selected_bid_a_pending_scene_is_not_adopted(self):
+        coordinator = self._coordinator()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: None
+        coordinator.project_data.get_selected_page_uids = lambda: []
+        coordinator.visualization_service = SimpleNamespace(
+            get_pending_mesh_scene_identity=lambda: SimpleNamespace(
+                bid_ref=None, page_uids=()
+            )
+        )
+        coordinator.set_mesh_window_visible(True)
+        (window,) = _MeshWindowFake.instances
+        self.assertFalse(
+            any(e[0] == "prepare" for e in window.log if isinstance(e, tuple))
+        )
+        self.assertIn(("mesh_refresh", []), self.log)
+
+    def test_closing_detaches_the_window_before_closing_it(self):
+        coordinator = self._coordinator()
+        window = _MeshWindowFake()
+        coordinator._mesh_window = window
+        coordinator._sync_mesh_window_action = lambda visible: self.log.append(
+            ("action", visible, coordinator._mesh_window)
+        )
+        coordinator.set_mesh_window_visible(False)
+        self.assertIsNone(coordinator._mesh_window)
+        self.assertEqual(self.log, [("action", False, None)])
+        self.assertEqual(window.log, ["close"])
+
+    def test_closing_without_a_window_only_unchecks_the_action(self):
+        coordinator = self._coordinator()
+        coordinator.set_mesh_window_visible(False)
+        self.assertEqual(self.log, [("action", False)])
+
+
+_SP3A5B_COORDINATOR = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+_SP3A5B_BID = BidRef("b.mdb", "bid-1")
+_SP3A5B_OTHER_BID = BidRef("b.mdb", "bid-2")
+
+
+class _Sp3a5bAction:
+    def __init__(self):
+        self.events = []
+
+    def blockSignals(self, blocked):
+        self.events.append(("blockSignals", blocked))
+
+    def setChecked(self, checked):
+        self.events.append(("setChecked", checked))
+
+
+class _Sp3a5bSurface:
+    def __init__(self, log=None):
+        self.log = [] if log is None else log
+
+    def prepare_scene_refresh(self, bid_ref, page_uids):
+        self.log.append(("prepare", bid_ref, tuple(page_uids)))
+
+    def apply_mesh_data(self, *args, **kwargs):
+        self.log.append(("apply", kwargs["scene_identity"]))
+
+    def set_pending_mutation_uids(self, uids):
+        self.log.append(("pending", set(uids)))
+
+    def close(self):
+        self.log.append(("close",))
+
+
+class _Sp3a5bFeatureAccess:
+    def __init__(self, allowed=()):
+        self.allowed = set(allowed)
+        self.asked = []
+
+    def is_allowed(self, feature):
+        self.asked.append(feature)
+        return feature in self.allowed
+
+
+class _Sp3a5bUiState:
+    def __init__(
+        self,
+        bid_ref=_SP3A5B_BID,
+        selected_page_uids=(),
+        active_page_uid=None,
+        highlighted=(),
+        place_condition_uids=(),
+    ):
+        self.bid_ref = bid_ref
+        self.selected_page_uids = list(selected_page_uids)
+        self.active_page_uid = active_page_uid
+        self.highlighted_condition_uids = set(highlighted)
+        self.place_condition_uids = list(place_condition_uids)
+        self.highlight_calls = []
+
+    def get_selected_bid_ref(self):
+        return self.bid_ref
+
+    def set_highlighted_conditions(self, uids):
+        self.highlight_calls.append(set(uids))
+        self.highlighted_condition_uids = set(uids)
+
+
+class _Sp3a5bProjectData:
+    def __init__(
+        self,
+        missing=(),
+        selected_page_uids=(),
+        conditions=None,
+        pages=(),
+        last_selected=None,
+        annotations=None,
+        bid_owner=None,
+        annotation_layer_uid=None,
+    ):
+        self.annotation_layer_uid = annotation_layer_uid
+        self.missing = set(missing)
+        self.selected_page_uids = list(selected_page_uids)
+        self.conditions = {} if conditions is None else conditions
+        self.pages = list(pages)
+        self.last_selected = last_selected
+        self.annotations = {} if annotations is None else annotations
+        self.bid_owner = bid_owner
+        self.annotation_requests = []
+
+    def get_page(self, uid):
+        if uid in self.missing:
+            return None
+        return SimpleNamespace(uid=uid)
+
+    def get_selected_page_uids(self):
+        return list(self.selected_page_uids)
+
+    def get_bid_conditions(self):
+        return self.conditions
+
+    def get_all_pages(self):
+        return list(self.pages)
+
+    def get_last_selected_page_uid(self):
+        return self.last_selected
+
+    def get_page_annotations(self, page_uid):
+        self.annotation_requests.append(page_uid)
+        return list(self.annotations.get(page_uid, []))
+
+    def get_bid(self, _bid_ref):
+        return self.bid_owner
+
+    def get_annotation_layer_uid(self):
+        return self.annotation_layer_uid
+
+    def get_area_uids_with_takeoff(self):
+        return {"area-with-takeoff"}
+
+
+def _sp3a5b_bare():
+    return UIEventCoordinator.__new__(UIEventCoordinator)
+
+
+class Sp3a5bMeshWindowHideAndActionTests(unittest.TestCase):
+    def _coordinator(self, window, action):
+        coordinator = _sp3a5b_bare()
+        configure_mesh_state(coordinator, mesh_window=window)
+        coordinator._mesh_window_action = action
+        return coordinator
+
+    def test_hiding_detached_window_clears_reference_unchecks_action_then_closes(self):
+        log = []
+        action = _Sp3a5bAction()
+        window = _Sp3a5bSurface(log)
+        coordinator = self._coordinator(window, action)
+        original_close = window.close
+
+        def close_and_note_state():
+            log.append(("action-before-close", list(action.events)))
+            log.append(("reference-at-close", coordinator._mesh_window))
+            original_close()
+
+        window.close = close_and_note_state
+        coordinator.set_mesh_window_visible(False)
+        self.assertIsNone(coordinator._mesh_window)
+        expected_events = [
+            ("blockSignals", True),
+            ("setChecked", False),
+            ("blockSignals", False),
+        ]
+        self.assertEqual(action.events, expected_events)
+        self.assertEqual(
+            log,
+            [
+                ("action-before-close", expected_events),
+                ("reference-at-close", None),
+                ("close",),
+            ],
+        )
+
+    def test_hiding_without_a_window_only_unchecks_the_action(self):
+        action = _Sp3a5bAction()
+        coordinator = self._coordinator(None, action)
+        coordinator.set_mesh_window_visible(False)
+        self.assertIsNone(coordinator._mesh_window)
+        self.assertEqual(
+            action.events,
+            [
+                ("blockSignals", True),
+                ("setChecked", False),
+                ("blockSignals", False),
+            ],
+        )
+
+    def test_sync_mesh_window_action_blocks_signals_around_set_checked(self):
+        action = _Sp3a5bAction()
+        coordinator = self._coordinator(None, action)
+        coordinator._sync_mesh_window_action(True)
+        self.assertEqual(
+            action.events,
+            [
+                ("blockSignals", True),
+                ("setChecked", True),
+                ("blockSignals", False),
+            ],
+        )
+
+    def test_sync_mesh_window_action_without_action_is_a_no_op(self):
+        coordinator = self._coordinator(None, None)
+        self.assertIsNone(coordinator._sync_mesh_window_action(True))
+
+    def test_sync_with_real_action_suppresses_toggled_and_unblocks_afterwards(self):
+        _app()
+        from PySide6 import QtGui
+
+        action = QtGui.QAction("3D")
+        action.setCheckable(True)
+        toggled = []
+        action.toggled.connect(toggled.append)
+        coordinator = self._coordinator(None, action)
+        coordinator._sync_mesh_window_action(True)
+        self.assertTrue(action.isChecked())
+        self.assertEqual(toggled, [])
+        self.assertFalse(action.signalsBlocked())
+        action.setChecked(False)
+        self.assertEqual(toggled, [False])
+
+    def test_destroyed_callback_ignores_unknown_or_missing_window(self):
+        action = _Sp3a5bAction()
+        window = _Sp3a5bSurface()
+        coordinator = self._coordinator(window, action)
+        coordinator._on_mesh_window_destroyed(id(window) + 1)
+        self.assertIs(coordinator._mesh_window, window)
+        self.assertEqual(action.events, [])
+        coordinator._mesh_window = None
+        coordinator._on_mesh_window_destroyed(id(window))
+        coordinator._on_mesh_window_destroyed(id(None))
+        self.assertIsNone(coordinator._mesh_window)
+        self.assertEqual(action.events, [])
+
+    def test_destroyed_callback_for_current_window_clears_it_and_unchecks_action(self):
+        action = _Sp3a5bAction()
+        window = _Sp3a5bSurface()
+        coordinator = self._coordinator(window, action)
+        coordinator._on_mesh_window_destroyed(id(window))
+        self.assertIsNone(coordinator._mesh_window)
+        self.assertEqual(
+            action.events,
+            [
+                ("blockSignals", True),
+                ("setChecked", False),
+                ("blockSignals", False),
+            ],
+        )
+
+    def test_mesh_window_click_requires_select_permission_and_forwards_uids(self):
+        coordinator = _sp3a5b_bare()
+        calls = []
+        coordinator._sync_selection = lambda source, uids: calls.append((source, uids))
+        coordinator.ui_access_manager = _Sp3a5bFeatureAccess()
+        coordinator._on_mesh_window_clicked(["t-1"])
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            coordinator.ui_access_manager.asked, [Feature.SELECT_PLAN_ITEMS]
+        )
+        coordinator.ui_access_manager = _Sp3a5bFeatureAccess(
+            {Feature.SELECT_PLAN_ITEMS}
+        )
+        coordinator._on_mesh_window_clicked(["t-1", "t-2"])
+        self.assertEqual(calls, [("3d_window", ["t-1", "t-2"])])
+
+
+class Sp3a5bMeshReplayTests(unittest.TestCase):
+    def _coordinator(self, publication, pending=None, pages=("page-1",)):
+        coordinator = _sp3a5b_bare()
+        configure_mesh_state(
+            coordinator,
+            visualization=FakeVisualization(pending_mesh_scene_identity=pending),
+            last_mesh_scene=publication,
+        )
+        coordinator.ui_state_manager = _Sp3a5bUiState(bid_ref=_SP3A5B_BID)
+        coordinator.project_data = _Sp3a5bProjectData(selected_page_uids=pages)
+        return coordinator
+
+    def _publication(self, identity):
+        return mesh_publication(("v", "n", "i", "c"), identity, {"page-1": 0.0})
+
+    def test_replay_without_buffered_scene_reports_false_and_touches_nothing(self):
+        coordinator = self._coordinator(None)
+        surface = _Sp3a5bSurface()
+        self.assertIs(coordinator._replay_mesh_if_current(surface), False)
+        self.assertEqual(surface.log, [])
+
+    def test_replay_applies_current_scene_then_projects_pending_uids(self):
+        identity = scene_identity(_SP3A5B_BID, 3)
+        coordinator = self._coordinator(self._publication(identity))
+        coordinator._pending_3d_takeoff_uids_by_bid = {_SP3A5B_BID: {"t-9"}}
+        surface = _Sp3a5bSurface()
+        self.assertIs(coordinator._replay_mesh_if_current(surface), True)
+        self.assertEqual(
+            surface.log,
+            [
+                ("prepare", _SP3A5B_BID, ("page-1",)),
+                ("apply", identity),
+                ("pending", {"t-9"}),
+            ],
+        )
+
+    def test_replay_discards_buffer_whose_identity_is_not_a_mesh_scene_identity(self):
+        impostor = SimpleNamespace(
+            bid_ref=_SP3A5B_BID, page_uids=("page-1",), generation=1
+        )
+        coordinator = self._coordinator(self._publication(impostor))
+        surface = _Sp3a5bSurface()
+        with self.assertLogs(_SP3A5B_COORDINATOR, level="WARNING"):
+            result = coordinator._replay_mesh_if_current(surface)
+        self.assertIs(result, False)
+        self.assertEqual(surface.log, [])
+        self.assertIsNone(coordinator._last_mesh_scene)
+
+    def test_replay_discards_buffer_of_other_bid_or_pages_and_reports_false(self):
+        for identity in (
+            scene_identity(_SP3A5B_OTHER_BID, 1),
+            scene_identity(_SP3A5B_BID, 1, ("page-2",)),
+        ):
+            coordinator = self._coordinator(self._publication(identity))
+            surface = _Sp3a5bSurface()
+            with self.assertLogs(_SP3A5B_COORDINATOR, level="WARNING"):
+                result = coordinator._replay_mesh_if_current(surface)
+            self.assertIs(result, False)
+            self.assertEqual(surface.log, [])
+            self.assertIsNone(coordinator._last_mesh_scene)
+
+    def test_replay_waits_for_strictly_newer_pending_generation_only(self):
+        cached = scene_identity(_SP3A5B_BID, 5)
+        cases = (
+            (scene_identity(_SP3A5B_BID, 6), False),
+            (scene_identity(_SP3A5B_BID, 5), True),
+            (scene_identity(_SP3A5B_BID, 4), True),
+            (scene_identity(_SP3A5B_OTHER_BID, 9), True),
+            (scene_identity(_SP3A5B_BID, 9, ("page-1", "page-2")), True),
+        )
+        for pending, expected in cases:
+            coordinator = self._coordinator(self._publication(cached), pending=pending)
+            surface = _Sp3a5bSurface()
+            result = coordinator._replay_mesh_if_current(surface)
+            self.assertIs(result, expected, pending)
+            self.assertEqual(bool(surface.log), expected, pending)
+            self.assertIsNotNone(coordinator._last_mesh_scene)
+
+    def test_project_pending_mutations_uses_the_bid_entry_or_empty_for_none(self):
+        coordinator = _sp3a5b_bare()
+        coordinator._pending_3d_takeoff_uids_by_bid = {
+            None: {"for-none"},
+            _SP3A5B_BID: {"t-1"},
+        }
+        surface = _Sp3a5bSurface()
+        coordinator._project_pending_3d_mutations(surface, _SP3A5B_BID)
+        coordinator._project_pending_3d_mutations(surface, None)
+        coordinator._project_pending_3d_mutations(surface, _SP3A5B_OTHER_BID)
+        self.assertEqual(
+            surface.log,
+            [("pending", {"t-1"}), ("pending", set()), ("pending", set())],
+        )
+
+    def test_invalidate_scene_request_cancels_clears_buffer_and_dirty_state(self):
+        identity = scene_identity(_SP3A5B_BID, 1)
+        coordinator = self._coordinator(self._publication(identity))
+        coordinator._mesh_scene_dirty = True
+        coordinator._dirty_mesh_page_uids = {"page-1"}
+        coordinator._pending_dirty_mesh_refresh = True
+        coordinator._invalidate_mesh_scene_request()
+        self.assertEqual(coordinator.visualization_service.cancelled_mesh_refreshes, 1)
+        self.assertIsNone(coordinator._last_mesh_scene)
+        self.assertIs(coordinator._mesh_scene_dirty, False)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, set())
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, False)
+
+    def test_clear_dirty_state_resets_all_three_fields(self):
+        coordinator = _sp3a5b_bare()
+        coordinator._mesh_scene_dirty = True
+        coordinator._dirty_mesh_page_uids = {"a", "b"}
+        coordinator._pending_dirty_mesh_refresh = True
+        coordinator._clear_mesh_dirty_state()
+        self.assertIs(coordinator._mesh_scene_dirty, False)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, set())
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, False)
+
+
+class Sp3a5bEmbeddedAndDirtyStateTests(unittest.TestCase):
+    def _coordinator(self, tab, stack):
+        coordinator = _sp3a5b_bare()
+        coordinator._tab_widget = tab
+        coordinator._view_stack = stack
+        return coordinator
+
+    def test_embedded_3d_active_needs_all_four_conditions(self):
+        class Index:
+            def __init__(self, index):
+                self.index = index
+
+            def currentIndex(self):
+                return self.index
+
+        cases = (
+            (Index(TAB_INDEX_TAKEOFF), Index(0), True),
+            (Index(TAB_INDEX_PROJECTS), Index(0), False),
+            (Index(TAB_INDEX_TAKEOFF), Index(1), False),
+            (Index(TAB_INDEX_TAKEOFF), None, False),
+            (None, Index(0), False),
+        )
+        for tab, stack, expected in cases:
+            coordinator = self._coordinator(tab, stack)
+            self.assertIs(coordinator._is_embedded_3d_active(), expected)
+
+    def test_mark_dirty_ignores_empty_and_falsy_uids_and_stringifies_valid(self):
+        coordinator = _sp3a5b_bare()
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._mark_mesh_scene_dirty([])
+        coordinator._mark_mesh_scene_dirty([None, ""])
+        self.assertIs(coordinator._mesh_scene_dirty, False)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, set())
+        coordinator._mark_mesh_scene_dirty([None, 7, "p"])
+        self.assertIs(coordinator._mesh_scene_dirty, True)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"7", "p"})
+
+
+class Sp3a5bRequestOrDeferMeshRefreshTests(unittest.TestCase):
+    def _coordinator(
+        self, *, allowed=True, bid_ref=_SP3A5B_BID, tab=TAB_INDEX_PROJECTS
+    ):
+        coordinator = _sp3a5b_bare()
+        configure_mesh_state(coordinator, tab_index=tab, view_index=1)
+        coordinator.ui_access_manager = _Sp3a5bFeatureAccess(
+            {Feature.VIEW_3D} if allowed else ()
+        )
+        coordinator.ui_state_manager = _Sp3a5bUiState(bid_ref=bid_ref)
+        self.cleared = []
+        coordinator._clear_mesh_views_for_scene_update = lambda: self.cleared.append(1)
+        self.view = _Sp3a5bSurface()
+        coordinator.opengl_viewer = self.view
+        return coordinator
+
+    def test_without_selected_bid_clears_views_and_stops(self):
+        coordinator = self._coordinator(bid_ref=None)
+        coordinator._request_or_defer_mesh_refresh(["page-1"])
+        self.assertEqual(self.cleared, [1])
+        self.assertEqual(self.view.log, [])
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+        self.assertIs(coordinator._mesh_scene_dirty, False)
+
+    def test_without_view_3d_permission_clears_views_and_stops(self):
+        coordinator = self._coordinator(allowed=False)
+        coordinator._request_or_defer_mesh_refresh(["page-1"])
+        self.assertEqual(self.cleared, [1])
+        self.assertEqual(self.view.log, [])
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+
+    def test_cached_scene_of_other_bid_with_same_pages_is_dropped(self):
+        coordinator = self._coordinator()
+        coordinator._last_mesh_scene = mesh_publication(
+            ("v", "n", "i", "c"),
+            scene_identity(_SP3A5B_OTHER_BID, 1, ("page-1",)),
+            {},
+        )
+        coordinator._request_or_defer_mesh_refresh(["page-1"])
+        self.assertIsNone(coordinator._last_mesh_scene)
+
+    def test_cached_scene_of_same_bid_and_pages_is_kept(self):
+        coordinator = self._coordinator()
+        publication = mesh_publication(
+            ("v", "n", "i", "c"),
+            scene_identity(_SP3A5B_BID, 1, ("page-1",)),
+            {},
+        )
+        coordinator._last_mesh_scene = publication
+        coordinator._request_or_defer_mesh_refresh(["page-1"])
+        self.assertIs(coordinator._last_mesh_scene, publication)
+
+    def test_empty_page_selection_clears_dirty_state_and_requests_empty_refresh(self):
+        coordinator = self._coordinator()
+        coordinator._mesh_scene_dirty = True
+        coordinator._dirty_mesh_page_uids = {"page-1"}
+        coordinator._pending_dirty_mesh_refresh = True
+        coordinator._request_or_defer_mesh_refresh([])
+        self.assertIs(coordinator._mesh_scene_dirty, False)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, set())
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, False)
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [[]])
+        self.assertEqual(self.view.log, [("prepare", _SP3A5B_BID, ())])
+
+    def test_live_refresh_mirrors_dirty_flag_into_pending_flag(self):
+        for dirty in (True, False):
+            coordinator = self._coordinator(tab=TAB_INDEX_TAKEOFF)
+            coordinator._view_stack = SimpleNamespace(currentIndex=lambda: 0)
+            coordinator._mesh_scene_dirty = dirty
+            coordinator._pending_dirty_mesh_refresh = not dirty
+            coordinator._request_or_defer_mesh_refresh(["page-1"])
+            self.assertIs(coordinator._pending_dirty_mesh_refresh, dirty)
+            self.assertEqual(coordinator.visualization_service.mesh_pages, [["page-1"]])
+
+    def test_flush_skips_when_view_3d_is_not_allowed(self):
+        coordinator = self._coordinator(allowed=False)
+        coordinator._mesh_scene_dirty = True
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator.project_data = _Sp3a5bProjectData(selected_page_uids=["page-1"])
+        coordinator._flush_dirty_mesh_refresh_if_needed()
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, False)
+        self.assertEqual(self.cleared, [])
+
+    def test_flush_with_no_selected_pages_requests_empty_refresh_only(self):
+        coordinator = self._coordinator()
+        coordinator._mesh_scene_dirty = True
+        coordinator.project_data = _Sp3a5bProjectData(selected_page_uids=[])
+        requests = []
+        coordinator._request_or_defer_mesh_refresh = lambda pages: requests.append(
+            (list(pages), coordinator._pending_dirty_mesh_refresh)
+        )
+        coordinator._flush_dirty_mesh_refresh_if_needed()
+        self.assertEqual(requests, [([], False)])
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, False)
+
+    def test_flush_marks_pending_before_requesting_the_selected_pages(self):
+        coordinator = self._coordinator()
+        coordinator._mesh_scene_dirty = True
+        coordinator.project_data = _Sp3a5bProjectData(selected_page_uids=["p-1", "p-2"])
+        requests = []
+        coordinator._request_or_defer_mesh_refresh = lambda pages: requests.append(
+            (list(pages), coordinator._pending_dirty_mesh_refresh)
+        )
+        coordinator._flush_dirty_mesh_refresh_if_needed()
+        self.assertEqual(requests, [(["p-1", "p-2"], True)])
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, True)
+
+
+class _Sp3a5bRecorder:
+    def __init__(self, label, log, methods, returns=None):
+        self._label = label
+        self._log = log
+        self._methods = set(methods)
+        self._returns = {} if returns is None else returns
+        self._cache = {}
+
+    def __getattr__(self, name):
+        if name.startswith("_") or name not in self._methods:
+            raise AttributeError(name)
+        if name not in self._cache:
+
+            def call(*args, **kwargs):
+                self._log.append((self._label, name, args, kwargs))
+                result = self._returns.get(name)
+                return result() if callable(result) else result
+
+            self._cache[name] = call
+        return self._cache[name]
+
+
+class _Sp3a5bTab:
+    def __init__(self, index=TAB_INDEX_TAKEOFF, count=3, log=None):
+        self.index = index
+        self.count_value = count
+        self.log = [] if log is None else log
+        self.currentChanged = FakeSignal()
+
+    def currentIndex(self):
+        return self.index
+
+    def count(self):
+        return self.count_value
+
+    def setTabVisible(self, tab_index, visible):
+        self.log.append(("setTabVisible", tab_index, visible))
+
+    def setCurrentIndex(self, tab_index):
+        self.log.append(("setCurrentIndex", tab_index))
+        self.index = tab_index
+
+
+class Sp3a5bWiringTests(unittest.TestCase):
+    def test_set_plan_view_stores_view_and_connects_every_signal_to_its_slot(self):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator._viewer = SimpleNamespace(plan_view=None)
+        coordinator._toolbar = _Sp3a5bRecorder(
+            "toolbar", log, {"set_plan_view", "refresh"}
+        )
+        coordinator._placement = _Sp3a5bRecorder("placement", log, {"set_plan_view"})
+        view = SimpleNamespace(
+            takeoff_selection_changed=FakeSignal(),
+            takeoff_selection_command_applied=FakeSignal(),
+            backout_mode_changed=FakeSignal(),
+            clipboard_changed=FakeSignal(),
+            text_annotation_edit_mode_changed=FakeSignal(),
+            page_fully_loaded=FakeSignal(),
+            page_view_state_changed=FakeSignal(),
+        )
+        coordinator.set_plan_view(view)
+        self.assertIs(coordinator.plan_view, view)
+        self.assertIs(coordinator._viewer.plan_view, view)
+        self.assertEqual(
+            log,
+            [
+                ("toolbar", "set_plan_view", (view,), {}),
+                ("placement", "set_plan_view", (view,), {}),
+            ],
+        )
+        expected = {
+            "takeoff_selection_changed": coordinator._on_takeoff_selection_changed,
+            "takeoff_selection_command_applied": (
+                coordinator._on_takeoff_selection_command_applied
+            ),
+            "backout_mode_changed": coordinator._on_backout_mode_changed,
+            "clipboard_changed": coordinator._toolbar.refresh,
+            "text_annotation_edit_mode_changed": (
+                coordinator._on_text_annotation_edit_mode_changed
+            ),
+            "page_fully_loaded": coordinator._on_plan_view_page_fully_loaded,
+            "page_view_state_changed": coordinator._on_plan_view_state_changed,
+        }
+        for signal_name, slot in expected.items():
+            self.assertEqual(getattr(view, signal_name).callbacks, [slot], signal_name)
+
+    def test_set_status_panel_stores_the_panel(self):
+        coordinator = _sp3a5b_bare()
+        panel = object()
+        coordinator.set_status_panel(panel)
+        self.assertIs(coordinator._status_panel, panel)
+
+    def test_set_tab_widget_registers_connects_and_syncs_renderer_exposure(self):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator._toolbar = _Sp3a5bRecorder("toolbar", log, {"set_tab_widget"})
+        coordinator.opengl_viewer = _Sp3a5bRecorder("viewer", log, {"setVisible"})
+        tab = _Sp3a5bTab(index=TAB_INDEX_TAKEOFF)
+        coordinator.set_tab_widget(tab)
+        self.assertIs(coordinator._tab_widget, tab)
+        self.assertEqual(tab.currentChanged.callbacks, [coordinator._on_tab_changed])
+        self.assertEqual(
+            log,
+            [
+                ("toolbar", "set_tab_widget", (tab,), {}),
+                ("viewer", "setVisible", (True,), {}),
+            ],
+        )
+
+    def test_renderer_exposure_follows_takeoff_tab_and_needs_viewer_and_tabs(self):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator.opengl_viewer = _Sp3a5bRecorder("viewer", log, {"setVisible"})
+        for index, expected in (
+            (TAB_INDEX_TAKEOFF, True),
+            (TAB_INDEX_PROJECTS, False),
+            (TAB_INDEX_SUMMARY, False),
+        ):
+            del log[:]
+            coordinator._tab_widget = _Sp3a5bTab(index=index)
+            coordinator._sync_embedded_renderer_exposure()
+            self.assertEqual(log, [("viewer", "setVisible", (expected,), {})])
+        del log[:]
+        coordinator._tab_widget = None
+        coordinator._sync_embedded_renderer_exposure()
+        coordinator.opengl_viewer = None
+        coordinator._tab_widget = _Sp3a5bTab()
+        coordinator._sync_embedded_renderer_exposure()
+        self.assertEqual(log, [])
+
+
+class Sp3a5bTakeoffTabVisibilityTests(unittest.TestCase):
+    def _coordinator(self, tab):
+        coordinator = _sp3a5b_bare()
+        coordinator._tab_widget = tab
+        return coordinator
+
+    def test_without_tab_widget_nothing_happens(self):
+        self.assertIsNone(self._coordinator(None)._set_takeoff_tab_visible(False))
+
+    def test_showing_tabs_sets_takeoff_and_summary_visible_without_switching(self):
+        tab = _Sp3a5bTab(index=TAB_INDEX_PROJECTS, count=3)
+        self._coordinator(tab)._set_takeoff_tab_visible(True)
+        self.assertEqual(
+            tab.log,
+            [
+                ("setTabVisible", TAB_INDEX_TAKEOFF, True),
+                ("setTabVisible", TAB_INDEX_SUMMARY, True),
+            ],
+        )
+
+    def test_hiding_tabs_leaves_the_projects_tab_selected_without_switching(self):
+        tab = _Sp3a5bTab(index=TAB_INDEX_PROJECTS, count=3)
+        self._coordinator(tab)._set_takeoff_tab_visible(False)
+        self.assertEqual(
+            tab.log,
+            [
+                ("setTabVisible", TAB_INDEX_TAKEOFF, False),
+                ("setTabVisible", TAB_INDEX_SUMMARY, False),
+            ],
+        )
+
+    def test_hiding_tabs_moves_a_hidden_current_tab_to_projects(self):
+        for index in (TAB_INDEX_TAKEOFF, TAB_INDEX_SUMMARY):
+            tab = _Sp3a5bTab(index=index, count=3)
+            self._coordinator(tab)._set_takeoff_tab_visible(False)
+            self.assertEqual(tab.log[-1], ("setCurrentIndex", TAB_INDEX_PROJECTS))
+            self.assertEqual(len(tab.log), 3)
+
+    def test_tab_widget_without_summary_tab_only_touches_takeoff_tab(self):
+        tab = _Sp3a5bTab(index=TAB_INDEX_SUMMARY, count=TAB_INDEX_SUMMARY)
+        self._coordinator(tab)._set_takeoff_tab_visible(False)
+        self.assertEqual(tab.log, [("setTabVisible", TAB_INDEX_TAKEOFF, False)])
+        tab = _Sp3a5bTab(index=TAB_INDEX_TAKEOFF, count=TAB_INDEX_SUMMARY)
+        self._coordinator(tab)._set_takeoff_tab_visible(False)
+        self.assertEqual(
+            tab.log,
+            [
+                ("setTabVisible", TAB_INDEX_TAKEOFF, False),
+                ("setCurrentIndex", TAB_INDEX_PROJECTS),
+            ],
+        )
+
+
+class Sp3a5bStagedTakeoffRestoreTests(unittest.TestCase):
+    def _coordinator(self, **project_options):
+        coordinator = _sp3a5b_bare()
+        coordinator.project_data = _Sp3a5bProjectData(**project_options)
+        coordinator._page_delete_stage_token = object()
+        coordinator._pending_takeoff_page_uids = ["old"]
+        coordinator._pending_takeoff_active_page_uid = "old"
+        coordinator._pending_takeoff_selected_area_uid = "old-area"
+        coordinator._pending_takeoff_place_condition_uid = "old-condition"
+        coordinator._pending_takeoff_place_condition_uids = ["old-condition"]
+        return coordinator
+
+    def test_clear_staged_restore_resets_all_five_fields(self):
+        coordinator = self._coordinator()
+        coordinator._clear_staged_takeoff_restore()
+        self.assertIsNone(coordinator._pending_takeoff_page_uids)
+        self.assertIsNone(coordinator._pending_takeoff_active_page_uid)
+        self.assertEqual(coordinator._pending_takeoff_selected_area_uid, "")
+        self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uids, [])
+
+    def test_reset_workspace_state_clears_sidebars_and_staging_by_default(self):
+        log = []
+        coordinator = self._coordinator()
+        coordinator.plan_view = None
+        coordinator._takeoff_workspace_bid_ref = _SP3A5B_BID
+        coordinator._selected_takeoff_uids = ("t-1",)
+        coordinator._selection_projected_condition_uids = {"c-1"}
+        coordinator._sidebar = _Sp3a5bRecorder("sidebar", log, {"clear_sidebars"})
+        coordinator._page_settings_bar = _Sp3a5bRecorder("bar", log, {"clear_bid"})
+        coordinator._reset_takeoff_workspace_state()
+        self.assertIsNone(coordinator._takeoff_workspace_bid_ref)
+        self.assertIsNone(coordinator._pending_takeoff_page_uids)
+        self.assertEqual(coordinator._selected_takeoff_uids, ())
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(
+            log,
+            [("sidebar", "clear_sidebars", (), {}), ("bar", "clear_bid", (), {})],
+        )
+
+    def test_reset_workspace_state_without_sidebar_clearing_keeps_selection(self):
+        log = []
+        coordinator = self._coordinator()
+        coordinator.plan_view = None
+        coordinator._takeoff_workspace_bid_ref = _SP3A5B_BID
+        coordinator._selected_takeoff_uids = ("t-1",)
+        coordinator._selection_projected_condition_uids = {"c-1"}
+        coordinator._sidebar = _Sp3a5bRecorder("sidebar", log, {"clear_sidebars"})
+        coordinator._page_settings_bar = _Sp3a5bRecorder("bar", log, {"clear_bid"})
+        coordinator._reset_takeoff_workspace_state(clear_sidebars=False)
+        self.assertIsNone(coordinator._takeoff_workspace_bid_ref)
+        self.assertIsNone(coordinator._pending_takeoff_page_uids)
+        self.assertEqual(coordinator._selected_takeoff_uids, ("t-1",))
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c-1"})
+        self.assertEqual(log, [])
+
+    def test_reset_workspace_state_tolerates_missing_page_settings_bar(self):
+        log = []
+        coordinator = self._coordinator()
+        coordinator.plan_view = None
+        coordinator._sidebar = _Sp3a5bRecorder("sidebar", log, {"clear_sidebars"})
+        coordinator._page_settings_bar = None
+        coordinator._reset_takeoff_workspace_state()
+        self.assertEqual(log, [("sidebar", "clear_sidebars", (), {})])
+
+    def test_stage_with_none_pages_clears_staged_pages_and_token(self):
+        coordinator = self._coordinator()
+        coordinator._stage_takeoff_restore(None, "p1")
+        self.assertIsNone(coordinator._page_delete_stage_token)
+        self.assertIsNone(coordinator._pending_takeoff_page_uids)
+        self.assertIsNone(coordinator._pending_takeoff_active_page_uid)
+
+    def test_stage_filters_pages_and_resolves_active_page(self):
+        cases = (
+            ((["p1", "", None, "ghost", "p2"], "p2"), (["p1", "p2"], "p2")),
+            ((["p1", "p2"], "ghost"), (["p1", "p2"], "p1")),
+            ((["p1", "p2"], ""), (["p1", "p2"], "p1")),
+            ((["p1", "p2"], None), (["p1", "p2"], "p1")),
+            ((["ghost", "p2"], None), (["p2"], "p2")),
+            (([], "p3"), ([], "p3")),
+            ((["ghost"], "p3"), ([], "p3")),
+            ((["ghost"], "ghost"), (None, None)),
+            (([], None), (None, None)),
+            (([], ""), (None, None)),
+        )
+        for (pages, active), (expected_pages, expected_active) in cases:
+            coordinator = self._coordinator(missing={"ghost"})
+            coordinator._stage_takeoff_restore(pages, active)
+            self.assertEqual(
+                (
+                    coordinator._pending_takeoff_page_uids,
+                    coordinator._pending_takeoff_active_page_uid,
+                ),
+                (expected_pages, expected_active),
+                (pages, active),
+            )
+
+    def test_stage_records_area_and_placement_arguments(self):
+        coordinator = self._coordinator()
+        uids = ["c-1", "c-2"]
+        coordinator._stage_takeoff_restore(
+            ["p1"],
+            "p1",
+            selected_area_uid="area-7",
+            place_condition_uid="c-1",
+            place_condition_uids=uids,
+        )
+        self.assertEqual(coordinator._pending_takeoff_selected_area_uid, "area-7")
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uid, "c-1")
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uids, uids)
+        self.assertIsNot(coordinator._pending_takeoff_place_condition_uids, uids)
+
+    def test_stage_defaults_reset_area_and_placement_fields(self):
+        coordinator = self._coordinator()
+        coordinator._stage_takeoff_restore(["p1"], "p1")
+        self.assertEqual(coordinator._pending_takeoff_selected_area_uid, "")
+        self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uids, [])
+        coordinator._stage_takeoff_restore(
+            ["p1"], "p1", selected_area_uid=None, place_condition_uids=None
+        )
+        self.assertEqual(coordinator._pending_takeoff_selected_area_uid, "")
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uids, [])
+
+
+class Sp3a5bResolveTakeoffSelectionTests(unittest.TestCase):
+    def _coordinator(
+        self,
+        *,
+        pending_pages=None,
+        pending_active=None,
+        selected=(),
+        active=None,
+        last=None,
+        first=None,
+        missing=("ghost",),
+    ):
+        coordinator = _sp3a5b_bare()
+        coordinator._pending_takeoff_page_uids = pending_pages
+        coordinator._pending_takeoff_active_page_uid = pending_active
+        coordinator.ui_state_manager = _Sp3a5bUiState(
+            selected_page_uids=selected, active_page_uid=active
+        )
+        coordinator.project_data = _Sp3a5bProjectData(
+            missing=missing, last_selected=last
+        )
+        coordinator.takeoff_sidebar = SimpleNamespace(get_first_page_uid=lambda: first)
+        return coordinator
+
+    def test_staged_pages_win_over_the_ui_selection_and_are_filtered(self):
+        cases = (
+            ((["p1", "ghost", "", "p2"], "p2"), (["p1", "p2"], "p2")),
+            ((["p1", "p2"], "ghost"), (["p1", "p2"], "p1")),
+            ((["p1", "p2"], None), (["p1", "p2"], "p1")),
+            ((["p1", "p2"], ""), (["p1", "p2"], "p1")),
+            (([], None), ([], None)),
+            ((["ghost"], "ghost"), ([], None)),
+            (([], "p5"), ([], "p5")),
+        )
+        for (pages, active), expected in cases:
+            coordinator = self._coordinator(
+                pending_pages=pages,
+                pending_active=active,
+                selected=["ui-1"],
+                active="ui-1",
+                last="last-1",
+                first="first-1",
+            )
+            self.assertEqual(
+                coordinator._resolve_takeoff_selection(), expected, (pages, active)
+            )
+
+    def test_ui_selection_is_filtered_and_active_page_is_validated(self):
+        cases = (
+            ((["p1", "ghost", "", "p2"], "p2"), (["p1", "p2"], "p2")),
+            ((["p1", "p2"], "ghost"), (["p1", "p2"], "p1")),
+            ((["p1", "p2"], None), (["p1", "p2"], "p1")),
+            ((["p1", "p2"], ""), (["p1", "p2"], "p1")),
+            (([], "p3"), ([], "p3")),
+            ((["ghost"], "p3"), ([], "p3")),
+        )
+        for (selected, active), expected in cases:
+            coordinator = self._coordinator(
+                selected=selected, active=active, last="last-1", first="first-1"
+            )
+            result = coordinator._resolve_takeoff_selection()
+            self.assertEqual(result, expected, (selected, active))
+            self.assertIsInstance(result, tuple)
+
+    def test_without_selection_falls_back_to_last_selected_then_first_page(self):
+        cases = (
+            (dict(last="p7", first="p8"), (["p7"], "p7")),
+            (dict(last="ghost", first="p8"), (["p8"], "p8")),
+            (dict(last=None, first="p8"), (["p8"], "p8")),
+            (dict(last="", first="p8"), (["p8"], "p8")),
+            (dict(last="ghost", first="ghost"), ([], None)),
+            (dict(last=None, first=None), ([], None)),
+            (dict(last="", first=""), ([], None)),
+        )
+        for options, expected in cases:
+            coordinator = self._coordinator(
+                selected=["ghost"], active="ghost", **options
+            )
+            self.assertEqual(
+                coordinator._resolve_takeoff_selection(), expected, options
+            )
+
+
+class Sp3a5bAuthoritativePageSelectionTests(unittest.TestCase):
+    def _coordinator(self, pages=()):
+        coordinator = _sp3a5b_bare()
+        coordinator.project_data = _Sp3a5bProjectData(
+            missing={"ghost"},
+            pages=[SimpleNamespace(uid=uid, sequence=seq) for uid, seq in pages],
+        )
+        return coordinator
+
+    def test_valid_pages_and_active_page_are_kept_in_order(self):
+        coordinator = self._coordinator([("first", 1)])
+        result = coordinator._resolve_authoritative_page_selection(
+            ["p1", "", None, "ghost", "p2"], "p2"
+        )
+        self.assertEqual(result, (["p1", "p2"], "p2"))
+
+    def test_valid_active_page_outside_the_selection_is_returned_as_is(self):
+        coordinator = self._coordinator([("first", 1)])
+        self.assertEqual(
+            coordinator._resolve_authoritative_page_selection(["p1"], "p9"),
+            (["p1"], "p9"),
+        )
+        self.assertEqual(
+            coordinator._resolve_authoritative_page_selection([], "p9"),
+            ([], "p9"),
+        )
+
+    def test_without_valid_active_page_the_first_valid_selected_page_is_active(self):
+        coordinator = self._coordinator([("first", 1)])
+        for active in (None, "", "ghost"):
+            self.assertEqual(
+                coordinator._resolve_authoritative_page_selection(
+                    ["ghost", "p2", "p3"], active
+                ),
+                (["p2", "p3"], "p2"),
+                active,
+            )
+
+    def test_without_any_selection_the_lowest_sequence_page_is_chosen(self):
+        coordinator = self._coordinator([("later", 5), ("first", 1), ("middle", 3)])
+        self.assertEqual(
+            coordinator._resolve_authoritative_page_selection(["ghost"], None),
+            (["first"], "first"),
+        )
+        self.assertEqual(
+            self._coordinator()._resolve_authoritative_page_selection([], None),
+            ([], None),
+        )
+
+
+class Sp3a5bActivateTakeoffWorkspaceTests(unittest.TestCase):
+    def _build(
+        self,
+        *,
+        bid_ref=_SP3A5B_BID,
+        workspace_bid=None,
+        sql=False,
+        selected=(),
+        active=None,
+        pending_pages=None,
+        pending_area="",
+        pending_condition=None,
+        pending_conditions=(),
+        resolved=(["p1"], "p1"),
+        restore_result=False,
+        conditions=None,
+        placeable=True,
+        view_2d=True,
+    ):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator.ui_state_manager = _Sp3a5bUiState(
+            bid_ref=bid_ref,
+            selected_page_uids=selected,
+            active_page_uid=active,
+            highlighted={"c-h"},
+        )
+        coordinator.project_data = _Sp3a5bProjectData(conditions=conditions)
+        coordinator.takeoff_sidebar = _Sp3a5bRecorder(
+            "takeoff_sidebar",
+            log,
+            {"restore_selection"},
+            {"restore_selection": restore_result},
+        )
+        coordinator._page_settings_bar = _Sp3a5bRecorder("bar", log, {"load_bid_areas"})
+        coordinator._project_write_service = _Sp3a5bRecorder(
+            "write",
+            log,
+            {"uses_sql_collaboration_mutations"},
+            {"uses_sql_collaboration_mutations": sql},
+        )
+        coordinator._sidebar = _Sp3a5bRecorder(
+            "sidebar",
+            log,
+            {
+                "load_takeoff_sidebar_from_memory",
+                "load_bid_layers_sidebar_from_memory",
+                "refresh_conditions_from_memory",
+                "load_bid_layers_sidebar",
+                "load_conditions_sidebar",
+                "update_conditions_quantities",
+            },
+        )
+        coordinator._placement = _Sp3a5bRecorder("placement", log, {"enter"})
+        coordinator.main_window = _Sp3a5bRecorder(
+            "main_window", log, {"notify_takeoff_workspace_activated"}
+        )
+        coordinator._bid_data_cache = "cache"
+        coordinator._takeoff_workspace_bid_ref = workspace_bid
+        coordinator._pending_takeoff_page_uids = pending_pages
+        coordinator._pending_takeoff_active_page_uid = "stale-active"
+        coordinator._pending_takeoff_selected_area_uid = pending_area
+        coordinator._pending_takeoff_place_condition_uid = pending_condition
+        coordinator._pending_takeoff_place_condition_uids = list(pending_conditions)
+        coordinator._load_takeoff_sidebar = lambda ref: log.append(
+            ("load_takeoff_sidebar", ref)
+        )
+        coordinator._load_condition_summary = lambda: log.append(("summary",))
+        coordinator._validate_condition_uids = lambda uids: (
+            log.append(("validate", set(uids))) or {"c-ok"}
+        )
+        coordinator._restore_sidebar_highlight = lambda uids, reveal=True: log.append(
+            ("restore_highlight", set(uids), reveal)
+        )
+        coordinator._resolve_takeoff_selection = lambda: (
+            log.append(("resolve",)) or resolved
+        )
+        coordinator.handle_active_page_changed = lambda uid: log.append(
+            ("handle_active", uid)
+        )
+        coordinator._sync_page_info_status = lambda: log.append(("sync_page_info",))
+        coordinator._is_condition_placeable = lambda uid: (
+            log.append(("placeable?", uid)) or placeable
+        )
+        coordinator._is_takeoff_2d_view_active = lambda: view_2d
+        coordinator._reset_to_select_mode = lambda: log.append(("reset_select",))
+        coordinator._sync_embedded_renderer_exposure = lambda: log.append(("expose",))
+        return coordinator, log
+
+    def test_no_selected_bid_or_no_sidebar_does_nothing(self):
+        coordinator, log = self._build(bid_ref=None)
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(log, [])
+        coordinator, log = self._build()
+        coordinator.takeoff_sidebar = None
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(log, [])
+        self.assertIsNone(coordinator._takeoff_workspace_bid_ref)
+
+    def test_first_activation_hydrates_sql_sidebars_from_memory_in_order(self):
+        coordinator, log = self._build(sql=True)
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(
+            log,
+            [
+                (
+                    "bar",
+                    "load_bid_areas",
+                    (_SP3A5B_BID,),
+                    {
+                        "areas_with_takeoff": {"area-with-takeoff"},
+                        "selected_uid": None,
+                    },
+                ),
+                ("write", "uses_sql_collaboration_mutations", ("b.mdb",), {}),
+                (
+                    "sidebar",
+                    "load_takeoff_sidebar_from_memory",
+                    (_SP3A5B_BID, "cache"),
+                    {},
+                ),
+                ("sidebar", "load_bid_layers_sidebar_from_memory", (), {}),
+                ("sidebar", "refresh_conditions_from_memory", (), {}),
+                ("summary",),
+                ("validate", {"c-h"}),
+                ("restore_highlight", {"c-ok"}, False),
+                ("resolve",),
+                ("takeoff_sidebar", "restore_selection", (["p1"], "p1"), {}),
+                ("handle_active", "p1"),
+                ("main_window", "notify_takeoff_workspace_activated", (), {}),
+                ("expose",),
+            ],
+        )
+        self.assertEqual(coordinator._takeoff_workspace_bid_ref, _SP3A5B_BID)
+
+    def test_first_activation_hydrates_database_sidebars_in_order(self):
+        coordinator, log = self._build(sql=False, restore_result=True)
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(
+            log,
+            [
+                (
+                    "bar",
+                    "load_bid_areas",
+                    (_SP3A5B_BID,),
+                    {
+                        "areas_with_takeoff": {"area-with-takeoff"},
+                        "selected_uid": None,
+                    },
+                ),
+                ("write", "uses_sql_collaboration_mutations", ("b.mdb",), {}),
+                ("load_takeoff_sidebar", _SP3A5B_BID),
+                ("sidebar", "load_bid_layers_sidebar", (), {}),
+                ("sidebar", "load_conditions_sidebar", (), {}),
+                ("sidebar", "update_conditions_quantities", (), {}),
+                ("summary",),
+                ("validate", {"c-h"}),
+                ("restore_highlight", {"c-ok"}, False),
+                ("resolve",),
+                ("takeoff_sidebar", "restore_selection", (["p1"], "p1"), {}),
+                ("main_window", "notify_takeoff_workspace_activated", (), {}),
+                ("expose",),
+            ],
+        )
+        self.assertEqual(coordinator._takeoff_workspace_bid_ref, _SP3A5B_BID)
+
+    def test_hydration_passes_staged_area_or_none_and_tolerates_missing_bar(self):
+        for staged, expected in (("area-3", "area-3"), ("", None)):
+            coordinator, log = self._build(sql=True, pending_area=staged)
+            coordinator._activate_takeoff_workspace()
+            self.assertEqual(log[0][3]["selected_uid"], expected)
+        coordinator, log = self._build(sql=True)
+        coordinator._page_settings_bar = None
+        coordinator._activate_takeoff_workspace()
+        self.assertNotIn("bar", [entry[0] for entry in log])
+        self.assertEqual(coordinator._takeoff_workspace_bid_ref, _SP3A5B_BID)
+
+    def test_already_hydrated_complete_selection_only_refreshes_quantities(self):
+        coordinator, log = self._build(
+            workspace_bid=_SP3A5B_BID, selected=["p1"], active="p1"
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(
+            log,
+            [
+                ("sidebar", "update_conditions_quantities", (), {}),
+                ("sync_page_info",),
+                ("main_window", "notify_takeoff_workspace_activated", (), {}),
+                ("expose",),
+            ],
+        )
+
+    def test_selection_is_restored_when_any_single_trigger_applies(self):
+        triggers = (
+            dict(workspace_bid=None, selected=["p1"], active="p1"),
+            dict(
+                workspace_bid=_SP3A5B_BID,
+                selected=["p1"],
+                active="p1",
+                pending_pages=[],
+            ),
+            dict(workspace_bid=_SP3A5B_BID, selected=[], active="p1"),
+            dict(workspace_bid=_SP3A5B_BID, selected=["p1"], active=None),
+        )
+        for options in triggers:
+            coordinator, log = self._build(sql=True, **options)
+            coordinator._activate_takeoff_workspace()
+            self.assertIn(("resolve",), log, options)
+            self.assertNotIn(("sync_page_info",), log, options)
+
+    def test_restore_selection_runs_with_staged_pages_even_if_resolved_is_empty(self):
+        coordinator, log = self._build(
+            workspace_bid=_SP3A5B_BID,
+            selected=["p1"],
+            active="p1",
+            pending_pages=[],
+            resolved=([], None),
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertIn(("takeoff_sidebar", "restore_selection", ([], None), {}), log)
+        self.assertIn(("handle_active", None), log)
+
+    def test_empty_resolution_without_staging_skips_restore_and_activates_page(self):
+        coordinator, log = self._build(
+            workspace_bid=_SP3A5B_BID,
+            selected=[],
+            active=None,
+            pending_pages=None,
+            resolved=([], "p9"),
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertNotIn("takeoff_sidebar", [entry[0] for entry in log])
+        self.assertEqual(
+            [entry for entry in log if entry[0] == "handle_active"],
+            [("handle_active", "p9")],
+        )
+
+    def test_page_activation_is_skipped_when_restore_reports_active_page_change(self):
+        coordinator, log = self._build(
+            workspace_bid=None, restore_result=True, resolved=(["p1", "p2"], "p2")
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertIn(
+            ("takeoff_sidebar", "restore_selection", (["p1", "p2"], "p2"), {}), log
+        )
+        self.assertNotIn("handle_active", [entry[0] for entry in log])
+
+    def test_staged_condition_placement_enters_placement_in_2d_view(self):
+        condition = object()
+        coordinator, log = self._build(
+            workspace_bid=_SP3A5B_BID,
+            selected=["p1"],
+            active="p1",
+            pending_condition="c-1",
+            pending_conditions=["c-1", "c-2"],
+            conditions={"c-1": condition},
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(
+            [entry for entry in log if entry[0] in ("placeable?", "reset_select")]
+            + [entry for entry in log if entry[0] == "placement"],
+            [
+                ("placeable?", "c-1"),
+                ("placement", "enter", ("c-1", ["c-1", "c-2"]), {}),
+            ],
+        )
+        self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uids, [])
+
+    def test_staged_placement_resets_to_select_mode_when_not_in_2d_view(self):
+        coordinator, log = self._build(
+            workspace_bid=_SP3A5B_BID,
+            selected=["p1"],
+            active="p1",
+            pending_condition="c-1",
+            conditions={"c-1": object()},
+            view_2d=False,
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(log.count(("reset_select",)), 1)
+        self.assertNotIn("placement", [entry[0] for entry in log])
+
+    def test_staged_placement_resets_to_select_mode_when_not_placeable(self):
+        coordinator, log = self._build(
+            workspace_bid=_SP3A5B_BID,
+            selected=["p1"],
+            active="p1",
+            pending_condition="c-1",
+            conditions={"c-1": object()},
+            placeable=False,
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(log.count(("reset_select",)), 1)
+        self.assertNotIn("placement", [entry[0] for entry in log])
+
+    def test_staged_placement_is_ignored_for_unknown_or_empty_condition(self):
+        cases = (
+            ("c-1", {"other": object()}),
+            ("c-1", {}),
+            (None, {"other": object()}),
+            ("", {"": object()}),
+            (None, {None: object()}),
+        )
+        for staged, conditions in cases:
+            coordinator, log = self._build(
+                workspace_bid=_SP3A5B_BID,
+                selected=["p1"],
+                active="p1",
+                pending_condition=staged,
+                conditions=conditions,
+            )
+            coordinator._activate_takeoff_workspace()
+            names = [entry[0] for entry in log]
+            self.assertNotIn("placeable?", names, (staged, conditions))
+            self.assertNotIn("placement", names, (staged, conditions))
+            self.assertNotIn("reset_select", names, (staged, conditions))
+
+    def test_activation_clears_staged_restore_state(self):
+        coordinator, log = self._build(
+            workspace_bid=_SP3A5B_BID,
+            selected=["p1"],
+            active="p1",
+            pending_pages=["p1"],
+            pending_area="area-1",
+            pending_condition="c-1",
+            pending_conditions=["c-1"],
+            conditions={"c-1": object()},
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertIsNone(coordinator._pending_takeoff_page_uids)
+        self.assertIsNone(coordinator._pending_takeoff_active_page_uid)
+        self.assertEqual(coordinator._pending_takeoff_selected_area_uid, "")
+        self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)
+        self.assertEqual(coordinator._pending_takeoff_place_condition_uids, [])
+        self.assertEqual(
+            log[-2:],
+            [
+                ("main_window", "notify_takeoff_workspace_activated", (), {}),
+                ("expose",),
+            ],
+        )
+
+
+class Sp3a5bTabChangedAndNavigationTests(unittest.TestCase):
+    def _coordinator(self, with_viewer=True):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator.opengl_viewer = (
+            _Sp3a5bRecorder("viewer", log, {"setVisible"}) if with_viewer else None
+        )
+        coordinator._activate_takeoff_workspace = lambda: log.append(("activate",))
+        coordinator._load_condition_summary = lambda: log.append(("summary",))
+        coordinator._update_export_menu_state = lambda: log.append(("export",))
+        coordinator._sync_page_info_status = lambda: log.append(("sync_page_info",))
+        coordinator._stage_hotlink_named_view_focus = lambda *args: log.append(
+            ("stage_hotlink", args)
+        )
+        coordinator._stage_takeoff_restore = lambda *args: log.append(
+            ("stage_restore", args)
+        )
+        coordinator._set_takeoff_tab_visible = lambda visible: log.append(
+            ("tab_visible", visible)
+        )
+        coordinator._clear_pending_hotlink_named_view_focus = lambda: log.append(
+            ("clear_focus",)
+        )
+        coordinator.project_data = _Sp3a5bProjectData(missing={"ghost"})
+        return coordinator, log
+
+    def test_takeoff_tab_hides_renderer_then_activates_workspace(self):
+        coordinator, log = self._coordinator()
+        coordinator._on_tab_changed(TAB_INDEX_TAKEOFF)
+        self.assertEqual(
+            log,
+            [
+                ("viewer", "setVisible", (False,), {}),
+                ("activate",),
+                ("export",),
+                ("sync_page_info",),
+            ],
+        )
+
+    def test_summary_tab_loads_summary_then_updates_menu_and_status(self):
+        coordinator, log = self._coordinator()
+        coordinator._on_tab_changed(TAB_INDEX_SUMMARY)
+        self.assertEqual(
+            log,
+            [
+                ("viewer", "setVisible", (False,), {}),
+                ("summary",),
+                ("export",),
+                ("sync_page_info",),
+            ],
+        )
+
+    def test_other_tabs_update_status_then_menu_only(self):
+        for index in (TAB_INDEX_PROJECTS, 7):
+            coordinator, log = self._coordinator()
+            coordinator._on_tab_changed(index)
+            self.assertEqual(
+                log,
+                [
+                    ("viewer", "setVisible", (False,), {}),
+                    ("sync_page_info",),
+                    ("export",),
+                ],
+                index,
+            )
+
+    def test_tab_change_without_embedded_viewer_skips_renderer_call(self):
+        coordinator, log = self._coordinator(with_viewer=False)
+        coordinator._on_tab_changed(TAB_INDEX_SUMMARY)
+        self.assertEqual(log, [("summary",), ("export",), ("sync_page_info",)])
+
+    def test_navigate_to_unknown_page_clears_pending_focus_and_stops(self):
+        for page_uid in ("ghost", ""):
+            coordinator, log = self._coordinator()
+            coordinator.navigate_to_takeoff_page(page_uid, "nv-1")
+            self.assertEqual(log, [("clear_focus",)], page_uid)
+
+    def test_navigate_switches_tab_to_takeoff_after_staging(self):
+        coordinator, log = self._coordinator()
+        coordinator._tab_widget = _Sp3a5bTab(index=TAB_INDEX_PROJECTS, log=log)
+        coordinator.navigate_to_takeoff_page("p1", "nv-1")
+        self.assertEqual(
+            log,
+            [
+                ("stage_hotlink", ("p1", "nv-1")),
+                ("stage_restore", (["p1"], "p1")),
+                ("tab_visible", True),
+                ("setCurrentIndex", TAB_INDEX_TAKEOFF),
+            ],
+        )
+
+    def test_navigate_activates_workspace_directly_when_takeoff_tab_is_current(self):
+        coordinator, log = self._coordinator()
+        coordinator._tab_widget = _Sp3a5bTab(index=TAB_INDEX_TAKEOFF, log=log)
+        coordinator.navigate_to_takeoff_page("p1")
+        self.assertEqual(
+            log,
+            [
+                ("stage_hotlink", ("p1", "")),
+                ("stage_restore", (["p1"], "p1")),
+                ("tab_visible", True),
+                ("activate",),
+            ],
+        )
+
+    def test_navigate_without_tab_widget_activates_workspace(self):
+        coordinator, log = self._coordinator()
+        coordinator._tab_widget = None
+        coordinator.navigate_to_takeoff_page("p1", "nv-1")
+        self.assertEqual(log[-1], ("activate",))
+        self.assertEqual(len(log), 4)
+
+    def test_apply_pending_focus_requires_a_stable_view(self):
+        coordinator, log = self._coordinator()
+        coordinator._apply_pending_hotlink_named_view_focus = lambda **kwargs: (
+            log.append(("apply", kwargs))
+        )
+        coordinator.apply_pending_hotlink_view_focus()
+        self.assertEqual(log, [("apply", {"require_stable": True})])
+
+    def test_page_fully_loaded_applies_stable_focus_then_refreshes_toolbar(self):
+        coordinator, log = self._coordinator()
+        coordinator._apply_pending_hotlink_named_view_focus = lambda **kwargs: (
+            log.append(("apply", kwargs))
+        )
+        coordinator._toolbar = _Sp3a5bRecorder("toolbar", log, {"refresh"})
+        coordinator._on_plan_view_page_fully_loaded()
+        self.assertEqual(
+            log,
+            [("apply", {"require_stable": True}), ("toolbar", "refresh", (), {})],
+        )
+
+
+class _Sp3a5bPlanView:
+    def __init__(self, log, current_page_uid="page-1", stable=True, visible=True):
+        self.log = log
+        self.current_page_uid = current_page_uid
+        self.is_view_state_stable = stable
+        self.visible = visible
+
+    def isVisible(self):
+        return self.visible
+
+    def reveal_deferred_page_visual(self):
+        self.log.append(("reveal",))
+
+    def set_page_visual_reveal_deferred(self, deferred):
+        self.log.append(("defer", deferred))
+
+
+def _sp3a5b_named_annotation(uid, text="View", page_uid="page-1", x2=10.0):
+    return BidAnnotation(
+        uid=uid,
+        annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+        page_uid=page_uid,
+        position=[0.0, 0.0, x2, 10.0],
+        properties={"Text": text},
+    )
+
+
+class Sp3a5bHotlinkNamedViewTests(unittest.TestCase):
+    def _coordinator(self, annotations=None, plan_view=True, **plan_options):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator.project_data = _Sp3a5bProjectData(
+            annotations={"page-1": annotations or []}
+        )
+        coordinator.plan_view = (
+            _Sp3a5bPlanView(log, **plan_options) if plan_view else None
+        )
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+        return coordinator, log
+
+    def test_resolve_named_view_with_empty_uid_does_not_scan_annotations(self):
+        coordinator, _log = self._coordinator([_sp3a5b_named_annotation("nv-1")])
+        self.assertIsNone(coordinator._resolve_hotlink_named_view("page-1", ""))
+        self.assertEqual(coordinator.project_data.annotation_requests, [])
+
+    def test_resolve_named_view_skips_other_annotations_and_matches_uid(self):
+        text = BidAnnotation(
+            uid="txt-1",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            page_uid="page-1",
+            position=[1.0, 2.0, 3.0, 4.0],
+        )
+        coordinator, _log = self._coordinator(
+            [
+                text,
+                _sp3a5b_named_annotation("nv-1", "First"),
+                _sp3a5b_named_annotation("nv-2", "Second"),
+            ]
+        )
+        found = coordinator._resolve_hotlink_named_view("page-1", "nv-2")
+        self.assertEqual((found.uid, found.name), ("nv-2", "Second"))
+        self.assertEqual(coordinator.project_data.annotation_requests, ["page-1"])
+        self.assertIsNone(coordinator._resolve_hotlink_named_view("page-1", "nv-9"))
+
+    def test_stage_focus_stores_named_view_and_defers_visual_for_other_page(self):
+        coordinator, log = self._coordinator(
+            [_sp3a5b_named_annotation("nv-1", "First")], current_page_uid="page-9"
+        )
+        coordinator._stage_hotlink_named_view_focus("page-1", "nv-1")
+        self.assertEqual(coordinator._pending_hotlink_page_uid, "page-1")
+        self.assertEqual(coordinator._pending_hotlink_named_view.uid, "nv-1")
+        self.assertEqual(log, [("defer", True)])
+
+    def test_stage_focus_keeps_visual_when_same_page_is_already_stable(self):
+        coordinator, log = self._coordinator(
+            [_sp3a5b_named_annotation("nv-1")], current_page_uid="page-1"
+        )
+        coordinator._stage_hotlink_named_view_focus("page-1", "nv-1")
+        self.assertEqual(coordinator._pending_hotlink_page_uid, "page-1")
+        self.assertEqual(log, [])
+
+    def test_stage_focus_without_matching_view_clears_pending_focus(self):
+        coordinator, log = self._coordinator([_sp3a5b_named_annotation("nv-1")])
+        coordinator._pending_hotlink_page_uid = "old-page"
+        coordinator._pending_hotlink_named_view = object()
+        coordinator._stage_hotlink_named_view_focus("page-1", "missing")
+        self.assertIsNone(coordinator._pending_hotlink_page_uid)
+        self.assertIsNone(coordinator._pending_hotlink_named_view)
+        self.assertEqual(log, [("reveal",)])
+
+    def test_defer_decision_depends_on_page_identity_and_stability(self):
+        coordinator, _log = self._coordinator(plan_view=False)
+        self.assertIs(coordinator._should_defer_hotlink_page_visual("page-1"), False)
+        cases = (
+            ("page-1", True, False),
+            ("page-1", False, True),
+            ("page-2", True, True),
+            ("page-2", False, True),
+        )
+        for current, stable, expected in cases:
+            coordinator, _log = self._coordinator(
+                current_page_uid=current, stable=stable
+            )
+            self.assertIs(
+                coordinator._should_defer_hotlink_page_visual("page-1"),
+                expected,
+                (current, stable),
+            )
+
+
+class Sp3a5bApplyPendingHotlinkFocusTests(unittest.TestCase):
+    def _coordinator(self, annotations, **plan_options):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator.project_data = _Sp3a5bProjectData(
+            annotations={"page-1": annotations}
+        )
+        coordinator.plan_view = _Sp3a5bPlanView(log, **plan_options)
+        stale = _sp3a5b_named_annotation("nv-1", "Old")
+        from ost_visualizer.domain.entities.named_view import (
+            build_named_view_from_annotation,
+        )
+
+        coordinator._pending_hotlink_page_uid = "page-1"
+        coordinator._pending_hotlink_named_view = build_named_view_from_annotation(
+            stale
+        )
+        return coordinator, log
+
+    def _apply(self, coordinator, log, require_stable=True):
+        def record_focus(plan_view, named_view):
+            log.append(("focus", plan_view, named_view))
+
+        with patch(
+            f"{_SP3A5B_COORDINATOR}.focus_plan_view_on_named_view",
+            side_effect=record_focus,
+        ):
+            return coordinator._apply_pending_hotlink_named_view_focus(
+                require_stable=require_stable
+            )
+
+    def test_missing_named_view_page_or_plan_view_is_a_no_op_returning_false(self):
+        for field in ("named_view", "page", "plan_view"):
+            coordinator, log = self._coordinator([_sp3a5b_named_annotation("nv-1")])
+            pending_view = coordinator._pending_hotlink_named_view
+            if field == "named_view":
+                coordinator._pending_hotlink_named_view = None
+            elif field == "page":
+                coordinator._pending_hotlink_page_uid = None
+            else:
+                coordinator.plan_view = None
+            self.assertIs(self._apply(coordinator, log), False, field)
+            self.assertEqual(log, [], field)
+            if field != "named_view":
+                self.assertIs(coordinator._pending_hotlink_named_view, pending_view)
+            if field != "page":
+                self.assertEqual(coordinator._pending_hotlink_page_uid, "page-1")
+
+    def test_other_loaded_page_abandons_pending_focus(self):
+        coordinator, log = self._coordinator(
+            [_sp3a5b_named_annotation("nv-1")], current_page_uid="page-9"
+        )
+        self.assertIs(self._apply(coordinator, log), False)
+        self.assertIsNone(coordinator._pending_hotlink_page_uid)
+        self.assertIsNone(coordinator._pending_hotlink_named_view)
+        self.assertEqual(log, [("reveal",)])
+
+    def test_no_loaded_page_yet_keeps_pending_focus(self):
+        coordinator, log = self._coordinator(
+            [_sp3a5b_named_annotation("nv-1")], current_page_uid=""
+        )
+        pending = coordinator._pending_hotlink_named_view
+        self.assertIs(self._apply(coordinator, log), False)
+        self.assertEqual(coordinator._pending_hotlink_page_uid, "page-1")
+        self.assertIs(coordinator._pending_hotlink_named_view, pending)
+        self.assertEqual(log, [])
+
+    def test_deleted_named_view_abandons_pending_focus(self):
+        coordinator, log = self._coordinator([])
+        self.assertIs(self._apply(coordinator, log), False)
+        self.assertIsNone(coordinator._pending_hotlink_page_uid)
+        self.assertIsNone(coordinator._pending_hotlink_named_view)
+        self.assertEqual(log, [("reveal",)])
+
+    def test_unstable_view_defers_but_adopts_the_authoritative_named_view(self):
+        coordinator, log = self._coordinator(
+            [_sp3a5b_named_annotation("nv-1", "New", x2=50.0)], stable=False
+        )
+        self.assertIs(self._apply(coordinator, log), False)
+        self.assertEqual(coordinator._pending_hotlink_named_view.name, "New")
+        self.assertEqual(coordinator._pending_hotlink_named_view.max_x, 50.0)
+        self.assertEqual(coordinator._pending_hotlink_page_uid, "page-1")
+        self.assertEqual(log, [])
+
+    def test_unstable_view_is_accepted_when_stability_is_not_required(self):
+        coordinator, log = self._coordinator(
+            [_sp3a5b_named_annotation("nv-1", "New")], stable=False
+        )
+        self.assertIs(self._apply(coordinator, log, require_stable=False), True)
+        self.assertEqual([entry[0] for entry in log], ["focus", "reveal"])
+
+    def test_hidden_plan_view_keeps_pending_focus(self):
+        coordinator, log = self._coordinator(
+            [_sp3a5b_named_annotation("nv-1", "New")], visible=False
+        )
+        self.assertIs(self._apply(coordinator, log), False)
+        self.assertEqual(coordinator._pending_hotlink_named_view.name, "New")
+        self.assertEqual(coordinator._pending_hotlink_page_uid, "page-1")
+        self.assertEqual(log, [])
+
+    def test_success_focuses_authoritative_view_clears_pending_and_reveals(self):
+        coordinator, log = self._coordinator([_sp3a5b_named_annotation("nv-1", "New")])
+        self.assertIs(self._apply(coordinator, log), True)
+        self.assertEqual(len(log), 2)
+        self.assertEqual(log[0][:2], ("focus", coordinator.plan_view))
+        self.assertEqual(log[0][2].name, "New")
+        self.assertEqual(log[1], ("reveal",))
+        self.assertIsNone(coordinator._pending_hotlink_page_uid)
+        self.assertIsNone(coordinator._pending_hotlink_named_view)
+
+
+class Sp3a5bPageViewStatePersistenceTests(unittest.TestCase):
+    def _coordinator(self, allowed=True):
+        coordinator = _sp3a5b_bare()
+        self.page = SimpleNamespace(zoom_fac=9.0, current_x=9.0, current_y=9.0)
+        coordinator.ui_state_manager = _Sp3a5bUiState()
+        coordinator.project_data = SimpleNamespace(get_page=lambda uid: self.page)
+        coordinator.ui_access_manager = _Sp3a5bFeatureAccess(
+            {Feature.EDIT_PAGE_SETTINGS} if allowed else ()
+        )
+        self.log = []
+        coordinator._project_write_service = _Sp3a5bRecorder(
+            "write", self.log, {"uses_sql_collaboration_mutations"}
+        )
+        coordinator._deferred_persistence = _Sp3a5bRecorder(
+            "persist", self.log, {"schedule_page_view_state"}
+        )
+        return coordinator
+
+    def test_fractional_and_unit_zoom_values_are_stored_and_scheduled(self):
+        for zoom in (0.5, 1.0, 2.0):
+            coordinator = self._coordinator()
+            del self.log[:]
+            coordinator._on_plan_view_state_changed("page-1", zoom, 3.0, 4.0)
+            self.assertEqual(
+                (self.page.zoom_fac, self.page.current_x, self.page.current_y),
+                (zoom, 3.0, 4.0),
+            )
+            self.assertEqual(
+                self.log,
+                [
+                    (
+                        "persist",
+                        "schedule_page_view_state",
+                        ("b.mdb", "bid-1", "page-1", zoom, 3.0, 4.0),
+                        {},
+                    )
+                ],
+                zoom,
+            )
+
+    def test_non_positive_zoom_or_missing_ids_are_ignored(self):
+        for page_uid, zoom in (("page-1", 0.0), ("page-1", -1.0), ("", 1.0)):
+            coordinator = self._coordinator()
+            coordinator._on_plan_view_state_changed(page_uid, zoom, 3.0, 4.0)
+            self.assertEqual(self.log, [], (page_uid, zoom))
+            self.assertEqual(self.page.zoom_fac, 9.0)
+        coordinator = self._coordinator()
+        coordinator.ui_state_manager = _Sp3a5bUiState(bid_ref=None)
+        coordinator._on_plan_view_state_changed("page-1", 1.0, 3.0, 4.0)
+        self.assertEqual(self.log, [])
+
+
+class Sp3a5bSidebarHighlightTests(unittest.TestCase):
+    def _coordinator(self, refreshing=False, with_sidebar=True):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator._nav = SimpleNamespace(is_refreshing=refreshing)
+        coordinator.ui_state_manager = _Sp3a5bUiState()
+        coordinator.conditions_sidebar = (
+            _Sp3a5bRecorder("sidebar", log, {"highlight_conditions"})
+            if with_sidebar
+            else None
+        )
+        coordinator._toolbar = _Sp3a5bRecorder(
+            "toolbar", log, {"refresh", "set_select_checked"}
+        )
+        coordinator._selection_projected_condition_uids = {"projected"}
+        return coordinator, log
+
+    def test_apply_highlight_is_blocked_while_navigation_refreshes(self):
+        coordinator, log = self._coordinator(refreshing=True)
+        self.assertIs(coordinator._apply_sidebar_highlight({"c-1"}), False)
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [])
+        self.assertEqual(log, [])
+
+    def test_apply_highlight_records_state_and_reveals_by_default(self):
+        coordinator, log = self._coordinator()
+        self.assertIs(coordinator._apply_sidebar_highlight({"c-1"}), True)
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [{"c-1"}])
+        self.assertEqual(
+            log, [("sidebar", "highlight_conditions", ({"c-1"},), {"reveal": True})]
+        )
+        coordinator, log = self._coordinator(with_sidebar=False)
+        self.assertIs(coordinator._apply_sidebar_highlight({"c-1"}), True)
+
+    def test_highlight_sidebar_reveals_refreshes_toolbar_and_drops_projection(self):
+        coordinator, log = self._coordinator()
+        coordinator.highlight_sidebar({"c-2"})
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(
+            log,
+            [
+                ("sidebar", "highlight_conditions", ({"c-2"},), {"reveal": True}),
+                ("toolbar", "refresh", (), {}),
+            ],
+        )
+
+    def test_highlight_sidebar_skips_toolbar_refresh_when_blocked(self):
+        coordinator, log = self._coordinator(refreshing=True)
+        coordinator.highlight_sidebar({"c-2"})
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(log, [])
+
+    def test_restore_highlight_does_not_reveal_by_default_and_refreshes_toolbar(self):
+        coordinator, log = self._coordinator()
+        coordinator._restore_sidebar_highlight({"c-3"})
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(
+            log,
+            [
+                ("sidebar", "highlight_conditions", ({"c-3"},), {"reveal": False}),
+                ("toolbar", "refresh", (), {}),
+            ],
+        )
+
+    def test_restore_highlight_keeps_projection_owned_by_takeoff_selection(self):
+        coordinator, log = self._coordinator()
+        coordinator._selection_projected_condition_uids = {"c-3"}
+        coordinator._restore_sidebar_highlight({"c-3"}, reveal=True)
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c-3"})
+        self.assertEqual(
+            log[0], ("sidebar", "highlight_conditions", ({"c-3"},), {"reveal": True})
+        )
+
+    def test_set_plan_select_mode_resets_ctrl_before_selecting_and_checks_button(self):
+        coordinator, log = self._coordinator()
+        coordinator.plan_view = _Sp3a5bRecorder(
+            "plan", log, {"reset_ctrl_held", "set_cursor_mode"}
+        )
+        coordinator._set_plan_select_mode()
+        self.assertEqual(
+            log,
+            [
+                ("plan", "reset_ctrl_held", (), {}),
+                ("plan", "set_cursor_mode", (CURSOR_MODE_SELECT,), {}),
+                ("toolbar", "set_select_checked", (), {}),
+            ],
+        )
+        del log[:]
+        coordinator.plan_view = None
+        coordinator._set_plan_select_mode()
+        self.assertEqual(log, [("toolbar", "set_select_checked", (), {})])
+
+
+def _sp3a5b_condition(layer_uid="L1", visible=True, condition_type="T"):
+    return SimpleNamespace(
+        layer_uid=layer_uid, layer_visible=visible, condition_type=condition_type
+    )
+
+
+class Sp3a5bLayerToolSnapshotTests(unittest.TestCase):
+    def _coordinator(
+        self,
+        *,
+        conditions=None,
+        place_uids=("c-1", "c-2"),
+        place_uid="c-1",
+        bid_ref=_SP3A5B_BID,
+        owner="owner",
+        plan_view=True,
+        mode=CURSOR_MODE_PLACE,
+    ):
+        coordinator = _sp3a5b_bare()
+        self.owner = owner
+        coordinator.ui_state_manager = _Sp3a5bUiState(
+            bid_ref=bid_ref, place_condition_uids=place_uids
+        )
+        if conditions is None:
+            conditions = {
+                "c-1": _sp3a5b_condition("L1"),
+                "c-2": _sp3a5b_condition("L1"),
+            }
+        self.conditions = conditions
+        coordinator.project_data = _Sp3a5bProjectData(
+            conditions=conditions, bid_owner=owner
+        )
+        coordinator.plan_view = (
+            SimpleNamespace(
+                cursor_mode=mode, place_condition_uid=place_uid, tool_revision=4
+            )
+            if plan_view
+            else None
+        )
+        return coordinator
+
+    def test_snapshot_needs_plan_view_selected_bid_and_bid_owner(self):
+        self.assertIsNone(
+            self._coordinator(plan_view=False)._active_layer_tool_snapshot("L1")
+        )
+        self.assertIsNone(
+            self._coordinator(bid_ref=None)._active_layer_tool_snapshot("L1")
+        )
+        self.assertIsNone(
+            self._coordinator(owner=None)._active_layer_tool_snapshot("L1")
+        )
+        self.assertIsNotNone(self._coordinator()._active_layer_tool_snapshot("L1"))
+
+    def test_snapshot_captures_every_placed_condition_identity(self):
+        coordinator = self._coordinator()
+        tool = coordinator._active_layer_tool_snapshot("L1")
+        self.assertEqual(
+            (tool.layer_uid, tool.mode, tool.bid_ref, tool.tool_revision),
+            ("L1", CURSOR_MODE_PLACE, _SP3A5B_BID, 4),
+        )
+        self.assertIs(tool.bid_owner, self.owner)
+        self.assertEqual(tool.condition_uid, "c-1")
+        self.assertEqual([uid for uid, _ in tool.condition_identities], ["c-1", "c-2"])
+        for uid, owner in tool.condition_identities:
+            self.assertIs(owner, self.conditions[uid])
+        self.assertIsNone(tool.annotation_type)
+
+    def test_snapshot_without_layer_filter_uses_condition_layer(self):
+        tool = self._coordinator()._active_layer_tool_snapshot(None)
+        self.assertEqual(tool.layer_uid, "L1")
+
+    def test_snapshot_requires_active_condition_among_placed_conditions(self):
+        coordinator = self._coordinator(place_uids=("c-2",), place_uid="c-1")
+        self.assertIsNone(coordinator._active_layer_tool_snapshot("L1"))
+
+    def test_snapshot_refuses_when_a_placed_condition_no_longer_exists(self):
+        coordinator = self._coordinator(place_uids=("c-1", "ghost"))
+        self.assertIsNone(coordinator._active_layer_tool_snapshot("L1"))
+
+    def test_snapshot_layer_filter_must_match_a_condition_layer(self):
+        coordinator = self._coordinator()
+        self.assertIsNone(coordinator._active_layer_tool_snapshot("L2"))
+        self.assertIsNone(coordinator._active_layer_tool_snapshot(""))
+
+    def test_snapshot_refuses_when_no_placed_condition_has_a_layer(self):
+        conditions = {"c-1": _sp3a5b_condition(None), "c-2": _sp3a5b_condition("")}
+        coordinator = self._coordinator(conditions=conditions)
+        self.assertIsNone(coordinator._active_layer_tool_snapshot(None))
+        self.assertIsNone(coordinator._active_layer_tool_snapshot("L1"))
+
+    def test_snapshot_of_layerless_condition_next_to_layered_one_has_empty_layer(self):
+        conditions = {"c-1": _sp3a5b_condition(None), "c-2": _sp3a5b_condition("L2")}
+        coordinator = self._coordinator(conditions=conditions)
+        tool = coordinator._active_layer_tool_snapshot(None)
+        self.assertEqual(tool.layer_uid, "")
+        tool = coordinator._active_layer_tool_snapshot("L2")
+        self.assertEqual(tool.layer_uid, "L2")
+
+    def test_snapshot_layer_filter_wins_over_the_condition_layer(self):
+        conditions = {"c-1": _sp3a5b_condition("L9"), "c-2": _sp3a5b_condition("L2")}
+        coordinator = self._coordinator(conditions=conditions)
+        self.assertEqual(coordinator._active_layer_tool_snapshot("L2").layer_uid, "L2")
+        self.assertEqual(coordinator._active_layer_tool_snapshot(None).layer_uid, "L9")
+
+    def test_snapshot_normalises_uids_to_strings_and_drops_duplicates(self):
+        conditions = {"1": _sp3a5b_condition("7"), "2": _sp3a5b_condition("7")}
+        coordinator = self._coordinator(
+            conditions=conditions, place_uids=(1, 1, 2, None, ""), place_uid="1"
+        )
+        tool = coordinator._active_layer_tool_snapshot(7)
+        self.assertEqual(tool.layer_uid, "7")
+        self.assertEqual([uid for uid, _ in tool.condition_identities], ["1", "2"])
+
+    def test_snapshot_keeps_active_condition_in_every_identity_tuple(self):
+        coordinator = self._coordinator(place_uid="c-2")
+        tool = coordinator._active_layer_tool_snapshot(None)
+        self.assertEqual(tool.condition_uid, "c-2")
+        self.assertIn("c-2", dict(tool.condition_identities))
+        self.assertIs(dict(tool.condition_identities)["c-2"], self.conditions["c-2"])
+
+    def test_canonical_selection_keeps_known_takeoffs_sorted_with_their_conditions(
+        self,
+    ):
+        coordinator = _sp3a5b_bare()
+        coordinator.project_data = SimpleNamespace(
+            get_all_takeoffs=lambda: [
+                SimpleNamespace(uid="t-2", condition_uid="c-2"),
+                SimpleNamespace(uid="t-1", condition_uid="c-1"),
+                SimpleNamespace(uid="t-3", condition_uid="c-1"),
+            ]
+        )
+        selected, conditions = coordinator._canonical_takeoff_selection(
+            ["t-3", "ghost", "t-2", "t-3", "t-1"]
+        )
+        self.assertEqual(selected, ("t-1", "t-2", "t-3"))
+        self.assertEqual(conditions, {"c-1", "c-2"})
+        self.assertEqual(
+            coordinator._canonical_takeoff_selection(["ghost"]), ((), set())
+        )
+
+    def test_snapshot_is_none_outside_place_mode(self):
+        coordinator = self._coordinator(mode=CURSOR_MODE_SELECT)
+        self.assertIsNone(coordinator._active_layer_tool_snapshot("L1"))
+
+
+class Sp3a5bRestoreSuspendedLayerToolTests(unittest.TestCase):
+    def _coordinator(
+        self,
+        *,
+        tool=None,
+        cursor_mode=CURSOR_MODE_SELECT,
+        revision=4,
+        selected_bid=_SP3A5B_BID,
+        owner=None,
+        view_2d=True,
+        allowed=(Feature.PLACE_ANNOTATIONS, Feature.PLACE_PLAN_ITEMS),
+        conditions=None,
+        plan_view=True,
+    ):
+        log = []
+        coordinator = _sp3a5b_bare()
+        self.owner = owner if owner is not None else object()
+        self.conditions = (
+            {"c-1": _sp3a5b_condition(), "c-2": _sp3a5b_condition()}
+            if conditions is None
+            else conditions
+        )
+        coordinator.ui_state_manager = _Sp3a5bUiState(bid_ref=selected_bid)
+        coordinator.project_data = _Sp3a5bProjectData(
+            conditions=self.conditions, bid_owner=self.owner
+        )
+        coordinator.ui_access_manager = _Sp3a5bFeatureAccess(allowed)
+        coordinator.plan_view = (
+            _Sp3a5bRecorder("plan", log, {"activate_annotation_placement"})
+            if plan_view
+            else None
+        )
+        if plan_view:
+            coordinator.plan_view.cursor_mode = cursor_mode
+            coordinator.plan_view.tool_revision = revision
+        coordinator._placement = _Sp3a5bRecorder("placement", log, {"enter"})
+        coordinator._is_takeoff_2d_view_active = lambda: view_2d
+        coordinator._suspended_layer_tool = tool
+        return coordinator, log
+
+    def _place_tool(self, owner, conditions, **options):
+        identities = options.pop("condition_identities", None)
+        if identities is None:
+            identities = (("c-1", conditions["c-1"]), ("c-2", conditions["c-2"]))
+        values = dict(
+            layer_uid="L1",
+            mode=CURSOR_MODE_PLACE,
+            bid_ref=_SP3A5B_BID,
+            bid_owner=owner,
+            tool_revision=4,
+            condition_uid="c-1",
+            condition_identities=identities,
+        )
+        values.update(options)
+        return _SuspendedLayerTool(**values)
+
+    def _annotation_tool(self, owner, **options):
+        values = dict(
+            layer_uid="L1",
+            mode=CURSOR_MODE_ANNOTATION_PLACE,
+            bid_ref=_SP3A5B_BID,
+            bid_owner=owner,
+            tool_revision=4,
+            annotation_type="rect",
+        )
+        values.update(options)
+        return _SuspendedLayerTool(**values)
+
+    def _run(self, make_tool, layer_uid=None, **options):
+        coordinator, log = self._coordinator(**options)
+        coordinator._suspended_layer_tool = make_tool(self.owner, self.conditions)
+        coordinator._restore_suspended_layer_tool(layer_uid)
+        return coordinator, log
+
+    def test_nothing_suspended_or_no_plan_view_changes_nothing(self):
+        coordinator, log = self._coordinator()
+        coordinator._restore_suspended_layer_tool("L1")
+        self.assertIsNone(coordinator._suspended_layer_tool)
+        coordinator, log = self._coordinator(plan_view=False)
+        tool = self._place_tool(self.owner, self.conditions)
+        coordinator._suspended_layer_tool = tool
+        coordinator._restore_suspended_layer_tool(None)
+        self.assertIs(coordinator._suspended_layer_tool, tool)
+        self.assertEqual(log, [])
+
+    def test_other_layer_keeps_the_suspended_tool_untouched(self):
+        coordinator, log = self._run(
+            lambda owner, conditions: self._place_tool(owner, conditions), "L2"
+        )
+        self.assertIsNotNone(coordinator._suspended_layer_tool)
+        self.assertEqual(log, [])
+
+    def test_matching_layer_or_no_layer_restores_and_clears_the_suspension(self):
+        for layer in ("L1", None):
+            coordinator, log = self._run(
+                lambda owner, conditions: self._place_tool(owner, conditions), layer
+            )
+            self.assertIsNone(coordinator._suspended_layer_tool, layer)
+            self.assertEqual(
+                log, [("placement", "enter", ("c-1", ["c-1", "c-2"]), {})], layer
+            )
+
+    def test_changed_cursor_mode_or_tool_revision_drops_the_suspension(self):
+        for options in (
+            dict(cursor_mode=CURSOR_MODE_PLACE),
+            dict(revision=5),
+        ):
+            coordinator, log = self._run(
+                lambda owner, conditions: self._place_tool(owner, conditions),
+                **options,
+            )
+            self.assertIsNone(coordinator._suspended_layer_tool, options)
+            self.assertEqual(log, [], options)
+
+    def test_other_bid_or_replaced_bid_owner_drops_the_suspension(self):
+        coordinator, log = self._run(
+            lambda owner, conditions: self._place_tool(owner, conditions),
+            selected_bid=_SP3A5B_OTHER_BID,
+        )
+        self.assertIsNone(coordinator._suspended_layer_tool)
+        self.assertEqual(log, [])
+        coordinator, log = self._run(
+            lambda owner, conditions: self._place_tool(object(), conditions)
+        )
+        self.assertIsNone(coordinator._suspended_layer_tool)
+        self.assertEqual(log, [])
+
+    def test_annotation_tool_reactivates_when_allowed_and_not_otherwise(self):
+        coordinator, log = self._run(
+            lambda owner, conditions: self._annotation_tool(owner)
+        )
+        self.assertEqual(
+            log, [("plan", "activate_annotation_placement", ("rect",), {})]
+        )
+        self.assertIsNone(coordinator._suspended_layer_tool)
+        coordinator, log = self._run(
+            lambda owner, conditions: self._annotation_tool(owner),
+            allowed=(Feature.PLACE_PLAN_ITEMS,),
+        )
+        self.assertEqual(log, [])
+        self.assertIsNone(coordinator._suspended_layer_tool)
+
+    def test_annotation_mode_without_type_does_not_fall_into_placement(self):
+        coordinator, log = self._run(
+            lambda owner, conditions: self._annotation_tool(
+                owner,
+                annotation_type=None,
+                condition_uid="c-1",
+                condition_identities=(
+                    ("c-1", conditions["c-1"]),
+                    ("c-2", conditions["c-2"]),
+                ),
+            )
+        )
+        self.assertEqual(log, [])
+        self.assertIsNone(coordinator._suspended_layer_tool)
+
+    def test_placement_mode_with_annotation_type_still_restores_placement(self):
+        coordinator, log = self._run(
+            lambda owner, conditions: self._place_tool(
+                owner, conditions, annotation_type="rect"
+            )
+        )
+        self.assertEqual(log, [("placement", "enter", ("c-1", ["c-1", "c-2"]), {})])
+
+    def test_placement_mode_without_condition_uid_restores_nothing(self):
+        coordinator, log = self._run(
+            lambda owner, conditions: self._place_tool(
+                owner, conditions, condition_uid=None, annotation_type="rect"
+            )
+        )
+        self.assertEqual(log, [])
+        self.assertIsNone(coordinator._suspended_layer_tool)
+
+    def test_placement_requires_captured_identities(self):
+        coordinator, log = self._run(
+            lambda owner, conditions: self._place_tool(
+                owner, conditions, condition_identities=()
+            )
+        )
+        self.assertEqual(log, [])
+        self.assertIsNone(coordinator._suspended_layer_tool)
+
+    def test_placement_requires_every_captured_condition_to_be_unchanged(self):
+        def replace_second(current, _first, _second):
+            current["c-2"] = _sp3a5b_condition()
+
+        def hide_second(_current, _first, second):
+            second.layer_visible = False
+
+        def retype_second(_current, _first, second):
+            second.condition_type = "other"
+
+        def remove_second(current, _first, _second):
+            del current["c-2"]
+
+        scenarios = (
+            ("replaced", replace_second),
+            ("hidden", hide_second),
+            ("retyped", retype_second),
+            ("removed", remove_second),
+        )
+        for label, change in scenarios:
+            first = _sp3a5b_condition()
+            second = _sp3a5b_condition()
+            current = {"c-1": first, "c-2": second}
+            captured = (("c-1", first), ("c-2", second))
+            change(current, first, second)
+            coordinator, log = self._coordinator(conditions=current)
+            coordinator._suspended_layer_tool = self._place_tool(
+                self.owner, current, condition_identities=captured
+            )
+            coordinator._restore_suspended_layer_tool(None)
+            self.assertEqual(log, [], label)
+            self.assertIsNone(coordinator._suspended_layer_tool, label)
+
+    def test_placement_with_unchanged_captured_conditions_is_the_positive_control(self):
+        first = _sp3a5b_condition()
+        second = _sp3a5b_condition()
+        current = {"c-1": first, "c-2": second}
+        coordinator, log = self._coordinator(conditions=current)
+        coordinator._suspended_layer_tool = self._place_tool(
+            self.owner,
+            current,
+            condition_identities=(("c-1", first), ("c-2", second)),
+        )
+        coordinator._restore_suspended_layer_tool(None)
+        self.assertEqual(log, [("placement", "enter", ("c-1", ["c-1", "c-2"]), {})])
+
+    def test_placement_mode_without_condition_uid_ignores_a_none_keyed_condition(self):
+        first = _sp3a5b_condition()
+        current = {"c-1": first, None: first}
+        coordinator, log = self._coordinator(conditions=current)
+        coordinator._suspended_layer_tool = self._place_tool(
+            self.owner,
+            current,
+            condition_uid=None,
+            condition_identities=(("c-1", first),),
+        )
+        coordinator._restore_suspended_layer_tool(None)
+        self.assertEqual(log, [])
+        self.assertIsNone(coordinator._suspended_layer_tool)
+
+    def test_hidden_active_condition_is_not_re_entered_even_if_captured_ones_are_ok(
+        self,
+    ):
+        first = _sp3a5b_condition()
+        hidden = _sp3a5b_condition(visible=False)
+        current = {"c-1": first, "c-3": hidden}
+        coordinator, log = self._coordinator(conditions=current)
+        coordinator._suspended_layer_tool = self._place_tool(
+            self.owner,
+            current,
+            condition_uid="c-3",
+            condition_identities=(("c-1", first),),
+        )
+        coordinator._restore_suspended_layer_tool(None)
+        self.assertEqual(log, [])
+        self.assertIsNone(coordinator._suspended_layer_tool)
+
+    def test_placement_requires_2d_view_and_place_permission(self):
+        for options in (
+            dict(view_2d=False),
+            dict(allowed=(Feature.PLACE_ANNOTATIONS,)),
+        ):
+            coordinator, log = self._run(
+                lambda owner, conditions: self._place_tool(owner, conditions),
+                **options,
+            )
+            self.assertEqual(log, [], options)
+            self.assertIsNone(coordinator._suspended_layer_tool, options)
+
+
+class Sp3a5bTakeoffSelectionProjectionTests(unittest.TestCase):
+    def _coordinator(
+        self,
+        *,
+        current=(),
+        projected=(),
+        sidebar_selected=(),
+        sidebar=True,
+        placement_active=False,
+        placement_uid=None,
+        refreshing=False,
+    ):
+        log = []
+        coordinator = _sp3a5b_bare()
+        coordinator._nav = SimpleNamespace(is_refreshing=refreshing)
+        coordinator.ui_state_manager = _Sp3a5bUiState(highlighted=current)
+        coordinator._selection_projected_condition_uids = set(projected)
+        coordinator.conditions_sidebar = (
+            _Sp3a5bRecorder(
+                "sidebar",
+                log,
+                {"get_selected_condition_uids", "highlight_conditions"},
+                {"get_selected_condition_uids": list(sidebar_selected)},
+            )
+            if sidebar
+            else None
+        )
+        coordinator._placement = SimpleNamespace(
+            is_active=placement_active, condition_uid=placement_uid
+        )
+        return coordinator, log
+
+    def test_default_call_does_not_take_ownership_of_a_foreign_highlight(self):
+        coordinator, _log = self._coordinator(current={"other"})
+        result = coordinator._project_takeoff_selection_conditions(
+            {"c-1"}, selection_changed=False
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [])
+
+    def test_selection_change_or_applied_command_projects_conditions(self):
+        for options in (
+            dict(selection_changed=True),
+            dict(selection_changed=False, selection_command_applied=True),
+        ):
+            coordinator, log = self._coordinator(current={"other"})
+            result = coordinator._project_takeoff_selection_conditions(
+                {"c-1"}, **options
+            )
+            self.assertIs(result, True, options)
+            self.assertEqual(coordinator._selection_projected_condition_uids, {"c-1"})
+            self.assertEqual(coordinator.ui_state_manager.highlight_calls, [{"c-1"}])
+            self.assertEqual(
+                log[-1],
+                ("sidebar", "highlight_conditions", ({"c-1"},), {"reveal": True}),
+            )
+
+    def test_previously_projected_selection_keeps_ownership_and_updates(self):
+        coordinator, _log = self._coordinator(current={"old"}, projected={"old"})
+        result = coordinator._project_takeoff_selection_conditions(
+            {"c-1"}, selection_changed=False
+        )
+        self.assertIs(result, True)
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c-1"})
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [{"c-1"}])
+
+    def test_complete_projection_only_rewrites_existing_ownership(self):
+        coordinator, _log = self._coordinator(
+            current={"c-1"}, projected={"old"}, sidebar_selected={"c-1"}
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            {"c-1"}, selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c-1"})
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [])
+        coordinator, _log = self._coordinator(
+            current={"c-1"}, projected=(), sidebar_selected={"c-1"}
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            {"c-1"}, selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+
+    def test_without_condition_sidebar_the_sidebar_projection_counts_as_complete(self):
+        coordinator, _log = self._coordinator(
+            current={"c-1"}, projected={"old"}, sidebar=False
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            {"c-1"}, selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c-1"})
+
+    def test_empty_selection_without_projection_never_touches_the_highlight(self):
+        coordinator, _log = self._coordinator(current={"a"})
+        self.assertIs(
+            coordinator._project_takeoff_selection_conditions(
+                set(), selection_changed=True
+            ),
+            False,
+        )
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [])
+
+    def test_empty_selection_leaves_a_highlight_that_is_not_ours_alone(self):
+        coordinator, _log = self._coordinator(current={"b"}, projected={"a"})
+        self.assertIs(
+            coordinator._project_takeoff_selection_conditions(
+                set(), selection_changed=True
+            ),
+            False,
+        )
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"a"})
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [])
+
+    def test_empty_selection_clears_our_projected_highlight(self):
+        coordinator, log = self._coordinator(current={"a"}, projected={"a", "z"})
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, True)
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [set()])
+        self.assertEqual(
+            log, [("sidebar", "highlight_conditions", (set(),), {"reveal": True})]
+        )
+
+    def test_empty_selection_with_nothing_highlighted_just_drops_projection(self):
+        coordinator, _log = self._coordinator(current=(), projected={"a"})
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [])
+
+    def test_empty_selection_keeps_projection_while_placement_uses_it(self):
+        coordinator, _log = self._coordinator(
+            current={"a"}, projected={"a"}, placement_active=True, placement_uid="a"
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"a"})
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [])
+
+    def test_placement_ownership_needs_active_placement_of_a_projected_condition(self):
+        scenarios = (
+            dict(placement_active=True, placement_uid="z"),
+            dict(placement_active=False, placement_uid="a"),
+            dict(placement_active=True, placement_uid=None),
+        )
+        for options in scenarios:
+            coordinator, _log = self._coordinator(
+                current={"a"}, projected={"a"}, **options
+            )
+            result = coordinator._project_takeoff_selection_conditions(
+                set(), selection_changed=True
+            )
+            self.assertIs(result, True, options)
+            self.assertEqual(coordinator._selection_projected_condition_uids, set())
+            self.assertEqual(coordinator.ui_state_manager.highlight_calls, [set()])
+
+    def test_blocked_highlight_keeps_the_projection(self):
+        coordinator, _log = self._coordinator(
+            current={"a"}, projected={"a"}, refreshing=True
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"a"})
+
+    def test_active_placement_with_empty_condition_uid_does_not_own_the_projection(
+        self,
+    ):
+        coordinator, _log = self._coordinator(
+            current={None}, projected={None}, placement_active=True, placement_uid=None
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, True)
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(coordinator.ui_state_manager.highlight_calls, [set()])
+
+
+_SP3A5C_MODULE = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+
+
+class _sp3a5c_UiState:
+    def __init__(self, highlighted=()):
+        self.highlighted_condition_uids = set(highlighted)
+
+    def set_highlighted_conditions(self, uids):
+        self.highlighted_condition_uids = set(uids)
+
+
+class _sp3a5c_Sidebar:
+    def __init__(self):
+        self.highlights = []
+
+    def highlight_conditions(self, uids, reveal=True):
+        self.highlights.append((set(uids), reveal))
+
+    def get_selected_condition_uids(self):
+        return []
+
+
+def _sp3a5c_strict_fake(real_class, record, **attributes):
+    """Fake class whose constructor refuses any call the real class would refuse."""
+    real_init = inspect.signature(real_class.__init__)
+
+    class Fake:
+        def __init__(self, *args, **kwargs):
+            real_init.bind(self, *args, **kwargs)
+            self.args = args
+            self.kwargs = kwargs
+            self.saved = False
+            self.cleaned = 0
+            self.bound_to = []
+            self.submitted = []
+            record.append(self)
+
+        def cleanup(self):
+            self.cleaned += 1
+
+        def has_saved_changes(self):
+            return self.saved
+
+        def bind_dialog(self, dialog):
+            self.bound_to.append(dialog)
+
+        def submit_mutation(self, factory, completed):
+            self.submitted.append((factory, completed))
+            return "submitted"
+
+    for name, value in attributes.items():
+        setattr(Fake, name, value)
+    return Fake
+
+
+class Sp3a5cSelectionProjectionTests(unittest.TestCase):
+    """_project_takeoff_selection_conditions: releasing a takeoff owned highlight."""
+
+    @staticmethod
+    def _coordinator(*, highlighted, projected, refreshing=False, placement=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = _sp3a5c_UiState(highlighted)
+        coordinator.conditions_sidebar = _sp3a5c_Sidebar()
+        coordinator._placement = placement or FakePlacement()
+        coordinator._nav = SimpleNamespace(is_refreshing=refreshing)
+        coordinator._selection_projected_condition_uids = set(projected)
+        return coordinator
+
+    def test_empty_selection_without_projection_changes_nothing_and_returns_false(
+        self,
+    ):
+        coordinator = self._coordinator(highlighted={"c9"}, projected=set())
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [])
+        highlighted = coordinator.ui_state_manager.highlighted_condition_uids
+        self.assertEqual(highlighted, {"c9"})
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+
+    def test_placement_owned_condition_keeps_its_projection(self):
+        placement = FakePlacement()
+        placement.is_active = True
+        placement.condition_uid = "c1"
+        coordinator = self._coordinator(
+            highlighted={"c1"}, projected={"c1"}, placement=placement
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [])
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c1"})
+
+    def test_cleared_sidebar_forgets_projection_without_another_sidebar_write(self):
+        coordinator = self._coordinator(highlighted=set(), projected={"c1"})
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [])
+
+    def test_released_takeoff_highlight_clears_sidebar_and_projection(self):
+        coordinator = self._coordinator(highlighted={"c1"}, projected={"c1"})
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, True)
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [(set(), True)])
+        self.assertEqual(coordinator.ui_state_manager.highlighted_condition_uids, set())
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+
+    def test_release_during_refresh_keeps_projection_and_reports_no_change(self):
+        coordinator = self._coordinator(
+            highlighted={"c1"}, projected={"c1"}, refreshing=True
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True
+        )
+        self.assertIs(result, False)
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [])
+        highlighted = coordinator.ui_state_manager.highlighted_condition_uids
+        self.assertEqual(highlighted, {"c1"})
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c1"})
+
+
+class Sp3a5cSyncSelectionTests(unittest.TestCase):
+    """_sync_selection mirroring, toolbar refresh and the selection dispatchers."""
+
+    SOURCES = ("2d", "3d_embedded", "3d_window", "model")
+
+    @staticmethod
+    def _coordinator(
+        *,
+        selected=(),
+        highlighted=(),
+        tab_index=TAB_INDEX_TAKEOFF,
+        with_tab_widget=True,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        log = []
+        coordinator.log = log
+
+        class PlanView:
+            def set_selected_uids(self, uids, emit=True):
+                log.append(("plan-set", set(uids), emit))
+
+            def clear_selection(self, emit=True):
+                log.append(("plan-clear", emit))
+
+        class MeshView:
+            def __init__(self, name):
+                self.name = name
+
+            def set_selected_takeoffs(self, uids):
+                log.append((self.name, list(uids)))
+
+        coordinator.ui_state_manager = _sp3a5c_UiState(highlighted)
+        coordinator.project_data = SimpleNamespace(
+            get_all_takeoffs=lambda: [
+                Takeoff(uid="t1", condition_uid="c1"),
+                Takeoff(uid="t2", condition_uid="c2"),
+            ]
+        )
+        coordinator.conditions_sidebar = _sp3a5c_Sidebar()
+        coordinator.plan_view = PlanView()
+        coordinator.opengl_viewer = MeshView("opengl")
+        coordinator._mesh_window = MeshView("mesh-window")
+        coordinator._placement = FakePlacement()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = (
+            FakeTabWidget(index=tab_index) if with_tab_widget else None
+        )
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator._selected_takeoff_uids = tuple(selected)
+        coordinator._selection_projected_condition_uids = set()
+        return coordinator
+
+    def test_source_constants_are_the_documented_literals(self):
+        self.assertEqual(UIEventCoordinator._SOURCE_2D, "2d")
+        self.assertEqual(UIEventCoordinator._SOURCE_3D, "3d_embedded")
+        self.assertEqual(UIEventCoordinator._SOURCE_3D_WINDOW, "3d_window")
+        self.assertEqual(UIEventCoordinator._SOURCE_MODEL, "model")
+
+    def test_new_selection_is_mirrored_to_every_surface_except_its_source(self):
+        expected_by_source = {
+            "2d": [("opengl", ["t1"]), ("mesh-window", ["t1"])],
+            "3d_embedded": [("plan-set", {"t1"}, False), ("mesh-window", ["t1"])],
+            "3d_window": [("plan-set", {"t1"}, False), ("opengl", ["t1"])],
+            "model": [
+                ("plan-set", {"t1"}, False),
+                ("opengl", ["t1"]),
+                ("mesh-window", ["t1"]),
+            ],
+        }
+        for source in self.SOURCES:
+            with self.subTest(source=source):
+                coordinator = self._coordinator()
+                coordinator._sync_selection(source, ["t1"])
+                self.assertEqual(coordinator.log, expected_by_source[source])
+                self.assertEqual(coordinator._selected_takeoff_uids, ("t1",))
+
+    def test_cleared_selection_is_mirrored_to_every_surface_except_its_source(self):
+        expected_by_source = {
+            "2d": [("opengl", []), ("mesh-window", [])],
+            "3d_embedded": [("plan-clear", False), ("mesh-window", [])],
+            "3d_window": [("plan-clear", False), ("opengl", [])],
+            "model": [("plan-clear", False), ("opengl", []), ("mesh-window", [])],
+        }
+        for source in self.SOURCES:
+            with self.subTest(source=source):
+                coordinator = self._coordinator(selected=("t1",), highlighted={"c1"})
+                coordinator._sync_selection(source, [])
+                self.assertEqual(coordinator.log, expected_by_source[source])
+                self.assertEqual(coordinator._selected_takeoff_uids, ())
+
+    def test_changed_selection_refreshes_toolbar_only_on_the_takeoff_tab(self):
+        cases = (
+            ("takeoff tab", dict(tab_index=TAB_INDEX_TAKEOFF), 1),
+            ("projects tab", dict(tab_index=TAB_INDEX_PROJECTS), 0),
+            ("no tab widget", dict(with_tab_widget=False), 0),
+        )
+        for label, options, expected in cases:
+            with self.subTest(label):
+                coordinator = self._coordinator(**options)
+                coordinator._sync_selection("2d", ["t1"])
+                self.assertEqual(coordinator._toolbar.refreshes, expected)
+
+    def test_unchanged_selection_refreshes_toolbar_for_2d_source_or_projection(self):
+        take, proj = TAB_INDEX_TAKEOFF, TAB_INDEX_PROJECTS
+        cases = (
+            ("2d unchanged, takeoff tab", "2d", False, take, True, 1),
+            ("3d projection, takeoff tab", "3d_embedded", True, take, True, 1),
+            ("3d unchanged, takeoff tab", "3d_embedded", False, take, True, 0),
+            ("2d unchanged, projects tab", "2d", False, proj, True, 0),
+            ("3d projection, projects tab", "3d_embedded", True, proj, True, 0),
+            ("2d unchanged, no tab widget", "2d", False, take, False, 0),
+            ("3d projection, no tab widget", "3d_embedded", True, take, False, 0),
+        )
+        for label, source, applied, tab_index, with_tab, expected in cases:
+            with self.subTest(label):
+                coordinator = self._coordinator(
+                    selected=("t1",), tab_index=tab_index, with_tab_widget=with_tab
+                )
+                coordinator._sync_selection(
+                    source, ["t1"], selection_command_applied=applied
+                )
+                self.assertEqual(coordinator._toolbar.refreshes, expected)
+                self.assertEqual(coordinator.log, [])
+
+    def test_command_applied_flag_defaults_to_false_for_an_unchanged_selection(self):
+        coordinator = self._coordinator(selected=("t1",))
+        coordinator._sync_selection("2d", ["t1"])
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [])
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        coordinator._sync_selection("2d", ["t1"], selection_command_applied=True)
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [({"c1"}, True)])
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c1"})
+
+    def test_sync_is_ignored_while_placement_or_navigation_is_missing(self):
+        for label, missing in (
+            ("placement", "_placement"),
+            ("navigation", "_nav"),
+            ("both", None),
+        ):
+            with self.subTest(label):
+                coordinator = self._coordinator()
+                if missing is None:
+                    coordinator._placement = None
+                    coordinator._nav = None
+                else:
+                    setattr(coordinator, missing, None)
+                coordinator._sync_selection("2d", ["t1"])
+                self.assertEqual(coordinator._selected_takeoff_uids, ())
+                self.assertEqual(coordinator.log, [])
+                self.assertEqual(coordinator._toolbar.refreshes, 0)
+        coordinator = self._coordinator()
+        coordinator._sync_selection("2d", ["t1"])
+        self.assertEqual(coordinator._selected_takeoff_uids, ("t1",))
+
+
+class Sp3a5cSelectionDispatchTests(unittest.TestCase):
+    """The three entry points that forward a selection into _sync_selection."""
+
+    @staticmethod
+    def _coordinator(*, placement=object(), nav=object(), allowed=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.calls = []
+        coordinator.features = []
+        coordinator._placement = placement
+        coordinator._nav = nav
+
+        def is_allowed(feature):
+            coordinator.features.append(feature)
+            return allowed
+
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=is_allowed)
+        coordinator._sync_selection = lambda source, uids, **kwargs: (
+            coordinator.calls.append(("sync", source, list(uids), kwargs))
+        )
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: (
+            coordinator.calls.append(("restore",))
+        )
+        return coordinator
+
+    def test_3d_mesh_click_syncs_with_3d_source_when_selection_is_allowed(self):
+        coordinator = self._coordinator()
+        coordinator._on_3d_mesh_clicked(["t1", "t2"])
+        self.assertEqual(coordinator.features, [Feature.SELECT_PLAN_ITEMS])
+        self.assertEqual(coordinator.calls, [("sync", "3d_embedded", ["t1", "t2"], {})])
+
+    def test_3d_mesh_click_is_ignored_when_selection_is_not_allowed(self):
+        coordinator = self._coordinator(allowed=False)
+        coordinator._on_3d_mesh_clicked(["t1"])
+        self.assertEqual(coordinator.features, [Feature.SELECT_PLAN_ITEMS])
+        self.assertEqual(coordinator.calls, [])
+
+    def test_2d_selection_change_syncs_then_restores_the_project_tree(self):
+        coordinator = self._coordinator()
+        coordinator._on_takeoff_selection_changed(["t1"])
+        self.assertEqual(coordinator.calls, [("sync", "2d", ["t1"], {}), ("restore",)])
+
+    def test_2d_selection_change_is_ignored_without_placement_or_navigation(self):
+        for label, placement, nav in (
+            ("no placement", None, object()),
+            ("no navigation", object(), None),
+            ("neither", None, None),
+        ):
+            with self.subTest(label):
+                coordinator = self._coordinator(placement=placement, nav=nav)
+                coordinator._on_takeoff_selection_changed(["t1"])
+                self.assertEqual(coordinator.calls, [])
+
+    def test_selection_command_applied_marks_the_sync_and_restores_the_tree(self):
+        coordinator = self._coordinator()
+        coordinator._on_takeoff_selection_command_applied(["t1"])
+        self.assertEqual(
+            coordinator.calls,
+            [("sync", "2d", ["t1"], {"selection_command_applied": True}), ("restore",)],
+        )
+
+    def test_selection_command_applied_is_ignored_without_placement_or_navigation(
+        self,
+    ):
+        for label, placement, nav in (
+            ("no placement", None, object()),
+            ("no navigation", object(), None),
+            ("neither", None, None),
+        ):
+            with self.subTest(label):
+                coordinator = self._coordinator(placement=placement, nav=nav)
+                coordinator._on_takeoff_selection_command_applied(["t1"])
+                self.assertEqual(coordinator.calls, [])
+
+
+class Sp3a5cBackoutTests(unittest.TestCase):
+    """_on_backout_toggled paths and the annotation edit mode relay."""
+
+    @staticmethod
+    def _coordinator(
+        *,
+        candidate="parent-1",
+        enter_backout=True,
+        takeoff=SimpleNamespace(condition_uid="c7"),
+        placement_enter=True,
+        with_plan_view=True,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        log = []
+        coordinator.log = log
+
+        class Toolbar:
+            def refresh_backout_action(self):
+                log.append("refresh")
+
+            def current_backout_candidate_uid(self):
+                log.append("candidate")
+                return candidate
+
+        class PlanView:
+            def enter_backout_mode(self, uid):
+                log.append(("enter-backout", uid))
+                return enter_backout
+
+            def get_takeoff(self, uid):
+                log.append(("get-takeoff", uid))
+                return takeoff
+
+            def cancel_backout_mode(self):
+                log.append("cancel")
+
+        class Placement:
+            def enter(self, condition_uid, condition_uids):
+                log.append(("place", condition_uid, list(condition_uids)))
+                return placement_enter
+
+        coordinator._toolbar = Toolbar()
+        coordinator.plan_view = PlanView() if with_plan_view else None
+        coordinator._placement = Placement()
+        return coordinator
+
+    def test_toggle_without_plan_view_only_refreshes_the_action(self):
+        for checked in (True, False):
+            with self.subTest(checked=checked):
+                coordinator = self._coordinator(with_plan_view=False)
+                coordinator._on_backout_toggled(checked)
+                self.assertEqual(coordinator.log, ["refresh"])
+
+    def test_checked_without_candidate_does_not_enter_backout(self):
+        coordinator = self._coordinator(candidate=None)
+        coordinator._on_backout_toggled(True)
+        self.assertEqual(coordinator.log, ["candidate", "refresh"])
+
+    def test_checked_with_refused_backout_mode_does_not_start_placement(self):
+        coordinator = self._coordinator(enter_backout=False)
+        coordinator._on_backout_toggled(True)
+        self.assertEqual(
+            coordinator.log, ["candidate", ("enter-backout", "parent-1"), "refresh"]
+        )
+
+    def test_checked_without_parent_takeoff_cancels_backout(self):
+        coordinator = self._coordinator(takeoff=None)
+        coordinator._on_backout_toggled(True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                "candidate",
+                ("enter-backout", "parent-1"),
+                ("get-takeoff", "parent-1"),
+                "cancel",
+                "refresh",
+            ],
+        )
+
+    def test_checked_with_parent_takeoff_without_condition_cancels_backout(self):
+        coordinator = self._coordinator(takeoff=SimpleNamespace(condition_uid=""))
+        coordinator._on_backout_toggled(True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                "candidate",
+                ("enter-backout", "parent-1"),
+                ("get-takeoff", "parent-1"),
+                "cancel",
+                "refresh",
+            ],
+        )
+
+    def test_checked_with_refused_placement_cancels_backout(self):
+        coordinator = self._coordinator(placement_enter=False)
+        coordinator._on_backout_toggled(True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                "candidate",
+                ("enter-backout", "parent-1"),
+                ("get-takeoff", "parent-1"),
+                ("place", "c7", ["c7"]),
+                "cancel",
+                "refresh",
+            ],
+        )
+
+    def test_checked_with_accepted_placement_keeps_backout_and_refreshes_once(self):
+        coordinator = self._coordinator()
+        coordinator._on_backout_toggled(True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                "candidate",
+                ("enter-backout", "parent-1"),
+                ("get-takeoff", "parent-1"),
+                ("place", "c7", ["c7"]),
+                "refresh",
+            ],
+        )
+
+    def test_unchecked_cancels_backout_then_refreshes_once(self):
+        coordinator = self._coordinator()
+        coordinator._on_backout_toggled(False)
+        self.assertEqual(coordinator.log, ["cancel", "refresh"])
+
+    def test_backout_mode_change_refreshes_the_action(self):
+        coordinator = self._coordinator()
+        coordinator._on_backout_mode_changed(True)
+        self.assertEqual(coordinator.log, ["refresh"])
+
+    def test_text_annotation_edit_mode_is_registered_for_the_main_plan(self):
+        for active in (True, False):
+            with self.subTest(active=active):
+                log = []
+                coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+                coordinator.ui_access_manager = SimpleNamespace(
+                    set_text_annotation_edit_active=lambda value, surface_id: (
+                        log.append(("edit-active", value, surface_id))
+                    )
+                )
+                coordinator.main_window = SimpleNamespace(
+                    menu_controller=SimpleNamespace(
+                        update_menu_states=lambda: log.append("menu")
+                    )
+                )
+                coordinator._on_text_annotation_edit_mode_changed(active)
+                self.assertEqual(
+                    log, [("edit-active", active, MAIN_PLAN_SURFACE_ID), "menu"]
+                )
+
+
+class Sp3a5cSubscriptionTests(unittest.TestCase):
+    EXPECTED = (
+        ("FILE_OPENED", "_on_file_opened"),
+        ("DATABASE_REFRESHED", "_invalidate_refreshed_image_sources"),
+        ("DATABASE_REFRESHED", "_on_database_refreshed"),
+        ("PAGE_METADATA_CHANGED", "_on_page_metadata_changed"),
+        ("DATABASE_CAPABILITIES_CHANGED", "_on_database_capabilities_changed"),
+        ("TAKEOFFS_CHANGED", "_on_takeoffs_changed"),
+        ("ANNOTATIONS_CHANGED", "_on_annotations_changed"),
+        ("ANNOTATION_LIFETIMES_DELETED", "_on_annotation_lifetimes_deleted"),
+        ("PENDING_PLAN_MUTATIONS_CHANGED", "_on_pending_plan_mutations_changed"),
+        ("CONDITIONS_CHANGED", "_on_conditions_changed"),
+        ("REMOTE_AREAS_CHANGED", "_on_remote_areas_changed"),
+        ("BID_AREAS_DELETED", "_on_bid_areas_deleted"),
+        ("REMOTE_BID_CONTENT_CHANGED", "_invalidate_refreshed_image_sources"),
+        ("REMOTE_BID_CONTENT_CHANGED", "_on_remote_bid_content_changed"),
+        ("REMOTE_HIERARCHY_CHANGED", "_on_remote_hierarchy_changed"),
+        ("REMOTE_PLAN_PROJECTION_REQUESTED", "_on_remote_plan_projection_requested"),
+        ("COLLABORATION_STATE_CHANGED", "_on_collaboration_state_changed"),
+        (
+            "COLLABORATION_MUTATION_STATE_CHANGED",
+            "_on_collaboration_mutation_state_changed",
+        ),
+        ("PRESENCE_CHANGED", "_on_presence_changed"),
+        ("BID_LOCKED_REJECTION", "_on_bid_locked_rejection"),
+        ("REMOTE_MASTER_DATA_CHANGED", "_on_remote_master_data_changed"),
+        ("FULL_RECONCILIATION_REQUIRED", "_on_full_reconciliation_required"),
+        ("SYNCHRONIZATION_CONFLICT", "_on_synchronization_conflict"),
+        ("EDIT_LEASE_LOST", "_on_edit_lease_lost"),
+        ("FILE_UNLOADED", "_on_file_unloaded"),
+        ("FILE_SELECTED", "_on_file_selected"),
+        ("APP_CONFIG_UPDATED", "_on_app_config_updated"),
+        ("LICENSE_STATUS_CHANGED", "_on_license_status_changed"),
+        ("NATIVE_SCENE_UPDATED", "_on_native_scene_updated"),
+        ("OST_STATUS_CHANGED", "_on_ost_status_changed"),
+    )
+
+    def test_every_application_event_is_subscribed_to_its_handler_in_order(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        calls = []
+        coordinator.event_bus = SimpleNamespace(
+            subscribe=lambda event, callback: calls.append((event, callback))
+        )
+        coordinator._subscriptions = []
+        coordinator._setup_event_subscriptions()
+        expected = [
+            (getattr(AppEvents, event), getattr(coordinator, handler))
+            for event, handler in self.EXPECTED
+        ]
+        self.assertEqual(calls, expected)
+        self.assertEqual(coordinator._subscriptions, expected)
+
+
+class Sp3a5cCollaborationEditContextTests(unittest.TestCase):
+    """_collaboration_edit_context_is_current and the thin delegations."""
+
+    @staticmethod
+    def _coordinator(*, selected_file="db.mdb", selected_bid=None, tab_index=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=selected_file,
+            get_selected_bid_ref=lambda: selected_bid,
+        )
+        coordinator._tab_widget = FakeTabWidget(
+            index=TAB_INDEX_TAKEOFF if tab_index is None else tab_index
+        )
+        return coordinator
+
+    def test_condition_sidebar_edit_is_current_only_on_the_takeoff_tab(self):
+        on_takeoff = self._coordinator()
+        self.assertIs(
+            on_takeoff._collaboration_edit_context_is_current(
+                "db.mdb", (), "condition-sidebar"
+            ),
+            True,
+        )
+        elsewhere = self._coordinator(tab_index=TAB_INDEX_PROJECTS)
+        self.assertIs(
+            elsewhere._collaboration_edit_context_is_current(
+                "db.mdb", (), "condition-sidebar"
+            ),
+            False,
+        )
+        self.assertIs(
+            elsewhere._collaboration_edit_context_is_current("db.mdb", (), "main-plan"),
+            True,
+        )
+
+    def test_edit_is_stale_when_selected_database_differs_or_is_missing(self):
+        for label, selected in (("other", "other.mdb"), ("missing", None)):
+            with self.subTest(label):
+                coordinator = self._coordinator(selected_file=selected)
+                self.assertIs(
+                    coordinator._collaboration_edit_context_is_current(
+                        "db.mdb", (), "main-plan"
+                    ),
+                    False,
+                )
+
+    def test_database_paths_are_compared_after_normalisation(self):
+        coordinator = self._coordinator(selected_file="./db.mdb")
+        self.assertIs(
+            coordinator._collaboration_edit_context_is_current(
+                "db.mdb", (), "main-plan"
+            ),
+            True,
+        )
+
+    def test_bid_scoped_edit_requires_exactly_the_selected_bid_of_that_database(self):
+        resource = ResourceRef("page", "p1", 8)
+        same_bid = BidRef("db.mdb", "8")
+        cases = (
+            ("selected bid matches", same_bid, (resource,), True),
+            ("no bid selected", None, (resource,), False),
+            ("bid of another database", BidRef("other.mdb", "8"), (resource,), False),
+            ("another bid uid", BidRef("db.mdb", "9"), (resource,), False),
+            (
+                "two bids in the resources",
+                same_bid,
+                (resource, ResourceRef("page", "p2", 9)),
+                False,
+            ),
+            (
+                "bid-less resource is ignored",
+                same_bid,
+                (resource, ResourceRef("employee", "5")),
+                True,
+            ),
+        )
+        for label, selected_bid, resources, expected in cases:
+            with self.subTest(label):
+                coordinator = self._coordinator(selected_bid=selected_bid)
+                self.assertIs(
+                    coordinator._collaboration_edit_context_is_current(
+                        "db.mdb", resources, "main-plan"
+                    ),
+                    expected,
+                )
+
+    def test_renumber_conditions_delegates_to_the_condition_handler(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        answers = iter((True, False))
+        coordinator._condition_handler = SimpleNamespace(
+            can_renumber_conditions=lambda: next(answers),
+            on_renumber_requested=lambda: calls.append("renumber"),
+        )
+        self.assertIs(coordinator.can_renumber_conditions(), True)
+        self.assertIs(coordinator.can_renumber_conditions(), False)
+        self.assertEqual(calls, [])
+        coordinator.renumber_conditions()
+        self.assertEqual(calls, ["renumber"])
+
+
+class Sp3a5cExecWithCollaborationLeaseTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    @staticmethod
+    def _handle(draft_id):
+        return EditLeaseHandle(
+            database_id="db.mdb",
+            draft_id=draft_id,
+            runtime_generation=1,
+            operation_id="dialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("condition_type", "1"),),
+        )
+
+    def _start(self, loaded_files):
+        dialog = QtWidgets.QDialog()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.event_bus = object()
+        coordinator.project_data = SimpleNamespace(
+            get_hierarchy=lambda: HierarchyData(loaded_files=list(loaded_files))
+        )
+        log = []
+        requests = []
+        coordinator.request_collaboration_edit = lambda *args, **kwargs: (
+            requests.append((args, kwargs))
+        )
+        coordinator.end_collaboration_edit = lambda handle: log.append(
+            ("release", handle)
+        )
+        patches = (
+            patch(
+                f"{_SP3A5C_MODULE}.exec_with_ost_blocking",
+                new=lambda shown, _bus: log.append(("exec", shown)),
+            ),
+            patch(
+                f"{_SP3A5C_MODULE}.delete_later_if_valid",
+                new=lambda shown: log.append(("delete", shown)),
+            ),
+        )
+        for active in patches:
+            active.start()
+            self.addCleanup(active.stop)
+        coordinator._exec_with_collaboration_lease(
+            dialog,
+            "db.mdb",
+            (ResourceRef("condition_type", "1"),),
+            lambda: log.append(("cleanup",)),
+            lambda executed: log.append(("after_close", executed)),
+        )
+        self.assertEqual(len(requests), 1)
+        return dialog, requests[0], log
+
+    def test_lease_is_requested_for_the_dialog_class_on_the_main_window_surface(self):
+        _dialog, (args, kwargs), _log = self._start([])
+        self.assertEqual(args[:2], ("db.mdb", (ResourceRef("condition_type", "1"),)))
+        self.assertTrue(callable(args[2]))
+        self.assertEqual(
+            kwargs, {"operation_id": "QDialog", "owning_surface": "main-window-dialog"}
+        )
+
+    def test_dialog_runs_when_its_database_is_not_in_the_loaded_hierarchy(self):
+        dialog, (args, _kwargs), log = self._start([])
+        handle = self._handle("d1")
+        args[2](EditLeaseResult(True, handle=handle))
+        self.assertEqual(
+            log,
+            [
+                ("exec", dialog),
+                ("release", handle),
+                ("after_close", True),
+                ("cleanup",),
+                ("delete", dialog),
+            ],
+        )
+
+    def test_dialog_runs_while_the_owning_entry_is_still_listed_among_same_path_entries(
+        self,
+    ):
+        owner = HierarchyFileEntry(file_path="db.mdb")
+        twin = HierarchyFileEntry(file_path="db.mdb")
+        dialog, (args, _kwargs), log = self._start([owner, twin])
+        args[2](EditLeaseResult(True, handle=self._handle("d1")))
+        self.assertIn(("exec", dialog), log)
+        self.assertIn(("after_close", True), log)
+
+    def test_dialog_is_skipped_when_the_owning_entry_was_replaced(self):
+        entries = [HierarchyFileEntry(file_path="db.mdb")]
+        dialog, (args, _kwargs), log = self._start(entries)
+        entries[0] = HierarchyFileEntry(file_path="db.mdb")
+        handle = self._handle("d1")
+        args[2](EditLeaseResult(True, handle=handle))
+        self.assertEqual(
+            log,
+            [
+                ("release", handle),
+                ("after_close", False),
+                ("cleanup",),
+                ("delete", dialog),
+            ],
+        )
+
+    def test_denied_lease_skips_the_dialog_but_still_cleans_up_in_order(self):
+        dialog, (args, _kwargs), log = self._start([])
+        args[2](EditLeaseResult(False, "busy"))
+        self.assertEqual(
+            log, [("after_close", False), ("cleanup",), ("delete", dialog)]
+        )
+
+    def test_duplicate_callbacks_release_only_foreign_handles(self):
+        _dialog, (args, _kwargs), log = self._start([])
+        first = self._handle("d1")
+        other = self._handle("d2")
+        args[2](EditLeaseResult(True, handle=first))
+        settled = list(log)
+        args[2](EditLeaseResult(True, handle=first))
+        args[2](EditLeaseResult(False, "late"))
+        self.assertEqual(log, settled)
+        args[2](EditLeaseResult(True, handle=other))
+        self.assertEqual(log, settled + [("release", other)])
+        self.assertEqual(sum(1 for entry in log if entry[0] == "exec"), 1)
+        self.assertEqual(sum(1 for entry in log if entry[0] == "cleanup"), 1)
+
+
+class _Sp3a5cOpenerHarness(unittest.TestCase):
+    """Builds a coordinator whose dialog classes and lease session are strict fakes."""
+
+    def _open(
+        self,
+        opener,
+        dialog_name,
+        dialog_class,
+        *,
+        sql,
+        file_path="db.mdb",
+        bid_ref=None,
+        allowed=True,
+        cover_data=None,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        run = SimpleNamespace(
+            dialogs=[],
+            leases=[],
+            features=[],
+            reads=[],
+            exec_calls=[],
+            current_files=[],
+            warnings=[],
+            reloads=[],
+            reload_result=True,
+            lease_class=None,
+        )
+        run.employees_project = [SimpleNamespace(uid=1), SimpleNamespace(uid=2)]
+        run.pay_classes_project = [SimpleNamespace(uid=3)]
+        run.employees_read = [SimpleNamespace(uid=4)]
+        run.pay_classes_read = [SimpleNamespace(uid=5), SimpleNamespace(uid=6)]
+        run.job_statuses_project = [SimpleNamespace(uid=7)]
+        run.job_statuses_read = [SimpleNamespace(uid=8)]
+        run.job_statuses_cover = [SimpleNamespace(uid=9)]
+        run.areas_project = [SimpleNamespace(uid=10), SimpleNamespace(uid=11)]
+        run.areas_read = [SimpleNamespace(uid=12)]
+        run.cdn_project = {"13": SimpleNamespace(uid=13)}
+        run.cdn_read = {"14": SimpleNamespace(uid=14), "15": SimpleNamespace(uid=15)}
+        run.queue = SimpleNamespace(
+            **{
+                name: (lambda *args, _name=name, **kwargs: _name)
+                for name in (
+                    "queue_employees_save",
+                    "queue_pay_classes_save",
+                    "queue_job_statuses_save",
+                )
+            }
+        )
+
+        def is_allowed(feature):
+            run.features.append(feature)
+            return allowed
+
+        def read(source, name, value):
+            def call(*args):
+                run.reads.append((source, name) + args)
+                return value
+
+            return call
+
+        coordinator.main_window = SimpleNamespace(
+            get_selected_database_context_file_path=lambda: file_path
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=is_allowed)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.project_data = SimpleNamespace(
+            set_current_file=run.current_files.append,
+            get_employee_snapshot=read("project", "employees", run.employees_project),
+            get_pay_class_snapshot=read(
+                "project", "pay_classes", run.pay_classes_project
+            ),
+            get_job_status_snapshot=read(
+                "project", "job_statuses", run.job_statuses_project
+            ),
+            get_bid_area_snapshot=read("project", "areas", run.areas_project),
+            get_cdn_types=read("project", "cdn_types", run.cdn_project),
+            get_area_uids_with_takeoff=lambda: {"project-area-uids"},
+            get_master_data_uids_in_use=lambda path, kind: ("project-uids", path, kind),
+        )
+        coordinator._project_read_service = SimpleNamespace(
+            get_employees_and_pay_classes=read(
+                "read",
+                "employees",
+                (run.employees_read, run.pay_classes_read),
+            ),
+            get_job_statuses=read("read", "job_statuses", run.job_statuses_read),
+            get_cover_sheet_data=read("read", "cover_sheet", cover_data),
+            get_bid_areas=read("read", "areas", run.areas_read),
+            get_cdn_types=read("read", "cdn_types", run.cdn_read),
+            get_master_data_uids_in_use=lambda path, kind: ("read-uids", path, kind),
+        )
+
+        def reload_and_notify(path):
+            run.reloads.append(path)
+            return run.reload_result
+
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: sql,
+            reload_and_notify=reload_and_notify,
+            queue_employees_save=run.queue.queue_employees_save,
+            queue_pay_classes_save=run.queue.queue_pay_classes_save,
+            queue_job_statuses_save=run.queue.queue_job_statuses_save,
+        )
+        coordinator._icon_provider = "icons"
+        coordinator._workspace_state_model = "workspace"
+        coordinator.event_bus = "bus"
+        coordinator._exec_with_collaboration_lease = lambda *args, **kwargs: (
+            run.exec_calls.append((args, kwargs))
+        )
+        run.coordinator = coordinator
+        run.lease_class = _sp3a5c_strict_fake(ModalEditLeaseSession, run.leases)
+        run.dialog_class = _sp3a5c_strict_fake(dialog_class, run.dialogs)
+        with (
+            patch(f"{_SP3A5C_MODULE}.{dialog_name}", run.dialog_class),
+            patch(f"{_SP3A5C_MODULE}.ModalEditLeaseSession", run.lease_class),
+            patch(
+                f"{_SP3A5C_MODULE}.show_warning",
+                new=lambda *args: run.warnings.append(args),
+            ),
+        ):
+            getattr(coordinator, opener)()
+        return run
+
+    @staticmethod
+    def _exec_parts(run):
+        ((args, kwargs),) = run.exec_calls
+        return args, kwargs
+
+
+class Sp3a5cOpenAreasDialogTests(_Sp3a5cOpenerHarness):
+    def _open_areas(self, **options):
+        options.setdefault("bid_ref", BidRef("db.mdb", "8"))
+        return self._open(
+            "open_areas_dialog", "BidAreasDialog", BidAreasDialog, **options
+        )
+
+    def test_without_selected_bid_nothing_is_opened_or_checked(self):
+        run = self._open_areas(sql=False, bid_ref=None)
+        self.assertEqual(run.dialogs, [])
+        self.assertEqual(run.features, [])
+        self.assertEqual(run.exec_calls, [])
+
+    def test_without_page_settings_permission_nothing_is_opened(self):
+        run = self._open_areas(sql=False, allowed=False)
+        self.assertEqual(run.features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(run.dialogs, [])
+        self.assertEqual(run.reads, [])
+        self.assertEqual(run.exec_calls, [])
+
+    def test_access_backed_dialog_reads_areas_and_has_no_lease_or_async_save(self):
+        run = self._open_areas(sql=False)
+        (dialog,) = run.dialogs
+        bid_ref = BidRef("db.mdb", "8")
+        self.assertEqual(run.reads, [("read", "areas", "db.mdb", "8")])
+        self.assertEqual(run.leases, [])
+        self.assertEqual(dialog.args, ("icons",))
+        self.assertIs(dialog.kwargs["bid_areas"], run.areas_read)
+        self.assertEqual(dialog.kwargs["parent"], run.coordinator.main_window)
+        self.assertIsNone(dialog.kwargs["save_async_fn"])
+        self.assertIs(dialog.kwargs["has_license"], True)
+        self.assertEqual(dialog.kwargs["bid_ref"], bid_ref)
+        self.assertEqual(dialog.kwargs["workspace_state_model"], "workspace")
+        self.assertIs(
+            dialog.kwargs["used_uids_fn"],
+            run.coordinator.project_data.get_area_uids_with_takeoff,
+        )
+        args, kwargs = self._exec_parts(run)
+        area_type = CollaborationResourceType.AREAS_COLLECTION.value
+        self.assertEqual(
+            args[:4],
+            (
+                dialog,
+                "db.mdb",
+                (
+                    ResourceRef(area_type, "8", 8),
+                    ResourceRef("area", "12", 8),
+                ),
+                dialog.cleanup,
+            ),
+        )
+        self.assertIsNone(args[5])
+        self.assertEqual(len(args), 6)
+        self.assertEqual(kwargs, {})
+
+    def test_non_numeric_bid_uid_leaves_area_resources_without_a_bid_number(self):
+        run = self._open_areas(sql=False, bid_ref=BidRef("db.mdb", "bid-x"))
+        args, _kwargs = self._exec_parts(run)
+        area_type = CollaborationResourceType.AREAS_COLLECTION.value
+        self.assertEqual(
+            args[2],
+            (ResourceRef(area_type, "bid-x", None), ResourceRef("area", "12", None)),
+        )
+        self.assertEqual(run.reads, [("read", "areas", "db.mdb", "bid-x")])
+
+    def test_sql_dialog_uses_snapshot_areas_and_a_bound_lease_session(self):
+        run = self._open_areas(sql=True)
+        (dialog,) = run.dialogs
+        (lease,) = run.leases
+        self.assertEqual(run.reads, [("project", "areas")])
+        self.assertIs(dialog.kwargs["bid_areas"], run.areas_project)
+        area_type = CollaborationResourceType.AREAS_COLLECTION.value
+        resources = (
+            ResourceRef(area_type, "8", 8),
+            ResourceRef("area", "10", 8),
+            ResourceRef("area", "11", 8),
+        )
+        self.assertEqual(
+            lease.args, (run.coordinator, "db.mdb", resources, "BidAreasDialog")
+        )
+        self.assertEqual(lease.kwargs, {"event_bus": "bus"})
+        self.assertEqual(lease.bound_to, [dialog])
+        args, kwargs = self._exec_parts(run)
+        self.assertEqual(args[:4], (dialog, "db.mdb", resources, dialog.cleanup))
+        self.assertIs(args[5], lease)
+        self.assertEqual(kwargs, {})
+
+    def test_dialog_save_callbacks_forward_to_the_coordinator_save_paths(self):
+        run = self._open_areas(sql=True)
+        (dialog,) = run.dialogs
+        (lease,) = run.leases
+        bid_ref = BidRef("db.mdb", "8")
+        saves = []
+        run.coordinator._save_bid_areas_from_dialog = lambda *args: (
+            saves.append(args) or "dialog-result"
+        )
+        self.assertEqual(dialog.kwargs["save_fn"]({"changes": 1}), "dialog-result")
+        self.assertEqual(saves, [(bid_ref, {"changes": 1})])
+        asyncs = []
+        run.coordinator._save_bid_areas_async = lambda *args, **kwargs: (
+            asyncs.append((args, kwargs)) or "async-result"
+        )
+
+        def completed(*_args):
+            raise AssertionError("not completed by the dialog callback itself")
+
+        self.assertEqual(
+            dialog.kwargs["save_async_fn"]({"changes": 2}, completed), "submitted"
+        )
+        ((factory, passed_completed),) = lease.submitted
+        self.assertIs(passed_completed, completed)
+        handle = object()
+        lease_completed = object()
+        self.assertEqual(factory(handle, lease_completed), "async-result")
+        self.assertEqual(
+            asyncs,
+            [
+                (
+                    (bid_ref, {"changes": 2}, lease_completed),
+                    {"edit_lease_handle": handle},
+                )
+            ],
+        )
+
+    def test_refresh_warning_is_shown_only_when_an_access_save_reload_fails(self):
+        message = (
+            "The bid area changes were saved, but the area list could not be "
+            "refreshed. Reopen the database to see the latest bid areas."
+        )
+        cases = (
+            ("failed reload", False, dict(executed=True, saved=True), True),
+            ("successful reload", True, dict(executed=True, saved=True), False),
+            ("dialog never executed", False, dict(executed=False, saved=True), False),
+            ("nothing saved", False, dict(executed=True, saved=False), False),
+        )
+        for label, reload_result, state, warns in cases:
+            with self.subTest(label):
+                run = self._open_areas(sql=False)
+                (dialog,) = run.dialogs
+                after_close = self._exec_parts(run)[0][4]
+                run.reload_result = reload_result
+                dialog.saved = state["saved"]
+                with patch(
+                    f"{_SP3A5C_MODULE}.show_warning",
+                    new=lambda *args: run.warnings.append(args),
+                ):
+                    after_close(state["executed"])
+                expected = [(run.coordinator.main_window, "Refresh Error", message)]
+                self.assertEqual(run.warnings, expected if warns else [])
+                self.assertEqual(
+                    run.reloads,
+                    ["db.mdb"] if state["executed"] and state["saved"] else [],
+                )
+
+    def test_sql_dialog_never_reloads_or_warns_after_close(self):
+        run = self._open_areas(sql=True)
+        (dialog,) = run.dialogs
+        dialog.saved = True
+        run.reload_result = False
+        after_close = self._exec_parts(run)[0][4]
+        with patch(
+            f"{_SP3A5C_MODULE}.show_warning",
+            new=lambda *args: run.warnings.append(args),
+        ):
+            after_close(True)
+        self.assertEqual(run.reloads, [])
+        self.assertEqual(run.warnings, [])
+
+
+class Sp3a5cBidAreaSaveTests(unittest.TestCase):
+    MESSAGE = (
+        "The bid area changes were saved, but the area list could not be "
+        "refreshed. Reopen the database to see the latest bid areas."
+    )
+
+    @staticmethod
+    def _coordinator(*, allowed=True, result=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.saves = []
+        coordinator.features = []
+        coordinator.warnings = []
+        coordinator.main_window = "window"
+
+        def is_allowed(feature):
+            coordinator.features.append(feature)
+            return allowed
+
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=is_allowed)
+        coordinator._project_write_service = SimpleNamespace(
+            save_bid_areas_result=lambda *args, **kwargs: (
+                coordinator.saves.append((args, kwargs)) or result
+            )
+        )
+        return coordinator
+
+    def _save(self, coordinator):
+        with patch(
+            f"{_SP3A5C_MODULE}.show_warning",
+            new=lambda *args: coordinator.warnings.append(args),
+        ):
+            return coordinator._save_bid_areas_from_dialog(
+                BidRef("db.mdb", "8"), {"changes": 1}
+            )
+
+    def test_dialog_save_is_refused_without_page_settings_permission(self):
+        result = SimpleNamespace(write_success=True, refresh_failed=False)
+        coordinator = self._coordinator(allowed=False, result=result)
+        self.assertIsNone(self._save(coordinator))
+        self.assertEqual(coordinator.features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(coordinator.saves, [])
+
+    def test_dialog_save_defers_the_refresh_publication_to_the_dialog_session(self):
+        result = SimpleNamespace(write_success=True, refresh_failed=False)
+        coordinator = self._coordinator(result=result)
+        self.assertIs(self._save(coordinator), result)
+        self.assertEqual(
+            coordinator.saves,
+            [
+                (
+                    ("db.mdb", "8", {"changes": 1}),
+                    {"publish_database_refreshed_after_write": False},
+                )
+            ],
+        )
+        self.assertEqual(coordinator.warnings, [])
+
+    def test_failed_write_returns_none_without_a_refresh_warning(self):
+        result = SimpleNamespace(write_success=False, refresh_failed=True)
+        coordinator = self._coordinator(result=result)
+        self.assertIsNone(self._save(coordinator))
+        self.assertEqual(len(coordinator.saves), 1)
+        self.assertEqual(coordinator.warnings, [])
+
+    def test_saved_write_with_failed_refresh_warns_and_still_returns_the_result(self):
+        result = SimpleNamespace(write_success=True, refresh_failed=True)
+        coordinator = self._coordinator(result=result)
+        self.assertIs(self._save(coordinator), result)
+        self.assertEqual(
+            coordinator.warnings, [("window", "Refresh Error", self.MESSAGE)]
+        )
+
+    def test_async_save_without_permission_completes_false_and_returns_false(self):
+        coordinator = self._coordinator(allowed=False)
+        completions = []
+        returned = coordinator._save_bid_areas_async(
+            BidRef("db.mdb", "8"),
+            {"changes": 1},
+            lambda *args: completions.append(args),
+        )
+        self.assertIs(returned, False)
+        self.assertEqual(completions, [(False, None)])
+        self.assertEqual(coordinator.features, [Feature.EDIT_PAGE_SETTINGS])
+
+    def test_public_async_save_forwards_without_a_lease_handle_and_returns_its_result(
+        self,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        calls = []
+        coordinator._save_bid_areas_async = lambda *args, **kwargs: (
+            calls.append((args, kwargs)) or "forwarded"
+        )
+        bid_ref = BidRef("db.mdb", "8")
+        completed = object()
+        self.assertEqual(
+            coordinator.save_bid_areas_async(bid_ref, {"changes": 1}, completed),
+            "forwarded",
+        )
+        self.assertEqual(calls, [((bid_ref, {"changes": 1}, completed), {})])
+
+
+class Sp3a5cOpenMasterDataDialogTests(_Sp3a5cOpenerHarness):
+    def _open_employees(self, **options):
+        return self._open(
+            "open_employees_dialog", "EmployeesDialog", EmployeesDialog, **options
+        )
+
+    def _open_job_statuses(self, **options):
+        return self._open(
+            "open_job_statuses_dialog",
+            "JobStatusesDialog",
+            JobStatusesDialog,
+            **options,
+        )
+
+    def _open_condition_types(self, **options):
+        return self._open(
+            "open_condition_types_dialog",
+            "ConditionTypesDialog",
+            ConditionTypesDialog,
+            **options,
+        )
+
+    def test_every_master_data_dialog_needs_a_database_and_edit_permission(self):
+        openers = (
+            self._open_employees,
+            self._open_job_statuses,
+            self._open_condition_types,
+        )
+        for opener in openers:
+            for label, options in (
+                ("no database", dict(file_path=None)),
+                ("empty database", dict(file_path="")),
+                ("not allowed", dict(allowed=False)),
+            ):
+                with self.subTest(opener=opener.__name__, case=label):
+                    run = opener(sql=True, **options)
+                    self.assertEqual(run.dialogs, [])
+                    self.assertEqual(run.leases, [])
+                    self.assertEqual(run.reads, [])
+                    self.assertEqual(run.exec_calls, [])
+                    self.assertEqual(run.current_files, [])
+        run = self._open_employees(sql=True)
+        self.assertEqual(run.current_files, ["db.mdb"])
+        self.assertEqual(run.features, [Feature.EDIT_MASTER_DATA])
+
+    def test_access_employees_dialog_reads_through_the_read_service(self):
+        run = self._open_employees(sql=False)
+        (dialog,) = run.dialogs
+        coordinator = run.coordinator
+        self.assertEqual(run.reads, [("read", "employees", "db.mdb")])
+        self.assertEqual(run.leases, [])
+        self.assertEqual(dialog.args, ("icons",))
+        kwargs = dialog.kwargs
+        self.assertIs(kwargs["employees"], run.employees_read)
+        self.assertIs(kwargs["pay_classes"], run.pay_classes_read)
+        self.assertEqual(kwargs["parent"], coordinator.main_window)
+        self.assertEqual(kwargs["event_bus"], "bus")
+        self.assertEqual(kwargs["database_id"], "db.mdb")
+        self.assertIs(kwargs["menu_mode"], True)
+        self.assertEqual(kwargs["workspace_state_model"], "workspace")
+        self.assertIsNone(kwargs["save_async_fn"])
+        self.assertIsNone(kwargs["pay_classes_save_async_fn"])
+        self.assertEqual(kwargs["used_uids_fn"](), ("read-uids", "db.mdb", "employees"))
+        self.assertEqual(
+            kwargs["pay_class_usage_fn"](), ("read-uids", "db.mdb", "pay_classes")
+        )
+        run.reads.clear()
+        self.assertEqual(
+            kwargs["reload_employees_fn"](), (run.employees_read, run.pay_classes_read)
+        )
+        self.assertEqual(run.reads, [("read", "employees", "db.mdb")])
+        args, exec_kwargs = self._exec_parts(run)
+        self.assertEqual(
+            args,
+            (
+                dialog,
+                "db.mdb",
+                (
+                    ResourceRef(
+                        CollaborationResourceType.EMPLOYEES_COLLECTION.value,
+                        "database",
+                    ),
+                    ResourceRef(
+                        CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+                        "database",
+                    ),
+                    ResourceRef("employee", "4"),
+                    ResourceRef("pay_class", "5"),
+                    ResourceRef("pay_class", "6"),
+                ),
+                dialog.cleanup,
+            ),
+        )
+        self.assertEqual(exec_kwargs, {"lease_session": None})
+
+    def test_sql_employees_dialog_reads_snapshots_and_binds_a_lease_session(self):
+        run = self._open_employees(sql=True)
+        (dialog,) = run.dialogs
+        (lease,) = run.leases
+        kwargs = dialog.kwargs
+        self.assertEqual(
+            run.reads,
+            [("project", "employees", "db.mdb"), ("project", "pay_classes", "db.mdb")],
+        )
+        self.assertIs(kwargs["employees"], run.employees_project)
+        self.assertIs(kwargs["pay_classes"], run.pay_classes_project)
+        self.assertEqual(
+            kwargs["used_uids_fn"](), ("project-uids", "db.mdb", "employees")
+        )
+        self.assertEqual(
+            kwargs["pay_class_usage_fn"](), ("project-uids", "db.mdb", "pay_classes")
+        )
+        run.reads.clear()
+        self.assertEqual(
+            kwargs["reload_employees_fn"](),
+            (run.employees_project, run.pay_classes_project),
+        )
+        self.assertEqual(
+            run.reads,
+            [("project", "employees", "db.mdb"), ("project", "pay_classes", "db.mdb")],
+        )
+        args, exec_kwargs = self._exec_parts(run)
+        resources = args[2]
+        self.assertEqual(
+            resources[2:],
+            (
+                ResourceRef("employee", "1"),
+                ResourceRef("employee", "2"),
+                ResourceRef("pay_class", "3"),
+            ),
+        )
+        self.assertEqual(
+            lease.args, (run.coordinator, "db.mdb", resources, "EmployeesDialog")
+        )
+        self.assertEqual(lease.kwargs, {"event_bus": "bus"})
+        self.assertEqual(lease.bound_to, [dialog])
+        self.assertEqual(exec_kwargs, {"lease_session": lease})
+        self.assertEqual(args[:2] + args[3:], (dialog, "db.mdb", dialog.cleanup))
+
+    def test_employee_dialog_save_callbacks_forward_with_the_database_path(self):
+        run = self._open_employees(sql=True)
+        (dialog,) = run.dialogs
+        (lease,) = run.leases
+        coordinator = run.coordinator
+        sync_calls = []
+        coordinator._save_master_employees_result = lambda *args: (
+            sync_calls.append(("employees",) + args) or "employees-result"
+        )
+        coordinator._save_master_pay_classes = lambda *args: (
+            sync_calls.append(("pay_classes",) + args) or "pay-classes-result"
+        )
+        self.assertEqual(dialog.kwargs["save_fn"]({"e": 1}), "employees-result")
+        self.assertEqual(
+            dialog.kwargs["pay_classes_save_fn"]({"p": 1}), "pay-classes-result"
+        )
+        self.assertEqual(
+            sync_calls,
+            [("employees", "db.mdb", {"e": 1}), ("pay_classes", "db.mdb", {"p": 1})],
+        )
+        async_calls = []
+        coordinator._save_master_data_async = lambda *args, **kwargs: (
+            async_calls.append((args, kwargs)) or "async-result"
+        )
+        handle = object()
+        lease_completed = object()
+        for key, title, queue_name, family in (
+            ("save_async_fn", "Employees", "queue_employees_save", "employees"),
+            (
+                "pay_classes_save_async_fn",
+                "Payroll Classes",
+                "queue_pay_classes_save",
+                "pay_classes",
+            ),
+        ):
+            with self.subTest(key):
+                lease.submitted.clear()
+                async_calls.clear()
+                completed = object()
+                self.assertEqual(dialog.kwargs[key]({"c": 1}, completed), "submitted")
+                ((factory, passed_completed),) = lease.submitted
+                self.assertIs(passed_completed, completed)
+                self.assertEqual(factory(handle, lease_completed), "async-result")
+                ((call_args, call_kwargs),) = async_calls
+                self.assertEqual(call_args[:2], ("db.mdb", title))
+                self.assertIs(
+                    call_args[2],
+                    getattr(coordinator._project_write_service, queue_name),
+                )
+                self.assertEqual(call_args[3], {"c": 1})
+                self.assertIs(call_args[4], lease_completed)
+                self.assertEqual(call_args[5], family)
+                self.assertEqual(len(call_args), 6)
+                self.assertEqual(call_kwargs, {"edit_lease_handle": handle})
+
+    def test_job_status_source_depends_on_backend_and_selected_bid(self):
+        cover = SimpleNamespace(job_statuses=[SimpleNamespace(uid=9)])
+        cases = (
+            (
+                "access, bid of this database",
+                dict(sql=False, bid_ref=BidRef("./db.mdb", "8"), cover_data=cover),
+                [("read", "cover_sheet", "db.mdb", "8")],
+                lambda run: cover.job_statuses,
+            ),
+            (
+                "access, bid of another database",
+                dict(sql=False, bid_ref=BidRef("other.mdb", "8"), cover_data=cover),
+                [("read", "job_statuses", "db.mdb")],
+                lambda run: run.job_statuses_read,
+            ),
+            (
+                "access, no bid",
+                dict(sql=False, bid_ref=None, cover_data=cover),
+                [("read", "job_statuses", "db.mdb")],
+                lambda run: run.job_statuses_read,
+            ),
+            (
+                "access, bid without cover data",
+                dict(sql=False, bid_ref=BidRef("db.mdb", "8"), cover_data=None),
+                [
+                    ("read", "cover_sheet", "db.mdb", "8"),
+                    ("read", "job_statuses", "db.mdb"),
+                ],
+                lambda run: run.job_statuses_read,
+            ),
+            (
+                "sql snapshot",
+                dict(sql=True, bid_ref=BidRef("db.mdb", "8"), cover_data=cover),
+                [("project", "job_statuses", "db.mdb")],
+                lambda run: run.job_statuses_project,
+            ),
+        )
+        for label, options, expected_reads, expected_source in cases:
+            with self.subTest(label):
+                run = self._open_job_statuses(**options)
+                (dialog,) = run.dialogs
+                self.assertEqual(run.reads, expected_reads)
+                self.assertIs(dialog.kwargs["job_statuses"], expected_source(run))
+
+    def test_job_status_dialog_resources_and_lease_wiring(self):
+        run = self._open_job_statuses(sql=True)
+        (dialog,) = run.dialogs
+        (lease,) = run.leases
+        kwargs = dialog.kwargs
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.JOB_STATUSES_COLLECTION.value, "database"
+            ),
+            ResourceRef("job_status", "7"),
+        )
+        args, exec_kwargs = self._exec_parts(run)
+        self.assertEqual(args, (dialog, "db.mdb", resources, dialog.cleanup))
+        self.assertEqual(exec_kwargs, {"lease_session": lease})
+        self.assertEqual(
+            lease.args, (run.coordinator, "db.mdb", resources, "JobStatusesDialog")
+        )
+        self.assertEqual(lease.kwargs, {"event_bus": "bus"})
+        self.assertEqual(lease.bound_to, [dialog])
+        self.assertEqual(dialog.args, ("icons",))
+        self.assertIs(kwargs["menu_mode"], True)
+        self.assertEqual(kwargs["workspace_state_model"], "workspace")
+        self.assertEqual(kwargs["parent"], run.coordinator.main_window)
+        self.assertEqual(
+            kwargs["used_uids_fn"](), ("project-uids", "db.mdb", "job_statuses")
+        )
+
+    def test_access_job_status_dialog_has_no_lease_and_reads_usage_from_read_service(
+        self,
+    ):
+        run = self._open_job_statuses(sql=False)
+        (dialog,) = run.dialogs
+        self.assertEqual(run.leases, [])
+        self.assertIsNone(dialog.kwargs["save_async_fn"])
+        self.assertEqual(
+            dialog.kwargs["used_uids_fn"](), ("read-uids", "db.mdb", "job_statuses")
+        )
+        args, exec_kwargs = self._exec_parts(run)
+        self.assertEqual(exec_kwargs, {"lease_session": None})
+        self.assertEqual(args[3], dialog.cleanup)
+
+    def test_job_status_dialog_save_callbacks_forward_with_the_database_path(self):
+        run = self._open_job_statuses(sql=True)
+        (dialog,) = run.dialogs
+        (lease,) = run.leases
+        coordinator = run.coordinator
+        sync_calls = []
+        coordinator._save_master_job_statuses = lambda *args: (
+            sync_calls.append(args) or "saved"
+        )
+        self.assertEqual(dialog.kwargs["save_fn"]({"j": 1}), "saved")
+        self.assertEqual(sync_calls, [("db.mdb", {"j": 1})])
+        async_calls = []
+        coordinator._save_master_data_async = lambda *args, **kwargs: (
+            async_calls.append((args, kwargs)) or "async-result"
+        )
+        completed = object()
+        self.assertEqual(
+            dialog.kwargs["save_async_fn"]({"j": 2}, completed), "submitted"
+        )
+        ((factory, passed_completed),) = lease.submitted
+        self.assertIs(passed_completed, completed)
+        handle = object()
+        lease_completed = object()
+        self.assertEqual(factory(handle, lease_completed), "async-result")
+        ((call_args, call_kwargs),) = async_calls
+        self.assertEqual(call_args[:2], ("db.mdb", "Job Statuses"))
+        self.assertIs(
+            call_args[2], coordinator._project_write_service.queue_job_statuses_save
+        )
+        self.assertEqual(call_args[3], {"j": 2})
+        self.assertIs(call_args[4], lease_completed)
+        self.assertEqual(call_args[5], "job_statuses")
+        self.assertEqual(len(call_args), 6)
+        self.assertEqual(call_kwargs, {"edit_lease_handle": handle})
+
+    def test_sql_condition_type_dialog_uses_snapshot_types_and_a_lease_session(self):
+        run = self._open_condition_types(sql=True)
+        (dialog,) = run.dialogs
+        (lease,) = run.leases
+        self.assertEqual(run.reads, [("project", "cdn_types")])
+        self.assertEqual(
+            dialog.kwargs["condition_types"], list(run.cdn_project.values())
+        )
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.CONDITION_TYPES_COLLECTION.value, "database"
+            ),
+            ResourceRef("condition_type", "13"),
+        )
+        self.assertEqual(
+            lease.args, (run.coordinator, "db.mdb", resources, "ConditionTypesDialog")
+        )
+        self.assertEqual(lease.kwargs, {"event_bus": "bus"})
+        self.assertEqual(lease.bound_to, [dialog])
+        args, exec_kwargs = self._exec_parts(run)
+        self.assertEqual(args[:3], (dialog, "db.mdb", resources))
+        self.assertEqual(exec_kwargs, {"lease_session": lease})
+
+    def test_access_condition_type_dialog_reads_types_by_database_without_a_lease(self):
+        run = self._open_condition_types(sql=False)
+        (dialog,) = run.dialogs
+        self.assertEqual(run.reads, [("read", "cdn_types", "db.mdb")])
+        self.assertEqual(run.leases, [])
+        self.assertEqual(dialog.kwargs["condition_types"], list(run.cdn_read.values()))
+        args, exec_kwargs = self._exec_parts(run)
+        self.assertEqual(
+            args[2],
+            (
+                ResourceRef(
+                    CollaborationResourceType.CONDITION_TYPES_COLLECTION.value,
+                    "database",
+                ),
+                ResourceRef("condition_type", "14"),
+                ResourceRef("condition_type", "15"),
+            ),
+        )
+        self.assertEqual(exec_kwargs, {"lease_session": None})
+
+
+class Sp3a5cBidAreaAsyncQueueTests(unittest.TestCase):
+    @staticmethod
+    def _coordinator(queue):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = "window"
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator._project_write_service = SimpleNamespace(queue_bid_areas_save=queue)
+        return coordinator
+
+    def test_locked_bid_refusal_is_only_logged_and_reports_not_started(self):
+        def queue(*_args, **_kwargs):
+            raise ActiveBidLockedError()
+
+        coordinator = self._coordinator(queue)
+        completions = []
+        with patch(
+            f"{_SP3A5C_MODULE}.show_warning",
+            new=lambda *args: self.fail(f"unexpected dialog {args}"),
+        ):
+            with self.assertLogs(_SP3A5C_MODULE, level="WARNING") as logged:
+                returned = coordinator._save_bid_areas_async(
+                    BidRef("db.mdb", "8"), {}, lambda *args: completions.append(args)
+                )
+        self.assertIs(returned, False)
+        self.assertEqual(completions, [])
+        self.assertEqual(
+            [(record.levelname, record.getMessage()) for record in logged.records],
+            [("WARNING", "Bid Areas blocked: the active bid is locked")],
+        )
+
+    def test_queue_errors_are_shown_with_the_bid_areas_title(self):
+        for error in (RuntimeError("queue down"), ValueError("bad changes")):
+            with self.subTest(error=type(error).__name__):
+
+                def queue(*_args, _error=error, **_kwargs):
+                    raise _error
+
+                coordinator = self._coordinator(queue)
+                shown = []
+                with patch(
+                    f"{_SP3A5C_MODULE}.show_warning",
+                    new=lambda *args: shown.append(args),
+                ):
+                    returned = coordinator._save_bid_areas_async(
+                        BidRef("db.mdb", "8"), {}, lambda *_args: None
+                    )
+                self.assertIs(returned, False)
+                self.assertEqual(shown, [("window", "Bid Areas", str(error))])
+
+    def test_queue_receives_the_lease_handle_only_when_one_is_supplied(self):
+        calls = []
+        coordinator = self._coordinator(
+            lambda *args, **kwargs: calls.append((args, kwargs))
+        )
+        bid_ref = BidRef("db.mdb", "8")
+        self.assertIs(
+            coordinator._save_bid_areas_async(bid_ref, {"c": 1}, lambda *_args: None),
+            True,
+        )
+        handle = object()
+        self.assertIs(
+            coordinator._save_bid_areas_async(
+                bid_ref, {"c": 2}, lambda *_args: None, edit_lease_handle=handle
+            ),
+            True,
+        )
+        (plain_args, plain_kwargs), (leased_args, leased_kwargs) = calls
+        self.assertEqual(plain_args[:3], ("db.mdb", "8", {"c": 1}))
+        self.assertTrue(callable(plain_args[3]))
+        self.assertEqual(len(plain_args), 4)
+        self.assertEqual(plain_kwargs, {})
+        self.assertEqual(leased_args[:3], ("db.mdb", "8", {"c": 2}))
+        self.assertEqual(len(leased_args), 4)
+        self.assertEqual(leased_kwargs, {"edit_lease_handle": handle})
+
+
+class Sp3a5cRequestCollaborationEditDefaultsTests(unittest.TestCase):
+    def test_request_defaults_to_the_desktop_surface_without_dependencies(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        requests = []
+        coordinator._sql_collaboration = SimpleNamespace(
+            request_local_edit=lambda *args, **kwargs: requests.append((args, kwargs))
+        )
+        resources = (ResourceRef("employee", "5"),)
+        callback = object()
+        coordinator.request_collaboration_edit("db.mdb", resources, callback)
+        ((args, kwargs),) = requests
+        self.assertEqual(args[:2], ("db.mdb", resources))
+        self.assertTrue(callable(args[2]))
+        self.assertEqual(len(args), 3)
+        self.assertEqual(
+            kwargs,
+            {
+                "dependency_resources": (),
+                "operation_id": "",
+                "owning_surface": "desktop",
+            },
+        )
+
+
+_sp3a5d_MOD = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+_sp3a5d_OPERATION_ID = "00000000-0000-4000-8000-0000000000d1"
+
+
+class Sp3a5dMasterDataDialogOpenerTests(unittest.TestCase):
+    """Real open_*_dialog methods with the dialog class, the modal lease session
+    and the lease-aware exec replaced by recording fakes: the constructor kwargs
+    are the contract between the coordinator and the dialogs."""
+
+    FILE_PATH = "db.ost"
+
+    @classmethod
+    def _open(cls, opener, dialog_name, sql, file_path=FILE_PATH):
+        env = SimpleNamespace(
+            dialogs=[], sessions=[], execs=[], calls=[], file_path=file_path
+        )
+
+        class FakeDialog:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+                env.dialogs.append(self)
+
+            def cleanup(self):
+                env.calls.append("cleanup")
+
+        class FakeSession:
+            def __init__(self, owner, database_id, resources, operation, **kwargs):
+                self.init = (owner, database_id, resources, operation, kwargs)
+                self.bound = []
+                self.submitted = []
+                env.sessions.append(self)
+
+            def bind_dialog(self, dialog):
+                self.bound.append(dialog)
+
+            def submit_mutation(self, fn, completed):
+                self.submitted.append((fn, completed))
+                return ("submitted", fn, completed)
+
+        class ProjectData:
+            def set_current_file(self, path):
+                env.calls.append(("set_current_file", path))
+
+            def get_cdn_types(self):
+                return {"c1": SimpleNamespace(uid=11)}
+
+            def get_pay_class_snapshot(self, path):
+                return [SimpleNamespace(uid=21, source="snapshot")]
+
+            def get_default_layer_snapshot(self, path):
+                return ["snapshot-layers", path]
+
+            def get_master_data_uids_in_use(self, path, kind):
+                return ("project_data", path, kind)
+
+        class ReadService:
+            def get_cdn_types(self, path):
+                return {"c2": SimpleNamespace(uid=12)}
+
+            def get_employees_and_pay_classes(self, path):
+                return (["employees"], [SimpleNamespace(uid=22, source="read")])
+
+            def get_default_layers(self, path):
+                return ["read-layers", path]
+
+            def get_master_data_uids_in_use(self, path, kind):
+                return ("read_service", path, kind)
+
+        class WriteService:
+            def uses_sql_collaboration_mutations(self, path):
+                env.calls.append(("uses_sql", path))
+                return sql
+
+            def validate_condition_types_delete(self, path, uids):
+                env.calls.append(("validate_delete", path, uids))
+                return SimpleNamespace(blocked_uids=[3, 4])
+
+            def queue_pay_classes_save(self, *args, **kwargs):
+                return ("queue_pay_classes_save", args, kwargs)
+
+            def queue_job_statuses_save(self, *args, **kwargs):
+                return ("queue_job_statuses_save", args, kwargs)
+
+            def queue_default_layer_insert(self, *args, **kwargs):
+                return ("queue_default_layer_insert", args, kwargs)
+
+            def queue_default_layers_delete(self, *args, **kwargs):
+                return ("queue_default_layers_delete", args, kwargs)
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        env.coordinator = coordinator
+        env.event_bus = object()
+        env.workspace = object()
+        coordinator.event_bus = env.event_bus
+        coordinator._icon_provider = object()
+        coordinator._workspace_state_model = env.workspace
+        coordinator.main_window = SimpleNamespace(
+            get_selected_database_context_file_path=lambda: file_path
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_MASTER_DATA
+        )
+        coordinator.project_data = ProjectData()
+        coordinator._project_read_service = ReadService()
+        coordinator._project_write_service = WriteService()
+        coordinator._exec_with_collaboration_lease = lambda *a, **k: env.execs.append(
+            (a, k)
+        )
+        for name in (
+            "_save_master_condition_types",
+            "_delete_master_condition_types",
+            "_save_master_pay_classes",
+            "_save_master_condition_types_async",
+            "_save_master_data_async",
+            "_save_default_layer_async",
+            "_save_default_layer_update_async",
+            "_insert_default_layer_from_dialog",
+            "_delete_default_layers_from_dialog",
+            "_update_default_layer_show_from_dialog",
+            "_update_all_default_layers_show_from_dialog",
+            "_update_default_layer_name_from_dialog",
+            "_move_default_layer_from_dialog",
+        ):
+            setattr(
+                coordinator,
+                name,
+                lambda *a, _name=name, **k: (_name, a, k),
+            )
+        with (
+            patch(f"{_sp3a5d_MOD}.{dialog_name}", FakeDialog),
+            patch(f"{_sp3a5d_MOD}.ModalEditLeaseSession", FakeSession),
+        ):
+            getattr(coordinator, opener)()
+        env.dialog = env.dialogs[0] if env.dialogs else None
+        env.session = env.sessions[0] if env.sessions else None
+        return env
+
+    def _assert_exec(self, env, resources):
+        self.assertEqual(len(env.execs), 1)
+        args, kwargs = env.execs[0]
+        self.assertEqual(len(args), 4)
+        self.assertIs(args[0], env.dialog)
+        self.assertEqual(args[1], env.file_path)
+        self.assertEqual(args[2], resources)
+        self.assertEqual(args[3], env.dialog.cleanup)
+        self.assertEqual(set(kwargs), {"lease_session"})
+        self.assertIs(kwargs["lease_session"], env.session)
+
+    def _assert_session(self, env, operation, resources):
+        self.assertEqual(len(env.sessions), 1)
+        owner, database_id, session_resources, name, kwargs = env.session.init
+        self.assertIs(owner, env.coordinator)
+        self.assertEqual(database_id, env.file_path)
+        self.assertEqual(session_resources, resources)
+        self.assertEqual(name, operation)
+        self.assertEqual(kwargs, {"event_bus": env.event_bus})
+        self.assertEqual(env.session.bound, [env.dialog])
+
+    def test_condition_types_dialog_uses_sql_queue_session_and_snapshot_reads(self):
+        env = self._open("open_condition_types_dialog", "ConditionTypesDialog", True)
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.CONDITION_TYPES_COLLECTION.value, "database"
+            ),
+            ResourceRef("condition_type", "11"),
+        )
+        self._assert_session(env, "ConditionTypesDialog", resources)
+        self._assert_exec(env, resources)
+        kwargs = env.dialog.kwargs
+        self.assertIs(env.dialog.args[0], env.coordinator._icon_provider)
+        self.assertEqual(len(env.dialog.args), 1)
+        self.assertIs(kwargs["parent"], env.coordinator.main_window)
+        self.assertEqual([item.uid for item in kwargs["condition_types"]], [11])
+        self.assertIs(kwargs["has_license"], True)
+        self.assertIs(kwargs["menu_mode"], True)
+        self.assertIs(kwargs["workspace_state_model"], env.workspace)
+        self.assertEqual(
+            kwargs["save_fn"]({"k": 1}),
+            ("_save_master_condition_types", (env.file_path, {"k": 1}), {}),
+        )
+        self.assertEqual(
+            kwargs["delete_fn"](["u1"]),
+            ("_delete_master_condition_types", (env.file_path, ["u1"]), {}),
+        )
+        self.assertEqual(kwargs["blocked_delete_uids_fn"](["u1"]), set())
+        self.assertNotIn(("validate_delete", env.file_path, ["u1"]), env.calls)
+        self.assertEqual([item.uid for item in kwargs["reload_fn"]()], [11])
+
+    def test_condition_types_async_save_is_submitted_through_the_session(self):
+        env = self._open("open_condition_types_dialog", "ConditionTypesDialog", True)
+        completed = object()
+        changes = {"k": 1}
+        returned = env.dialog.kwargs["save_async_fn"](changes, completed)
+        self.assertEqual(len(env.session.submitted), 1)
+        submit, done = env.session.submitted[0]
+        self.assertIs(done, completed)
+        self.assertEqual(returned, ("submitted", submit, completed))
+        handle, lease_completed = object(), object()
+        name, args, kwargs = submit(handle, lease_completed)
+        self.assertEqual(name, "_save_master_condition_types_async")
+        self.assertEqual(args[0], env.file_path)
+        self.assertIs(args[1], changes)
+        self.assertIs(args[2], lease_completed)
+        self.assertEqual(len(args), 3)
+        self.assertEqual(set(kwargs), {"edit_lease_handle"})
+        self.assertIs(kwargs["edit_lease_handle"], handle)
+
+    def test_condition_types_dialog_without_sql_queue_reads_services_directly(self):
+        env = self._open("open_condition_types_dialog", "ConditionTypesDialog", False)
+        self.assertEqual(env.sessions, [])
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.CONDITION_TYPES_COLLECTION.value, "database"
+            ),
+            ResourceRef("condition_type", "12"),
+        )
+        self._assert_exec(env, resources)
+        kwargs = env.dialog.kwargs
+        self.assertEqual([item.uid for item in kwargs["condition_types"]], [12])
+        self.assertIsNone(kwargs["save_async_fn"])
+        self.assertEqual(
+            kwargs["blocked_delete_uids_fn"]([7, 8]),
+            {"3", "4"},
+        )
+        self.assertIn(("validate_delete", env.file_path, [7, 8]), env.calls)
+        self.assertEqual([item.uid for item in kwargs["reload_fn"]()], [12])
+        self.assertEqual(
+            kwargs["save_fn"]({"k": 1}),
+            ("_save_master_condition_types", (env.file_path, {"k": 1}), {}),
+        )
+        self.assertEqual(
+            kwargs["delete_fn"](["u1"]),
+            ("_delete_master_condition_types", (env.file_path, ["u1"]), {}),
+        )
+
+    def test_condition_types_opener_does_nothing_without_an_editable_database(self):
+        env = self._open(
+            "open_condition_types_dialog", "ConditionTypesDialog", True, file_path=None
+        )
+        self.assertEqual(env.dialogs, [])
+        self.assertEqual(env.sessions, [])
+        self.assertEqual(env.execs, [])
+        self.assertEqual(env.calls, [])
+
+    def test_payroll_dialog_uses_snapshot_and_queue_when_sql_collaboration_is_on(self):
+        env = self._open("open_payroll_classes_dialog", "PayrollClassListDialog", True)
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value, "database"
+            ),
+            ResourceRef("pay_class", "21"),
+        )
+        self._assert_session(env, "PayrollClassListDialog", resources)
+        self._assert_exec(env, resources)
+        kwargs = env.dialog.kwargs
+        self.assertEqual(len(env.dialog.args), 1)
+        self.assertIs(env.dialog.args[0], env.coordinator._icon_provider)
+        self.assertIs(kwargs["parent"], env.coordinator.main_window)
+        self.assertEqual([item.source for item in kwargs["pay_classes"]], ["snapshot"])
+        self.assertIs(kwargs["event_bus"], env.event_bus)
+        self.assertEqual(kwargs["database_id"], env.file_path)
+        self.assertIs(kwargs["menu_mode"], True)
+        self.assertIs(kwargs["workspace_state_model"], env.workspace)
+        self.assertEqual(
+            [item.source for item in kwargs["reload_pay_classes_fn"]()], ["snapshot"]
+        )
+        self.assertEqual(
+            kwargs["used_uids_fn"](),
+            ("project_data", env.file_path, "pay_classes"),
+        )
+        self.assertEqual(
+            kwargs["save_fn"]({"k": 1}),
+            ("_save_master_pay_classes", (env.file_path, {"k": 1}), {}),
+        )
+
+    def test_payroll_async_save_goes_through_the_session_to_the_master_data_queue(
+        self,
+    ):
+        env = self._open("open_payroll_classes_dialog", "PayrollClassListDialog", True)
+        completed = object()
+        changes = {"k": 1}
+        returned = env.dialog.kwargs["save_async_fn"](changes, completed)
+        submit, done = env.session.submitted[0]
+        self.assertIs(done, completed)
+        self.assertEqual(returned, ("submitted", submit, completed))
+        handle, lease_completed = object(), object()
+        name, args, kwargs = submit(handle, lease_completed)
+        self.assertEqual(name, "_save_master_data_async")
+        self.assertEqual(len(args), 6)
+        self.assertEqual(args[:2], (env.file_path, "Payroll Classes"))
+        self.assertEqual(
+            args[2], env.coordinator._project_write_service.queue_pay_classes_save
+        )
+        self.assertIs(args[3], changes)
+        self.assertIs(args[4], lease_completed)
+        self.assertEqual(args[5], "pay_classes")
+        self.assertEqual(set(kwargs), {"edit_lease_handle"})
+        self.assertIs(kwargs["edit_lease_handle"], handle)
+
+    def test_payroll_dialog_without_sql_queue_takes_pay_classes_from_read_service(
+        self,
+    ):
+        env = self._open("open_payroll_classes_dialog", "PayrollClassListDialog", False)
+        self.assertEqual(env.sessions, [])
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value, "database"
+            ),
+            ResourceRef("pay_class", "22"),
+        )
+        self._assert_exec(env, resources)
+        kwargs = env.dialog.kwargs
+        self.assertEqual([item.source for item in kwargs["pay_classes"]], ["read"])
+        self.assertEqual(
+            [item.source for item in kwargs["reload_pay_classes_fn"]()], ["read"]
+        )
+        self.assertEqual(
+            kwargs["used_uids_fn"](),
+            ("read_service", env.file_path, "pay_classes"),
+        )
+        self.assertIsNone(kwargs["save_async_fn"])
+
+    def test_payroll_opener_does_nothing_without_an_editable_database(self):
+        env = self._open(
+            "open_payroll_classes_dialog",
+            "PayrollClassListDialog",
+            True,
+            file_path=None,
+        )
+        self.assertEqual(env.dialogs, [])
+        self.assertEqual(env.sessions, [])
+        self.assertEqual(env.execs, [])
+        self.assertEqual(env.calls, [])
+
+    def test_default_layers_dialog_reads_snapshot_and_binds_lease_session(self):
+        env = self._open("open_default_layers_dialog", "LayersDialog", True)
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value, "database"
+            ),
+        )
+        self._assert_session(env, "LayersDialog", resources)
+        self._assert_exec(env, resources)
+        kwargs = env.dialog.kwargs
+        self.assertEqual(len(env.dialog.args), 1)
+        self.assertIs(env.dialog.args[0], env.coordinator._icon_provider)
+        self.assertIs(kwargs["parent"], env.coordinator.main_window)
+        self.assertEqual(kwargs["layers"], ["snapshot-layers", env.file_path])
+        self.assertEqual(kwargs["reload_fn"](), ["snapshot-layers", env.file_path])
+        self.assertIs(kwargs["has_license"], True)
+        self.assertEqual(kwargs["mode"], LayersDialogMode.DEFAULT_LAYERS)
+        self.assertIs(kwargs["workspace_state_model"], env.workspace)
+
+    def test_default_layers_dialog_without_sql_queue_reads_services_and_has_no_async(
+        self,
+    ):
+        env = self._open("open_default_layers_dialog", "LayersDialog", False)
+        self.assertEqual(env.sessions, [])
+        kwargs = env.dialog.kwargs
+        self.assertEqual(kwargs["layers"], ["read-layers", env.file_path])
+        self.assertEqual(kwargs["reload_fn"](), ["read-layers", env.file_path])
+        for key in (
+            "insert_async_fn",
+            "delete_many_async_fn",
+            "update_name_async_fn",
+            "move_async_fn",
+            "update_show_async_fn",
+            "update_all_show_async_fn",
+        ):
+            self.assertIsNone(kwargs[key], key)
+        self._assert_exec(
+            env,
+            (
+                ResourceRef(
+                    CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value,
+                    "database",
+                ),
+            ),
+        )
+
+    def test_default_layers_dialog_forwards_each_sync_callback_with_the_file_path(self):
+        env = self._open("open_default_layers_dialog", "LayersDialog", False)
+        kwargs = env.dialog.kwargs
+        path = env.file_path
+        self.assertEqual(
+            kwargs["insert_fn"]("Name", 4),
+            ("_insert_default_layer_from_dialog", (path, "Name", 4), {}),
+        )
+        self.assertEqual(
+            kwargs["delete_many_fn"](["a", "b"]),
+            ("_delete_default_layers_from_dialog", (path, ["a", "b"]), {}),
+        )
+        self.assertEqual(
+            kwargs["update_show_fn"]("uid", True),
+            ("_update_default_layer_show_from_dialog", (path, "uid", True), {}),
+        )
+        self.assertEqual(
+            kwargs["update_all_show_fn"](False),
+            ("_update_all_default_layers_show_from_dialog", (path, False), {}),
+        )
+        self.assertEqual(
+            kwargs["update_name_fn"]("uid", "New"),
+            ("_update_default_layer_name_from_dialog", (path, "uid", "New"), {}),
+        )
+        self.assertEqual(
+            kwargs["move_fn"]("uid", "other"),
+            ("_move_default_layer_from_dialog", (path, "uid", "other"), {}),
+        )
+
+    def test_default_layers_insert_and_delete_async_use_session_and_queue(self):
+        env = self._open("open_default_layers_dialog", "LayersDialog", True)
+        kwargs = env.dialog.kwargs
+        session = env.session
+        completed = object()
+        returned = kwargs["insert_async_fn"]("Name", 3, completed)
+        submit, done = session.submitted[-1]
+        self.assertIs(done, completed)
+        self.assertEqual(returned, ("submitted", submit, completed))
+        handle, lease_completed = object(), object()
+        name, args, extra = submit(handle, lease_completed)
+        self.assertEqual(name, "_save_default_layer_async")
+        self.assertEqual(extra, {})
+        self.assertEqual(len(args), 5)
+        self.assertEqual(args[:2], (env.file_path, "New Default Layer"))
+        self.assertIs(args[3], lease_completed)
+        self.assertEqual(args[4], "default_layers")
+        callback = object()
+        queued = args[2](callback)
+        self.assertEqual(queued[0], "queue_default_layer_insert")
+        self.assertEqual(queued[1], (env.file_path, "Name", 3, callback))
+        self.assertEqual(set(queued[2]), {"edit_lease_handle"})
+        self.assertIs(queued[2]["edit_lease_handle"], handle)
+        completed = object()
+        returned = kwargs["delete_many_async_fn"](["u1", "u2"], completed)
+        submit, done = session.submitted[-1]
+        self.assertIs(done, completed)
+        self.assertEqual(returned, ("submitted", submit, completed))
+        handle, lease_completed = object(), object()
+        name, args, extra = submit(handle, lease_completed)
+        self.assertEqual(name, "_save_default_layer_async")
+        self.assertEqual(extra, {})
+        self.assertEqual(len(args), 4)
+        self.assertEqual(args[:2], (env.file_path, "Delete Default Layer"))
+        self.assertIs(args[3], lease_completed)
+        callback = object()
+        queued = args[2](callback)
+        self.assertEqual(queued[0], "queue_default_layers_delete")
+        self.assertEqual(queued[1], (env.file_path, ["u1", "u2"], callback))
+        self.assertEqual(set(queued[2]), {"edit_lease_handle"})
+        self.assertIs(queued[2]["edit_lease_handle"], handle)
+
+    def test_default_layers_update_async_callbacks_submit_the_matching_operation(self):
+        env = self._open("open_default_layers_dialog", "LayersDialog", True)
+        kwargs = env.dialog.kwargs
+        session = env.session
+        cases = (
+            (
+                "update_name_async_fn",
+                ("uid", "N"),
+                "rename",
+                {"layer_uid": "uid", "name": "N"},
+            ),
+            (
+                "move_async_fn",
+                ("uid", "nb"),
+                "reorder",
+                {"layer_uid": "uid", "neighbor_uid": "nb"},
+            ),
+            (
+                "update_show_async_fn",
+                ("uid", False),
+                "show",
+                {"layer_uid": "uid", "show": False},
+            ),
+            ("update_all_show_async_fn", (True,), "show_all", {"show": True}),
+        )
+        for key, call_args, operation, values in cases:
+            with self.subTest(key):
+                completed = object()
+                returned = kwargs[key](*call_args, completed)
+                submit, done = session.submitted[-1]
+                self.assertIs(done, completed)
+                self.assertEqual(returned, ("submitted", submit, completed))
+                handle, lease_completed = object(), object()
+                name, args, extra = submit(handle, lease_completed)
+                self.assertEqual(name, "_save_default_layer_update_async")
+                self.assertEqual(len(args), 4)
+                self.assertEqual(args[:3], (env.file_path, operation, values))
+                self.assertIs(args[3], lease_completed)
+                self.assertEqual(set(extra), {"edit_lease_handle"})
+                self.assertIs(extra["edit_lease_handle"], handle)
+
+    def test_default_layers_opener_does_nothing_without_an_editable_database(self):
+        env = self._open(
+            "open_default_layers_dialog", "LayersDialog", True, file_path=None
+        )
+        self.assertEqual(env.dialogs, [])
+        self.assertEqual(env.sessions, [])
+        self.assertEqual(env.execs, [])
+        self.assertEqual(env.calls, [])
+
+
+class Sp3a5dQueuedMasterDataSaveTests(unittest.TestCase):
+    FILE_PATH = "db.ost"
+
+    @classmethod
+    def _coordinator(cls, allowed=True):
+        env = SimpleNamespace(calls=[], warnings=[], criticals=[])
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        env.coordinator = coordinator
+        env.window = object()
+        coordinator.main_window = env.window
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: allowed and feature == Feature.EDIT_MASTER_DATA
+        )
+        coordinator.present_queued_mutation_error = lambda *a, **k: env.calls.append(
+            ("present", a, k)
+        )
+
+        def queue(name):
+            def record(*args, **kwargs):
+                env.calls.append((name, args, kwargs))
+                if env.raises is not None:
+                    raise env.raises
+
+            return record
+
+        env.raises = None
+        coordinator._project_write_service = SimpleNamespace(
+            queue_condition_types_save=queue("queue_condition_types_save"),
+            queue_default_layer_update=queue("queue_default_layer_update"),
+        )
+        env.queue = queue("queue_fn")
+        env.completed = lambda *a: env.calls.append(("completed", a))
+        return env
+
+    @classmethod
+    def _patched(cls, env):
+        return patch.multiple(
+            _sp3a5d_MOD,
+            show_warning=lambda *a: env.warnings.append(a),
+            show_critical=lambda *a: env.criticals.append(a),
+        )
+
+    @staticmethod
+    def _result(status, maps=None, message=""):
+        authoritative = (
+            None if maps is None else AuthoritativeMutationResult(created_uid_maps=maps)
+        )
+        return QueuedMutationResult(
+            database_id="db.ost",
+            runtime_generation=1,
+            operation_id=_sp3a5d_OPERATION_ID,
+            outcome_status=status,
+            authoritative_result=authoritative,
+            message=message,
+        )
+
+    def _start_master_data(self, env, handle=None):
+        changes = {"k": 1}
+        kwargs = {} if handle is None else {"edit_lease_handle": handle}
+        with self._patched(env):
+            started = env.coordinator._save_master_data_async(
+                self.FILE_PATH,
+                "Employees",
+                env.queue,
+                changes,
+                env.completed,
+                "employees",
+                **kwargs,
+            )
+        return started, changes
+
+    def test_master_data_async_save_is_refused_without_the_edit_permission(self):
+        env = self._coordinator(allowed=False)
+        started, _ = self._start_master_data(env)
+        self.assertIs(started, False)
+        self.assertEqual(env.calls, [("completed", (False, None))])
+
+    def test_master_data_async_save_queues_without_a_lease_keyword(self):
+        env = self._coordinator()
+        started, changes = self._start_master_data(env)
+        self.assertIs(started, True)
+        self.assertEqual(len(env.calls), 1)
+        name, args, kwargs = env.calls[0]
+        self.assertEqual(name, "queue_fn")
+        self.assertEqual(args[:2], (self.FILE_PATH, changes))
+        self.assertIs(args[1], changes)
+        self.assertEqual(len(args), 3)
+        self.assertTrue(callable(args[2]))
+        self.assertEqual(kwargs, {})
+
+    def test_master_data_async_save_passes_the_lease_handle_by_keyword(self):
+        env = self._coordinator()
+        handle = object()
+        started, changes = self._start_master_data(env, handle)
+        self.assertIs(started, True)
+        name, args, kwargs = env.calls[0]
+        self.assertEqual(len(args), 3)
+        self.assertEqual(args[0], self.FILE_PATH)
+        self.assertIs(args[1], changes)
+        self.assertEqual(set(kwargs), {"edit_lease_handle"})
+        self.assertIs(kwargs["edit_lease_handle"], handle)
+
+    def test_master_data_async_finish_maps_the_committed_result_by_family(self):
+        env = self._coordinator()
+        self._start_master_data(env)
+        finish = env.calls[0][1][2]
+        env.calls.clear()
+        maps = (
+            ("other", (("x", "9"),)),
+            ("employees", (("a", "1"), ("b", "2"))),
+        )
+        finish(self._result(MutationOutcomeStatus.COMMITTED, maps))
+        self.assertEqual(env.calls, [("completed", (True, {"a": "1", "b": "2"}))])
+
+    def test_master_data_async_finish_without_authoritative_result_returns_empty(
+        self,
+    ):
+        env = self._coordinator()
+        self._start_master_data(env)
+        finish = env.calls[0][1][2]
+        env.calls.clear()
+        finish(self._result(MutationOutcomeStatus.COMMITTED))
+        self.assertEqual(env.calls, [("completed", (True, {}))])
+        env.calls.clear()
+        finish(self._result(MutationOutcomeStatus.COMMITTED, (("other", ()),)))
+        self.assertEqual(env.calls, [("completed", (True, {}))])
+
+    def test_master_data_async_finish_stays_silent_while_the_commit_is_pending(self):
+        env = self._coordinator()
+        self._start_master_data(env)
+        finish = env.calls[0][1][2]
+        env.calls.clear()
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            finish(self._result(status))
+        self.assertEqual(env.calls, [])
+
+    def test_master_data_async_finish_presents_the_error_before_completing_false(
+        self,
+    ):
+        env = self._coordinator()
+        self._start_master_data(env)
+        finish = env.calls[0][1][2]
+        env.calls.clear()
+        result = self._result(MutationOutcomeStatus.FAILED_BEFORE_COMMIT)
+        finish(result)
+        self.assertEqual(len(env.calls), 2)
+        kind, args, kwargs = env.calls[0]
+        self.assertEqual(kind, "present")
+        self.assertEqual(args[:2], (self.FILE_PATH, "Employees"))
+        self.assertIs(args[2], result)
+        self.assertEqual(len(args), 3)
+        self.assertEqual(kwargs, {})
+        self.assertEqual(env.calls[1], ("completed", (False, None)))
+
+    def test_master_data_async_save_warns_and_returns_false_on_queue_errors(self):
+        for error in (RuntimeError("runtime"), ValueError("value")):
+            with self.subTest(type(error).__name__):
+                env = self._coordinator()
+                env.raises = error
+                started, _ = self._start_master_data(env)
+                self.assertIs(started, False)
+                self.assertEqual(env.warnings, [(env.window, "Employees", str(error))])
+                self.assertEqual(env.criticals, [])
+                self.assertNotIn("completed", [c[0] for c in env.calls])
+
+    def _start_layer(self, env, submit):
+        with self._patched(env):
+            return env.coordinator._save_default_layer_async(
+                self.FILE_PATH, "Default Layers", submit, env.completed
+            )
+
+    def test_default_layer_async_is_refused_without_the_edit_permission(self):
+        env = self._coordinator(allowed=False)
+        submitted = []
+        started = self._start_layer(env, submitted.append)
+        self.assertIs(started, False)
+        self.assertEqual(submitted, [])
+        self.assertEqual(env.calls, [("completed", (False, None))])
+
+    def test_default_layer_async_submits_a_finish_callback_and_returns_true(self):
+        env = self._coordinator()
+        submitted = []
+        started = self._start_layer(env, submitted.append)
+        self.assertIs(started, True)
+        self.assertEqual(len(submitted), 1)
+        self.assertTrue(callable(submitted[0]))
+        self.assertEqual(env.calls, [])
+
+    def _finish_layer(self, env, *family):
+        submitted = []
+        with self._patched(env):
+            env.coordinator._save_default_layer_async(
+                self.FILE_PATH,
+                "Default Layers",
+                submitted.append,
+                env.completed,
+                *family,
+            )
+        return submitted[0]
+
+    def test_default_layer_finish_returns_the_created_uid_of_the_family(self):
+        env = self._coordinator()
+        finish = self._finish_layer(env, "default_layers")
+        maps = (
+            ("elsewhere", (("0", "wrong"),)),
+            ("default_layers", (("0", "layer-9"), ("1", "other"))),
+        )
+        finish(self._result(MutationOutcomeStatus.COMMITTED, maps))
+        self.assertEqual(env.calls, [("completed", (True, "layer-9"))])
+
+    def test_default_layer_finish_returns_none_without_family_or_authoritative(self):
+        env = self._coordinator()
+        finish = self._finish_layer(env)
+        maps = (("", (("0", "wrong"),)), ("default_layers", (("0", "wrong"),)))
+        finish(self._result(MutationOutcomeStatus.COMMITTED, maps))
+        self.assertEqual(env.calls, [("completed", (True, None))])
+        env.calls.clear()
+        finish = self._finish_layer(env, "default_layers")
+        finish(self._result(MutationOutcomeStatus.COMMITTED))
+        self.assertEqual(env.calls, [("completed", (True, None))])
+        env.calls.clear()
+        finish(self._result(MutationOutcomeStatus.COMMITTED, (("default_layers", ()),)))
+        self.assertEqual(env.calls, [("completed", (True, None))])
+
+    def test_default_layer_finish_ignores_pending_and_presents_other_failures(self):
+        env = self._coordinator()
+        finish = self._finish_layer(env, "default_layers")
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            finish(self._result(status))
+        self.assertEqual(env.calls, [])
+        result = self._result(MutationOutcomeStatus.CONFLICT)
+        finish(result)
+        self.assertEqual(len(env.calls), 2)
+        kind, args, kwargs = env.calls[0]
+        self.assertEqual(kind, "present")
+        self.assertEqual(args[:2], (self.FILE_PATH, "Default Layers"))
+        self.assertIs(args[2], result)
+        self.assertEqual(env.calls[1], ("completed", (False, None)))
+
+    def test_default_layer_async_warns_and_returns_false_when_submit_raises(self):
+        for error in (RuntimeError("runtime"), ValueError("value")):
+            with self.subTest(type(error).__name__):
+                env = self._coordinator()
+
+                def submit(_finish, error=error):
+                    raise error
+
+                started = self._start_layer(env, submit)
+                self.assertIs(started, False)
+                self.assertEqual(
+                    env.warnings, [(env.window, "Default Layers", str(error))]
+                )
+                self.assertEqual(env.calls, [])
+
+    def test_default_layer_update_async_queues_the_operation_without_a_handle(self):
+        env = self._coordinator()
+        values = {"layer_uid": "u", "show": True}
+        with self._patched(env):
+            started = env.coordinator._save_default_layer_update_async(
+                self.FILE_PATH, "show", values, env.completed
+            )
+        self.assertIs(started, True)
+        self.assertEqual(len(env.calls), 1)
+        name, args, kwargs = env.calls[0]
+        self.assertEqual(name, "queue_default_layer_update")
+        self.assertEqual(args[:3], (self.FILE_PATH, "show", values))
+        self.assertEqual(len(args), 4)
+        self.assertTrue(callable(args[3]))
+        self.assertEqual(kwargs, {})
+
+    def test_default_layer_update_async_passes_the_handle_by_keyword(self):
+        env = self._coordinator()
+        handle = object()
+        values = {"show": False}
+        with self._patched(env):
+            started = env.coordinator._save_default_layer_update_async(
+                self.FILE_PATH,
+                "show_all",
+                values,
+                env.completed,
+                edit_lease_handle=handle,
+            )
+        self.assertIs(started, True)
+        name, args, kwargs = env.calls[0]
+        self.assertEqual(args[:3], (self.FILE_PATH, "show_all", values))
+        self.assertEqual(len(args), 4)
+        self.assertEqual(set(kwargs), {"edit_lease_handle"})
+        self.assertIs(kwargs["edit_lease_handle"], handle)
+
+    def test_default_layer_update_async_reports_through_the_default_layers_title(
+        self,
+    ):
+        env = self._coordinator()
+        with self._patched(env):
+            env.coordinator._save_default_layer_update_async(
+                self.FILE_PATH, "rename", {}, env.completed
+            )
+            finish = env.calls[0][1][3]
+            env.calls.clear()
+            result = self._result(MutationOutcomeStatus.REJECTED)
+            finish(result)
+        self.assertEqual(env.calls[0][0], "present")
+        self.assertEqual(env.calls[0][1][:2], (self.FILE_PATH, "Default Layers"))
+        self.assertEqual(env.calls[1], ("completed", (False, None)))
+
+    def test_default_layer_update_async_returns_false_when_not_allowed(self):
+        env = self._coordinator(allowed=False)
+        with self._patched(env):
+            started = env.coordinator._save_default_layer_update_async(
+                self.FILE_PATH, "rename", {}, env.completed
+            )
+        self.assertIs(started, False)
+        self.assertEqual(env.calls, [("completed", (False, None))])
+
+    def _start_condition_types(self, env, handle=None):
+        changes = {"k": 1}
+        kwargs = {} if handle is None else {"edit_lease_handle": handle}
+        with self._patched(env):
+            started = env.coordinator._save_master_condition_types_async(
+                self.FILE_PATH, changes, env.completed, **kwargs
+            )
+        return started, changes
+
+    def test_condition_types_async_is_refused_without_the_edit_permission(self):
+        env = self._coordinator(allowed=False)
+        started, _ = self._start_condition_types(env)
+        self.assertIs(started, False)
+        self.assertEqual(env.calls, [("completed", (False, None))])
+
+    def test_condition_types_async_queues_without_a_lease_keyword(self):
+        env = self._coordinator()
+        started, changes = self._start_condition_types(env)
+        self.assertIs(started, True)
+        self.assertEqual(len(env.calls), 1)
+        name, args, kwargs = env.calls[0]
+        self.assertEqual(name, "queue_condition_types_save")
+        self.assertEqual(len(args), 3)
+        self.assertEqual(args[0], self.FILE_PATH)
+        self.assertIs(args[1], changes)
+        self.assertTrue(callable(args[2]))
+        self.assertEqual(kwargs, {})
+
+    def test_condition_types_async_queues_with_the_lease_handle_keyword(self):
+        env = self._coordinator()
+        handle = object()
+        started, changes = self._start_condition_types(env, handle)
+        self.assertIs(started, True)
+        name, args, kwargs = env.calls[0]
+        self.assertEqual(name, "queue_condition_types_save")
+        self.assertEqual(len(args), 3)
+        self.assertIs(args[1], changes)
+        self.assertEqual(set(kwargs), {"edit_lease_handle"})
+        self.assertIs(kwargs["edit_lease_handle"], handle)
+
+    def test_condition_types_finish_returns_condition_type_uid_map_when_committed(
+        self,
+    ):
+        env = self._coordinator()
+        self._start_condition_types(env)
+        finish = env.calls[0][1][2]
+        env.calls.clear()
+        maps = (
+            ("employees", (("x", "9"),)),
+            ("condition_types", (("new", "type-1"),)),
+        )
+        finish(self._result(MutationOutcomeStatus.COMMITTED, maps))
+        self.assertEqual(env.calls, [("completed", (True, {"new": "type-1"}))])
+        env.calls.clear()
+        finish(self._result(MutationOutcomeStatus.COMMITTED))
+        self.assertEqual(env.calls, [("completed", (True, {}))])
+        env.calls.clear()
+        finish(self._result(MutationOutcomeStatus.COMMITTED, (("employees", ()),)))
+        self.assertEqual(env.calls, [("completed", (True, {}))])
+
+    def test_condition_types_finish_ignores_pending_and_presents_failures(self):
+        env = self._coordinator()
+        self._start_condition_types(env)
+        finish = env.calls[0][1][2]
+        env.calls.clear()
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            finish(self._result(status))
+        self.assertEqual(env.calls, [])
+        result = self._result(MutationOutcomeStatus.REJECTED)
+        finish(result)
+        self.assertEqual(len(env.calls), 2)
+        kind, args, kwargs = env.calls[0]
+        self.assertEqual(kind, "present")
+        self.assertEqual(args[:2], (self.FILE_PATH, "Condition Types"))
+        self.assertIs(args[2], result)
+        self.assertEqual(len(args), 3)
+        self.assertEqual(env.calls[1], ("completed", (False, None)))
+
+    def test_condition_types_async_warns_and_returns_false_on_queue_errors(self):
+        for error in (RuntimeError("runtime"), ValueError("value")):
+            with self.subTest(type(error).__name__):
+                env = self._coordinator()
+                env.raises = error
+                started, _ = self._start_condition_types(env)
+                self.assertIs(started, False)
+                self.assertEqual(
+                    env.warnings, [(env.window, "Condition Types", str(error))]
+                )
+                self.assertNotIn("completed", [c[0] for c in env.calls])
+
+    def test_only_unknown_and_projection_failed_outcomes_remain_pending(self):
+        pending = {
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        }
+        for status in MutationOutcomeStatus:
+            with self.subTest(status.value):
+                result = SimpleNamespace(outcome_status=status)
+                self.assertIs(
+                    UIEventCoordinator._modal_mutation_result_remains_pending(result),
+                    status in pending,
+                )
+
+
+class Sp3a5dSyncMasterDataSaveTests(unittest.TestCase):
+    FILE_PATH = "db.ost"
+
+    @classmethod
+    def _coordinator(cls, allowed=True):
+        env = SimpleNamespace(calls=[], warnings=[])
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        env.coordinator = coordinator
+        env.window = object()
+        coordinator.main_window = env.window
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: allowed and feature == Feature.EDIT_MASTER_DATA
+        )
+
+        class WriteService:
+            results = {}
+
+            def __getattr__(self, name):
+                def call(*args):
+                    env.calls.append((name, args))
+                    return env.results[name]
+
+                return call
+
+        env.results = {}
+        coordinator._project_write_service = WriteService()
+        return env
+
+    @classmethod
+    def _patched(cls, env):
+        return patch.object(
+            __import__(_sp3a5d_MOD, fromlist=["show_warning"]),
+            "show_warning",
+            lambda *a: env.warnings.append(a),
+        )
+
+    def test_employees_result_is_false_without_permission_and_skips_the_write(self):
+        env = self._coordinator(allowed=False)
+        with self._patched(env):
+            result = env.coordinator._save_master_employees_result(
+                self.FILE_PATH, {"k": 1}
+            )
+        self.assertIs(result, False)
+        self.assertEqual(env.calls, [])
+
+    def test_employees_result_returns_the_write_result_and_warns_on_refresh_failure(
+        self,
+    ):
+        env = self._coordinator()
+        failed = WriteReloadResult(None, write_success=True, reload_success=False)
+        env.results["save_employees_result"] = failed
+        changes = {"k": 1}
+        with self._patched(env):
+            result = env.coordinator._save_master_employees_result(
+                self.FILE_PATH, changes
+            )
+        self.assertIs(result, failed)
+        self.assertEqual(
+            env.calls, [("save_employees_result", (self.FILE_PATH, changes))]
+        )
+        self.assertEqual(
+            env.warnings,
+            [
+                (
+                    env.window,
+                    "Refresh Error",
+                    "The employee changes were saved, but the employee list could "
+                    "not be refreshed. Reopen the database to see the latest "
+                    "employees.",
+                )
+            ],
+        )
+        env.warnings.clear()
+        clean = WriteReloadResult(None, write_success=True, reload_success=True)
+        env.results["save_employees_result"] = clean
+        with self._patched(env):
+            result = env.coordinator._save_master_employees_result(
+                self.FILE_PATH, changes
+            )
+        self.assertIs(result, clean)
+        self.assertEqual(env.warnings, [])
+
+    def test_job_statuses_and_pay_classes_saves_delegate_with_path_then_changes(self):
+        env = self._coordinator()
+        env.results["save_job_statuses"] = "job-result"
+        env.results["save_pay_classes"] = "pay-result"
+        changes = {"k": 1}
+        self.assertEqual(
+            env.coordinator._save_master_job_statuses(self.FILE_PATH, changes),
+            "job-result",
+        )
+        self.assertEqual(
+            env.coordinator._save_master_pay_classes(self.FILE_PATH, changes),
+            "pay-result",
+        )
+        self.assertEqual(
+            env.calls,
+            [
+                ("save_job_statuses", (self.FILE_PATH, changes)),
+                ("save_pay_classes", (self.FILE_PATH, changes)),
+            ],
+        )
+
+    def test_job_statuses_and_pay_classes_saves_are_false_without_permission(self):
+        env = self._coordinator(allowed=False)
+        self.assertIs(
+            env.coordinator._save_master_job_statuses(self.FILE_PATH, {}), False
+        )
+        self.assertIs(
+            env.coordinator._save_master_pay_classes(self.FILE_PATH, {}), False
+        )
+        self.assertEqual(env.calls, [])
+
+    def test_condition_types_save_returns_none_for_a_failed_write_with_a_value(self):
+        env = self._coordinator()
+        env.results["save_condition_types_result"] = WriteReloadResult(
+            {"stale": "value"}, write_success=False, reload_success=False
+        )
+        with self._patched(env):
+            result = env.coordinator._save_master_condition_types(
+                self.FILE_PATH, {"k": 1}
+            )
+        self.assertIsNone(result)
+        self.assertEqual(env.warnings, [])
+        self.assertEqual(
+            env.calls, [("save_condition_types_result", (self.FILE_PATH, {"k": 1}))]
+        )
+
+    def test_condition_types_save_is_none_without_permission(self):
+        env = self._coordinator(allowed=False)
+        with self._patched(env):
+            result = env.coordinator._save_master_condition_types(self.FILE_PATH, {})
+        self.assertIsNone(result)
+        self.assertEqual(env.calls, [])
+
+    def test_condition_types_delete_returns_the_result_and_warns_once_on_refresh(
+        self,
+    ):
+        env = self._coordinator()
+        failed = WriteReloadResult(None, write_success=True, reload_success=False)
+        env.results["delete_condition_types_result"] = failed
+        with self._patched(env):
+            result = env.coordinator._delete_master_condition_types(
+                self.FILE_PATH, ["u1", "u2"]
+            )
+        self.assertIs(result, failed)
+        self.assertEqual(
+            env.calls,
+            [("delete_condition_types_result", (self.FILE_PATH, ["u1", "u2"]))],
+        )
+        self.assertEqual(
+            env.warnings,
+            [
+                (
+                    env.window,
+                    "Refresh Error",
+                    "The condition type changes were saved, but the condition type "
+                    "list could not be refreshed. Reopen the database to see the "
+                    "latest condition types.",
+                )
+            ],
+        )
+        env.warnings.clear()
+        clean = WriteReloadResult(None, write_success=True, reload_success=True)
+        env.results["delete_condition_types_result"] = clean
+        with self._patched(env):
+            self.assertIs(
+                env.coordinator._delete_master_condition_types(self.FILE_PATH, []),
+                clean,
+            )
+        self.assertEqual(env.warnings, [])
+
+    def test_condition_types_delete_is_none_without_permission(self):
+        env = self._coordinator(allowed=False)
+        with self._patched(env):
+            result = env.coordinator._delete_master_condition_types(self.FILE_PATH, [])
+        self.assertIsNone(result)
+        self.assertEqual(env.calls, [])
+
+    def test_insert_default_layer_returns_the_new_uid_as_text(self):
+        env = self._coordinator()
+        env.results["insert_default_layer_result"] = WriteReloadResult(
+            5, write_success=True, reload_success=True
+        )
+        with self._patched(env):
+            result = env.coordinator._insert_default_layer_from_dialog(
+                self.FILE_PATH, "Name", 7
+            )
+        self.assertEqual(result, "5")
+        self.assertEqual(
+            env.calls, [("insert_default_layer_result", (self.FILE_PATH, "Name", 7))]
+        )
+        self.assertEqual(env.warnings, [])
+
+    def test_insert_default_layer_returns_none_unless_written_with_a_value(self):
+        env = self._coordinator()
+        cases = (
+            WriteReloadResult(5, write_success=False, reload_success=True),
+            WriteReloadResult(None, write_success=True, reload_success=True),
+            WriteReloadResult(None, write_success=False, reload_success=False),
+        )
+        for case in cases:
+            with self.subTest(case):
+                env.results["insert_default_layer_result"] = case
+                with self._patched(env):
+                    result = env.coordinator._insert_default_layer_from_dialog(
+                        self.FILE_PATH, "Name", 7
+                    )
+                self.assertIsNone(result)
+        self.assertEqual(env.warnings, [])
+
+    def test_insert_default_layer_warns_but_still_returns_uid_on_refresh_failure(
+        self,
+    ):
+        env = self._coordinator()
+        env.results["insert_default_layer_result"] = WriteReloadResult(
+            8, write_success=True, reload_success=False
+        )
+        with self._patched(env):
+            result = env.coordinator._insert_default_layer_from_dialog(
+                self.FILE_PATH, "Name", 7
+            )
+        self.assertEqual(result, "8")
+        self.assertEqual(
+            env.warnings,
+            [
+                (
+                    env.window,
+                    "Refresh Error",
+                    "The default layer was saved, but the default layer list could "
+                    "not be refreshed. Reopen the database to see the latest "
+                    "default layers.",
+                )
+            ],
+        )
+
+    def test_insert_default_layer_is_none_without_permission(self):
+        env = self._coordinator(allowed=False)
+        self.assertIsNone(
+            env.coordinator._insert_default_layer_from_dialog(self.FILE_PATH, "N", 1)
+        )
+        self.assertEqual(env.calls, [])
+
+    def test_default_layer_dialog_writes_delegate_and_return_the_service_value(self):
+        env = self._coordinator()
+        for name in (
+            "delete_default_layers",
+            "update_default_layer_show",
+            "update_all_default_layers_show",
+            "update_default_layer_name",
+            "swap_default_layer_sequence",
+        ):
+            env.results[name] = f"result-{name}"
+        coordinator = env.coordinator
+        path = self.FILE_PATH
+        self.assertEqual(
+            coordinator._delete_default_layers_from_dialog(path, ["a"]),
+            "result-delete_default_layers",
+        )
+        self.assertEqual(
+            coordinator._update_default_layer_show_from_dialog(path, "uid", True),
+            "result-update_default_layer_show",
+        )
+        self.assertEqual(
+            coordinator._update_all_default_layers_show_from_dialog(path, False),
+            "result-update_all_default_layers_show",
+        )
+        self.assertEqual(
+            coordinator._update_default_layer_name_from_dialog(path, "uid", "New"),
+            "result-update_default_layer_name",
+        )
+        self.assertEqual(
+            coordinator._move_default_layer_from_dialog(path, "uid", "other"),
+            "result-swap_default_layer_sequence",
+        )
+        self.assertEqual(
+            env.calls,
+            [
+                ("delete_default_layers", (path, ["a"])),
+                ("update_default_layer_show", (path, "uid", True)),
+                ("update_all_default_layers_show", (path, False)),
+                ("update_default_layer_name", (path, "uid", "New")),
+                ("swap_default_layer_sequence", (path, "uid", "other")),
+            ],
+        )
+
+    def test_default_layer_dialog_writes_are_refused_without_permission(self):
+        env = self._coordinator(allowed=False)
+        coordinator = env.coordinator
+        path = self.FILE_PATH
+        self.assertIsNone(coordinator._delete_default_layers_from_dialog(path, ["a"]))
+        self.assertIs(
+            coordinator._update_default_layer_show_from_dialog(path, "u", True), False
+        )
+        self.assertIs(
+            coordinator._update_all_default_layers_show_from_dialog(path, True), False
+        )
+        self.assertIs(
+            coordinator._update_default_layer_name_from_dialog(path, "u", "N"), False
+        )
+        self.assertIs(
+            coordinator._move_default_layer_from_dialog(path, "u", "o"), False
+        )
+        self.assertEqual(env.calls, [])
+
+
+class Sp3a5dMasterDataFilePathTests(unittest.TestCase):
+    @staticmethod
+    def _coordinator(path, allowed):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(
+            get_selected_database_context_file_path=lambda: path
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: allowed and feature == Feature.EDIT_MASTER_DATA
+        )
+        coordinator.project_data = SimpleNamespace(
+            set_current_file=lambda value: calls.append(value)
+        )
+        return coordinator, calls
+
+    def test_resolve_returns_the_selected_database_context_path(self):
+        coordinator, _ = self._coordinator("ctx.ost", True)
+        self.assertEqual(coordinator._resolve_master_data_file_path(), "ctx.ost")
+
+    def test_editable_path_selects_the_file_and_returns_it(self):
+        coordinator, calls = self._coordinator("ctx.ost", True)
+        self.assertEqual(coordinator._editable_master_data_file_path(), "ctx.ost")
+        self.assertEqual(calls, ["ctx.ost"])
+
+    def test_editable_path_is_none_without_selection_or_permission(self):
+        for path, allowed in ((None, True), ("", True), ("ctx.ost", False)):
+            with self.subTest(path=path, allowed=allowed):
+                coordinator, calls = self._coordinator(path, allowed)
+                self.assertIsNone(coordinator._editable_master_data_file_path())
+                self.assertEqual(calls, [])
+
+    def test_empty_selection_is_not_checked_for_permission(self):
+        checked = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(
+            get_selected_database_context_file_path=lambda: None
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: checked.append(feature) or True
+        )
+        coordinator.project_data = SimpleNamespace(
+            set_current_file=lambda value: checked.append(value)
+        )
+        self.assertIsNone(coordinator._editable_master_data_file_path())
+        self.assertEqual(checked, [])
+
+
+class Sp3a5dPlacementAndSelectModeTests(unittest.TestCase):
+    def test_placement_property_returns_the_placement_coordinator(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        placement = object()
+        coordinator._placement = placement
+        self.assertIs(coordinator.placement, placement)
+
+    def test_condition_is_placeable_only_when_present_with_a_visible_layer(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: {
+                "visible": SimpleNamespace(layer_visible=True),
+                "hidden": SimpleNamespace(layer_visible=False),
+            }
+        )
+        self.assertIs(coordinator._is_condition_placeable("visible"), True)
+        self.assertIs(coordinator._is_condition_placeable("hidden"), False)
+        self.assertIs(coordinator._is_condition_placeable("missing"), False)
+
+    def test_condition_placeable_result_is_a_plain_bool_for_truthy_layer_flags(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: {"c": SimpleNamespace(layer_visible=1)}
+        )
+        self.assertIs(coordinator._is_condition_placeable("c"), True)
+
+    @staticmethod
+    def _reconcile_coordinator(reconciled):
+        events = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+
+        def reconcile(**kwargs):
+            events.append(("reconcile", kwargs))
+            return reconciled
+
+        coordinator._placement = SimpleNamespace(
+            reconcile_authoritative_conditions=reconcile
+        )
+        coordinator._set_plan_select_mode = lambda: events.append("select")
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: events.append("refresh"))
+        return coordinator, events
+
+    def test_reconcile_returns_true_and_leaves_the_mode_when_placement_survives(self):
+        coordinator, events = self._reconcile_coordinator(True)
+        self.assertIs(coordinator._reconcile_active_placement(), True)
+        self.assertEqual(events, [("reconcile", {})])
+
+    def test_reconcile_forwards_the_reconstructed_condition_acceptance_flag(self):
+        coordinator, events = self._reconcile_coordinator(True)
+        self.assertIs(
+            coordinator._reconcile_active_placement(
+                accept_reconstructed_conditions=True
+            ),
+            True,
+        )
+        self.assertEqual(
+            events, [("reconcile", {"accept_reconstructed_conditions": True})]
+        )
+
+    def test_reconcile_failure_resets_select_mode_then_refreshes_toolbar(self):
+        coordinator, events = self._reconcile_coordinator(False)
+        self.assertIs(coordinator._reconcile_active_placement(), False)
+        self.assertEqual(events, [("reconcile", {}), "select", "refresh"])
+
+    @staticmethod
+    def _select_mode_coordinator(
+        *,
+        plan_view="present",
+        active=False,
+        rotate=False,
+        highlighted=(),
+        selected=None,
+    ):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = (
+            None
+            if plan_view is None
+            else SimpleNamespace(
+                is_rotate_mode_active=rotate,
+                selected_takeoff_condition_uid=lambda: selected,
+            )
+        )
+        coordinator._placement = SimpleNamespace(is_active=active)
+        coordinator.ui_state_manager = SimpleNamespace(
+            highlighted_condition_uids=set(highlighted)
+        )
+        coordinator._set_plan_select_mode = lambda: calls.append("select")
+        return coordinator, calls
+
+    def test_ensure_select_mode_switches_when_nothing_blocks_it(self):
+        coordinator, calls = self._select_mode_coordinator()
+        coordinator.ensure_select_mode()
+        self.assertEqual(calls, ["select"])
+
+    def test_ensure_select_mode_keeps_the_mode_when_anything_blocks_it(self):
+        cases = {
+            "no plan view": {"plan_view": None},
+            "active placement": {"active": True},
+            "rotate mode": {"rotate": True},
+            "highlighted conditions": {"highlighted": ("c1",)},
+            "selected takeoff condition": {"selected": "c2"},
+        }
+        for label, options in cases.items():
+            with self.subTest(label):
+                coordinator, calls = self._select_mode_coordinator(**options)
+                coordinator.ensure_select_mode()
+                self.assertEqual(calls, [])
+
+    def test_ost_status_change_ensures_select_mode_then_refreshes_then_signals(self):
+        events = []
+        for call_args in ((), (True,)):
+            with self.subTest(call_args):
+                events.clear()
+                coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+                coordinator.ensure_select_mode = lambda: events.append("select")
+                coordinator.condition_summary_tab = SimpleNamespace(
+                    refresh_view=lambda: events.append("refresh")
+                )
+                coordinator._menu_state_signaler = SimpleNamespace(
+                    request=lambda: events.append("request")
+                )
+                coordinator._on_ost_status_changed(*call_args)
+                self.assertEqual(events, ["select", "refresh", "request"])
+
+    def test_ost_status_change_without_summary_tab_still_signals_the_menu(self):
+        events = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ensure_select_mode = lambda: events.append("select")
+        coordinator.condition_summary_tab = None
+        coordinator._menu_state_signaler = SimpleNamespace(
+            request=lambda: events.append("request")
+        )
+        coordinator._on_ost_status_changed()
+        self.assertEqual(events, ["select", "request"])
+
+
+class Sp3a5dModalMutationErrorTests(unittest.TestCase):
+    @staticmethod
+    def _coordinator(current_file="db.ost", handler="handler", plan_view="plan"):
+        events = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = SimpleNamespace(
+            get_current_file_path=lambda: current_file
+        )
+        coordinator._reset_to_select_mode = lambda: events.append("reset")
+        coordinator._prepare_plan_for_authoritative_refresh = lambda: events.append(
+            "prepare-handler"
+        )
+        coordinator._plan_view_handler = (
+            SimpleNamespace() if handler == "handler" else None
+        )
+        coordinator.plan_view = (
+            SimpleNamespace(
+                prepare_for_authoritative_refresh=lambda: events.append("prepare-view")
+            )
+            if plan_view == "plan"
+            else None
+        )
+        return coordinator, events
+
+    def test_other_database_errors_leave_the_plan_interaction_alone(self):
+        coordinator, events = self._coordinator()
+        coordinator._prepare_for_modal_mutation_error("other.ost")
+        self.assertEqual(events, [])
+
+    def test_current_database_error_resets_mode_then_releases_the_plan_view(self):
+        coordinator, events = self._coordinator(handler=None)
+        coordinator._prepare_for_modal_mutation_error("db.ost")
+        self.assertEqual(events, ["reset", "prepare-handler", "prepare-view"])
+
+    def test_plan_view_is_released_directly_only_when_no_handler_exists(self):
+        coordinator, events = self._coordinator(handler="handler")
+        coordinator._prepare_for_modal_mutation_error("db.ost")
+        self.assertEqual(events, ["reset", "prepare-handler"])
+
+    def test_missing_handler_and_plan_view_is_tolerated(self):
+        coordinator, events = self._coordinator(handler=None, plan_view=None)
+        coordinator._prepare_for_modal_mutation_error("db.ost")
+        self.assertEqual(events, ["reset", "prepare-handler"])
+
+    def test_prepare_plan_calls_the_handler_only_when_present(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._plan_view_handler = SimpleNamespace(
+            prepare_for_authoritative_refresh=lambda: calls.append("handler")
+        )
+        coordinator._prepare_plan_for_authoritative_refresh()
+        self.assertEqual(calls, ["handler"])
+        coordinator._plan_view_handler = None
+        coordinator._prepare_plan_for_authoritative_refresh()
+        self.assertEqual(calls, ["handler"])
+
+    @staticmethod
+    def _remote_coordinator(blocker, plan_view=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = (
+            SimpleNamespace(has_active_remote_projection_blocker=lambda: blocker)
+            if plan_view
+            else None
+        )
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid="page-1")
+        return coordinator
+
+    def test_remote_change_invalidates_interaction_only_with_an_active_blocker(self):
+        pages = CollaborationResourceFamily.PAGES.value
+        affected = {pages: ("page-1",)}
+        blocked = self._remote_coordinator(True)
+        unblocked = self._remote_coordinator(False)
+        self.assertIs(
+            blocked._remote_bid_change_invalidates_plan_interaction({pages}, affected),
+            True,
+        )
+        self.assertIs(
+            unblocked._remote_bid_change_invalidates_plan_interaction(
+                {pages}, affected
+            ),
+            False,
+        )
+        self.assertIs(
+            self._remote_coordinator(
+                True, plan_view=False
+            )._remote_bid_change_invalidates_plan_interaction({pages}, affected),
+            False,
+        )
+
+    def test_remote_change_of_other_pages_or_unprojected_families_is_ignored(self):
+        pages = CollaborationResourceFamily.PAGES.value
+        coordinator = self._remote_coordinator(True)
+        self.assertIs(
+            coordinator._remote_bid_change_invalidates_plan_interaction(
+                {pages}, {pages: ("page-2",)}
+            ),
+            False,
+        )
+        self.assertIs(
+            coordinator._remote_bid_change_invalidates_plan_interaction(
+                {CollaborationResourceFamily.MASTER_DATA.value},
+                {CollaborationResourceFamily.MASTER_DATA.value: ("page-1",)},
+            ),
+            False,
+        )
+
+    @staticmethod
+    def _present_coordinator():
+        env = SimpleNamespace(prepared=[], warnings=[], criticals=[])
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        env.coordinator = coordinator
+        env.window = object()
+        coordinator.main_window = env.window
+        coordinator._is_cleaning_up = False
+        coordinator._prepare_for_modal_mutation_error = env.prepared.append
+        return env
+
+    @staticmethod
+    def _result(status, message=""):
+        return QueuedMutationResult(
+            database_id="db.ost",
+            runtime_generation=1,
+            operation_id=_sp3a5d_OPERATION_ID,
+            outcome_status=status,
+            message=message,
+        )
+
+    def _present(self, env, result, title="Employees", **kwargs):
+        with patch.multiple(
+            _sp3a5d_MOD,
+            show_warning=lambda *a: env.warnings.append(a),
+            show_critical=lambda *a: env.criticals.append(a),
+        ):
+            env.coordinator.present_queued_mutation_error(
+                "db.ost", title, result, **kwargs
+            )
+
+    def test_failure_is_shown_as_a_warning_by_default(self):
+        env = self._present_coordinator()
+        self._present(
+            env, self._result(MutationOutcomeStatus.REJECTED, "Refused by server")
+        )
+        self.assertEqual(env.prepared, ["db.ost"])
+        self.assertEqual(env.warnings, [(env.window, "Employees", "Refused by server")])
+        self.assertEqual(env.criticals, [])
+
+    def test_failure_is_shown_as_critical_when_requested(self):
+        env = self._present_coordinator()
+        self._present(
+            env,
+            self._result(MutationOutcomeStatus.FAILED_BEFORE_COMMIT, "Broke"),
+            critical=True,
+        )
+        self.assertEqual(env.criticals, [(env.window, "Employees", "Broke")])
+        self.assertEqual(env.warnings, [])
+
+    def test_failure_without_message_uses_the_lowercased_title_fallback(self):
+        env = self._present_coordinator()
+        self._present(
+            env, self._result(MutationOutcomeStatus.REJECTED), title="Pay Classes"
+        )
+        self.assertEqual(
+            env.warnings,
+            [(env.window, "Pay Classes", "The pay classes could not be completed.")],
+        )
+
+    def test_unknown_commit_status_warns_with_the_server_message_or_recovery_text(
+        self,
+    ):
+        env = self._present_coordinator()
+        self._present(
+            env,
+            self._result(MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN, "Please wait"),
+        )
+        self.assertEqual(
+            env.warnings, [(env.window, "SQL Synchronization", "Please wait")]
+        )
+        env.warnings.clear()
+        self._present(env, self._result(MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN))
+        self.assertEqual(
+            env.warnings,
+            [
+                (
+                    env.window,
+                    "SQL Synchronization",
+                    "The committed update requires authoritative SQL recovery.",
+                )
+            ],
+        )
+        self.assertEqual(env.criticals, [])
+        self.assertEqual(env.prepared, ["db.ost", "db.ost"])
+
+
+class Sp3a5dCleanupTests(unittest.TestCase):
+    @staticmethod
+    def _coordinator():
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.project_operations = SimpleNamespace(
+            cancel_navigation_load=lambda: None
+        )
+        coordinator._status_panel = None
+        coordinator._sync_collaboration_status = lambda *a, **k: None
+        coordinator._invalidate_mesh_scene_request = lambda: None
+        coordinator._plan_view_handler = None
+        coordinator._view_stack = None
+        coordinator._tab_widget = None
+        coordinator._undo_service = None
+        coordinator._subscriptions = []
+        coordinator.event_bus = None
+        coordinator._plan_view_signaler = None
+        coordinator._menu_state_signaler = None
+        coordinator._bid_data_cache = None
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator._placement = None
+        coordinator.opengl_viewer = None
+        coordinator.takeoff_sidebar = None
+        coordinator.plan_view = None
+        coordinator._sidebar = None
+        coordinator._viewer = None
+        coordinator._toolbar = None
+        return coordinator
+
+    def test_cleanup_disconnects_view_stack_and_tab_widget_change_handlers(self):
+        disconnected = []
+
+        class Signal:
+            def __init__(self, name):
+                self.name = name
+
+            def disconnect(self, callback):
+                disconnected.append((self.name, callback))
+
+        coordinator = self._coordinator()
+        coordinator._view_stack = SimpleNamespace(currentChanged=Signal("stack"))
+        coordinator._tab_widget = SimpleNamespace(currentChanged=Signal("tabs"))
+        on_stack = coordinator._on_view_stack_changed
+        on_tabs = coordinator._on_tab_changed
+        coordinator.cleanup()
+        self.assertEqual(disconnected, [("stack", on_stack), ("tabs", on_tabs)])
+
+    def test_cleanup_tolerates_already_disconnected_view_stack_signals(self):
+        reached = []
+
+        class Signal:
+            def __init__(self, error):
+                self.error = error
+
+            def disconnect(self, _callback):
+                raise self.error
+
+        coordinator = self._coordinator()
+        coordinator._view_stack = SimpleNamespace(
+            currentChanged=Signal(RuntimeError("gone"))
+        )
+        coordinator._tab_widget = SimpleNamespace(
+            currentChanged=Signal(TypeError("not connected"))
+        )
+        coordinator._toolbar = SimpleNamespace(
+            cleanup=lambda: reached.append("toolbar")
+        )
+        coordinator.cleanup()
+        self.assertEqual(reached, ["toolbar"])
+
+    def test_repeated_cleanup_raises_a_retained_unsubscribe_error_and_keeps_the_bus(
+        self,
+    ):
+        class FailingBus:
+            def unsubscribe(self, event_name, callback):
+                raise RuntimeError("still failing")
+
+        coordinator = self._coordinator()
+        coordinator._is_cleaning_up = True
+        bus = FailingBus()
+        coordinator.event_bus = bus
+        coordinator._subscriptions = [(AppEvents.FILE_OPENED, lambda **_: None)]
+        with self.assertRaises(RuntimeError) as captured:
+            coordinator.cleanup()
+        self.assertEqual(str(captured.exception), "still failing")
+        self.assertIs(coordinator.event_bus, bus)
+        self.assertEqual(len(coordinator._subscriptions), 1)
+
+    def test_repeated_cleanup_with_clean_unsubscribe_drops_the_bus_without_error(
+        self,
+    ):
+        unsubscribed = []
+
+        class Bus:
+            def unsubscribe(self, event_name, callback):
+                unsubscribed.append(event_name)
+
+        coordinator = self._coordinator()
+        coordinator._is_cleaning_up = True
+        coordinator.event_bus = Bus()
+        coordinator._subscriptions = [(AppEvents.FILE_OPENED, lambda **_: None)]
+        coordinator.cleanup()
+        self.assertEqual(unsubscribed, [AppEvents.FILE_OPENED])
+        self.assertIsNone(coordinator.event_bus)
+        self.assertEqual(coordinator._subscriptions, [])
+
+
+_SP3A5E_MODULE = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+_SP3A5E_FAMILY = CollaborationResourceFamily
+
+
+def _sp3a5e_fake(log, name, methods=(), returns=None, effects=None, **attrs):
+    returns = returns or {}
+    effects = effects or {}
+    fake = SimpleNamespace(**attrs)
+    for method in methods:
+
+        def call(*args, _method=method, **kwargs):
+            log.append((f"{name}.{_method}", args, kwargs))
+            if _method in effects:
+                return effects[_method](*args, **kwargs)
+            return returns.get(_method)
+
+        setattr(fake, method, call)
+    return fake
+
+
+def _sp3a5e_stub(coordinator, log, name, result=None, effect=None):
+    signature = inspect.signature(getattr(UIEventCoordinator, name))
+
+    def stub(*args, **kwargs):
+        signature.bind(coordinator, *args, **kwargs)
+        log.append((name, args, kwargs))
+        if effect is not None:
+            return effect(*args, **kwargs)
+        return result
+
+    setattr(coordinator, name, stub)
+
+
+def _sp3a5e_calls(log, name):
+    return [(args, kwargs) for entry, args, kwargs in log if entry == name]
+
+
+def _sp3a5e_names(log):
+    return [entry for entry, _args, _kwargs in log]
+
+
+class Sp3a5eCleanupTests(unittest.TestCase):
+    _RELEASED = (
+        "_plan_view_signaler",
+        "_menu_state_signaler",
+        "_nav",
+        "_sidebar",
+        "_viewer",
+        "_toolbar",
+        "_bid_clipboard",
+        "_undo_service",
+        "main_window",
+        "ui_state_manager",
+        "ui_access_manager",
+        "project_data",
+        "project_operations",
+        "visualization_service",
+        "_color_service",
+        "_icon_provider",
+        "_project_write_service",
+        "_project_read_service",
+        "takeoff_sidebar",
+        "conditions_sidebar",
+        "condition_summary_tab",
+        "opengl_viewer",
+        "plan_view",
+        "_condition_handler",
+        "_deferred_persistence",
+        "_bid_data_cache",
+        "_mesh_window",
+        "_mesh_window_action",
+        "_placement",
+        "event_bus",
+    )
+
+    def _coordinator(self, log, failing=()):
+        def make(name, methods):
+            effects = {}
+            if name in failing:
+                effects = {m: self._raiser(name) for m in methods}
+            return _sp3a5e_fake(log, name, methods, effects=effects)
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.project_operations = make("operations", ("cancel_navigation_load",))
+        coordinator._status_panel = None
+        _sp3a5e_stub(coordinator, log, "_sync_collaboration_status")
+        _sp3a5e_stub(coordinator, log, "_invalidate_mesh_scene_request")
+        coordinator._plan_view_handler = make(
+            "handler",
+            (
+                "prepare_for_authoritative_refresh",
+                "invalidate_pending_takeoff_placements",
+            ),
+        )
+        coordinator._view_stack = _sp3a5e_fake(
+            log,
+            "view_stack",
+            currentChanged=make("view_stack_signal", ("disconnect",)),
+        )
+        coordinator._tab_widget = _sp3a5e_fake(
+            log,
+            "tab_widget",
+            currentChanged=make("tab_signal", ("disconnect",)),
+        )
+        coordinator._undo_service = make("undo", ("set_change_callback",))
+        coordinator.event_bus = make("bus", ("unsubscribe",))
+        coordinator._subscriptions = [(AppEvents.FILE_OPENED, "callback")]
+        coordinator._plan_view_signaler = make("plan_signaler", ("cleanup",))
+        coordinator._menu_state_signaler = make("menu_signaler", ("cleanup",))
+        coordinator._bid_data_cache = {"bid": "data"}
+        coordinator._pending_3d_takeoff_uids_by_bid = {BidRef("db", "1"): {"t1"}}
+        coordinator._mesh_window = make("mesh_window", ("close",))
+        coordinator._mesh_window_action = object()
+        coordinator._placement = make("placement", ("cleanup",))
+        coordinator.opengl_viewer = make("opengl", ("cleanup",))
+        coordinator.takeoff_sidebar = make("takeoff_sidebar", ("cleanup",))
+        coordinator.plan_view = make("plan_view", ("cleanup",))
+        coordinator._sidebar = make("sidebar", ("cleanup",))
+        coordinator._viewer = make("viewer", ("cleanup",))
+        coordinator._toolbar = make("toolbar", ("cleanup",))
+        for name in (
+            "_nav",
+            "_bid_clipboard",
+            "main_window",
+            "ui_state_manager",
+            "ui_access_manager",
+            "project_data",
+            "visualization_service",
+            "_color_service",
+            "_icon_provider",
+            "_project_write_service",
+            "_project_read_service",
+            "conditions_sidebar",
+            "condition_summary_tab",
+            "_condition_handler",
+            "_deferred_persistence",
+        ):
+            setattr(coordinator, name, object())
+        return coordinator
+
+    @staticmethod
+    def _raiser(name):
+        def raise_error(*_args, **_kwargs):
+            raise RuntimeError(f"{name} failed")
+
+        return raise_error
+
+    def test_cleanup_runs_every_release_step_in_order_and_drops_references(self):
+        log = []
+        coordinator = self._coordinator(log)
+        cache = coordinator._bid_data_cache
+        pending = coordinator._pending_3d_takeoff_uids_by_bid
+        for name in self._RELEASED:
+            self.assertIsNotNone(getattr(coordinator, name), name)
+        coordinator.cleanup()
+        self.assertEqual(
+            log,
+            [
+                ("operations.cancel_navigation_load", (), {}),
+                ("_sync_collaboration_status", ("",), {"reset_mutation": True}),
+                ("_invalidate_mesh_scene_request", (), {}),
+                ("handler.prepare_for_authoritative_refresh", (), {}),
+                ("handler.invalidate_pending_takeoff_placements", (), {}),
+                (
+                    "view_stack_signal.disconnect",
+                    (coordinator._on_view_stack_changed,),
+                    {},
+                ),
+                ("tab_signal.disconnect", (coordinator._on_tab_changed,), {}),
+                ("undo.set_change_callback", (None,), {}),
+                ("bus.unsubscribe", (AppEvents.FILE_OPENED, "callback"), {}),
+                ("plan_signaler.cleanup", (), {}),
+                ("menu_signaler.cleanup", (), {}),
+                ("mesh_window.close", (), {}),
+                ("placement.cleanup", (), {}),
+                ("opengl.cleanup", (), {}),
+                ("takeoff_sidebar.cleanup", (), {}),
+                ("plan_view.cleanup", (), {}),
+                ("sidebar.cleanup", (), {}),
+                ("viewer.cleanup", (), {}),
+                ("toolbar.cleanup", (), {}),
+            ],
+        )
+        self.assertEqual(cache, {})
+        self.assertEqual(pending, {})
+        for name in self._RELEASED:
+            self.assertIsNone(getattr(coordinator, name), name)
+        self.assertEqual(coordinator._subscriptions, [])
+
+    def test_single_cleanup_failure_is_raised_as_itself_after_every_step_ran(self):
+        log = []
+        coordinator = self._coordinator(log, failing=("viewer",))
+        with self.assertRaises(RuntimeError) as captured:
+            coordinator.cleanup()
+        self.assertIs(type(captured.exception), RuntimeError)
+        self.assertEqual(str(captured.exception), "viewer failed")
+        self.assertIn(("toolbar.cleanup", (), {}), log)
+        self.assertIsNone(coordinator._toolbar)
+
+    def test_several_cleanup_failures_are_grouped_with_every_error(self):
+        log = []
+        coordinator = self._coordinator(log, failing=("viewer", "toolbar"))
+        with self.assertRaises(ExceptionGroup) as captured:
+            coordinator.cleanup()
+        self.assertEqual(
+            captured.exception.message, "UI event coordinator cleanup failed"
+        )
+        self.assertEqual(
+            [str(error) for error in captured.exception.exceptions],
+            ["viewer failed", "toolbar failed"],
+        )
+
+    def test_subscription_cleanup_without_event_bus_discards_subscriptions(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.event_bus = None
+        coordinator._subscriptions = [(AppEvents.FILE_OPENED, "callback")]
+        self.assertEqual(coordinator._cleanup_event_subscriptions(), [])
+        self.assertEqual(coordinator._subscriptions, [])
+
+
+class Sp3a5eFileOpenedTests(unittest.TestCase):
+    def test_file_opened_resets_ui_in_documented_order(self):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = _sp3a5e_fake(
+            log, "ui_state", ("reset_selections",)
+        )
+        coordinator._placement = _sp3a5e_fake(log, "placement", ("force_exit",))
+        coordinator.main_window = _sp3a5e_fake(
+            log,
+            "main_window",
+            ("set_database_window_title",),
+            project_view=_sp3a5e_fake(
+                log, "project_view", ("set_selected_node_state",)
+            ),
+        )
+        coordinator._nav = _sp3a5e_fake(log, "nav", ("transition_to",))
+        coordinator.ui_access_manager = _sp3a5e_fake(log, "access", ("refresh",))
+        coordinator._viewer = _sp3a5e_fake(log, "viewer", ("clear_plan_view",))
+        for name in (
+            "_prepare_plan_for_authoritative_refresh",
+            "_save_current_page_view_state",
+            "_sync_undo_bid",
+            "_clear_mesh_views_for_scene_update",
+            "_set_takeoff_tab_visible",
+            "_rebuild_ui_after_file_load",
+            "_update_export_menu_state",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        coordinator._on_file_opened("C:/bids/opened.mdb")
+        self.assertEqual(
+            log,
+            [
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("_save_current_page_view_state", (), {}),
+                ("placement.force_exit", (), {}),
+                ("ui_state.reset_selections", (), {}),
+                ("_sync_undo_bid", (), {}),
+                ("project_view.set_selected_node_state", (None,), {}),
+                ("nav.transition_to", (NavState.FILE_LOADED_NO_BID,), {}),
+                ("access.refresh", (), {}),
+                ("viewer.clear_plan_view", (), {}),
+                ("_clear_mesh_views_for_scene_update", (), {}),
+                ("_set_takeoff_tab_visible", (False,), {}),
+                ("_rebuild_ui_after_file_load", (), {}),
+                ("_update_export_menu_state", (), {}),
+                ("main_window.set_database_window_title", ("C:/bids/opened.mdb",), {}),
+            ],
+        )
+
+
+class Sp3a5eInvalidateImageSourcesTests(unittest.TestCase):
+    SELECTED = BidRef("sql-db", "bid-1")
+
+    def _coordinator(self, selected=SELECTED, pages=None):
+        pages = pages if pages is not None else {}
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=pages.get,
+            get_all_pages=lambda: list(pages.values()),
+        )
+        return coordinator
+
+    def _invalidate(self, coordinator, **kwargs):
+        captured = []
+        with patch(
+            f"{_SP3A5E_MODULE}.invalidate_source_files",
+            side_effect=lambda paths: captured.append(list(paths)),
+        ):
+            coordinator._invalidate_refreshed_image_sources(**kwargs)
+        return captured
+
+    @staticmethod
+    def _pages():
+        return {
+            "p1": Page(uid="p1", name="One", image_path="one.png"),
+            "p2": Page(
+                uid="p2", name="Two", image_path="two.png", overlay_image_path="ov.png"
+            ),
+        }
+
+    def test_all_pages_are_invalidated_by_default_with_overlay_paths(self):
+        coordinator = self._coordinator(pages=self._pages())
+        captured = self._invalidate(coordinator, database_id="sql-db", bid_uid="bid-1")
+        self.assertEqual(captured, [["one.png", None, "two.png", "ov.png"]])
+
+    def test_unchanged_image_sources_skip_without_consulting_selection(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        captured = self._invalidate(coordinator, image_sources_unchanged=True)
+        self.assertEqual(captured, [])
+
+    def test_no_selected_bid_invalidates_nothing(self):
+        coordinator = self._coordinator(selected=None, pages=self._pages())
+        self.assertEqual(self._invalidate(coordinator, database_id="sql-db"), [])
+        self.assertEqual(self._invalidate(coordinator), [])
+
+    def test_database_id_takes_precedence_over_file_path_as_owner(self):
+        coordinator = self._coordinator(pages=self._pages())
+        matching = self._invalidate(
+            coordinator, database_id="sql-db", file_path="other-path"
+        )
+        self.assertEqual(len(matching), 1)
+        mismatching = self._invalidate(
+            coordinator, database_id="other-db", file_path="sql-db"
+        )
+        self.assertEqual(mismatching, [])
+
+    def test_file_path_is_the_owner_when_database_id_is_missing(self):
+        coordinator = self._coordinator(pages=self._pages())
+        self.assertEqual(len(self._invalidate(coordinator, file_path="sql-db")), 1)
+        self.assertEqual(self._invalidate(coordinator, file_path="other"), [])
+
+    def test_missing_owner_does_not_filter_by_database(self):
+        coordinator = self._coordinator(pages=self._pages())
+        self.assertEqual(len(self._invalidate(coordinator, bid_uid="bid-1")), 1)
+
+    def test_other_bid_is_ignored_and_empty_bid_uid_matches_any_bid(self):
+        coordinator = self._coordinator(pages=self._pages())
+        self.assertEqual(
+            self._invalidate(coordinator, database_id="sql-db", bid_uid="bid-2"), []
+        )
+        self.assertEqual(len(self._invalidate(coordinator, database_id="sql-db")), 1)
+
+    def test_families_without_pages_are_ignored_and_pages_family_is_processed(self):
+        coordinator = self._coordinator(pages=self._pages())
+        self.assertEqual(
+            self._invalidate(
+                coordinator,
+                database_id="sql-db",
+                families=[_SP3A5E_FAMILY.TAKEOFFS.value],
+            ),
+            [],
+        )
+        self.assertEqual(
+            len(
+                self._invalidate(
+                    coordinator,
+                    database_id="sql-db",
+                    families=[
+                        _SP3A5E_FAMILY.TAKEOFFS.value,
+                        _SP3A5E_FAMILY.PAGES.value,
+                    ],
+                )
+            ),
+            1,
+        )
+
+    def test_changed_page_uids_limit_invalidation_and_skip_unknown_pages(self):
+        coordinator = self._coordinator(pages=self._pages())
+        captured = self._invalidate(
+            coordinator,
+            database_id="sql-db",
+            families=[_SP3A5E_FAMILY.PAGES.value],
+            resource_uids_by_family={_SP3A5E_FAMILY.PAGES.value: ["p2", "missing"]},
+        )
+        self.assertEqual(captured, [["two.png", "ov.png"]])
+
+    def test_empty_page_uid_list_falls_back_to_all_pages(self):
+        coordinator = self._coordinator(pages=self._pages())
+        captured = self._invalidate(
+            coordinator,
+            database_id="sql-db",
+            resource_uids_by_family={_SP3A5E_FAMILY.PAGES.value: []},
+        )
+        self.assertEqual(captured, [["one.png", None, "two.png", "ov.png"]])
+
+
+class Sp3a5eDatabaseRefreshedTests(unittest.TestCase):
+    def _coordinator(self, log, selected=BidRef("db-a", "1")):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._deferred_persistence = _sp3a5e_fake(
+            log, "deferred", ("cancel_for_file",)
+        )
+        coordinator.project_data = _sp3a5e_fake(
+            log,
+            "data",
+            ("get_current_file_path",),
+            returns={"get_current_file_path": "db-a"},
+        )
+        coordinator._undo_service = _sp3a5e_fake(log, "undo", ("clear",))
+        coordinator._selected_takeoff_uids = ()
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected,
+            selected_area_uid="area-1",
+            selected_page_uids=["page-1"],
+        )
+        coordinator._placement = object()
+        coordinator._nav = _sp3a5e_fake(
+            log, "nav", ("start_refresh",), returns={"start_refresh": True}
+        )
+        for name in (
+            "_prepare_for_modal_mutation_error",
+            "_do_file_refresh",
+            "_finish_refresh",
+            "_flush_dirty_mesh_refresh_if_needed",
+            "_clear_mesh_views_for_scene_update",
+            "_mark_mesh_scene_dirty",
+            "_restore_project_tree_bid_selection_if_needed",
+            "_update_export_menu_state",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        _sp3a5e_stub(coordinator, log, "_flush_deferred_for_file", result=True)
+        return coordinator
+
+    def test_external_change_ignores_page_scale_refresh_and_rebuilds_tree(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_database_refreshed(
+            file_path="db-a", external_change=True, page_scale_uids=("page-1",)
+        )
+        self.assertEqual(
+            [
+                entry
+                for entry in log
+                if entry[0] in ("_do_file_refresh", "_finish_refresh")
+            ],
+            [("_do_file_refresh", (), {}), ("_finish_refresh", (), {})],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "deferred.cancel_for_file"), [(("db-a",), {})]
+        )
+        self.assertEqual(len(_sp3a5e_calls(log, "undo.clear")), 1)
+        self.assertEqual(
+            _sp3a5e_calls(log, "_prepare_for_modal_mutation_error"), [(("db-a",), {})]
+        )
+
+    def test_local_page_scale_refresh_keeps_project_tree_and_accepts_placement(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_database_refreshed(
+            file_path="db-a", page_scale_uids=("page-1",)
+        )
+        self.assertEqual(
+            [
+                entry
+                for entry in log
+                if entry[0] in ("_do_file_refresh", "_finish_refresh")
+            ],
+            [
+                ("_do_file_refresh", (), {"rebuild_project_tree": False}),
+                (
+                    "_finish_refresh",
+                    (),
+                    {"accept_reconstructed_placement_conditions": True},
+                ),
+            ],
+        )
+
+    def test_refresh_without_file_path_runs_the_navigation_refresh(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_database_refreshed()
+        names = _sp3a5e_names(log)
+        self.assertEqual(
+            names,
+            [
+                "nav.start_refresh",
+                "_clear_mesh_views_for_scene_update",
+                "_mark_mesh_scene_dirty",
+                "_do_file_refresh",
+                "_finish_refresh",
+                "_flush_dirty_mesh_refresh_if_needed",
+            ],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_mark_mesh_scene_dirty"), [((["page-1"],), {})]
+        )
+
+    def test_refresh_of_another_database_only_rebuilds_the_file_tree(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_database_refreshed(file_path="db-b")
+        self.assertEqual(
+            _sp3a5e_names(log),
+            [
+                "_flush_deferred_for_file",
+                "_do_file_refresh",
+                "_restore_project_tree_bid_selection_if_needed",
+                "_update_export_menu_state",
+            ],
+        )
+
+    def test_unchanged_mesh_scene_skips_mesh_invalidation(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_database_refreshed(mesh_scene_unchanged=True)
+        self.assertEqual(_sp3a5e_calls(log, "_mark_mesh_scene_dirty"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_clear_mesh_views_for_scene_update"), [])
+
+
+class Sp3a5eSummaryTabTests(unittest.TestCase):
+    def _active(self, tab_widget):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._tab_widget = tab_widget
+        return coordinator._is_summary_tab_active()
+
+    @staticmethod
+    def _tabs(count, index):
+        return SimpleNamespace(count=lambda: count, currentIndex=lambda: index)
+
+    def test_summary_tab_is_active_only_when_it_exists_and_is_current(self):
+        self.assertIs(
+            self._active(self._tabs(TAB_INDEX_SUMMARY + 1, TAB_INDEX_SUMMARY)), True
+        )
+        self.assertIs(
+            self._active(self._tabs(TAB_INDEX_SUMMARY + 1, TAB_INDEX_SUMMARY - 1)),
+            False,
+        )
+        self.assertIs(self._active(None), False)
+
+    def test_summary_tab_missing_from_widget_is_never_active(self):
+        self.assertIs(
+            self._active(self._tabs(TAB_INDEX_SUMMARY, TAB_INDEX_SUMMARY)), False
+        )
+        self.assertIs(self._active(self._tabs(0, TAB_INDEX_SUMMARY)), False)
+
+
+class Sp3a5ePageMetadataTests(unittest.TestCase):
+    BID = BidRef("sql-db", "bid-1")
+
+    def _coordinator(
+        self,
+        log,
+        *,
+        selected=BID,
+        active="page-1",
+        summary_active=False,
+        selected_pages=("page-1",),
+    ):
+        pages = {
+            "page-1": Page(uid="page-1", name="One"),
+            "page-2": Page(uid="page-2", name="Two"),
+        }
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected, active_page_uid=active
+        )
+        coordinator.takeoff_sidebar = _sp3a5e_fake(
+            log, "takeoff_sidebar", ("refresh_page_labels",)
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=pages.get,
+            get_selected_page_uids=lambda: list(selected_pages),
+        )
+        coordinator._sidebar = _sp3a5e_fake(
+            log,
+            "sidebar",
+            ("load_condition_summary_from_memory", "update_conditions_quantities"),
+        )
+        coordinator._viewer = _sp3a5e_fake(log, "viewer", ("update_plan_view",))
+        coordinator._is_summary_tab_active = lambda: summary_active
+        for name in (
+            "_sync_page_info_status",
+            "_update_page_settings_bar",
+            "_apply_pending_hotlink_named_view_focus",
+            "_request_or_defer_mesh_refresh",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        coordinator.pages = pages
+        return coordinator
+
+    def _changed(self, coordinator, **kwargs):
+        kwargs.setdefault("database_id", self.BID.file_path)
+        kwargs.setdefault("bid_uid", self.BID.bid_uid)
+        coordinator._on_page_metadata_changed(**kwargs)
+
+    def test_rename_refreshes_labels_status_and_summary_then_stops(self):
+        log = []
+        coordinator = self._coordinator(log, summary_active=True)
+        self._changed(
+            coordinator,
+            page_uids=("page-1", "missing", "page-2"),
+            changed_fields=("name",),
+        )
+        self.assertEqual(
+            log,
+            [
+                (
+                    "takeoff_sidebar.refresh_page_labels",
+                    ([coordinator.pages["page-1"], coordinator.pages["page-2"]],),
+                    {},
+                ),
+                ("_sync_page_info_status", (), {}),
+                ("sidebar.load_condition_summary_from_memory", (), {}),
+            ],
+        )
+
+    def test_summary_is_not_reloaded_without_affected_pages(self):
+        log = []
+        coordinator = self._coordinator(log, summary_active=True)
+        self._changed(coordinator, page_uids=(), changed_fields=("name",))
+        self.assertEqual(
+            _sp3a5e_calls(log, "takeoff_sidebar.refresh_page_labels"), [(([],), {})]
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.load_condition_summary_from_memory"), []
+        )
+
+    def test_summary_is_not_reloaded_when_summary_tab_is_hidden(self):
+        log = []
+        coordinator = self._coordinator(log, summary_active=False)
+        self._changed(coordinator, page_uids=("page-1",), changed_fields=("name",))
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.load_condition_summary_from_memory"), []
+        )
+
+    def test_other_bid_metadata_is_ignored(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._changed(
+            coordinator,
+            bid_uid="bid-2",
+            page_uids=("page-1",),
+            changed_fields=("name",),
+        )
+        self.assertEqual(log, [])
+
+    def test_non_name_change_on_active_page_reprojects_plan_and_quantities(self):
+        log = []
+        coordinator = self._coordinator(
+            log, active="page-1", selected_pages=("page-9",)
+        )
+        self._changed(
+            coordinator, page_uids=("page-1",), changed_fields=("scale_factor1",)
+        )
+        self.assertEqual(
+            log,
+            [
+                ("_update_page_settings_bar", ("page-1",), {}),
+                (
+                    "viewer.update_plan_view",
+                    ("page-1",),
+                    {"force_overlay_refresh": True},
+                ),
+                (
+                    "_apply_pending_hotlink_named_view_focus",
+                    (),
+                    {"require_stable": True},
+                ),
+                ("sidebar.update_conditions_quantities", (), {}),
+            ],
+        )
+
+    def test_rename_with_other_changes_continues_to_projection(self):
+        log = []
+        coordinator = self._coordinator(log, active="page-1")
+        self._changed(
+            coordinator, page_uids=("page-1",), changed_fields=("name", "scale_factor1")
+        )
+        names = _sp3a5e_names(log)
+        self.assertIn("takeoff_sidebar.refresh_page_labels", names)
+        self.assertIn("viewer.update_plan_view", names)
+
+    def test_selected_inactive_page_updates_quantities_and_mesh_only(self):
+        log = []
+        coordinator = self._coordinator(
+            log, active="page-1", selected_pages=("page-1", "page-2")
+        )
+        self._changed(coordinator, page_uids=("page-2",), changed_fields=("rotation",))
+        self.assertEqual(
+            log,
+            [
+                ("sidebar.update_conditions_quantities", (), {}),
+                ("_request_or_defer_mesh_refresh", (["page-1", "page-2"],), {}),
+            ],
+        )
+
+    def test_unselected_inactive_page_changes_nothing(self):
+        log = []
+        coordinator = self._coordinator(
+            log, active="page-1", selected_pages=("page-1",)
+        )
+        self._changed(coordinator, page_uids=("page-2",), changed_fields=("rotation",))
+        self.assertEqual(log, [])
+
+    def test_active_page_not_selected_updates_quantities_without_mesh_refresh(self):
+        log = []
+        coordinator = self._coordinator(
+            log, active="page-1", selected_pages=("page-2",)
+        )
+        self._changed(coordinator, page_uids=("page-1",), changed_fields=("rotation",))
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.update_conditions_quantities"), [((), {})]
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+
+class Sp3a5eTakeoffsChangedTests(unittest.TestCase):
+    def _coordinator(self, log, *, active="page-1", summary_active=False):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid=active)
+        coordinator.project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["page-1", "page-3"]
+        )
+        coordinator._sidebar = _sp3a5e_fake(
+            log, "sidebar", ("update_conditions_quantities",)
+        )
+        _sp3a5e_stub(coordinator, log, "_is_summary_tab_active", result=summary_active)
+        for name in (
+            "_refresh_takeoff_dependent_page_controls",
+            "_update_plan_view",
+            "_update_plan_view_for_active",
+            "_request_or_defer_mesh_refresh",
+            "_load_condition_summary",
+            "_update_export_menu_state",
+            "_restore_project_tree_bid_selection_if_needed",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        return coordinator
+
+    def test_unscoped_change_updates_active_page_without_page_controls(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_takeoffs_changed(takeoff_uids=["t1"], condition_uids=["c1"])
+        self.assertEqual(
+            log,
+            [
+                (
+                    "_update_plan_view",
+                    ("page-1",),
+                    {
+                        "condition_uids": ["c1"],
+                        "takeoff_uids": ["t1"],
+                        "refresh_quantities": True,
+                    },
+                ),
+                (
+                    "_request_or_defer_mesh_refresh",
+                    (["page-1", "page-3"],),
+                    {"dirty_page_uids": None},
+                ),
+                ("_is_summary_tab_active", (), {}),
+                ("_update_export_menu_state", (), {}),
+                ("_restore_project_tree_bid_selection_if_needed", (), {}),
+            ],
+        )
+
+    def test_change_on_another_page_only_refreshes_quantities_and_controls(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_takeoffs_changed(page_uid="page-2", condition_uids=["c1"])
+        self.assertEqual(
+            _sp3a5e_calls(log, "_refresh_takeoff_dependent_page_controls"),
+            [
+                (
+                    (),
+                    {
+                        "page_uids": ["page-2"],
+                        "refresh_area_usage": True,
+                        "refresh_page_usage": True,
+                    },
+                )
+            ],
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view_for_active"), [])
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.update_conditions_quantities"),
+            [((), {"condition_uids": ["c1"]})],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_request_or_defer_mesh_refresh"),
+            [((["page-1", "page-3"],), {"dirty_page_uids": ["page-2"]})],
+        )
+
+    def test_page_uids_win_over_single_page_uid_and_are_deduplicated(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_takeoffs_changed(
+            page_uid="page-9", page_uids=["page-1", "", "page-1", "page-2"]
+        )
+        controls = _sp3a5e_calls(log, "_refresh_takeoff_dependent_page_controls")
+        self.assertEqual(controls[0][1]["page_uids"], ["page-1", "page-2"])
+        self.assertEqual(len(_sp3a5e_calls(log, "_update_plan_view")), 1)
+
+    def test_without_active_page_the_active_plan_projection_is_requested(self):
+        log = []
+        coordinator = self._coordinator(log, active="")
+        coordinator._on_takeoffs_changed(takeoff_uids=["t1"], condition_uids=["c1"])
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view"), [])
+        self.assertEqual(
+            _sp3a5e_calls(log, "_update_plan_view_for_active"),
+            [
+                (
+                    (),
+                    {
+                        "condition_uids": ["c1"],
+                        "takeoff_uids": ["t1"],
+                        "refresh_quantities": True,
+                    },
+                )
+            ],
+        )
+        self.assertEqual(_sp3a5e_calls(log, "sidebar.update_conditions_quantities"), [])
+
+    def test_disabled_plan_update_without_active_page_refreshes_aggregates_only(self):
+        log = []
+        coordinator = self._coordinator(log, active="")
+        coordinator._on_takeoffs_changed(update_plan=False, condition_uids=["c1"])
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view_for_active"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view"), [])
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.update_conditions_quantities"),
+            [((), {"condition_uids": ["c1"]})],
+        )
+
+    def test_flags_disable_aggregates_mesh_and_shell_updates(self):
+        log = []
+        coordinator = self._coordinator(log, summary_active=True)
+        coordinator._on_takeoffs_changed(
+            update_shell=False,
+            update_plan=False,
+            update_mesh=False,
+            refresh_aggregates=False,
+            refresh_area_usage=False,
+            refresh_page_usage=False,
+            page_uid="page-1",
+        )
+        self.assertEqual(
+            log,
+            [
+                (
+                    "_refresh_takeoff_dependent_page_controls",
+                    (),
+                    {
+                        "page_uids": ["page-1"],
+                        "refresh_area_usage": False,
+                        "refresh_page_usage": False,
+                    },
+                )
+            ],
+        )
+
+    def test_summary_is_reloaded_when_aggregates_are_refreshed(self):
+        log = []
+        coordinator = self._coordinator(log, summary_active=True)
+        coordinator._on_takeoffs_changed(update_shell=False, update_mesh=False)
+        self.assertEqual(_sp3a5e_calls(log, "_load_condition_summary"), [((), {})])
+        self.assertEqual(_sp3a5e_calls(log, "_update_export_menu_state"), [])
+        self.assertEqual(
+            _sp3a5e_calls(log, "_restore_project_tree_bid_selection_if_needed"), []
+        )
+
+
+class Sp3a5ePendingPlanMutationTests(unittest.TestCase):
+    BID = BidRef("sql-db", "bid-1")
+
+    def _coordinator(self, selected):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected
+        )
+        self.view_calls = []
+        view = SimpleNamespace(
+            set_pending_mutation_uids=lambda uids: self.view_calls.append(set(uids))
+        )
+        coordinator._native_3d_views = lambda: [view]
+        return coordinator
+
+    def test_pending_uids_accumulate_by_default_and_are_pushed_to_selected_views(self):
+        coordinator = self._coordinator(self.BID)
+        coordinator._on_pending_plan_mutations_changed(
+            "sql-db", ["t1", "", "t2"], bid_uid="bid-1"
+        )
+        coordinator._on_pending_plan_mutations_changed(
+            "sql-db", ["t3"], bid_uid="bid-1"
+        )
+        self.assertEqual(
+            coordinator._pending_3d_takeoff_uids_by_bid, {self.BID: {"t1", "t2", "t3"}}
+        )
+        self.assertEqual(self.view_calls, [{"t1", "t2"}, {"t1", "t2", "t3"}])
+
+    def test_completed_uids_are_removed_and_empty_entry_is_dropped(self):
+        coordinator = self._coordinator(self.BID)
+        coordinator._pending_3d_takeoff_uids_by_bid[self.BID] = {"t1", "t2"}
+        coordinator._on_pending_plan_mutations_changed(
+            "sql-db", ["t1"], pending=False, bid_uid="bid-1"
+        )
+        self.assertEqual(
+            coordinator._pending_3d_takeoff_uids_by_bid, {self.BID: {"t2"}}
+        )
+        coordinator._on_pending_plan_mutations_changed(
+            "sql-db", ["t2"], pending=False, bid_uid="bid-1"
+        )
+        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_bid, {})
+        self.assertEqual(self.view_calls, [{"t2"}, set()])
+
+    def test_missing_takeoff_uids_are_accepted(self):
+        coordinator = self._coordinator(self.BID)
+        coordinator._on_pending_plan_mutations_changed("sql-db", None, bid_uid="bid-1")
+        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_bid, {})
+        self.assertEqual(self.view_calls, [set()])
+
+    def test_other_selected_bid_keeps_tracking_without_touching_views(self):
+        coordinator = self._coordinator(BidRef("sql-db", "bid-2"))
+        coordinator._on_pending_plan_mutations_changed(
+            "sql-db", ["t1"], bid_uid="bid-1"
+        )
+        self.assertEqual(
+            coordinator._pending_3d_takeoff_uids_by_bid, {self.BID: {"t1"}}
+        )
+        self.assertEqual(self.view_calls, [])
+
+
+class Sp3a5eRemoteBidContentTests(unittest.TestCase):
+    BID = BidRef("sql-db", "bid-1")
+
+    def _coordinator(
+        self,
+        log,
+        *,
+        active="page-1",
+        selected_pages=("page-1",),
+        layers_sidebar=True,
+        summary_active=False,
+        undo=True,
+        selected_takeoffs=(),
+        interaction_invalidated=False,
+        resolved=(("page-1",), "page-1"),
+        page_settings_bar=True,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+
+        def set_page_selection(page_uids):
+            log.append(("ui_state.set_page_selection", (page_uids,), {}))
+
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid=active,
+            selected_page_uids=list(selected_pages),
+            get_selected_bid_ref=lambda: self.BID,
+            set_page_selection=set_page_selection,
+        )
+        all_pages = [Page(uid="page-1", name="One"), Page(uid="page-2", name="Two")]
+        coordinator.project_data = _sp3a5e_fake(
+            log,
+            "data",
+            (
+                "select_pages",
+                "get_all_pages",
+                "get_bid_layer_snapshot",
+                "get_layer_uids_in_use",
+                "get_selected_page_uids",
+            ),
+            returns={
+                "get_all_pages": all_pages,
+                "get_bid_layer_snapshot": "layer-snapshot",
+                "get_layer_uids_in_use": {"layer-in-use"},
+                "get_selected_page_uids": ["page-1"],
+            },
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=_sp3a5e_fake(
+                log, "project_view", ("update_bid_content_counts",)
+            )
+        )
+        layers = (
+            _sp3a5e_fake(log, "layers_sidebar", ("load_layers",))
+            if layers_sidebar
+            else None
+        )
+        coordinator._sidebar = _sp3a5e_fake(
+            log,
+            "sidebar",
+            (
+                "load_takeoff_sidebar_from_memory",
+                "update_conditions_quantities",
+                "refresh_conditions_from_memory",
+            ),
+            bid_layers_sidebar=layers,
+        )
+        coordinator.takeoff_sidebar = _sp3a5e_fake(
+            log, "takeoff_sidebar", ("restore_selection",)
+        )
+        coordinator._page_settings_bar = (
+            _sp3a5e_fake(log, "page_settings", ("clear_page",))
+            if page_settings_bar
+            else None
+        )
+        coordinator._viewer = _sp3a5e_fake(log, "viewer", ("clear_plan_view",))
+        coordinator._deferred_persistence = _sp3a5e_fake(
+            log,
+            "deferred",
+            (
+                "reproject_newer_layer_visual_revisions",
+                "reproject_newer_page_visual_revisions",
+                "invalidate_layer_visual_revisions",
+                "invalidate_page_visual_revisions",
+                "cancel_pages",
+            ),
+        )
+        coordinator._undo_service = (
+            _sp3a5e_fake(log, "undo", ("clear",)) if undo else None
+        )
+        coordinator._selected_takeoff_uids = tuple(selected_takeoffs)
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._bid_data_cache = "bid-cache"
+        coordinator._is_summary_tab_active = lambda: summary_active
+        _sp3a5e_stub(
+            coordinator,
+            log,
+            "_remote_bid_change_invalidates_plan_interaction",
+            result=interaction_invalidated,
+        )
+        _sp3a5e_stub(
+            coordinator,
+            log,
+            "_resolve_authoritative_page_selection",
+            result=(list(resolved[0]), resolved[1]),
+        )
+        for name in (
+            "_prepare_plan_for_authoritative_refresh",
+            "_sync_selection",
+            "_on_takeoffs_changed",
+            "_on_annotations_changed",
+            "_sync_navigation_for_active_page",
+            "_update_page_settings_bar",
+            "_sync_overlay_display_mode",
+            "_update_plan_view",
+            "_update_native_page_textures",
+            "_request_or_defer_mesh_refresh",
+            "_load_condition_summary",
+            "_sync_page_info_status",
+            "_reconcile_active_placement",
+            "_update_plan_view_for_active",
+            "_update_export_menu_state",
+            "_restore_project_tree_bid_selection_if_needed",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        return coordinator
+
+    def _run(self, coordinator, **kwargs):
+        coordinator._on_remote_bid_content_changed(
+            database_id=self.BID.file_path, bid_uid=self.BID.bid_uid, **kwargs
+        )
+
+    def test_other_bid_content_change_is_ignored(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_remote_bid_content_changed(
+            database_id="sql-db",
+            bid_uid="bid-2",
+            families=[_SP3A5E_FAMILY.LAYERS.value],
+        )
+        self.assertEqual(log, [])
+
+    def test_local_layer_completion_reprojects_newer_layer_revisions(self):
+        log = []
+        coordinator = self._coordinator(log, interaction_invalidated=True)
+        self._run(
+            coordinator,
+            families=[_SP3A5E_FAMILY.LAYERS.value],
+            resource_uids_by_family={_SP3A5E_FAMILY.LAYERS.value: ["layer-1"]},
+            local_completion=True,
+            defer_plan_projection=True,
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "deferred.reproject_newer_layer_visual_revisions"),
+            [(("sql-db", ["layer-1"]), {})],
+        )
+        names = _sp3a5e_names(log)
+        self.assertNotIn("deferred.invalidate_layer_visual_revisions", names)
+        self.assertNotIn("undo.clear", names)
+        self.assertNotIn("_prepare_plan_for_authoritative_refresh", names)
+
+    def test_local_layer_completion_without_uids_reprojects_all_layers(self):
+        for resource_uids in ({}, {_SP3A5E_FAMILY.LAYERS.value: []}):
+            with self.subTest(resource_uids=resource_uids):
+                log = []
+                coordinator = self._coordinator(log)
+                self._run(
+                    coordinator,
+                    families=[_SP3A5E_FAMILY.LAYERS.value],
+                    resource_uids_by_family=resource_uids,
+                    local_completion=True,
+                    defer_plan_projection=True,
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(
+                        log, "deferred.reproject_newer_layer_visual_revisions"
+                    ),
+                    [(("sql-db", None), {})],
+                )
+
+    def test_remote_layer_change_releases_plan_then_invalidates_then_clears_undo(self):
+        log = []
+        coordinator = self._coordinator(log, interaction_invalidated=True)
+        self._run(
+            coordinator,
+            families=[_SP3A5E_FAMILY.LAYERS.value],
+            resource_uids_by_family={_SP3A5E_FAMILY.LAYERS.value: ["layer-1"]},
+            defer_plan_projection=True,
+        )
+        names = _sp3a5e_names(log)
+        self.assertEqual(
+            names[:4],
+            [
+                "_remote_bid_change_invalidates_plan_interaction",
+                "_prepare_plan_for_authoritative_refresh",
+                "deferred.invalidate_layer_visual_revisions",
+                "undo.clear",
+            ],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "deferred.invalidate_layer_visual_revisions"),
+            [(("sql-db", ["layer-1"]), {})],
+        )
+        self.assertNotIn("deferred.reproject_newer_layer_visual_revisions", names)
+
+    def test_remote_layer_change_without_uids_invalidates_all_layers(self):
+        for resource_uids in ({}, {_SP3A5E_FAMILY.LAYERS.value: []}):
+            with self.subTest(resource_uids=resource_uids):
+                log = []
+                coordinator = self._coordinator(log)
+                self._run(
+                    coordinator,
+                    families=[_SP3A5E_FAMILY.LAYERS.value],
+                    resource_uids_by_family=resource_uids,
+                    defer_plan_projection=True,
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(log, "deferred.invalidate_layer_visual_revisions"),
+                    [(("sql-db", None), {})],
+                )
+
+    def test_local_page_completion_reprojects_newer_page_revisions(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(
+            coordinator,
+            families=[_SP3A5E_FAMILY.PAGES.value],
+            resource_uids_by_family={_SP3A5E_FAMILY.PAGES.value: ["page-1"]},
+            local_completion=True,
+            defer_plan_projection=True,
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "deferred.reproject_newer_page_visual_revisions"),
+            [(("sql-db", ["page-1"], "bid-1"), {})],
+        )
+        names = _sp3a5e_names(log)
+        self.assertNotIn("deferred.invalidate_page_visual_revisions", names)
+        self.assertNotIn("deferred.cancel_pages", names)
+        self.assertNotIn("undo.clear", names)
+
+    def test_local_page_completion_without_uids_reprojects_all_pages(self):
+        for resource_uids in ({}, {_SP3A5E_FAMILY.PAGES.value: []}):
+            with self.subTest(resource_uids=resource_uids):
+                log = []
+                coordinator = self._coordinator(log)
+                self._run(
+                    coordinator,
+                    families=[_SP3A5E_FAMILY.PAGES.value],
+                    resource_uids_by_family=resource_uids,
+                    local_completion=True,
+                    defer_plan_projection=True,
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(
+                        log, "deferred.reproject_newer_page_visual_revisions"
+                    ),
+                    [(("sql-db", None, "bid-1"), {})],
+                )
+
+    def test_remote_page_change_invalidates_revisions_and_cancels_page_writes(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(
+            coordinator,
+            families=[_SP3A5E_FAMILY.PAGES.value],
+            resource_uids_by_family={_SP3A5E_FAMILY.PAGES.value: ("page-1", "page-2")},
+            defer_plan_projection=True,
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "deferred.invalidate_page_visual_revisions"),
+            [(("sql-db", ("page-1", "page-2"), "bid-1"), {})],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "deferred.cancel_pages"),
+            [(("sql-db", "bid-1", ["page-1", "page-2"]), {})],
+        )
+        names = _sp3a5e_names(log)
+        self.assertLess(
+            names.index("deferred.invalidate_page_visual_revisions"),
+            names.index("undo.clear"),
+        )
+        self.assertLess(names.index("undo.clear"), names.index("deferred.cancel_pages"))
+
+    def test_remote_page_change_without_uids_invalidates_and_cancels_all_pages(self):
+        for resource_uids in ({}, {_SP3A5E_FAMILY.PAGES.value: []}):
+            with self.subTest(resource_uids=resource_uids):
+                log = []
+                coordinator = self._coordinator(log)
+                self._run(
+                    coordinator,
+                    families=[_SP3A5E_FAMILY.PAGES.value],
+                    resource_uids_by_family=resource_uids,
+                    defer_plan_projection=True,
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(log, "deferred.invalidate_page_visual_revisions"),
+                    [(("sql-db", None, "bid-1"), {})],
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(log, "deferred.cancel_pages"),
+                    [(("sql-db", "bid-1", None), {})],
+                )
+
+    def test_undo_history_is_cleared_for_remote_changes_only(self):
+        cases = (
+            ("remote", dict(families=[_SP3A5E_FAMILY.ANNOTATIONS.value]), True),
+            (
+                "local",
+                dict(
+                    families=[_SP3A5E_FAMILY.ANNOTATIONS.value], local_completion=True
+                ),
+                False,
+            ),
+            ("no families", dict(families=[]), False),
+        )
+        for label, kwargs, expected in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(log)
+                self._run(coordinator, **kwargs)
+                self.assertEqual(len(_sp3a5e_calls(log, "undo.clear")), int(expected))
+
+    def test_remote_change_without_undo_service_is_projected(self):
+        log = []
+        coordinator = self._coordinator(log, undo=False)
+        self._run(coordinator, families=[_SP3A5E_FAMILY.LAYERS.value])
+        self.assertIn("_update_export_menu_state", _sp3a5e_names(log))
+
+    def _takeoff_projection(self, log, **kwargs):
+        coordinator = self._coordinator(
+            log,
+            layers_sidebar=kwargs.pop("layers_sidebar", True),
+            selected_takeoffs=kwargs.pop("selected_takeoffs", ()),
+        )
+        self._run(coordinator, **kwargs)
+        return _sp3a5e_calls(log, "_on_takeoffs_changed")
+
+    def test_takeoff_change_projects_with_all_flags_enabled(self):
+        log = []
+        calls = self._takeoff_projection(
+            log,
+            families=[_SP3A5E_FAMILY.TAKEOFFS.value],
+            resource_uids_by_family={_SP3A5E_FAMILY.TAKEOFFS.value: ["t1"]},
+            affected_page_uids_by_family={_SP3A5E_FAMILY.TAKEOFFS.value: ["page-2"]},
+            selected_takeoffs=("t1", "t2"),
+        )
+        self.assertEqual(
+            calls,
+            [
+                (
+                    (),
+                    {
+                        "page_uid": "page-1",
+                        "page_uids": ["page-2"],
+                        "takeoff_uids": ["t1"],
+                        "update_shell": False,
+                        "refresh_aggregates": True,
+                        "refresh_area_usage": True,
+                        "refresh_page_usage": True,
+                        "update_plan": True,
+                        "update_mesh": True,
+                    },
+                )
+            ],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_sync_selection"),
+            [(("model", ["t1", "t2"]), {})],
+        )
+
+    def test_takeoff_change_without_uids_projects_unscoped(self):
+        log = []
+        calls = self._takeoff_projection(log, families=[_SP3A5E_FAMILY.TAKEOFFS.value])
+        self.assertIsNone(calls[0][1]["takeoff_uids"])
+        self.assertIsNone(calls[0][1]["page_uids"])
+        self.assertEqual(_sp3a5e_calls(log, "_sync_selection"), [])
+
+    def test_takeoff_change_with_empty_uid_list_projects_unscoped(self):
+        log = []
+        calls = self._takeoff_projection(
+            log,
+            families=[_SP3A5E_FAMILY.TAKEOFFS.value],
+            resource_uids_by_family={_SP3A5E_FAMILY.TAKEOFFS.value: []},
+        )
+        self.assertIsNone(calls[0][1]["takeoff_uids"])
+
+    def test_change_without_families_only_refreshes_the_shell(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(coordinator)
+        self.assertEqual(
+            _sp3a5e_names(log),
+            [
+                "_remote_bid_change_invalidates_plan_interaction",
+                "_update_export_menu_state",
+                "_restore_project_tree_bid_selection_if_needed",
+            ],
+        )
+
+    def test_takeoff_change_with_projected_conditions_skips_aggregate_refresh(self):
+        log = []
+        calls = self._takeoff_projection(
+            log,
+            families=[_SP3A5E_FAMILY.TAKEOFFS.value],
+            condition_family_projected=True,
+            area_family_projected=True,
+        )
+        flags = calls[0][1]
+        self.assertFalse(flags["refresh_aggregates"])
+        self.assertFalse(flags["refresh_area_usage"])
+        self.assertTrue(flags["refresh_page_usage"])
+
+    def test_takeoff_change_with_projected_layers_sidebar_skips_aggregate_refresh(self):
+        log = []
+        calls = self._takeoff_projection(
+            log, families=[_SP3A5E_FAMILY.TAKEOFFS.value, _SP3A5E_FAMILY.LAYERS.value]
+        )
+        self.assertFalse(calls[0][1]["refresh_aggregates"])
+
+    def test_takeoff_change_with_layers_but_no_layers_sidebar_refreshes_aggregates(
+        self,
+    ):
+        log = []
+        calls = self._takeoff_projection(
+            log,
+            families=[_SP3A5E_FAMILY.TAKEOFFS.value, _SP3A5E_FAMILY.LAYERS.value],
+            layers_sidebar=False,
+        )
+        self.assertTrue(calls[0][1]["refresh_aggregates"])
+
+    def test_takeoff_change_with_pages_defers_plan_mesh_and_aggregates(self):
+        log = []
+        calls = self._takeoff_projection(
+            log, families=[_SP3A5E_FAMILY.TAKEOFFS.value, _SP3A5E_FAMILY.PAGES.value]
+        )
+        flags = calls[0][1]
+        self.assertFalse(flags["refresh_aggregates"])
+        self.assertFalse(flags["refresh_page_usage"])
+        self.assertFalse(flags["update_plan"])
+        self.assertFalse(flags["update_mesh"])
+        self.assertTrue(flags["refresh_area_usage"])
+
+    def test_takeoff_change_with_deferred_plan_projection_skips_plan_and_mesh(self):
+        log = []
+        calls = self._takeoff_projection(
+            log, families=[_SP3A5E_FAMILY.TAKEOFFS.value], defer_plan_projection=True
+        )
+        flags = calls[0][1]
+        self.assertFalse(flags["update_plan"])
+        self.assertFalse(flags["update_mesh"])
+        self.assertTrue(flags["refresh_aggregates"])
+
+    def _annotation_calls(self, log, **kwargs):
+        coordinator = self._coordinator(log)
+        self._run(coordinator, **kwargs)
+        return _sp3a5e_calls(log, "_on_annotations_changed")
+
+    def test_annotation_change_on_active_page_projects_identities(self):
+        log = []
+        calls = self._annotation_calls(
+            log,
+            families=[_SP3A5E_FAMILY.ANNOTATIONS.value],
+            resource_uids_by_family={
+                _SP3A5E_FAMILY.ANNOTATIONS.value: ["text/a1", "rect/a2"]
+            },
+            affected_page_uids_by_family={_SP3A5E_FAMILY.ANNOTATIONS.value: ["page-1"]},
+        )
+        self.assertEqual(
+            calls,
+            [
+                (
+                    (),
+                    {
+                        "page_uid": "page-1",
+                        "annotation_uids": ["a1", "a2"],
+                        "annotation_types": ["text", "rect"],
+                        "update_shell": False,
+                        "update_plan": True,
+                    },
+                )
+            ],
+        )
+
+    def test_annotation_change_without_identities_projects_whole_page(self):
+        log = []
+        calls = self._annotation_calls(log, families=[_SP3A5E_FAMILY.ANNOTATIONS.value])
+        self.assertIsNone(calls[0][1]["annotation_uids"])
+        self.assertIsNone(calls[0][1]["annotation_types"])
+
+    def test_annotation_change_on_other_page_is_not_projected(self):
+        log = []
+        calls = self._annotation_calls(
+            log,
+            families=[_SP3A5E_FAMILY.ANNOTATIONS.value],
+            affected_page_uids_by_family={_SP3A5E_FAMILY.ANNOTATIONS.value: ["page-2"]},
+        )
+        self.assertEqual(calls, [])
+
+    def test_non_annotation_change_does_not_project_annotations(self):
+        log = []
+        calls = self._annotation_calls(log, families=[_SP3A5E_FAMILY.TAKEOFFS.value])
+        self.assertEqual(calls, [])
+
+    def test_annotation_plan_update_is_suppressed_by_other_projections(self):
+        cases = (
+            ("deferred", dict(defer_plan_projection=True)),
+            (
+                "layers",
+                dict(
+                    families=[
+                        _SP3A5E_FAMILY.ANNOTATIONS.value,
+                        _SP3A5E_FAMILY.LAYERS.value,
+                    ]
+                ),
+            ),
+            (
+                "pages",
+                dict(
+                    families=[
+                        _SP3A5E_FAMILY.ANNOTATIONS.value,
+                        _SP3A5E_FAMILY.PAGES.value,
+                    ]
+                ),
+            ),
+        )
+        for label, extra in cases:
+            with self.subTest(label):
+                log = []
+                kwargs = {"families": [_SP3A5E_FAMILY.ANNOTATIONS.value], **extra}
+                calls = self._annotation_calls(log, **kwargs)
+                self.assertFalse(calls[0][1]["update_plan"])
+        log = []
+        calls = self._annotation_calls(log, families=[_SP3A5E_FAMILY.ANNOTATIONS.value])
+        self.assertTrue(calls[0][1]["update_plan"])
+
+    def _page_change(self, log, *, coordinator_options=None, **kwargs):
+        coordinator = self._coordinator(log, **(coordinator_options or {}))
+        kwargs.setdefault("families", [_SP3A5E_FAMILY.PAGES.value])
+        self._run(coordinator, **kwargs)
+        return coordinator
+
+    def test_page_change_applies_authoritative_selection_everywhere(self):
+        log = []
+        coordinator = self._page_change(
+            log,
+            coordinator_options={"resolved": (("page-1", "page-2"), "page-2")},
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_resolve_authoritative_page_selection"),
+            [((["page-1"], "page-1"), {})],
+        )
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "page-2")
+        names = _sp3a5e_names(log)
+        start = names.index("ui_state.set_page_selection")
+        self.assertEqual(
+            log[start : start + 12],
+            [
+                ("ui_state.set_page_selection", (["page-1", "page-2"],), {}),
+                ("data.select_pages", (["page-1", "page-2"],), {}),
+                ("data.get_all_pages", (), {}),
+                (
+                    "project_view.update_bid_content_counts",
+                    (self.BID,),
+                    {"page_count": 2},
+                ),
+                ("_sync_navigation_for_active_page", (self.BID, "page-2"), {}),
+                (
+                    "sidebar.load_takeoff_sidebar_from_memory",
+                    (self.BID, "bid-cache"),
+                    {},
+                ),
+                (
+                    "takeoff_sidebar.restore_selection",
+                    (["page-1", "page-2"], "page-2"),
+                    {},
+                ),
+                ("_update_page_settings_bar", ("page-2",), {}),
+                ("_sync_overlay_display_mode", ("page-2",), {}),
+                ("_update_plan_view", ("page-2",), {}),
+                ("_request_or_defer_mesh_refresh", (["page-1", "page-2"],), {}),
+                ("_sync_page_info_status", (), {}),
+            ],
+        )
+
+    def test_unchanged_page_selection_does_not_resync_navigation(self):
+        log = []
+        self._page_change(log)
+        self.assertEqual(_sp3a5e_calls(log, "_sync_navigation_for_active_page"), [])
+
+    def test_deferred_page_change_requeries_quantities_only_when_selection_changed(
+        self,
+    ):
+        cases = (
+            ("nothing changed", dict(resolved=(("page-1",), "page-1")), 0),
+            ("active changed", dict(resolved=(("page-1",), "page-2")), 1),
+            ("selection changed", dict(resolved=(("page-1", "page-2"), "page-1")), 1),
+        )
+        for label, options, expected in cases:
+            with self.subTest(label):
+                log = []
+                self._page_change(
+                    log, coordinator_options=options, defer_plan_projection=True
+                )
+                self.assertEqual(
+                    len(_sp3a5e_calls(log, "sidebar.update_conditions_quantities")),
+                    expected,
+                )
+                self.assertEqual(_sp3a5e_calls(log, "_update_plan_view"), [])
+
+    def test_deferred_page_change_with_takeoffs_requeries_unprojected_quantities(self):
+        for projected, expected in ((False, 1), (True, 0)):
+            with self.subTest(condition_family_projected=projected):
+                log = []
+                self._page_change(
+                    log,
+                    families=[
+                        _SP3A5E_FAMILY.PAGES.value,
+                        _SP3A5E_FAMILY.TAKEOFFS.value,
+                    ],
+                    defer_plan_projection=True,
+                    condition_family_projected=projected,
+                )
+                self.assertEqual(
+                    len(_sp3a5e_calls(log, "sidebar.update_conditions_quantities")),
+                    expected,
+                )
+
+    def test_page_change_without_active_page_clears_plan_view(self):
+        log = []
+        self._page_change(
+            log,
+            coordinator_options={"resolved": ((), "")},
+        )
+        names = _sp3a5e_names(log)
+        self.assertEqual(_sp3a5e_calls(log, "page_settings.clear_page"), [((), {})])
+        self.assertEqual(_sp3a5e_calls(log, "viewer.clear_plan_view"), [((), {})])
+        self.assertEqual(
+            len(_sp3a5e_calls(log, "sidebar.update_conditions_quantities")), 1
+        )
+        self.assertNotIn("_update_page_settings_bar", names)
+        self.assertNotIn("_update_plan_view", names)
+
+    def test_page_change_without_active_page_and_without_page_settings_bar(self):
+        log = []
+        self._page_change(
+            log,
+            coordinator_options={"resolved": ((), ""), "page_settings_bar": False},
+        )
+        self.assertEqual(_sp3a5e_calls(log, "viewer.clear_plan_view"), [((), {})])
+
+    def test_page_change_without_active_page_requeries_quantities_only_on_change(self):
+        log = []
+        self._page_change(
+            log,
+            coordinator_options={"resolved": (("page-1",), "")},
+        )
+        self.assertEqual(
+            len(_sp3a5e_calls(log, "sidebar.update_conditions_quantities")), 1
+        )
+        log = []
+        self._page_change(
+            log,
+            coordinator_options={
+                "resolved": (("page-1",), ""),
+                "active": "",
+            },
+        )
+        self.assertEqual(_sp3a5e_calls(log, "sidebar.update_conditions_quantities"), [])
+
+    def test_page_texture_change_updates_textures_instead_of_mesh_scene(self):
+        log = []
+        self._page_change(log, page_texture_only=True)
+        self.assertEqual(_sp3a5e_calls(log, "_update_native_page_textures"), [((), {})])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_unchanged_mesh_scene_skips_mesh_refresh_for_page_change(self):
+        log = []
+        self._page_change(log, mesh_scene_unchanged=True)
+        self.assertEqual(_sp3a5e_calls(log, "_update_native_page_textures"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_deferred_page_change_skips_mesh_and_texture_work(self):
+        log = []
+        self._page_change(log, defer_plan_projection=True, page_texture_only=True)
+        self.assertEqual(_sp3a5e_calls(log, "_update_native_page_textures"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_page_change_reloads_summary_only_when_nothing_projected_it(self):
+        cases = (
+            ("nothing projected", {}, True, 1),
+            ("summary hidden", {}, False, 0),
+            ("conditions projected", dict(condition_family_projected=True), True, 0),
+            ("areas projected", dict(area_family_projected=True), True, 0),
+        )
+        for label, extra, summary_active, expected in cases:
+            with self.subTest(label):
+                log = []
+                self._page_change(
+                    log,
+                    coordinator_options={"summary_active": summary_active},
+                    **extra,
+                )
+                self.assertEqual(
+                    len(_sp3a5e_calls(log, "_load_condition_summary")), expected
+                )
+
+    def test_page_change_with_layers_sidebar_skips_summary_reload(self):
+        log = []
+        self._page_change(
+            log,
+            coordinator_options={"summary_active": True},
+            families=[_SP3A5E_FAMILY.PAGES.value, _SP3A5E_FAMILY.LAYERS.value],
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_load_condition_summary"), [])
+        log = []
+        self._page_change(
+            log,
+            coordinator_options={"summary_active": True, "layers_sidebar": False},
+            families=[_SP3A5E_FAMILY.PAGES.value, _SP3A5E_FAMILY.LAYERS.value],
+        )
+        self.assertEqual(len(_sp3a5e_calls(log, "_load_condition_summary")), 1)
+
+    def _layer_change(self, log, coordinator_options=None, **kwargs):
+        coordinator = self._coordinator(log, **(coordinator_options or {}))
+        kwargs.setdefault("families", [_SP3A5E_FAMILY.LAYERS.value])
+        self._run(coordinator, **kwargs)
+
+    def test_layer_change_reloads_layer_sidebar_and_reconciles_placement(self):
+        log = []
+        self._layer_change(log)
+        self.assertEqual(
+            _sp3a5e_calls(log, "layers_sidebar.load_layers"),
+            [(("layer-snapshot",), {"used_uids": {"layer-in-use"}})],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.refresh_conditions_from_memory"), [((), {})]
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_reconcile_active_placement"), [((), {})])
+
+    def test_layer_change_keeps_projected_conditions(self):
+        log = []
+        self._layer_change(log, condition_family_projected=True)
+        self.assertEqual(len(_sp3a5e_calls(log, "layers_sidebar.load_layers")), 1)
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.refresh_conditions_from_memory"), []
+        )
+
+    def test_layer_change_without_layers_sidebar_still_reconciles_placement(self):
+        log = []
+        self._layer_change(log, coordinator_options={"layers_sidebar": False})
+        self.assertEqual(
+            _sp3a5e_calls(log, "sidebar.refresh_conditions_from_memory"), []
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_reconcile_active_placement"), [((), {})])
+
+    def test_non_layer_change_does_not_reconcile_placement(self):
+        log = []
+        self._layer_change(log, families=[_SP3A5E_FAMILY.TAKEOFFS.value])
+        self.assertEqual(_sp3a5e_calls(log, "_reconcile_active_placement"), [])
+        self.assertEqual(_sp3a5e_calls(log, "layers_sidebar.load_layers"), [])
+
+    def test_layer_change_reprojects_active_plan_with_quantity_policy(self):
+        layers = [_SP3A5E_FAMILY.LAYERS.value]
+        cases = (
+            ("layers sidebar projects", True, dict(families=layers), False),
+            (
+                "conditions projected",
+                False,
+                dict(families=layers, condition_family_projected=True),
+                False,
+            ),
+            (
+                "takeoffs project",
+                False,
+                dict(families=layers + [_SP3A5E_FAMILY.TAKEOFFS.value]),
+                False,
+            ),
+            ("nothing else projects", False, dict(families=layers), True),
+        )
+        for label, sidebar, kwargs, refresh_quantities in cases:
+            with self.subTest(label):
+                log = []
+                self._layer_change(
+                    log, coordinator_options={"layers_sidebar": sidebar}, **kwargs
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(log, "_update_plan_view_for_active"),
+                    [((), {"refresh_quantities": refresh_quantities})],
+                )
+
+    def test_layer_change_defers_or_skips_plan_projection_when_pages_change(self):
+        for label, extra in (
+            ("deferred", dict(defer_plan_projection=True)),
+            (
+                "pages",
+                dict(
+                    families=[_SP3A5E_FAMILY.LAYERS.value, _SP3A5E_FAMILY.PAGES.value]
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                log = []
+                self._layer_change(log, **extra)
+                self.assertEqual(_sp3a5e_calls(log, "_update_plan_view_for_active"), [])
+
+    def test_layer_only_change_refreshes_mesh_for_selected_pages(self):
+        log = []
+        self._layer_change(log)
+        self.assertEqual(
+            _sp3a5e_calls(log, "_request_or_defer_mesh_refresh"),
+            [((["page-1"],), {})],
+        )
+
+    def test_layer_change_skips_mesh_refresh_when_something_else_owns_it(self):
+        cases = (
+            ("scene unchanged", dict(mesh_scene_unchanged=True)),
+            (
+                "takeoffs",
+                dict(
+                    families=[
+                        _SP3A5E_FAMILY.LAYERS.value,
+                        _SP3A5E_FAMILY.TAKEOFFS.value,
+                    ]
+                ),
+            ),
+            (
+                "pages",
+                dict(
+                    families=[_SP3A5E_FAMILY.LAYERS.value, _SP3A5E_FAMILY.PAGES.value],
+                    page_texture_only=True,
+                ),
+            ),
+            ("deferred", dict(defer_plan_projection=True)),
+        )
+        for label, extra in cases:
+            with self.subTest(label):
+                log = []
+                self._layer_change(log, **extra)
+                self.assertEqual(
+                    _sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), []
+                )
+
+    def test_content_change_finishes_with_shell_refresh(self):
+        log = []
+        self._layer_change(log, families=[])
+        self.assertEqual(
+            _sp3a5e_names(log)[-2:],
+            [
+                "_update_export_menu_state",
+                "_restore_project_tree_bid_selection_if_needed",
+            ],
+        )
+
+
+class Sp3a5eAnnotationTests(unittest.TestCase):
+    def _coordinator(self, log, *, active="page-1", undo=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid=active)
+        coordinator._undo_service = (
+            _sp3a5e_fake(log, "undo", ("invalidate_deleted_annotation_lifetimes",))
+            if undo
+            else None
+        )
+        for name in (
+            "_update_plan_view_annotations",
+            "_update_export_menu_state",
+            "_restore_project_tree_bid_selection_if_needed",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        return coordinator
+
+    def test_deleted_annotation_lifetimes_are_forwarded_to_undo_history(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_annotation_lifetimes_deleted(
+            database_id="db", bid_uid="1", annotation_uids=["a1"]
+        )
+        self.assertEqual(
+            log,
+            [
+                (
+                    "undo.invalidate_deleted_annotation_lifetimes",
+                    (),
+                    {"database_id": "db", "bid_uid": "1", "annotation_uids": ["a1"]},
+                )
+            ],
+        )
+
+    def test_deleted_annotation_lifetimes_without_undo_service_are_ignored(self):
+        log = []
+        coordinator = self._coordinator(log, undo=False)
+        coordinator._on_annotation_lifetimes_deleted(database_id="db")
+        self.assertEqual(log, [])
+
+    def test_unscoped_annotation_change_updates_active_page_and_shell(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_annotations_changed(
+            annotation_uids=["a1"], annotation_types=["text"]
+        )
+        self.assertEqual(
+            log,
+            [
+                (
+                    "_update_plan_view_annotations",
+                    ("page-1",),
+                    {"annotation_uids": ["a1"], "annotation_types": ["text"]},
+                ),
+                ("_update_export_menu_state", (), {}),
+                ("_restore_project_tree_bid_selection_if_needed", (), {}),
+            ],
+        )
+
+    def test_empty_page_scope_is_not_replaced_by_an_empty_page_uid(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_annotations_changed(page_uid="", page_uids=None)
+        self.assertEqual(len(_sp3a5e_calls(log, "_update_plan_view_annotations")), 1)
+
+    def test_page_uids_scope_wins_over_single_page_uid(self):
+        log = []
+        coordinator = self._coordinator(log, active="page-1")
+        coordinator._on_annotations_changed(page_uid="page-1", page_uids=["page-2"])
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view_annotations"), [])
+        coordinator._on_annotations_changed(
+            page_uid="page-9", page_uids=["page-2", "page-1"]
+        )
+        self.assertEqual(len(_sp3a5e_calls(log, "_update_plan_view_annotations")), 1)
+
+    def test_single_page_uid_scopes_the_update_to_that_page(self):
+        log = []
+        coordinator = self._coordinator(log, active="page-1")
+        coordinator._on_annotations_changed(page_uid="page-2")
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view_annotations"), [])
+        coordinator._on_annotations_changed(page_uid="page-1")
+        self.assertEqual(len(_sp3a5e_calls(log, "_update_plan_view_annotations")), 1)
+
+    def test_shell_and_plan_updates_can_be_disabled(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_annotations_changed(update_shell=False, update_plan=False)
+        self.assertEqual(log, [])
+        coordinator._on_annotations_changed(update_shell=False)
+        self.assertEqual(_sp3a5e_names(log), ["_update_plan_view_annotations"])
+
+
+class Sp3a5eConditionsChangedTests(unittest.TestCase):
+    BID = BidRef("sql-db", "bid-1")
+
+    def _coordinator(self, log, *, blocker=True, plan_view=True, undo=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID,
+            highlighted_condition_uids={"c1", "gone"},
+            set_highlighted_conditions=lambda uids: log.append(
+                ("ui_state.set_highlighted_conditions", (uids,), {})
+            ),
+        )
+        coordinator.plan_view = (
+            SimpleNamespace(has_active_remote_projection_blocker=lambda: blocker)
+            if plan_view
+            else None
+        )
+        coordinator._undo_service = (
+            _sp3a5e_fake(log, "undo", ("clear",)) if undo else None
+        )
+        coordinator._sidebar = _sp3a5e_fake(
+            log, "sidebar", ("refresh_conditions_from_memory",)
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=_sp3a5e_fake(
+                log, "project_view", ("update_bid_content_counts",)
+            )
+        )
+        coordinator.project_data = _sp3a5e_fake(
+            log,
+            "data",
+            ("get_bid_conditions", "get_selected_page_uids"),
+            returns={
+                "get_bid_conditions": {"c1": object(), "c2": object()},
+                "get_selected_page_uids": ["page-1"],
+            },
+        )
+        _sp3a5e_stub(coordinator, log, "_validate_condition_uids", result={"c1"})
+        for name in (
+            "_prepare_plan_for_authoritative_refresh",
+            "_reconcile_active_placement",
+            "_restore_sidebar_highlight",
+            "_update_plan_view_for_active",
+            "_request_or_defer_mesh_refresh",
+            "_update_export_menu_state",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        return coordinator
+
+    def _changed(self, coordinator, **kwargs):
+        coordinator._on_conditions_changed(
+            database_id=self.BID.file_path, bid_uid=self.BID.bid_uid, **kwargs
+        )
+
+    def test_other_bid_condition_change_is_ignored(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_conditions_changed(database_id="sql-db", bid_uid="other")
+        self.assertEqual(log, [])
+
+    def test_condition_change_refreshes_sidebar_counts_highlight_plan_and_mesh(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._changed(
+            coordinator,
+            condition_uids=["c1"],
+            changed_fields=["z_value"],
+            change_operations=["update"],
+            invalidates_undo=True,
+        )
+        self.assertEqual(
+            log,
+            [
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                (
+                    "_reconcile_active_placement",
+                    (),
+                    {"accept_reconstructed_conditions": True},
+                ),
+                ("undo.clear", (), {}),
+                ("_validate_condition_uids", ({"c1", "gone"},), {}),
+                ("ui_state.set_highlighted_conditions", ({"c1"},), {}),
+                ("sidebar.refresh_conditions_from_memory", (), {}),
+                ("data.get_bid_conditions", (), {}),
+                (
+                    "project_view.update_bid_content_counts",
+                    (self.BID,),
+                    {"condition_count": 2},
+                ),
+                ("_restore_sidebar_highlight", ({"c1"},), {"reveal": False}),
+                (
+                    "_update_plan_view_for_active",
+                    (),
+                    {"condition_uids": ["c1"], "refresh_quantities": False},
+                ),
+                ("data.get_selected_page_uids", (), {}),
+                ("_request_or_defer_mesh_refresh", (["page-1"],), {}),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+
+    def test_missing_field_and_operation_lists_are_treated_as_empty(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._changed(coordinator, condition_uids=["c1"])
+        self.assertEqual(_sp3a5e_calls(log, "_reconcile_active_placement"), [((), {})])
+        self.assertEqual(len(_sp3a5e_calls(log, "_update_plan_view_for_active")), 1)
+        self.assertEqual(len(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh")), 1)
+        self.assertEqual(_sp3a5e_calls(log, "undo.clear"), [])
+
+    def test_deferred_projection_skips_plan_and_mesh(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._changed(
+            coordinator,
+            changed_fields=["z_value"],
+            change_operations=["update"],
+            defer_plan_projection=True,
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view_for_active"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_non_plan_condition_change_skips_plan_projection(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._changed(
+            coordinator, changed_fields=["notes"], change_operations=["update"]
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_update_plan_view_for_active"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_blocked_plan_is_released_only_for_undo_invalidating_plan_changes(self):
+        cases = (
+            ("released", True, ["z_value"], True, True, 1),
+            ("no undo invalidation", False, ["z_value"], True, True, 0),
+            ("non-plan change", True, ["notes"], True, True, 0),
+            ("no blocker", True, ["z_value"], False, True, 0),
+            ("no plan view", True, ["z_value"], True, False, 0),
+        )
+        for label, invalidates, fields, blocker, plan_view, expected in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(
+                    log, blocker=blocker, plan_view=plan_view
+                )
+                self._changed(
+                    coordinator,
+                    changed_fields=fields,
+                    change_operations=["update"],
+                    invalidates_undo=invalidates,
+                )
+                self.assertEqual(
+                    len(_sp3a5e_calls(log, "_prepare_plan_for_authoritative_refresh")),
+                    expected,
+                )
+
+    def test_reconstructed_conditions_are_accepted_for_update_and_reorder_only(self):
+        folder = CollaborationResourceType.CONDITION_FOLDER.value
+        cases = (
+            ("update", ["name"], ["update"], True),
+            ("reorder", ["name"], ["reorder"], True),
+            ("update and reorder", ["name"], ["update", "reorder"], True),
+            ("create", ["name"], ["create"], False),
+            ("delete", ["name"], ["delete"], False),
+            ("update and create", ["name"], ["update", "create"], False),
+            ("folder only without operations", [folder], [], True),
+            ("folder with create", [folder], ["create"], False),
+            ("other fields without operations", ["name"], [], False),
+        )
+        for label, fields, operations, accepted in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(log)
+                self._changed(
+                    coordinator, changed_fields=fields, change_operations=operations
+                )
+                expected = {"accept_reconstructed_conditions": True} if accepted else {}
+                self.assertEqual(
+                    _sp3a5e_calls(log, "_reconcile_active_placement"),
+                    [((), expected)],
+                )
+
+    def test_condition_change_with_undo_invalidation_but_no_undo_service_is_projected(
+        self,
+    ):
+        log = []
+        coordinator = self._coordinator(log, undo=False)
+        self._changed(coordinator, invalidates_undo=True)
+        self.assertIn("sidebar.refresh_conditions_from_memory", _sp3a5e_names(log))
+
+
+class Sp3a5eAreasTests(unittest.TestCase):
+    BID = BidRef("sql-db", "bid-1")
+
+    def _coordinator(self, log, *, selected=BID, undo=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected,
+            active_page_uid="page-1",
+            selected_area_uid="stale",
+        )
+        coordinator._undo_service = (
+            _sp3a5e_fake(log, "undo", ("clear",)) if undo else None
+        )
+        return coordinator
+
+    def test_deleted_areas_of_the_selected_bid_clear_undo_history(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_bid_areas_deleted("sql-db", "bid-1", ["a1"])
+        self.assertEqual(log, [("undo.clear", (), {})])
+
+    def test_deleted_areas_that_do_not_apply_keep_undo_history(self):
+        cases = (
+            ("no areas", dict(), []),
+            ("other bid", dict(selected=BidRef("sql-db", "bid-2")), ["a1"]),
+            ("nothing selected", dict(selected=None), ["a1"]),
+            ("swapped identity", dict(selected=BidRef("bid-1", "sql-db")), ["a1"]),
+        )
+        for label, options, area_uids in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(log, **options)
+                coordinator._on_bid_areas_deleted("sql-db", "bid-1", area_uids)
+                self.assertEqual(log, [])
+
+    def test_deleted_areas_without_undo_service_are_ignored(self):
+        log = []
+        coordinator = self._coordinator(log, undo=False)
+        coordinator._on_bid_areas_deleted("sql-db", "bid-1", ["a1"])
+        self.assertEqual(log, [])
+
+    def _remote_coordinator(self, log, *, blocker=True, area_uids=("area-2", None)):
+        coordinator = self._coordinator(log)
+        coordinator.plan_view = SimpleNamespace(
+            has_active_remote_projection_blocker=lambda: blocker
+        )
+        remaining = list(area_uids)
+        coordinator._page_settings_bar = _sp3a5e_fake(
+            log,
+            "page_settings",
+            ("get_selected_area_uid", "load_bid_areas"),
+            effects={"get_selected_area_uid": lambda: remaining.pop(0)},
+        )
+        coordinator.project_data = _sp3a5e_fake(
+            log,
+            "data",
+            (
+                "get_area_uids_with_takeoff",
+                "get_bid_area_snapshot",
+                "get_selected_page_uids",
+            ),
+            returns={
+                "get_area_uids_with_takeoff": {"area-1"},
+                "get_bid_area_snapshot": "area-snapshot",
+                "get_selected_page_uids": ["page-1"],
+            },
+        )
+        coordinator._sidebar = _sp3a5e_fake(
+            log, "sidebar", ("load_condition_summary_from_memory",)
+        )
+        coordinator._is_summary_tab_active = lambda: True
+        for name in (
+            "_prepare_plan_for_authoritative_refresh",
+            "_refresh_takeoff_dependent_page_controls",
+            "_request_or_defer_mesh_refresh",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        return coordinator
+
+    def _remote(self, coordinator, **kwargs):
+        coordinator._on_remote_areas_changed(
+            database_id="sql-db", bid_uid="bid-1", **kwargs
+        )
+
+    def test_remote_area_change_reloads_area_controls_then_mesh_and_summary(self):
+        log = []
+        coordinator = self._remote_coordinator(log)
+        self._remote(coordinator)
+        self.assertEqual(
+            log,
+            [
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("undo.clear", (), {}),
+                ("page_settings.get_selected_area_uid", (), {}),
+                ("data.get_area_uids_with_takeoff", (), {}),
+                ("data.get_bid_area_snapshot", (), {}),
+                (
+                    "page_settings.load_bid_areas",
+                    (self.BID,),
+                    {
+                        "areas": "area-snapshot",
+                        "areas_with_takeoff": {"area-1"},
+                        "selected_uid": "area-2",
+                    },
+                ),
+                ("page_settings.get_selected_area_uid", (), {}),
+                (
+                    "_refresh_takeoff_dependent_page_controls",
+                    ("page-1",),
+                    {"bid_areas": {"area-1"}, "refresh_page_usage": True},
+                ),
+                ("data.get_selected_page_uids", (), {}),
+                ("_request_or_defer_mesh_refresh", (["page-1"],), {}),
+                ("sidebar.load_condition_summary_from_memory", (), {}),
+            ],
+        )
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "")
+
+    def test_remote_area_change_keeps_selected_area_uid_when_it_survives(self):
+        log = []
+        coordinator = self._remote_coordinator(log, area_uids=("area-2", "area-2"))
+        self._remote(coordinator)
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "area-2")
+
+    def test_remote_area_change_with_pending_takeoffs_keeps_page_usage(self):
+        log = []
+        coordinator = self._remote_coordinator(log)
+        self._remote(coordinator, takeoff_family_pending=True)
+        self.assertFalse(
+            _sp3a5e_calls(log, "_refresh_takeoff_dependent_page_controls")[0][1][
+                "refresh_page_usage"
+            ]
+        )
+
+    def test_projected_page_controls_are_not_reloaded(self):
+        log = []
+        coordinator = self._remote_coordinator(log)
+        self._remote(coordinator, page_controls_projected=True)
+        names = _sp3a5e_names(log)
+        self.assertNotIn("page_settings.load_bid_areas", names)
+        self.assertNotIn("_refresh_takeoff_dependent_page_controls", names)
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "stale")
+
+    def test_local_or_unblocked_remote_area_change_keeps_plan_and_undo(self):
+        log = []
+        coordinator = self._remote_coordinator(log, blocker=False)
+        self._remote(coordinator)
+        names = _sp3a5e_names(log)
+        self.assertNotIn("_prepare_plan_for_authoritative_refresh", names)
+        self.assertIn("undo.clear", names)
+        log = []
+        coordinator = self._remote_coordinator(log)
+        self._remote(coordinator, local_completion=True)
+        names = _sp3a5e_names(log)
+        self.assertNotIn("_prepare_plan_for_authoritative_refresh", names)
+        self.assertNotIn("undo.clear", names)
+
+    def test_deferred_remote_area_change_skips_mesh_and_summary_can_be_skipped(self):
+        log = []
+        coordinator = self._remote_coordinator(log)
+        self._remote(
+            coordinator, defer_plan_projection=True, summary_refresh_required=False
+        )
+        names = _sp3a5e_names(log)
+        self.assertNotIn("_request_or_defer_mesh_refresh", names)
+        self.assertNotIn("sidebar.load_condition_summary_from_memory", names)
+
+    def test_other_bid_area_change_is_ignored(self):
+        log = []
+        coordinator = self._remote_coordinator(log)
+        coordinator._on_remote_areas_changed(database_id="sql-db", bid_uid="other")
+        self.assertEqual(log, [])
+
+    def test_remote_area_change_without_page_settings_bar_still_defers(self):
+        log = []
+        coordinator = self._remote_coordinator(log)
+        coordinator._page_settings_bar = None
+        self._remote(coordinator)
+        self.assertEqual(
+            _sp3a5e_names(log)[:3],
+            [
+                "_prepare_plan_for_authoritative_refresh",
+                "undo.clear",
+                "data.get_selected_page_uids",
+            ],
+        )
+
+
+class Sp3a5eCollaborationStatusTests(unittest.TestCase):
+    def _coordinator(self, log, *, selected="db-a", panel=True, handler=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=selected,
+            get_selected_bid_ref=lambda: BidRef("db-a", "1"),
+        )
+        coordinator._deferred_persistence = _sp3a5e_fake(
+            log, "deferred", ("cancel_for_file",)
+        )
+        coordinator._placement = _sp3a5e_fake(log, "placement", ("force_exit",))
+        coordinator._plan_view_handler = (
+            _sp3a5e_fake(log, "handler", ("hide_pending_takeoff_placement_previews",))
+            if handler
+            else None
+        )
+        coordinator._status_panel = (
+            _sp3a5e_fake(
+                log,
+                "panel",
+                (
+                    "set_collaboration_state",
+                    "set_collaboration_mutation_state",
+                    "set_collaboration_presence",
+                ),
+            )
+            if panel
+            else None
+        )
+        coordinator._sql_collaboration = _sp3a5e_fake(
+            log,
+            "sql",
+            ("status",),
+            effects={
+                "status": lambda database_id: CollaborationStatus(
+                    database_id, SynchronizationState.CONFLICTED, "needs reload"
+                )
+            },
+        )
+        return coordinator
+
+    def test_failed_synchronization_of_selected_database_stops_editing(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_collaboration_state_changed("db-a", "disconnected", "lost")
+        self.assertEqual(
+            log,
+            [
+                ("handler.hide_pending_takeoff_placement_previews", (), {}),
+                ("deferred.cancel_for_file", ("db-a",), {}),
+                ("placement.force_exit", (), {}),
+                ("panel.set_collaboration_state", ("disconnected", "lost"), {}),
+            ],
+        )
+
+    def test_healthy_and_catching_up_states_keep_editing(self):
+        for state in (
+            SynchronizationState.HEALTHY.value,
+            SynchronizationState.CATCHING_UP.value,
+        ):
+            with self.subTest(state):
+                log = []
+                coordinator = self._coordinator(log)
+                coordinator._on_collaboration_state_changed("db-a", state, "ok")
+                self.assertEqual(
+                    log, [("panel.set_collaboration_state", (state, "ok"), {})]
+                )
+
+    def test_failed_synchronization_of_other_database_only_cancels_its_writes(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_collaboration_state_changed("db-b", "disconnected", "lost")
+        self.assertEqual(log, [("deferred.cancel_for_file", ("db-b",), {})])
+
+    def test_failed_synchronization_without_plan_handler_or_panel_is_tolerated(self):
+        log = []
+        coordinator = self._coordinator(log, handler=False, panel=False)
+        coordinator._on_collaboration_state_changed("db-a", "disconnected", "lost")
+        self.assertEqual(
+            _sp3a5e_names(log), ["deferred.cancel_for_file", "placement.force_exit"]
+        )
+
+    def test_state_without_database_id_only_updates_panel_when_nothing_selected(self):
+        log = []
+        coordinator = self._coordinator(log, selected=None)
+        coordinator._on_collaboration_state_changed("", "disconnected", "lost")
+        self.assertEqual(
+            log,
+            [
+                ("handler.hide_pending_takeoff_placement_previews", (), {}),
+                ("panel.set_collaboration_state", ("disconnected", "lost"), {}),
+            ],
+        )
+
+    def test_mutation_state_projects_status_and_mutation_progress(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_collaboration_mutation_state_changed(
+            database_id="db-a",
+            operation_id="op",
+            mutation_type="takeoff",
+            state="queued",
+            message="Saving",
+            pending_count=3,
+        )
+        self.assertEqual(
+            log,
+            [
+                ("sql.status", ("db-a",), {}),
+                ("panel.set_collaboration_state", ("conflicted", "needs reload"), {}),
+                ("panel.set_collaboration_mutation_state", ("queued", 3, "Saving"), {}),
+            ],
+        )
+
+    def test_mutation_state_defaults_to_no_pending_mutations(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_collaboration_mutation_state_changed(
+            database_id="db-a", state="idle", message="Done"
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "panel.set_collaboration_mutation_state"),
+            [(("idle", 0, "Done"), {})],
+        )
+
+    def test_mutation_state_of_other_database_or_without_panel_is_ignored(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_collaboration_mutation_state_changed(
+            database_id="db-b", state="queued"
+        )
+        self.assertEqual(log, [])
+        coordinator = self._coordinator(log, panel=False)
+        coordinator._on_collaboration_mutation_state_changed(
+            database_id="db-a", state="queued"
+        )
+        self.assertEqual(log, [])
+
+    def test_mutation_state_without_database_matches_when_nothing_is_selected(self):
+        log = []
+        coordinator = self._coordinator(log, selected=None)
+        coordinator._on_collaboration_mutation_state_changed(state="queued")
+        self.assertEqual(
+            _sp3a5e_names(log),
+            [
+                "sql.status",
+                "panel.set_collaboration_state",
+                "panel.set_collaboration_mutation_state",
+            ],
+        )
+
+    def test_presence_is_shown_for_the_selected_bid_only(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_presence_changed("db-a", "1", ["ann"])
+        self.assertEqual(log, [("panel.set_collaboration_presence", (["ann"],), {})])
+        log.clear()
+        coordinator._on_presence_changed("db-a", "1", None)
+        self.assertEqual(log, [("panel.set_collaboration_presence", ([],), {})])
+        log.clear()
+        coordinator._on_presence_changed("db-a", "2", ["ann"])
+        coordinator._on_presence_changed("1", "db-a", ["ann"])
+        self.assertEqual(log, [])
+
+    def test_presence_without_status_panel_is_ignored(self):
+        log = []
+        coordinator = self._coordinator(log, panel=False)
+        coordinator._on_presence_changed("db-a", "1", ["ann"])
+        self.assertEqual(log, [])
+
+    def test_sync_status_resets_presence_mutation_and_projects_database_status(self):
+        log = []
+        coordinator = self._coordinator(log)
+        status = coordinator._sync_collaboration_status("db-a", reset_mutation=True)
+        self.assertEqual(status.state, SynchronizationState.CONFLICTED)
+        self.assertEqual(
+            log,
+            [
+                ("panel.set_collaboration_presence", ([],), {}),
+                ("panel.set_collaboration_mutation_state", ("", 0), {}),
+                ("sql.status", ("db-a",), {}),
+                ("panel.set_collaboration_state", ("conflicted", "needs reload"), {}),
+            ],
+        )
+
+    def test_sync_status_without_reset_keeps_mutation_state(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._sync_collaboration_status("db-a", reset_mutation=False)
+        self.assertNotIn("panel.set_collaboration_mutation_state", _sp3a5e_names(log))
+
+    def test_sync_status_without_database_reports_stopped(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self.assertIsNone(
+            coordinator._sync_collaboration_status("", reset_mutation=False)
+        )
+        self.assertEqual(
+            log,
+            [
+                ("panel.set_collaboration_presence", ([],), {}),
+                ("panel.set_collaboration_state", ("stopped",), {}),
+            ],
+        )
+
+    def test_sync_status_without_panel_returns_none(self):
+        log = []
+        coordinator = self._coordinator(log, panel=False)
+        self.assertIsNone(
+            coordinator._sync_collaboration_status("db-a", reset_mutation=True)
+        )
+        self.assertEqual(log, [])
+
+
+class Sp3a5eFullReconciliationTests(unittest.TestCase):
+    def _coordinator(self, log, *, current, recovery_started):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._deferred_persistence = _sp3a5e_fake(
+            log, "deferred", ("cancel_for_file",)
+        )
+        coordinator._sql_collaboration = _sp3a5e_fake(
+            log,
+            "sql",
+            ("resume_controlled_recovery",),
+            returns={"resume_controlled_recovery": recovery_started},
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_current_file_path=lambda: current
+        )
+        coordinator.main_window = "main-window"
+        _sp3a5e_stub(coordinator, log, "_prepare_for_modal_mutation_error")
+        return coordinator
+
+    def _reconcile(self, coordinator, **kwargs):
+        with patch(f"{_SP3A5E_MODULE}.show_warning") as warning:
+            coordinator._on_full_reconciliation_required("db-a", **kwargs)
+        return warning
+
+    def test_inactive_database_resumes_recovery_without_any_dialog(self):
+        log = []
+        coordinator = self._coordinator(log, current="db-b", recovery_started=False)
+        warning = self._reconcile(coordinator, reason="broken")
+        self.assertEqual(
+            log,
+            [
+                ("deferred.cancel_for_file", ("db-a",), {}),
+                ("sql.resume_controlled_recovery", ("db-a",), {}),
+            ],
+        )
+        warning.assert_not_called()
+
+    def test_active_database_with_started_recovery_waits_silently(self):
+        log = []
+        coordinator = self._coordinator(log, current="db-a", recovery_started=True)
+        warning = self._reconcile(coordinator, reason="broken")
+        self.assertEqual(_sp3a5e_calls(log, "_prepare_for_modal_mutation_error"), [])
+        warning.assert_not_called()
+
+    def test_active_database_without_recovery_warns_after_releasing_edits(self):
+        log = []
+        coordinator = self._coordinator(log, current="db-a", recovery_started=False)
+        warning = self._reconcile(coordinator, reason="broken")
+        self.assertEqual(
+            _sp3a5e_names(log),
+            [
+                "deferred.cancel_for_file",
+                "sql.resume_controlled_recovery",
+                "_prepare_for_modal_mutation_error",
+            ],
+        )
+        warning.assert_called_once_with("main-window", "SQL Synchronization", "broken")
+
+    def test_active_database_without_reason_uses_the_default_message(self):
+        log = []
+        coordinator = self._coordinator(log, current="db-a", recovery_started=False)
+        warning = self._reconcile(coordinator)
+        warning.assert_called_once_with(
+            "main-window",
+            "SQL Synchronization",
+            "The SQL database could not be reconciled safely.",
+        )
+
+
+class Sp3a5eRemoteHierarchyTests(unittest.TestCase):
+    def _coordinator(
+        self,
+        log,
+        *,
+        active_bid=None,
+        selected_bid=None,
+        selected_file="",
+        node_before=None,
+        node_after=None,
+        current_file="db-a",
+        bid_exists=True,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        nodes = [node_before, node_after]
+        coordinator.project_data = _sp3a5e_fake(
+            log,
+            "data",
+            ("get_current_bid_ref", "get_current_file_path", "get_bid"),
+            returns={
+                "get_current_bid_ref": active_bid,
+                "get_current_file_path": current_file,
+                "get_bid": object() if bid_exists else None,
+            },
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected_bid,
+            selected_file_path=selected_file,
+        )
+        coordinator.main_window = _sp3a5e_fake(
+            log,
+            "main_window",
+            ("refresh_window_title",),
+            project_view=_sp3a5e_fake(
+                log,
+                "project_view",
+                (
+                    "get_selected_node_state",
+                    "notify_current_selection",
+                    "restore_file_selection",
+                    "restore_bid_selection",
+                ),
+                effects={"get_selected_node_state": lambda: nodes.pop(0)},
+            ),
+        )
+        coordinator._sidebar = _sp3a5e_fake(
+            log, "sidebar", ("refresh_conditions_from_memory",)
+        )
+        coordinator.ui_access_manager = _sp3a5e_fake(log, "access", ("refresh",))
+        for name in (
+            "_do_file_refresh",
+            "handle_bid_selection",
+            "_on_file_selected",
+            "_resolve_bid_lock_state",
+            "_update_menu_state",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        return coordinator
+
+    @staticmethod
+    def _bid_node(**overrides):
+        node = {"kind": "bid", "file_path": "db-a", "bid_uid": "3"}
+        node.update(overrides)
+        return node
+
+    def _names(self, log):
+        return [
+            name
+            for name in _sp3a5e_names(log)
+            if name not in ("data.get_current_bid_ref", "data.get_current_file_path")
+        ]
+
+    def test_existing_active_bid_restores_tree_selection_and_access(self):
+        log = []
+        active = BidRef("db-a", "1")
+        coordinator = self._coordinator(log, active_bid=active)
+        coordinator._on_remote_hierarchy_changed("db-a")
+        self.assertEqual(
+            self._names(log),
+            [
+                "project_view.get_selected_node_state",
+                "_do_file_refresh",
+                "sidebar.refresh_conditions_from_memory",
+                "data.get_bid",
+                "_resolve_bid_lock_state",
+                "access.refresh",
+                "_update_menu_state",
+                "project_view.restore_bid_selection",
+                "main_window.refresh_window_title",
+            ],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_resolve_bid_lock_state"), [((active,), {})]
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "project_view.restore_bid_selection"),
+            [((active,), {})],
+        )
+
+    def test_projected_conditions_are_not_reloaded_again(self):
+        log = []
+        coordinator = self._coordinator(log, active_bid=BidRef("db-a", "1"))
+        coordinator._on_remote_hierarchy_changed(
+            "db-a", condition_family_projected=True
+        )
+        self.assertNotIn("sidebar.refresh_conditions_from_memory", _sp3a5e_names(log))
+
+    def test_active_bid_of_other_database_is_left_alone(self):
+        log = []
+        coordinator = self._coordinator(log, active_bid=BidRef("db-b", "1"))
+        coordinator._on_remote_hierarchy_changed("db-a")
+        self.assertEqual(_sp3a5e_calls(log, "project_view.restore_bid_selection"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_on_file_selected"), [])
+
+    def test_deleted_active_bid_falls_back_to_the_database_root(self):
+        log = []
+        coordinator = self._coordinator(
+            log, active_bid=BidRef("db-a", "1"), bid_exists=False
+        )
+        coordinator._on_remote_hierarchy_changed("db-a")
+        self.assertEqual(
+            _sp3a5e_calls(log, "_on_file_selected"),
+            [(("db-a",), {"is_database_root": True})],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "project_view.restore_file_selection"),
+            [(("db-a",), {})],
+        )
+        self.assertEqual(_sp3a5e_calls(log, "project_view.restore_bid_selection"), [])
+
+    def test_other_selected_database_ignores_remote_hierarchy_selection(self):
+        log = []
+        coordinator = self._coordinator(
+            log,
+            selected_bid=BidRef("db-a", "1"),
+            selected_file="db-b",
+            node_after=self._bid_node(),
+        )
+        coordinator._on_remote_hierarchy_changed("db-a")
+        names = _sp3a5e_names(log)
+        self.assertNotIn("handle_bid_selection", names)
+        self.assertNotIn("project_view.notify_current_selection", names)
+        self.assertNotIn("project_view.restore_file_selection", names)
+
+    def test_selected_bid_is_reselected_forcefully_instead_of_tree_node(self):
+        log = []
+        selected = BidRef("db-a", "1")
+        coordinator = self._coordinator(
+            log,
+            selected_bid=selected,
+            node_after=self._bid_node(bid_uid="9"),
+        )
+        coordinator._on_remote_hierarchy_changed("db-a")
+        self.assertEqual(
+            _sp3a5e_calls(log, "handle_bid_selection"), [((selected,), {"force": True})]
+        )
+        self.assertNotIn("project_view.notify_current_selection", _sp3a5e_names(log))
+
+    def test_bid_node_selected_in_tree_is_restored_when_no_bid_was_selected(self):
+        log = []
+        coordinator = self._coordinator(log, node_after=self._bid_node(bid_uid=3))
+        coordinator._on_remote_hierarchy_changed("db-a")
+        self.assertEqual(
+            _sp3a5e_calls(log, "handle_bid_selection"),
+            [((BidRef("db-a", "3"),), {"force": True})],
+        )
+
+    def test_tree_node_that_is_not_a_bid_of_this_database_is_not_restored(self):
+        nodes = (
+            ("file node", self._bid_node(kind="file")),
+            ("other database", self._bid_node(file_path="db-b")),
+            ("no bid uid", self._bid_node(bid_uid="")),
+            ("no file path", self._bid_node(file_path=None)),
+        )
+        for label, node in nodes:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(log, node_after=node)
+                coordinator._on_remote_hierarchy_changed("db-a")
+                self.assertEqual(_sp3a5e_calls(log, "handle_bid_selection"), [])
+                self.assertEqual(
+                    _sp3a5e_calls(log, "project_view.notify_current_selection"),
+                    [((), {})],
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(log, "project_view.restore_file_selection"), []
+                )
+
+    def test_selected_bid_of_another_file_or_missing_bid_is_not_restored(self):
+        cases = (
+            ("other file", BidRef("db-b", "1"), True),
+            ("missing bid", BidRef("db-a", "1"), False),
+        )
+        for label, selected, exists in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(
+                    log, selected_bid=selected, bid_exists=exists
+                )
+                coordinator._on_remote_hierarchy_changed("db-a")
+                self.assertEqual(_sp3a5e_calls(log, "handle_bid_selection"), [])
+
+    def test_unchanged_tree_selection_restores_database_selection_when_none_is_selected(
+        self,
+    ):
+        log = []
+        coordinator = self._coordinator(log, selected_file="", current_file="db-a")
+        coordinator._on_remote_hierarchy_changed("db-a")
+        self.assertEqual(
+            _sp3a5e_calls(log, "project_view.restore_file_selection"),
+            [(("db-a",), {})],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "project_view.notify_current_selection"), [((), {})]
+        )
+
+    def test_database_selection_is_kept_when_something_is_already_selected(self):
+        cases = (
+            ("selection exists", "db-a", "db-a"),
+            ("other current database", "", "db-b"),
+        )
+        for label, selected_file, current in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(
+                    log, selected_file=selected_file, current_file=current
+                )
+                coordinator._on_remote_hierarchy_changed("db-a")
+                self.assertEqual(
+                    _sp3a5e_calls(log, "project_view.restore_file_selection"), []
+                )
+                self.assertEqual(
+                    _sp3a5e_calls(log, "project_view.notify_current_selection"), []
+                )
+
+
+class Sp3a5eRemotePlanProjectionTests(unittest.TestCase):
+    BID = BidRef("sql-db", "bid-1")
+
+    def _coordinator(
+        self,
+        log,
+        *,
+        selected=BID,
+        active="page-1",
+        cleaning=False,
+        plan_view=True,
+        accepted=True,
+        viewer_error=None,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = cleaning
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected, active_page_uid=active
+        )
+        coordinator.project_data = _sp3a5e_fake(
+            log,
+            "data",
+            ("get_selected_page_uids",),
+            returns={"get_selected_page_uids": ["page-1", "page-2"]},
+        )
+        coordinator.plan_view = object() if plan_view else None
+        self.completions = []
+
+        def request(**kwargs):
+            log.append(("viewer.request_remote_plan_update", (), kwargs))
+            self.completions.append(kwargs["completion"])
+            if viewer_error is not None:
+                raise viewer_error
+            return accepted
+
+        coordinator._viewer = SimpleNamespace(request_remote_plan_update=request)
+        for name in (
+            "_update_native_page_textures",
+            "_request_or_defer_mesh_refresh",
+            "_apply_pending_hotlink_named_view_focus",
+            "_update_export_menu_state",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        return coordinator
+
+    def _barrier(self, current=True):
+        self.outcomes = []
+        self.surfaces = []
+        surfaces = self.surfaces
+
+        class RecordingBarrier(RemoteProjectionBarrier):
+            def register(self, surface_id):
+                surfaces.append(surface_id)
+                return super().register(surface_id)
+
+        return RecordingBarrier(
+            database_id="sql-db",
+            runtime_generation=3,
+            is_runtime_current=lambda _database_id, _generation: current,
+            on_complete=self.outcomes.append,
+        )
+
+    def _request(self, coordinator, barrier, **overrides):
+        arguments = dict(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            runtime_generation=3,
+            families=(),
+            condition_uids=(),
+            condition_changed_fields=None,
+            condition_change_operations=(),
+            areas_changed=False,
+            resource_uids_by_family={},
+            barrier=barrier,
+        )
+        arguments.update(overrides)
+        coordinator._on_remote_plan_projection_requested(**arguments)
+
+    def _plan_requests(self, log):
+        return _sp3a5e_calls(log, "viewer.request_remote_plan_update")
+
+    def test_mesh_refresh_precedes_the_plan_request_and_barrier_waits_for_it(self):
+        log = []
+        coordinator = self._coordinator(log)
+        barrier = self._barrier()
+        resource_uids = {_SP3A5E_FAMILY.TAKEOFFS.value: ("t1",)}
+        self._request(
+            coordinator,
+            barrier,
+            families=(_SP3A5E_FAMILY.TAKEOFFS.value,),
+            resource_uids_by_family=resource_uids,
+        )
+        self.assertEqual(
+            _sp3a5e_names(log),
+            [
+                "data.get_selected_page_uids",
+                "_request_or_defer_mesh_refresh",
+                "viewer.request_remote_plan_update",
+            ],
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_request_or_defer_mesh_refresh"),
+            [((["page-1", "page-2"],), {})],
+        )
+        request = self._plan_requests(log)[0][1]
+        self.assertEqual(
+            {key: value for key, value in request.items() if key != "completion"},
+            {
+                "database_id": "sql-db",
+                "runtime_generation": 3,
+                "bid_uid": "bid-1",
+                "resource_uids_by_family": resource_uids,
+                "barrier": barrier,
+            },
+        )
+        self.assertEqual(self.surfaces, ["main-plan"])
+        barrier.seal()
+        self.assertEqual(self.outcomes, [])
+        self.completions[0](True)
+        self.assertEqual(self.outcomes, [True])
+
+    def test_successful_plan_completion_focuses_named_view_then_refreshes_shell(self):
+        log = []
+        coordinator = self._coordinator(log)
+        barrier = self._barrier()
+        self._request(coordinator, barrier, areas_changed=True)
+        barrier.seal()
+        log.clear()
+        self.completions[0](True)
+        self.assertEqual(
+            log,
+            [
+                (
+                    "_apply_pending_hotlink_named_view_focus",
+                    (),
+                    {"require_stable": True},
+                ),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+        self.assertEqual(self.outcomes, [True])
+
+    def test_failed_plan_completion_fails_the_barrier_without_shell_work(self):
+        log = []
+        coordinator = self._coordinator(log)
+        barrier = self._barrier()
+        self._request(coordinator, barrier, areas_changed=True)
+        barrier.seal()
+        log.clear()
+        self.completions[0](False)
+        self.assertEqual(log, [])
+        self.assertEqual(self.outcomes, [False])
+
+    def test_stale_runtime_fails_the_barrier_even_when_plan_completes(self):
+        log = []
+        coordinator = self._coordinator(log)
+        barrier = self._barrier(current=False)
+        self._request(coordinator, barrier, areas_changed=True)
+        barrier.seal()
+        self.completions[0](True)
+        self.assertEqual(self.outcomes, [False])
+
+    def test_completion_during_cleanup_skips_shell_work_but_completes_the_token(self):
+        log = []
+        coordinator = self._coordinator(log)
+        barrier = self._barrier()
+        self._request(coordinator, barrier, areas_changed=True)
+        barrier.seal()
+        coordinator._is_cleaning_up = True
+        log.clear()
+        self.completions[0](True)
+        self.assertEqual(log, [])
+        self.assertEqual(self.outcomes, [True])
+
+    def test_viewer_rejecting_the_plan_update_fails_the_barrier(self):
+        log = []
+        coordinator = self._coordinator(log, accepted=False)
+        barrier = self._barrier()
+        self._request(coordinator, barrier, areas_changed=True)
+        barrier.seal()
+        self.assertEqual(len(self._plan_requests(log)), 1)
+        self.assertEqual(self.outcomes, [False])
+
+    def test_viewer_error_fails_the_barrier_and_is_propagated(self):
+        log = []
+        coordinator = self._coordinator(log, viewer_error=RuntimeError("viewer broke"))
+        barrier = self._barrier()
+        with self.assertRaisesRegex(RuntimeError, "viewer broke"):
+            self._request(coordinator, barrier, areas_changed=True)
+        barrier.seal()
+        self.assertEqual(self.outcomes, [False])
+
+    def test_page_texture_update_replaces_mesh_refresh(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._request(
+            coordinator,
+            self._barrier(),
+            families=(_SP3A5E_FAMILY.PAGES.value,),
+            page_texture_only=True,
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_update_native_page_textures"), [((), {})])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_texture_only_with_unchanged_scene_still_updates_textures_only(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._request(
+            coordinator,
+            self._barrier(),
+            families=(_SP3A5E_FAMILY.PAGES.value,),
+            page_texture_only=True,
+            mesh_scene_unchanged=True,
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_update_native_page_textures"), [((), {})])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_unchanged_mesh_scene_skips_mesh_and_texture_work(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._request(
+            coordinator,
+            self._barrier(),
+            families=(_SP3A5E_FAMILY.TAKEOFFS.value,),
+            mesh_scene_unchanged=True,
+        )
+        self.assertEqual(_sp3a5e_calls(log, "_update_native_page_textures"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), [])
+
+    def test_mesh_and_texture_work_is_skipped_during_cleanup_or_for_other_bid(self):
+        cases = (
+            ("cleaning", dict(cleaning=True)),
+            ("other bid", dict(selected=BidRef("sql-db", "bid-2"))),
+        )
+        for label, options in cases:
+            for texture_only in (True, False):
+                with self.subTest(label, texture_only=texture_only):
+                    log = []
+                    coordinator = self._coordinator(log, **options)
+                    self._request(
+                        coordinator,
+                        self._barrier(),
+                        families=(_SP3A5E_FAMILY.TAKEOFFS.value,),
+                        page_texture_only=texture_only,
+                    )
+                    self.assertEqual(
+                        _sp3a5e_calls(log, "_update_native_page_textures"), []
+                    )
+                    self.assertEqual(
+                        _sp3a5e_calls(log, "_request_or_defer_mesh_refresh"), []
+                    )
+
+    def test_area_change_alone_refreshes_the_mesh(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._request(coordinator, self._barrier(), areas_changed=True)
+        self.assertEqual(
+            _sp3a5e_calls(log, "_request_or_defer_mesh_refresh"),
+            [((["page-1", "page-2"],), {})],
+        )
+
+    def test_condition_changes_refresh_mesh_only_for_geometry_fields(self):
+        cases = (
+            ("geometry", ("z_value",), 1),
+            ("metadata", ("name",), 0),
+        )
+        for label, fields, expected in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(log)
+                self._request(
+                    coordinator,
+                    self._barrier(),
+                    condition_changed_fields=fields,
+                    condition_change_operations=("update",),
+                )
+                self.assertEqual(
+                    len(_sp3a5e_calls(log, "_request_or_defer_mesh_refresh")), expected
+                )
+
+    def test_plan_is_requested_for_conditions_areas_and_active_page_families(self):
+        cases = (
+            ("areas", dict(areas_changed=True)),
+            (
+                "plan condition field",
+                dict(
+                    condition_changed_fields=("name",),
+                    condition_change_operations=("update",),
+                ),
+            ),
+            (
+                "family without page scope",
+                dict(families=(_SP3A5E_FAMILY.TAKEOFFS.value,)),
+            ),
+            (
+                "family on active page",
+                dict(
+                    families=(_SP3A5E_FAMILY.TAKEOFFS.value,),
+                    affected_page_uids_by_family={
+                        _SP3A5E_FAMILY.TAKEOFFS.value: ("page-1",)
+                    },
+                ),
+            ),
+        )
+        for label, overrides in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(log)
+                self._request(coordinator, self._barrier(), **overrides)
+                self.assertEqual(len(self._plan_requests(log)), 1)
+
+    def test_plan_is_not_requested_when_nothing_requires_it(self):
+        cases = (
+            ("nothing changed", {}, {}),
+            (
+                "non-plan condition field",
+                {},
+                dict(
+                    condition_changed_fields=("notes",),
+                    condition_change_operations=("update",),
+                ),
+            ),
+            (
+                "family on other page",
+                {},
+                dict(
+                    families=(_SP3A5E_FAMILY.TAKEOFFS.value,),
+                    affected_page_uids_by_family={
+                        _SP3A5E_FAMILY.TAKEOFFS.value: ("page-2",)
+                    },
+                ),
+            ),
+            ("cleaning", dict(cleaning=True), dict(areas_changed=True)),
+            (
+                "other bid",
+                dict(selected=BidRef("sql-db", "bid-2")),
+                dict(areas_changed=True),
+            ),
+            ("no active page", dict(active=""), dict(areas_changed=True)),
+            ("no plan view", dict(plan_view=False), dict(areas_changed=True)),
+        )
+        for label, options, overrides in cases:
+            with self.subTest(label):
+                log = []
+                coordinator = self._coordinator(log, **options)
+                barrier = self._barrier()
+                self._request(coordinator, barrier, **overrides)
+                self.assertEqual(self._plan_requests(log), [])
+                barrier.seal()
+                self.assertEqual(self.outcomes, [True])
+
+
+class Sp3a5eRemotePlanCompletionTests(unittest.TestCase):
+    def _complete(self, *, success, cleaning):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = cleaning
+        for name in (
+            "_apply_pending_hotlink_named_view_focus",
+            "_update_export_menu_state",
+        ):
+            _sp3a5e_stub(coordinator, log, name)
+        token = _sp3a5e_fake(log, "token", ("complete",))
+        coordinator._complete_remote_plan_projection(token, success)
+        return log
+
+    def test_success_applies_focus_and_shell_refresh_before_completing(self):
+        self.assertEqual(
+            self._complete(success=True, cleaning=False),
+            [
+                (
+                    "_apply_pending_hotlink_named_view_focus",
+                    (),
+                    {"require_stable": True},
+                ),
+                ("_update_export_menu_state", (), {}),
+                ("token.complete", (True,), {}),
+            ],
+        )
+
+    def test_failure_or_cleanup_only_completes_the_token(self):
+        self.assertEqual(
+            self._complete(success=False, cleaning=False),
+            [("token.complete", (False,), {})],
+        )
+        self.assertEqual(
+            self._complete(success=True, cleaning=True),
+            [("token.complete", (True,), {})],
+        )
+        self.assertEqual(
+            self._complete(success=False, cleaning=True),
+            [("token.complete", (False,), {})],
+        )
+
+
+class Sp3a5eSynchronizationConflictTests(unittest.TestCase):
+    def _run(self, *, action=None, **kwargs):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._sql_collaboration = _sp3a5e_fake(
+            log,
+            "sql",
+            ("enter_conflict", "enter_resource_conflict", "discard_local_draft"),
+        )
+        coordinator._icon_provider = "icons"
+        coordinator.main_window = "window"
+        coordinator.event_bus = "bus"
+        _sp3a5e_stub(coordinator, log, "_prepare_for_modal_mutation_error")
+        _sp3a5e_stub(coordinator, log, "_on_full_reconciliation_required")
+
+        def make_dialog(icons, message, actions, parent):
+            log.append(("dialog.create", (icons, message, actions, parent), {}))
+            return _sp3a5e_fake(
+                log,
+                "dialog",
+                ("selected_action",),
+                returns={"selected_action": action},
+            )
+
+        with (
+            patch(f"{_SP3A5E_MODULE}.SynchronizationConflictDialog", make_dialog),
+            patch(
+                f"{_SP3A5E_MODULE}.exec_with_ost_blocking",
+                side_effect=lambda dialog, bus: log.append(("dialog.exec", (bus,), {})),
+            ),
+            patch(f"{_SP3A5E_MODULE}.isValid", return_value=True),
+            patch(
+                f"{_SP3A5E_MODULE}.delete_later_if_valid",
+                side_effect=lambda dialog: log.append(("dialog.delete", (), {})),
+            ),
+        ):
+            coordinator._on_synchronization_conflict(**kwargs)
+        return log
+
+    def test_database_blocking_conflict_is_entered_before_the_modal_dialog(self):
+        log = self._run(
+            action=ConflictResolutionAction.CANCEL_READ_ONLY,
+            database_id="db-a",
+            resource_type="takeoff",
+            resource_id="t1",
+            message="Changed elsewhere",
+        )
+        self.assertEqual(
+            log,
+            [
+                ("sql.enter_conflict", ("db-a", "Changed elsewhere"), {}),
+                ("_prepare_for_modal_mutation_error", ("db-a",), {}),
+                (
+                    "dialog.create",
+                    (
+                        "icons",
+                        "Changed elsewhere",
+                        (
+                            ConflictResolutionAction.RELOAD,
+                            ConflictResolutionAction.CANCEL_READ_ONLY,
+                        ),
+                        "window",
+                    ),
+                    {},
+                ),
+                ("dialog.exec", ("bus",), {}),
+                ("dialog.selected_action", (), {}),
+                ("dialog.delete", (), {}),
+            ],
+        )
+
+    def test_resource_conflict_uses_resource_identity_and_default_message(self):
+        log = self._run(
+            action=ConflictResolutionAction.CANCEL_READ_ONLY,
+            database_id="db-a",
+            resource_type="takeoff",
+            resource_id="t1",
+            bid_uid="8",
+            blocks_database=False,
+            allowed_actions=["reload", "discard_draft"],
+        )
+        self.assertEqual(
+            log[0],
+            (
+                "sql.enter_resource_conflict",
+                ("db-a", ResourceRef("takeoff", "t1", 8), ""),
+                {},
+            ),
+        )
+        self.assertNotIn("sql.enter_conflict", _sp3a5e_names(log))
+        self.assertEqual(
+            _sp3a5e_calls(log, "dialog.create"),
+            [
+                (
+                    (
+                        "icons",
+                        "takeoff t1 changed in another session. "
+                        "Reload the database before saving again.",
+                        (
+                            ConflictResolutionAction.RELOAD,
+                            ConflictResolutionAction.DISCARD_DRAFT,
+                        ),
+                        "window",
+                    ),
+                    {},
+                )
+            ],
+        )
+
+    def test_resource_conflict_without_bid_has_no_bid_identity(self):
+        log = self._run(
+            action=ConflictResolutionAction.CANCEL_READ_ONLY,
+            database_id="db-a",
+            resource_type="takeoff",
+            resource_id="t1",
+            blocks_database=False,
+            message="Conflict",
+        )
+        self.assertEqual(
+            log[0],
+            (
+                "sql.enter_resource_conflict",
+                ("db-a", ResourceRef("takeoff", "t1", None), "Conflict"),
+                {},
+            ),
+        )
+
+    def test_reload_choice_discards_the_draft_and_starts_reconciliation(self):
+        log = self._run(
+            action=ConflictResolutionAction.RELOAD,
+            database_id="db-a",
+            message="Conflict",
+            draft_id="draft-1",
+        )
+        self.assertEqual(
+            log[-2:],
+            [
+                ("sql.discard_local_draft", ("db-a", "draft-1"), {}),
+                ("_on_full_reconciliation_required", ("db-a", "Conflict"), {}),
+            ],
+        )
+
+    def test_cancel_choice_leaves_the_conflict_in_place(self):
+        log = self._run(
+            action=ConflictResolutionAction.CANCEL_READ_ONLY,
+            database_id="db-a",
+            message="Conflict",
+            draft_id="draft-1",
+        )
+        names = _sp3a5e_names(log)
+        self.assertNotIn("sql.discard_local_draft", names)
+        self.assertNotIn("_on_full_reconciliation_required", names)
+
+
+_SP3A5F_MODULE = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+
+
+def _sp3a5f_spy(log, name, methods=(), returns=None, **attrs):
+    spy = SimpleNamespace(**attrs)
+    returns = returns or {}
+    for method in methods:
+
+        def record(*args, _method=method, **kwargs):
+            log.append((f"{name}.{_method}", args, kwargs))
+            value = returns.get(_method)
+            return value() if callable(value) else value
+
+        setattr(spy, method, record)
+    return spy
+
+
+def _sp3a5f_stub(coordinator, log, names, returns=None):
+    returns = returns or {}
+    for name in names:
+
+        def record(*args, _name=name, **kwargs):
+            log.append((_name, args, kwargs))
+            value = returns.get(_name)
+            return value() if callable(value) else value
+
+        setattr(coordinator, name, record)
+
+
+def _sp3a5f_calls(log, *names):
+    return [entry for entry in log if entry[0] in names]
+
+
+class _Sp3a5FConflictDialog:
+    def __init__(self, log, action):
+        self._log = log
+        self._action = action
+
+    def selected_action(self):
+        self._log.append(("dialog.selected_action", (), {}))
+        return self._action
+
+
+class Sp3a5FSynchronizationConflictTests(unittest.TestCase):
+    def _run(
+        self,
+        *,
+        action=ConflictResolutionAction.CANCEL_READ_ONLY,
+        invalid=(),
+        **kwargs,
+    ):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._sql_collaboration = _sp3a5f_spy(
+            log,
+            "sql",
+            ("enter_conflict", "enter_resource_conflict", "discard_local_draft"),
+        )
+        coordinator._icon_provider = object()
+        coordinator.main_window = object()
+        coordinator.event_bus = EventBus()
+        _sp3a5f_stub(
+            coordinator,
+            log,
+            ("_prepare_for_modal_mutation_error", "_on_full_reconciliation_required"),
+        )
+        dialog = _Sp3a5FConflictDialog(log, action)
+        created = []
+
+        def make_dialog(icon_provider, message, actions, parent):
+            created.append((icon_provider, message, actions, parent))
+            return dialog
+
+        def execute(executed, event_bus):
+            log.append(("exec", (executed, event_bus), {}))
+
+        def is_valid(obj):
+            return not any(obj is item for item in invalid)
+
+        def delete_later(obj):
+            log.append(("delete_later", (obj,), {}))
+
+        invalid = tuple(
+            dialog if item == "dialog" else coordinator.main_window for item in invalid
+        )
+        with (
+            patch(f"{_SP3A5F_MODULE}.SynchronizationConflictDialog", make_dialog),
+            patch(f"{_SP3A5F_MODULE}.exec_with_ost_blocking", execute),
+            patch(f"{_SP3A5F_MODULE}.isValid", is_valid),
+            patch(f"{_SP3A5F_MODULE}.delete_later_if_valid", delete_later),
+        ):
+            coordinator._on_synchronization_conflict(database_id="db", **kwargs)
+        return coordinator, dialog, created, log
+
+    def test_allowed_actions_are_passed_to_the_dialog_in_order(self):
+        coordinator, dialog, created, log = self._run(
+            message="Custom",
+            allowed_actions=["discard_draft", "reload"],
+        )
+        self.assertEqual(
+            created[0][2],
+            (ConflictResolutionAction.DISCARD_DRAFT, ConflictResolutionAction.RELOAD),
+        )
+        self.assertIs(created[0][0], coordinator._icon_provider)
+        self.assertIs(created[0][3], coordinator.main_window)
+
+    def test_missing_allowed_actions_offer_reload_and_cancel_read_only(self):
+        _coordinator, _dialog, created, _log = self._run(message="Custom")
+        self.assertEqual(
+            created[0][2],
+            (
+                ConflictResolutionAction.RELOAD,
+                ConflictResolutionAction.CANCEL_READ_ONLY,
+            ),
+        )
+
+    def test_empty_allowed_actions_offer_reload_and_cancel_read_only(self):
+        _coordinator, _dialog, created, _log = self._run(
+            message="Custom", allowed_actions=[]
+        )
+        self.assertEqual(
+            created[0][2],
+            (
+                ConflictResolutionAction.RELOAD,
+                ConflictResolutionAction.CANCEL_READ_ONLY,
+            ),
+        )
+
+    def test_explicit_message_is_shown_verbatim(self):
+        _coordinator, _dialog, created, _log = self._run(
+            resource_type="takeoff", resource_id="t1", message="Changed elsewhere"
+        )
+        self.assertEqual(created[0][1], "Changed elsewhere")
+
+    def test_empty_message_falls_back_to_resource_description(self):
+        _coordinator, _dialog, created, _log = self._run(
+            resource_type="takeoff", resource_id="t1", message=""
+        )
+        self.assertEqual(
+            created[0][1],
+            "takeoff t1 changed in another session. "
+            "Reload the database before saving again.",
+        )
+
+    def test_dialog_runs_with_the_event_bus_as_second_argument(self):
+        coordinator, dialog, _created, log = self._run(message="Custom")
+        executed = _sp3a5f_calls(log, "exec")
+        self.assertEqual(len(executed), 1)
+        self.assertIs(executed[0][1][0], dialog)
+        self.assertIs(executed[0][1][1], coordinator.event_bus)
+
+    def test_main_window_destroyed_during_dialog_stops_before_reading_action(self):
+        _coordinator, dialog, _created, log = self._run(
+            message="Custom",
+            action=ConflictResolutionAction.RELOAD,
+            draft_id="draft-1",
+            invalid=("main_window",),
+        )
+        self.assertEqual(_sp3a5f_calls(log, "dialog.selected_action"), [])
+        self.assertEqual(_sp3a5f_calls(log, "sql.discard_local_draft"), [])
+        self.assertEqual(_sp3a5f_calls(log, "_on_full_reconciliation_required"), [])
+        self.assertEqual(
+            _sp3a5f_calls(log, "delete_later"), [("delete_later", (dialog,), {})]
+        )
+
+    def test_dialog_destroyed_during_exec_stops_before_reading_action(self):
+        _coordinator, dialog, _created, log = self._run(
+            message="Custom",
+            action=ConflictResolutionAction.RELOAD,
+            draft_id="draft-1",
+            invalid=("dialog",),
+        )
+        self.assertEqual(_sp3a5f_calls(log, "dialog.selected_action"), [])
+        self.assertEqual(_sp3a5f_calls(log, "sql.discard_local_draft"), [])
+        self.assertEqual(_sp3a5f_calls(log, "_on_full_reconciliation_required"), [])
+        self.assertEqual(
+            _sp3a5f_calls(log, "delete_later"), [("delete_later", (dialog,), {})]
+        )
+
+    def test_valid_widgets_read_the_selected_action_before_deleting_the_dialog(self):
+        _coordinator, dialog, _created, log = self._run(message="Custom")
+        names = [entry[0] for entry in log]
+        self.assertLess(
+            names.index("dialog.selected_action"), names.index("delete_later")
+        )
+
+    def test_reload_with_draft_discards_the_draft_then_reconciles(self):
+        _coordinator, _dialog, _created, log = self._run(
+            message="Lost",
+            action=ConflictResolutionAction.RELOAD,
+            draft_id="draft-1",
+        )
+        tail = [
+            entry
+            for entry in log
+            if entry[0]
+            in ("sql.discard_local_draft", "_on_full_reconciliation_required")
+        ]
+        self.assertEqual(
+            tail,
+            [
+                ("sql.discard_local_draft", ("db", "draft-1"), {}),
+                ("_on_full_reconciliation_required", ("db", "Lost"), {}),
+            ],
+        )
+
+    def test_discard_draft_action_without_draft_id_only_reconciles(self):
+        _coordinator, _dialog, _created, log = self._run(
+            message="Lost",
+            action=ConflictResolutionAction.DISCARD_DRAFT,
+            draft_id="",
+        )
+        self.assertEqual(_sp3a5f_calls(log, "sql.discard_local_draft"), [])
+        self.assertEqual(
+            _sp3a5f_calls(log, "_on_full_reconciliation_required"),
+            [("_on_full_reconciliation_required", ("db", "Lost"), {})],
+        )
+
+    def test_cancel_read_only_neither_discards_nor_reconciles(self):
+        _coordinator, _dialog, _created, log = self._run(
+            message="Lost",
+            action=ConflictResolutionAction.CANCEL_READ_ONLY,
+            draft_id="draft-1",
+        )
+        self.assertEqual(_sp3a5f_calls(log, "sql.discard_local_draft"), [])
+        self.assertEqual(_sp3a5f_calls(log, "_on_full_reconciliation_required"), [])
+
+
+class Sp3a5FRestoreProjectTreeBidSelectionTests(unittest.TestCase):
+    def _run(self, selected_node, bid_ref=BidRef("C:/jobs/a.mdb", "bid-1")):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=_sp3a5f_spy(
+                log,
+                "tree",
+                ("get_selected_node_state", "restore_bid_selection"),
+                {"get_selected_node_state": lambda: selected_node},
+            )
+        )
+        coordinator._restore_project_tree_bid_selection_if_needed()
+        return bid_ref, _sp3a5f_calls(log, "tree.restore_bid_selection")
+
+    def test_matching_selected_bid_node_is_left_alone(self):
+        _ref, restores = self._run(
+            {"kind": "bid", "bid_uid": "bid-1", "file_path": "C:\\jobs\\A.mdb"}
+        )
+        self.assertEqual(restores, [])
+
+    def test_node_without_file_path_matches_bid_with_empty_file_path(self):
+        _ref, restores = self._run(
+            {"kind": "bid", "bid_uid": "bid-1"}, BidRef("", "bid-1")
+        )
+        self.assertEqual(restores, [])
+
+    def test_missing_selected_node_restores_the_bid(self):
+        ref, restores = self._run(None)
+        self.assertEqual(restores, [("tree.restore_bid_selection", (ref,), {})])
+
+    def test_node_of_another_kind_restores_the_bid(self):
+        ref, restores = self._run(
+            {"kind": "project", "bid_uid": "bid-1", "file_path": "C:/jobs/a.mdb"}
+        )
+        self.assertEqual(restores, [("tree.restore_bid_selection", (ref,), {})])
+
+    def test_node_with_another_bid_uid_restores_the_bid(self):
+        ref, restores = self._run(
+            {"kind": "bid", "bid_uid": "bid-2", "file_path": "C:/jobs/a.mdb"}
+        )
+        self.assertEqual(restores, [("tree.restore_bid_selection", (ref,), {})])
+
+    def test_node_in_another_file_restores_the_bid(self):
+        ref, restores = self._run(
+            {"kind": "bid", "bid_uid": "bid-1", "file_path": "C:/jobs/b.mdb"}
+        )
+        self.assertEqual(restores, [("tree.restore_bid_selection", (ref,), {})])
+
+    def test_node_without_file_path_restores_bid_of_a_real_file(self):
+        ref, restores = self._run({"kind": "bid", "bid_uid": "bid-1"})
+        self.assertEqual(restores, [("tree.restore_bid_selection", (ref,), {})])
+
+    def test_no_selected_bid_does_not_query_the_tree(self):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: None
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=_sp3a5f_spy(
+                log, "tree", ("get_selected_node_state", "restore_bid_selection")
+            )
+        )
+        coordinator._restore_project_tree_bid_selection_if_needed()
+        self.assertEqual(log, [])
+
+
+class Sp3a5FTakeoffDependentPageControlsTests(unittest.TestCase):
+    def _coordinator(self, log, *, active="page-1", bar=True, sidebar=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.takeoff_sidebar = (
+            _sp3a5f_spy(log, "sidebar", ("set_page_has_takeoffs",)) if sidebar else None
+        )
+        coordinator._page_settings_bar = (
+            _sp3a5f_spy(log, "bar", ("update_area_usage",)) if bar else None
+        )
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid=active)
+        coordinator.project_data = _sp3a5f_spy(
+            log,
+            "data",
+            (
+                "has_takeoffs_for_pages",
+                "get_area_uids_with_takeoff",
+                "get_area_uids_with_takeoff_for_page",
+            ),
+            {
+                "has_takeoffs_for_pages": lambda: True,
+                "get_area_uids_with_takeoff": lambda: {"area-all"},
+                "get_area_uids_with_takeoff_for_page": lambda: {"area-page"},
+            },
+        )
+        return coordinator
+
+    def test_defaults_refresh_page_usage_and_area_usage(self):
+        log = []
+        coordinator = self._coordinator(log, active="other")
+        coordinator._refresh_takeoff_dependent_page_controls("page-1")
+        self.assertEqual(
+            _sp3a5f_calls(log, "sidebar.set_page_has_takeoffs"),
+            [("sidebar.set_page_has_takeoffs", ("page-1", True), {})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "bar.update_area_usage"),
+            [("bar.update_area_usage", ({"area-all"},), {})],
+        )
+
+    def test_page_usage_refresh_can_be_disabled(self):
+        log = []
+        coordinator = self._coordinator(log, active="other")
+        coordinator._refresh_takeoff_dependent_page_controls(
+            "page-1", refresh_page_usage=False
+        )
+        self.assertEqual(_sp3a5f_calls(log, "sidebar.set_page_has_takeoffs"), [])
+        self.assertEqual(len(_sp3a5f_calls(log, "bar.update_area_usage")), 1)
+
+    def test_page_usage_refresh_requires_a_takeoff_sidebar(self):
+        log = []
+        coordinator = self._coordinator(log, active="other", sidebar=False)
+        coordinator._refresh_takeoff_dependent_page_controls("page-1")
+        self.assertEqual(len(_sp3a5f_calls(log, "bar.update_area_usage")), 1)
+
+    def test_area_usage_refresh_can_be_disabled_with_a_settings_bar_present(self):
+        log = []
+        coordinator = self._coordinator(log, active="page-1")
+        coordinator._refresh_takeoff_dependent_page_controls(
+            "page-1", refresh_area_usage=False
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "bar.update_area_usage"),
+            [],
+        )
+        self.assertEqual(len(_sp3a5f_calls(log, "sidebar.set_page_has_takeoffs")), 1)
+
+    def test_missing_settings_bar_skips_area_usage_queries(self):
+        log = []
+        coordinator = self._coordinator(log, bar=False)
+        coordinator._refresh_takeoff_dependent_page_controls("page-1")
+        self.assertEqual(_sp3a5f_calls(log, "data.get_area_uids_with_takeoff"), [])
+
+    def test_active_page_among_affected_pages_gets_page_specific_usage(self):
+        log = []
+        coordinator = self._coordinator(log, active="page-1")
+        coordinator._refresh_takeoff_dependent_page_controls("page-1")
+        self.assertEqual(
+            _sp3a5f_calls(log, "bar.update_area_usage"),
+            [("bar.update_area_usage", ({"area-all"}, {"area-page"}), {})],
+        )
+
+    def test_inactive_affected_page_updates_bid_usage_only(self):
+        log = []
+        coordinator = self._coordinator(log, active="page-2")
+        coordinator._refresh_takeoff_dependent_page_controls(
+            page_uids=["page-1", "page-1"], bid_areas={"given"}
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "bar.update_area_usage"),
+            [("bar.update_area_usage", ({"given"},), {})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "data.get_area_uids_with_takeoff"),
+            [],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "sidebar.set_page_has_takeoffs"),
+            [("sidebar.set_page_has_takeoffs", ("page-1", True), {})],
+        )
+
+
+class Sp3a5FFileRefreshTests(unittest.TestCase):
+    def _coordinator(self, log, *, cleaning_up=False):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = cleaning_up
+        coordinator.project_data = _sp3a5f_spy(
+            log, "data", ("get_hierarchy",), {"get_hierarchy": lambda: "hierarchy"}
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=_sp3a5f_spy(log, "tree", ("build_complete_structure",))
+        )
+        _sp3a5f_stub(coordinator, log, ("_cache_bid_data",))
+        return coordinator
+
+    def _run(self, action, log):
+        def build(hierarchy):
+            log.append(("build_loaded_files", (hierarchy,), {}))
+            return ["loaded"]
+
+        with patch(f"{_SP3A5F_MODULE}.build_loaded_files", build):
+            action()
+
+    def test_file_refresh_defaults_to_rebuilding_the_project_tree(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(coordinator._do_file_refresh, log)
+        self.assertEqual(
+            log,
+            [
+                ("data.get_hierarchy", (), {}),
+                ("build_loaded_files", ("hierarchy",), {}),
+                ("_cache_bid_data", (["loaded"],), {}),
+                ("tree.build_complete_structure", (["loaded"],), {}),
+            ],
+        )
+
+    def test_file_refresh_can_skip_the_project_tree_rebuild(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(lambda: coordinator._do_file_refresh(rebuild_project_tree=False), log)
+        self.assertEqual(
+            [entry[0] for entry in log],
+            ["data.get_hierarchy", "build_loaded_files", "_cache_bid_data"],
+        )
+
+    def test_hierarchy_projection_refreshes_the_tree_when_alive(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(coordinator.refresh_hierarchy_projection, log)
+        self.assertEqual(
+            _sp3a5f_calls(log, "tree.build_complete_structure"),
+            [("tree.build_complete_structure", (["loaded"],), {})],
+        )
+
+    def test_hierarchy_projection_is_skipped_during_cleanup(self):
+        log = []
+        coordinator = self._coordinator(log, cleaning_up=True)
+        self._run(coordinator.refresh_hierarchy_projection, log)
+        self.assertEqual(log, [])
+
+
+class _Sp3a5FRefreshUi:
+    def __init__(self, log):
+        self._log = log
+        self._active = "initial"
+
+    @property
+    def active_page_uid(self):
+        return self._active
+
+    @active_page_uid.setter
+    def active_page_uid(self, value):
+        self._log.append(("ui.active_page_uid=", (value,), {}))
+        self._active = value
+
+    def set_bid_selection(self, bid_ref):
+        self._log.append(("ui.set_bid_selection", (bid_ref,), {}))
+
+    def set_highlighted_conditions(self, uids):
+        self._log.append(("ui.set_highlighted_conditions", (uids,), {}))
+
+    def set_page_selection(self, pages):
+        self._log.append(("ui.set_page_selection", (pages,), {}))
+
+    def reset_selections(self):
+        self._log.append(("ui.reset_selections", (), {}))
+
+    def set_database_selected(self, selected, file_path=None):
+        self._log.append(("ui.set_database_selected", (selected, file_path), {}))
+
+
+class Sp3a5FFinishRefreshTests(unittest.TestCase):
+    BID = BidRef("C:/jobs/a.mdb", "bid-1")
+    HAS_FILE_STATES = (
+        (True, NavState.FILE_LOADED_NO_BID),
+        (False, NavState.NO_FILE),
+    )
+    SELF_STUBS = (
+        "_reset_takeoff_workspace_state",
+        "_sync_undo_bid",
+        "_clear_mesh_views_for_scene_update",
+        "_discard_mesh_camera_states",
+        "_set_takeoff_tab_visible",
+        "_update_export_menu_state",
+        "handle_bid_selection",
+        "_resolve_bid_lock_state",
+        "_reset_to_select_mode",
+        "_stage_takeoff_restore",
+        "_activate_takeoff_workspace",
+        "_update_page_settings_bar",
+        "_load_condition_summary",
+        "_sync_page_info_status",
+        "_reconcile_active_placement",
+        "_is_condition_placeable",
+        "_resolve_authoritative_page_selection",
+    )
+
+    @staticmethod
+    def _snap(**overrides):
+        values = {
+            "bid_ref": None,
+            "project_uid": None,
+            "database_selected": False,
+            "selected_file_path": "",
+            "highlighted_condition_uids": set(),
+            "page_uids": [],
+            "active_page_uid": None,
+            "place_condition_uid": None,
+            "place_condition_uids": [],
+            "selected_area_uid": "",
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _quiet(log):
+        return [
+            entry
+            for entry in log
+            if not entry[0].startswith(("data.get", "nav.compute"))
+        ]
+
+    def _coordinator(
+        self,
+        log,
+        snap,
+        *,
+        current_file="C:/jobs/a.mdb",
+        bid_exists=True,
+        current_bid_ref=None,
+        conditions=("c1", "c2"),
+        tab_index=TAB_INDEX_PROJECTS,
+        has_bar=True,
+        placement_active=False,
+        returns=None,
+        project_file_path=None,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = _sp3a5f_spy(
+            log,
+            "nav",
+            ("finish_refresh", "compute_state_for"),
+            {"compute_state_for": lambda: "base-target"},
+            refresh_snapshot=snap,
+        )
+        hierarchy = _sp3a5f_spy(
+            log,
+            "hierarchy",
+            ("find_file_path_for_project",),
+            {"find_file_path_for_project": lambda: project_file_path},
+        )
+        coordinator.project_data = _sp3a5f_spy(
+            log,
+            "data",
+            (
+                "get_current_file_path",
+                "get_bid",
+                "get_current_bid_ref",
+                "deselect_pages",
+                "select_pages",
+                "get_hierarchy",
+                "get_bid_conditions",
+            ),
+            {
+                "get_current_file_path": lambda: current_file,
+                "get_bid": lambda: object() if bid_exists else None,
+                "get_current_bid_ref": lambda: current_bid_ref or snap.bid_ref,
+                "get_hierarchy": lambda: hierarchy,
+                "get_bid_conditions": lambda: {uid: object() for uid in conditions},
+            },
+        )
+        coordinator.ui_state_manager = _Sp3a5FRefreshUi(log)
+        coordinator.ui_access_manager = _sp3a5f_spy(log, "access", ("refresh",))
+        coordinator.main_window = _sp3a5f_spy(
+            log,
+            "window",
+            ("refresh_window_title", "set_database_window_title"),
+            project_view=_sp3a5f_spy(
+                log,
+                "tree",
+                (
+                    "restore_file_selection",
+                    "restore_bid_selection",
+                    "restore_project_selection",
+                ),
+            ),
+        )
+        coordinator._viewer = _sp3a5f_spy(log, "viewer", ("clear_plan_view",))
+        coordinator._placement = SimpleNamespace(is_active=placement_active)
+        coordinator._tab_widget = SimpleNamespace(currentIndex=lambda: tab_index)
+        coordinator._page_settings_bar = (
+            _sp3a5f_spy(log, "bar", ("clear_page",)) if has_bar else None
+        )
+        defaults = {
+            "_reconcile_active_placement": lambda: True,
+            "_is_condition_placeable": lambda: True,
+        }
+        if snap is not None:
+            defaults["_resolve_authoritative_page_selection"] = lambda: (
+                list(snap.page_uids),
+                snap.active_page_uid,
+            )
+        defaults.update(returns or {})
+        _sp3a5f_stub(coordinator, log, self.SELF_STUBS, defaults)
+        return coordinator
+
+    def test_missing_snapshot_finishes_without_bid_and_refreshes_the_title(self):
+        log = []
+        coordinator = self._coordinator(log, None)
+        coordinator._finish_refresh()
+        self.assertEqual(
+            log,
+            [
+                ("nav.finish_refresh", (NavState.FILE_LOADED_NO_BID,), {}),
+                ("window.refresh_window_title", (), {}),
+            ],
+        )
+
+    def test_deleted_bid_falls_back_to_the_file_and_stops(self):
+        for has_file, state in self.HAS_FILE_STATES:
+            with self.subTest(has_file=has_file):
+                log = []
+                snap = self._snap(bid_ref=self.BID, selected_file_path="sel.mdb")
+                coordinator = self._coordinator(
+                    log,
+                    snap,
+                    bid_exists=False,
+                    current_file="x.mdb" if has_file else "",
+                )
+                coordinator._finish_refresh()
+                self.assertEqual(
+                    self._quiet(log),
+                    [
+                        ("_reset_takeoff_workspace_state", (), {}),
+                        ("ui.set_bid_selection", (None,), {}),
+                        ("_sync_undo_bid", (), {}),
+                        ("data.deselect_pages", (), {}),
+                        ("viewer.clear_plan_view", (), {}),
+                        ("_clear_mesh_views_for_scene_update", (), {}),
+                        ("_discard_mesh_camera_states", (), {"bid_ref": self.BID}),
+                        ("tree.restore_file_selection", ("sel.mdb",), {}),
+                        ("_set_takeoff_tab_visible", (False,), {}),
+                        ("nav.finish_refresh", (state,), {}),
+                        ("access.refresh", (), {}),
+                        ("_update_export_menu_state", (), {}),
+                        ("window.set_database_window_title", ("sel.mdb",), {}),
+                    ],
+                )
+
+    def test_deleted_bid_without_selected_file_uses_the_bid_file(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID, selected_file_path="")
+        coordinator = self._coordinator(log, snap, bid_exists=False)
+        coordinator._finish_refresh()
+        self.assertEqual(
+            _sp3a5f_calls(log, "tree.restore_file_selection"),
+            [("tree.restore_file_selection", (self.BID.file_path,), {})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "window.set_database_window_title"),
+            [("window.set_database_window_title", (self.BID.file_path,), {})],
+        )
+
+    def test_stale_current_bid_restores_selection_and_reselects_forced(self):
+        for has_file, state in self.HAS_FILE_STATES:
+            with self.subTest(has_file=has_file):
+                log = []
+                snap = self._snap(bid_ref=self.BID)
+                other = BidRef("C:/jobs/a.mdb", "bid-other")
+                coordinator = self._coordinator(
+                    log,
+                    snap,
+                    current_bid_ref=other,
+                    current_file="x.mdb" if has_file else "",
+                )
+                coordinator._finish_refresh()
+                self.assertEqual(
+                    self._quiet(log),
+                    [
+                        ("tree.restore_bid_selection", (self.BID,), {}),
+                        ("nav.finish_refresh", (state,), {}),
+                        ("handle_bid_selection", (self.BID,), {"force": True}),
+                    ],
+                )
+
+    def test_current_bid_refresh_restores_workspace_in_order(self):
+        log = []
+        snap = self._snap(
+            bid_ref=self.BID,
+            highlighted_condition_uids={"c1", "gone"},
+            page_uids=["p1", "p2"],
+            active_page_uid="p1",
+            selected_area_uid="area-1",
+        )
+        coordinator = self._coordinator(log, snap)
+        coordinator._finish_refresh()
+        self.assertEqual(
+            [entry for entry in log if not entry[0].startswith("data.get")],
+            [
+                ("tree.restore_bid_selection", (self.BID,), {}),
+                ("_resolve_bid_lock_state", (self.BID,), {}),
+                ("_reset_takeoff_workspace_state", (), {"clear_sidebars": False}),
+                ("ui.set_highlighted_conditions", ({"c1"},), {}),
+                ("_resolve_authoritative_page_selection", (["p1", "p2"], "p1"), {}),
+                ("ui.set_page_selection", (["p1", "p2"],), {}),
+                ("ui.active_page_uid=", ("p1",), {}),
+                ("data.select_pages", (["p1", "p2"],), {}),
+                (
+                    "_stage_takeoff_restore",
+                    (),
+                    {
+                        "page_uids": ["p1", "p2"],
+                        "active_page_uid": "p1",
+                        "selected_area_uid": "area-1",
+                        "place_condition_uid": None,
+                        "place_condition_uids": [],
+                    },
+                ),
+                (
+                    "nav.compute_state_for",
+                    (),
+                    {"has_file": True, "bid_ref": self.BID, "active_page_uid": "p1"},
+                ),
+                ("nav.finish_refresh", ("base-target",), {}),
+                ("access.refresh", (), {}),
+                ("_update_export_menu_state", (), {}),
+                ("_sync_page_info_status", (), {}),
+                ("window.refresh_window_title", (), {}),
+            ],
+        )
+
+    def test_changed_active_page_clears_the_plan_view_before_selecting(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID, page_uids=["p1"], active_page_uid="gone")
+        coordinator = self._coordinator(
+            log,
+            snap,
+            returns={"_resolve_authoritative_page_selection": lambda: (["p1"], "p1")},
+        )
+        coordinator._finish_refresh()
+        names = [entry[0] for entry in log]
+        self.assertEqual(names.count("viewer.clear_plan_view"), 1)
+        self.assertLess(
+            names.index("viewer.clear_plan_view"), names.index("ui.set_page_selection")
+        )
+
+    def test_takeoff_tab_reactivates_the_takeoff_workspace(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID)
+        coordinator = self._coordinator(log, snap, tab_index=TAB_INDEX_TAKEOFF)
+        coordinator._finish_refresh()
+        names = [entry[0] for entry in log]
+        self.assertEqual(names.count("_activate_takeoff_workspace"), 1)
+        self.assertLess(
+            names.index("nav.finish_refresh"),
+            names.index("_activate_takeoff_workspace"),
+        )
+        self.assertLess(
+            names.index("_activate_takeoff_workspace"), names.index("access.refresh")
+        )
+        self.assertEqual(_sp3a5f_calls(log, "_load_condition_summary"), [])
+
+    def test_summary_tab_with_active_page_updates_settings_bar_and_summary(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID, page_uids=["p1"], active_page_uid="p1")
+        coordinator = self._coordinator(log, snap, tab_index=TAB_INDEX_SUMMARY)
+        coordinator._finish_refresh()
+        names = [entry[0] for entry in log]
+        self.assertEqual(
+            _sp3a5f_calls(log, "_update_page_settings_bar"),
+            [("_update_page_settings_bar", ("p1",), {})],
+        )
+        self.assertEqual(_sp3a5f_calls(log, "bar.clear_page"), [])
+        self.assertEqual(names.count("_load_condition_summary"), 1)
+        self.assertLess(
+            names.index("_update_page_settings_bar"),
+            names.index("_load_condition_summary"),
+        )
+        self.assertEqual(_sp3a5f_calls(log, "_activate_takeoff_workspace"), [])
+
+    def test_summary_tab_without_active_page_clears_the_settings_bar(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID)
+        coordinator = self._coordinator(log, snap, tab_index=TAB_INDEX_SUMMARY)
+        coordinator._finish_refresh()
+        names = [entry[0] for entry in log]
+        self.assertEqual(names.count("bar.clear_page"), 1)
+        self.assertEqual(_sp3a5f_calls(log, "_update_page_settings_bar"), [])
+        self.assertEqual(names.count("_load_condition_summary"), 1)
+
+    def test_summary_tab_without_active_page_or_bar_only_loads_the_summary(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID)
+        coordinator = self._coordinator(
+            log, snap, tab_index=TAB_INDEX_SUMMARY, has_bar=False
+        )
+        coordinator._finish_refresh()
+        self.assertEqual(len(_sp3a5f_calls(log, "_load_condition_summary")), 1)
+
+    def test_other_tab_leaves_the_tab_specific_refreshes_alone(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID, page_uids=["p1"], active_page_uid="p1")
+        coordinator = self._coordinator(log, snap, tab_index=TAB_INDEX_PROJECTS)
+        coordinator._finish_refresh()
+        self.assertEqual(
+            _sp3a5f_calls(
+                log,
+                "_activate_takeoff_workspace",
+                "_update_page_settings_bar",
+                "_load_condition_summary",
+                "bar.clear_page",
+            ),
+            [],
+        )
+
+    def test_placement_that_survives_reconciliation_is_restored(self):
+        log = []
+        snap = self._snap(
+            bid_ref=self.BID,
+            place_condition_uid="c1",
+            place_condition_uids=["c1", "c2"],
+        )
+        coordinator = self._coordinator(log, snap, placement_active=True)
+        coordinator._finish_refresh(accept_reconstructed_placement_conditions=True)
+        self.assertEqual(
+            _sp3a5f_calls(log, "_reconcile_active_placement"),
+            [
+                (
+                    "_reconcile_active_placement",
+                    (),
+                    {"accept_reconstructed_conditions": True},
+                )
+            ],
+        )
+        self.assertEqual(_sp3a5f_calls(log, "_reset_to_select_mode"), [])
+        staged = _sp3a5f_calls(log, "_stage_takeoff_restore")[0][2]
+        self.assertEqual(staged["place_condition_uid"], "c1")
+        self.assertEqual(staged["place_condition_uids"], ["c1", "c2"])
+
+    def test_reconcile_default_does_not_accept_reconstructed_conditions(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID, place_condition_uid="c1")
+        coordinator = self._coordinator(log, snap, placement_active=True)
+        coordinator._finish_refresh()
+        self.assertEqual(
+            _sp3a5f_calls(log, "_reconcile_active_placement")[0][2],
+            {"accept_reconstructed_conditions": False},
+        )
+
+    def test_inactive_placement_is_not_reconciled_and_resets_select_mode(self):
+        log = []
+        snap = self._snap(bid_ref=self.BID, place_condition_uid="c1")
+        coordinator = self._coordinator(log, snap, placement_active=False)
+        coordinator._finish_refresh()
+        self.assertEqual(_sp3a5f_calls(log, "_reconcile_active_placement"), [])
+        self.assertEqual(len(_sp3a5f_calls(log, "_reset_to_select_mode")), 0)
+        staged = _sp3a5f_calls(log, "_stage_takeoff_restore")[0][2]
+        self.assertIsNone(staged["place_condition_uid"])
+        self.assertEqual(staged["place_condition_uids"], [])
+
+    def test_failed_reconciliation_does_not_restore_or_reset_placement(self):
+        log = []
+        snap = self._snap(
+            bid_ref=self.BID, place_condition_uid="c1", place_condition_uids=["c1"]
+        )
+        coordinator = self._coordinator(
+            log,
+            snap,
+            placement_active=True,
+            returns={"_reconcile_active_placement": lambda: False},
+        )
+        coordinator._finish_refresh()
+        self.assertEqual(_sp3a5f_calls(log, "_reset_to_select_mode"), [])
+        staged = _sp3a5f_calls(log, "_stage_takeoff_restore")[0][2]
+        self.assertIsNone(staged["place_condition_uid"])
+        self.assertEqual(staged["place_condition_uids"], [])
+
+    def test_placement_deactivated_by_reconciliation_resets_select_mode(self):
+        log = []
+        snap = self._snap(
+            bid_ref=self.BID, place_condition_uid="c1", place_condition_uids=["c1"]
+        )
+        coordinator = self._coordinator(log, snap, placement_active=True)
+
+        def deactivate(**_kwargs):
+            coordinator._placement.is_active = False
+            return True
+
+        coordinator._reconcile_active_placement = deactivate
+        coordinator._finish_refresh()
+        self.assertEqual(len(_sp3a5f_calls(log, "_reset_to_select_mode")), 1)
+        staged = _sp3a5f_calls(log, "_stage_takeoff_restore")[0][2]
+        self.assertIsNone(staged["place_condition_uid"])
+        self.assertEqual(staged["place_condition_uids"], [])
+
+    def test_placement_condition_missing_from_bid_resets_select_mode(self):
+        log = []
+        snap = self._snap(
+            bid_ref=self.BID, place_condition_uid="c9", place_condition_uids=["c9"]
+        )
+        coordinator = self._coordinator(log, snap, placement_active=True)
+        coordinator._finish_refresh()
+        self.assertEqual(len(_sp3a5f_calls(log, "_reset_to_select_mode")), 1)
+        staged = _sp3a5f_calls(log, "_stage_takeoff_restore")[0][2]
+        self.assertIsNone(staged["place_condition_uid"])
+        self.assertEqual(staged["place_condition_uids"], [])
+
+    def test_unplaceable_placement_condition_resets_select_mode(self):
+        log = []
+        snap = self._snap(
+            bid_ref=self.BID, place_condition_uid="c1", place_condition_uids=["c1"]
+        )
+        coordinator = self._coordinator(
+            log,
+            snap,
+            placement_active=True,
+            returns={"_is_condition_placeable": lambda: False},
+        )
+        coordinator._finish_refresh()
+        self.assertEqual(
+            _sp3a5f_calls(log, "_is_condition_placeable"),
+            [("_is_condition_placeable", ("c1",), {})],
+        )
+        self.assertEqual(len(_sp3a5f_calls(log, "_reset_to_select_mode")), 1)
+        staged = _sp3a5f_calls(log, "_stage_takeoff_restore")[0][2]
+        self.assertIsNone(staged["place_condition_uid"])
+
+    def test_project_snapshot_restores_project_selection_with_selected_file(self):
+        log = []
+        snap = self._snap(project_uid="proj-1", selected_file_path="sel.mdb")
+        coordinator = self._coordinator(log, snap, project_file_path="found.mdb")
+        coordinator._finish_refresh()
+        self.assertEqual(
+            [entry for entry in log if entry[0] != "data.get_current_file_path"],
+            [
+                ("_reset_takeoff_workspace_state", (), {}),
+                ("data.get_hierarchy", (), {}),
+                ("hierarchy.find_file_path_for_project", ("proj-1", "sel.mdb"), {}),
+                ("tree.restore_project_selection", ("proj-1", "sel.mdb"), {}),
+                ("_set_takeoff_tab_visible", (False,), {}),
+                ("nav.finish_refresh", (NavState.FILE_LOADED_NO_BID,), {}),
+                ("access.refresh", (), {}),
+                ("_update_export_menu_state", (), {}),
+                ("_sync_page_info_status", (), {}),
+                ("window.refresh_window_title", (), {}),
+            ],
+        )
+
+    def test_project_snapshot_without_selected_file_uses_the_found_file(self):
+        log = []
+        snap = self._snap(project_uid="proj-1", selected_file_path="")
+        coordinator = self._coordinator(log, snap, project_file_path="found.mdb")
+        coordinator._finish_refresh()
+        self.assertEqual(
+            _sp3a5f_calls(log, "tree.restore_project_selection"),
+            [("tree.restore_project_selection", ("proj-1", "found.mdb"), {})],
+        )
+
+    def test_missing_project_falls_back_to_the_selected_file(self):
+        log = []
+        snap = self._snap(project_uid="gone", selected_file_path="sel.mdb")
+        coordinator = self._coordinator(log, snap, project_file_path=None)
+        coordinator._finish_refresh()
+        self.assertEqual(
+            [entry for entry in log if entry[0] != "data.get_current_file_path"][:7],
+            [
+                ("_reset_takeoff_workspace_state", (), {}),
+                ("data.get_hierarchy", (), {}),
+                ("hierarchy.find_file_path_for_project", ("gone", "sel.mdb"), {}),
+                ("ui.reset_selections", (), {}),
+                ("ui.set_database_selected", (True, "sel.mdb"), {}),
+                ("tree.restore_file_selection", ("sel.mdb",), {}),
+                ("_set_takeoff_tab_visible", (False,), {}),
+            ],
+        )
+        self.assertEqual(_sp3a5f_calls(log, "tree.restore_project_selection"), [])
+
+    def test_missing_project_without_selected_file_uses_the_current_file(self):
+        log = []
+        snap = self._snap(project_uid="gone", selected_file_path="")
+        coordinator = self._coordinator(
+            log, snap, project_file_path=None, current_file="cur.mdb"
+        )
+        coordinator._finish_refresh()
+        self.assertEqual(
+            _sp3a5f_calls(log, "ui.set_database_selected"),
+            [("ui.set_database_selected", (True, "cur.mdb"), {})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "tree.restore_file_selection"),
+            [("tree.restore_file_selection", ("cur.mdb",), {})],
+        )
+
+    def test_missing_project_without_any_file_selects_nothing(self):
+        log = []
+        snap = self._snap(project_uid="gone", selected_file_path="")
+        coordinator = self._coordinator(
+            log, snap, project_file_path=None, current_file=""
+        )
+        coordinator._finish_refresh()
+        self.assertEqual(
+            _sp3a5f_calls(log, "ui.set_database_selected"),
+            [("ui.set_database_selected", (False, ""), {})],
+        )
+        self.assertEqual(_sp3a5f_calls(log, "tree.restore_file_selection"), [])
+        self.assertEqual(
+            _sp3a5f_calls(log, "nav.finish_refresh"),
+            [("nav.finish_refresh", (NavState.NO_FILE,), {})],
+        )
+
+    def test_project_snapshot_finishes_by_whether_a_file_is_loaded(self):
+        for has_file, state in self.HAS_FILE_STATES:
+            with self.subTest(has_file=has_file):
+                log = []
+                snap = self._snap(project_uid="p", selected_file_path="s.mdb")
+                coordinator = self._coordinator(
+                    log,
+                    snap,
+                    project_file_path="f.mdb",
+                    current_file="x" if has_file else "",
+                )
+                coordinator._finish_refresh()
+                self.assertEqual(
+                    _sp3a5f_calls(log, "nav.finish_refresh"),
+                    [("nav.finish_refresh", (state,), {})],
+                )
+
+    def test_database_selection_restores_the_file_and_hides_takeoff(self):
+        for has_file, state in self.HAS_FILE_STATES:
+            with self.subTest(has_file=has_file):
+                log = []
+                snap = self._snap(database_selected=True, selected_file_path="s.mdb")
+                coordinator = self._coordinator(
+                    log, snap, current_file="x" if has_file else ""
+                )
+                coordinator._finish_refresh()
+                self.assertEqual(
+                    self._quiet(log),
+                    [
+                        ("_reset_takeoff_workspace_state", (), {}),
+                        ("tree.restore_file_selection", ("s.mdb",), {}),
+                        ("_set_takeoff_tab_visible", (False,), {}),
+                        ("nav.finish_refresh", (state,), {}),
+                        ("access.refresh", (), {}),
+                        ("_update_export_menu_state", (), {}),
+                        ("_sync_page_info_status", (), {}),
+                        ("window.refresh_window_title", (), {}),
+                    ],
+                )
+
+    def test_database_selection_without_a_file_takes_the_plain_fallback(self):
+        log = []
+        snap = self._snap(database_selected=True, selected_file_path="")
+        coordinator = self._coordinator(log, snap)
+        coordinator._finish_refresh()
+        self.assertEqual(_sp3a5f_calls(log, "tree.restore_file_selection"), [])
+        self.assertEqual(
+            [entry[0] for entry in self._quiet(log)],
+            [
+                "_reset_takeoff_workspace_state",
+                "_set_takeoff_tab_visible",
+                "nav.finish_refresh",
+                "access.refresh",
+                "_update_export_menu_state",
+                "_sync_page_info_status",
+                "window.refresh_window_title",
+            ],
+        )
+
+    def test_file_without_database_selection_takes_the_plain_fallback(self):
+        for has_file, state in self.HAS_FILE_STATES:
+            with self.subTest(has_file=has_file):
+                log = []
+                snap = self._snap(database_selected=False, selected_file_path="s.mdb")
+                coordinator = self._coordinator(
+                    log, snap, current_file="x" if has_file else ""
+                )
+                coordinator._finish_refresh()
+                self.assertEqual(
+                    self._quiet(log),
+                    [
+                        ("_reset_takeoff_workspace_state", (), {}),
+                        ("_set_takeoff_tab_visible", (False,), {}),
+                        ("nav.finish_refresh", (state,), {}),
+                        ("access.refresh", (), {}),
+                        ("_update_export_menu_state", (), {}),
+                        ("_sync_page_info_status", (), {}),
+                        ("window.refresh_window_title", (), {}),
+                    ],
+                )
+
+
+class _Sp3a5FUnloadUi:
+    def __init__(self, log, selected_file_path):
+        self._log = log
+        self.selected_file_path = selected_file_path
+
+    def reset_selections(self):
+        self._log.append(("ui.reset_selections", (), {}))
+
+    def set_database_selected(self, *args):
+        self._log.append(("ui.set_database_selected", args, {}))
+
+
+class Sp3a5FFileUnloadedTests(unittest.TestCase):
+    STUBS = (
+        "_discard_mesh_camera_states",
+        "_refresh_project_tree_after_file_unload",
+        "_update_menu_state",
+        "_prepare_plan_for_authoritative_refresh",
+        "_sync_undo_bid",
+        "_reset_takeoff_workspace_state",
+        "_clear_mesh_views_for_scene_update",
+        "_project_pending_3d_mutations",
+        "_set_takeoff_tab_visible",
+        "_update_export_menu_state",
+        "_sync_page_info_status",
+        "_sync_collaboration_status",
+    )
+
+    def _coordinator(self, log, *, selected="C:/jobs/a.mdb", clipboard=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_operations = _sp3a5f_spy(
+            log, "ops", ("cancel_navigation_load",)
+        )
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
+        coordinator._bid_clipboard = (
+            _sp3a5f_spy(log, "clipboard", ("clear_for_file",)) if clipboard else None
+        )
+        coordinator.ui_state_manager = _Sp3a5FUnloadUi(log, selected)
+        coordinator.ui_access_manager = _sp3a5f_spy(log, "access", ("refresh",))
+        coordinator._placement = _sp3a5f_spy(log, "placement", ("force_exit",))
+        coordinator.project_data = _sp3a5f_spy(log, "data", ("clear_page_selection",))
+        coordinator._viewer = _sp3a5f_spy(log, "viewer", ("clear_plan_view",))
+        coordinator.main_window = _sp3a5f_spy(log, "window", ("refresh_window_title",))
+        view = object()
+        self.view = view
+        _sp3a5f_stub(coordinator, log, self.STUBS)
+        coordinator._native_3d_views = lambda: (view,)
+        return coordinator
+
+    def test_inactive_unload_refreshes_only_the_tree_and_menus(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_file_unloaded("C:/jobs/b.mdb", False)
+        self.assertEqual(
+            log,
+            [
+                ("ops.cancel_navigation_load", ("C:/jobs/b.mdb",), {}),
+                ("clipboard.clear_for_file", ("C:/jobs/b.mdb",), {}),
+                ("_discard_mesh_camera_states", (), {"file_path": "C:/jobs/b.mdb"}),
+                ("_refresh_project_tree_after_file_unload", (), {}),
+                ("access.refresh", (), {}),
+                ("_update_menu_state", (), {}),
+            ],
+        )
+
+    def test_active_unload_resets_the_whole_workspace_in_order(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_file_unloaded("C:/jobs/b.mdb", True)
+        self.assertEqual(
+            log,
+            [
+                ("ops.cancel_navigation_load", ("C:/jobs/b.mdb",), {}),
+                ("clipboard.clear_for_file", ("C:/jobs/b.mdb",), {}),
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("placement.force_exit", (), {}),
+                ("ui.reset_selections", (), {}),
+                ("ui.set_database_selected", (False,), {}),
+                ("_sync_undo_bid", (), {}),
+                ("access.refresh", (), {}),
+                ("data.clear_page_selection", (), {}),
+                ("_reset_takeoff_workspace_state", (), {}),
+                ("viewer.clear_plan_view", (), {}),
+                ("_clear_mesh_views_for_scene_update", (), {}),
+                ("_project_pending_3d_mutations", (self.view, None), {}),
+                ("_discard_mesh_camera_states", (), {"file_path": "C:/jobs/b.mdb"}),
+                ("_set_takeoff_tab_visible", (False,), {}),
+                ("_refresh_project_tree_after_file_unload", (), {}),
+                ("_update_export_menu_state", (), {}),
+                ("_sync_page_info_status", (), {}),
+                ("_sync_collaboration_status", ("",), {"reset_mutation": True}),
+                ("window.refresh_window_title", (), {}),
+            ],
+        )
+
+    def test_unload_defaults_to_removing_the_active_context(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_file_unloaded("C:/jobs/b.mdb")
+        self.assertEqual(len(_sp3a5f_calls(log, "ui.reset_selections")), 1)
+        self.assertEqual(len(_sp3a5f_calls(log, "_update_menu_state")), 0)
+
+    def test_inactive_flag_is_overridden_when_the_selected_file_is_unloaded(self):
+        log = []
+        coordinator = self._coordinator(log, selected="C:\\Jobs\\A.mdb")
+        coordinator._on_file_unloaded("c:/jobs/a.mdb", False)
+        self.assertEqual(len(_sp3a5f_calls(log, "ui.reset_selections")), 1)
+        self.assertEqual(_sp3a5f_calls(log, "_update_menu_state"), [])
+
+    def test_inactive_flag_holds_when_another_file_is_unloaded(self):
+        log = []
+        coordinator = self._coordinator(log, selected="C:/jobs/a.mdb")
+        coordinator._on_file_unloaded("C:/jobs/b.mdb", False)
+        self.assertEqual(_sp3a5f_calls(log, "ui.reset_selections"), [])
+        self.assertEqual(len(_sp3a5f_calls(log, "_update_menu_state")), 1)
+
+    def test_active_flag_holds_when_another_file_is_unloaded(self):
+        log = []
+        coordinator = self._coordinator(log, selected="C:/jobs/a.mdb")
+        coordinator._on_file_unloaded("C:/jobs/b.mdb", True)
+        self.assertEqual(len(_sp3a5f_calls(log, "ui.reset_selections")), 1)
+
+    def test_unload_without_selected_file_keeps_the_inactive_flag(self):
+        for selected in ("", None):
+            with self.subTest(selected=selected):
+                log = []
+                coordinator = self._coordinator(log, selected=selected)
+                coordinator._on_file_unloaded("C:/jobs/a.mdb", False)
+                self.assertEqual(_sp3a5f_calls(log, "ui.reset_selections"), [])
+                self.assertEqual(len(_sp3a5f_calls(log, "_update_menu_state")), 1)
+
+    def test_empty_unloaded_path_never_matches_a_dot_selected_path(self):
+        log = []
+        coordinator = self._coordinator(log, selected=".")
+        coordinator._on_file_unloaded("", False)
+        self.assertEqual(_sp3a5f_calls(log, "ui.reset_selections"), [])
+
+    def test_dot_unloaded_path_never_matches_an_empty_selected_path(self):
+        log = []
+        coordinator = self._coordinator(log, selected="")
+        coordinator._on_file_unloaded(".", False)
+        self.assertEqual(_sp3a5f_calls(log, "ui.reset_selections"), [])
+
+    def test_missing_unloaded_path_is_treated_as_empty(self):
+        log = []
+        coordinator = self._coordinator(log, selected="C:/jobs/a.mdb")
+        coordinator._pending_3d_takeoff_uids_by_bid = {
+            BidRef("C:/jobs/a.mdb", "bid-1"): {"t1"},
+            BidRef(".", "bid-2"): {"t2"},
+        }
+        coordinator._on_file_unloaded(None, False)
+        self.assertEqual(
+            _sp3a5f_calls(log, "clipboard.clear_for_file"),
+            [("clipboard.clear_for_file", ("",), {})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "_discard_mesh_camera_states"),
+            [("_discard_mesh_camera_states", (), {"file_path": ""})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "ops.cancel_navigation_load"),
+            [("ops.cancel_navigation_load", (None,), {})],
+        )
+        self.assertEqual(
+            coordinator._pending_3d_takeoff_uids_by_bid,
+            {BidRef("C:/jobs/a.mdb", "bid-1"): {"t1"}},
+        )
+
+    def test_unload_forgets_pending_3d_takeoffs_of_that_file_only(self):
+        log = []
+        coordinator = self._coordinator(log, clipboard=False)
+        keep = BidRef("C:/jobs/other.mdb", "bid-9")
+        coordinator._pending_3d_takeoff_uids_by_bid = {
+            BidRef("C:\\Jobs\\B.mdb", "bid-1"): {"t1"},
+            keep: {"t9"},
+        }
+        coordinator._on_file_unloaded("c:/jobs/b.mdb", False)
+        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_bid, {keep: {"t9"}})
+
+
+class Sp3a5FProjectTreeAfterUnloadTests(unittest.TestCase):
+    def _coordinator(self, log, current_file):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = _sp3a5f_spy(
+            log,
+            "data",
+            ("get_current_file_path", "get_hierarchy"),
+            {
+                "get_current_file_path": lambda: current_file,
+                "get_hierarchy": lambda: "hierarchy",
+            },
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=_sp3a5f_spy(log, "tree", ("build_complete_structure", "reset"))
+        )
+        coordinator._nav = _sp3a5f_spy(log, "nav", ("transition_to",))
+        _sp3a5f_stub(coordinator, log, ("_cache_bid_data", "_sync_monitoring_state"))
+        return coordinator
+
+    def test_remaining_files_rebuild_the_tree(self):
+        log = []
+        coordinator = self._coordinator(log, "C:/jobs/a.mdb")
+
+        def build(hierarchy):
+            log.append(("build_loaded_files", (hierarchy,), {}))
+            return ["loaded"]
+
+        with patch(f"{_SP3A5F_MODULE}.build_loaded_files", build):
+            coordinator._refresh_project_tree_after_file_unload()
+        self.assertEqual(
+            log,
+            [
+                ("data.get_current_file_path", (), {}),
+                ("data.get_hierarchy", (), {}),
+                ("build_loaded_files", ("hierarchy",), {}),
+                ("_cache_bid_data", (["loaded"],), {}),
+                ("tree.build_complete_structure", (["loaded"],), {}),
+                ("nav.transition_to", (NavState.FILE_LOADED_NO_BID,), {}),
+            ],
+        )
+
+    def test_no_remaining_file_resets_the_tree_and_monitoring(self):
+        log = []
+        coordinator = self._coordinator(log, "")
+        coordinator._refresh_project_tree_after_file_unload()
+        self.assertEqual(
+            log,
+            [
+                ("data.get_current_file_path", (), {}),
+                ("tree.reset", (), {}),
+                ("_sync_monitoring_state", (), {}),
+                ("nav.transition_to", (NavState.NO_FILE,), {}),
+            ],
+        )
+
+
+class Sp3a5FFileSelectedTests(unittest.TestCase):
+    STUBS = (
+        "_save_current_page_view_state",
+        "_flush_deferred_for_file",
+        "_restore_project_tree_bid_selection_if_needed",
+        "_sync_page_info_status",
+        "_prepare_plan_for_authoritative_refresh",
+        "_sync_undo_bid",
+        "_reset_takeoff_workspace_state",
+        "_set_takeoff_tab_visible",
+        "_clear_mesh_views_for_scene_update",
+        "_update_export_menu_state",
+        "_sync_collaboration_status",
+        "_on_full_reconciliation_required",
+    )
+
+    def _coordinator(self, log, *, previous=None, flush=True, status=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_operations = _sp3a5f_spy(
+            log, "ops", ("cancel_navigation_load",)
+        )
+        coordinator.ui_state_manager = _sp3a5f_spy(
+            log,
+            "ui",
+            (
+                "get_selected_bid_ref",
+                "reset_selections",
+                "set_database_selected",
+                "set_project_uid",
+            ),
+            {"get_selected_bid_ref": lambda: previous},
+        )
+        coordinator._placement = _sp3a5f_spy(log, "placement", ("force_exit",))
+        coordinator.main_window = _sp3a5f_spy(log, "window", ("refresh_window_title",))
+        coordinator.project_data = _sp3a5f_spy(
+            log, "data", ("clear_bid", "deselect_pages")
+        )
+        coordinator._nav = _sp3a5f_spy(log, "nav", ("transition_to",))
+        coordinator.ui_access_manager = _sp3a5f_spy(log, "access", ("refresh",))
+        coordinator._viewer = _sp3a5f_spy(log, "viewer", ("clear_plan_view",))
+        _sp3a5f_stub(
+            coordinator,
+            log,
+            self.STUBS,
+            {
+                "_flush_deferred_for_file": lambda: flush,
+                "_sync_collaboration_status": lambda: status,
+            },
+        )
+        return coordinator
+
+    def test_selecting_a_file_resets_the_workspace_in_order(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_file_selected("C:/jobs/a.mdb", "proj-1", True)
+        self.assertEqual(
+            log,
+            [
+                ("ops.cancel_navigation_load", (), {}),
+                ("ui.get_selected_bid_ref", (), {}),
+                ("_save_current_page_view_state", (), {}),
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("placement.force_exit", (), {}),
+                ("ui.reset_selections", (), {}),
+                ("ui.set_database_selected", (True, "C:/jobs/a.mdb"), {}),
+                ("ui.set_project_uid", ("proj-1",), {}),
+                ("window.refresh_window_title", (), {}),
+                ("data.clear_bid", (), {}),
+                ("_sync_undo_bid", (), {}),
+                ("nav.transition_to", (NavState.FILE_LOADED_NO_BID,), {}),
+                ("access.refresh", (), {}),
+                ("data.deselect_pages", (), {}),
+                ("_reset_takeoff_workspace_state", (), {}),
+                ("_set_takeoff_tab_visible", (False,), {}),
+                ("viewer.clear_plan_view", (), {}),
+                ("_clear_mesh_views_for_scene_update", (), {}),
+                ("_update_export_menu_state", (), {}),
+                ("_sync_page_info_status", (), {}),
+                (
+                    "_sync_collaboration_status",
+                    ("C:/jobs/a.mdb",),
+                    {"reset_mutation": True},
+                ),
+            ],
+        )
+
+    def test_file_selection_is_not_a_database_root_by_default(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_file_selected("C:/jobs/a.mdb")
+        self.assertEqual(
+            _sp3a5f_calls(log, "ui.set_database_selected"),
+            [("ui.set_database_selected", (False, "C:/jobs/a.mdb"), {})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "ui.set_project_uid"),
+            [("ui.set_project_uid", (None,), {})],
+        )
+
+    def test_missing_file_path_syncs_collaboration_for_the_empty_database(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._on_file_selected(None)
+        self.assertEqual(
+            _sp3a5f_calls(log, "_sync_collaboration_status"),
+            [("_sync_collaboration_status", ("",), {"reset_mutation": True})],
+        )
+
+    def test_refused_flush_restores_the_tree_selection_and_stops(self):
+        log = []
+        previous = BidRef("C:/jobs/old.mdb", "bid-1")
+        coordinator = self._coordinator(log, previous=previous, flush=False)
+        coordinator._on_file_selected("C:/jobs/a.mdb")
+        self.assertEqual(
+            log,
+            [
+                ("ops.cancel_navigation_load", (), {}),
+                ("ui.get_selected_bid_ref", (), {}),
+                ("_save_current_page_view_state", (), {}),
+                ("_flush_deferred_for_file", ("C:/jobs/old.mdb",), {}),
+                ("_restore_project_tree_bid_selection_if_needed", (), {}),
+                ("_sync_page_info_status", (), {}),
+            ],
+        )
+
+    def test_accepted_flush_continues_into_the_reset(self):
+        log = []
+        previous = BidRef("C:/jobs/old.mdb", "bid-1")
+        coordinator = self._coordinator(log, previous=previous, flush=True)
+        coordinator._on_file_selected("C:/jobs/a.mdb")
+        self.assertEqual(len(_sp3a5f_calls(log, "ui.reset_selections")), 1)
+        self.assertEqual(
+            _sp3a5f_calls(log, "_restore_project_tree_bid_selection_if_needed"), []
+        )
+
+    def test_reconciliation_required_status_starts_reconciliation(self):
+        log = []
+        status = CollaborationStatus(
+            "C:/jobs/a.mdb",
+            SynchronizationState.RECONCILIATION_REQUIRED,
+            message="gap",
+        )
+        coordinator = self._coordinator(log, status=status)
+        coordinator._on_file_selected("C:/jobs/a.mdb")
+        self.assertEqual(
+            _sp3a5f_calls(log, "_on_full_reconciliation_required"),
+            [("_on_full_reconciliation_required", ("C:/jobs/a.mdb", "gap"), {})],
+        )
+
+    def test_other_collaboration_states_do_not_start_reconciliation(self):
+        log = []
+        status = CollaborationStatus(
+            "C:/jobs/a.mdb", SynchronizationState.STOPPED, message="idle"
+        )
+        coordinator = self._coordinator(log, status=status)
+        coordinator._on_file_selected("C:/jobs/a.mdb")
+        self.assertEqual(_sp3a5f_calls(log, "_on_full_reconciliation_required"), [])
+
+
+class Sp3a5FConditionDisplayRefreshTests(unittest.TestCase):
+    def _coordinator(self, log, *, highlighted, sidebar):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            highlighted_condition_uids=highlighted
+        )
+        coordinator._sidebar = _sp3a5f_spy(
+            log, "sidebar", ("refresh_conditions_from_memory",)
+        )
+        coordinator.conditions_sidebar = (
+            _sp3a5f_spy(log, "conditions", ("highlight_conditions",))
+            if sidebar
+            else None
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: False)
+        return coordinator
+
+    def test_previous_highlight_is_restored_after_the_refresh(self):
+        log = []
+        coordinator = self._coordinator(log, highlighted=["c1", "c2"], sidebar=True)
+        coordinator._refresh_condition_display_after_app_config_change()
+        self.assertEqual(
+            log,
+            [
+                ("sidebar.refresh_conditions_from_memory", (), {}),
+                ("conditions.highlight_conditions", ({"c1", "c2"},), {}),
+            ],
+        )
+
+    def test_without_previous_highlight_nothing_is_restored(self):
+        log = []
+        coordinator = self._coordinator(log, highlighted=[], sidebar=True)
+        coordinator._refresh_condition_display_after_app_config_change()
+        self.assertEqual(log, [("sidebar.refresh_conditions_from_memory", (), {})])
+
+    def test_without_a_conditions_sidebar_the_highlight_is_skipped(self):
+        log = []
+        coordinator = self._coordinator(log, highlighted=["c1"], sidebar=False)
+        coordinator._refresh_condition_display_after_app_config_change()
+        self.assertEqual(log, [("sidebar.refresh_conditions_from_memory", (), {})])
+
+
+class Sp3a5FNativeSceneCacheTests(unittest.TestCase):
+    ACTIVE = BidRef("test.mdb", "bid-1")
+
+    def _coordinator(
+        self,
+        *,
+        cached=None,
+        embedded=True,
+        detached_visible=False,
+        pages=("page-1",),
+        has_embedded_viewer=True,
+        has_detached_window=True,
+    ):
+        from tests.presentation.coordinators.ui_event_coordinator_support import (
+            FakeMeshAccess,
+            FakeMeshPlanSignaler,
+            FakeMeshReceiver,
+            FakeNav,
+            FakeProjectData,
+            FakeUiState,
+            configure_mesh_state,
+        )
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = FakeNav()
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator.ui_state_manager = FakeUiState(self.ACTIVE)
+        coordinator.project_data = FakeProjectData()
+        coordinator.project_data.selected_page_uids = list(pages)
+        coordinator._plan_view_signaler = FakeMeshPlanSignaler()
+        self.embedded = FakeMeshReceiver() if has_embedded_viewer else None
+        self.detached = (
+            FakeMeshReceiver(visible=detached_visible) if has_detached_window else None
+        )
+        configure_mesh_state(
+            coordinator,
+            view_index=0 if embedded else 1,
+            opengl_viewer=self.embedded,
+            mesh_window=self.detached,
+            last_mesh_scene=cached,
+        )
+        self.replays = []
+        coordinator._replay_mesh_if_current = lambda surface: self.replays.append(
+            surface
+        )
+        return coordinator
+
+    @staticmethod
+    def _cached(identity):
+        from tests.presentation.coordinators.ui_event_coordinator_support import (
+            mesh_publication,
+        )
+
+        return mesh_publication(("v", "n", "i", "c"), identity, {})
+
+    @staticmethod
+    def _identity(bid_ref, generation, pages=("page-1",)):
+        return MeshSceneIdentity(bid_ref, tuple(pages), generation)
+
+    def _publish(self, coordinator, identity, *, failed=False):
+        coordinator._on_native_scene_updated(
+            geometries=[], scene_identity=identity, scene_failed=failed
+        )
+
+    def test_same_generation_for_the_same_scene_is_not_published_again(self):
+        cached = self._cached(self._identity(self.ACTIVE, 5))
+        coordinator = self._coordinator(cached=cached)
+        self._publish(coordinator, self._identity(self.ACTIVE, 5))
+        self.assertIs(coordinator._last_mesh_scene, cached)
+        self.assertEqual(self.embedded.mesh_calls, [])
+
+    def test_newer_generation_for_the_same_scene_is_published(self):
+        cached = self._cached(self._identity(self.ACTIVE, 5))
+        coordinator = self._coordinator(cached=cached)
+        newer = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, newer)
+        self.assertEqual(coordinator._last_mesh_scene.scene_identity, newer)
+        self.assertEqual(len(self.embedded.mesh_calls), 1)
+
+    def test_newer_cached_generation_of_another_bid_does_not_block_publication(self):
+        other = BidRef("other.mdb", "bid-9")
+        cached = self._cached(self._identity(other, 50))
+        coordinator = self._coordinator(cached=cached)
+        identity = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, identity)
+        self.assertEqual(coordinator._last_mesh_scene.scene_identity, identity)
+        self.assertEqual(len(self.embedded.mesh_calls), 1)
+
+    def test_newer_cached_generation_of_other_pages_does_not_block_publication(self):
+        cached = self._cached(self._identity(self.ACTIVE, 50, ("page-2",)))
+        coordinator = self._coordinator(cached=cached)
+        identity = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, identity)
+        self.assertEqual(coordinator._last_mesh_scene.scene_identity, identity)
+        self.assertEqual(len(self.embedded.mesh_calls), 1)
+
+    def test_failure_of_a_matching_scene_replays_the_cache_on_live_surfaces(self):
+        cached = self._cached(self._identity(self.ACTIVE, 5))
+        coordinator = self._coordinator(cached=cached, detached_visible=True)
+        coordinator._pending_dirty_mesh_refresh = True
+        failed = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, failed, failed=True)
+        self.assertIs(coordinator._last_mesh_scene, cached)
+        self.assertEqual(self.replays, [self.embedded, self.detached])
+        self.assertEqual(self.embedded.scene_failures, [failed])
+        self.assertEqual(self.detached.scene_failures, [failed])
+        self.assertFalse(coordinator._pending_dirty_mesh_refresh)
+        self.assertTrue(coordinator._mesh_scene_dirty)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"page-1"})
+
+    def test_failure_with_cache_of_another_bid_clears_the_replay_buffer(self):
+        other = BidRef("other.mdb", "bid-9")
+        cached = self._cached(self._identity(other, 1))
+        coordinator = self._coordinator(cached=cached)
+        failed = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, failed, failed=True)
+        self.assertIsNone(coordinator._last_mesh_scene)
+        self.assertEqual(self.replays, [])
+        self.assertEqual(self.embedded.scene_failures, [failed])
+
+    def test_failure_with_cache_of_other_pages_clears_the_replay_buffer(self):
+        cached = self._cached(self._identity(self.ACTIVE, 1, ("page-2",)))
+        coordinator = self._coordinator(cached=cached)
+        failed = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, failed, failed=True)
+        self.assertIsNone(coordinator._last_mesh_scene)
+        self.assertEqual(self.replays, [])
+
+    def test_failure_without_cache_leaves_an_empty_replay_buffer(self):
+        coordinator = self._coordinator(cached=None)
+        failed = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, failed, failed=True)
+        self.assertIsNone(coordinator._last_mesh_scene)
+        self.assertEqual(self.replays, [])
+        self.assertEqual(self.embedded.scene_failures, [failed])
+
+    def test_failure_reaches_only_live_surfaces(self):
+        coordinator = self._coordinator(cached=None, detached_visible=False)
+        failed = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, failed, failed=True)
+        self.assertEqual(self.embedded.scene_failures, [failed])
+        self.assertEqual(self.detached.scene_failures, [])
+
+    def test_failure_skips_the_embedded_viewer_when_the_2d_view_is_shown(self):
+        coordinator = self._coordinator(cached=None, embedded=False)
+        failed = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, failed, failed=True)
+        self.assertEqual(self.embedded.scene_failures, [])
+
+    def test_failure_tolerates_missing_live_surfaces(self):
+        coordinator = self._coordinator(
+            cached=None, has_embedded_viewer=False, has_detached_window=False
+        )
+        failed = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, failed, failed=True)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"page-1"})
+
+    def test_publication_tolerates_missing_live_surfaces(self):
+        coordinator = self._coordinator(
+            cached=None, has_embedded_viewer=False, has_detached_window=False
+        )
+        identity = self._identity(self.ACTIVE, 6)
+        self._publish(coordinator, identity)
+        self.assertEqual(coordinator._last_mesh_scene.scene_identity, identity)
+        self.assertEqual(coordinator._plan_view_signaler.requests, 0)
+
+    def test_publication_projects_pending_3d_takeoffs_onto_live_surfaces(self):
+        coordinator = self._coordinator(cached=None, detached_visible=True)
+        coordinator._pending_3d_takeoff_uids_by_bid = {self.ACTIVE: {"t1", "t2"}}
+        self._publish(coordinator, self._identity(self.ACTIVE, 6))
+        self.assertEqual(self.embedded.pending_mutation_uids, {"t1", "t2"})
+        self.assertEqual(self.detached.pending_mutation_uids, {"t1", "t2"})
+
+    def test_publication_skips_surfaces_that_are_not_live(self):
+        coordinator = self._coordinator(cached=None, detached_visible=False)
+        coordinator._pending_3d_takeoff_uids_by_bid = {self.ACTIVE: {"t1"}}
+        self._publish(coordinator, self._identity(self.ACTIVE, 6))
+        self.assertEqual(len(self.embedded.mesh_calls), 1)
+        self.assertEqual(self.detached.mesh_calls, [])
+        self.assertEqual(self.detached.pending_mutation_uids, set())
+
+    def test_plan_view_refresh_is_requested_only_with_pages_and_live_surface(self):
+        live = self._coordinator(cached=None)
+        self._publish(live, self._identity(self.ACTIVE, 6))
+        self.assertEqual(live._plan_view_signaler.requests, 1)
+        not_live = self._coordinator(cached=None, embedded=False)
+        self._publish(not_live, self._identity(self.ACTIVE, 6))
+        self.assertEqual(not_live._plan_view_signaler.requests, 0)
+        no_pages = self._coordinator(cached=None, pages=())
+        self._publish(no_pages, self._identity(self.ACTIVE, 6, ()))
+        self.assertEqual(len(self.embedded.mesh_calls), 1)
+        self.assertEqual(no_pages._plan_view_signaler.requests, 0)
+
+
+class Sp3a5FHandleBidSelectionTests(unittest.TestCase):
+    BID = BidRef("C:/jobs/a.mdb", "bid-1")
+    PREV = BidRef("C:/jobs/old.mdb", "bid-0")
+    STUBS = (
+        "_save_current_page_view_state",
+        "_flush_deferred_for_file",
+        "_restore_project_tree_bid_selection_if_needed",
+        "_sync_page_info_status",
+        "_prepare_plan_for_authoritative_refresh",
+        "_sync_undo_bid",
+        "_reset_takeoff_workspace_state",
+        "_set_takeoff_tab_visible",
+        "_clear_mesh_views_for_scene_update",
+        "_update_export_menu_state",
+        "_sync_collaboration_status",
+        "_complete_bid_navigation_load",
+    )
+
+    def _coordinator(
+        self,
+        log,
+        *,
+        previous=None,
+        flush=True,
+        loading=False,
+        current_file="C:/jobs/a.mdb",
+        begin=True,
+        handler=True,
+        request=None,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_operations = _sp3a5f_spy(
+            log,
+            "ops",
+            (
+                "cancel_navigation_load",
+                "navigation_load_in_progress",
+                "request_load_bid",
+            ),
+            {"navigation_load_in_progress": lambda: loading},
+        )
+        if request is not None:
+            coordinator.project_operations.request_load_bid = request
+        coordinator.ui_state_manager = _sp3a5f_spy(
+            log,
+            "ui",
+            (
+                "get_selected_bid_ref",
+                "set_bid_selection",
+                "set_database_selected",
+                "set_file_path",
+            ),
+            {"get_selected_bid_ref": lambda: previous},
+        )
+        coordinator._sql_collaboration = _sp3a5f_spy(log, "sql", ("update_presence",))
+        coordinator._plan_view_handler = (
+            _sp3a5f_spy(log, "handler", ("hide_pending_takeoff_placement_previews",))
+            if handler
+            else None
+        )
+        coordinator._placement = _sp3a5f_spy(log, "placement", ("force_exit",))
+        coordinator.project_data = _sp3a5f_spy(
+            log,
+            "data",
+            ("clear_bid", "deselect_pages", "get_current_file_path", "get_bid"),
+            {
+                "get_current_file_path": lambda: current_file,
+                "get_bid": lambda: None,
+            },
+        )
+        coordinator._nav = _sp3a5f_spy(
+            log,
+            "nav",
+            ("transition_to", "compute_state_for", "begin_bid_load"),
+            {
+                "compute_state_for": lambda: "computed-state",
+                "begin_bid_load": lambda: begin,
+            },
+        )
+        coordinator.ui_access_manager = _sp3a5f_spy(log, "access", ("refresh",))
+        coordinator._viewer = _sp3a5f_spy(log, "viewer", ("clear_plan_view",))
+        coordinator.main_window = _sp3a5f_spy(log, "window", ("refresh_window_title",))
+        _sp3a5f_stub(
+            coordinator, log, self.STUBS, {"_flush_deferred_for_file": lambda: flush}
+        )
+        return coordinator
+
+    def test_reselecting_the_same_bid_is_ignored(self):
+        log = []
+        coordinator = self._coordinator(log, previous=self.BID)
+        coordinator.handle_bid_selection(BidRef("C:/jobs/a.mdb", "bid-1"))
+        self.assertEqual(
+            [entry[0] for entry in log],
+            ["ui.get_selected_bid_ref", "ops.navigation_load_in_progress"],
+        )
+
+    def test_forced_reselection_reloads_the_same_bid(self):
+        log = []
+        coordinator = self._coordinator(log, previous=self.BID)
+        coordinator.handle_bid_selection(self.BID, force=True)
+        self.assertEqual(len(_sp3a5f_calls(log, "ops.request_load_bid")), 1)
+
+    def test_reselection_while_a_load_runs_restarts_the_load(self):
+        log = []
+        coordinator = self._coordinator(log, previous=self.BID, loading=True)
+        coordinator.handle_bid_selection(self.BID)
+        self.assertEqual(len(_sp3a5f_calls(log, "ops.request_load_bid")), 1)
+
+    def test_refused_flush_restores_the_tree_selection_and_keeps_the_bid(self):
+        log = []
+        coordinator = self._coordinator(log, previous=self.PREV, flush=False)
+        coordinator.handle_bid_selection(self.BID)
+        self.assertEqual(
+            log,
+            [
+                ("ui.get_selected_bid_ref", (), {}),
+                ("_save_current_page_view_state", (), {}),
+                ("_flush_deferred_for_file", ("C:/jobs/old.mdb",), {}),
+                ("_restore_project_tree_bid_selection_if_needed", (), {}),
+                ("_sync_page_info_status", (), {}),
+            ],
+        )
+
+    def test_clearing_the_selection_resets_the_workspace_in_order(self):
+        log = []
+        coordinator = self._coordinator(log, previous=self.PREV)
+        coordinator.handle_bid_selection(None)
+        self.assertEqual(
+            [entry for entry in log if entry[0] != "data.get_current_file_path"],
+            [
+                ("ui.get_selected_bid_ref", (), {}),
+                ("_save_current_page_view_state", (), {}),
+                ("_flush_deferred_for_file", ("C:/jobs/old.mdb",), {}),
+                ("ops.cancel_navigation_load", (), {}),
+                ("sql.update_presence", ("C:/jobs/old.mdb", None, None), {}),
+                ("handler.hide_pending_takeoff_placement_previews", (), {}),
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("placement.force_exit", (), {}),
+                ("ui.set_bid_selection", (None,), {}),
+                ("ui.set_database_selected", (False,), {}),
+                ("ui.set_file_path", (None,), {}),
+                ("data.clear_bid", (), {}),
+                ("_sync_undo_bid", (), {}),
+                (
+                    "nav.compute_state_for",
+                    (),
+                    {"has_file": True, "bid_ref": None, "active_page_uid": None},
+                ),
+                ("nav.transition_to", ("computed-state",), {}),
+                ("access.refresh", (), {}),
+                ("data.deselect_pages", (), {}),
+                ("_reset_takeoff_workspace_state", (), {}),
+                ("viewer.clear_plan_view", (), {}),
+                ("_clear_mesh_views_for_scene_update", (), {}),
+                ("_set_takeoff_tab_visible", (False,), {}),
+                ("_update_export_menu_state", (), {}),
+                ("_sync_page_info_status", (), {}),
+                ("_sync_collaboration_status", ("",), {"reset_mutation": True}),
+                ("window.refresh_window_title", (), {}),
+            ],
+        )
+
+    def test_clearing_without_previous_bid_or_handler_skips_presence_and_previews(self):
+        log = []
+        coordinator = self._coordinator(
+            log, previous=None, handler=False, current_file=""
+        )
+        coordinator.handle_bid_selection(None)
+        self.assertEqual(_sp3a5f_calls(log, "sql.update_presence"), [])
+        self.assertEqual(
+            _sp3a5f_calls(log, "handler.hide_pending_takeoff_placement_previews"), []
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "nav.compute_state_for"),
+            [
+                (
+                    "nav.compute_state_for",
+                    (),
+                    {"has_file": False, "bid_ref": None, "active_page_uid": None},
+                )
+            ],
+        )
+        self.assertEqual(len(_sp3a5f_calls(log, "window.refresh_window_title")), 1)
+
+    def test_refused_bid_load_start_only_syncs_the_page_info(self):
+        log = []
+        coordinator = self._coordinator(log, previous=None, begin=False)
+        coordinator.handle_bid_selection(self.BID)
+        self.assertEqual(
+            log,
+            [
+                ("ui.get_selected_bid_ref", (), {}),
+                ("_save_current_page_view_state", (), {}),
+                ("data.get_current_file_path", (), {}),
+                ("nav.begin_bid_load", (True,), {}),
+                ("_sync_page_info_status", (), {}),
+            ],
+        )
+
+    def test_started_load_completes_through_the_navigation_callback(self):
+        log = []
+        captured = []
+
+        def request(bid_ref, completion):
+            log.append(("ops.request_load_bid", (bid_ref,), {}))
+            captured.append(completion)
+
+        coordinator = self._coordinator(log, previous=self.PREV, request=request)
+        coordinator.handle_bid_selection(self.BID)
+        self.assertEqual(
+            [entry[0] for entry in log][-3:],
+            ["nav.begin_bid_load", "ops.request_load_bid", "_sync_page_info_status"],
+        )
+        captured[0](True, "done")
+        self.assertEqual(
+            _sp3a5f_calls(log, "_complete_bid_navigation_load"),
+            [
+                (
+                    "_complete_bid_navigation_load",
+                    (self.BID, self.PREV, "C:/jobs/a.mdb", True, "done"),
+                    {},
+                )
+            ],
+        )
+
+    def test_catalog_error_at_start_completes_the_load_as_failed(self):
+        log = []
+
+        def request(_bid_ref, _completion):
+            raise DatabaseCatalogError("catalog down")
+
+        coordinator = self._coordinator(log, previous=self.PREV, request=request)
+        with self.assertLogs(_SP3A5F_MODULE, level="WARNING") as captured:
+            coordinator.handle_bid_selection(self.BID)
+        self.assertEqual(
+            [(r.levelname, r.getMessage()) for r in captured.records],
+            [("WARNING", "Failed to start the selected SQL bid load")],
+        )
+        self.assertIsNotNone(captured.records[0].exc_info)
+        self.assertEqual(
+            _sp3a5f_calls(log, "_complete_bid_navigation_load"),
+            [
+                (
+                    "_complete_bid_navigation_load",
+                    (self.BID, self.PREV, "C:/jobs/a.mdb", False, "catalog down"),
+                    {},
+                )
+            ],
+        )
+        self.assertEqual(_sp3a5f_calls(log, "_sync_page_info_status"), [])
+
+    def test_unexpected_error_at_start_completes_the_load_as_failed(self):
+        log = []
+
+        def request(_bid_ref, _completion):
+            raise RuntimeError("boom")
+
+        coordinator = self._coordinator(log, previous=self.PREV, request=request)
+        with self.assertLogs(_SP3A5F_MODULE, level="ERROR") as captured:
+            coordinator.handle_bid_selection(self.BID)
+        self.assertEqual(
+            [(r.levelname, r.getMessage()) for r in captured.records],
+            [("ERROR", "Failed to start the selected bid load")],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "_complete_bid_navigation_load")[0][1][3:],
+            (False, "boom"),
+        )
+
+    def test_unexpected_error_without_message_reports_the_exception_class(self):
+        log = []
+
+        def request(_bid_ref, _completion):
+            raise KeyError()
+
+        coordinator = self._coordinator(log, previous=self.PREV, request=request)
+        with self.assertLogs(_SP3A5F_MODULE, level="ERROR"):
+            coordinator.handle_bid_selection(self.BID)
+        self.assertEqual(
+            _sp3a5f_calls(log, "_complete_bid_navigation_load")[0][1][3:],
+            (False, "KeyError"),
+        )
+
+
+class Sp3a5FCompleteBidNavigationLoadTests(unittest.TestCase):
+    BID = BidRef("C:/jobs/a.mdb", "bid-1")
+    PREV = BidRef("C:/jobs/old.mdb", "bid-0")
+    SAME_FILE_PREV = BidRef("C:/jobs/a.mdb", "bid-0")
+    STUBS = (
+        "_update_menu_state",
+        "_restore_project_tree_bid_selection_if_needed",
+        "_sync_page_info_status",
+        "_prepare_plan_for_authoritative_refresh",
+        "ensure_select_mode",
+        "_sync_collaboration_status",
+        "_sync_undo_bid",
+        "_begin_mesh_views_for_bid_load",
+        "_resolve_bid_lock_state",
+        "_reset_takeoff_workspace_state",
+        "_update_export_menu_state",
+        "_set_takeoff_tab_visible",
+        "_activate_takeoff_workspace",
+    )
+
+    def _coordinator(self, log, *, cleaning_up=False, tab_index=None, handler=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = cleaning_up
+        coordinator.project_data = _sp3a5f_spy(
+            log, "data", ("set_current_file", "deselect_pages")
+        )
+        coordinator.ui_access_manager = _sp3a5f_spy(log, "access", ("refresh",))
+        coordinator._sql_collaboration = _sp3a5f_spy(log, "sql", ("update_presence",))
+        coordinator._plan_view_handler = (
+            _sp3a5f_spy(log, "handler", ("hide_pending_takeoff_placement_previews",))
+            if handler
+            else None
+        )
+        coordinator._placement = _sp3a5f_spy(log, "placement", ("force_exit",))
+        coordinator.ui_state_manager = _sp3a5f_spy(
+            log, "ui", ("set_bid_selection", "set_page_selection")
+        )
+        coordinator._viewer = _sp3a5f_spy(log, "viewer", ("clear_plan_view",))
+        coordinator._nav = _sp3a5f_spy(log, "nav", ("transition_to",))
+        coordinator.main_window = _sp3a5f_spy(log, "window", ("refresh_window_title",))
+        coordinator._tab_widget = (
+            None
+            if tab_index is None
+            else SimpleNamespace(currentIndex=lambda: tab_index)
+        )
+        coordinator.main_window.parent_marker = object()
+        _sp3a5f_stub(coordinator, log, self.STUBS)
+        return coordinator
+
+    def _run(self, coordinator, *args):
+        warnings = []
+        with patch(
+            f"{_SP3A5F_MODULE}.show_warning",
+            lambda *a: warnings.append(a),
+        ):
+            coordinator._complete_bid_navigation_load(*args)
+        return warnings
+
+    def test_cleanup_ignores_a_late_completion(self):
+        log = []
+        coordinator = self._coordinator(log, cleaning_up=True)
+        warnings = self._run(coordinator, self.BID, self.PREV, "x.mdb", False, "err")
+        self.assertEqual(log, [])
+        self.assertEqual(warnings, [])
+
+    def test_failure_restores_the_previous_file_and_warns(self):
+        log = []
+        coordinator = self._coordinator(log)
+        warnings = self._run(
+            coordinator, self.BID, self.PREV, "C:/jobs/prev.mdb", False, "no access"
+        )
+        self.assertEqual(
+            log,
+            [
+                ("data.set_current_file", ("C:/jobs/prev.mdb",), {}),
+                ("access.refresh", (), {}),
+                ("_update_menu_state", (), {}),
+                ("_restore_project_tree_bid_selection_if_needed", (), {}),
+                ("_sync_page_info_status", (), {}),
+            ],
+        )
+        self.assertEqual(
+            warnings, [(coordinator.main_window, "Open SQL Bid", "no access")]
+        )
+
+    def test_failure_without_previous_file_falls_back_to_the_previous_bid_file(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(coordinator, self.BID, self.PREV, None, False, "")
+        self.assertEqual(
+            _sp3a5f_calls(log, "data.set_current_file"),
+            [("data.set_current_file", ("C:/jobs/old.mdb",), {})],
+        )
+
+    def test_failure_without_any_previous_state_keeps_the_current_file(self):
+        log = []
+        coordinator = self._coordinator(log)
+        warnings = self._run(coordinator, self.BID, None, None, False, "")
+        self.assertEqual(_sp3a5f_calls(log, "data.set_current_file"), [])
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            [entry[0] for entry in log],
+            [
+                "access.refresh",
+                "_update_menu_state",
+                "_restore_project_tree_bid_selection_if_needed",
+                "_sync_page_info_status",
+            ],
+        )
+
+    def test_success_switching_files_resets_the_workspace_in_order(self):
+        log = []
+        coordinator = self._coordinator(log, tab_index=TAB_INDEX_PROJECTS)
+        warnings = self._run(coordinator, self.BID, self.PREV, "x.mdb", True, "")
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            log,
+            [
+                ("sql.update_presence", ("C:/jobs/old.mdb", None, None), {}),
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("handler.hide_pending_takeoff_placement_previews", (), {}),
+                ("placement.force_exit", (), {}),
+                ("ensure_select_mode", (), {}),
+                ("ui.set_bid_selection", (self.BID,), {}),
+                (
+                    "_sync_collaboration_status",
+                    ("C:/jobs/a.mdb",),
+                    {"reset_mutation": True},
+                ),
+                ("sql.update_presence", ("C:/jobs/a.mdb", "bid-1", None), {}),
+                ("_sync_undo_bid", (), {}),
+                ("data.deselect_pages", (), {}),
+                ("ui.set_page_selection", ([],), {}),
+                ("viewer.clear_plan_view", (), {}),
+                ("_begin_mesh_views_for_bid_load", (self.BID,), {}),
+                ("_resolve_bid_lock_state", (self.BID,), {}),
+                ("_reset_takeoff_workspace_state", (), {}),
+                ("nav.transition_to", (NavState.BID_ACTIVE_NO_PAGES,), {}),
+                ("access.refresh", (), {}),
+                ("_update_export_menu_state", (), {}),
+                ("window.refresh_window_title", (), {}),
+                ("_set_takeoff_tab_visible", (True,), {}),
+                ("_sync_page_info_status", (), {}),
+            ],
+        )
+
+    def test_success_within_the_same_file_keeps_presence_and_mutation_state(self):
+        log = []
+        coordinator = self._coordinator(log, handler=False)
+        self._run(coordinator, self.BID, self.SAME_FILE_PREV, "x.mdb", True, "")
+        self.assertEqual(
+            _sp3a5f_calls(log, "sql.update_presence"),
+            [("sql.update_presence", ("C:/jobs/a.mdb", "bid-1", None), {})],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "_sync_collaboration_status"),
+            [
+                (
+                    "_sync_collaboration_status",
+                    ("C:/jobs/a.mdb",),
+                    {"reset_mutation": False},
+                )
+            ],
+        )
+        self.assertEqual(
+            _sp3a5f_calls(log, "handler.hide_pending_takeoff_placement_previews"), []
+        )
+
+    def test_success_without_previous_bid_does_not_reset_mutation_state(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self._run(coordinator, self.BID, None, None, True, "")
+        self.assertEqual(
+            _sp3a5f_calls(log, "_sync_collaboration_status"),
+            [
+                (
+                    "_sync_collaboration_status",
+                    ("C:/jobs/a.mdb",),
+                    {"reset_mutation": False},
+                )
+            ],
+        )
+        self.assertEqual(len(_sp3a5f_calls(log, "sql.update_presence")), 1)
+
+    def test_success_on_the_takeoff_tab_activates_the_takeoff_workspace(self):
+        log = []
+        coordinator = self._coordinator(log, tab_index=TAB_INDEX_TAKEOFF)
+        self._run(coordinator, self.BID, None, None, True, "")
+        names = [entry[0] for entry in log]
+        self.assertEqual(names.count("_activate_takeoff_workspace"), 1)
+        self.assertEqual(
+            names[-2:], ["_activate_takeoff_workspace", "_sync_page_info_status"]
+        )
+
+    def test_success_on_another_tab_does_not_activate_the_takeoff_workspace(self):
+        log = []
+        coordinator = self._coordinator(log, tab_index=TAB_INDEX_SUMMARY)
+        self._run(coordinator, self.BID, None, None, True, "")
+        self.assertEqual(_sp3a5f_calls(log, "_activate_takeoff_workspace"), [])
+
+    def test_success_without_a_tab_widget_does_not_activate_the_workspace(self):
+        log = []
+        coordinator = self._coordinator(log, tab_index=None)
+        self._run(coordinator, self.BID, None, None, True, "")
+        self.assertEqual(_sp3a5f_calls(log, "_activate_takeoff_workspace"), [])
+        self.assertEqual(
+            _sp3a5f_calls(log, "_set_takeoff_tab_visible"),
+            [("_set_takeoff_tab_visible", (True,), {})],
+        )
+
+
+class Sp3a5FPageSelectionHandlerTests(unittest.TestCase):
+    BID = BidRef("C:/jobs/a.mdb", "bid-1")
+
+    def _coordinator(self, log, *, refreshing=False, bid=None, selected=()):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = SimpleNamespace(is_refreshing=refreshing)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid,
+            selected_page_uids=list(selected),
+        )
+        _sp3a5f_stub(coordinator, log, ("_update_page_selection",))
+        return coordinator
+
+    def test_refreshing_navigation_ignores_the_page_selection(self):
+        log = []
+        coordinator = self._coordinator(
+            log, refreshing=True, bid=self.BID, selected=["p1"]
+        )
+        coordinator.handle_page_selection(["p2"])
+        self.assertEqual(log, [])
+
+    def test_refreshing_navigation_ignores_a_page_selection_without_bid(self):
+        log = []
+        coordinator = self._coordinator(log, refreshing=True, bid=None, selected=["p1"])
+        coordinator.handle_page_selection(["p2"])
+        self.assertEqual(log, [])
+
+    def test_page_selection_without_bid_clears_stale_selected_pages_only(self):
+        log = []
+        coordinator = self._coordinator(log, bid=None, selected=["p1"])
+        coordinator.handle_page_selection(["p2"])
+        self.assertEqual(log, [("_update_page_selection", ([],), {})])
+
+    def test_page_selection_without_bid_and_without_selection_does_nothing(self):
+        log = []
+        coordinator = self._coordinator(log, bid=None, selected=[])
+        coordinator.handle_page_selection(["p2"])
+        self.assertEqual(log, [])
+
+    def test_page_selection_with_bid_is_applied(self):
+        log = []
+        coordinator = self._coordinator(log, bid=self.BID, selected=["p1"])
+        coordinator.handle_page_selection(["p2", "p3"])
+        self.assertEqual(log, [("_update_page_selection", (["p2", "p3"],), {})])
+
+
+class Sp3a5FActivePageChangedTests(unittest.TestCase):
+    BID = BidRef("C:/jobs/a.mdb", "bid-1")
+    STUBS = (
+        "_prepare_plan_for_authoritative_refresh",
+        "_save_current_page_view_state",
+        "_sync_navigation_for_active_page",
+        "_update_page_settings_bar",
+        "_sync_overlay_display_mode",
+        "_update_native_page_textures",
+        "_update_plan_view",
+        "_sync_page_info_status",
+        "_update_export_menu_state",
+    )
+
+    def _coordinator(
+        self,
+        log,
+        *,
+        bid=None,
+        view_2d=True,
+        placement_active=False,
+        plan_view="absent",
+        has_bar=True,
+        refreshing=False,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = SimpleNamespace(is_refreshing=refreshing)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid, active_page_uid="initial"
+        )
+        coordinator._sql_collaboration = _sp3a5f_spy(log, "sql", ("update_presence",))
+        coordinator._page_settings_bar = (
+            _sp3a5f_spy(log, "bar", ("clear_page",)) if has_bar else None
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: view_2d and feature == Feature.VIEW_2D
+        )
+        coordinator._viewer = _sp3a5f_spy(log, "viewer", ("clear_plan_view",))
+        coordinator._sidebar = _sp3a5f_spy(
+            log, "sidebar", ("update_conditions_quantities",)
+        )
+        coordinator._placement = _sp3a5f_spy(
+            log,
+            "placement",
+            ("force_exit",),
+            is_active=placement_active,
+        )
+        coordinator.plan_view = None if plan_view == "absent" else plan_view
+        _sp3a5f_stub(coordinator, log, self.STUBS)
+        return coordinator
+
+    def test_refreshing_navigation_ignores_the_active_page_change(self):
+        log = []
+        coordinator = self._coordinator(log, refreshing=True, bid=self.BID)
+        coordinator.handle_active_page_changed("p1")
+        self.assertEqual(log, [])
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "initial")
+
+    def test_active_page_with_2d_view_updates_every_projection_in_order(self):
+        log = []
+        coordinator = self._coordinator(log, bid=self.BID)
+        coordinator.handle_active_page_changed("p1")
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p1")
+        self.assertEqual(
+            log,
+            [
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("_save_current_page_view_state", (), {"selected_page_override": "p1"}),
+                ("_sync_navigation_for_active_page", (self.BID, "p1"), {}),
+                ("sql.update_presence", ("C:/jobs/a.mdb", "bid-1", "p1"), {}),
+                ("_update_page_settings_bar", ("p1",), {}),
+                ("_sync_overlay_display_mode", ("p1",), {}),
+                ("_update_native_page_textures", (), {}),
+                ("_update_plan_view", ("p1",), {}),
+                ("_sync_page_info_status", (), {}),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+
+    def test_active_page_without_2d_access_clears_the_plan_view(self):
+        log = []
+        coordinator = self._coordinator(log, bid=self.BID, view_2d=False)
+        coordinator.handle_active_page_changed("p1")
+        self.assertEqual(_sp3a5f_calls(log, "_update_plan_view"), [])
+        self.assertEqual(
+            [
+                entry[0]
+                for entry in log
+                if entry[0]
+                in ("viewer.clear_plan_view", "sidebar.update_conditions_quantities")
+            ],
+            ["viewer.clear_plan_view", "sidebar.update_conditions_quantities"],
+        )
+
+    def test_cleared_active_page_clears_settings_bar_plan_view_and_quantities(self):
+        log = []
+        coordinator = self._coordinator(log, bid=None)
+        coordinator.handle_active_page_changed(None)
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, None)
+        self.assertEqual(
+            log,
+            [
+                ("_prepare_plan_for_authoritative_refresh", (), {}),
+                ("_save_current_page_view_state", (), {"selected_page_override": None}),
+                ("_sync_navigation_for_active_page", (None, None), {}),
+                ("bar.clear_page", (), {}),
+                ("viewer.clear_plan_view", (), {}),
+                ("sidebar.update_conditions_quantities", (), {}),
+                ("_sync_page_info_status", (), {}),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+
+    def test_cleared_active_page_without_settings_bar_still_clears_the_view(self):
+        log = []
+        coordinator = self._coordinator(log, bid=self.BID, has_bar=False)
+        coordinator.handle_active_page_changed("")
+        self.assertEqual(len(_sp3a5f_calls(log, "viewer.clear_plan_view")), 1)
+        self.assertEqual(
+            _sp3a5f_calls(log, "sql.update_presence"),
+            [("sql.update_presence", ("C:/jobs/a.mdb", "bid-1", ""), {})],
+        )
+
+    def test_stale_placement_is_reset_when_the_cursor_left_place_mode(self):
+        log = []
+        plan_view = SimpleNamespace(cursor_mode=CURSOR_MODE_SELECT)
+        coordinator = self._coordinator(
+            log, bid=self.BID, placement_active=True, plan_view=plan_view
+        )
+        with self.assertLogs(_SP3A5F_MODULE, level="WARNING") as captured:
+            coordinator.handle_active_page_changed("p1")
+        self.assertEqual(
+            [r.getMessage() for r in captured.records],
+            [
+                "Resetting stale placement state after page change because plan "
+                f"view cursor is {CURSOR_MODE_SELECT!r}"
+            ],
+        )
+        self.assertEqual(len(_sp3a5f_calls(log, "placement.force_exit")), 1)
+        names = [entry[0] for entry in log]
+        self.assertLess(
+            names.index("placement.force_exit"), names.index("_sync_page_info_status")
+        )
+
+    def test_placement_in_place_mode_is_kept_on_page_change(self):
+        log = []
+        plan_view = SimpleNamespace(cursor_mode=CURSOR_MODE_PLACE)
+        coordinator = self._coordinator(
+            log, bid=self.BID, placement_active=True, plan_view=plan_view
+        )
+        coordinator.handle_active_page_changed("p1")
+        self.assertEqual(_sp3a5f_calls(log, "placement.force_exit"), [])
+
+    def test_active_placement_without_plan_view_is_kept_on_page_change(self):
+        log = []
+        coordinator = self._coordinator(
+            log, bid=self.BID, placement_active=True, plan_view="absent"
+        )
+        coordinator.handle_active_page_changed("p1")
+        self.assertEqual(_sp3a5f_calls(log, "placement.force_exit"), [])
+
+    def test_inactive_placement_is_not_reset_on_page_change(self):
+        log = []
+        plan_view = SimpleNamespace(cursor_mode=CURSOR_MODE_SELECT)
+        coordinator = self._coordinator(
+            log, bid=self.BID, placement_active=False, plan_view=plan_view
+        )
+        coordinator.handle_active_page_changed("p1")
+        self.assertEqual(_sp3a5f_calls(log, "placement.force_exit"), [])
+
+
+class Sp3a5FNavigationForActivePageWithoutBidTests(unittest.TestCase):
+    def _coordinator(self, *, placement_active=False):
+        from tests.presentation.coordinators.ui_event_coordinator_support import (
+            FakePlacement,
+        )
+        from ost_visualizer.presentation.coordinators.navigation_state_machine import (
+            NavigationStateMachine,
+        )
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = NavigationStateMachine()
+        coordinator._nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        coordinator._placement = FakePlacement()
+        coordinator._placement.is_active = placement_active
+        return coordinator
+
+    def test_active_page_without_bid_leaves_the_navigation_state_alone(self):
+        coordinator = self._coordinator()
+        coordinator._sync_navigation_for_active_page(None, "page-1")
+        self.assertEqual(coordinator._nav.current_state, NavState.FILE_LOADED_NO_BID)
+
+    def test_missing_active_page_without_bid_leaves_placement_alone(self):
+        coordinator = self._coordinator(placement_active=True)
+        coordinator._sync_navigation_for_active_page(None, None)
+        self.assertEqual(coordinator._placement.force_exit_count, 0)
+        self.assertEqual(coordinator._nav.current_state, NavState.FILE_LOADED_NO_BID)
+
+
+class Sp3a5FPageInfoStatusTests(unittest.TestCase):
+    def _coordinator(
+        self,
+        log,
+        *,
+        tab_index=TAB_INDEX_TAKEOFF,
+        view_index=1,
+        selected=("p1", "p2"),
+        active=None,
+        loading=False,
+        panel=True,
+        tab=True,
+        stack=True,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._status_panel = (
+            _sp3a5f_spy(log, "panel", ("set_page_info",)) if panel else None
+        )
+        coordinator.project_operations = SimpleNamespace(
+            navigation_load_in_progress=lambda: loading
+        )
+        coordinator._tab_widget = (
+            SimpleNamespace(currentIndex=lambda: tab_index) if tab else None
+        )
+        coordinator._view_stack = (
+            SimpleNamespace(currentIndex=lambda: view_index) if stack else None
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_page_uids=list(selected), active_page_uid=active
+        )
+        pages = {
+            "p1": SimpleNamespace(name="First"),
+            "p2": SimpleNamespace(name="Second"),
+        }
+        coordinator.project_data = SimpleNamespace(get_page=pages.get)
+        return coordinator
+
+    def test_without_a_status_panel_nothing_happens(self):
+        log = []
+        coordinator = self._coordinator(log, panel=False)
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [])
+
+    def test_loading_bid_shows_the_loading_text(self):
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        log = []
+        coordinator = self._coordinator(log, loading=True)
+        coordinator._sync_page_info_status()
+        self.assertEqual(
+            log,
+            [
+                (
+                    "panel.set_page_info",
+                    (ui_event_coordinator._BID_PAGES_LOADING_STATUS,),
+                    {},
+                )
+            ],
+        )
+
+    def test_missing_tab_widget_clears_the_page_info(self):
+        log = []
+        coordinator = self._coordinator(log, tab=False)
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [("panel.set_page_info", ("",), {})])
+
+    def test_tab_without_pages_clears_the_page_info(self):
+        for tab_index in (TAB_INDEX_PROJECTS,):
+            with self.subTest(tab_index=tab_index):
+                log = []
+                coordinator = self._coordinator(log, tab_index=tab_index)
+                coordinator._sync_page_info_status()
+                self.assertEqual(log, [("panel.set_page_info", ("",), {})])
+
+    def test_summary_tab_shows_the_page_info(self):
+        log = []
+        coordinator = self._coordinator(log, tab_index=TAB_INDEX_SUMMARY, active="p2")
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [("panel.set_page_info", ("Second",), {})])
+
+    def test_no_selected_pages_clear_the_page_info(self):
+        log = []
+        coordinator = self._coordinator(log, selected=())
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [("panel.set_page_info", ("",), {})])
+
+    def test_3d_view_lists_every_selected_page_name(self):
+        log = []
+        coordinator = self._coordinator(
+            log, view_index=0, selected=("p1", "missing", "p2"), active="p2"
+        )
+        coordinator._sync_page_info_status()
+        self.assertEqual(
+            log, [("panel.set_page_info", ("First, missing, Second",), {})]
+        )
+
+    def test_2d_view_shows_the_active_page_name(self):
+        log = []
+        coordinator = self._coordinator(log, view_index=1, active="p2")
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [("panel.set_page_info", ("Second",), {})])
+
+    def test_2d_view_without_active_page_shows_the_first_selected_page(self):
+        log = []
+        coordinator = self._coordinator(log, view_index=1, active=None)
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [("panel.set_page_info", ("First",), {})])
+
+    def test_missing_view_stack_is_treated_as_the_2d_view(self):
+        log = []
+        coordinator = self._coordinator(log, stack=False, active=None)
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [("panel.set_page_info", ("First",), {})])
+
+    def test_2d_view_with_an_unknown_page_falls_back_to_its_uid(self):
+        log = []
+        coordinator = self._coordinator(log, view_index=1, active="ghost")
+        coordinator._sync_page_info_status()
+        self.assertEqual(log, [("panel.set_page_info", ("ghost",), {})])
+
+
+class Sp3a5FStartupAndFileLoadSyncTests(unittest.TestCase):
+    def _coordinator(self, log):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = _sp3a5f_spy(
+            log, "data", ("get_hierarchy",), {"get_hierarchy": lambda: "hierarchy"}
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=_sp3a5f_spy(
+                log,
+                "tree",
+                ("build_complete_structure", "notify_current_selection"),
+            )
+        )
+        coordinator._nav = _sp3a5f_spy(log, "nav", ("transition_to",))
+        _sp3a5f_stub(
+            coordinator, log, ("_cache_bid_data", "_reset_takeoff_workspace_state")
+        )
+        return coordinator
+
+    @staticmethod
+    def _build(log):
+        def build(hierarchy):
+            log.append(("build_loaded_files", (hierarchy,), {}))
+            return ["loaded"]
+
+        return patch(f"{_SP3A5F_MODULE}.build_loaded_files", build)
+
+    def test_startup_load_builds_the_tree_then_notifies_the_selection(self):
+        log = []
+        coordinator = self._coordinator(log)
+        with self._build(log):
+            coordinator.sync_after_startup_load()
+        self.assertEqual(
+            log,
+            [
+                ("data.get_hierarchy", (), {}),
+                ("build_loaded_files", ("hierarchy",), {}),
+                ("_cache_bid_data", (["loaded"],), {}),
+                ("tree.build_complete_structure", (["loaded"],), {}),
+                ("nav.transition_to", (NavState.FILE_LOADED_NO_BID,), {}),
+                ("tree.notify_current_selection", (), {}),
+            ],
+        )
+
+    def test_rebuild_after_file_load_resets_the_workspace_before_the_tree(self):
+        log = []
+        coordinator = self._coordinator(log)
+        with self._build(log):
+            coordinator._rebuild_ui_after_file_load()
+        self.assertEqual(
+            log,
+            [
+                ("data.get_hierarchy", (), {}),
+                ("build_loaded_files", ("hierarchy",), {}),
+                ("_cache_bid_data", (["loaded"],), {}),
+                ("_reset_takeoff_workspace_state", (), {}),
+                ("tree.build_complete_structure", (["loaded"],), {}),
+            ],
+        )
+
+
+class Sp3a5FUpdatePageSettingsBarTests(unittest.TestCase):
+    def _coordinator(self, log, page):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._page_settings_bar = _sp3a5f_spy(
+            log,
+            "bar",
+            ("clear_page", "load_page", "get_selected_area_uid"),
+            {"get_selected_area_uid": lambda: "area-7"},
+        )
+        coordinator.project_data = _sp3a5f_spy(
+            log,
+            "data",
+            (
+                "get_page",
+                "get_page_area_selections",
+                "get_area_uids_with_takeoff_for_page",
+            ),
+            {
+                "get_page": lambda: page,
+                "get_page_area_selections": lambda: {"p1": "area-3"},
+                "get_area_uids_with_takeoff_for_page": lambda: {"area-3"},
+            },
+        )
+        coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="")
+        return coordinator
+
+    def test_empty_page_uid_clears_the_bar_without_loading(self):
+        log = []
+        coordinator = self._coordinator(log, SimpleNamespace())
+        coordinator._update_page_settings_bar("")
+        self.assertEqual(log, [("bar.clear_page", (), {})])
+
+    def test_unknown_page_clears_the_bar_without_loading(self):
+        log = []
+        coordinator = self._coordinator(log, None)
+        coordinator._update_page_settings_bar("p1")
+        self.assertEqual(
+            log, [("data.get_page", ("p1",), {}), ("bar.clear_page", (), {})]
+        )
+
+    def test_known_page_is_loaded_into_the_bar(self):
+        log = []
+        page = SimpleNamespace(scale_factor1=1.5, scale_factor2=2.5)
+        coordinator = self._coordinator(log, page)
+        coordinator._update_page_settings_bar("p1")
+        self.assertEqual(
+            _sp3a5f_calls(log, "bar.load_page"),
+            [
+                (
+                    "bar.load_page",
+                    ("p1", 1.5, 2.5, "area-3"),
+                    {"areas_with_takeoff": {"area-3"}},
+                )
+            ],
+        )
+        self.assertEqual(_sp3a5f_calls(log, "bar.clear_page"), [])
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "area-7")
+
+
+class Sp3a5FValidateConditionUidsTests(unittest.TestCase):
+    def _coordinator(self, log, conditions=("c1", "c2")):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = _sp3a5f_spy(
+            log,
+            "data",
+            ("get_bid_conditions",),
+            {"get_bid_conditions": lambda: {uid: object() for uid in conditions}},
+        )
+        return coordinator
+
+    def test_only_conditions_of_the_current_bid_are_kept(self):
+        log = []
+        coordinator = self._coordinator(log)
+        self.assertEqual(
+            coordinator._validate_condition_uids({"c1", "gone", "c2"}), {"c1", "c2"}
+        )
+        self.assertEqual(log, [("data.get_bid_conditions", (), {})])
+
+    def test_empty_selection_is_answered_without_querying_the_bid(self):
+        for empty in (set(), None):
+            with self.subTest(empty=empty):
+                log = []
+                coordinator = self._coordinator(log)
+                result = coordinator._validate_condition_uids(empty)
+                self.assertEqual(result, set())
+                self.assertIsInstance(result, set)
+                self.assertEqual(log, [])
+
+
+_UEC = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+
+
+def _sp3a5g_coordinator():
+    return UIEventCoordinator.__new__(UIEventCoordinator)
+
+
+class Sp3a5gPageSettingsBarProjectionTests(unittest.TestCase):
+    def _make(self, selected_in_bar, selections=None):
+        loads = []
+        coordinator = _sp3a5g_coordinator()
+        page = SimpleNamespace(scale_factor1=1.5, scale_factor2=24.0)
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: page if uid == "p1" else None,
+            get_page_area_selections=lambda: selections or {},
+            get_area_uids_with_takeoff_for_page=lambda uid: ["a1"],
+        )
+        coordinator._page_settings_bar = SimpleNamespace(
+            load_page=lambda *args, **kwargs: loads.append((args, kwargs)),
+            get_selected_area_uid=lambda: selected_in_bar,
+            clear_page=lambda: loads.append("cleared"),
+        )
+        coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="stale")
+        return coordinator, loads
+
+    def test_selected_area_uid_mirrors_the_bar_selection(self):
+        coordinator, loads = self._make("area-7", {"p1": "area-3"})
+        coordinator._update_page_settings_bar("p1")
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "area-7")
+        self.assertEqual(
+            loads,
+            [(("p1", 1.5, 24.0, "area-3"), {"areas_with_takeoff": ["a1"]})],
+        )
+
+    def test_selected_area_uid_becomes_empty_string_when_bar_has_none(self):
+        coordinator, _loads = self._make(None)
+        coordinator._update_page_settings_bar("p1")
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "")
+        self.assertIsInstance(coordinator.ui_state_manager.selected_area_uid, str)
+
+
+class Sp3a5gPageSelectionTests(unittest.TestCase):
+    def test_page_selection_refreshes_quantities_export_menu_then_status(self):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_page_uids=["p0"],
+            set_page_selection=lambda selected: calls.append(("select", selected)),
+        )
+        coordinator.project_data = SimpleNamespace(
+            select_pages=lambda uids: calls.append(("project", list(uids)))
+            or list(uids)
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: False)
+        coordinator._sidebar = SimpleNamespace(
+            update_conditions_quantities=lambda: calls.append("quantities")
+        )
+        coordinator._update_export_menu_state = lambda: calls.append("export")
+        coordinator._sync_page_info_status = lambda: calls.append("status")
+        coordinator._update_page_selection(["p1"])
+        self.assertEqual(
+            calls,
+            [
+                ("project", ["p1"]),
+                ("select", ["p1"]),
+                "quantities",
+                "export",
+                "status",
+            ],
+        )
+
+
+class Sp3a5gBidDataCacheTests(unittest.TestCase):
+    def test_cache_rebuild_clears_old_cache_and_publishes_new_one(self):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        old_ref = BidRef("old.mdb", "1")
+        old_cache = {old_ref: object()}
+        coordinator._bid_data_cache = old_cache
+        coordinator.visualization_service = SimpleNamespace(
+            start_database_monitoring=lambda: calls.append("monitor")
+        )
+        bid_a = SimpleNamespace(uid="10")
+        bid_b = SimpleNamespace(uid="11")
+        bid_orphan = SimpleNamespace(uid="12")
+        loaded = [
+            SimpleNamespace(
+                file_path="a.mdb",
+                projects=[SimpleNamespace(bids=[bid_a, bid_b])],
+                orphan_bids=[bid_orphan],
+            )
+        ]
+        coordinator._cache_bid_data(loaded)
+        self.assertEqual(old_cache, {})
+        self.assertIsNot(coordinator._bid_data_cache, old_cache)
+        self.assertEqual(
+            coordinator._bid_data_cache,
+            {
+                BidRef("a.mdb", "10"): bid_a,
+                BidRef("a.mdb", "11"): bid_b,
+                BidRef("a.mdb", "12"): bid_orphan,
+            },
+        )
+        self.assertEqual(calls, ["monitor"])
+
+
+class Sp3a5gSavePageViewStateTests(unittest.TestCase):
+    def _make(
+        self,
+        *,
+        bid_ref=BidRef("a.mdb", "bid-1"),
+        plan_page="p1",
+        stable=True,
+        view_state=(2.0, 5.0, 6.0),
+        edit_allowed=True,
+        uses_sql=False,
+        active_page="p-active",
+        pages=("p1", "p-active", "p3"),
+    ):
+        calls = []
+        page_objects = {
+            uid: SimpleNamespace(zoom_fac=1.0, current_x=0.0, current_y=0.0)
+            for uid in pages
+        }
+        coordinator = _sp3a5g_coordinator()
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref, active_page_uid=active_page
+        )
+        coordinator.plan_view = (
+            SimpleNamespace(
+                current_page_uid=plan_page,
+                is_view_state_stable=stable,
+                get_view_state=lambda: view_state,
+            )
+            if plan_page is not False
+            else None
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: calls.append(("allowed", feature))
+            or edit_allowed
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: calls.append(("sql", path))
+            or uses_sql
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: page_objects.get(uid)
+        )
+        coordinator._deferred_persistence = SimpleNamespace(
+            schedule_page_view_state=lambda *a: calls.append(("view",) + a),
+            schedule_bid_selected_page=lambda *a: calls.append(("selected",) + a),
+            cancel_bid_selected_pages=lambda *a: calls.append(("cancel",) + a),
+        )
+        return coordinator, calls, page_objects
+
+    @staticmethod
+    def _writes(calls):
+        return [c for c in calls if c[0] in {"view", "selected", "cancel"}]
+
+    def test_without_selected_bid_nothing_is_read_or_scheduled(self):
+        coordinator, calls, pages = self._make(bid_ref=None)
+        coordinator._save_current_page_view_state()
+        self.assertEqual(calls, [])
+        self.assertEqual(pages["p1"].zoom_fac, 1.0)
+
+    def test_sql_collaboration_alone_allows_persistence(self):
+        coordinator, calls, _pages = self._make(edit_allowed=False, uses_sql=True)
+        coordinator._save_current_page_view_state()
+        self.assertEqual(
+            self._writes(calls),
+            [
+                ("view", "a.mdb", "bid-1", "p1", 2.0, 5.0, 6.0),
+                ("selected", "a.mdb", "bid-1", "p1"),
+            ],
+        )
+        self.assertIn(("sql", "a.mdb"), calls)
+        self.assertIn(("allowed", Feature.EDIT_PAGE_SETTINGS), calls)
+
+    def test_without_edit_right_view_state_is_cached_but_not_persisted(self):
+        coordinator, calls, pages = self._make(edit_allowed=False, uses_sql=False)
+        coordinator._save_current_page_view_state()
+        self.assertEqual(self._writes(calls), [])
+        self.assertEqual(
+            (pages["p1"].zoom_fac, pages["p1"].current_x, pages["p1"].current_y),
+            (2.0, 5.0, 6.0),
+        )
+
+    def test_view_state_requires_a_current_page_and_a_stable_view(self):
+        cases = {
+            "no plan view page": dict(plan_page="", stable=True),
+            "unstable view": dict(plan_page="p1", stable=False),
+            "no plan view": dict(plan_page=False),
+        }
+        for name, options in cases.items():
+            with self.subTest(case=name):
+                coordinator, calls, pages = self._make(**options)
+                coordinator._save_current_page_view_state()
+                self.assertEqual([c for c in self._writes(calls) if c[0] == "view"], [])
+                self.assertEqual(pages["p1"].zoom_fac, 1.0)
+                self.assertEqual(pages["p-active"].zoom_fac, 1.0)
+
+    def test_zoom_must_be_strictly_positive_to_be_stored(self):
+        for zoom, stored in ((0.0, False), (0.5, True), (-1.0, False)):
+            with self.subTest(zoom=zoom):
+                coordinator, calls, pages = self._make(view_state=(zoom, 7.0, 8.0))
+                coordinator._save_current_page_view_state()
+                views = [c for c in calls if c[0] == "view"]
+                if stored:
+                    self.assertEqual(pages["p1"].zoom_fac, zoom)
+                    self.assertEqual(pages["p1"].current_x, 7.0)
+                    self.assertEqual(
+                        views, [("view", "a.mdb", "bid-1", "p1", zoom, 7.0, 8.0)]
+                    )
+                else:
+                    self.assertEqual(pages["p1"].zoom_fac, 1.0)
+                    self.assertEqual(pages["p1"].current_x, 0.0)
+                    self.assertEqual(views, [])
+
+    def test_selected_page_is_not_scheduled_without_persistence_right(self):
+        coordinator, calls, _pages = self._make(
+            edit_allowed=False, uses_sql=False, stable=False
+        )
+        coordinator._save_current_page_view_state()
+        self.assertEqual(self._writes(calls), [])
+
+    def test_page_to_save_prefers_override_then_plan_page_then_active_page(self):
+        cases = (
+            ("override", dict(), "p3", "p3"),
+            ("plan page", dict(stable=False), None, "p1"),
+            ("active page", dict(plan_page=False), None, "p-active"),
+        )
+        for name, options, override, expected in cases:
+            with self.subTest(case=name):
+                coordinator, calls, _pages = self._make(**options)
+                coordinator._save_current_page_view_state(
+                    selected_page_override=override
+                )
+                self.assertEqual(
+                    [c for c in calls if c[0] == "selected"],
+                    [("selected", "a.mdb", "bid-1", expected)],
+                )
+
+    def test_missing_page_to_save_cancels_pending_selected_page_only(self):
+        coordinator, calls, _pages = self._make(plan_page=False, active_page="gone")
+        coordinator._save_current_page_view_state()
+        self.assertEqual(self._writes(calls), [("cancel", "a.mdb", ["bid-1"])])
+
+    def test_no_page_at_all_schedules_no_selected_page(self):
+        coordinator, calls, _pages = self._make(plan_page=False, active_page=None)
+        coordinator._save_current_page_view_state()
+        self.assertEqual(self._writes(calls), [])
+
+
+class Sp3a5gFlushDeferredTests(unittest.TestCase):
+    def _make(self, flush_result):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda path: calls.append(path) or flush_result
+        )
+        return coordinator, calls
+
+    def test_empty_file_path_is_trivially_flushed_without_asking_persistence(self):
+        for path in (None, ""):
+            with self.subTest(path=path):
+                coordinator, calls = self._make(False)
+                self.assertIs(coordinator._flush_deferred_for_file(path), True)
+                self.assertEqual(calls, [])
+
+    def test_flush_result_is_returned_as_bool_by_both_entry_points(self):
+        for flush_result, expected in ((True, True), (False, False), (1, True)):
+            with self.subTest(result=flush_result):
+                coordinator, calls = self._make(flush_result)
+                self.assertIs(coordinator._flush_deferred_for_file("a.mdb"), expected)
+                self.assertIs(coordinator.flush_deferred_for_file("a.mdb"), expected)
+                self.assertEqual(calls, ["a.mdb", "a.mdb"])
+
+
+class Sp3a5gOverlayModeSyncTests(unittest.TestCase):
+    def _make(self, current_page_uid="p1", page_present=True):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        page = SimpleNamespace(image_show_mode="overlay-mode")
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: calls.append(("get_page", uid))
+            or (page if page_present else None)
+        )
+        coordinator.plan_view = SimpleNamespace(
+            current_page_uid=current_page_uid,
+            set_overlay_display_mode=lambda mode: calls.append(("plan", mode)),
+        )
+        coordinator.opengl_viewer = SimpleNamespace(
+            set_overlay_display_mode=lambda mode: calls.append(("gl", mode))
+        )
+        coordinator._mesh_window = SimpleNamespace(
+            set_overlay_display_mode=lambda mode: calls.append(("mesh", mode))
+        )
+        return coordinator, calls
+
+    def test_mode_is_applied_to_plan_view_and_every_native_view(self):
+        coordinator, calls = self._make()
+        coordinator._sync_overlay_display_mode("p1")
+        self.assertEqual(
+            calls,
+            [
+                ("get_page", "p1"),
+                ("plan", "overlay-mode"),
+                ("gl", "overlay-mode"),
+                ("mesh", "overlay-mode"),
+            ],
+        )
+
+    def test_plan_view_on_another_page_is_not_touched(self):
+        coordinator, calls = self._make(current_page_uid="p2")
+        coordinator._sync_overlay_display_mode("p1")
+        self.assertEqual(
+            calls,
+            [("get_page", "p1"), ("gl", "overlay-mode"), ("mesh", "overlay-mode")],
+        )
+
+    def test_missing_page_or_page_uid_changes_nothing(self):
+        coordinator, calls = self._make(page_present=False)
+        coordinator._sync_overlay_display_mode("p1")
+        self.assertEqual(calls, [("get_page", "p1")])
+        for page_uid in (None, ""):
+            coordinator, calls = self._make()
+            coordinator._sync_overlay_display_mode(page_uid)
+            self.assertEqual(calls, [])
+
+
+class Sp3a5gPlanViewUpdateTests(unittest.TestCase):
+    def _make(self, active_page_uid="p-active"):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator._viewer = SimpleNamespace(
+            update_plan_view_for_active=lambda **kw: calls.append(("active", kw)),
+            update_plan_view=lambda *a, **kw: calls.append(("page", a, kw)),
+        )
+        coordinator._apply_pending_hotlink_named_view_focus = lambda **kw: calls.append(
+            ("focus", kw)
+        )
+        coordinator._sidebar = SimpleNamespace(
+            update_conditions_quantities=lambda *a, **kw: calls.append(
+                ("quantities", a, kw)
+            ),
+            load_takeoff_sidebar=lambda *a: calls.append(("load", a)),
+        )
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid=active_page_uid)
+        return coordinator, calls
+
+    def test_active_plan_update_defaults_refresh_all_quantities(self):
+        coordinator, calls = self._make()
+        coordinator._update_plan_view_for_active()
+        self.assertEqual(
+            calls,
+            [
+                ("active", {"changed_takeoff_uids": None}),
+                ("focus", {"require_stable": True}),
+                ("quantities", (), {}),
+            ],
+        )
+
+    def test_active_plan_update_forwards_changed_uids_and_condition_scope(self):
+        coordinator, calls = self._make()
+        coordinator._update_plan_view_for_active(condition_uids=[], takeoff_uids=["t1"])
+        self.assertEqual(
+            calls,
+            [
+                ("active", {"changed_takeoff_uids": ["t1"]}),
+                ("focus", {"require_stable": True}),
+                ("quantities", (), {"condition_uids": []}),
+            ],
+        )
+
+    def test_active_plan_update_can_skip_quantity_refresh(self):
+        coordinator, calls = self._make()
+        coordinator._update_plan_view_for_active(
+            condition_uids=["c1"], refresh_quantities=False
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("active", {"changed_takeoff_uids": None}),
+                ("focus", {"require_stable": True}),
+            ],
+        )
+
+    def test_page_plan_update_defaults_refresh_all_quantities(self):
+        coordinator, calls = self._make()
+        coordinator._update_plan_view("p9")
+        self.assertEqual(
+            calls,
+            [
+                ("page", ("p9",), {"changed_takeoff_uids": None}),
+                ("focus", {"require_stable": True}),
+                ("quantities", (), {}),
+            ],
+        )
+
+    def test_page_plan_update_forwards_scope_and_can_skip_quantities(self):
+        coordinator, calls = self._make()
+        coordinator._update_plan_view("p9", condition_uids=["c1"], takeoff_uids=["t1"])
+        self.assertEqual(calls[-1], ("quantities", (), {"condition_uids": ["c1"]}))
+        coordinator, calls = self._make()
+        coordinator._update_plan_view(
+            "p9", takeoff_uids=["t1"], refresh_quantities=False
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("page", ("p9",), {"changed_takeoff_uids": ["t1"]}),
+                ("focus", {"require_stable": True}),
+            ],
+        )
+
+    def test_annotation_update_for_other_page_is_dropped_entirely(self):
+        coordinator, calls = self._make(active_page_uid="p-active")
+        coordinator._update_plan_view_annotations("p-other", ["a1"], ["rect"])
+        self.assertEqual(calls, [])
+
+    def test_annotation_update_targets_explicit_or_active_page(self):
+        for page_uid, expected in (("p-active", "p-active"), (None, "p-active")):
+            with self.subTest(page_uid=page_uid):
+                coordinator, calls = self._make(active_page_uid="p-active")
+                coordinator._update_plan_view_annotations(page_uid, ["a1"], ["rect"])
+                self.assertEqual(
+                    calls,
+                    [
+                        (
+                            "page",
+                            (expected,),
+                            {
+                                "changed_annotation_uids": ["a1"],
+                                "changed_annotation_types": ["rect"],
+                            },
+                        ),
+                        ("focus", {"require_stable": True}),
+                    ],
+                )
+
+    def test_takeoff_sidebar_load_passes_bid_and_cache_in_order(self):
+        coordinator, calls = self._make()
+        coordinator._bid_data_cache = {"cache": 1}
+        bid_ref = BidRef("a.mdb", "1")
+        coordinator._load_takeoff_sidebar(bid_ref)
+        self.assertEqual(len(calls), 1)
+        name, args = calls[0]
+        self.assertEqual(name, "load")
+        self.assertIs(args[0], bid_ref)
+        self.assertIs(args[1], coordinator._bid_data_cache)
+
+
+class Sp3a5gConditionSelectionTests(unittest.TestCase):
+    def _make(
+        self,
+        *,
+        selected_takeoff_condition=None,
+        has_plan_view=True,
+        sidebar_selection=None,
+        active_2d=True,
+        placeable=True,
+    ):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator._selection_projected_condition_uids = {"stale"}
+        coordinator.ui_state_manager = SimpleNamespace(
+            set_highlighted_conditions=lambda s: calls.append(("highlight", s))
+        )
+        coordinator.plan_view = (
+            SimpleNamespace(
+                selected_takeoff_condition_uid=lambda: selected_takeoff_condition
+            )
+            if has_plan_view
+            else None
+        )
+        coordinator.conditions_sidebar = (
+            SimpleNamespace(
+                get_selected_condition_uids=lambda: calls.append("sidebar-selection")
+                or sidebar_selection
+            )
+            if sidebar_selection is not None
+            else None
+        )
+        coordinator._placement = SimpleNamespace(
+            force_exit=lambda: calls.append("force_exit"),
+            enter=lambda uid, selected: calls.append(("enter", uid, selected)),
+        )
+        coordinator.ensure_select_mode = lambda: calls.append("ensure_select")
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: calls.append("refresh"))
+        coordinator._is_takeoff_2d_view_active = lambda: calls.append("2d") or active_2d
+        coordinator._is_condition_placeable = (
+            lambda uid: calls.append(("placeable", uid)) or placeable
+        )
+        coordinator._reset_to_select_mode = lambda: calls.append("reset")
+        return coordinator, calls
+
+    def test_clearing_selection_exits_placement_when_no_takeoff_condition(self):
+        for has_plan_view in (True, False):
+            with self.subTest(plan_view=has_plan_view):
+                coordinator, calls = self._make(
+                    selected_takeoff_condition=None,
+                    has_plan_view=has_plan_view,
+                    sidebar_selection=["c1"],
+                )
+                coordinator._on_condition_selected("")
+                self.assertEqual(coordinator._selection_projected_condition_uids, set())
+                self.assertEqual(
+                    calls,
+                    [("highlight", set()), "force_exit", "ensure_select", "refresh"],
+                )
+
+    def test_clearing_selection_keeps_placement_when_takeoff_condition_selected(self):
+        coordinator, calls = self._make(selected_takeoff_condition="c9")
+        coordinator._on_condition_selected("")
+        self.assertEqual(calls, [("highlight", set()), "refresh"])
+
+    def test_selection_uses_sidebar_selection_and_enters_placement(self):
+        coordinator, calls = self._make(sidebar_selection=["c1", "c2"])
+        coordinator._on_condition_selected("c1")
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(
+            calls,
+            [
+                "sidebar-selection",
+                ("highlight", {"c1", "c2"}),
+                "2d",
+                ("placeable", "c1"),
+                ("enter", "c1", ["c1", "c2"]),
+                "refresh",
+            ],
+        )
+
+    def test_selection_without_sidebar_selects_just_the_condition(self):
+        coordinator, calls = self._make(sidebar_selection=None)
+        coordinator._on_condition_selected("c5")
+        self.assertEqual(
+            calls,
+            [
+                ("highlight", {"c5"}),
+                "2d",
+                ("placeable", "c5"),
+                ("enter", "c5", ["c5"]),
+                "refresh",
+            ],
+        )
+
+    def test_selection_resets_to_select_mode_when_not_2d_or_not_placeable(self):
+        for name, options in (
+            ("not 2d", dict(active_2d=False, placeable=True)),
+            ("not placeable", dict(active_2d=True, placeable=False)),
+            ("neither", dict(active_2d=False, placeable=False)),
+        ):
+            with self.subTest(case=name):
+                coordinator, calls = self._make(**options)
+                coordinator._on_condition_selected("c5")
+                self.assertIn("reset", calls)
+                self.assertNotIn("refresh", calls)
+                self.assertFalse([c for c in calls if c[0] == "enter"])
+                self.assertEqual(calls[-1], "reset")
+
+
+class Sp3a5gTakeoffStateQueryTests(unittest.TestCase):
+    def _make(self, takeoffs, conditions=None):
+        coordinator = _sp3a5g_coordinator()
+        coordinator.project_data = SimpleNamespace(
+            get_takeoff=lambda uid: takeoffs.get(uid),
+            get_bid_conditions=lambda: conditions if conditions is not None else {},
+        )
+        return coordinator
+
+    def test_all_negative_requires_every_takeoff_to_exist_and_be_negative(self):
+        takeoffs = {
+            "n1": SimpleNamespace(is_negative=True),
+            "n2": SimpleNamespace(is_negative=True),
+            "p1": SimpleNamespace(is_negative=False),
+        }
+        coordinator = self._make(takeoffs)
+        cases = (
+            ([], False),
+            (["n1"], True),
+            (["n1", "n2"], True),
+            (["p1"], False),
+            (["n1", "p1"], False),
+            (["p1", "n1"], False),
+            (["missing"], False),
+            (["n1", "missing"], False),
+        )
+        for uids, expected in cases:
+            with self.subTest(uids=uids):
+                self.assertIs(coordinator._check_takeoffs_all_negative(uids), expected)
+
+    def test_curved_state_empty_selection_is_false_false(self):
+        coordinator = self._make({})
+        result = coordinator._check_takeoffs_curved_state([])
+        self.assertEqual(result, (False, False))
+        self.assertIsInstance(result, tuple)
+
+    def test_curved_state_reports_all_linear_and_all_curved(self):
+        conditions = {
+            "lin": SimpleNamespace(is_linear=True),
+            "area": SimpleNamespace(is_linear=False),
+        }
+        takeoffs = {
+            "zero": SimpleNamespace(condition_uid="lin", curve=0.0),
+            "pos": SimpleNamespace(condition_uid="lin", curve=2.0),
+            "neg": SimpleNamespace(condition_uid="lin", curve=-1.0),
+            "area": SimpleNamespace(condition_uid="area", curve=-5.0),
+            "orphan": SimpleNamespace(condition_uid="gone", curve=-5.0),
+        }
+        coordinator = self._make(takeoffs, conditions)
+        cases = (
+            (["zero"], (True, True)),
+            (["pos"], (True, True)),
+            (["zero", "pos"], (True, True)),
+            (["neg"], (True, False)),
+            (["pos", "neg"], (True, False)),
+            (["area"], (False, True)),
+            (["area", "neg"], (False, True)),
+            (["orphan", "neg"], (False, True)),
+            (["zero", "area"], (False, True)),
+            (["missing"], (False, False)),
+            (["zero", "missing"], (False, False)),
+        )
+        for uids, expected in cases:
+            with self.subTest(uids=uids):
+                result = coordinator._check_takeoffs_curved_state(uids)
+                self.assertEqual(result, expected)
+                self.assertIsInstance(result, tuple)
+
+    def test_selected_context_state_is_built_from_project_data_lookups(self):
+        sentinel = object()
+        seen = []
+        conditions = {"c": object()}
+        coordinator = self._make({}, conditions)
+
+        def fake_build(takeoff_uids, resolve, conds):
+            seen.append((takeoff_uids, resolve, conds))
+            return sentinel
+
+        with patch(f"{_UEC}.build_selected_takeoff_context_state", fake_build):
+            result = coordinator._selected_takeoff_context_state(["t1"])
+        self.assertIs(result, sentinel)
+        self.assertEqual(len(seen), 1)
+        takeoff_uids, resolve, conds = seen[0]
+        self.assertEqual(takeoff_uids, ["t1"])
+        self.assertIs(conds, conditions)
+        self.assertIsNone(resolve("nothing"))
+
+
+class Sp3a5gBidLockStateTests(unittest.TestCase):
+    def _make(self, statuses, bid_status_uid="2", uses_sql=True):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        bid = SimpleNamespace(status_uid=bid_status_uid)
+        coordinator.project_data = SimpleNamespace(
+            get_bid=lambda ref: bid,
+            get_job_status_snapshot=lambda path: statuses,
+            set_current_bid_locked=lambda locked: calls.append(locked),
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: uses_sql
+        )
+        return coordinator, calls
+
+    def test_sql_lock_requires_the_bids_own_status_to_be_locked(self):
+        cases = (
+            ("only matching locked among many", [(1, False), (2, True)], True),
+            ("matching unlocked, other locked", [(1, True), (2, False)], False),
+            ("no statuses", [], False),
+            ("unrelated locked", [(3, True)], False),
+        )
+        for name, rows, expected in cases:
+            with self.subTest(case=name):
+                statuses = [SimpleNamespace(uid=uid, locked=lk) for uid, lk in rows]
+                coordinator, calls = self._make(statuses)
+                coordinator._resolve_bid_lock_state(BidRef("db", "1"))
+                self.assertEqual(calls, [expected])
+                self.assertIs(calls[0], expected)
+
+
+class Sp3a5gBidLockReverifyTests(unittest.TestCase):
+    def _make(self, *, active=BidRef("db.mdb", "1"), bid_present=True, locked=False):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator._is_cleaning_up = False
+        coordinator._bid_lock_watch = {"db.mdb"}
+        coordinator._bid_lock_reverify_scheduled = {"db.mdb"}
+        coordinator.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: active,
+            get_bid=lambda ref: object() if bid_present else None,
+            is_current_bid_locked=lambda: locked,
+        )
+        coordinator._resolve_bid_lock_state = lambda ref: calls.append(("resolve", ref))
+        coordinator.ui_access_manager = SimpleNamespace(
+            refresh=lambda: calls.append("refresh")
+        )
+        coordinator._update_menu_state = lambda: calls.append("menu")
+        return coordinator, calls
+
+    def test_remote_master_data_without_families_does_not_reverify(self):
+        coordinator, _calls = self._make()
+        reverified = []
+        coordinator._reverify_bid_lock_state = reverified.append
+        coordinator._on_remote_master_data_changed("db.mdb", None)
+        coordinator._on_remote_master_data_changed("db.mdb")
+        coordinator._on_remote_master_data_changed("db.mdb", ["pages"])
+        coordinator._on_remote_master_data_changed("other.mdb", ["job_statuses"])
+        self.assertEqual(reverified, [])
+        coordinator._on_remote_master_data_changed("db.mdb", ["job_statuses"])
+        self.assertEqual(reverified, ["db.mdb"])
+
+    def test_unscheduled_reverify_keeps_the_scheduled_marker(self):
+        coordinator, _calls = self._make()
+        coordinator._reverify_bid_lock_state("db.mdb")
+        self.assertEqual(coordinator._bid_lock_reverify_scheduled, {"db.mdb"})
+        coordinator._reverify_bid_lock_state("db.mdb", scheduled=True)
+        self.assertEqual(coordinator._bid_lock_reverify_scheduled, set())
+
+    def test_reverify_resolves_refreshes_and_stops_watching_once_locked(self):
+        coordinator, calls = self._make(locked=True)
+        coordinator._reverify_bid_lock_state("db.mdb")
+        self.assertEqual(calls, [("resolve", BidRef("db.mdb", "1")), "refresh", "menu"])
+        self.assertEqual(coordinator._bid_lock_watch, set())
+        coordinator, calls = self._make(locked=False)
+        coordinator._reverify_bid_lock_state("db.mdb")
+        self.assertEqual(coordinator._bid_lock_watch, {"db.mdb"})
+
+    def test_reverify_ignores_missing_active_bid_other_database_or_unloaded_bid(self):
+        cases = (
+            dict(active=None),
+            dict(active=BidRef("other.mdb", "1")),
+            dict(bid_present=False),
+        )
+        for options in cases:
+            with self.subTest(options=options):
+                coordinator, calls = self._make(**options)
+                coordinator._reverify_bid_lock_state("db.mdb")
+                self.assertEqual(calls, [])
+
+
+class Sp3a5gPageScaleChangedTests(unittest.TestCase):
+    def _make(self, *, flush=True, queued=None, saved=True, selected=None, active="p1"):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator._flush_deferred_for_file = (
+            lambda path: calls.append(("flush", path)) or flush
+        )
+        coordinator._update_page_settings_bar = lambda uid: calls.append(("bar", uid))
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected, active_page_uid=active
+        )
+        captured = {}
+
+        def queue(path, uid, kind, values, callback=None):
+            calls.append(("queue", path, uid, kind, values))
+            captured["callback"] = callback
+            return queued
+
+        def save_scale(path, uid, sf1, sf2):
+            calls.append(("save", path, uid, sf1, sf2))
+            if isinstance(saved, Exception):
+                raise saved
+            return saved
+
+        coordinator._project_write_service = SimpleNamespace(
+            queue_page_setting_if_sql=queue, save_page_scale=save_scale
+        )
+        return coordinator, calls, captured
+
+    def test_failed_flush_resets_bar_without_queueing_or_saving(self):
+        coordinator, calls, _captured = self._make(flush=False)
+        coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertEqual(calls, [("flush", "db.mdb"), ("bar", "p1")])
+
+    def test_queued_scale_resets_bar_only_when_queueing_was_refused(self):
+        coordinator, calls, _c = self._make(queued=True)
+        coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertEqual(
+            calls,
+            [("flush", "db.mdb"), ("queue", "db.mdb", "p1", "scale", [1.0, 2.0])],
+        )
+        coordinator, calls, _c = self._make(queued=False)
+        coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertEqual(calls[-1], ("bar", "p1"))
+        self.assertEqual(len([c for c in calls if c[0] == "save"]), 0)
+
+    def test_completion_resets_bar_for_current_selection_only_on_failure(self):
+        bid_ref = BidRef("db.mdb", "1")
+        failed = SimpleNamespace(outcome_status=MutationOutcomeStatus.REJECTED)
+        cases = (
+            ("failed, current", dict(selected=bid_ref), failed, True),
+            (
+                "failed, other database",
+                dict(selected=BidRef("other.mdb", "1")),
+                failed,
+                False,
+            ),
+            ("failed, other page", dict(selected=bid_ref, active="p2"), failed, False),
+            ("failed, no bid", dict(selected=None), failed, False),
+        )
+        for status in (
+            MutationOutcomeStatus.COMMITTED,
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            cases += (
+                (
+                    status.name,
+                    dict(selected=bid_ref),
+                    SimpleNamespace(outcome_status=status),
+                    False,
+                ),
+            )
+        for name, options, result, expect_bar in cases:
+            with self.subTest(case=name):
+                coordinator, calls, captured = self._make(queued=True, **options)
+                coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+                calls.clear()
+                captured["callback"](result)
+                self.assertEqual(calls, [("bar", "p1")] if expect_bar else [])
+
+    def test_direct_save_failure_and_exception_reset_bar_success_does_not(self):
+        coordinator, calls, _c = self._make(saved=True)
+        coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertEqual(calls[-1], ("save", "db.mdb", "p1", 1.0, 2.0))
+        self.assertNotIn(("bar", "p1"), calls)
+        coordinator, calls, _c = self._make(saved=False)
+        coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertEqual(calls[-1], ("bar", "p1"))
+        coordinator, calls, _c = self._make(saved=RuntimeError("disk"))
+        with self.assertLogs(_UEC, level="WARNING") as logs:
+            coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertEqual(calls[-1], ("bar", "p1"))
+        self.assertEqual(
+            [r.getMessage() for r in logs.records], ["Failed to save page scale"]
+        )
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertIsInstance(logs.records[0].exc_info[1], RuntimeError)
+
+
+class Sp3a5gTakeoffTransformTests(unittest.TestCase):
+    def _make(self, *, allowed=True, has_selection=True, with_plan_view=True):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: calls.append(("allowed", feature)) or allowed
+        )
+        coordinator.plan_view = (
+            SimpleNamespace(
+                has_selected_takeoffs=has_selection,
+                rotate_selected_takeoffs=lambda angle: calls.append(("rotate", angle)),
+                flip_selected_takeoffs=lambda **kw: calls.append(("flip", kw)),
+            )
+            if with_plan_view
+            else None
+        )
+        return coordinator, calls
+
+    def test_flips_are_forwarded_with_their_axis_when_allowed(self):
+        coordinator, calls = self._make()
+        coordinator.flip_selected_takeoffs_horizontal()
+        coordinator.flip_selected_takeoffs_vertical()
+        coordinator.rotate_selected_takeoffs_left()
+        coordinator.rotate_selected_takeoffs_right()
+        self.assertEqual(
+            [c for c in calls if c[0] != "allowed"],
+            [
+                ("flip", {"horizontal": True}),
+                ("flip", {"horizontal": False}),
+                ("rotate", -90.0),
+                ("rotate", 90.0),
+            ],
+        )
+
+    def test_nothing_is_transformed_when_not_transformable(self):
+        for options in (
+            dict(allowed=False),
+            dict(has_selection=False),
+            dict(with_plan_view=False),
+        ):
+            with self.subTest(options=options):
+                coordinator, calls = self._make(**options)
+                coordinator.flip_selected_takeoffs_horizontal()
+                coordinator.flip_selected_takeoffs_vertical()
+                coordinator.rotate_selected_takeoffs_left()
+                coordinator.rotate_selected_takeoffs_right()
+                self.assertEqual([c for c in calls if c[0] != "allowed"], [])
+                self.assertIs(coordinator._can_transform_selected_takeoffs(), False)
+
+    def test_transform_check_asks_edit_plan_items_and_returns_true(self):
+        coordinator, calls = self._make()
+        self.assertIs(coordinator._can_transform_selected_takeoffs(), True)
+        self.assertEqual(calls, [("allowed", Feature.EDIT_PLAN_ITEMS)])
+
+
+class Sp3a5gImageAdjustmentShortcutTests(unittest.TestCase):
+    def test_shortcuts_forward_exact_adjustment_requests(self):
+        coordinator = _sp3a5g_coordinator()
+        calls = []
+        coordinator._adjust_current_page_image = lambda **kw: calls.append(kw)
+        coordinator.rotate_image_left()
+        coordinator.rotate_image_right()
+        coordinator.flip_image_horizontal()
+        coordinator.flip_image_vertical()
+        self.assertEqual(
+            calls,
+            [
+                {"rotation_delta": -90},
+                {"rotation_delta": 90},
+                {"toggle_flip_x": True},
+                {"toggle_flip_y": True},
+            ],
+        )
+
+
+class Sp3a5gAdjustCurrentPageImageTests(unittest.TestCase):
+    def _make(
+        self,
+        *,
+        page=None,
+        active_page="p1",
+        bid_ref=BidRef("db.mdb", "8"),
+        allowed=True,
+        flush=True,
+        queued=True,
+    ):
+        calls = []
+        page = (
+            page
+            if page is not None
+            else SimpleNamespace(
+                rotation=0, flip_x=False, flip_y=False, invert=True, bitonal=False
+            )
+        )
+        coordinator = _sp3a5g_coordinator()
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid=active_page, get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: calls.append(("allowed", feature)) or allowed
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: calls.append(("get_page", uid)) or page
+        )
+        coordinator._save_current_page_view_state = lambda **kw: calls.append(
+            ("view_state", kw)
+        )
+        coordinator._flush_deferred_for_file = (
+            lambda path: calls.append(("flush", path)) or flush
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            queue_page_setting_if_sql=lambda *a: calls.append(("queue",) + a) or queued,
+            save_page_image_adjustments=lambda *a: calls.append(("save",) + a),
+        )
+        return coordinator, calls
+
+    @staticmethod
+    def _writes(calls):
+        return [c for c in calls if c[0] in {"queue", "save"}]
+
+    def test_missing_context_or_rights_or_page_writes_nothing(self):
+        cases = (
+            ("no active page", dict(active_page=None)),
+            ("empty active page", dict(active_page="")),
+            ("no bid", dict(bid_ref=None)),
+            ("no edit right", dict(allowed=False)),
+        )
+        for name, options in cases:
+            with self.subTest(case=name):
+                coordinator, calls = self._make(**options)
+                coordinator._adjust_current_page_image(rotation_delta=90)
+                self.assertEqual(self._writes(calls), [])
+                self.assertEqual(
+                    [c for c in calls if c[0] in {"view_state", "flush"}], []
+                )
+        coordinator, calls = self._make()
+        coordinator.project_data.get_page = lambda uid: None
+        coordinator._adjust_current_page_image(rotation_delta=90)
+        self.assertEqual(calls, [("allowed", Feature.EDIT_PAGE_SETTINGS)])
+
+    def test_edit_right_is_checked_for_page_settings(self):
+        coordinator, calls = self._make(allowed=False)
+        coordinator._adjust_current_page_image(rotation_delta=90)
+        self.assertEqual(calls, [("allowed", Feature.EDIT_PAGE_SETTINGS)])
+
+    def test_rotation_is_added_wrapped_and_invalid_values_reset(self):
+        cases = (
+            (0, 90, 90),
+            (90, 90, 180),
+            (180, 90, 270),
+            (270, 90, 0),
+            (0, -90, 270),
+            (90, -90, 0),
+            (None, 90, 90),
+            (None, 0, 0),
+            (45, 0, 0),
+            (1, 0, 0),
+            (0, 0, 0),
+            (180, 0, 180),
+        )
+        for rotation, delta, expected in cases:
+            with self.subTest(rotation=rotation, delta=delta):
+                page = SimpleNamespace(
+                    rotation=rotation,
+                    flip_x=False,
+                    flip_y=False,
+                    invert=False,
+                    bitonal=False,
+                )
+                coordinator, calls = self._make(page=page)
+                coordinator._adjust_current_page_image(rotation_delta=delta)
+                self.assertEqual(
+                    self._writes(calls),
+                    [
+                        (
+                            "queue",
+                            "db.mdb",
+                            "p1",
+                            "image_adjustments",
+                            [expected, False, False, False, False],
+                        )
+                    ],
+                )
+
+    def test_flip_toggles_only_the_requested_axis(self):
+        cases = (
+            ({}, True, False, True, False),
+            ({"toggle_flip_x": True}, True, False, False, False),
+            ({"toggle_flip_x": True}, False, True, True, True),
+            ({"toggle_flip_y": True}, True, False, True, True),
+            ({"toggle_flip_y": True}, False, True, False, False),
+            ({"toggle_flip_x": True, "toggle_flip_y": True}, True, True, False, False),
+        )
+        for kwargs, start_x, start_y, end_x, end_y in cases:
+            with self.subTest(kwargs=kwargs, x=start_x, y=start_y):
+                page = SimpleNamespace(
+                    rotation=90,
+                    flip_x=start_x,
+                    flip_y=start_y,
+                    invert=True,
+                    bitonal=True,
+                )
+                coordinator, calls = self._make(page=page)
+                coordinator._adjust_current_page_image(**kwargs)
+                self.assertEqual(
+                    self._writes(calls),
+                    [
+                        (
+                            "queue",
+                            "db.mdb",
+                            "p1",
+                            "image_adjustments",
+                            [90, end_x, end_y, True, True],
+                        )
+                    ],
+                )
+
+    def test_view_state_is_saved_then_flushed_then_queued_in_order(self):
+        coordinator, calls = self._make()
+        coordinator._adjust_current_page_image(rotation_delta=90)
+        self.assertEqual(
+            [c[0] for c in calls if c[0] != "allowed" and c[0] != "get_page"],
+            ["view_state", "flush", "queue"],
+        )
+        self.assertIn(("view_state", {"selected_page_override": "p1"}), calls)
+        self.assertIn(("flush", "db.mdb"), calls)
+
+    def test_failed_flush_prevents_any_write(self):
+        coordinator, calls = self._make(flush=False)
+        coordinator._adjust_current_page_image(rotation_delta=90)
+        self.assertEqual(self._writes(calls), [])
+        self.assertIn(("flush", "db.mdb"), calls)
+
+    def test_direct_save_runs_only_when_sql_queue_declines(self):
+        page = SimpleNamespace(
+            rotation=90, flip_x=True, flip_y=False, invert=True, bitonal=False
+        )
+        coordinator, calls = self._make(page=page, queued=None)
+        coordinator._adjust_current_page_image(toggle_flip_y=True)
+        self.assertEqual(
+            self._writes(calls),
+            [
+                (
+                    "queue",
+                    "db.mdb",
+                    "p1",
+                    "image_adjustments",
+                    [90, True, True, True, False],
+                ),
+                ("save", "db.mdb", ["p1"], 90, True, True, True, False),
+            ],
+        )
+        for queued in (True, False):
+            coordinator, calls = self._make(page=page, queued=queued)
+            coordinator._adjust_current_page_image(toggle_flip_y=True)
+            self.assertEqual([c[0] for c in self._writes(calls)], ["queue"])
+
+
+class Sp3a5gPageDialogHelperTests(unittest.TestCase):
+    def test_page_dialog_resources_cover_rename_targets_plus_current_page(self):
+        coordinator = _sp3a5g_coordinator()
+        coordinator._rename_page_targets = lambda: [
+            SimpleNamespace(uid="p1"),
+            SimpleNamespace(uid="p2"),
+        ]
+        bid_ref = BidRef("db.mdb", "8")
+        self.assertEqual(
+            coordinator._page_dialog_resources(bid_ref, "p2"),
+            (ResourceRef("page", "p1", 8), ResourceRef("page", "p2", 8)),
+        )
+        resources = coordinator._page_dialog_resources(bid_ref, "p3")
+        self.assertIsInstance(resources, tuple)
+        self.assertEqual(
+            resources,
+            (
+                ResourceRef("page", "p1", 8),
+                ResourceRef("page", "p2", 8),
+                ResourceRef("page", "p3", 8),
+            ),
+        )
+
+    def test_page_setting_uids_single_page_or_all_known_pages_in_order(self):
+        coordinator = _sp3a5g_coordinator()
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["a", "", None, "missing", "b"]
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: None if uid == "missing" else object()
+        )
+        self.assertEqual(coordinator._page_setting_uids("a", False), ["a"])
+        self.assertEqual(coordinator._page_setting_uids("a", True), ["a", "b"])
+
+    def test_page_setting_uids_without_sidebar_selects_nothing_for_all_pages(self):
+        coordinator = _sp3a5g_coordinator()
+        coordinator.takeoff_sidebar = None
+        coordinator.project_data = SimpleNamespace(get_page=lambda uid: object())
+        result = coordinator._page_setting_uids("a", True)
+        self.assertEqual(result, [])
+        self.assertIsInstance(result, list)
+        self.assertEqual(coordinator._page_setting_uids("a", False), ["a"])
+
+
+class Sp3a5gPageSettingKinds:
+    ADJUST = SimpleNamespace(
+        name="adjust",
+        open_method="open_adjust_images_dialog",
+        dialog_name="AdjustImagesDialog",
+        label="AdjustImagesDialog",
+        sync_method="_save_image_adjustments",
+        async_method="_save_image_adjustments_async",
+        setting_kind="image_adjustments",
+        title="Adjust Images",
+        settings=ImageAdjustmentSettings(180, True, False, True, False, False),
+        updates=lambda uids: [[uid, 180, True, False, True, False] for uid in uids],
+    )
+    SCALE = SimpleNamespace(
+        name="scale",
+        open_method="open_set_scale_dialog",
+        dialog_name="SetScaleDialog",
+        label="SetScaleDialog",
+        sync_method="_save_scale_settings",
+        async_method="_save_scale_settings_async",
+        setting_kind="scale",
+        title="Set Scale",
+        settings=ScaleSettings(2.5, 36.0, False),
+        updates=lambda uids: [[uid, 2.5, 36.0] for uid in uids],
+    )
+    ALL = (ADJUST, SCALE)
+
+    @staticmethod
+    def make_page(**overrides):
+        values = dict(
+            rotation=90,
+            flip_x=True,
+            flip_y=False,
+            invert=True,
+            bitonal=False,
+            scale_factor1=1.5,
+            scale_factor2=24.0,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def settings_for(kind, apply_to_all_pages):
+        base = kind.settings
+        if kind.name == "adjust":
+            return ImageAdjustmentSettings(
+                base.rotation,
+                base.flip_x,
+                base.flip_y,
+                base.invert,
+                base.bitonal,
+                apply_to_all_pages,
+            )
+        return ScaleSettings(base.scale_factor1, base.scale_factor2, apply_to_all_pages)
+
+
+class Sp3a5gPageDialogOpenTests(unittest.TestCase):
+    K = Sp3a5gPageSettingKinds
+
+    def _build(
+        self,
+        *,
+        uses_sql=False,
+        selected=BidRef("db.mdb", "8"),
+        active="p1",
+        allowed=True,
+        pages=None,
+        any_page=False,
+    ):
+        page = self.K.make_page()
+        pages = {"p1": page} if pages is None else pages
+        ctx = SimpleNamespace(
+            calls=[],
+            dialogs=[],
+            sessions=[],
+            page=page,
+            resources=(ResourceRef("page", "p1", 8),),
+            icon=object(),
+            window=object(),
+            bus=object(),
+            exec_error=None,
+        )
+
+        class FakeDialog:
+            def __init__(dialog, *args, **kwargs):
+                dialog.args = args
+                dialog.kwargs = kwargs
+                ctx.dialogs.append(dialog)
+
+            def cleanup(dialog):
+                ctx.calls.append(("cleanup", dialog))
+
+        class FakeSession:
+            def __init__(session, *args, **kwargs):
+                session.args = args
+                session.kwargs = kwargs
+                session.submitted = []
+                ctx.sessions.append(session)
+
+            def bind_dialog(session, dialog):
+                ctx.calls.append(("bind", session, dialog))
+
+            def submit_mutation(session, mutation, on_complete):
+                session.submitted.append((mutation, on_complete))
+                return "submitted"
+
+        def fake_exec(*args):
+            ctx.calls.append(("exec",) + args)
+            if ctx.exec_error is not None:
+                raise ctx.exec_error
+            return 0
+
+        ctx.dialog_cls = FakeDialog
+        ctx.session_cls = FakeSession
+        ctx.exec_fn = fake_exec
+        ctx.delete_fn = lambda dialog: ctx.calls.append(("delete", dialog))
+        coordinator = _sp3a5g_coordinator()
+        coordinator._icon_provider = ctx.icon
+        coordinator.main_window = ctx.window
+        coordinator.event_bus = ctx.bus
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid=active, get_selected_bid_ref=lambda: selected
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: ctx.calls.append(("allowed", feature)) or allowed
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: page if any_page else pages.get(uid)
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: ctx.calls.append(
+                ("sql", path)
+            )
+            or uses_sql
+        )
+        coordinator._page_dialog_resources = (
+            lambda bid_ref, uid: ctx.calls.append(("resources", bid_ref, uid))
+            or ctx.resources
+        )
+        coordinator._exec_with_collaboration_lease = lambda *a, **kw: ctx.calls.append(
+            ("lease_exec", a, kw)
+        )
+        return coordinator, ctx
+
+    def _open(self, kind, coordinator, ctx, **kwargs):
+        with (
+            patch(f"{_UEC}.{kind.dialog_name}", ctx.dialog_cls),
+            patch(f"{_UEC}.ModalEditLeaseSession", ctx.session_cls),
+            patch(f"{_UEC}.exec_with_ost_blocking", ctx.exec_fn),
+            patch(f"{_UEC}.delete_later_if_valid", ctx.delete_fn),
+        ):
+            getattr(coordinator, kind.open_method)(**kwargs)
+
+    @staticmethod
+    def _effects(ctx):
+        return [c for c in ctx.calls if c[0] not in {"allowed", "sql"}]
+
+    def test_dialog_is_not_opened_without_context_rights_or_page(self):
+        for kind in self.K.ALL:
+            cases = (
+                ("no active page", dict(active=None, any_page=True)),
+                ("empty active page", dict(active="", any_page=True)),
+                ("no bid", dict(selected=None)),
+                ("no edit right", dict(allowed=False)),
+                ("page missing", dict(pages={})),
+            )
+            for name, options in cases:
+                with self.subTest(kind=kind.name, case=name):
+                    coordinator, ctx = self._build(**options)
+                    self._open(kind, coordinator, ctx)
+                    self.assertEqual(ctx.dialogs, [])
+                    self.assertEqual(ctx.sessions, [])
+                    self.assertEqual(self._effects(ctx), [])
+
+    def test_edit_page_settings_right_gates_the_dialog(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, ctx = self._build(allowed=False)
+                self._open(kind, coordinator, ctx)
+                self.assertEqual(ctx.calls, [("allowed", Feature.EDIT_PAGE_SETTINGS)])
+
+    def test_set_scale_dialog_rejects_inconsistent_file_context(self):
+        kind = self.K.SCALE
+        cases = (
+            ("other database parameter", {}, {"file_path": "other.mdb"}),
+            ("bid with empty database", {"selected": BidRef("", "8")}, {}),
+            (
+                "bid missing with explicit path",
+                {"selected": None},
+                {"file_path": "db.mdb"},
+            ),
+        )
+        for name, build_options, kwargs in cases:
+            with self.subTest(case=name):
+                coordinator, ctx = self._build(**build_options)
+                self._open(kind, coordinator, ctx, **kwargs)
+                self.assertEqual(ctx.dialogs, [])
+                self.assertEqual(self._effects(ctx), [])
+
+    def test_set_scale_dialog_explicit_page_and_file_take_precedence(self):
+        kind = self.K.SCALE
+        other = self.K.make_page(scale_factor1=3.0, scale_factor2=96.0)
+        coordinator, ctx = self._build(pages={"p1": self.K.make_page(), "p2": other})
+        saved = []
+        coordinator._save_scale_settings = lambda *a: saved.append(a) or True
+        self._open(kind, coordinator, ctx, file_path="db.mdb", page_uid="p2")
+        self.assertEqual(len(ctx.dialogs), 1)
+        dialog = ctx.dialogs[0]
+        self.assertEqual(dialog.args, (ctx.icon, ctx.window, 3.0, 96.0))
+        self.assertIn(("resources", BidRef("db.mdb", "8"), "p2"), ctx.calls)
+        self.assertTrue(dialog.kwargs["save_fn"](kind.settings))
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0][:2], (BidRef("db.mdb", "8"), "p2"))
+        self.assertIs(saved[0][2], other)
+
+    def test_set_scale_dialog_defaults_to_active_page_and_selected_bid_file(self):
+        coordinator, ctx = self._build(uses_sql=True, active="p1")
+        self._open(self.K.SCALE, coordinator, ctx)
+        self.assertEqual(len(ctx.dialogs), 1)
+        self.assertIn(("sql", "db.mdb"), ctx.calls)
+        self.assertEqual(ctx.sessions[0].args[1], "db.mdb")
+        self.assertIn(("resources", BidRef("db.mdb", "8"), "p1"), ctx.calls)
+
+    def test_non_sql_dialog_runs_blocking_then_deletes_without_lease(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, ctx = self._build(uses_sql=False)
+                self._open(kind, coordinator, ctx)
+                self.assertEqual(len(ctx.dialogs), 1)
+                dialog = ctx.dialogs[0]
+                self.assertEqual(ctx.sessions, [])
+                self.assertIsNone(dialog.kwargs["save_async_fn"])
+                self.assertTrue(callable(dialog.kwargs["save_fn"]))
+                self.assertEqual(
+                    [c for c in ctx.calls if c[0] in {"exec", "delete", "lease_exec"}],
+                    [("exec", dialog, ctx.bus), ("delete", dialog)],
+                )
+                self.assertEqual(
+                    [c for c in ctx.calls if c[0] == "resources"],
+                    [("resources", BidRef("db.mdb", "8"), "p1")],
+                )
+                self.assertIn(("sql", "db.mdb"), ctx.calls)
+
+    def test_dialog_constructor_receives_icons_parent_and_page_values(self):
+        coordinator, ctx = self._build()
+        ctx.page.rotation, ctx.page.flip_x, ctx.page.flip_y = 270, False, True
+        ctx.page.invert, ctx.page.bitonal = False, True
+        self._open(self.K.ADJUST, coordinator, ctx)
+        self.assertEqual(
+            ctx.dialogs[0].args,
+            (ctx.icon, ctx.window, 270, False, True, False, True),
+        )
+        coordinator, ctx = self._build()
+        self._open(self.K.SCALE, coordinator, ctx)
+        self.assertEqual(ctx.dialogs[0].args, (ctx.icon, ctx.window, 1.5, 24.0))
+
+    def test_non_sql_dialog_is_deleted_even_when_exec_raises(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, ctx = self._build()
+                ctx.exec_error = RuntimeError("boom")
+                with self.assertRaises(RuntimeError):
+                    self._open(kind, coordinator, ctx)
+                dialog = ctx.dialogs[0]
+                self.assertEqual(
+                    [c for c in ctx.calls if c[0] in {"exec", "delete"}],
+                    [("exec", dialog, ctx.bus), ("delete", dialog)],
+                )
+
+    def test_sql_dialog_binds_lease_session_and_runs_under_collaboration_lease(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, ctx = self._build(uses_sql=True)
+                self._open(kind, coordinator, ctx)
+                self.assertEqual(len(ctx.dialogs), 1)
+                self.assertEqual(len(ctx.sessions), 1)
+                dialog, session = ctx.dialogs[0], ctx.sessions[0]
+                self.assertEqual(
+                    session.args, (coordinator, "db.mdb", ctx.resources, kind.label)
+                )
+                self.assertEqual(session.kwargs, {"event_bus": ctx.bus})
+                self.assertTrue(callable(dialog.kwargs["save_async_fn"]))
+                self.assertEqual(
+                    [
+                        c
+                        for c in ctx.calls
+                        if c[0] in {"bind", "lease_exec", "exec", "delete"}
+                    ],
+                    [
+                        ("bind", session, dialog),
+                        (
+                            "lease_exec",
+                            (dialog, "db.mdb", ctx.resources, dialog.cleanup),
+                            {"lease_session": session},
+                        ),
+                    ],
+                )
+                self.assertEqual(
+                    [c for c in ctx.calls if c[0] == "resources"],
+                    [("resources", BidRef("db.mdb", "8"), "p1")],
+                )
+
+    def test_sql_async_save_submits_mutation_through_lease_session(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, ctx = self._build(uses_sql=True)
+                async_calls = []
+                setattr(
+                    coordinator,
+                    kind.async_method,
+                    lambda *a, **kw: async_calls.append((a, kw)) or "async-result",
+                )
+                self._open(kind, coordinator, ctx)
+                save_async = ctx.dialogs[0].kwargs["save_async_fn"]
+                completions = []
+                self.assertEqual(
+                    save_async(kind.settings, completions.append), "submitted"
+                )
+                session = ctx.sessions[0]
+                self.assertEqual(len(session.submitted), 1)
+                mutation, on_complete = session.submitted[0]
+                lease_done = []
+                handle = object()
+                result = mutation(
+                    handle, lambda success, value: lease_done.append((success, value))
+                )
+                self.assertEqual(result, "async-result")
+                self.assertEqual(len(async_calls), 1)
+                args, kwargs = async_calls[0]
+                self.assertEqual(args[:3], (BidRef("db.mdb", "8"), "p1", kind.settings))
+                self.assertEqual(len(args), 4)
+                self.assertEqual(kwargs, {"edit_lease_handle": handle})
+                args[3](True)
+                args[3](False)
+                self.assertEqual(lease_done, [(True, None), (False, None)])
+                on_complete(True, "ignored")
+                on_complete(False, None)
+                self.assertEqual(completions, [True, False])
+
+    def _opened_save_fn(self, kind):
+        coordinator, ctx = self._build()
+        saves = []
+        outcome = {"value": True, "current": True}
+
+        def sync(*a):
+            saves.append(a)
+            if isinstance(outcome["value"], Exception):
+                raise outcome["value"]
+            return outcome["value"]
+
+        setattr(coordinator, kind.sync_method, sync)
+        coordinator._page_dialog_context_is_current = lambda *a: outcome["current"]
+        self._open(kind, coordinator, ctx)
+        return ctx, ctx.dialogs[0].kwargs["save_fn"], saves, outcome
+
+    def test_save_fn_logs_and_reports_false_when_the_save_raises(self):
+        expected = {
+            "adjust": "Image adjustment save raised (database=db.mdb, bid=8, page=p1)",
+            "scale": "Page scale save raised (database=db.mdb, bid=8, page=p1)",
+        }
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                _ctx, save_fn, saves, outcome = self._opened_save_fn(kind)
+                outcome["value"] = RuntimeError("disk")
+                with self.assertLogs(_UEC, level="ERROR") as logs:
+                    result = save_fn(kind.settings)
+                self.assertIs(result, False)
+                self.assertEqual(
+                    [r.getMessage() for r in logs.records], [expected[kind.name]]
+                )
+                self.assertIsInstance(logs.records[0].exc_info[1], RuntimeError)
+                self.assertEqual(len(saves), 1)
+
+    def test_save_fn_logs_failure_context_and_reports_false(self):
+        expected = {
+            "adjust": (
+                "Image adjustment save failed (database=db.mdb, bid=8, page=p1, "
+                "context_current=False)"
+            ),
+            "scale": (
+                "Page scale save failed (database=db.mdb, bid=8, page=p1, "
+                "context_current=False, page_present=True, page_current=True, "
+                "selection_current=True, edit_allowed=True)"
+            ),
+        }
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                ctx, save_fn, saves, outcome = self._opened_save_fn(kind)
+                outcome["value"] = False
+                outcome["current"] = False
+                with self.assertLogs(_UEC, level="WARNING") as logs:
+                    result = save_fn(kind.settings)
+                self.assertIs(result, False)
+                self.assertEqual(
+                    [r.getMessage() for r in logs.records], [expected[kind.name]]
+                )
+                self.assertEqual(logs.records[0].levelno, logging.WARNING)
+                self.assertEqual(
+                    saves, [(BidRef("db.mdb", "8"), "p1", ctx.page, kind.settings)]
+                )
+
+    def test_save_fn_success_follows_current_page_object_only_in_current_context(self):
+        bid_ref = BidRef("db.mdb", "8")
+        for kind in self.K.ALL:
+            cases = (
+                ("replaced page, context current", True, True, True),
+                ("replaced page, context stale", True, False, False),
+                ("page gone, context current", False, True, False),
+            )
+            for name, has_new_page, context_current, follows in cases:
+                with self.subTest(kind=kind.name, case=name):
+                    coordinator, ctx = self._build()
+                    live = {"page": ctx.page}
+                    coordinator.project_data.get_page = lambda uid: live["page"]
+                    context_calls = []
+                    coordinator._page_dialog_context_is_current = (
+                        lambda *a: context_calls.append(a) or context_current
+                    )
+                    saves = []
+                    setattr(
+                        coordinator,
+                        kind.sync_method,
+                        lambda *a: saves.append(a) or True,
+                    )
+                    self._open(kind, coordinator, ctx)
+                    save_fn = ctx.dialogs[0].kwargs["save_fn"]
+                    new_page = self.K.make_page(rotation=0) if has_new_page else None
+                    live["page"] = new_page
+                    self.assertIs(save_fn(kind.settings), True)
+                    self.assertIs(save_fn(kind.settings), True)
+                    self.assertIs(saves[0][2], ctx.page)
+                    self.assertIs(saves[1][2], new_page if follows else ctx.page)
+                    if has_new_page:
+                        self.assertEqual(context_calls, [(bid_ref, "p1", new_page)] * 2)
+                    else:
+                        self.assertEqual(context_calls, [])
+
+
+class Sp3a5gPageSettingSaveTests(unittest.TestCase):
+    K = Sp3a5gPageSettingKinds
+    BID = BidRef("db.mdb", "8")
+
+    def _make(
+        self,
+        *,
+        context=True,
+        uids=("p1", "p2"),
+        flush=True,
+        uses_sql=False,
+        queued=0,
+    ):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator._page_dialog_context_is_current = (
+            lambda *a: calls.append(("context",) + a) or context
+        )
+        coordinator._page_setting_uids = lambda *a: calls.append(("uids",) + a) or list(
+            uids
+        )
+        coordinator._flush_deferred_for_file = (
+            lambda path: calls.append(("flush", path)) or flush
+        )
+
+        def queue(*a):
+            calls.append(("queue",) + a)
+            if isinstance(queued, Exception):
+                raise queued
+            return queued
+
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: calls.append(("sql", path))
+            or uses_sql,
+            queue_page_settings=queue,
+            save_page_image_adjustments=lambda *a: calls.append(("image",) + a)
+            or "image-result",
+            save_page_scale=lambda *a: calls.append(("scale1",) + a) or "scale1-result",
+            save_page_scales=lambda *a: calls.append(("scaleN",) + a)
+            or "scaleN-result",
+        )
+        return coordinator, calls
+
+    def _save(self, kind, coordinator, settings=None):
+        return getattr(coordinator, kind.sync_method)(
+            self.BID, "p1", object(), settings or kind.settings
+        )
+
+    def test_stale_context_refuses_before_any_lookup_flush_or_write(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, calls = self._make(context=False)
+                self.assertIs(self._save(kind, coordinator), False)
+                self.assertEqual([c[0] for c in calls], ["context"])
+
+    def test_page_uids_come_from_page_and_apply_to_all_flag_in_that_order(self):
+        for kind in self.K.ALL:
+            for flag in (False, True):
+                with self.subTest(kind=kind.name, apply_all=flag):
+                    coordinator, calls = self._make()
+                    self._save(kind, coordinator, self.K.settings_for(kind, flag))
+                    self.assertIn(("uids", "p1", flag), calls)
+
+    def test_no_pages_or_failed_flush_refuse_without_writing(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name, case="no pages"):
+                coordinator, calls = self._make(uids=())
+                self.assertIs(self._save(kind, coordinator), False)
+                self.assertEqual([c[0] for c in calls], ["context", "uids"])
+            with self.subTest(kind=kind.name, case="flush failed"):
+                coordinator, calls = self._make(flush=False)
+                self.assertIs(self._save(kind, coordinator), False)
+                self.assertEqual([c[0] for c in calls], ["context", "uids", "flush"])
+                self.assertIn(("flush", "db.mdb"), calls)
+
+    def test_sql_save_queues_updates_and_reports_acceptance_by_sequence(self):
+        for kind in self.K.ALL:
+            for queued, expected in ((0, True), (7, True), (-1, False)):
+                with self.subTest(kind=kind.name, queued=queued):
+                    coordinator, calls = self._make(uses_sql=True, queued=queued)
+                    self.assertIs(self._save(kind, coordinator), expected)
+                    queue_calls = [c for c in calls if c[0] == "queue"]
+                    self.assertEqual(len(queue_calls), 1)
+                    call = queue_calls[0]
+                    self.assertEqual(len(call), 6)
+                    self.assertEqual(
+                        call[1:5],
+                        (
+                            "db.mdb",
+                            "8",
+                            kind.setting_kind,
+                            kind.updates(["p1", "p2"]),
+                        ),
+                    )
+                    self.assertIsNone(call[5](object()))
+
+    def test_sql_save_refused_by_locked_bid_reports_false(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, _calls = self._make(
+                    uses_sql=True, queued=ActiveBidLockedError()
+                )
+                with self.assertLogs(_UEC, level="WARNING") as logs:
+                    self.assertIs(self._save(kind, coordinator), False)
+                self.assertEqual(len(logs.records), 1)
+
+    def test_image_adjustments_mdb_save_passes_values_and_returns_result(self):
+        coordinator, calls = self._make(uses_sql=False)
+        result = self._save(self.K.ADJUST, coordinator)
+        self.assertEqual(result, "image-result")
+        self.assertEqual(
+            [c for c in calls if c[0] == "image"],
+            [("image", "db.mdb", ["p1", "p2"], 180, True, False, True, False)],
+        )
+        self.assertEqual([c for c in calls if c[0] == "queue"], [])
+
+    def test_scale_mdb_save_returns_service_result(self):
+        coordinator, _calls = self._make(uses_sql=False, uids=("p1",))
+        self.assertEqual(self._save(self.K.SCALE, coordinator), "scale1-result")
+        coordinator, _calls = self._make(uses_sql=False)
+        self.assertEqual(self._save(self.K.SCALE, coordinator), "scaleN-result")
+
+    def test_async_save_builds_updates_for_resolved_pages_and_delegates(self):
+        for kind in self.K.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, calls = self._make(uids=("p1", "p2"))
+                delegated = []
+                coordinator._save_page_settings_async = (
+                    lambda *a, **kw: delegated.append((a, kw)) or "delegated"
+                )
+                completed = object()
+                handle = object()
+                result = getattr(coordinator, kind.async_method)(
+                    self.BID,
+                    "p1",
+                    kind.settings,
+                    completed,
+                    edit_lease_handle=handle,
+                )
+                self.assertEqual(result, "delegated")
+                self.assertEqual(
+                    delegated,
+                    [
+                        (
+                            (
+                                self.BID,
+                                kind.setting_kind,
+                                kind.updates(["p1", "p2"]),
+                                kind.title,
+                                completed,
+                                handle,
+                            ),
+                            {},
+                        )
+                    ],
+                )
+                self.assertIn(("uids", "p1", False), calls)
+
+
+_SP3A5H_MOD = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+_SP3A5H_OP_ID = "00000000-0000-4000-8000-000000000001"
+
+
+def _sp3a5h_result(status, **kwargs):
+    return QueuedMutationResult(
+        database_id="db.mdb",
+        runtime_generation=1,
+        operation_id=_SP3A5H_OP_ID,
+        outcome_status=status,
+        **kwargs,
+    )
+
+
+class _Sp3a5hWriteService:
+    def __init__(self, raises=None, sql=True, queued_if_sql=None):
+        self.raises = raises
+        self.sql = sql
+        self.queued_if_sql = queued_if_sql
+        self.calls = []
+        self.callbacks = []
+        self.log = None
+
+    def queue_page_settings(
+        self, file_path, bid_uid, kind, updates, callback, edit_lease_handle=None
+    ):
+        self.calls.append((file_path, bid_uid, kind, updates, edit_lease_handle))
+        self.callbacks.append(callback)
+        if self.raises is not None:
+            raise self.raises
+        return 1
+
+
+class Sp3a5hPageSettingsAsyncTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _coordinator(self, log, *, allowed=True, flush_ok=True, service=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = SimpleNamespace(name="main-window")
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS and allowed
+        )
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda file_path: log.append(("flush", file_path))
+            or flush_ok
+        )
+        coordinator._project_write_service = service or _Sp3a5hWriteService()
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["p1", "", "p2", "ghost"]
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: (
+                Page(uid=uid, name=uid) if uid in {"p1", "p2", "p3"} else None
+            )
+        )
+        coordinator.present_queued_mutation_error = lambda *args, **kwargs: log.append(
+            ("error", args, kwargs)
+        )
+        return coordinator
+
+    def test_scale_async_without_apply_to_all_queues_only_the_given_page(self):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, service=service)
+        handle = object()
+        completed = []
+        started = coordinator._save_scale_settings_async(
+            self.BID,
+            "p3",
+            ScaleSettings(2.0, 3.0, False),
+            completed.append,
+            edit_lease_handle=handle,
+        )
+        self.assertIs(started, True)
+        self.assertEqual(
+            service.calls,
+            [("db.mdb", "bid-7", "scale", [["p3", 2.0, 3.0]], handle)],
+        )
+        self.assertEqual(completed, [])
+
+    def test_scale_async_apply_to_all_queues_each_existing_sidebar_page(self):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, service=service)
+        coordinator._save_scale_settings_async(
+            self.BID,
+            "p3",
+            ScaleSettings(2.0, 3.0, True),
+            lambda _success: None,
+            edit_lease_handle=object(),
+        )
+        self.assertEqual(
+            service.calls[0][2:4],
+            ("scale", [["p1", 2.0, 3.0], ["p2", 2.0, 3.0]]),
+        )
+
+    def test_page_settings_without_updates_reject_without_flush_or_queue(self):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, service=service)
+        completed = []
+        result = coordinator._save_page_settings_async(
+            self.BID, "scale", [], "Set Scale", completed.append, object()
+        )
+        self.assertIs(result, False)
+        self.assertEqual(completed, [False])
+        self.assertEqual(log, [])
+        self.assertEqual(service.calls, [])
+
+    def test_page_settings_without_edit_permission_reject_without_flush_or_queue(
+        self,
+    ):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, allowed=False, service=service)
+        completed = []
+        result = coordinator._save_page_settings_async(
+            self.BID, "scale", [["p1", 1.0, 2.0]], "Set Scale", completed.append, 1
+        )
+        self.assertIs(result, False)
+        self.assertEqual(completed, [False])
+        self.assertEqual(log, [])
+        self.assertEqual(service.calls, [])
+
+    def test_page_settings_flush_failure_rejects_without_queueing(self):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, flush_ok=False, service=service)
+        completed = []
+        result = coordinator._save_page_settings_async(
+            self.BID, "scale", [["p1", 1.0, 2.0]], "Set Scale", completed.append, 1
+        )
+        self.assertIs(result, False)
+        self.assertEqual(completed, [False])
+        self.assertEqual(log, [("flush", "db.mdb")])
+        self.assertEqual(service.calls, [])
+
+    def test_page_settings_queue_receives_the_exact_arguments_and_returns_true(self):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, service=service)
+        handle = object()
+        updates = [["p1", 1.0, 2.0]]
+        result = coordinator._save_page_settings_async(
+            self.BID, "scale", updates, "Set Scale", lambda _s: None, handle
+        )
+        self.assertIs(result, True)
+        self.assertEqual(log, [("flush", "db.mdb")])
+        self.assertEqual(service.calls, [("db.mdb", "bid-7", "scale", updates, handle)])
+
+    def _run_terminal(self, status, **kwargs):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, service=service)
+        coordinator._save_page_settings_async(
+            self.BID,
+            "scale",
+            [["p1", 1.0, 2.0]],
+            "Set Scale",
+            lambda success: log.append(("completed", success)),
+            object(),
+        )
+        result = _sp3a5h_result(status, **kwargs)
+        log.clear()
+        service.callbacks[0](result)
+        return log, result
+
+    def test_page_settings_committed_completes_true_without_error_dialog(self):
+        log, _result = self._run_terminal(MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(log, [("completed", True)])
+
+    def test_page_settings_unknown_or_projection_failed_outcome_stays_silent(self):
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            with self.subTest(status=status):
+                log, _result = self._run_terminal(status)
+                self.assertEqual(log, [])
+
+    def test_page_settings_failed_outcome_presents_error_then_completes_false(self):
+        for status in (
+            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            MutationOutcomeStatus.CANCELLED_BEFORE_START,
+        ):
+            with self.subTest(status=status):
+                log, result = self._run_terminal(status)
+                self.assertEqual(
+                    log,
+                    [
+                        ("error", ("db.mdb", "Set Scale", result), {}),
+                        ("completed", False),
+                    ],
+                )
+
+    def test_page_settings_queue_errors_are_reported_and_return_false(self):
+        for error, expect_warning in (
+            (ActiveBidLockedError(), False),
+            (RuntimeError("boom"), True),
+            (ValueError("bad value"), True),
+        ):
+            with self.subTest(error=error):
+                log = []
+                coordinator = self._coordinator(
+                    log, service=_Sp3a5hWriteService(raises=error)
+                )
+                with patch(f"{_SP3A5H_MOD}.show_warning") as warning:
+                    result = coordinator._save_page_settings_async(
+                        self.BID,
+                        "scale",
+                        [["p1", 1.0, 2.0]],
+                        "Set Scale",
+                        lambda _s: None,
+                        object(),
+                    )
+                self.assertIs(result, False)
+                if expect_warning:
+                    warning.assert_called_once_with(
+                        coordinator.main_window, "Set Scale", str(error)
+                    )
+                else:
+                    warning.assert_not_called()
+
+
+class Sp3a5hRenamePageAsyncTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _coordinator(self, log, *, allowed=True, flush_ok=True, service=None):
+        return Sp3a5hPageSettingsAsyncTests._coordinator(
+            self, log, allowed=allowed, flush_ok=flush_ok, service=service
+        )
+
+    def test_rename_async_queues_the_name_update_and_returns_true(self):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, service=service)
+        handle = object()
+        result = coordinator._save_page_name_async(
+            self.BID, "p2", "New", lambda _s: None, edit_lease_handle=handle
+        )
+        self.assertIs(result, True)
+        self.assertEqual(
+            service.calls, [("db.mdb", "bid-7", "name", [["p2", "New"]], handle)]
+        )
+
+    def test_rename_async_without_edit_permission_completes_false_and_skips_flush(
+        self,
+    ):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, allowed=False, service=service)
+        completed = []
+        result = coordinator._save_page_name_async(
+            self.BID, "p2", "New", completed.append, edit_lease_handle=object()
+        )
+        self.assertIs(result, False)
+        self.assertEqual(completed, [False])
+        self.assertEqual(log, [])
+        self.assertEqual(service.calls, [])
+
+    def test_rename_async_flush_failure_completes_false_and_skips_queue(self):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, flush_ok=False, service=service)
+        completed = []
+        result = coordinator._save_page_name_async(
+            self.BID, "p2", "New", completed.append, edit_lease_handle=object()
+        )
+        self.assertIs(result, False)
+        self.assertEqual(completed, [False])
+        self.assertEqual(log, [("flush", "db.mdb")])
+        self.assertEqual(service.calls, [])
+
+    def _run_terminal(self, status):
+        log = []
+        service = _Sp3a5hWriteService()
+        coordinator = self._coordinator(log, service=service)
+        coordinator._save_page_name_async(
+            self.BID,
+            "p2",
+            "New",
+            lambda success: log.append(("completed", success)),
+            edit_lease_handle=object(),
+        )
+        result = _sp3a5h_result(status)
+        log.clear()
+        service.callbacks[0](result)
+        return log, result
+
+    def test_rename_async_committed_completes_true_only(self):
+        log, _result = self._run_terminal(MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(log, [("completed", True)])
+
+    def test_rename_async_unknown_or_projection_failed_outcome_stays_silent(self):
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            with self.subTest(status=status):
+                log, _result = self._run_terminal(status)
+                self.assertEqual(log, [])
+
+    def test_rename_async_failure_presents_rename_page_error_then_completes_false(
+        self,
+    ):
+        log, result = self._run_terminal(MutationOutcomeStatus.FAILED_BEFORE_COMMIT)
+        self.assertEqual(
+            log,
+            [
+                ("error", ("db.mdb", "Rename Page", result), {}),
+                ("completed", False),
+            ],
+        )
+
+    def test_rename_async_queue_errors_are_reported_and_return_false(self):
+        for error, expect_warning in (
+            (ActiveBidLockedError(), False),
+            (RuntimeError("boom"), True),
+            (ValueError("bad value"), True),
+        ):
+            with self.subTest(error=error):
+                log = []
+                coordinator = self._coordinator(
+                    log, service=_Sp3a5hWriteService(raises=error)
+                )
+                with patch(f"{_SP3A5H_MOD}.show_warning") as warning:
+                    result = coordinator._save_page_name_async(
+                        self.BID,
+                        "p2",
+                        "New",
+                        lambda _s: None,
+                        edit_lease_handle=object(),
+                    )
+                self.assertIs(result, False)
+                if expect_warning:
+                    warning.assert_called_once_with(
+                        coordinator.main_window, "Rename Page", str(error)
+                    )
+                else:
+                    warning.assert_not_called()
+
+
+class _Sp3a5hRenameDialog:
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        type(self).instances.append(self)
+
+    def cleanup(self):
+        return None
+
+
+class _Sp3a5hLeaseSession:
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        self.bound = []
+        type(self).instances.append(self)
+
+    def bind_dialog(self, dialog):
+        self.bound.append(dialog)
+
+
+class Sp3a5hRenamePageDialogTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "12")
+
+    def setUp(self):
+        _Sp3a5hRenameDialog.instances = []
+        _Sp3a5hLeaseSession.instances = []
+
+    def _coordinator(
+        self,
+        log,
+        *,
+        page_uid="p1",
+        bid_ref=BID,
+        allowed=True,
+        sql=False,
+        order=("p1", "p2"),
+        sidebar=True,
+        get_page=None,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid=page_uid, get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS and allowed
+        )
+        coordinator.takeoff_sidebar = (
+            SimpleNamespace(get_page_order=lambda: list(order)) if sidebar else None
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=get_page
+            or (lambda uid: Page(uid=uid, name=f"name-{uid}") if uid else None)
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda file_path: log.append(
+                ("uses_sql", file_path)
+            )
+            or sql
+        )
+        coordinator._icon_provider = "icons"
+        coordinator.main_window = "main-window"
+        coordinator.event_bus = "bus"
+        coordinator._exec_with_collaboration_lease = lambda *args, **kwargs: log.append(
+            ("lease_exec", args, kwargs)
+        )
+        return coordinator
+
+    def _open(self, coordinator, log, exec_error=None):
+        def fake_exec(dialog, bus):
+            log.append(("exec", dialog, bus))
+            if exec_error is not None:
+                raise exec_error
+
+        with (
+            patch(f"{_SP3A5H_MOD}.RenamePageDialog", _Sp3a5hRenameDialog),
+            patch(f"{_SP3A5H_MOD}.ModalEditLeaseSession", _Sp3a5hLeaseSession),
+            patch(f"{_SP3A5H_MOD}.exec_with_ost_blocking", side_effect=fake_exec),
+            patch(
+                f"{_SP3A5H_MOD}.delete_later_if_valid",
+                side_effect=lambda dialog: log.append(("delete_later", dialog)),
+            ),
+        ):
+            coordinator.open_rename_page_dialog()
+
+    def _assert_nothing_opened(self, coordinator, log):
+        self._open(coordinator, log)
+        self.assertEqual(_Sp3a5hRenameDialog.instances, [])
+        self.assertEqual(_Sp3a5hLeaseSession.instances, [])
+        self.assertEqual([entry for entry in log if entry[0] != "uses_sql"], [])
+
+    def test_positive_control_valid_context_builds_the_dialog(self):
+        log = []
+        self._open(self._coordinator(log), log)
+        self.assertEqual(len(_Sp3a5hRenameDialog.instances), 1)
+
+    def test_no_active_page_does_not_open_the_dialog(self):
+        log = []
+        coordinator = self._coordinator(
+            log,
+            page_uid=None,
+            get_page=lambda uid: Page(uid="p1", name="One"),
+        )
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: log.append(("page_order",)) or ["p1"]
+        )
+        self._assert_nothing_opened(coordinator, log)
+
+    def test_no_selected_bid_does_not_open_the_dialog(self):
+        log = []
+        self._assert_nothing_opened(self._coordinator(log, bid_ref=None), log)
+
+    def test_denied_page_settings_edit_does_not_open_the_dialog(self):
+        log = []
+        self._assert_nothing_opened(self._coordinator(log, allowed=False), log)
+
+    def test_blank_active_page_uid_does_not_open_the_dialog_even_if_a_blank_page_exists(
+        self,
+    ):
+        log = []
+        coordinator = self._coordinator(
+            log,
+            page_uid="",
+            order=("x",),
+            get_page=lambda uid: Page(uid="", name="blank"),
+        )
+        self._assert_nothing_opened(coordinator, log)
+
+    def test_missing_sidebar_means_no_rename_targets_and_no_dialog(self):
+        log = []
+        self._assert_nothing_opened(self._coordinator(log, sidebar=False), log)
+
+    def test_active_page_absent_from_sidebar_targets_does_not_open_the_dialog(self):
+        log = []
+        self._assert_nothing_opened(self._coordinator(log, order=("p2", "p3")), log)
+
+    def test_active_page_that_cannot_be_resolved_does_not_open_the_dialog(self):
+        log = []
+
+        def get_page(uid):
+            if uid == "alias":
+                return Page(uid="p1", name="aliased")
+            return None
+
+        coordinator = self._coordinator(log, order=("alias",), get_page=get_page)
+        self._assert_nothing_opened(coordinator, log)
+
+    def test_dialog_is_built_for_all_sidebar_pages_when_active_page_is_one_of_them(
+        self,
+    ):
+        log = []
+        self._open(self._coordinator(log, order=("p0", "p1", "p2")), log)
+        dialog = _Sp3a5hRenameDialog.instances[0]
+        pages = dialog.args[2]
+        self.assertEqual(
+            [(page.uid, page.name) for page in pages],
+            [
+                ("p0", "name-p0"),
+                ("p1", "name-p1"),
+                ("p2", "name-p2"),
+            ],
+        )
+        self.assertEqual(dialog.args[3], "p1")
+
+    def test_non_sql_dialog_runs_blocking_with_the_event_bus_and_is_cleaned_up(self):
+        log = []
+        bid_ref = BidRef("db.mdb", "not-an-int")
+        coordinator = self._coordinator(log, bid_ref=bid_ref, sql=False)
+        self._open(coordinator, log)
+        dialog = _Sp3a5hRenameDialog.instances[0]
+        self.assertIsNone(dialog.kwargs["save_async_fn"])
+        self.assertEqual(_Sp3a5hLeaseSession.instances, [])
+        self.assertEqual(
+            [entry for entry in log if entry[0] != "uses_sql"],
+            [("exec", dialog, "bus"), ("delete_later", dialog)],
+        )
+
+    def test_non_sql_dialog_is_cleaned_up_when_exec_raises(self):
+        log = []
+        coordinator = self._coordinator(log, sql=False)
+        with self.assertRaises(RuntimeError):
+            self._open(coordinator, log, exec_error=RuntimeError("exec failed"))
+        dialog = _Sp3a5hRenameDialog.instances[0]
+        self.assertEqual(
+            [entry for entry in log if entry[0] != "uses_sql"],
+            [("exec", dialog, "bus"), ("delete_later", dialog)],
+        )
+
+    def test_sql_dialog_binds_a_lease_session_over_page_resources_and_defers_exec(
+        self,
+    ):
+        log = []
+        coordinator = self._coordinator(log, sql=True)
+        self._open(coordinator, log)
+        dialog = _Sp3a5hRenameDialog.instances[0]
+        session = _Sp3a5hLeaseSession.instances[0]
+        resources = (
+            ResourceRef("page", "p1", 12),
+            ResourceRef("page", "p2", 12),
+        )
+        self.assertEqual(
+            session.args, (coordinator, "db.mdb", resources, "RenamePageDialog")
+        )
+        self.assertEqual(session.kwargs, {"event_bus": "bus"})
+        self.assertEqual(session.bound, [dialog])
+        self.assertIsNotNone(dialog.kwargs["save_async_fn"])
+        lease_calls = [entry for entry in log if entry[0] == "lease_exec"]
+        self.assertEqual(
+            lease_calls,
+            [
+                (
+                    "lease_exec",
+                    (dialog, "db.mdb", resources, dialog.cleanup),
+                    {"lease_session": session},
+                )
+            ],
+        )
+        self.assertFalse([entry for entry in log if entry[0] == "exec"])
+
+    def test_rename_targets_without_sidebar_are_an_empty_list(self):
+        coordinator = self._coordinator([], sidebar=False)
+        self.assertEqual(coordinator._rename_page_targets(), [])
+
+
+class Sp3a5hSavePageNameTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    class _Service:
+        def __init__(self, queued, saved):
+            self.queued = queued
+            self.saved = saved
+            self.calls = []
+
+        def queue_page_setting_if_sql(self, file_path, page_uid, kind, values):
+            self.calls.append(("queue", file_path, page_uid, kind, values))
+            return self.queued
+
+        def save_page_name(self, file_path, page_uid, name):
+            self.calls.append(("save", file_path, page_uid, name))
+            return self.saved
+
+    def _build(self, *, queued=None, saved=True, flush_ok=True, current=True):
+        active = Page(uid="p1", name="Active")
+        target = Page(uid="p2", name="Target")
+        log = []
+        service = self._Service(queued, saved)
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="p1",
+            get_selected_bid_ref=lambda: self.BID if current else BidRef("x", "y"),
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        pages = {"p1": active, "p2": target}
+        coordinator.project_data = SimpleNamespace(get_page=pages.get)
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda file_path: log.append(("flush", file_path))
+            or flush_ok
+        )
+        coordinator._project_write_service = service
+        return coordinator, service, log, active, target, pages
+
+    def test_stale_dialog_context_returns_false_without_flush_or_write(self):
+        coordinator, service, log, active, target, _pages = self._build(current=False)
+        result = coordinator._save_page_name(
+            self.BID, "p1", active, {"p2": target}, "p2", "New"
+        )
+        self.assertIs(result, False)
+        self.assertEqual(log, [])
+        self.assertEqual(service.calls, [])
+
+    def test_unknown_target_page_returns_false_without_flush_or_write(self):
+        coordinator, service, log, active, _target, _pages = self._build()
+        result = coordinator._save_page_name(self.BID, "p1", active, {}, "ghost", "New")
+        self.assertIs(result, False)
+        self.assertEqual(log, [])
+        self.assertEqual(service.calls, [])
+
+    def test_replaced_target_page_returns_false_without_flush_or_write(self):
+        coordinator, service, log, active, target, pages = self._build()
+        pages["p2"] = Page(uid="p2", name="Recreated")
+        result = coordinator._save_page_name(
+            self.BID, "p1", active, {"p2": target}, "p2", "New"
+        )
+        self.assertIs(result, False)
+        self.assertEqual(log, [])
+        self.assertEqual(service.calls, [])
+
+    def test_missing_owner_entry_with_vanished_project_page_returns_false(self):
+        coordinator, service, log, active, target, pages = self._build()
+        del pages["p2"]
+        result = coordinator._save_page_name(
+            self.BID, "p1", active, {"p2": None}, "p2", "New"
+        )
+        self.assertIs(result, False)
+        self.assertEqual(log, [])
+        self.assertEqual(service.calls, [])
+
+    def test_flush_failure_returns_false_without_writing(self):
+        coordinator, service, log, active, target, _pages = self._build(flush_ok=False)
+        result = coordinator._save_page_name(
+            self.BID, "p1", active, {"p2": target}, "p2", "New"
+        )
+        self.assertIs(result, False)
+        self.assertEqual(log, [("flush", "db.mdb")])
+        self.assertEqual(service.calls, [])
+
+    def test_sql_queue_result_is_returned_and_blocks_the_direct_save(self):
+        for queued in (True, False):
+            with self.subTest(queued=queued):
+                coordinator, service, log, active, target, _pages = self._build(
+                    queued=queued, saved=not queued
+                )
+                result = coordinator._save_page_name(
+                    self.BID, "p1", active, {"p2": target}, "p2", "New"
+                )
+                self.assertIs(result, queued)
+                self.assertEqual(
+                    service.calls, [("queue", "db.mdb", "p2", "name", ["New"])]
+                )
+
+    def test_non_sql_save_returns_the_service_result(self):
+        for saved in (True, False):
+            with self.subTest(saved=saved):
+                coordinator, service, log, active, target, _pages = self._build(
+                    queued=None, saved=saved
+                )
+                result = coordinator._save_page_name(
+                    self.BID, "p1", active, {"p2": target}, "p2", "New"
+                )
+                self.assertIs(result, saved)
+                self.assertEqual(
+                    service.calls,
+                    [
+                        ("queue", "db.mdb", "p2", "name", ["New"]),
+                        ("save", "db.mdb", "p2", "New"),
+                    ],
+                )
+
+
+class _Sp3a5hDeleteState:
+    def __init__(self):
+        self.tab_active = True
+        self.allowed = True
+        self.bid_ref = BidRef("db.mdb", "bid-7")
+        self.active_page_uid = "p1"
+        self.pages = {
+            "p1": Page(uid="p1", name="Page 1"),
+            "p2": Page(uid="p2", name="Page 2"),
+        }
+        self.order = ["p1", "p2"]
+        self.sidebar = True
+        self.sql = False
+        self.content = set()
+        self.takeoffs = []
+        self.annotations = []
+        self.flush_ok = True
+        self.stage_result = False
+        self.get_page_override = None
+
+    def get_selected_bid_ref(self):
+        return self.bid_ref
+
+    def get_page(self, uid):
+        if self.get_page_override is not None:
+            return self.get_page_override(uid)
+        return self.pages.get(uid)
+
+
+class Sp3a5hDeleteCurrentPageTests(unittest.TestCase):
+    def _build(self, log, **overrides):
+        st = _Sp3a5hDeleteState()
+        for key, value in overrides.items():
+            setattr(st, key, value)
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(
+            is_takeoff_tab_active=lambda: st.tab_active
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS
+            and st.allowed
+        )
+        coordinator.ui_state_manager = st
+        coordinator.takeoff_sidebar = (
+            SimpleNamespace(get_page_order=lambda: list(st.order))
+            if st.sidebar
+            else None
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=st.get_page,
+            get_page_takeoffs=lambda uid: list(st.takeoffs),
+            get_page_annotations=lambda uid: list(st.annotations),
+            get_page_delete_content_snapshot=lambda *args: log.append(
+                ("snapshot", args)
+            )
+            or st.content,
+        )
+        coordinator._project_read_service = SimpleNamespace(
+            get_pages_with_delete_content=lambda *args: log.append(
+                ("read_content", args)
+            )
+            or st.content
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda file_path: log.append(
+                ("uses_sql", file_path)
+            )
+            or st.sql,
+            queue_pages_delete=lambda *args: log.append(("queue_delete", args[:3])),
+            delete_pages=lambda file_path, uids: log.append(
+                ("delete_pages", file_path, list(uids))
+            )
+            or True,
+        )
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda file_path: log.append(("flush", file_path))
+            or st.flush_ok
+        )
+        coordinator._stage_selection_after_page_delete = (
+            lambda uid: log.append(("stage", uid)) or st.stage_result
+        )
+        coordinator._clear_staged_takeoff_restore = lambda: log.append(("clear",))
+        return coordinator, st
+
+    def test_can_delete_is_true_only_when_every_precondition_holds(self):
+        coordinator, _st = self._build([])
+        self.assertIs(coordinator.can_delete_current_page(), True)
+
+    def test_can_delete_is_false_when_the_takeoff_tab_is_inactive(self):
+        coordinator, _st = self._build([], tab_active=False)
+        self.assertIs(coordinator.can_delete_current_page(), False)
+
+    def test_can_delete_is_false_without_page_settings_permission(self):
+        coordinator, _st = self._build([], allowed=False)
+        self.assertIs(coordinator.can_delete_current_page(), False)
+
+    def test_can_delete_is_false_without_a_selected_bid(self):
+        coordinator, _st = self._build([], bid_ref=None)
+        self.assertIs(coordinator.can_delete_current_page(), False)
+
+    def test_can_delete_is_false_without_an_active_page_uid_even_if_lookup_finds_one(
+        self,
+    ):
+        coordinator, _st = self._build(
+            [],
+            active_page_uid="",
+            get_page_override=lambda uid: Page(uid="p1", name="p1"),
+        )
+        self.assertIs(coordinator.can_delete_current_page(), False)
+
+    def test_can_delete_is_false_when_the_active_page_is_not_loaded(self):
+        coordinator, _st = self._build([], get_page_override=lambda uid: None)
+        self.assertIs(coordinator.can_delete_current_page(), False)
+
+    def test_can_delete_is_false_without_a_page_sidebar(self):
+        coordinator, _st = self._build([], sidebar=False)
+        self.assertIs(coordinator.can_delete_current_page(), False)
+
+    def test_can_delete_requires_more_than_one_page_in_the_sidebar(self):
+        for order, expected in ((["p1"], False), ([], False), (["p1", "p2"], True)):
+            with self.subTest(order=order):
+                coordinator, _st = self._build([], order=order)
+                self.assertIs(coordinator.can_delete_current_page(), expected)
+
+    def test_delete_does_nothing_when_deletion_is_not_allowed(self):
+        log = []
+        coordinator, _st = self._build(log, tab_active=False)
+        coordinator.delete_current_page()
+        self.assertEqual(log, [])
+
+    def test_delete_guards_each_missing_state_even_if_can_delete_says_yes(self):
+        cases = {
+            "bid": {"bid_ref": None},
+            "page_uid": {
+                "active_page_uid": "",
+                "get_page_override": lambda uid: Page(uid="p1", name="x"),
+            },
+            "page": {"get_page_override": lambda uid: None},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(missing=name):
+                log = []
+                coordinator, _st = self._build(log, **overrides)
+                coordinator.can_delete_current_page = lambda: True
+                coordinator.delete_current_page()
+                self.assertEqual(log, [])
+
+    def test_non_sql_delete_reads_content_with_file_path_then_bid_uid(self):
+        log = []
+        coordinator, _st = self._build(log, sql=False)
+        coordinator.delete_current_page()
+        self.assertIn(("read_content", ("db.mdb", "bid-7")), log)
+        self.assertFalse([entry for entry in log if entry[0] == "snapshot"])
+
+    def test_sql_delete_reads_the_snapshot_with_file_path_then_bid_uid(self):
+        log = []
+        coordinator, _st = self._build(log, sql=True)
+        coordinator.delete_current_page()
+        self.assertIn(("snapshot", ("db.mdb", "bid-7")), log)
+        self.assertFalse([entry for entry in log if entry[0] == "read_content"])
+
+    def _delete_with_confirm(self, st_overrides, answer=False, mutate=None):
+        log = []
+        coordinator, st = self._build(log, **st_overrides)
+
+        def confirm(parent, name):
+            log.append(("confirm", name))
+            if mutate is not None:
+                mutate(st)
+            return answer
+
+        with patch(f"{_SP3A5H_MOD}.confirm_delete_page_with_contents", confirm):
+            coordinator.delete_current_page()
+        return log
+
+    def test_page_with_loaded_takeoffs_asks_for_confirmation(self):
+        log = self._delete_with_confirm({"takeoffs": [object()]})
+        self.assertEqual(log.count(("confirm", "Page 1")), 1)
+        self.assertNotIn(("stage", "p1"), log)
+
+    def test_page_with_loaded_annotations_asks_for_confirmation(self):
+        log = self._delete_with_confirm({"annotations": [object()]})
+        self.assertEqual(log.count(("confirm", "Page 1")), 1)
+        self.assertNotIn(("stage", "p1"), log)
+
+    def test_page_with_persisted_content_asks_for_confirmation(self):
+        log = self._delete_with_confirm({"content": {"p1"}})
+        self.assertEqual(log.count(("confirm", "Page 1")), 1)
+
+    def test_empty_page_is_deleted_without_confirmation(self):
+        log = self._delete_with_confirm({})
+        self.assertFalse([entry for entry in log if entry[0] == "confirm"])
+        self.assertIn(("stage", "p1"), log)
+
+    def test_confirmed_delete_proceeds_when_nothing_changed_meanwhile(self):
+        log = self._delete_with_confirm({"takeoffs": [object()]}, answer=True)
+        self.assertEqual(log.count(("stage", "p1")), 1)
+
+    def test_confirmed_delete_aborts_when_the_selected_bid_changed(self):
+        def mutate(st):
+            st.bid_ref = BidRef("db.mdb", "bid-8")
+
+        log = self._delete_with_confirm(
+            {"takeoffs": [object()]}, answer=True, mutate=mutate
+        )
+        self.assertIn(("confirm", "Page 1"), log)
+        self.assertNotIn(("stage", "p1"), log)
+
+    def test_confirmed_delete_aborts_when_the_active_page_changed(self):
+        def mutate(st):
+            st.active_page_uid = "p2"
+
+        log = self._delete_with_confirm(
+            {"takeoffs": [object()]}, answer=True, mutate=mutate
+        )
+        self.assertIn(("confirm", "Page 1"), log)
+        self.assertNotIn(("stage", "p1"), log)
+        self.assertNotIn(("stage", "p2"), log)
+
+    def test_confirmed_delete_aborts_when_the_page_object_was_replaced(self):
+        def mutate(st):
+            st.pages["p1"] = Page(uid="p1", name="Recreated")
+
+        log = self._delete_with_confirm(
+            {"takeoffs": [object()]}, answer=True, mutate=mutate
+        )
+        self.assertIn(("confirm", "Page 1"), log)
+        self.assertNotIn(("stage", "p1"), log)
+
+    def test_confirmed_delete_aborts_when_deletion_became_disallowed(self):
+        def mutate(st):
+            st.allowed = False
+
+        log = self._delete_with_confirm(
+            {"takeoffs": [object()]}, answer=True, mutate=mutate
+        )
+        self.assertNotIn(("stage", "p1"), log)
+
+    def test_refused_selection_staging_stops_before_flush_and_delete(self):
+        log = []
+        coordinator, _st = self._build(log, stage_result=False)
+        coordinator.delete_current_page()
+        self.assertEqual(
+            [entry for entry in log if entry[0] not in {"uses_sql", "read_content"}],
+            [("stage", "p1")],
+        )
+
+    def test_flush_failure_clears_the_staged_restore_and_does_not_delete(self):
+        log = []
+        coordinator, _st = self._build(log, stage_result=True, flush_ok=False)
+        coordinator.delete_current_page()
+        self.assertEqual(
+            [entry for entry in log if entry[0] not in {"uses_sql", "read_content"}],
+            [("stage", "p1"), ("flush", "db.mdb"), ("clear",)],
+        )
+
+    def test_sql_delete_reports_a_failed_outcome_once_even_if_called_back_twice(self):
+        log = []
+        coordinator, _st = self._build(log, sql=True, stage_result=True)
+        callbacks = []
+        coordinator._project_write_service.queue_pages_delete = (
+            lambda file_path, bid_uid, uids, callback: callbacks.append(
+                (file_path, bid_uid, list(uids), callback)
+            )
+        )
+        coordinator._clear_staged_takeoff_restore = lambda: log.append(("clear",))
+        coordinator.present_queued_mutation_error = lambda *args, **kwargs: log.append(
+            ("error", args, kwargs)
+        )
+        coordinator.delete_current_page()
+        file_path, bid_uid, uids, callback = callbacks[0]
+        self.assertEqual((file_path, bid_uid, uids), ("db.mdb", "bid-7", ["p1"]))
+        committed = _sp3a5h_result(MutationOutcomeStatus.COMMITTED)
+        failed = _sp3a5h_result(MutationOutcomeStatus.FAILED_BEFORE_COMMIT)
+        log.clear()
+        callback(committed)
+        self.assertEqual(log, [])
+        callback(failed)
+        callback(failed)
+        self.assertEqual(
+            log,
+            [
+                ("clear",),
+                ("error", ("db.mdb", "Delete Page", failed), {"critical": True}),
+            ],
+        )
+
+    def test_positive_control_non_sql_delete_writes_the_page(self):
+        log = []
+        coordinator, _st = self._build(log, stage_result=True)
+        coordinator.delete_current_page()
+        self.assertEqual(
+            [entry for entry in log if entry[0] not in {"uses_sql", "read_content"}],
+            [
+                ("stage", "p1"),
+                ("flush", "db.mdb"),
+                ("delete_pages", "db.mdb", ["p1"]),
+            ],
+        )
+
+
+class Sp3a5hStageSelectionAfterPageDeleteTests(unittest.TestCase):
+    def _build(self, order, log):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = "main-window"
+        coordinator.takeoff_sidebar = (
+            None if order is None else SimpleNamespace(get_page_order=lambda: order)
+        )
+        coordinator._stage_takeoff_restore = lambda **kwargs: log.append(kwargs)
+        return coordinator
+
+    def test_without_sidebar_nothing_is_staged(self):
+        log = []
+        coordinator = self._build(None, log)
+        self.assertIs(coordinator._stage_selection_after_page_delete("p1"), False)
+        self.assertEqual(log, [])
+
+    def test_page_missing_from_the_sidebar_order_is_not_staged(self):
+        log = []
+        coordinator = self._build(["p1", "p2"], log)
+        self.assertIs(coordinator._stage_selection_after_page_delete("p9"), False)
+        self.assertEqual(log, [])
+
+    def test_last_remaining_page_cannot_be_deleted_and_warns(self):
+        log = []
+        coordinator = self._build(["p1"], log)
+        with patch(f"{_SP3A5H_MOD}.show_warning") as warning:
+            result = coordinator._stage_selection_after_page_delete("p1")
+        self.assertIs(result, False)
+        self.assertEqual(log, [])
+        warning.assert_called_once_with(
+            "main-window", "Delete Page", "Cannot delete the last page in the bid."
+        )
+
+    def test_deleting_the_first_page_selects_the_next_page(self):
+        log = []
+        coordinator = self._build(["a", "b", "c"], log)
+        self.assertIs(coordinator._stage_selection_after_page_delete("a"), True)
+        self.assertEqual(log, [{"page_uids": ["b"], "active_page_uid": "b"}])
+
+    def test_deleting_a_middle_page_selects_the_page_that_follows_it(self):
+        log = []
+        coordinator = self._build(["a", "b", "c"], log)
+        self.assertIs(coordinator._stage_selection_after_page_delete("b"), True)
+        self.assertEqual(log, [{"page_uids": ["c"], "active_page_uid": "c"}])
+
+    def test_deleting_the_last_page_selects_the_previous_page(self):
+        log = []
+        coordinator = self._build(["a", "b", "c"], log)
+        self.assertIs(coordinator._stage_selection_after_page_delete("c"), True)
+        self.assertEqual(log, [{"page_uids": ["b"], "active_page_uid": "b"}])
+
+
+class Sp3a5hQueuedPageDeleteCompleteTests(unittest.TestCase):
+    def _build(self, token, log):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._page_delete_stage_token = token
+        coordinator._clear_staged_takeoff_restore = lambda: log.append(("clear",))
+        coordinator.present_queued_mutation_error = lambda *args, **kwargs: log.append(
+            ("error", args, kwargs)
+        )
+        return coordinator
+
+    def test_committed_unknown_and_projection_failed_outcomes_are_not_failures(self):
+        for status in (
+            MutationOutcomeStatus.COMMITTED,
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            with self.subTest(status=status):
+                log = []
+                token = object()
+                coordinator = self._build(token, log)
+                handled = coordinator._on_queued_page_delete_complete(
+                    "db.mdb", _sp3a5h_result(status), token
+                )
+                self.assertIs(handled, False)
+                self.assertEqual(log, [])
+
+    def test_failed_outcome_clears_staged_restore_and_presents_critical_error(self):
+        log = []
+        token = object()
+        coordinator = self._build(token, log)
+        result = _sp3a5h_result(MutationOutcomeStatus.FAILED_BEFORE_COMMIT)
+        handled = coordinator._on_queued_page_delete_complete("db.mdb", result, token)
+        self.assertIs(handled, True)
+        self.assertEqual(
+            log,
+            [
+                ("clear",),
+                ("error", ("db.mdb", "Delete Page", result), {"critical": True}),
+            ],
+        )
+
+    def test_failure_of_a_superseded_delete_keeps_the_newer_staged_restore(self):
+        log = []
+        coordinator = self._build(object(), log)
+        result = _sp3a5h_result(MutationOutcomeStatus.FAILED_BEFORE_COMMIT)
+        handled = coordinator._on_queued_page_delete_complete(
+            "db.mdb", result, object()
+        )
+        self.assertIs(handled, True)
+        self.assertEqual(
+            log, [("error", ("db.mdb", "Delete Page", result), {"critical": True})]
+        )
+
+
+class Sp3a5hPageDeleteDisplayNameTests(unittest.TestCase):
+    def _name(self, **kwargs):
+        return UIEventCoordinator._page_delete_display_name(Page(uid="u9", **kwargs))
+
+    def test_a_page_name_wins_over_the_image_path(self):
+        self.assertEqual(self._name(name="Lobby", image_path="C:\\x\\f.pdf"), "Lobby")
+
+    def test_unnamed_page_uses_the_image_file_name_for_every_separator_style(self):
+        for path, expected in (
+            ("C:\\dir\\sub\\file.pdf", "file.pdf"),
+            ("/dir/sub/file.pdf", "file.pdf"),
+            ("C:/dir\\sub/file.pdf", "file.pdf"),
+            ("C:\\dir/sub\\file.pdf", "file.pdf"),
+            ("a\\b/c.png", "c.png"),
+            ("a/b\\c.png", "c.png"),
+            ("file.pdf", "file.pdf"),
+            ("dir\\file.pdf", "file.pdf"),
+            ("dir/file.pdf", "file.pdf"),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self._name(name="", image_path=path), expected)
+
+    def test_unnamed_page_without_image_falls_back_to_its_uid(self):
+        self.assertEqual(self._name(name="", image_path=None), "Page u9")
+        self.assertEqual(self._name(name="", image_path=""), "Page u9")
+
+
+class Sp3a5hOverlayImageSelectionTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(
+        self,
+        *,
+        page_uid="p1",
+        bid_ref=BID,
+        allowed=True,
+        page="default",
+    ):
+        if page == "default":
+            page = Page(uid="p1", name="One", overlay_image_path="old.pdf")
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = "main-window"
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid=page_uid, get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS and allowed
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda uid: page)
+        saved = []
+        coordinator._save_page_overlay_image = lambda *args: saved.append(args)
+        return coordinator, saved
+
+    def _select(self, coordinator):
+        with patch(
+            f"{_SP3A5H_MOD}.select_overlay_image_path", return_value="new.pdf"
+        ) as chooser:
+            coordinator.select_overlay_image()
+        return chooser
+
+    def test_positive_control_select_saves_the_chosen_overlay(self):
+        coordinator, saved = self._build()
+        chooser = self._select(coordinator)
+        chooser.assert_called_once_with("main-window", "old.pdf")
+        self.assertEqual(saved, [("db.mdb", "p1", "new.pdf")])
+
+    def test_select_without_active_page_never_opens_the_file_dialog(self):
+        coordinator, saved = self._build(page_uid=None)
+        self._select(coordinator).assert_not_called()
+        self.assertEqual(saved, [])
+
+    def test_select_without_selected_bid_never_opens_the_file_dialog(self):
+        coordinator, saved = self._build(bid_ref=None)
+        self._select(coordinator).assert_not_called()
+        self.assertEqual(saved, [])
+
+    def test_select_without_edit_permission_never_opens_the_file_dialog(self):
+        coordinator, saved = self._build(allowed=False)
+        self._select(coordinator).assert_not_called()
+        self.assertEqual(saved, [])
+
+    def test_select_for_an_unloaded_page_never_opens_the_file_dialog(self):
+        coordinator, saved = self._build(page=None)
+        self._select(coordinator).assert_not_called()
+        self.assertEqual(saved, [])
+
+    def test_select_for_page_without_overlay_offers_an_empty_current_path(self):
+        page = Page(uid="p1", name="One", overlay_image_path=None)
+        coordinator, saved = self._build(page=page)
+        chooser = self._select(coordinator)
+        chooser.assert_called_once_with("main-window", "")
+        self.assertEqual(saved, [("db.mdb", "p1", "new.pdf")])
+
+
+class Sp3a5hOverlayImageRemovalTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(
+        self,
+        *,
+        page_uid="p1",
+        bid_ref=BID,
+        allowed=True,
+        overlay="old.pdf",
+        any_page=False,
+    ):
+        page = Page(uid="p1", name="One", overlay_image_path=overlay)
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid=page_uid, get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS and allowed
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: page if any_page or uid == "p1" else None
+        )
+        saved = []
+        coordinator._save_page_overlay_image = lambda *args: saved.append(args)
+        return coordinator, saved
+
+    def test_remove_saves_an_empty_overlay_path_for_the_active_page(self):
+        coordinator, saved = self._build()
+        coordinator.remove_overlay_image()
+        self.assertEqual(saved, [("db.mdb", "p1", "")])
+
+    def test_remove_does_nothing_without_an_active_page(self):
+        coordinator, saved = self._build(page_uid=None, any_page=True)
+        coordinator.remove_overlay_image()
+        self.assertEqual(saved, [])
+
+    def test_remove_does_nothing_for_a_blank_page_uid_even_if_lookup_finds_a_page(
+        self,
+    ):
+        coordinator, saved = self._build(page_uid="", any_page=True)
+        coordinator.remove_overlay_image()
+        self.assertEqual(saved, [])
+
+    def test_remove_does_nothing_without_a_selected_bid(self):
+        coordinator, saved = self._build(bid_ref=None)
+        coordinator.remove_overlay_image()
+        self.assertEqual(saved, [])
+
+    def test_remove_does_nothing_without_edit_permission(self):
+        coordinator, saved = self._build(allowed=False)
+        coordinator.remove_overlay_image()
+        self.assertEqual(saved, [])
+
+    def test_remove_does_nothing_for_an_unloaded_page(self):
+        coordinator, saved = self._build(page_uid="ghost")
+        coordinator.remove_overlay_image()
+        self.assertEqual(saved, [])
+
+    def test_remove_does_nothing_when_the_page_has_no_overlay(self):
+        for overlay in (None, ""):
+            with self.subTest(overlay=overlay):
+                coordinator, saved = self._build(overlay=overlay)
+                coordinator.remove_overlay_image()
+                self.assertEqual(saved, [])
+
+
+class Sp3a5hOverlayVisibilityTests(unittest.TestCase):
+    def _run(self, target, checked, has_original, has_overlay, mode, page_uid="p1"):
+        page = Page(
+            uid="p1",
+            name="One",
+            image_path="orig.pdf" if has_original else None,
+            overlay_image_path="over.pdf" if has_overlay else None,
+            image_show_mode=mode,
+        )
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid=page_uid)
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: page if uid == "p1" else None
+        )
+        coordinator._update_export_menu_state = lambda: log.append("export")
+        coordinator._on_overlay_display_mode_requested = lambda m: log.append(
+            ("request", m)
+        )
+        coordinator._set_overlay_visibility(target, checked)
+        return log
+
+    def test_missing_active_page_only_refreshes_the_export_menu(self):
+        self.assertEqual(
+            self._run("original", True, True, True, 0, page_uid=""), ["export"]
+        )
+
+    def test_unloaded_active_page_only_refreshes_the_export_menu(self):
+        self.assertEqual(
+            self._run("original", True, True, True, 0, page_uid="ghost"), ["export"]
+        )
+
+    def test_hiding_original_while_overlay_exists_requests_overlay_only(self):
+        self.assertEqual(self._run("original", False, True, True, 2), [("request", 1)])
+
+    def test_hiding_overlay_while_original_exists_requests_original_only(self):
+        self.assertEqual(self._run("overlay", False, True, True, 2), [("request", 0)])
+
+    def test_unchanged_mode_requests_nothing_and_skips_the_menu_refresh(self):
+        self.assertEqual(self._run("original", True, True, True, 2), [])
+
+    def test_showing_original_without_an_original_image_is_refused(self):
+        self.assertEqual(self._run("original", True, False, True, 1), ["export"])
+
+    def test_showing_overlay_without_an_overlay_image_is_refused(self):
+        self.assertEqual(self._run("overlay", True, True, False, 0), ["export"])
+
+    def test_hiding_the_only_source_is_refused(self):
+        self.assertEqual(self._run("original", False, True, False, 0), ["export"])
+        self.assertEqual(self._run("overlay", False, False, True, 1), ["export"])
+
+    def test_showing_overlay_is_allowed_without_an_original_image(self):
+        self.assertEqual(self._run("overlay", True, False, True, 0), [("request", 2)])
+
+    def test_showing_original_is_allowed_without_an_overlay_image(self):
+        self.assertEqual(self._run("original", True, True, False, 1), [("request", 2)])
+
+    def test_showing_original_without_overlay_when_already_shown_changes_nothing(self):
+        self.assertEqual(self._run("original", True, True, False, 0), [])
+
+
+class Sp3a5hSavePageOverlayImageTests(unittest.TestCase):
+    def _build(self, log, *, flush_ok=True, queued=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._save_current_page_view_state = lambda **kwargs: log.append(
+            ("view_state", kwargs)
+        )
+        coordinator._flush_deferred_for_file = (
+            lambda file_path: log.append(("flush", file_path)) or flush_ok
+        )
+        callbacks = []
+
+        def queue(file_path, page_uid, kind, values, callback=None):
+            log.append(("queue", file_path, page_uid, kind, values))
+            callbacks.append(callback)
+            return queued
+
+        coordinator._project_write_service = SimpleNamespace(
+            queue_page_setting_if_sql=queue,
+            save_page_overlay_image=lambda file_path, page_uid, path: log.append(
+                ("save", file_path, page_uid, path)
+            ),
+        )
+        coordinator.present_queued_mutation_error = lambda *args: log.append(
+            ("error", args)
+        )
+        return coordinator, callbacks
+
+    def test_non_sql_save_snapshots_view_flushes_queues_and_saves_directly(self):
+        log = []
+        coordinator, _callbacks = self._build(log)
+        coordinator._save_page_overlay_image("db.mdb", "p9", "new.pdf")
+        self.assertEqual(
+            log,
+            [
+                ("view_state", {"selected_page_override": "p9"}),
+                ("flush", "db.mdb"),
+                ("queue", "db.mdb", "p9", "overlay_image", ["new.pdf"]),
+                ("save", "db.mdb", "p9", "new.pdf"),
+            ],
+        )
+
+    def test_flush_failure_stops_before_any_write(self):
+        log = []
+        coordinator, _callbacks = self._build(log, flush_ok=False)
+        coordinator._save_page_overlay_image("db.mdb", "p9", "new.pdf")
+        self.assertEqual(
+            log,
+            [("view_state", {"selected_page_override": "p9"}), ("flush", "db.mdb")],
+        )
+
+    def test_queued_sql_save_does_not_write_directly(self):
+        log = []
+        coordinator, _callbacks = self._build(log, queued=True)
+        coordinator._save_page_overlay_image("db.mdb", "p9", "")
+        self.assertFalse([entry for entry in log if entry[0] == "save"])
+
+    def test_queued_failure_titles_follow_replace_versus_remove(self):
+        for path, title in (
+            ("new.pdf", "Replace Overlay Image"),
+            ("", "Remove Overlay Image"),
+        ):
+            with self.subTest(path=path):
+                log = []
+                coordinator, callbacks = self._build(log, queued=True)
+                coordinator._save_page_overlay_image("db.mdb", "p9", path)
+                result = _sp3a5h_result(MutationOutcomeStatus.FAILED_BEFORE_COMMIT)
+                log.clear()
+                callbacks[0](result)
+                self.assertEqual(log, [("error", ("db.mdb", title, result))])
+
+
+class Sp3a5hQueuedPageImageCompleteTests(unittest.TestCase):
+    def _run(self, result):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.present_queued_mutation_error = lambda *args: log.append(args)
+        coordinator._on_queued_page_image_complete(result, "Replace Overlay Image")
+        return log
+
+    def test_committed_and_cancelled_outcomes_show_no_error(self):
+        for status in (
+            MutationOutcomeStatus.COMMITTED,
+            MutationOutcomeStatus.CANCELLED_BEFORE_START,
+        ):
+            with self.subTest(status=status):
+                self.assertEqual(self._run(_sp3a5h_result(status)), [])
+
+    def test_conflict_with_resolution_data_shows_no_error(self):
+        conflict = SynchronizationConflict(
+            database_id="db.mdb",
+            resource=ResourceRef("page", "p1", 1),
+            reason="changed",
+        )
+        result = _sp3a5h_result(MutationOutcomeStatus.CONFLICT, conflict=conflict)
+        self.assertEqual(self._run(result), [])
+
+    def test_other_outcomes_present_the_error_for_the_result_database(self):
+        for status in (
+            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            MutationOutcomeStatus.CONFLICT,
+        ):
+            with self.subTest(status=status):
+                result = _sp3a5h_result(status)
+                self.assertEqual(
+                    self._run(result), [("db.mdb", "Replace Overlay Image", result)]
+                )
+
+
+class _Sp3a5hFlakyPages:
+    def __init__(self, page):
+        self.page = page
+        self.calls = 0
+
+    def get_page(self, uid):
+        self.calls += 1
+        return self.page if self.calls == 1 else None
+
+
+class _Sp3a5hPageUiState:
+    def __init__(self, bid_ref, active_page_uid):
+        self.bid_ref = bid_ref
+        self.active_page_uid = active_page_uid
+        self.selected_area_uid = "unset"
+
+    def get_selected_bid_ref(self):
+        return self.bid_ref
+
+
+class Sp3a5hPageSettingOwnerTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(self, *, pages=None, bid_ref=BID, cleaning=False):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = cleaning
+        coordinator.ui_state_manager = _Sp3a5hPageUiState(bid_ref, "p1")
+        table = {"p1": Page(uid="p1", name="One")} if pages is None else pages
+        coordinator.project_data = SimpleNamespace(get_page=table.get)
+        return coordinator, table
+
+    def test_current_owner_without_explicit_page_owner_is_current(self):
+        coordinator, _pages = self._build()
+        self.assertIs(coordinator._page_setting_owner_is_current(self.BID, "p1"), True)
+
+    def test_matching_page_owner_is_current(self):
+        coordinator, pages = self._build()
+        self.assertIs(
+            coordinator._page_setting_owner_is_current(self.BID, "p1", pages["p1"]),
+            True,
+        )
+
+    def test_a_different_page_object_is_not_the_owner(self):
+        coordinator, _pages = self._build()
+        other = Page(uid="p1", name="One")
+        self.assertIs(
+            coordinator._page_setting_owner_is_current(self.BID, "p1", other), False
+        )
+
+    def test_unloaded_page_is_not_current(self):
+        coordinator, _pages = self._build()
+        self.assertIs(coordinator._page_setting_owner_is_current(self.BID, "p2"), False)
+
+    def test_other_selected_bid_is_not_current(self):
+        coordinator, _pages = self._build(bid_ref=BidRef("other.mdb", "bid-1"))
+        self.assertIs(coordinator._page_setting_owner_is_current(self.BID, "p1"), False)
+
+    def test_cleanup_in_progress_is_not_current(self):
+        coordinator, _pages = self._build(cleaning=True)
+        self.assertIs(coordinator._page_setting_owner_is_current(self.BID, "p1"), False)
+
+    def test_missing_ui_state_manager_is_not_current(self):
+        coordinator, _pages = self._build()
+        coordinator.ui_state_manager = None
+        self.assertIs(coordinator._page_setting_owner_is_current(self.BID, "p1"), False)
+
+    def test_missing_project_data_is_not_current(self):
+        coordinator, _pages = self._build()
+        coordinator.project_data = None
+        self.assertIs(coordinator._page_setting_owner_is_current(self.BID, "p1"), False)
+
+
+class Sp3a5hPageAreaChangeTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(self, *, bid_ref=BID, allowed=True, previous=None, scheduled=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: allowed)
+        coordinator.ui_state_manager = _Sp3a5hPageUiState(bid_ref, "p1")
+        self.owner = Page(uid="p1", name="One")
+        selections = {} if previous is None else {"p1": previous}
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: self.owner if uid == "p1" else None,
+            get_page_area_selections=lambda: selections,
+        )
+        self.schedules = []
+        self.projections = []
+
+        def schedule(file_path, page_uid, area_uid, **kwargs):
+            self.schedules.append((file_path, page_uid, area_uid, kwargs))
+            return scheduled
+
+        coordinator._deferred_persistence = SimpleNamespace(
+            schedule_page_area_selection=schedule
+        )
+        coordinator._project_page_area_if_current = lambda *args: (
+            self.projections.append(args)
+        )
+        return coordinator
+
+    def test_area_change_without_selected_bid_schedules_nothing(self):
+        coordinator = self._build(bid_ref=None)
+        coordinator._on_page_area_changed("db.mdb", "p1", "area-1")
+        self.assertEqual(self.schedules, [])
+        self.assertEqual(self.projections, [])
+
+    def test_area_change_for_a_different_file_schedules_nothing(self):
+        coordinator = self._build()
+        coordinator._on_page_area_changed("other.mdb", "p1", "area-1")
+        self.assertEqual(self.schedules, [])
+
+    def test_area_change_schedules_projects_and_hands_over_callbacks(self):
+        coordinator = self._build(previous="area-0")
+        coordinator._on_page_area_changed("db.mdb", "p1", "area-1")
+        file_path, page_uid, area_uid, kwargs = self.schedules[0]
+        self.assertEqual((file_path, page_uid, area_uid), ("db.mdb", "p1", "area-1"))
+        self.assertEqual(kwargs["bid_uid"], "bid-7")
+        self.assertEqual(self.projections, [(self.BID, "p1", "area-1", self.owner)])
+        kwargs["project_value"]()
+        kwargs["restore_authoritative"]()
+        self.assertEqual(
+            self.projections[1:],
+            [
+                (self.BID, "p1", "area-1", self.owner),
+                (self.BID, "p1", "area-0", self.owner),
+            ],
+        )
+
+    def test_clearing_the_area_schedules_an_empty_uid_and_restores_empty(self):
+        coordinator = self._build(previous=None)
+        coordinator._on_page_area_changed("db.mdb", "p1", None)
+        self.assertEqual(self.schedules[0][2], "")
+        self.schedules[0][3]["restore_authoritative"]()
+        self.assertEqual(self.projections[-1], (self.BID, "p1", "", self.owner))
+
+    def test_unscheduled_area_change_does_not_project_immediately(self):
+        coordinator = self._build(scheduled=False)
+        coordinator._on_page_area_changed("db.mdb", "p1", "area-1")
+        self.assertEqual(len(self.schedules), 1)
+        self.assertEqual(self.projections, [])
+
+
+class Sp3a5hProjectPageAreaTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(self, *, active="p1", cleaning=False, area_selections=None):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = cleaning
+        coordinator.ui_state_manager = _Sp3a5hPageUiState(self.BID, active)
+        self.owner = Page(uid="p1", name="One")
+        self.selections = {} if area_selections is None else area_selections
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: self.owner if uid == "p1" else None,
+            get_page_area_selections=lambda: self.selections,
+            get_selected_page_uids=lambda: ["p1", "p2"],
+        )
+        coordinator._update_page_settings_bar = lambda uid: log.append(("bar", uid))
+        coordinator._viewer = SimpleNamespace(
+            update_page_area_selection=lambda uid: log.append(("viewer_area", uid))
+            or False,
+            update_plan_view=lambda uid: log.append(("viewer_plan", uid)),
+        )
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_area_selection=lambda uid: log.append(
+                ("detached", uid)
+            )
+        )
+        coordinator._request_or_defer_mesh_refresh = lambda uids: log.append(
+            ("mesh", list(uids))
+        )
+        coordinator._apply_pending_hotlink_named_view_focus = lambda **kw: log.append(
+            ("hotlink", kw)
+        )
+        return coordinator, log
+
+    def test_stale_owner_projects_nothing(self):
+        coordinator, log = self._build(cleaning=True)
+        coordinator._project_page_area_if_current(self.BID, "p1", "area-1", self.owner)
+        self.assertEqual(log, [])
+        self.assertEqual(self.selections, {})
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "unset")
+
+    def test_active_page_projection_updates_selection_bar_viewers_and_mesh(self):
+        coordinator, log = self._build()
+        coordinator._project_page_area_if_current(self.BID, "p1", "area-1", self.owner)
+        self.assertEqual(self.selections, {"p1": "area-1"})
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "area-1")
+        self.assertEqual(
+            log,
+            [
+                ("bar", "p1"),
+                ("viewer_area", "p1"),
+                ("viewer_plan", "p1"),
+                ("detached", "p1"),
+                ("mesh", ["p1", "p2"]),
+                ("hotlink", {"require_stable": True}),
+            ],
+        )
+
+    def test_active_page_projection_of_no_area_clears_selection_to_empty_text(self):
+        coordinator, log = self._build(area_selections={"p1": "area-1"})
+        coordinator._project_page_area_if_current(self.BID, "p1", None, self.owner)
+        self.assertEqual(self.selections, {"p1": None})
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "")
+
+    def test_inactive_page_projection_only_refreshes_detached_views_and_mesh(self):
+        coordinator, log = self._build(active="other")
+        coordinator._project_page_area_if_current(self.BID, "p1", "area-1", self.owner)
+        self.assertEqual(self.selections, {"p1": "area-1"})
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "unset")
+        self.assertEqual(log, [("detached", "p1"), ("mesh", ["p1", "p2"])])
+
+
+class Sp3a5hOverlayDisplayModeRequestTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(self, *, page_uid="p1", bid_ref=BID, allowed=True, page="default"):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        if page == "default":
+            page = Page(uid="p1", name="One", image_show_mode=1)
+        self.page = page
+        coordinator.ui_state_manager = _Sp3a5hPageUiState(bid_ref, page_uid)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS and allowed
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda uid: page)
+        self.log = []
+        coordinator._save_current_page_view_state = lambda **kwargs: self.log.append(
+            ("view_state", kwargs)
+        )
+        self.projections = []
+        coordinator._project_page_show_mode_if_current = lambda *args: (
+            self.projections.append(args)
+        )
+
+        def schedule(file_path, page_uid, show_mode, **kwargs):
+            self.log.append(("schedule", file_path, page_uid, show_mode, kwargs))
+            return self.scheduled
+
+        self.scheduled = True
+        coordinator._deferred_persistence = SimpleNamespace(
+            schedule_page_show_mode=schedule
+        )
+        return coordinator
+
+    def test_valid_mode_snapshots_view_then_schedules_and_projects(self):
+        coordinator = self._build()
+        coordinator._on_overlay_display_mode_requested(2)
+        self.assertEqual(self.log[0], ("view_state", {"selected_page_override": "p1"}))
+        kind, file_path, page_uid, show_mode, kwargs = self.log[1]
+        self.assertEqual(
+            (kind, file_path, page_uid, show_mode), ("schedule", "db.mdb", "p1", 2)
+        )
+        self.assertEqual(kwargs["bid_uid"], "bid-7")
+        self.assertEqual(self.projections, [(self.BID, "p1", 2, self.page)])
+        kwargs["restore_authoritative"]()
+        self.assertEqual(self.projections[-1], (self.BID, "p1", 1, self.page))
+
+    def test_unknown_mode_is_ignored(self):
+        coordinator = self._build()
+        coordinator._on_overlay_display_mode_requested(99)
+        self.assertEqual(self.log, [])
+        self.assertEqual(self.projections, [])
+
+    def test_missing_active_page_uid_is_ignored(self):
+        coordinator = self._build(page_uid=None)
+        coordinator._on_overlay_display_mode_requested(2)
+        self.assertEqual(self.log, [])
+
+    def test_missing_selected_bid_is_ignored(self):
+        coordinator = self._build(bid_ref=None)
+        coordinator._on_overlay_display_mode_requested(2)
+        self.assertEqual(self.log, [])
+
+    def test_denied_edit_permission_is_ignored(self):
+        coordinator = self._build(allowed=False)
+        coordinator._on_overlay_display_mode_requested(2)
+        self.assertEqual(self.log, [])
+
+    def test_unloaded_page_is_ignored(self):
+        coordinator = self._build(page=None)
+        coordinator._on_overlay_display_mode_requested(2)
+        self.assertEqual(self.log, [])
+
+    def test_unscheduled_mode_change_is_not_projected(self):
+        coordinator = self._build()
+        self.scheduled = False
+        coordinator._on_overlay_display_mode_requested(2)
+        self.assertEqual(len(self.log), 2)
+        self.assertEqual(self.projections, [])
+
+
+class Sp3a5hProjectPageViewSettingTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(self, *, active="p1", plan_view=True, view_2d=True, flaky=False):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.ui_state_manager = _Sp3a5hPageUiState(self.BID, active)
+        self.page = Page(uid="p1", name="One", image_show_mode=0)
+        if flaky:
+            lookup = _Sp3a5hFlakyPages(self.page).get_page
+        else:
+            lookup = lambda uid: self.page if uid == "p1" else None
+        coordinator.project_data = SimpleNamespace(get_page=lookup)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.VIEW_2D and view_2d
+        )
+        coordinator.plan_view = object() if plan_view else None
+        coordinator._sync_overlay_display_mode = lambda uid: log.append(("sync", uid))
+        coordinator._update_native_page_textures = lambda: log.append("textures")
+        coordinator._update_plan_view = lambda uid: log.append(("plan", uid))
+        coordinator._update_export_menu_state = lambda: log.append("export")
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: log.append("detached")
+        )
+        return coordinator, log
+
+    def _show_mode(self, coordinator):
+        coordinator._project_page_show_mode_if_current(self.BID, "p1", 2, self.page)
+
+    def _flag(self, coordinator, writes):
+        coordinator._project_page_image_flag_if_current(
+            self.BID,
+            "p1",
+            "invert",
+            lambda page, value: writes.append((page, value)),
+            True,
+            self.page,
+        )
+
+    def test_show_mode_projection_of_the_active_page_refreshes_everything(self):
+        coordinator, log = self._build()
+        self._show_mode(coordinator)
+        self.assertEqual(self.page.image_show_mode, 2)
+        self.assertEqual(
+            log, [("sync", "p1"), "textures", ("plan", "p1"), "detached", "export"]
+        )
+
+    def test_show_mode_projection_skips_plan_update_without_a_plan_view(self):
+        coordinator, log = self._build(plan_view=False)
+        self._show_mode(coordinator)
+        self.assertEqual(log, [("sync", "p1"), "textures", "detached", "export"])
+
+    def test_show_mode_projection_skips_plan_update_without_2d_permission(self):
+        coordinator, log = self._build(view_2d=False)
+        self._show_mode(coordinator)
+        self.assertEqual(log, [("sync", "p1"), "textures", "detached", "export"])
+
+    def test_show_mode_projection_of_an_inactive_page_refreshes_views_only(self):
+        coordinator, log = self._build(active="other")
+        self._show_mode(coordinator)
+        self.assertEqual(self.page.image_show_mode, 2)
+        self.assertEqual(log, ["textures", "detached"])
+
+    def test_show_mode_projection_ignores_a_page_that_vanishes_after_the_owner_check(
+        self,
+    ):
+        coordinator, log = self._build(flaky=True)
+        self._show_mode(coordinator)
+        self.assertEqual(self.page.image_show_mode, 0)
+        self.assertEqual(log, [])
+
+    def test_flag_projection_of_the_active_page_writes_and_refreshes_everything(
+        self,
+    ):
+        coordinator, log = self._build()
+        writes = []
+        self._flag(coordinator, writes)
+        self.assertEqual(writes, [(self.page, True)])
+        self.assertEqual(log, ["textures", ("plan", "p1"), "detached", "export"])
+
+    def test_flag_projection_skips_plan_update_without_a_plan_view(self):
+        coordinator, log = self._build(plan_view=False)
+        self._flag(coordinator, [])
+        self.assertEqual(log, ["textures", "detached", "export"])
+
+    def test_flag_projection_skips_plan_update_without_2d_permission(self):
+        coordinator, log = self._build(view_2d=False)
+        self._flag(coordinator, [])
+        self.assertEqual(log, ["textures", "detached", "export"])
+
+    def test_flag_projection_of_an_inactive_page_refreshes_views_only(self):
+        coordinator, log = self._build(active="other")
+        writes = []
+        self._flag(coordinator, writes)
+        self.assertEqual(writes, [(self.page, True)])
+        self.assertEqual(log, ["textures", "detached"])
+
+    def test_flag_projection_of_a_stale_owner_writes_nothing(self):
+        coordinator, log = self._build()
+        coordinator._is_cleaning_up = True
+        writes = []
+        self._flag(coordinator, writes)
+        self.assertEqual(writes, [])
+        self.assertEqual(log, [])
+
+    def test_flag_projection_ignores_a_page_that_vanishes_after_the_owner_check(
+        self,
+    ):
+        coordinator, log = self._build(flaky=True)
+        writes = []
+        self._flag(coordinator, writes)
+        self.assertEqual(writes, [])
+        self.assertEqual(log, [])
+
+
+class Sp3a5hTogglePageImageFlagTests(unittest.TestCase):
+    BID = BidRef("db.mdb", "bid-7")
+
+    def _build(self, *, page_uid="p1", bid_ref=BID, allowed=True, page="default"):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        if page == "default":
+            page = Page(uid="p1", name="One")
+        self.page = page
+        coordinator.ui_state_manager = _Sp3a5hPageUiState(bid_ref, page_uid)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS and allowed
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda uid: page)
+        self.log = []
+        coordinator._update_export_menu_state = lambda: self.log.append("export")
+        coordinator._save_current_page_view_state = lambda **kw: self.log.append(
+            ("view_state", kw)
+        )
+        self.scheduled = []
+
+        def make(kind):
+            def schedule(file_path, page_uid, value, **kwargs):
+                self.scheduled.append((kind, file_path, page_uid, value, kwargs))
+                return False
+
+            return schedule
+
+        coordinator._deferred_persistence = SimpleNamespace(
+            schedule_page_invert=make("invert"), schedule_page_bitonal=make("bitonal")
+        )
+        return coordinator
+
+    def test_positive_control_toggle_invert_schedules_the_flag(self):
+        coordinator = self._build()
+        coordinator.toggle_page_invert(True)
+        self.assertEqual(self.log, [("view_state", {"selected_page_override": "p1"})])
+        self.assertEqual(
+            [entry[:4] for entry in self.scheduled], [("invert", "db.mdb", "p1", True)]
+        )
+
+    def test_unsupported_flag_name_raises_before_anything_is_scheduled(self):
+        coordinator = self._build()
+        with self.assertRaises(ValueError):
+            coordinator._toggle_page_image_flag("sepia", lambda page, value: None, True)
+        self.assertEqual(self.scheduled, [])
+
+    def test_toggle_bitonal_schedules_the_bitonal_flag(self):
+        coordinator = self._build()
+        coordinator.toggle_page_bitonal(True)
+        self.assertEqual(
+            [entry[:4] for entry in self.scheduled], [("bitonal", "db.mdb", "p1", True)]
+        )
+
+    def test_toggle_without_active_page_only_refreshes_the_export_menu(self):
+        coordinator = self._build(page_uid=None)
+        coordinator.toggle_page_invert(True)
+        self.assertEqual(self.log, ["export"])
+        self.assertEqual(self.scheduled, [])
+
+    def test_toggle_without_selected_bid_only_refreshes_the_export_menu(self):
+        coordinator = self._build(bid_ref=None)
+        coordinator.toggle_page_invert(True)
+        self.assertEqual(self.log, ["export"])
+        self.assertEqual(self.scheduled, [])
+
+    def test_toggle_without_edit_permission_only_refreshes_the_export_menu(self):
+        coordinator = self._build(allowed=False)
+        coordinator.toggle_page_bitonal(True)
+        self.assertEqual(self.log, ["export"])
+        self.assertEqual(self.scheduled, [])
+
+    def test_toggle_for_an_unloaded_page_only_refreshes_the_export_menu(self):
+        coordinator = self._build(page=None)
+        coordinator.toggle_page_invert(True)
+        self.assertEqual(self.log, ["export"])
+        self.assertEqual(self.scheduled, [])
+
+
+class Sp3a5hLayerVisibilityToggleTests(unittest.TestCase):
+    def _build(self, bid_ref):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        self.calls = []
+        coordinator.update_layer_visibility_deferred = lambda *args: self.calls.append(
+            args
+        )
+        return coordinator
+
+    def test_toggle_with_a_selected_bid_updates_the_layer_visibility(self):
+        coordinator = self._build(BidRef("db.mdb", "bid-7"))
+        coordinator._on_layer_visibility_toggled("layer-3", False)
+        self.assertEqual(self.calls, [("layer-3", False)])
+
+    def test_toggle_without_a_selected_bid_is_ignored(self):
+        coordinator = self._build(None)
+        coordinator._on_layer_visibility_toggled("layer-3", True)
+        self.assertEqual(self.calls, [])
+
+
+_sp3a5i_MODULE = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+
+
+def _sp3a5i_stub(coordinator, name, result=None):
+    def stub(*args, **kwargs):
+        coordinator.log.append((name, args, kwargs))
+        return result
+
+    setattr(coordinator, name, stub)
+
+
+def _sp3a5i_stub_all(coordinator, *names):
+    for name in names:
+        _sp3a5i_stub(coordinator, name)
+
+
+def _sp3a5i_names(coordinator):
+    return [entry[0] for entry in coordinator.log]
+
+
+class _sp3a5i_SidebarMethods:
+    def _init_sidebar(self, log, visibility=True, layers=()):
+        self.log = log
+        self.visibility = visibility
+        self.layers = list(layers)
+
+    def get_layer_visibility(self, layer_uid):
+        self.log.append(("sidebar.get_layer_visibility", (layer_uid,), {}))
+        return self.visibility
+
+    def set_layer_visible(self, layer_uid, show):
+        self.log.append(("sidebar.set_layer_visible", (layer_uid, show), {}))
+
+    def get_layers(self):
+        self.log.append(("sidebar.get_layers", (), {}))
+        return list(self.layers)
+
+    def set_layer_visibilities(self, requested):
+        self.log.append(("sidebar.set_layer_visibilities", (dict(requested),), {}))
+
+    def set_all_layers_visible(self, show):
+        self.log.append(("sidebar.set_all_layers_visible", (show,), {}))
+
+
+class _sp3a5i_PlainSidebar(_sp3a5i_SidebarMethods):
+    def __init__(self, log, visibility=True, layers=()):
+        self._init_sidebar(log, visibility, layers)
+
+
+class _sp3a5i_QtSidebar(_sp3a5i_SidebarMethods, QtCore.QObject):
+    def __init__(self, log, visibility=True, layers=()):
+        QtCore.QObject.__init__(self)
+        self._init_sidebar(log, visibility, layers)
+
+
+class _sp3a5i_NonQObjectSidebar(_sp3a5i_SidebarMethods, QtWidgets.QGraphicsRectItem):
+    def __init__(self, log, visibility=True, layers=()):
+        QtWidgets.QGraphicsRectItem.__init__(self)
+        self._init_sidebar(log, visibility, layers)
+
+
+class _sp3a5i_PlanView:
+    def __init__(
+        self,
+        log,
+        current_page_uid="p1",
+        page_image=True,
+        layer=True,
+        all_layers=True,
+    ):
+        self.log = log
+        self.current_page_uid = current_page_uid
+        self.results = {
+            "page_image": page_image,
+            "layer": layer,
+            "all_layers": all_layers,
+        }
+
+    def apply_page_image_layer_visibility(self, page):
+        self.log.append(("plan.apply_page_image_layer_visibility", (page,), {}))
+        return self.results["page_image"]
+
+    def apply_layer_visibility(self, layer_uid, show, conditions):
+        self.log.append(
+            ("plan.apply_layer_visibility", (layer_uid, show, conditions), {})
+        )
+        return self.results["layer"]
+
+    def apply_all_layer_visibility(self, show, conditions):
+        self.log.append(("plan.apply_all_layer_visibility", (show, conditions), {}))
+        return self.results["all_layers"]
+
+
+class _sp3a5i_WriteService:
+    def __init__(self, log, sql=False):
+        self.log = log
+        self.sql = sql
+        self.results = {}
+        self.errors = {}
+
+    def uses_sql_collaboration_mutations(self, file_path):
+        self.log.append(("uses_sql_collaboration_mutations", (file_path,), {}))
+        return self.sql
+
+    def _record(self, name, args):
+        self.log.append((name, args, {}))
+        if name in self.errors:
+            raise self.errors[name]
+        return self.results.get(name)
+
+    def insert_layer_result(self, *args):
+        return self._record("insert_layer_result", args)
+
+    def queue_layer_insert(self, *args):
+        return self._record("queue_layer_insert", args)
+
+    def delete_layer(self, *args):
+        return self._record("delete_layer", args)
+
+    def queue_layer_delete(self, *args):
+        return self._record("queue_layer_delete", args)
+
+    def swap_layer_sequence(self, *args):
+        return self._record("swap_layer_sequence", args)
+
+    def queue_layer_reorder(self, *args):
+        return self._record("queue_layer_reorder", args)
+
+    def update_layer_name(self, *args):
+        return self._record("update_layer_name", args)
+
+    def queue_layer_rename(self, *args):
+        return self._record("queue_layer_rename", args)
+
+
+_sp3a5i_WRITE_NAMES = (
+    "insert_layer_result",
+    "queue_layer_insert",
+    "delete_layer",
+    "queue_layer_delete",
+    "swap_layer_sequence",
+    "queue_layer_reorder",
+    "update_layer_name",
+    "queue_layer_rename",
+)
+
+
+def _sp3a5i_writes(coordinator):
+    return [e for e in coordinator.log if e[0] in _sp3a5i_WRITE_NAMES]
+
+
+def _sp3a5i_layer_write_fixture(
+    *,
+    allowed=True,
+    bid_ref=BidRef("a.mdb", "bid-1"),
+    sidebar=True,
+    flush_ok=True,
+    sql=False,
+    bid_owner=None,
+    neighbor_uid="neighbor",
+):
+    coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+    coordinator.log = []
+    log = coordinator.log
+    coordinator._is_cleaning_up = False
+    coordinator.main_window = object()
+    coordinator.checked_features = []
+
+    def is_allowed(feature):
+        coordinator.checked_features.append(feature)
+        return allowed
+
+    coordinator.ui_access_manager = SimpleNamespace(is_allowed=is_allowed)
+    coordinator.ui_state_manager = SimpleNamespace(get_selected_bid_ref=lambda: bid_ref)
+    coordinator.project_data = SimpleNamespace(get_bid=lambda ref: bid_owner)
+    layers_sidebar = None
+    if sidebar:
+        layers_sidebar = SimpleNamespace(
+            set_pending_selection=lambda uid: log.append(
+                ("sidebar.set_pending_selection", (uid,), {})
+            ),
+            get_neighbor_uid=lambda direction: (
+                log.append(("sidebar.get_neighbor_uid", (direction,), {}))
+                or neighbor_uid
+            ),
+        )
+    coordinator._sidebar = SimpleNamespace(
+        bid_layers_sidebar=layers_sidebar,
+        load_bid_layers_sidebar=lambda: log.append(("load_bid_layers_sidebar", (), {})),
+        load_bid_layers_sidebar_from_memory=lambda: log.append(
+            ("load_bid_layers_sidebar_from_memory", (), {})
+        ),
+    )
+    coordinator._project_write_service = _sp3a5i_WriteService(log, sql=sql)
+
+    def flush(file_path):
+        log.append(("_flush_deferred_for_file", (file_path,), {}))
+        return flush_ok
+
+    coordinator._flush_deferred_for_file = flush
+    return coordinator
+
+
+class Sp3a5iLayerToggleTests(unittest.TestCase):
+    def _toggle_coordinator(self, bid_ref):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.log = []
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        _sp3a5i_stub(coordinator, "update_layer_visibility_deferred", True)
+        return coordinator
+
+    def test_layer_toggle_without_selected_bid_does_not_schedule_visibility(self):
+        coordinator = self._toggle_coordinator(None)
+        coordinator._on_layer_visibility_toggled("l1", False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_layer_toggle_forwards_layer_uid_then_show_flag(self):
+        coordinator = self._toggle_coordinator(BidRef("a.mdb", "bid-1"))
+        coordinator._on_layer_visibility_toggled("l1", False)
+        self.assertEqual(
+            coordinator.log,
+            [("update_layer_visibility_deferred", ("l1", False), {})],
+        )
+
+    def test_show_all_toggle_without_selected_bid_does_not_schedule(self):
+        coordinator = self._toggle_coordinator(None)
+        _sp3a5i_stub(coordinator, "update_all_layers_visibility_deferred", True)
+        coordinator._on_layers_show_all(True)
+        self.assertEqual(coordinator.log, [])
+
+    def test_show_all_toggle_forwards_show_flag(self):
+        coordinator = self._toggle_coordinator(BidRef("a.mdb", "bid-1"))
+        _sp3a5i_stub(coordinator, "update_all_layers_visibility_deferred", True)
+        coordinator._on_layers_show_all(False)
+        self.assertEqual(
+            coordinator.log,
+            [("update_all_layers_visibility_deferred", (False,), {})],
+        )
+
+
+class Sp3a5iConditionRowTests(unittest.TestCase):
+    def _coordinator(self, layer_uids):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        conditions = {
+            f"c{index}": Condition(uid=f"c{index}", layer_uid=layer_uid)
+            for index, layer_uid in enumerate(layer_uids)
+        }
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: conditions
+        )
+        return coordinator
+
+    def test_layer_with_a_single_matching_condition_row_is_reported(self):
+        coordinator = self._coordinator(["other", "l1", "third"])
+        self.assertIs(coordinator._layer_has_condition_rows("l1"), True)
+
+    def test_layer_without_any_matching_condition_row_is_not_reported(self):
+        coordinator = self._coordinator(["other", "third"])
+        self.assertIs(coordinator._layer_has_condition_rows("l1"), False)
+
+    def test_condition_without_layer_never_matches_the_literal_none_uid(self):
+        coordinator = self._coordinator([None, ""])
+        self.assertIs(coordinator._layer_has_condition_rows("None"), False)
+        self.assertIs(coordinator._layer_has_condition_rows(""), True)
+
+
+class Sp3a5iDeferredLayerVisibilityTests(unittest.TestCase):
+    BID_REF = BidRef("a.mdb", "bid-1")
+
+    def _coordinator(
+        self,
+        *,
+        allowed=True,
+        bid_ref=BID_REF,
+        bid_owner=True,
+        layer_show=True,
+        schedule_result=True,
+        sidebar=False,
+        project_result=True,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.log = []
+        log = coordinator.log
+        coordinator.owner = object() if bid_owner else None
+        coordinator.layers = [
+            SimpleNamespace(uid="other", show=True),
+            SimpleNamespace(uid=5, show=layer_show),
+        ]
+        coordinator.checked_features = []
+
+        def is_allowed(feature):
+            coordinator.checked_features.append(feature)
+            return allowed
+
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=is_allowed)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_bid=lambda ref: (
+                log.append(("project_data.get_bid", (ref,), {})) or coordinator.owner
+            ),
+            get_bid_layer_snapshot=lambda: list(coordinator.layers),
+        )
+        coordinator.schedule_kwargs = {}
+
+        def schedule_layer_show(*args, **kwargs):
+            log.append(("schedule_layer_show", args, sorted(kwargs)))
+            coordinator.schedule_kwargs = kwargs
+            return schedule_result
+
+        coordinator._deferred_persistence = SimpleNamespace(
+            schedule_layer_show=schedule_layer_show
+        )
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=(
+                SimpleNamespace(
+                    set_layer_visible=lambda uid, show: log.append(
+                        ("sidebar.set_layer_visible", (uid, show), {})
+                    )
+                )
+                if sidebar
+                else None
+            )
+        )
+        _sp3a5i_stub(
+            coordinator, "_project_layer_visibility_if_current", project_result
+        )
+        return coordinator
+
+    def test_denied_page_settings_access_returns_false_without_scheduling(self):
+        coordinator = self._coordinator(allowed=False)
+        result = coordinator.update_layer_visibility_deferred("5", False)
+        self.assertIs(result, False)
+        self.assertEqual(coordinator.checked_features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_selected_bid_returns_false_without_scheduling(self):
+        coordinator = self._coordinator(bid_ref=None)
+        self.assertIs(coordinator.update_layer_visibility_deferred("5", False), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_bid_owner_returns_false_without_scheduling(self):
+        coordinator = self._coordinator(bid_owner=False)
+        self.assertIs(coordinator.update_layer_visibility_deferred("5", False), False)
+        self.assertEqual(
+            coordinator.log, [("project_data.get_bid", (self.BID_REF,), {})]
+        )
+
+    def test_unknown_layer_returns_false_without_scheduling(self):
+        coordinator = self._coordinator()
+        self.assertIs(
+            coordinator.update_layer_visibility_deferred("missing", False), False
+        )
+        self.assertNotIn("schedule_layer_show", _sp3a5i_names(coordinator))
+
+    def test_layer_is_matched_by_string_uid_and_scheduled_with_exact_arguments(self):
+        coordinator = self._coordinator()
+        result = coordinator.update_layer_visibility_deferred("5", False)
+        self.assertIs(result, True)
+        self.assertEqual(
+            coordinator.log[1:],
+            [
+                (
+                    "schedule_layer_show",
+                    ("a.mdb", "5", False),
+                    ["project_value", "restore_authoritative"],
+                ),
+                (
+                    "_project_layer_visibility_if_current",
+                    (self.BID_REF, coordinator.owner, "5", False),
+                    {},
+                ),
+            ],
+        )
+
+    def test_schedule_callbacks_project_previous_and_requested_visibility(self):
+        coordinator = self._coordinator(layer_show=True)
+        coordinator.update_layer_visibility_deferred("5", False)
+        coordinator.log.clear()
+        coordinator.schedule_kwargs["restore_authoritative"]()
+        coordinator.schedule_kwargs["project_value"]()
+        self.assertEqual(
+            coordinator.log,
+            [
+                (
+                    "_project_layer_visibility_if_current",
+                    (self.BID_REF, coordinator.owner, "5", True),
+                    {},
+                ),
+                (
+                    "_project_layer_visibility_if_current",
+                    (self.BID_REF, coordinator.owner, "5", False),
+                    {},
+                ),
+            ],
+        )
+
+    def test_rejected_schedule_restores_sidebar_checkbox_and_returns_false(self):
+        coordinator = self._coordinator(
+            layer_show=True, schedule_result=False, sidebar=True
+        )
+        result = coordinator.update_layer_visibility_deferred("5", False)
+        self.assertIs(result, False)
+        self.assertEqual(
+            coordinator.log[-1], ("sidebar.set_layer_visible", ("5", True), {})
+        )
+        self.assertNotIn(
+            "_project_layer_visibility_if_current", _sp3a5i_names(coordinator)
+        )
+
+    def test_rejected_schedule_without_sidebar_returns_false(self):
+        coordinator = self._coordinator(schedule_result=False, sidebar=False)
+        result = coordinator.update_layer_visibility_deferred("5", False)
+        self.assertIs(result, False)
+        self.assertNotIn(
+            "_project_layer_visibility_if_current", _sp3a5i_names(coordinator)
+        )
+
+    def test_stale_projection_after_scheduling_returns_false(self):
+        coordinator = self._coordinator(project_result=False)
+        result = coordinator.update_layer_visibility_deferred("5", False)
+        self.assertIs(result, False)
+        self.assertEqual(
+            _sp3a5i_names(coordinator).count("_project_layer_visibility_if_current"), 1
+        )
+
+
+_sp3a5i_BID_REF = BidRef("a.mdb", "bid-1")
+_sp3a5i_INTERNAL = (
+    "_suspend_active_layer_tool",
+    "_restore_suspended_layer_tool",
+    "_update_native_page_textures",
+    "_refresh_conditions_sidebar_layer_visibility_from_memory",
+    "_apply_layer_visibility_to_current_plan_view",
+    "_request_or_defer_mesh_refresh",
+    "_load_condition_summary",
+    "_update_export_menu_state",
+    "_update_plan_view",
+)
+
+
+def _sp3a5i_projection_fixture(
+    *,
+    layer_show=True,
+    sidebar=None,
+    cleaning=False,
+    owner_is_none=False,
+    selected=_sp3a5i_BID_REF,
+    current_owner="same",
+    layer_uids=("l1",),
+    image=False,
+    condition_layer=True,
+    changed_pages=("p1",),
+    active_page_uid="p1",
+):
+    coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+    coordinator.log = []
+    log = coordinator.log
+    coordinator._is_cleaning_up = cleaning
+    coordinator.owner = None if owner_is_none else object()
+    if current_owner == "same":
+        current_owner = coordinator.owner
+    coordinator.layers = [
+        SimpleNamespace(uid=uid, show=layer_show) for uid in layer_uids
+    ]
+    coordinator.ui_state_manager = SimpleNamespace(
+        get_selected_bid_ref=lambda: selected, active_page_uid=active_page_uid
+    )
+    conditions = {
+        "c1": Condition(uid="c1", layer_uid="l1" if condition_layer else "zzz")
+    }
+    coordinator.conditions = conditions
+
+    def update_layer_visibility(layer_uid, show):
+        log.append(("project_data.update_layer_visibility", (layer_uid, show), {}))
+        return list(changed_pages)
+
+    coordinator.project_data = SimpleNamespace(
+        get_bid=lambda ref: current_owner,
+        get_bid_layer_snapshot=lambda: list(coordinator.layers),
+        is_image_layer_uid=lambda uid: image,
+        get_bid_conditions=lambda: conditions,
+        update_layer_visibility=update_layer_visibility,
+        get_selected_page_uids=lambda: ["sel-1", "sel-2"],
+    )
+    coordinator._sidebar = SimpleNamespace(bid_layers_sidebar=sidebar)
+    coordinator.event_bus = SimpleNamespace(
+        publish=lambda event, **payload: log.append(("publish", (event,), payload))
+    )
+    _sp3a5i_stub_all(coordinator, *_sp3a5i_INTERNAL)
+    return coordinator
+
+
+class Sp3a5iProjectLayerVisibilityTests(unittest.TestCase):
+    def _project(self, coordinator, layer_uid="l1", show=False):
+        return coordinator._project_layer_visibility_if_current(
+            _sp3a5i_BID_REF, coordinator.owner, layer_uid, show
+        )
+
+    def test_cleanup_returns_false_without_touching_visibility(self):
+        coordinator = _sp3a5i_projection_fixture(cleaning=True)
+        self.assertIs(self._project(coordinator), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_bid_owner_returns_false_even_when_current_owner_is_missing(self):
+        coordinator = _sp3a5i_projection_fixture(owner_is_none=True, current_owner=None)
+        self.assertIs(self._project(coordinator), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_changed_selected_bid_returns_false(self):
+        coordinator = _sp3a5i_projection_fixture(selected=BidRef("a.mdb", "bid-2"))
+        self.assertIs(self._project(coordinator), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_replaced_bid_owner_returns_false(self):
+        coordinator = _sp3a5i_projection_fixture(current_owner=object())
+        self.assertIs(self._project(coordinator), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_unknown_layer_returns_false_and_matches_layers_by_string_uid(self):
+        coordinator = _sp3a5i_projection_fixture(layer_uids=(7,))
+        self.assertIs(self._project(coordinator, "missing"), False)
+        self.assertEqual(coordinator.log, [])
+        self.assertIs(self._project(coordinator, "7", show=True), True)
+        self.assertEqual(coordinator.log, [])
+
+    def test_state_already_matching_without_sidebar_is_a_no_op(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=False)
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertEqual(coordinator.log, [])
+
+    def test_state_matching_in_model_and_sidebar_is_a_no_op(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=False)
+        sidebar = _sp3a5i_PlainSidebar(coordinator.log, visibility=False)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertEqual(
+            coordinator.log, [("sidebar.get_layer_visibility", ("l1",), {})]
+        )
+
+    def test_sidebar_checkbox_out_of_sync_is_still_projected(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=False)
+        sidebar = _sp3a5i_PlainSidebar(coordinator.log, visibility=True)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, show=False), True)
+        names = _sp3a5i_names(coordinator)
+        self.assertIn("project_data.update_layer_visibility", names)
+        self.assertIn("sidebar.set_layer_visible", names)
+
+    def test_model_out_of_sync_is_projected_even_if_sidebar_matches(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=True)
+        sidebar = _sp3a5i_PlainSidebar(coordinator.log, visibility=False)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertIn(
+            ("project_data.update_layer_visibility", ("l1", False), {}),
+            coordinator.log,
+        )
+
+    def test_live_qobject_sidebar_is_used(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=True)
+        sidebar = _sp3a5i_QtSidebar(coordinator.log, visibility=True)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertIn(("sidebar.get_layer_visibility", ("l1",), {}), coordinator.log)
+        self.assertIn(("sidebar.set_layer_visible", ("l1", False), {}), coordinator.log)
+
+    def test_deleted_qobject_sidebar_is_ignored(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=False)
+        sidebar = _sp3a5i_QtSidebar(coordinator.log, visibility=True)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        delete(sidebar)
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertEqual(coordinator.log, [])
+
+    def test_deleted_qobject_sidebar_is_not_updated_when_state_changes(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=True)
+        sidebar = _sp3a5i_QtSidebar(coordinator.log, visibility=True)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        delete(sidebar)
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertNotIn("sidebar.set_layer_visible", _sp3a5i_names(coordinator))
+        self.assertNotIn("sidebar.get_layer_visibility", _sp3a5i_names(coordinator))
+
+    def test_non_qobject_sidebar_is_trusted_even_if_shiboken_reports_it_invalid(self):
+        _app()
+        coordinator = _sp3a5i_projection_fixture(layer_show=True)
+        sidebar = _sp3a5i_NonQObjectSidebar(coordinator.log, visibility=True)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        delete(sidebar)
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertIn(("sidebar.set_layer_visible", ("l1", False), {}), coordinator.log)
+
+    def test_hiding_a_condition_layer_runs_the_full_projection_in_order(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=True, changed_pages=("p1",))
+        sidebar = _sp3a5i_PlainSidebar(coordinator.log, visibility=True)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("sidebar.get_layer_visibility", ("l1",), {}),
+                ("_suspend_active_layer_tool", ("l1",), {}),
+                ("project_data.update_layer_visibility", ("l1", False), {}),
+                (
+                    "publish",
+                    (AppEvents.LAYER_VISIBILITY_CHANGED,),
+                    {
+                        "file_path": "a.mdb",
+                        "bid_uid": "bid-1",
+                        "layer_uid": "l1",
+                        "show": False,
+                        "image_layer": False,
+                        "all_layers": False,
+                    },
+                ),
+                ("sidebar.set_layer_visible", ("l1", False), {}),
+                (
+                    "_refresh_conditions_sidebar_layer_visibility_from_memory",
+                    ("l1",),
+                    {},
+                ),
+                (
+                    "_apply_layer_visibility_to_current_plan_view",
+                    ("l1", False),
+                    {"changed_page_uids": ["p1"]},
+                ),
+                ("_request_or_defer_mesh_refresh", (["sel-1", "sel-2"],), {}),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+
+    def test_showing_an_image_layer_updates_textures_and_skips_tool_handling(self):
+        coordinator = _sp3a5i_projection_fixture(
+            layer_show=False, image=True, condition_layer=False
+        )
+        self.assertIs(self._project(coordinator, show=True), True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("project_data.update_layer_visibility", ("l1", True), {}),
+                ("_update_native_page_textures", (), {}),
+                (
+                    "publish",
+                    (AppEvents.LAYER_VISIBILITY_CHANGED,),
+                    {
+                        "file_path": "a.mdb",
+                        "bid_uid": "bid-1",
+                        "layer_uid": "l1",
+                        "show": True,
+                        "image_layer": True,
+                        "all_layers": False,
+                    },
+                ),
+                (
+                    "_apply_layer_visibility_to_current_plan_view",
+                    ("l1", True),
+                    {"changed_page_uids": ["p1"]},
+                ),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+
+    def test_hiding_an_image_layer_does_not_suspend_the_active_tool(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=True, image=True)
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertNotIn("_suspend_active_layer_tool", _sp3a5i_names(coordinator))
+        self.assertNotIn("_restore_suspended_layer_tool", _sp3a5i_names(coordinator))
+
+    def test_showing_a_regular_layer_restores_but_never_suspends_the_tool(self):
+        coordinator = _sp3a5i_projection_fixture(
+            layer_show=False, condition_layer=False
+        )
+        self.assertIs(self._project(coordinator, show=True), True)
+        names = _sp3a5i_names(coordinator)
+        self.assertNotIn("_suspend_active_layer_tool", names)
+        self.assertEqual(
+            names[-2:], ["_update_export_menu_state", "_restore_suspended_layer_tool"]
+        )
+        self.assertEqual(
+            coordinator.log[-1], ("_restore_suspended_layer_tool", ("l1",), {})
+        )
+        self.assertNotIn(
+            "_refresh_conditions_sidebar_layer_visibility_from_memory", names
+        )
+        self.assertNotIn("_request_or_defer_mesh_refresh", names)
+
+    def test_hiding_a_regular_layer_never_restores_the_tool(self):
+        coordinator = _sp3a5i_projection_fixture(layer_show=True, condition_layer=False)
+        self.assertIs(self._project(coordinator, show=False), True)
+        self.assertNotIn("_restore_suspended_layer_tool", _sp3a5i_names(coordinator))
+        self.assertIn("_suspend_active_layer_tool", _sp3a5i_names(coordinator))
+
+
+class Sp3a5iApplyPlanViewVisibilityTests(unittest.TestCase):
+    CONDITIONS = {"c1": object()}
+
+    def _coordinator(self, *, active="p1", plan_view="default", page="page", **kwargs):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.log = []
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid=active)
+        if plan_view == "default":
+            plan_view = _sp3a5i_PlanView(coordinator.log, **kwargs)
+        coordinator.plan_view = plan_view
+        coordinator.page = page
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: (
+                coordinator.log.append(("get_page", (uid,), {})) or coordinator.page
+            ),
+            get_bid_conditions=lambda: self.CONDITIONS,
+        )
+        _sp3a5i_stub(coordinator, "_update_plan_view")
+        return coordinator
+
+    def test_without_active_page_nothing_is_applied_or_reloaded(self):
+        coordinator = self._coordinator(active=None)
+        coordinator.plan_view.current_page_uid = "p1"
+        coordinator._apply_layer_visibility_to_current_plan_view("l1", False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_without_plan_view_nothing_is_applied_or_reloaded(self):
+        coordinator = self._coordinator(plan_view=None)
+        coordinator._apply_layer_visibility_to_current_plan_view("l1", False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_plan_view_on_another_page_is_reloaded_and_not_patched(self):
+        coordinator = self._coordinator(current_page_uid="other")
+        coordinator._apply_layer_visibility_to_current_plan_view("l1", False)
+        self.assertEqual(coordinator.log, [("_update_plan_view", ("p1",), {})])
+
+    def test_single_layer_is_applied_in_place_with_none_changed_pages(self):
+        coordinator = self._coordinator()
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "l1", False, changed_page_uids=None
+        )
+        self.assertEqual(
+            coordinator.log,
+            [("plan.apply_layer_visibility", ("l1", False, self.CONDITIONS), {})],
+        )
+
+    def test_failed_in_place_single_layer_apply_reloads_the_page(self):
+        coordinator = self._coordinator(layer=False)
+        coordinator._apply_layer_visibility_to_current_plan_view("l1", True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("plan.apply_layer_visibility", ("l1", True, self.CONDITIONS), {}),
+                ("_update_plan_view", ("p1",), {}),
+            ],
+        )
+
+    def test_changed_page_without_page_object_reloads_without_image_apply(self):
+        coordinator = self._coordinator(page=None)
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "l1", False, changed_page_uids=["p1"]
+        )
+        self.assertEqual(
+            coordinator.log,
+            [("get_page", ("p1",), {}), ("_update_plan_view", ("p1",), {})],
+        )
+
+    def test_changed_page_image_apply_failure_reloads_and_stops(self):
+        coordinator = self._coordinator(page_image=False)
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "l1", False, changed_page_uids=["p1"]
+        )
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("get_page", ("p1",), {}),
+                ("plan.apply_page_image_layer_visibility", ("page",), {}),
+                ("_update_plan_view", ("p1",), {}),
+            ],
+        )
+
+    def test_changed_page_image_apply_success_stops_for_single_layer(self):
+        coordinator = self._coordinator()
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "l1", False, changed_page_uids=[1, "p1"]
+        )
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("get_page", ("p1",), {}),
+                ("plan.apply_page_image_layer_visibility", ("page",), {}),
+            ],
+        )
+
+    def test_changed_page_uids_are_compared_as_strings(self):
+        coordinator = self._coordinator(active="1")
+        coordinator.plan_view.current_page_uid = "1"
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "l1", False, changed_page_uids=[1]
+        )
+        self.assertEqual(coordinator.log[0], ("get_page", ("1",), {}))
+
+    def test_unrelated_changed_pages_leave_the_image_state_alone(self):
+        coordinator = self._coordinator()
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "l1", False, changed_page_uids=["p2"]
+        )
+        self.assertEqual(_sp3a5i_names(coordinator), ["plan.apply_layer_visibility"])
+
+    def test_all_layers_apply_continues_after_image_apply_and_stops_on_success(self):
+        coordinator = self._coordinator()
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "", True, changed_page_uids=["p1"], all_layers=True
+        )
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("get_page", ("p1",), {}),
+                ("plan.apply_page_image_layer_visibility", ("page",), {}),
+                ("plan.apply_all_layer_visibility", (True, self.CONDITIONS), {}),
+            ],
+        )
+
+    def test_failed_all_layers_apply_reloads_without_single_layer_apply(self):
+        coordinator = self._coordinator(all_layers=False)
+        coordinator._apply_layer_visibility_to_current_plan_view(
+            "", False, all_layers=True
+        )
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("plan.apply_all_layer_visibility", (False, self.CONDITIONS), {}),
+                ("_update_plan_view", ("p1",), {}),
+            ],
+        )
+
+    def test_single_layer_apply_never_uses_the_all_layers_apply(self):
+        coordinator = self._coordinator(layer=False, all_layers=True)
+        coordinator._apply_layer_visibility_to_current_plan_view("l1", False)
+        self.assertNotIn("plan.apply_all_layer_visibility", _sp3a5i_names(coordinator))
+
+
+_sp3a5i_FLUSH = ("_flush_deferred_for_file", ("a.mdb",), {})
+
+
+class Sp3a5iLayerAddTests(unittest.TestCase):
+    def _stubbed(self, **kwargs):
+        coordinator = _sp3a5i_layer_write_fixture(**kwargs)
+        _sp3a5i_stub_all(
+            coordinator,
+            "_refuse_locked_layer_write",
+            "_on_queued_layer_insert_complete",
+        )
+        return coordinator
+
+    def test_denied_page_settings_access_adds_nothing(self):
+        coordinator = self._stubbed(allowed=False)
+        coordinator._on_layer_added("New", 3)
+        self.assertEqual(coordinator.checked_features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_selected_bid_adds_nothing(self):
+        coordinator = self._stubbed(bid_ref=None)
+        coordinator._on_layer_added("New", 3)
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_layers_sidebar_adds_nothing(self):
+        coordinator = self._stubbed(sidebar=False)
+        coordinator._on_layer_added("New", 3)
+        self.assertEqual(coordinator.log, [])
+
+    def test_failed_deferred_flush_adds_nothing(self):
+        coordinator = self._stubbed(flush_ok=False)
+        coordinator._on_layer_added("New", 3)
+        self.assertEqual(coordinator.log, [_sp3a5i_FLUSH])
+
+    def test_sql_add_without_bid_owner_queues_nothing(self):
+        coordinator = self._stubbed(sql=True, bid_owner=None)
+        coordinator._on_layer_added("New", 3)
+        self.assertEqual(_sp3a5i_writes(coordinator), [])
+        self.assertNotIn("_refuse_locked_layer_write", _sp3a5i_names(coordinator))
+
+    def test_sql_add_queues_exact_insert_and_binds_completion_to_current_owner(self):
+        owner = object()
+        coordinator = self._stubbed(sql=True, bid_owner=owner)
+        coordinator._on_layer_added("New", 3)
+        writes = _sp3a5i_writes(coordinator)
+        self.assertEqual(len(writes), 1)
+        name, args, _kwargs = writes[0]
+        self.assertEqual(name, "queue_layer_insert")
+        self.assertEqual(args[:4], ("a.mdb", "bid-1", "New", 3))
+        coordinator.log.clear()
+        sentinel = object()
+        args[4](sentinel)
+        self.assertEqual(
+            coordinator.log,
+            [
+                (
+                    "_on_queued_layer_insert_complete",
+                    (
+                        coordinator._sidebar.bid_layers_sidebar,
+                        BidRef("a.mdb", "bid-1"),
+                        owner,
+                        sentinel,
+                    ),
+                    {},
+                )
+            ],
+        )
+
+    def test_sql_add_refused_by_bid_lock_is_reported_once(self):
+        coordinator = self._stubbed(sql=True, bid_owner=object())
+        coordinator._project_write_service.errors["queue_layer_insert"] = (
+            ActiveBidLockedError("locked")
+        )
+        coordinator._on_layer_added("New", 3)
+        self.assertEqual(
+            coordinator.log[-1], ("_refuse_locked_layer_write", ("Layer Creation",), {})
+        )
+        self.assertEqual(
+            _sp3a5i_names(coordinator).count("_refuse_locked_layer_write"), 1
+        )
+
+    def test_direct_add_selects_the_created_layer_as_text(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.results["insert_layer_result"] = (
+            SimpleNamespace(write_success=True, value=42, refresh_failed=False)
+        )
+        coordinator._on_layer_added("New", 3)
+        self.assertEqual(
+            coordinator.log[-2:],
+            [
+                ("insert_layer_result", ("a.mdb", "bid-1", "New", 3), {}),
+                ("sidebar.set_pending_selection", ("42",), {}),
+            ],
+        )
+        self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
+
+    def test_direct_add_reloads_sidebar_when_write_fails_or_returns_no_value(self):
+        cases = ((False, "uid"), (True, ""), (True, None), (False, None))
+        for write_success, value in cases:
+            with self.subTest(write_success=write_success, value=value):
+                coordinator = self._stubbed()
+                coordinator._project_write_service.results["insert_layer_result"] = (
+                    SimpleNamespace(
+                        write_success=write_success, value=value, refresh_failed=True
+                    )
+                )
+                with patch(_sp3a5i_MODULE + ".show_warning") as warning:
+                    coordinator._on_layer_added("New", 3)
+                self.assertEqual(
+                    coordinator.log[-1], ("load_bid_layers_sidebar", (), {})
+                )
+                self.assertNotIn(
+                    "sidebar.set_pending_selection", _sp3a5i_names(coordinator)
+                )
+                warning.assert_not_called()
+
+    def test_direct_add_with_failed_refresh_warns_and_does_not_select(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.results["insert_layer_result"] = (
+            SimpleNamespace(write_success=True, value="uid", refresh_failed=True)
+        )
+        with patch(_sp3a5i_MODULE + ".show_warning") as warning:
+            coordinator._on_layer_added("New", 3)
+        warning.assert_called_once_with(
+            coordinator.main_window,
+            "Refresh Error",
+            "The layer was created, but the layer list could not be refreshed. "
+            "Reopen the database to see the new layer.",
+        )
+        self.assertNotIn("sidebar.set_pending_selection", _sp3a5i_names(coordinator))
+        self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
+
+    def test_direct_add_without_refresh_failure_does_not_warn(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.results["insert_layer_result"] = (
+            SimpleNamespace(write_success=True, value="uid", refresh_failed=False)
+        )
+        with patch(_sp3a5i_MODULE + ".show_warning") as warning:
+            coordinator._on_layer_added("New", 3)
+        warning.assert_not_called()
+
+    def test_direct_add_exception_is_logged_and_sidebar_is_reloaded(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.errors["insert_layer_result"] = RuntimeError(
+            "boom"
+        )
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+            coordinator._on_layer_added("New", 3)
+        self.assertEqual(
+            [(r.levelno, r.getMessage()) for r in logs.records],
+            [(logging.WARNING, "Failed to insert layer")],
+        )
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertEqual(coordinator.log[-1], ("load_bid_layers_sidebar", (), {}))
+
+
+class Sp3a5iQueuedLayerInsertCompleteTests(unittest.TestCase):
+    BID_REF = BidRef("a.mdb", "bid-1")
+
+    def _fixture(
+        self,
+        *,
+        selected=BID_REF,
+        same_owner=True,
+        same_sidebar=True,
+        cleaning=False,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.log = []
+        log = coordinator.log
+        coordinator._is_cleaning_up = cleaning
+        coordinator.owner = object()
+        coordinator.sidebar = SimpleNamespace(
+            set_pending_selection=lambda uid: log.append(
+                ("sidebar.set_pending_selection", (uid,), {})
+            )
+        )
+        current_owner = coordinator.owner if same_owner else object()
+        current_sidebar = coordinator.sidebar if same_sidebar else object()
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected
+        )
+        coordinator.project_data = SimpleNamespace(get_bid=lambda ref: current_owner)
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=current_sidebar,
+            load_bid_layers_sidebar_from_memory=lambda: log.append(
+                ("load_bid_layers_sidebar_from_memory", (), {})
+            ),
+        )
+        _sp3a5i_stub(coordinator, "present_queued_mutation_error")
+        return coordinator
+
+    def _complete(self, coordinator, result):
+        coordinator._on_queued_layer_insert_complete(
+            coordinator.sidebar, self.BID_REF, coordinator.owner, result
+        )
+
+    @staticmethod
+    def _result(status, ids=(), reason=None):
+        return SimpleNamespace(
+            outcome_status=status,
+            created_resource_ids=list(ids),
+            rejection_reason=reason,
+            message="failure-message",
+            database_id="a.mdb",
+        )
+
+    def test_committed_insert_selects_first_created_resource_in_current_sidebar(self):
+        coordinator = self._fixture()
+        self._complete(
+            coordinator, self._result(MutationOutcomeStatus.COMMITTED, ["n1", "n2"])
+        )
+        self.assertEqual(
+            coordinator.log, [("sidebar.set_pending_selection", ("n1",), {})]
+        )
+
+    def test_committed_insert_is_not_selected_when_bid_selection_moved_on(self):
+        coordinator = self._fixture(selected=BidRef("a.mdb", "bid-2"))
+        self._complete(
+            coordinator, self._result(MutationOutcomeStatus.COMMITTED, ["n1"])
+        )
+        self.assertEqual(coordinator.log, [])
+
+    def test_committed_insert_is_not_selected_when_sidebar_was_replaced(self):
+        coordinator = self._fixture(same_sidebar=False)
+        self._complete(
+            coordinator, self._result(MutationOutcomeStatus.COMMITTED, ["n1"])
+        )
+        self.assertEqual(coordinator.log, [])
+
+    def test_committed_insert_is_not_selected_when_bid_owner_was_replaced(self):
+        coordinator = self._fixture(same_owner=False)
+        self._complete(
+            coordinator, self._result(MutationOutcomeStatus.COMMITTED, ["n1"])
+        )
+        self.assertEqual(coordinator.log, [])
+
+    def test_committed_insert_without_resource_ids_is_reported_as_failure(self):
+        coordinator = self._fixture()
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+            self._complete(coordinator, self._result(MutationOutcomeStatus.COMMITTED))
+        self.assertEqual(
+            logs.output,
+            [
+                "WARNING:" + _sp3a5i_MODULE + ":Queued SQL layer insertion failed: "
+                "failure-message"
+            ],
+        )
+        self.assertEqual(
+            _sp3a5i_names(coordinator),
+            ["load_bid_layers_sidebar_from_memory", "present_queued_mutation_error"],
+        )
+
+    def test_rejected_insert_with_resource_ids_is_never_selected(self):
+        coordinator = self._fixture()
+        result = self._result(MutationOutcomeStatus.CONFLICT, ["n1"])
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            self._complete(coordinator, result)
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("load_bid_layers_sidebar_from_memory", (), {}),
+                (
+                    "present_queued_mutation_error",
+                    ("a.mdb", "Layer Creation", result),
+                    {},
+                ),
+            ],
+        )
+
+    def test_failed_insert_reloads_from_memory_then_presents_the_error(self):
+        coordinator = self._fixture()
+        result = self._result(MutationOutcomeStatus.CONFLICT)
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            self._complete(coordinator, result)
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("load_bid_layers_sidebar_from_memory", (), {}),
+                (
+                    "present_queued_mutation_error",
+                    ("a.mdb", "Layer Creation", result),
+                    {},
+                ),
+            ],
+        )
+
+    def test_bid_locked_rejection_is_not_logged_but_still_presented(self):
+        coordinator = self._fixture()
+        result = self._result(
+            MutationOutcomeStatus.REJECTED, reason=MutationRejectionReason.BID_LOCKED
+        )
+        with self.assertNoLogs(_sp3a5i_MODULE, level="WARNING"):
+            self._complete(coordinator, result)
+        self.assertEqual(
+            _sp3a5i_names(coordinator),
+            ["load_bid_layers_sidebar_from_memory", "present_queued_mutation_error"],
+        )
+
+    def test_failed_insert_during_cleanup_is_not_reloaded_or_presented(self):
+        coordinator = self._fixture(cleaning=True)
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            self._complete(coordinator, self._result(MutationOutcomeStatus.CONFLICT))
+        self.assertEqual(coordinator.log, [])
+
+    def test_failed_insert_for_other_bid_is_not_reloaded_or_presented(self):
+        coordinator = self._fixture(selected=BidRef("a.mdb", "bid-2"))
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            self._complete(coordinator, self._result(MutationOutcomeStatus.CONFLICT))
+        self.assertEqual(coordinator.log, [])
+
+    def test_failed_insert_with_replaced_sidebar_is_not_reloaded_or_presented(self):
+        coordinator = self._fixture(same_sidebar=False)
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            self._complete(coordinator, self._result(MutationOutcomeStatus.CONFLICT))
+        self.assertEqual(coordinator.log, [])
+
+    def test_failed_insert_with_replaced_owner_is_not_reloaded_or_presented(self):
+        coordinator = self._fixture(same_owner=False)
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            self._complete(coordinator, self._result(MutationOutcomeStatus.CONFLICT))
+        self.assertEqual(coordinator.log, [])
+
+
+class Sp3a5iLayerDeleteTests(unittest.TestCase):
+    def _stubbed(self, **kwargs):
+        coordinator = _sp3a5i_layer_write_fixture(**kwargs)
+        _sp3a5i_stub(coordinator, "_refuse_locked_layer_write")
+        return coordinator
+
+    def test_denied_page_settings_access_deletes_nothing(self):
+        coordinator = self._stubbed(allowed=False)
+        coordinator._on_layer_deleted("l1")
+        self.assertEqual(coordinator.checked_features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_selected_bid_deletes_nothing(self):
+        coordinator = self._stubbed(bid_ref=None)
+        coordinator._on_layer_deleted("l1")
+        self.assertEqual(coordinator.log, [])
+
+    def test_failed_deferred_flush_deletes_nothing(self):
+        coordinator = self._stubbed(flush_ok=False)
+        coordinator._on_layer_deleted("l1")
+        self.assertEqual(coordinator.log, [_sp3a5i_FLUSH])
+
+    def test_sql_delete_queues_exact_delete_with_delete_completion(self):
+        coordinator = self._stubbed(sql=True)
+        coordinator._on_layer_deleted("l1")
+        self.assertEqual(
+            _sp3a5i_writes(coordinator),
+            [
+                (
+                    "queue_layer_delete",
+                    (
+                        "a.mdb",
+                        "bid-1",
+                        "l1",
+                        coordinator._on_queued_layer_delete_complete,
+                    ),
+                    {},
+                )
+            ],
+        )
+        self.assertNotIn("_refuse_locked_layer_write", _sp3a5i_names(coordinator))
+
+    def test_sql_delete_refused_by_bid_lock_is_reported_and_not_deleted_directly(self):
+        coordinator = self._stubbed(sql=True)
+        coordinator._project_write_service.errors["queue_layer_delete"] = (
+            ActiveBidLockedError("locked")
+        )
+        coordinator._on_layer_deleted("l1")
+        self.assertEqual(
+            coordinator.log[-1], ("_refuse_locked_layer_write", ("Delete Layer",), {})
+        )
+        self.assertNotIn("delete_layer", _sp3a5i_names(coordinator))
+
+    def test_direct_delete_success_neither_reloads_nor_reports(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.results["delete_layer"] = True
+        with patch(_sp3a5i_MODULE + ".show_critical") as critical:
+            coordinator._on_layer_deleted("l1")
+        self.assertEqual(
+            _sp3a5i_writes(coordinator), [("delete_layer", ("a.mdb", "l1"), {})]
+        )
+        self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
+        critical.assert_not_called()
+
+    def test_direct_delete_failure_reloads_then_reports_with_lock_hint(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.results["delete_layer"] = False
+        with patch(_sp3a5i_MODULE + ".show_critical") as critical:
+            critical.side_effect = lambda *args: coordinator.log.append(
+                ("show_critical", args, {})
+            )
+            coordinator._on_layer_deleted("l1")
+        self.assertEqual(
+            coordinator.log[-2:],
+            [
+                ("load_bid_layers_sidebar", (), {}),
+                (
+                    "show_critical",
+                    (
+                        coordinator.main_window,
+                        "Delete Layer",
+                        f"Failed to delete layer. {DB_LOCKED_HINT}",
+                    ),
+                    {},
+                ),
+            ],
+        )
+
+    def test_direct_delete_exception_is_logged_and_treated_as_failure(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.errors["delete_layer"] = RuntimeError("x")
+        with patch(_sp3a5i_MODULE + ".show_critical") as critical:
+            with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+                coordinator._on_layer_deleted("l1")
+        self.assertEqual(
+            [(r.levelno, r.getMessage()) for r in logs.records],
+            [(logging.WARNING, "Failed to delete layer")],
+        )
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertEqual(coordinator.log[-1], ("load_bid_layers_sidebar", (), {}))
+        critical.assert_called_once()
+
+
+class Sp3a5iLayerMoveTests(unittest.TestCase):
+    def _stubbed(self, **kwargs):
+        coordinator = _sp3a5i_layer_write_fixture(**kwargs)
+        _sp3a5i_stub(coordinator, "_refuse_locked_layer_write")
+        return coordinator
+
+    def test_denied_page_settings_access_moves_nothing(self):
+        coordinator = self._stubbed(allowed=False)
+        coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(coordinator.checked_features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_selected_bid_moves_nothing(self):
+        coordinator = self._stubbed(bid_ref=None)
+        coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_layers_sidebar_moves_nothing(self):
+        coordinator = self._stubbed(sidebar=False)
+        coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_neighbour_moves_nothing_and_skips_the_flush(self):
+        coordinator = self._stubbed(neighbor_uid="")
+        coordinator._on_layer_moved("l1", -1)
+        self.assertEqual(coordinator.log, [("sidebar.get_neighbor_uid", (-1,), {})])
+
+    def test_failed_deferred_flush_moves_nothing(self):
+        coordinator = self._stubbed(flush_ok=False)
+        coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(_sp3a5i_writes(coordinator), [])
+        self.assertEqual(coordinator.log[-1], _sp3a5i_FLUSH)
+
+    def test_sql_move_queues_exact_reorder_with_generic_completion(self):
+        coordinator = self._stubbed(sql=True)
+        coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(
+            _sp3a5i_writes(coordinator),
+            [
+                (
+                    "queue_layer_reorder",
+                    (
+                        "a.mdb",
+                        "bid-1",
+                        "l1",
+                        "neighbor",
+                        coordinator._on_queued_layer_write_complete,
+                    ),
+                    {},
+                )
+            ],
+        )
+
+    def test_sql_move_refused_by_bid_lock_keeps_sidebar_without_reload(self):
+        coordinator = self._stubbed(sql=True)
+        coordinator._project_write_service.errors["queue_layer_reorder"] = (
+            ActiveBidLockedError("locked")
+        )
+        coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(
+            coordinator.log[-1],
+            ("_refuse_locked_layer_write", ("Move Layer",), {"reload_sidebar": False}),
+        )
+        self.assertNotIn("swap_layer_sequence", _sp3a5i_names(coordinator))
+
+    def test_direct_move_swaps_layer_with_its_neighbour(self):
+        coordinator = self._stubbed()
+        coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(
+            _sp3a5i_writes(coordinator),
+            [("swap_layer_sequence", ("a.mdb", "l1", "neighbor"), {})],
+        )
+
+    def test_direct_move_failure_is_logged_without_reloading(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.errors["swap_layer_sequence"] = RuntimeError(
+            "x"
+        )
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+            coordinator._on_layer_moved("l1", 1)
+        self.assertEqual(
+            [(r.levelno, r.getMessage()) for r in logs.records],
+            [(logging.WARNING, "Failed to move layer")],
+        )
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
+
+
+class Sp3a5iLayerRenameTests(unittest.TestCase):
+    def _stubbed(self, **kwargs):
+        coordinator = _sp3a5i_layer_write_fixture(**kwargs)
+        _sp3a5i_stub(coordinator, "_refuse_locked_layer_write")
+        return coordinator
+
+    def test_denied_page_settings_access_renames_nothing(self):
+        coordinator = self._stubbed(allowed=False)
+        coordinator._on_layer_renamed("l1", "New")
+        self.assertEqual(coordinator.checked_features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_selected_bid_renames_nothing_and_touches_no_service(self):
+        coordinator = self._stubbed(bid_ref=None)
+        coordinator._on_layer_renamed("l1", "New")
+        self.assertEqual(coordinator.log, [])
+
+    def test_sql_rename_queues_exact_rename_with_generic_completion(self):
+        coordinator = self._stubbed(sql=True)
+        coordinator._on_layer_renamed("l1", "New")
+        self.assertEqual(
+            _sp3a5i_writes(coordinator),
+            [
+                (
+                    "queue_layer_rename",
+                    (
+                        "a.mdb",
+                        "bid-1",
+                        "l1",
+                        "New",
+                        coordinator._on_queued_layer_write_complete,
+                    ),
+                    {},
+                )
+            ],
+        )
+
+    def test_sql_rename_refused_by_bid_lock_is_reported_and_not_renamed_directly(self):
+        coordinator = self._stubbed(sql=True)
+        coordinator._project_write_service.errors["queue_layer_rename"] = (
+            ActiveBidLockedError("locked")
+        )
+        coordinator._on_layer_renamed("l1", "New")
+        self.assertEqual(
+            coordinator.log[-1], ("_refuse_locked_layer_write", ("Rename Layer",), {})
+        )
+        self.assertNotIn("update_layer_name", _sp3a5i_names(coordinator))
+
+    def test_direct_rename_success_does_not_reload_the_sidebar(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.results["update_layer_name"] = True
+        coordinator._on_layer_renamed("l1", "New")
+        self.assertEqual(
+            _sp3a5i_writes(coordinator),
+            [("update_layer_name", ("a.mdb", "l1", "New"), {})],
+        )
+        self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
+
+    def test_direct_rename_reported_failure_reloads_the_sidebar(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.results["update_layer_name"] = False
+        coordinator._on_layer_renamed("l1", "New")
+        self.assertEqual(coordinator.log[-1], ("load_bid_layers_sidebar", (), {}))
+
+    def test_direct_rename_exception_is_logged_and_reloads_the_sidebar(self):
+        coordinator = self._stubbed()
+        coordinator._project_write_service.errors["update_layer_name"] = RuntimeError(
+            "x"
+        )
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+            coordinator._on_layer_renamed("l1", "New")
+        self.assertEqual(
+            [(r.levelno, r.getMessage()) for r in logs.records],
+            [(logging.WARNING, "Failed to rename layer")],
+        )
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertEqual(coordinator.log[-1], ("load_bid_layers_sidebar", (), {}))
+
+
+class Sp3a5iRefuseLockedLayerWriteTests(unittest.TestCase):
+    def _coordinator(self, cleaning=False):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.log = []
+        coordinator._is_cleaning_up = cleaning
+        coordinator._sidebar = SimpleNamespace(
+            load_bid_layers_sidebar_from_memory=lambda: coordinator.log.append("reload")
+        )
+        return coordinator
+
+    def test_default_refusal_logs_title_and_reloads_sidebar_from_memory(self):
+        coordinator = self._coordinator()
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+            coordinator._refuse_locked_layer_write("Rename Layer")
+        self.assertEqual(
+            logs.output,
+            [
+                "WARNING:" + _sp3a5i_MODULE + ":Rename Layer blocked: the active "
+                "bid is locked"
+            ],
+        )
+        self.assertEqual(coordinator.log, ["reload"])
+
+    def test_refusal_can_skip_the_sidebar_reload(self):
+        coordinator = self._coordinator()
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            coordinator._refuse_locked_layer_write("Move Layer", reload_sidebar=False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_refusal_during_cleanup_does_not_reload_the_sidebar(self):
+        coordinator = self._coordinator(cleaning=True)
+        with self.assertLogs(_sp3a5i_MODULE, level="WARNING"):
+            coordinator._refuse_locked_layer_write("Move Layer")
+        self.assertEqual(coordinator.log, [])
+
+
+class Sp3a5iConditionSidebarVisibilityRefreshTests(unittest.TestCase):
+    def _coordinator(self, *, sidebars=True):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.log = []
+        coordinator.conditions = {"c1": object()}
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: coordinator.conditions
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            state=SimpleNamespace(grayscale_enabled=True)
+        )
+        if sidebars:
+            coordinator.conditions_sidebar = SimpleNamespace(
+                apply_layer_visibility_state=lambda *args: coordinator.log.append(
+                    ("conditions_sidebar", args)
+                )
+            )
+            coordinator.condition_summary_tab = SimpleNamespace(
+                apply_layer_visibility_state=lambda *args: coordinator.log.append(
+                    ("summary_tab", args)
+                )
+            )
+        else:
+            coordinator.conditions_sidebar = None
+            coordinator.condition_summary_tab = None
+        return coordinator
+
+    def test_refresh_updates_sidebar_then_summary_by_default(self):
+        coordinator = self._coordinator()
+        coordinator._refresh_conditions_sidebar_layer_visibility_from_memory("l1")
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("conditions_sidebar", (coordinator.conditions, True, "l1")),
+                ("summary_tab", (coordinator.conditions, True, "l1")),
+            ],
+        )
+
+    def test_refresh_without_summary_skips_the_summary_tab(self):
+        coordinator = self._coordinator()
+        coordinator._refresh_conditions_sidebar_layer_visibility_from_memory(
+            update_summary=False
+        )
+        self.assertEqual(
+            coordinator.log,
+            [("conditions_sidebar", (coordinator.conditions, True, None))],
+        )
+
+    def test_refresh_without_sidebars_does_nothing(self):
+        coordinator = self._coordinator(sidebars=False)
+        coordinator._refresh_conditions_sidebar_layer_visibility_from_memory("l1")
+        coordinator._refresh_conditions_sidebar_layer_visibility_from_memory(
+            update_summary=False
+        )
+        self.assertEqual(coordinator.log, [])
+
+
+class _sp3a5i_Deferred:
+    def __init__(self, log, schedule=True, revision=False):
+        self.log = log
+        self.schedule = schedule
+        self.revision = revision
+        self.kwargs = {}
+
+    def has_all_layers_show_revision(self, *args):
+        self.log.append(("has_all_layers_show_revision", args, {}))
+        return self.revision
+
+    def schedule_all_layers_show(self, *args, **kwargs):
+        self.log.append(("schedule_all_layers_show", args, sorted(kwargs)))
+        self.kwargs = kwargs
+        return self.schedule
+
+
+def _sp3a5i_bulk_fixture(
+    *,
+    allowed=True,
+    bid_ref=_sp3a5i_BID_REF,
+    owner=True,
+    sql=False,
+    sidebar=True,
+    shows=(True, True),
+    schedule=True,
+    revision=False,
+    snapshot_shows=None,
+):
+    coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+    coordinator.log = []
+    log = coordinator.log
+    coordinator.owner = object() if owner else None
+    coordinator.checked_features = []
+    coordinator.layers = [
+        SimpleNamespace(uid=f"l{index + 1}", show=show)
+        for index, show in enumerate(shows)
+    ]
+    snapshot = coordinator.layers
+    if snapshot_shows is not None:
+        snapshot = [
+            SimpleNamespace(uid=f"s{index + 1}", show=show)
+            for index, show in enumerate(snapshot_shows)
+        ]
+    coordinator.snapshot = snapshot
+
+    def is_allowed(feature):
+        coordinator.checked_features.append(feature)
+        return allowed
+
+    coordinator.ui_access_manager = SimpleNamespace(is_allowed=is_allowed)
+    coordinator.ui_state_manager = SimpleNamespace(
+        get_selected_bid_ref=lambda: bid_ref, active_page_uid="p1"
+    )
+    coordinator.project_data = SimpleNamespace(
+        get_bid=lambda ref: coordinator.owner,
+        get_bid_layer_snapshot=lambda: list(coordinator.snapshot),
+        set_bid_layer_visibility=lambda layers: log.append(
+            ("project_data.set_bid_layer_visibility", (layers,), {})
+        ),
+        update_all_layer_visibility=lambda show: (
+            log.append(("project_data.update_all_layer_visibility", (show,), {}))
+            or ["p1"]
+        ),
+        get_selected_page_uids=lambda: ["sel-1", "sel-2"],
+    )
+    coordinator._project_write_service = _sp3a5i_WriteService(log, sql=sql)
+    coordinator._project_read_service = SimpleNamespace(
+        get_merged_bid_layers=lambda *args: (
+            log.append(("get_merged_bid_layers", args, {})) or list(coordinator.layers)
+        )
+    )
+    coordinator.sidebar = (
+        _sp3a5i_PlainSidebar(log, layers=coordinator.layers) if sidebar else None
+    )
+    coordinator._sidebar = SimpleNamespace(bid_layers_sidebar=coordinator.sidebar)
+    coordinator._deferred_persistence = _sp3a5i_Deferred(
+        log, schedule=schedule, revision=revision
+    )
+    coordinator.event_bus = SimpleNamespace(
+        publish=lambda event, **payload: log.append(("publish", (event,), payload))
+    )
+    _sp3a5i_stub_all(coordinator, *_sp3a5i_INTERNAL)
+    _sp3a5i_stub(coordinator, "_project_layer_visibility_map_if_current", True)
+    return coordinator
+
+
+class Sp3a5iBulkLayerVisibilityTests(unittest.TestCase):
+    def _publish(self, show):
+        return (
+            "publish",
+            (AppEvents.LAYER_VISIBILITY_CHANGED,),
+            {
+                "file_path": "a.mdb",
+                "bid_uid": "bid-1",
+                "show": show,
+                "all_layers": True,
+            },
+        )
+
+    def test_denied_page_settings_access_returns_false_without_any_work(self):
+        coordinator = _sp3a5i_bulk_fixture(allowed=False)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), False)
+        self.assertEqual(coordinator.checked_features, [Feature.EDIT_PAGE_SETTINGS])
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_selected_bid_returns_false_without_any_work(self):
+        coordinator = _sp3a5i_bulk_fixture(bid_ref=None)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_bid_owner_returns_false_without_any_work(self):
+        coordinator = _sp3a5i_bulk_fixture(owner=False)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_mdb_without_sidebar_reads_merged_layers_with_file_then_bid_uid(self):
+        coordinator = _sp3a5i_bulk_fixture(sidebar=False, sql=False)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), True)
+        self.assertEqual(
+            coordinator.log[:3],
+            [
+                ("uses_sql_collaboration_mutations", ("a.mdb",), {}),
+                ("get_merged_bid_layers", ("a.mdb", "bid-1"), {}),
+                (
+                    "schedule_all_layers_show",
+                    ("a.mdb", "bid-1", False, ["l1", "l2"]),
+                    ["project_value", "restore_authoritative"],
+                ),
+            ],
+        )
+
+    def test_layers_without_any_entry_return_false_without_scheduling(self):
+        coordinator = _sp3a5i_bulk_fixture(shows=())
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), False)
+        self.assertNotIn("schedule_all_layers_show", _sp3a5i_names(coordinator))
+
+    def test_layers_already_in_requested_state_without_pending_revision_are_a_no_op(
+        self,
+    ):
+        coordinator = _sp3a5i_bulk_fixture(shows=(False, False), revision=False)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), True)
+        self.assertEqual(_sp3a5i_names(coordinator)[-1], "has_all_layers_show_revision")
+        self.assertEqual(coordinator.log[-1][1], ("a.mdb", "bid-1", ["l1", "l2"]))
+        self.assertNotIn("schedule_all_layers_show", _sp3a5i_names(coordinator))
+
+    def test_layers_already_in_requested_state_with_pending_revision_reschedule_all(
+        self,
+    ):
+        coordinator = _sp3a5i_bulk_fixture(shows=(False, False), revision=True)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), True)
+        schedule = [e for e in coordinator.log if e[0] == "schedule_all_layers_show"]
+        self.assertEqual(schedule[0][1], ("a.mdb", "bid-1", False, ["l1", "l2"]))
+
+    def test_rejected_schedule_returns_false_without_projecting_anything(self):
+        coordinator = _sp3a5i_bulk_fixture(schedule=False)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), False)
+        self.assertEqual(_sp3a5i_names(coordinator)[-1], "schedule_all_layers_show")
+
+    def test_schedule_callbacks_project_previous_and_requested_maps(self):
+        coordinator = _sp3a5i_bulk_fixture(shows=(True, False))
+        coordinator.update_all_layers_visibility_deferred(False)
+        kwargs = coordinator._deferred_persistence.kwargs
+        coordinator.log.clear()
+        kwargs["restore_authoritative"]()
+        kwargs["project_value"]()
+        self.assertEqual(
+            coordinator.log,
+            [
+                (
+                    "_project_layer_visibility_map_if_current",
+                    (_sp3a5i_BID_REF, coordinator.owner, {"l1": True}),
+                    {},
+                ),
+                (
+                    "_project_layer_visibility_map_if_current",
+                    (_sp3a5i_BID_REF, coordinator.owner, {"l1": False}),
+                    {},
+                ),
+            ],
+        )
+
+    def test_hide_all_with_sidebar_runs_the_full_projection_in_order(self):
+        coordinator = _sp3a5i_bulk_fixture()
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), True)
+        index = _sp3a5i_names(coordinator).index("schedule_all_layers_show")
+        self.assertEqual(
+            coordinator.log[index + 1 :],
+            [
+                ("sidebar.set_all_layers_visible", (False,), {}),
+                ("_suspend_active_layer_tool", (), {}),
+                (
+                    "project_data.set_bid_layer_visibility",
+                    (coordinator.layers,),
+                    {},
+                ),
+                ("project_data.update_all_layer_visibility", (False,), {}),
+                ("_update_native_page_textures", (), {}),
+                self._publish(False),
+                (
+                    "_refresh_conditions_sidebar_layer_visibility_from_memory",
+                    (),
+                    {"update_summary": False},
+                ),
+                (
+                    "_apply_layer_visibility_to_current_plan_view",
+                    ("", False),
+                    {"changed_page_uids": ["p1"], "all_layers": True},
+                ),
+                ("_request_or_defer_mesh_refresh", (["sel-1", "sel-2"],), {}),
+                ("_load_condition_summary", (), {}),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+
+    def test_show_all_without_sidebar_restores_the_tool_and_never_suspends(self):
+        coordinator = _sp3a5i_bulk_fixture(shows=(False, False), sidebar=False)
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(True), True)
+        names = _sp3a5i_names(coordinator)
+        self.assertNotIn("sidebar.set_all_layers_visible", names)
+        self.assertNotIn("_suspend_active_layer_tool", names)
+        self.assertEqual(
+            names[-2:], ["_update_export_menu_state", "_restore_suspended_layer_tool"]
+        )
+        self.assertIn(self._publish(True), coordinator.log)
+
+    def test_sql_queue_without_sidebar_uses_the_hydrated_snapshot(self):
+        coordinator = _sp3a5i_bulk_fixture(
+            sidebar=False, sql=True, snapshot_shows=(True, True, True)
+        )
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), True)
+        schedule = [e for e in coordinator.log if e[0] == "schedule_all_layers_show"]
+        self.assertEqual(schedule[0][1][3], ["s1", "s2", "s3"])
+        self.assertNotIn("get_merged_bid_layers", _sp3a5i_names(coordinator))
+
+
+def _sp3a5i_map_fixture(
+    *,
+    current=(("l1", True), ("l2", True)),
+    sidebar=None,
+    active_page_uid="p1",
+    changed=None,
+    cleaning=False,
+    owner_is_none=False,
+    selected=_sp3a5i_BID_REF,
+    current_owner="same",
+):
+    coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+    coordinator.log = []
+    log = coordinator.log
+    coordinator._is_cleaning_up = cleaning
+    coordinator.owner = None if owner_is_none else object()
+    if current_owner == "same":
+        current_owner = coordinator.owner
+    coordinator.layers = [SimpleNamespace(uid=uid, show=show) for uid, show in current]
+    coordinator.ui_state_manager = SimpleNamespace(
+        get_selected_bid_ref=lambda: selected, active_page_uid=active_page_uid
+    )
+    changed = changed or {"l1": ["p2"], "l2": ["p1", "p2"]}
+
+    def update_layer_visibility(layer_uid, show):
+        log.append(("project_data.update_layer_visibility", (layer_uid, show), {}))
+        return list(changed.get(layer_uid, []))
+
+    coordinator.project_data = SimpleNamespace(
+        get_bid=lambda ref: current_owner,
+        get_bid_layer_snapshot=lambda: list(coordinator.layers),
+        update_layer_visibility=update_layer_visibility,
+        get_selected_page_uids=lambda: ["sel-1", "sel-2"],
+    )
+    coordinator._sidebar = SimpleNamespace(bid_layers_sidebar=sidebar)
+    coordinator.event_bus = SimpleNamespace(
+        publish=lambda event, **payload: log.append(("publish", (event,), payload))
+    )
+    _sp3a5i_stub_all(coordinator, *_sp3a5i_INTERNAL)
+    return coordinator
+
+
+class Sp3a5iProjectLayerVisibilityMapTests(unittest.TestCase):
+    def _project(self, coordinator, requested):
+        return coordinator._project_layer_visibility_map_if_current(
+            _sp3a5i_BID_REF, coordinator.owner, requested
+        )
+
+    def _publish(self, show):
+        return (
+            "publish",
+            (AppEvents.LAYER_VISIBILITY_CHANGED,),
+            {
+                "file_path": "a.mdb",
+                "bid_uid": "bid-1",
+                "show": show,
+                "all_layers": True,
+            },
+        )
+
+    def test_cleanup_returns_false_without_touching_visibility(self):
+        coordinator = _sp3a5i_map_fixture(cleaning=True)
+        self.assertIs(self._project(coordinator, {"l1": False}), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_missing_bid_owner_returns_false_even_when_current_owner_is_missing(self):
+        coordinator = _sp3a5i_map_fixture(owner_is_none=True, current_owner=None)
+        self.assertIs(self._project(coordinator, {"l1": False}), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_changed_selected_bid_returns_false(self):
+        coordinator = _sp3a5i_map_fixture(selected=BidRef("a.mdb", "bid-2"))
+        self.assertIs(self._project(coordinator, {"l1": False}), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_replaced_bid_owner_returns_false(self):
+        coordinator = _sp3a5i_map_fixture(current_owner=object())
+        self.assertIs(self._project(coordinator, {"l1": False}), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_empty_request_returns_false_without_work(self):
+        coordinator = _sp3a5i_map_fixture()
+        self.assertIs(self._project(coordinator, {}), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_request_with_unknown_layer_returns_false_without_work(self):
+        coordinator = _sp3a5i_map_fixture()
+        self.assertIs(self._project(coordinator, {"l1": False, "ghost": False}), False)
+        self.assertEqual(coordinator.log, [])
+
+    def test_request_matching_model_without_sidebar_is_a_no_op(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False), ("l2", True)))
+        self.assertIs(self._project(coordinator, {"l1": False, "l2": True}), True)
+        self.assertEqual(coordinator.log, [])
+
+    def test_request_matching_model_and_sidebar_is_a_no_op(self):
+        log = []
+        layers = [SimpleNamespace(uid="l1", show=False)]
+        sidebar = _sp3a5i_PlainSidebar(log, layers=layers)
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False),), sidebar=sidebar)
+        sidebar.log = coordinator.log
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertEqual(coordinator.log, [("sidebar.get_layers", (), {})])
+
+    def test_sidebar_out_of_sync_is_still_projected(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False),))
+        sidebar = _sp3a5i_PlainSidebar(
+            coordinator.log, layers=[SimpleNamespace(uid="l1", show=True)]
+        )
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertIn(
+            ("sidebar.set_layer_visibilities", ({"l1": False},), {}), coordinator.log
+        )
+        self.assertIn(
+            ("project_data.update_layer_visibility", ("l1", False), {}),
+            coordinator.log,
+        )
+
+    def test_model_out_of_sync_is_projected_even_if_sidebar_matches(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", True),))
+        sidebar = _sp3a5i_PlainSidebar(
+            coordinator.log, layers=[SimpleNamespace(uid="l1", show=False)]
+        )
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertIn(
+            ("project_data.update_layer_visibility", ("l1", False), {}),
+            coordinator.log,
+        )
+
+    def test_one_diverging_layer_among_matching_ones_triggers_projection(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False), ("l2", True)))
+        self.assertIs(self._project(coordinator, {"l1": False, "l2": False}), True)
+        self.assertEqual(
+            [e for e in coordinator.log if e[0].startswith("project_data")],
+            [
+                ("project_data.update_layer_visibility", ("l1", False), {}),
+                ("project_data.update_layer_visibility", ("l2", False), {}),
+            ],
+        )
+
+    def test_live_qobject_sidebar_is_consulted_and_updated(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False),))
+        sidebar = _sp3a5i_QtSidebar(
+            coordinator.log, layers=[SimpleNamespace(uid="l1", show=True)]
+        )
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertIn(("sidebar.get_layers", (), {}), coordinator.log)
+        self.assertIn(
+            ("sidebar.set_layer_visibilities", ({"l1": False},), {}), coordinator.log
+        )
+
+    def test_deleted_qobject_sidebar_is_ignored(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False),))
+        sidebar = _sp3a5i_QtSidebar(
+            coordinator.log, layers=[SimpleNamespace(uid="l1", show=True)]
+        )
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        delete(sidebar)
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertEqual(coordinator.log, [])
+
+    def test_deleted_qobject_sidebar_is_not_updated_when_state_changes(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", True),))
+        sidebar = _sp3a5i_QtSidebar(
+            coordinator.log, layers=[SimpleNamespace(uid="l1", show=True)]
+        )
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        delete(sidebar)
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertNotIn("sidebar.set_layer_visibilities", _sp3a5i_names(coordinator))
+        self.assertNotIn("sidebar.get_layers", _sp3a5i_names(coordinator))
+
+    def test_non_qobject_sidebar_is_trusted_even_if_shiboken_reports_it_invalid(self):
+        _app()
+        coordinator = _sp3a5i_map_fixture(current=(("l1", True),))
+        sidebar = _sp3a5i_NonQObjectSidebar(
+            coordinator.log, layers=[SimpleNamespace(uid="l1", show=True)]
+        )
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        delete(sidebar)
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertIn(
+            ("sidebar.set_layer_visibilities", ({"l1": False},), {}), coordinator.log
+        )
+
+    def test_hiding_every_layer_runs_the_full_projection_in_order(self):
+        coordinator = _sp3a5i_map_fixture()
+        sidebar = _sp3a5i_PlainSidebar(coordinator.log, layers=list(coordinator.layers))
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        self.assertIs(self._project(coordinator, {"l1": False, "l2": False}), True)
+        self.assertEqual(
+            coordinator.log,
+            [
+                ("sidebar.get_layers", (), {}),
+                ("_suspend_active_layer_tool", (), {}),
+                ("project_data.update_layer_visibility", ("l1", False), {}),
+                ("project_data.update_layer_visibility", ("l2", False), {}),
+                ("_update_native_page_textures", (), {}),
+                self._publish(False),
+                ("sidebar.set_layer_visibilities", ({"l1": False, "l2": False},), {}),
+                (
+                    "_refresh_conditions_sidebar_layer_visibility_from_memory",
+                    (),
+                    {"update_summary": False},
+                ),
+                (
+                    "_apply_layer_visibility_to_current_plan_view",
+                    ("", False),
+                    {"changed_page_uids": ["p1", "p2"], "all_layers": True},
+                ),
+                ("_request_or_defer_mesh_refresh", (["sel-1", "sel-2"],), {}),
+                ("_load_condition_summary", (), {}),
+                ("_update_export_menu_state", (), {}),
+            ],
+        )
+
+    def test_showing_every_layer_restores_the_tool_without_suspending(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False), ("l2", False)))
+        self.assertIs(self._project(coordinator, {"l1": True, "l2": True}), True)
+        names = _sp3a5i_names(coordinator)
+        self.assertNotIn("_suspend_active_layer_tool", names)
+        self.assertNotIn("sidebar.set_layer_visibilities", names)
+        self.assertIn(self._publish(True), coordinator.log)
+        self.assertIn(
+            (
+                "_apply_layer_visibility_to_current_plan_view",
+                ("", True),
+                {"changed_page_uids": ["p1", "p2"], "all_layers": True},
+            ),
+            coordinator.log,
+        )
+        self.assertEqual(coordinator.log[-1], ("_restore_suspended_layer_tool", (), {}))
+
+    def test_single_layer_request_uses_the_in_place_plan_view_update(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", True), ("l2", True)))
+        self.assertIs(self._project(coordinator, {"l1": False}), True)
+        self.assertIn(
+            (
+                "_apply_layer_visibility_to_current_plan_view",
+                ("", False),
+                {"changed_page_uids": ["p2"], "all_layers": True},
+            ),
+            coordinator.log,
+        )
+        self.assertNotIn("_update_plan_view", _sp3a5i_names(coordinator))
+        self.assertNotIn("_restore_suspended_layer_tool", _sp3a5i_names(coordinator))
+
+    def test_mixed_request_reloads_the_active_page_and_suspends_and_restores(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", False), ("l2", True)))
+        self.assertIs(self._project(coordinator, {"l1": True, "l2": False}), True)
+        names = _sp3a5i_names(coordinator)
+        self.assertEqual(names.count("_suspend_active_layer_tool"), 1)
+        self.assertEqual(names.count("_restore_suspended_layer_tool"), 1)
+        self.assertNotIn("_apply_layer_visibility_to_current_plan_view", names)
+        self.assertIn(("_update_plan_view", ("p1",), {}), coordinator.log)
+        self.assertIn(self._publish(False), coordinator.log)
+
+    def test_mixed_request_without_active_page_does_not_reload_a_plan_view(self):
+        coordinator = _sp3a5i_map_fixture(
+            current=(("l1", False), ("l2", True)), active_page_uid=None
+        )
+        self.assertIs(self._project(coordinator, {"l1": True, "l2": False}), True)
+        names = _sp3a5i_names(coordinator)
+        self.assertNotIn("_update_plan_view", names)
+        self.assertNotIn("_apply_layer_visibility_to_current_plan_view", names)
+        self.assertIn("_request_or_defer_mesh_refresh", names)
+
+    def test_mixed_request_with_hidden_first_layer_still_suspends(self):
+        coordinator = _sp3a5i_map_fixture(current=(("l1", True), ("l2", False)))
+        self.assertIs(self._project(coordinator, {"l1": False, "l2": True}), True)
+        names = _sp3a5i_names(coordinator)
+        self.assertEqual(names.count("_suspend_active_layer_tool"), 1)
+        self.assertEqual(names.count("_restore_suspended_layer_tool"), 1)
+
+
+class Sp3a5jDialogTitleTests(unittest.TestCase):
+    def test_unverifiable_page_contents_stop_the_delete_with_a_critical_dialog(self):
+        log = []
+        coordinator, _state = Sp3a5hDeleteCurrentPageTests()._build(log, content=None)
+        with (
+            patch(f"{_SP3A5H_MOD}.show_critical") as critical,
+            patch(f"{_SP3A5H_MOD}.confirm_delete_page_with_contents") as confirm,
+        ):
+            coordinator.delete_current_page()
+        critical.assert_called_once_with(
+            coordinator.main_window,
+            "Delete Page",
+            f"Failed to verify page contents. {DB_LOCKED_HINT}",
+        )
+        confirm.assert_not_called()
+        self.assertEqual(
+            [entry[0] for entry in log if entry[0] in ("delete_pages", "queue_delete")],
+            [],
+        )
+
+    def test_a_page_change_during_the_overlay_file_dialog_warns_and_saves_nothing(self):
+        helper = Sp3a5hOverlayImageSelectionTests()
+        coordinator, saved = helper._build()
+
+        def choose_while_page_changes(_window, _current):
+            coordinator.ui_state_manager.active_page_uid = "p2"
+            return "new.pdf"
+
+        with (
+            patch(
+                f"{_SP3A5H_MOD}.select_overlay_image_path",
+                side_effect=choose_while_page_changes,
+            ),
+            patch(f"{_SP3A5H_MOD}.show_warning") as warning,
+        ):
+            coordinator.select_overlay_image()
+        warning.assert_called_once_with(
+            "main-window",
+            "Overlay Selection Cancelled",
+            "The selected page changed while the file dialog was open. "
+            "Please choose the overlay again.",
+        )
+        self.assertEqual(saved, [])
+
+
+class Sp3a5jOrderingTests(unittest.TestCase):
+    def test_a_failing_subscribe_is_not_recorded_as_a_subscription(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._subscriptions = []
+
+        def failing_subscribe(_event, _callback):
+            raise RuntimeError("bus closed")
+
+        coordinator.event_bus = SimpleNamespace(subscribe=failing_subscribe)
+        with self.assertRaises(RuntimeError):
+            coordinator._subscribe("event", len)
+        self.assertEqual(coordinator._subscriptions, [])
+        seen = []
+        coordinator.event_bus = SimpleNamespace(
+            subscribe=lambda event, callback: seen.append((event, callback))
+        )
+        coordinator._subscribe("event", len)
+        self.assertEqual(seen, [("event", len)])
+        self.assertEqual(coordinator._subscriptions, [("event", len)])
+
+    def test_the_export_menu_state_updates_the_menu_before_the_toolbar(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        log = []
+        coordinator._update_menu_state = lambda: log.append("menu")
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: log.append("toolbar"))
+        coordinator._update_export_menu_state()
+        self.assertEqual(log, ["menu", "toolbar"])
+
+    def test_the_undo_history_follows_the_selected_bid(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("db", "5")
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        seen = []
+        coordinator._undo_service = SimpleNamespace(set_active_bid=seen.append)
+        coordinator._sync_undo_bid()
+        self.assertEqual(seen, [bid_ref])
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: None
+        )
+        coordinator._sync_undo_bid()
+        self.assertEqual(seen, [bid_ref, None])
+        coordinator._undo_service = None
+        coordinator._sync_undo_bid()
+        self.assertEqual(seen, [bid_ref, None])
+
+    def test_the_recovery_warning_is_shown_after_the_plan_was_prepared(self):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = SimpleNamespace(
+            get_current_file_path=lambda: "database"
+        )
+        coordinator._deferred_persistence = SimpleNamespace(
+            cancel_for_file=lambda _database_id: None
+        )
+        coordinator._sql_collaboration = SimpleNamespace(
+            resume_controlled_recovery=lambda _database_id: False
+        )
+        coordinator._prepare_for_modal_mutation_error = lambda database_id: (
+            log.append(("prepare", database_id))
+        )
+        coordinator.main_window = "window"
+        with patch(
+            f"{_COORDINATOR}.show_warning",
+            side_effect=lambda *args: log.append(("warning", args[1:])),
+        ):
+            coordinator._on_full_reconciliation_required("database", "gap")
+        self.assertEqual(
+            log,
+            [("prepare", "database"), ("warning", ("SQL Synchronization", "gap"))],
+        )
+
+    def test_a_failed_page_delete_clears_the_staged_selection_before_the_dialog(self):
+        log = []
+        coordinator, _state = Sp3a5hDeleteCurrentPageTests()._build(
+            log, stage_result=True
+        )
+        coordinator._project_write_service.delete_pages = lambda *args: (
+            log.append(("delete_pages", args)) or False
+        )
+        with patch(
+            f"{_COORDINATOR}.show_critical",
+            side_effect=lambda *args: log.append(("critical", args[1])),
+        ):
+            coordinator.delete_current_page()
+        names = [entry[0] for entry in log]
+        self.assertEqual(names[-3:], ["delete_pages", "clear", "critical"])
+
+    def test_the_bid_area_error_dialog_precedes_the_failed_completion(self):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        callbacks = []
+        coordinator._project_write_service = SimpleNamespace(
+            queue_bid_areas_save=lambda *args, **kwargs: callbacks.append(args[3])
+        )
+        coordinator.present_queued_mutation_error = lambda *args: log.append(
+            ("error", args[:2])
+        )
+        started = coordinator._save_bid_areas_async(
+            BidRef("db", "8"),
+            object(),
+            lambda success, value: log.append(("completed", success, value)),
+        )
+        self.assertTrue(started)
+        callbacks[0](
+            QueuedMutationResult(
+                database_id="db",
+                runtime_generation=1,
+                operation_id="00000000-0000-4000-8000-000000000009",
+                outcome_status=MutationOutcomeStatus.REJECTED,
+                message="busy",
+            )
+        )
+        self.assertEqual(
+            log, [("error", ("db", "Bid Areas")), ("completed", False, None)]
+        )
+
+    def test_the_staged_takeoff_restore_is_cleared_before_the_workspace_is_announced(
+        self,
+    ):
+        helper = Sp3a5bActivateTakeoffWorkspaceTests()
+        coordinator, _log = helper._build(pending_pages=["staged"])
+        seen = []
+        coordinator.main_window = SimpleNamespace(
+            notify_takeoff_workspace_activated=lambda: seen.append(
+                (
+                    coordinator._pending_takeoff_page_uids,
+                    coordinator._pending_takeoff_active_page_uid,
+                )
+            )
+        )
+        coordinator._clear_pending_hotlink_named_view_focus = lambda: None
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(seen, [(None, None)])
+
+    def _hierarchy_coordinator(self, log, *, active_bid, selected_file_path):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: active_bid,
+            get_current_file_path=lambda: "db",
+            get_bid=lambda _ref: None,
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: None, selected_file_path=selected_file_path
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=SimpleNamespace(
+                get_selected_node_state=lambda: None,
+                restore_file_selection=lambda path: log.append(("restore_file", path)),
+                notify_current_selection=lambda: log.append("notify"),
+            )
+        )
+        coordinator._do_file_refresh = lambda: log.append("refresh")
+        coordinator._sidebar = SimpleNamespace(
+            refresh_conditions_from_memory=lambda: log.append("conditions")
+        )
+        coordinator._on_file_selected = lambda path, is_database_root=False: (
+            log.append(("file_selected", path, is_database_root))
+        )
+        return coordinator
+
+    def test_a_vanished_active_bid_selects_the_file_before_restoring_its_row(self):
+        log = []
+        coordinator = self._hierarchy_coordinator(
+            log, active_bid=BidRef("db", "1"), selected_file_path="db"
+        )
+        coordinator._on_remote_hierarchy_changed("db")
+        self.assertEqual(
+            log,
+            [
+                "refresh",
+                "conditions",
+                ("file_selected", "db", True),
+                ("restore_file", "db"),
+            ],
+        )
+
+    def test_an_unselected_database_restores_its_row_before_notifying_the_selection(
+        self,
+    ):
+        log = []
+        coordinator = self._hierarchy_coordinator(
+            log, active_bid=None, selected_file_path=""
+        )
+        coordinator._on_remote_hierarchy_changed("db")
+        self.assertEqual(
+            log, ["refresh", "conditions", ("restore_file", "db"), "notify"]
+        )
+
+
+class _OrderedSurface:
+    def __init__(self, log):
+        self.log = log
+
+    def apply_mesh_data(self, *_args, **_kwargs):
+        self.log.append("apply")
+
+    def set_pending_mutation_uids(self, uids):
+        self.log.append(("pending", set(uids)))
+
+    def begin_scene_load(self, bid_ref):
+        self.log.append(("begin", bid_ref))
+
+    def prepare_scene_refresh(self, bid_ref, pages):
+        self.log.append(("prepare", bid_ref, tuple(pages)))
+
+
+class Sp3a5jMeshOrderingTests(unittest.TestCase):
+    BID = BidRef("db", "7")
+
+    def test_a_live_surface_gets_the_scene_before_its_pending_mutation_highlights(
+        self,
+    ):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["p1"]
+        )
+        coordinator._last_mesh_scene = None
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator._is_embedded_3d_active = lambda: True
+        coordinator._is_detached_mesh_visible = lambda: False
+        coordinator.opengl_viewer = _OrderedSurface(log)
+        coordinator._mesh_window = None
+        coordinator._pending_3d_takeoff_uids_by_bid = {self.BID: {"t1"}}
+        coordinator._plan_view_signaler = SimpleNamespace(
+            request=lambda: log.append("plan_request")
+        )
+        coordinator._on_native_scene_updated(
+            [], MeshSceneIdentity(self.BID, ("p1",), 2), False
+        )
+        self.assertEqual(log, ["apply", ("pending", {"t1"}), "plan_request"])
+
+    def test_a_bid_load_begins_each_scene_before_projecting_its_pending_highlights(
+        self,
+    ):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._invalidate_mesh_scene_request = lambda: log.append("invalidate")
+        coordinator.opengl_viewer = _OrderedSurface(log)
+        coordinator._mesh_window = None
+        coordinator._pending_3d_takeoff_uids_by_bid = {self.BID: {"t2"}}
+        coordinator._begin_mesh_views_for_bid_load(self.BID)
+        self.assertEqual(log, ["invalidate", ("begin", self.BID), ("pending", {"t2"})])
+
+    def test_invalidating_a_scene_request_cancels_the_refresh_before_dropping_state(
+        self,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._last_mesh_scene = "stale"
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
+
+        def cancel():
+            coordinator._last_mesh_scene = "late publication"
+            coordinator._mesh_scene_dirty = True
+            coordinator._dirty_mesh_page_uids = {"p1"}
+            coordinator._pending_dirty_mesh_refresh = True
+
+        coordinator.visualization_service = SimpleNamespace(
+            cancel_mesh_view_refresh=cancel
+        )
+        coordinator._invalidate_mesh_scene_request()
+        self.assertIsNone(coordinator._last_mesh_scene)
+        self.assertIs(coordinator._mesh_scene_dirty, False)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, set())
+        self.assertIs(coordinator._pending_dirty_mesh_refresh, False)
+
+    def test_an_empty_page_selection_clears_the_dirty_state_before_refreshing(self):
+        log = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID
+        )
+        coordinator._last_mesh_scene = None
+        coordinator.opengl_viewer = _OrderedSurface(log)
+        coordinator._mesh_window = None
+        coordinator._clear_mesh_dirty_state = lambda: log.append("clear_dirty")
+        coordinator.visualization_service = SimpleNamespace(
+            refresh_mesh_view=lambda pages: log.append(("refresh", list(pages)))
+        )
+        coordinator._request_or_defer_mesh_refresh([])
+        self.assertEqual(
+            log, [("prepare", self.BID, ()), "clear_dirty", ("refresh", [])]
+        )
+
+
+class Sp3a5jOrderedWindowOpenTests(unittest.TestCase):
+    def test_the_action_is_checked_before_the_window_is_shown(self):
+        log = []
+        BID = BidRef("db", "7")
+
+        class Window(_MeshWindowFake):
+            def show_initial_window(self):
+                log.append("show")
+
+            def set_pending_mutation_uids(self, uids):
+                log.append("pending")
+
+        coordinator = _bare()
+        coordinator._mesh_window = None
+        coordinator._icon_provider = None
+        coordinator._color_service = None
+        coordinator._plan_texture_provider = None
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
+        coordinator._mesh_scene_dirty = False
+        coordinator._last_mesh_scene = None
+        coordinator._plan_view_handler = None
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: [], get_selected_page_uids=lambda: ["p1"]
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BID, active_page_uid="p1"
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: False)
+        coordinator.main_window = SimpleNamespace(menu_controller=None)
+        coordinator._sync_overlay_display_mode = lambda _uid: log.append("overlay")
+        coordinator._sync_mesh_window_action = lambda visible: log.append(
+            ("action", visible)
+        )
+        coordinator._replay_mesh_if_current = lambda _window: True
+        with patch(f"{_COORDINATOR}.MeshViewWindow", Window):
+            coordinator.set_mesh_window_visible(True)
+        self.assertEqual(log, ["pending", "overlay", ("action", True), "show"])
+
+
+class _Sp3a5jDeferredFlags:
+    def __init__(self, scheduled):
+        self.scheduled = scheduled
+        self.calls = []
+
+    def schedule_page_invert(self, *args, **kwargs):
+        self.calls.append(("invert", args, kwargs))
+        return self.scheduled
+
+    def schedule_page_bitonal(self, *args, **kwargs):
+        self.calls.append(("bitonal", args, kwargs))
+        return self.scheduled
+
+
+class Sp3a5jPageImageFlagRestoreTests(unittest.TestCase):
+    BID = BidRef("db", "7")
+
+    def _coordinator(self, scheduled):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        self.page = SimpleNamespace(invert=True, bitonal=True)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="p1", get_selected_bid_ref=lambda: self.BID
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.project_data = SimpleNamespace(get_page=lambda _uid: self.page)
+        coordinator._save_current_page_view_state = lambda **_kwargs: None
+        self.deferred = _Sp3a5jDeferredFlags(scheduled)
+        coordinator._deferred_persistence = self.deferred
+        self.projected = []
+        coordinator._project_page_image_flag_if_current = lambda *args: (
+            self.projected.append(args)
+        )
+        return coordinator
+
+    def test_the_restore_callback_projects_the_value_the_page_had_before(self):
+        for flag, toggle in (
+            ("invert", "toggle_page_invert"),
+            ("bitonal", "toggle_page_bitonal"),
+        ):
+            with self.subTest(flag=flag):
+                coordinator = self._coordinator(scheduled=False)
+                getattr(coordinator, toggle)(False)
+                ((name, args, kwargs),) = self.deferred.calls
+                self.assertEqual(name, flag)
+                self.assertEqual(args, ("db", "p1", False))
+                self.assertEqual(kwargs["bid_uid"], "7")
+                self.assertEqual(self.projected, [])
+                kwargs["restore_authoritative"]()
+                kwargs["project_value"]()
+                setter = getattr(coordinator, "_set_page_" + flag)
+                self.assertEqual(
+                    self.projected,
+                    [
+                        (self.BID, "p1", flag, setter, True, self.page),
+                        (self.BID, "p1", flag, setter, False, self.page),
+                    ],
+                )
+
+    def test_a_scheduled_toggle_projects_the_new_value_at_once(self):
+        coordinator = self._coordinator(scheduled=True)
+        coordinator.toggle_page_invert(False)
+        setter = coordinator._set_page_invert
+        self.assertEqual(
+            self.projected, [(self.BID, "p1", "invert", setter, False, self.page)]
+        )
+
+
+class Sp3a5jRenameDialogOwnersTests(unittest.TestCase):
+    def test_the_direct_save_hands_the_page_owners_of_every_target_to_the_save(self):
+        helper = Sp3a5hRenamePageDialogTests()
+        helper.setUp()
+        log = []
+        pages = {uid: Page(uid=uid, name=f"name-{uid}") for uid in ("p1", "p2")}
+        coordinator = helper._coordinator(log, get_page=lambda uid: pages.get(uid))
+        saved = []
+        coordinator._save_page_name = lambda *args: saved.append(args) or True
+        helper._open(coordinator, log)
+        (dialog,) = _Sp3a5hRenameDialog.instances
+        self.assertIs(dialog.kwargs["save_fn"]("p2", "New"), True)
+        ((bid_ref, page_uid, active_page, owners, target_uid, new_name),) = saved
+        self.assertEqual(
+            (bid_ref, page_uid, target_uid, new_name), (helper.BID, "p1", "p2", "New")
+        )
+        self.assertIs(active_page, pages["p1"])
+        self.assertEqual(owners, pages)
+        self.assertIs(owners["p2"], pages["p2"])
+
+
+class Sp3a5jRenameLeaseOrderTests(unittest.TestCase):
+    def test_the_sql_rename_dialog_is_bound_to_its_lease_before_it_is_executed(self):
+        helper = Sp3a5hRenamePageDialogTests()
+        helper.setUp()
+        log = []
+        coordinator = helper._coordinator(log, sql=True)
+        bound_at_exec = []
+        coordinator._exec_with_collaboration_lease = lambda *args, **kwargs: (
+            bound_at_exec.append(list(kwargs["lease_session"].bound))
+        )
+        helper._open(coordinator, log)
+        (dialog,) = _Sp3a5hRenameDialog.instances
+        self.assertEqual(bound_at_exec, [[dialog]])

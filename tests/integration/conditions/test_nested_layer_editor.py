@@ -137,7 +137,12 @@ class NestedLayerEditorConditionBehaviorTests(unittest.TestCase):
             parent._layer_used_uids_fn = fail_usage
             with patch(
                 "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
-            ) as error, patch.object(QtWidgets.QMessageBox, "question") as question:
+            ) as error, patch.object(
+                QtWidgets.QMessageBox, "question"
+            ) as question, patch(
+                "ost_visualizer.presentation.dialogs.layers_dialog.confirm_multi_delete",
+                side_effect=AssertionError("usage failure reached the confirmation"),
+            ):
                 child._on_delete()
             error.assert_called_once_with(
                 child, "Delete Layer", "Failed to validate layer usage."

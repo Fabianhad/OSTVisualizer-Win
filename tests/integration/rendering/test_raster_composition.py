@@ -346,3 +346,35 @@ class RasterViewportCompositionTests(unittest.TestCase):
             self.first.render_overlay_only(self.page, 1.0),
             self.second.render_overlay_only(other_page, 1.0),
         )
+
+    def test_clear_composites_during_render_never_stores_the_cleared_result(self):
+        entered, release = threading.Event(), threading.Event()
+        results = []
+        draw = self.first._draw_overlay_raster_frame
+
+        def blocked(*args):
+            entered.set()
+            if not release.wait(2):
+                raise AssertionError("Raster composition was not released")
+            return draw(*args)
+
+        with patch.object(
+            self.first, "_draw_overlay_raster_frame", side_effect=blocked
+        ):
+            thread = threading.Thread(target=lambda: results.append(self.render()))
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.cache.clear_composites()
+            finally:
+                release.set()
+                thread.join(2)
+        self.assertFalse(thread.is_alive())
+        # The in-flight caller still receives its pixels, but the cleared
+        # generation must not repopulate the cache with them.
+        self.assertEqual(len(results), 1)
+        self.assertIsNotNone(results[0])
+        self.assertEqual(len(self.cache._composite_cache), 0)
+        again = self.render(self.second)
+        self.assertEqual(again, results[0])
+        self.assertEqual(len(self.cache._composite_cache), 1)

@@ -13,7 +13,14 @@ from tests.helpers.sql.collaboration import _change
 
 
 class BidCollectionDraftConflictTests(unittest.TestCase):
-    def begin(self, drafts, resource, database="database", dependency=False):
+    def begin(
+        self,
+        drafts,
+        resource,
+        database="database",
+        dependency=False,
+        runtime_generation=1,
+    ):
         draft = drafts.begin(
             draft_type="conditions_editor",
             database_id=database,
@@ -27,7 +34,7 @@ class BidCollectionDraftConflictTests(unittest.TestCase):
             ),
             dependency_resources=(resource,) if dependency else (),
         )
-        drafts.activate(draft.draft_id, (), runtime_generation=1)
+        drafts.activate(draft.draft_id, (), runtime_generation=runtime_generation)
         return draft
 
     def test_coalesced_conditions_notify_before_replacing_editor_objects(self):
@@ -38,7 +45,11 @@ class BidCollectionDraftConflictTests(unittest.TestCase):
         old = Condition("42", name="Editor baseline")
         context.data.replace_condition_family(context.fixture.bid_ref, {"42": old}, {})
         drafts = context.coordinator._local_drafts
-        draft = self.begin(drafts, ResourceRef("condition", "42", 8))
+        draft = self.begin(
+            drafts,
+            ResourceRef("condition", "42", 8),
+            runtime_generation=context.runtime.generation,
+        )
         notifications = []
 
         def notified(**payload):
@@ -95,7 +106,7 @@ class BidCollectionDraftConflictTests(unittest.TestCase):
 
 
 class EntityCollectionDraftConflictTests(unittest.TestCase):
-    def begin(self, registry, collection):
+    def begin(self, registry, collection, runtime_generation=1):
         draft = registry.begin(
             draft_type="cover_sheet_editor",
             database_id="database",
@@ -105,7 +116,7 @@ class EntityCollectionDraftConflictTests(unittest.TestCase):
             affected_resources=(ResourceRef("cover_sheet", "8", 8),),
             dependency_resources=(collection,),
         )
-        registry.activate(draft.draft_id, (), runtime_generation=1)
+        registry.activate(draft.draft_id, (), runtime_generation=runtime_generation)
         return draft
 
     def test_individual_condition_notifies_cover_sheet_collection_dependency(self):
@@ -116,7 +127,11 @@ class EntityCollectionDraftConflictTests(unittest.TestCase):
         old = Condition("42", name="Opening snapshot")
         context.data.replace_condition_family(context.fixture.bid_ref, {"42": old}, {})
         registry = context.coordinator._local_drafts
-        draft = self.begin(registry, ResourceRef("conditions_collection", "8", 8))
+        draft = self.begin(
+            registry,
+            ResourceRef("conditions_collection", "8", 8),
+            runtime_generation=context.runtime.generation,
+        )
         notices = []
 
         def notified(**payload):
@@ -178,3 +193,166 @@ class EntityCollectionDraftConflictTests(unittest.TestCase):
                         ],
                         [draft.draft_id],
                     )
+
+
+class DraftConflictScopeTests(unittest.TestCase):
+    """Negative controls: conflicts stay within the draft database, Bid, family."""
+
+    KINDS = ("condition", "page", "area", "annotation", "layer", "takeoff")
+
+    @staticmethod
+    def _uid(kind, uid):
+        return f"text/{uid}" if kind == "annotation" else str(uid)
+
+    @staticmethod
+    def _begin(registry, *resources, database="database", bid=8):
+        return registry.begin(
+            draft_type="editor",
+            database_id=database,
+            bid_uid=bid,
+            page_uid=None,
+            owning_surface="dialog",
+            affected_resources=resources,
+        )
+
+    def _conflicting_drafts(self, registry, resource, database="database"):
+        return [
+            c.draft_id
+            for c in registry.conflicts_for_changes(
+                database, (_change(database, resource),)
+            )
+        ]
+
+    def test_bid_collection_change_conflicts_only_with_drafts_of_the_same_bid(self):
+        for kind in self.KINDS:
+            with self.subTest(kind=kind):
+                records = [
+                    _RecordedMutation(
+                        ResourceRef(kind, self._uid(kind, uid), 8),
+                        ChangeOperation.UPDATE,
+                    )
+                    for uid in range(1, 452)
+                ]
+                (collection,) = SqlProjectWriter._coalesce_records(records)
+                self.assertEqual(collection.resource.bid_uid, 8)
+                registry = LocalDraftRegistry()
+                same_bid = self._begin(
+                    registry, ResourceRef(kind, self._uid(kind, 5), 8)
+                )
+                other_bid = self._begin(
+                    registry, ResourceRef(kind, self._uid(kind, 905), 9), bid=9
+                )
+                foreign_kind = "page" if kind != "page" else "condition"
+                foreign_family = self._begin(
+                    registry, ResourceRef(foreign_kind, "7", 8)
+                )
+                self.assertEqual(
+                    self._conflicting_drafts(registry, collection.resource),
+                    [same_bid.draft_id],
+                )
+                for untouched in (other_bid, foreign_family):
+                    self.assertEqual(
+                        registry.get(untouched.draft_id).state,
+                        LocalDraftState.PENDING,
+                    )
+                self.assertEqual(
+                    self._conflicting_drafts(
+                        registry, collection.resource, database="other-database"
+                    ),
+                    [],
+                )
+
+    def test_entity_change_conflicts_only_with_its_own_bid_collection_draft(self):
+        for entity, collection in (
+            ("condition", "conditions_collection"),
+            ("page", "pages_collection"),
+            ("area", "areas_collection"),
+            ("annotation", "annotations_collection"),
+            ("takeoff", "takeoffs_collection"),
+            ("layer", "layers_collection"),
+        ):
+            with self.subTest(entity=entity):
+                registry = LocalDraftRegistry()
+                owner = self._begin(registry, ResourceRef(collection, "8", 8))
+                other_bid = self._begin(
+                    registry, ResourceRef(collection, "9", 9), bid=9
+                )
+                change = ResourceRef(entity, self._uid(entity, 42), 8)
+                self.assertEqual(
+                    self._conflicting_drafts(registry, change), [owner.draft_id]
+                )
+                self.assertEqual(
+                    registry.get(other_bid.draft_id).state, LocalDraftState.PENDING
+                )
+                self.assertEqual(
+                    self._conflicting_drafts(registry, change, database="elsewhere"),
+                    [],
+                )
+                # A different entity family in the same Bid is not covered.
+                foreign = "page" if entity != "page" else "condition"
+                self.assertEqual(
+                    self._conflicting_drafts(registry, ResourceRef(foreign, "42", 8)),
+                    [],
+                )
+
+    def test_database_wide_collection_conflicts_with_every_bid(self):
+        registry = LocalDraftRegistry()
+        draft = self._begin(
+            registry, ResourceRef("conditions_collection", "9", 9), bid=9
+        )
+        wide_change = ResourceRef("conditions_collection", "database")
+        self.assertEqual(
+            self._conflicting_drafts(registry, wide_change), [draft.draft_id]
+        )
+        wide_draft_registry = LocalDraftRegistry()
+        wide_draft = self._begin(
+            wide_draft_registry,
+            ResourceRef("conditions_collection", "database"),
+            bid=None,
+        )
+        self.assertEqual(
+            self._conflicting_drafts(
+                wide_draft_registry, ResourceRef("condition", "42", 8)
+            ),
+            [wide_draft.draft_id],
+        )
+        self.assertEqual(
+            self._conflicting_drafts(wide_draft_registry, ResourceRef("page", "42", 8)),
+            [],
+        )
+
+    def test_exact_entity_identity_conflicts_and_neighbours_do_not(self):
+        registry = LocalDraftRegistry()
+        draft = self._begin(registry, ResourceRef("condition", "42", 8))
+        self.assertEqual(
+            self._conflicting_drafts(registry, ResourceRef("condition", "42", 8)),
+            [draft.draft_id],
+        )
+        fresh = LocalDraftRegistry()
+        self._begin(fresh, ResourceRef("condition", "42", 8))
+        for neighbour in (
+            ResourceRef("condition", "43", 8),
+            ResourceRef("page", "42", 8),
+        ):
+            with self.subTest(neighbour=neighbour):
+                self.assertEqual(self._conflicting_drafts(fresh, neighbour), [])
+
+    def test_a_draft_is_reported_once_for_several_overlapping_changes(self):
+        registry = LocalDraftRegistry()
+        draft = self._begin(
+            registry,
+            ResourceRef("condition", "42", 8),
+            ResourceRef("condition", "43", 8),
+        )
+        conflicts = registry.conflicts_for_changes(
+            "database",
+            (
+                _change("database", ResourceRef("condition", "42", 8), 1),
+                _change("database", ResourceRef("condition", "43", 8), 2),
+            ),
+        )
+        self.assertEqual([c.draft_id for c in conflicts], [draft.draft_id])
+        self.assertEqual(
+            conflicts[0].changed_resource, ResourceRef("condition", "42", 8)
+        )
+        self.assertEqual(registry.get(draft.draft_id).state, LocalDraftState.CONFLICTED)

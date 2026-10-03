@@ -1087,6 +1087,13 @@ class ProjectDataService:
                     return project_uid
         return None
 
+    def find_owning_bid_uid_for_page(
+        self, file_path: str, page_uid: str
+    ) -> Optional[str]:
+        return self.model.get_hierarchy_data().find_bid_uid_for_page(
+            page_uid, file_path
+        )
+
     def compute_quantities_for_pages(
         self, page_uids: List[str], only_condition_uids: Optional[set] = None
     ) -> Dict[str, Tuple[float, float, float]]:

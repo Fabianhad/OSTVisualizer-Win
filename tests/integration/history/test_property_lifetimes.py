@@ -300,6 +300,36 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
         self.assertFalse(undo.can_undo())
         self.assertFalse(undo.can_redo())
 
+    def test_late_transition_completion_cannot_touch_history_after_clear(self):
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        changes = []
+        undo.set_change_callback(lambda: changes.append("change"))
+        stale, fresh = [], []
+        undo.push(stale.append, lambda complete: None)
+        undo.undo()
+        self.assertEqual(len(stale), 1)
+        undo.clear()
+        undo.push(fresh.append, lambda complete: None)
+        undo.undo()
+        self.assertEqual(len(fresh), 1)
+        notifications = len(changes)
+        # The first generation's undo reports an uncertain commit late: it must
+        # not mark or notify anything in the new generation's history.
+        stale[0](
+            replace(
+                self.committed(),
+                outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            )
+        )
+        self.assertEqual(len(changes), notifications)
+        self.assertFalse(undo.can_undo())
+        self.assertFalse(undo.can_redo())
+        # Positive control: the current generation's own completion still lands.
+        fresh[0](self.committed())
+        self.assertTrue(undo.can_redo())
+        self.assertFalse(undo.can_undo())
+
     def test_late_placement_undo_cannot_suspend_new_history_after_invalidation(self):
         handler, data, write, undo = self.make_handler()
         write.sql_collaboration_mutations = True
@@ -347,6 +377,29 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
                 undo.undo()
                 undo.undo()
                 self.assertEqual(write.local_properties[-1][3][0][0], "restored-parent")
+
+    def test_older_property_history_refuses_takeoff_that_changed_pages(self):
+        for moved in (False, True):
+            with self.subTest(moved=moved):
+                handler, data, write, undo = self.make_handler()
+                handler.on_assign_to_area(["parent"])
+                writes = len(write.local_properties)
+                if moved:
+                    data.takeoffs["parent"] = replace(
+                        data.takeoffs["parent"], page_uid="p2"
+                    )
+                    with self.assertLogs(undo.logger, "ERROR") as logs:
+                        undo.undo()
+                    self.assertIn(
+                        "The property history Takeoff no longer owns its Page.",
+                        logs.output[0],
+                    )
+                    self.assertEqual(len(write.local_properties), writes)
+                else:
+                    # Positive control: an unchanged Takeoff is undone normally.
+                    undo.undo()
+                    self.assertEqual(len(write.local_properties), writes + 1)
+                    self.assertEqual(write.local_properties[-1][3][0][0], "parent")
 
     def test_late_related_completions_cannot_recreate_invalidated_history(self):
         for kind in ("delete", "paste", "geometry", "placement"):

@@ -41,9 +41,15 @@ def _execute_batch(
         connection.close()
 
 
+def _require_marked_server(configuration: DisposableSqlConfiguration) -> None:
+    """Refuse to touch a server that lacks the disposable-test server marker."""
+    DisposableSqlDatabase(configuration)._verify_server_marker()
+
+
 class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
     def test_authentication_encryption_and_engine_capabilities(self):
         configuration = DisposableSqlConfiguration.from_environment()
+        _require_marked_server(configuration)
         manager = SqlConnectionManager()
         windows_location = replace(
             configuration.location,
@@ -192,6 +198,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
 
     def test_executor_cannot_bypass_guarded_database_procedures(self):
         configuration = DisposableSqlConfiguration.from_environment()
+        _require_marked_server(configuration)
         direct_name = f"OSTV_IT_DIRECT_DENIED_{secrets.token_hex(6)}"
         _require_test_database_name(direct_name)
         direct_marker = secrets.token_hex(16)
@@ -262,8 +269,12 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
     def test_disposable_database_is_removed_after_test_failure(self):
         configuration = DisposableSqlConfiguration.from_environment()
         database = DisposableSqlDatabase(configuration)
+        # If the context manager regresses, still remove the database.
+        self.addCleanup(database.drop)
         with self.assertRaisesRegex(RuntimeError, "deliberate test failure"):
             with database:
+                # Positive control: the database exists until the failure unwinds.
+                self.assertTrue(database._database_exists())
                 raise RuntimeError("deliberate test failure")
         master_request = SqlConnectionRequest(
             configuration.location,
@@ -435,19 +446,20 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
             windows_master,
             database_override="master",
         )
-        with manager.connection(windows_master_request, autocommit=True) as lease:
-            with lease.cursor() as cursor:
-                for login, (_role, password) in accounts.items():
-                    cursor.execute(
-                        "DECLARE @secret nvarchar(128)=?; "
-                        "DECLARE @statement nvarchar(max)=N'CREATE LOGIN "
-                        f"[{login}] WITH PASSWORD=' + "
-                        "QUOTENAME(@secret, NCHAR(39)) + "
-                        "N', CHECK_POLICY=ON, CHECK_EXPIRATION=OFF'; "
-                        "EXEC sys.sp_executesql @statement",
-                        password,
-                    )
+        _require_marked_server(configuration)
         try:
+            with manager.connection(windows_master_request, autocommit=True) as lease:
+                with lease.cursor() as cursor:
+                    for login, (_role, password) in accounts.items():
+                        cursor.execute(
+                            "DECLARE @secret nvarchar(128)=?; "
+                            "DECLARE @statement nvarchar(max)=N'CREATE LOGIN "
+                            f"[{login}] WITH PASSWORD=' + "
+                            "QUOTENAME(@secret, NCHAR(39)) + "
+                            "N', CHECK_POLICY=ON, CHECK_EXPIRATION=OFF'; "
+                            "EXEC sys.sp_executesql @statement",
+                            password,
+                        )
             with DisposableSqlDatabase(configuration) as database:
                 windows_location = replace(
                     database.location,

@@ -81,6 +81,13 @@ class ConditionUomConsistencyTests(unittest.TestCase):
             projects=[],
         )
         service = ProjectDataService(model)
+        # Preconditions: the Bid is imperial and the Condition carries imperial
+        # codes, so the later metric assertions are real changes.
+        self.assertEqual(model.current_bid.measure_base, 0)
+        self.assertEqual(
+            (condition.uom1, condition.uom2, condition.uom3),
+            (UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET),
+        )
         service.replace_database_hierarchy(
             HierarchyFileEntry(file_path=bid_ref.file_path), {}
         )
@@ -91,6 +98,7 @@ class ConditionUomConsistencyTests(unittest.TestCase):
         )
         reconstructed_after_rename = _uom_support__condition()
         reconstructed_after_rename.name = "Renamed"
+        self.assertEqual(reconstructed_after_rename.uom1, UOM_LINEAR_FEET)
         self.assertTrue(
             service.replace_condition_family(
                 bid_ref, {condition.uid: reconstructed_after_rename}, {}
@@ -104,3 +112,6 @@ class ConditionUomConsistencyTests(unittest.TestCase):
             ),
             (UOM_M, UOM_M2, UOM_M3),
         )
+        # The normalized replacement is what the model now holds.
+        self.assertIs(model.bid_conditions[condition.uid], reconstructed_after_rename)
+        self.assertEqual(model.bid_conditions[condition.uid].name, "Renamed")

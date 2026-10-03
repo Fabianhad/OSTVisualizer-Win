@@ -3,6 +3,7 @@ from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     MutationOutcomeStatus,
+    ResourceRef,
 )
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -25,8 +26,10 @@ class TakeoffLifecycleRequestTests(unittest.TestCase):
         handler._clipboard_svc = SelectionClipboardService()
         handler._clipboard_svc.copy([], source_bid_uid="6", source_file_path="bid.mdb")
         submitted = []
-        write.execute_plan_items_paste_local = lambda _database, payload, **_options: (
+        submitted_options = []
+        write.execute_plan_items_paste_local = lambda _database, payload, **options: (
             submitted.append(payload)
+            or submitted_options.append(options)
             or MutationExecutionResult(
                 outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT
             )
@@ -46,6 +49,20 @@ class TakeoffLifecycleRequestTests(unittest.TestCase):
             "6",
         )
         self.assertEqual(len(submitted), 1)
+        payload = submitted[0]
+        # The child restore is one payload that names the cross-Bid source and
+        # its Condition as a dependency of the destination write.
+        self.assertEqual(
+            (payload.source_bid_uid, len(payload.takeoff_specs)),
+            ("6", 1),
+        )
+        spec = payload.takeoff_specs[0]
+        self.assertEqual((spec.condition_uid, spec.parent_uid), ("c1", "parent"))
+        self.assertEqual(payload.takeoff_external_parent_sources, ())
+        self.assertEqual(
+            submitted_options[0]["dependency_resources"],
+            (ResourceRef("condition", "c1", 6),),
+        )
         self.assertEqual(write.condition_duplicate_calls, [])
         self.assertFalse(undo.can_undo())
 
@@ -125,39 +142,64 @@ class TakeoffLifecycleRequestTests(unittest.TestCase):
         count = Takeoff(
             uid="count", condition_uid="c1", page_uid="p1", position=[20, 20]
         )
-        attachment = Takeoff(
-            uid="point",
-            condition_uid="attachment",
-            page_uid="p1",
-            parent_uid="parent",
-            position=[9, 9],
-        )
-        prepared = handler._prepare_plan_items_paste(
-            handler._ui_state.get_selected_bid_ref(),
-            "p1",
-            "0",
-            [count],
-            [attachment],
-            [],
-        )
-        self.assertIsNone(prepared)
-        self.assertEqual(write.calls, [])
+        # Parent is the 10 x 10 square; the attachment footprint is 4 x 4 around its
+        # centre, so [9, 9] sticks out (7..11) while [5, 5] fits (3..7).
+        for centre, fits in (([5, 5], True), ([9, 9], False)):
+            with self.subTest(centre=centre):
+                write.calls.clear()
+                attachment = Takeoff(
+                    uid="point",
+                    condition_uid="attachment",
+                    page_uid="p1",
+                    parent_uid="parent",
+                    position=centre,
+                )
+                prepared = handler._prepare_plan_items_paste(
+                    handler._ui_state.get_selected_bid_ref(),
+                    "p1",
+                    "0",
+                    [count],
+                    [attachment],
+                    [],
+                )
+                if fits:
+                    # Positive control: the same paste is prepared when it fits.
+                    self.assertIsNotNone(prepared)
+                else:
+                    self.assertIsNone(prepared)
+                # Preparing a paste never submits anything by itself.
+                self.assertEqual(write.calls, [])
 
     def test_deleting_any_ancestor_includes_complete_descendant_graph(self):
-        for selected, expected in (
-            ("parent", {"parent", "child", "grandchild"}),
-            ("child", {"child", "grandchild"}),
-        ):
-            with self.subTest(selected=selected):
-                handler, data, write, _undo = (
-                    history_fixtures.PlanPropertyHistoryIdentityTests().make_handler()
-                )
-                data.takeoffs["grandchild"] = replace(
-                    data.takeoffs["child"], uid="grandchild", parent_uid="child"
-                )
-                write.sql_collaboration_mutations = True
-                handler.on_elements_deleted([selected])
-                self.assertEqual(set(write.queued_deletes[-1][2]), expected)
+        for sql in (True, False):
+            for selected, expected in (
+                ("parent", {"parent", "child", "grandchild"}),
+                ("child", {"child", "grandchild"}),
+            ):
+                with self.subTest(sql=sql, selected=selected):
+                    handler, data, write, _undo = (
+                        history_fixtures.PlanPropertyHistoryIdentityTests().make_handler()
+                    )
+                    data.takeoffs["grandchild"] = replace(
+                        data.takeoffs["child"], uid="grandchild", parent_uid="child"
+                    )
+                    write.sql_collaboration_mutations = sql
+                    handler.on_elements_deleted([selected])
+                    if sql:
+                        # Queued SQL work carries the full graph; nothing is removed
+                        # locally until the authoritative projection arrives.
+                        self.assertEqual(set(write.queued_deletes[-1][2]), expected)
+                        self.assertEqual(write.local_deletes, [])
+                        self.assertEqual(
+                            set(data.takeoffs), {"parent", "child", "grandchild"}
+                        )
+                    else:
+                        self.assertEqual(set(write.local_deletes[-1][2]), expected)
+                        self.assertEqual(write.queued_deletes, [])
+                        self.assertEqual(
+                            set(data.takeoffs),
+                            {"parent", "child", "grandchild"} - expected,
+                        )
 
     def test_copy_parent_captures_detached_descendant_snapshot(self):
         handler, data, _write, _undo = (

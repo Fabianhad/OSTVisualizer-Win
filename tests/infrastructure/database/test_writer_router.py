@@ -9,6 +9,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     MutationOutcomeStatus,
     ResourceRef,
+    SynchronizationConflictKind,
 )
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
@@ -17,6 +18,7 @@ from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
 from ost_visualizer.domain.entities.database_descriptor import (
+    DatabaseBackend,
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
 )
@@ -33,9 +35,16 @@ from ost_visualizer.infrastructure.database.writer_router import DatabaseProject
 from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
     ACCESS_BULK_CHUNK_SIZE,
 )
-from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
+from ost_visualizer.infrastructure.mdb.connection_manager import (
+    MdbConnectionManager,
+    WriteBlockedError,
+)
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.schema_compatibility import MdbSchemaInspector
+from ost_visualizer.infrastructure.sql.errors import (
+    SqlErrorCode,
+    SqlInfrastructureError,
+)
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
@@ -43,7 +52,10 @@ from tests.helpers.sql.cleanup_support import (
     DatabaseMutationRequest as _cleanup_support_DatabaseMutationRequest,
     _AccessTransactionConnections as _cleanup_support__AccessTransactionConnections,
     _CredentialStore as _cleanup_support__CredentialStore,
+    _WriterCursor as _cleanup_support__WriterCursor,
+    _WriterLease as _cleanup_support__WriterLease,
     _WriterManager as _cleanup_support__WriterManager,
+    _canonical_writer_permission_snapshot as _cleanup_support__canonical_writer_permission_snapshot,
 )
 from tests.helpers.sql.database_foundation_support import (
     _CredentialStore as _database_foundation_support__CredentialStore,
@@ -389,12 +401,14 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
         mutation_token = writer._active_mutation.set(mutation_state)
         try:
             with writer._backend_scope("example.mdb"):
-                self.assertFalse(writer._record_caught_mutation_error(original))
-                self.assertTrue(writer._is_access_resource_exceeded(resource_error))
+                self.assertIs(writer._record_caught_mutation_error(original), False)
+                self.assertIs(writer._is_access_resource_exceeded(resource_error), True)
             self.assertIsNone(mutation_state.operation_error)
             with writer._backend_scope(descriptor.database_id):
-                self.assertTrue(writer._record_caught_mutation_error(original))
-                self.assertFalse(writer._is_access_resource_exceeded(resource_error))
+                self.assertIs(writer._record_caught_mutation_error(original), True)
+                self.assertIs(
+                    writer._is_access_resource_exceeded(resource_error), False
+                )
             self.assertIs(mutation_state.operation_error, original)
         finally:
             writer._active_mutation.reset(mutation_token)
@@ -1086,3 +1100,410 @@ class WriterRouterDatabaseDescriptorTests(unittest.TestCase):
             writer._convert_sql_import_value("not-a-date", "datetime2")
         with self.assertRaisesRegex(RuntimeError, "Unsupported SQL import type"):
             writer._convert_sql_import_value("value", "xml")
+
+
+def _sql_descriptor_registry():
+    registry = DatabaseDescriptorRegistry()
+    descriptor = DatabaseDescriptor.for_sql_server(
+        SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+        schema_version=SQL_SCHEMA_V1.version,
+    )
+    registry.register(descriptor)
+    return registry, descriptor
+
+
+class WriterRouterBackendBoundaryTests(unittest.TestCase):
+    """Second pass: explicit dispatch, scope ownership and mutation boundaries.
+    Access runs through the real MdbWriter code on fake or sqlite/real-Access
+    connections; SQL runs through the real SqlProjectWriter code on fake leases
+    (no live SQL Server exists here, so only the routing and the writer-side
+    boundary logic are proven, never server behaviour).
+    """
+
+    def test_every_backend_divergent_member_is_overridden_by_the_router(self):
+        # Python resolves DatabaseProjectWriter -> SqlProjectWriter -> MdbWriter,
+        # so an Access locator would silently run SQL Server code for any
+        # inherited member the two backends implement differently unless the
+        # router dispatches it. Compare the two backends' own resolution.
+        def resolved(cls, name):
+            member = getattr(cls, name, None)
+            return getattr(member, "__func__", member)
+
+        names = {
+            name
+            for cls in (MdbWriter, SqlProjectWriter)
+            for name in dir(cls)
+            if not (name.startswith("__") and name.endswith("__"))
+        }
+        divergent = {
+            name
+            for name in names
+            if name in dir(MdbWriter)
+            and resolved(MdbWriter, name) is not resolved(SqlProjectWriter, name)
+        }
+        self.assertTrue(
+            {
+                "_connection",
+                "_schema",
+                "_next_uid",
+                "_next_uid_preserving_references",
+                "_next_uids_preserving_references",
+                "_record_caught_mutation_error",
+                "_is_access_resource_exceeded",
+                "_global_settings_read_table_sql",
+                "_global_settings_write_table_sql",
+                "_execute_insert_values",
+                "_filter_existing_write_values",
+                "_assign_next_bid_no",
+                "_get_table_info",
+                "_load_existing_uid_candidates_by_column",
+                "_load_existing_employee_uid_candidates_by_key",
+                "_insert_page_area_selection",
+                "_run_delete_takeoffs",
+                "verify_plan_items_exist",
+                "create_project",
+                "import_ost_data",
+            }
+            <= divergent
+        )
+        self.assertEqual(divergent - set(vars(DatabaseProjectWriter)), set())
+        # Backend-specific members that exist only on the SQL side must never
+        # be reachable from the Access path except through SQL-guarded code.
+        self.assertIn("execute", vars(DatabaseProjectWriter))
+
+    def test_active_backend_scope_wins_over_the_current_registry(self):
+        registry, descriptor = _sql_descriptor_registry()
+        writer = DatabaseProjectWriter(object(), registry, object(), object())
+        self.assertIs(writer._is_sql(descriptor.database_id), True)
+        self.assertIs(writer._is_sql("example.mdb"), False)
+        with writer._backend_scope("example.mdb"):
+            self.assertIs(writer._is_sql(descriptor.database_id), False)
+            self.assertEqual(writer._backend("anything"), DatabaseBackend.ACCESS)
+            registry.unregister(descriptor.database_id)
+        registry.register(descriptor)
+        with writer._backend_scope(descriptor.database_id):
+            self.assertIs(writer._is_sql("example.mdb"), True)
+            registry.unregister(descriptor.database_id)
+            self.assertIs(writer._is_sql(descriptor.database_id), True)
+        with self.assertRaises(LookupError):
+            writer._is_sql(descriptor.database_id)
+
+    def test_access_connection_dispatches_to_the_transaction_owner_and_resets_scope(
+        self,
+    ):
+        connections = _cleanup_support__AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections, DatabaseDescriptorRegistry(), object(), object()
+        )
+        with writer._connection("example.mdb") as connection:
+            self.assertEqual(writer._current_backend(), DatabaseBackend.ACCESS)
+            self.assertIs(connections.asserted_autocommit, False)
+            self.assertEqual(connections.connection_value.commits, 0)
+            self.assertIsNotNone(connection)
+        self.assertEqual(connections.connection_value.commits, 1)
+        self.assertEqual(connections.connection_value.rollbacks, 0)
+        with self.assertRaises(RuntimeError):
+            writer._current_backend()
+        with self.assertRaisesRegex(ValueError, "failed body"):
+            with writer._connection("example.mdb"):
+                raise ValueError("failed body")
+        self.assertEqual(connections.connection_value.commits, 1)
+        self.assertEqual(connections.connection_value.rollbacks, 1)
+        with self.assertRaises(RuntimeError):
+            writer._current_backend()
+
+    def test_sql_connection_outside_a_mutation_is_refused_and_scope_is_reset(self):
+        registry, descriptor = _sql_descriptor_registry()
+
+        class _NoAccessManager:
+            def connection(self, *_args, **_kwargs):
+                raise AssertionError("a SQL operation opened an Access connection")
+
+        writer = DatabaseProjectWriter(
+            _NoAccessManager(), registry, object(), DatabaseSessionRegistry()
+        )
+        with self.assertRaisesRegex(
+            SqlInfrastructureError, "collaboration mutation transaction"
+        ) as refused:
+            with writer._connection(descriptor.database_id):
+                self.fail("a SQL write connection was granted outside a mutation")
+        self.assertEqual(refused.exception.details.code, SqlErrorCode.SESSION_EXPIRED)
+        with self.assertRaises(RuntimeError):
+            writer._current_backend()
+
+    def test_sql_connection_inside_a_mutation_is_the_transaction_lease(self):
+        registry, descriptor = _sql_descriptor_registry()
+        manager = _cleanup_support__WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+
+        class _NoAccessManager:
+            def connection(self, *_args, **_kwargs):
+                raise AssertionError("a SQL operation opened an Access connection")
+
+        writer = DatabaseProjectWriter(
+            _NoAccessManager(), registry, _cleanup_support__CredentialStore(), sessions
+        )
+        writer._sql_connections = manager
+        observed = []
+
+        def operation(_recorder):
+            with writer._connection(descriptor.database_id) as lease:
+                observed.append(("lease", lease))
+            with self.assertRaisesRegex(RuntimeError, "cannot switch databases"):
+                with writer._connection("another-database-id"):
+                    self.fail("a SQL mutation switched databases")
+            return "unrecorded"
+
+        # The operation records no affected resource, so the writer must roll
+        # the transaction back; what matters here is the lease identity.
+        with self.assertRaisesRegex(RuntimeError, "did not record"):
+            writer.execute(
+                _cleanup_support_DatabaseMutationRequest(
+                    database_id=descriptor.database_id, session_id="session-1"
+                ),
+                operation,
+            )
+        self.assertEqual(observed, [("lease", manager.lease)])
+        self.assertIs(observed[0][1], manager.lease)
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+        with self.assertRaises(RuntimeError):
+            writer._current_backend()
+
+    def test_sql_mutation_boundary_rejects_missing_or_changed_sessions_unopened(self):
+        registry, descriptor = _sql_descriptor_registry()
+        for label, registered in (
+            ("no session registered", None),
+            ("different session registered", "session-2"),
+        ):
+            with self.subTest(case=label):
+                manager = _cleanup_support__WriterManager()
+                sessions = DatabaseSessionRegistry()
+                if registered is not None:
+                    sessions.register(descriptor.database_id, registered)
+                writer = DatabaseProjectWriter(
+                    object(),
+                    registry,
+                    _cleanup_support__CredentialStore(),
+                    sessions,
+                )
+                writer._sql_connections = manager
+                calls = []
+                result = writer.execute(
+                    _cleanup_support_DatabaseMutationRequest(
+                        database_id=descriptor.database_id,
+                        session_id="session-1",
+                    ),
+                    lambda _recorder: calls.append("ran"),
+                )
+                self.assertEqual(result.outcome_status, MutationOutcomeStatus.CONFLICT)
+                self.assertEqual(
+                    result.conflict.kind, SynchronizationConflictKind.SESSION
+                )
+                self.assertEqual(calls, [])
+                self.assertFalse(hasattr(manager, "autocommit"))
+                self.assertEqual(manager.lease.cursors, [])
+                self.assertEqual(
+                    (manager.lease.commits, manager.lease.rollbacks), (0, 0)
+                )
+
+    def test_access_mutation_boundary_rejects_writes_while_ost_blocks_them(self):
+        manager = MdbConnectionManager()
+        manager.set_write_blocked(True)
+        writer = DatabaseProjectWriter(
+            manager, DatabaseDescriptorRegistry(), object(), object()
+        )
+        calls = []
+        with patch("pyodbc.connect", side_effect=AssertionError("connection opened")):
+            with self.assertRaises(WriteBlockedError):
+                writer.execute(
+                    _cleanup_support_DatabaseMutationRequest(
+                        database_id="blocked.mdb", session_id=None
+                    ),
+                    lambda _recorder: calls.append("ran"),
+                )
+        self.assertEqual(calls, [])
+        self.assertEqual(manager._active_leases, {})
+        with self.assertRaises(RuntimeError):
+            writer._current_backend()
+
+    def test_access_execute_resets_its_backend_scope_after_every_outcome(self):
+        connections = _cleanup_support__AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections, DatabaseDescriptorRegistry(), object(), object()
+        )
+        request = _cleanup_support_DatabaseMutationRequest(
+            database_id="example.mdb", session_id=None
+        )
+        seen = []
+
+        def ok(_recorder):
+            seen.append(writer._current_backend())
+            return "ok"
+
+        def failing(_recorder):
+            seen.append(writer._current_backend())
+            raise ValueError("operation failed")
+
+        self.assertEqual(writer.execute(request, ok).value, "ok")
+        with self.assertRaisesRegex(ValueError, "operation failed"):
+            writer.execute(request, failing)
+        self.assertEqual(seen, [DatabaseBackend.ACCESS, DatabaseBackend.ACCESS])
+        self.assertIsNone(writer._active_backend.get())
+
+    def test_router_scope_decides_uid_allocation_for_the_same_cursor_and_schema(self):
+        # One fixture, both backends: Access scans MAX(UID) and the inbound
+        # references (reference-safe range); SQL hands out database-generated
+        # deferred identities and must not run any scan at all.
+        registry, descriptor = _sql_descriptor_registry()
+        writer = DatabaseProjectWriter(object(), registry, object(), object())
+        statements = []
+
+        class _Cursor:
+            def execute(self, sql, *params):
+                statements.append(sql)
+                self._sql = sql
+
+            def fetchone(self):
+                # UID column max is 7; BidPages.MasterPageUID already names 12.
+                return (12,) if "MasterPageUID" in self._sql else (7,)
+
+        class _Schema:
+            @staticmethod
+            def optional_table_missing(table):
+                return table != "BidPages"
+
+            @staticmethod
+            def column_exists(table, column):
+                return (table, column) == ("BidPages", "MasterPageUID")
+
+        with writer._backend_scope("example.mdb"):
+            access_range = tuple(
+                writer._next_uids_preserving_references(
+                    _Cursor(), _Schema(), "BidPages", 3
+                )
+            )
+            access_single = writer._next_uid_preserving_references(
+                _Cursor(), _Schema(), "BidPages"
+            )
+        self.assertEqual(access_range, (13, 14, 15))
+        self.assertEqual(access_single, 13)
+        self.assertEqual(
+            statements,
+            [
+                "SELECT MAX([UID]) FROM [BidPages]",
+                "SELECT MAX([MasterPageUID]) FROM [BidPages]",
+                "SELECT MAX([UID]) FROM [BidPages]",
+                "SELECT MAX([MasterPageUID]) FROM [BidPages]",
+            ],
+        )
+        del statements[:]
+        with writer._backend_scope(descriptor.database_id):
+            sql_range = writer._next_uids_preserving_references(
+                _Cursor(), _Schema(), "BidPages", 3
+            )
+            sql_single = writer._next_uid_preserving_references(
+                _Cursor(), _Schema(), "BidPages"
+            )
+            sql_plain = writer._next_uid(_Cursor(), "BidPages")
+        self.assertEqual(statements, [])
+        self.assertEqual(len(sql_range), 3)
+        for identity in (*sql_range, sql_single, sql_plain):
+            with self.assertRaisesRegex(RuntimeError, "has not been generated"):
+                str(identity)
+        self.assertEqual(len({*sql_range, sql_single, sql_plain}), 5)
+
+    def test_access_chunk_size_stays_inside_the_access_parameter_limit(self):
+        # Independent literals: Access allows ~255 parameters per statement and
+        # bid-owned/bulk UID sets are bounded at 50 (one below, at, one above
+        # are exercised by the persistence tests).
+        self.assertEqual(ACCESS_BULK_CHUNK_SIZE, 50)
+        self.assertLess(ACCESS_BULK_CHUNK_SIZE, 255)
+
+    def test_access_error_policy_records_only_odbc_errors_inside_a_transaction(self):
+        writer = DatabaseProjectWriter(
+            object(), DatabaseDescriptorRegistry(), object(), object()
+        )
+        odbc_error = pyodbc.DataError("22018", "type mismatch")
+        plain_error = ValueError("not a driver error")
+        with writer._backend_scope("example.mdb"):
+            # Outside an Access transaction nothing is recorded or re-raised.
+            self.assertIs(writer._record_caught_mutation_error(odbc_error), False)
+            token = writer._access_transaction_depth.set(1)
+            try:
+                self.assertIs(writer._record_caught_mutation_error(odbc_error), True)
+                self.assertIs(writer._record_caught_mutation_error(plain_error), False)
+            finally:
+                writer._access_transaction_depth.reset(token)
+            self.assertIs(writer._is_access_resource_exceeded(plain_error), False)
+            self.assertIs(
+                writer._is_access_resource_exceeded(
+                    pyodbc.Error("42000", "System resource exceeded.")
+                ),
+                True,
+            )
+            self.assertIs(writer._is_access_resource_exceeded(odbc_error), False)
+
+    def test_sql_mutation_boundary_refuses_a_client_without_write_permission(self):
+        registry, descriptor = _sql_descriptor_registry()
+        denied_snapshots = {
+            "missing writer role": _cleanup_support__canonical_writer_permission_snapshot(
+                roles=(0, 1, 1, 1, 1)
+            ),
+            "read-only database": _cleanup_support__canonical_writer_permission_snapshot(
+                metadata=(
+                    SQL_SCHEMA_V1.version,
+                    SQL_SCHEMA_V1.checksum,
+                    "READ_ONLY",
+                    "ost_visualizer_only",
+                    "disabled",
+                    None,
+                    1,
+                    1,
+                    1,
+                    1,
+                )
+            ),
+            "no marker write permission": _cleanup_support__canonical_writer_permission_snapshot(
+                marker=(1, 0, 0, 0, 1)
+            ),
+        }
+        for label, snapshot in denied_snapshots.items():
+            with self.subTest(case=label):
+
+                class _DeniedCursor(_cleanup_support__WriterCursor):
+                    def fetchone(self, _snapshot=snapshot):
+                        if "ostv_permission_snapshot" in self._last_sql:
+                            return _snapshot
+                        return super().fetchone()
+
+                class _DeniedLease(_cleanup_support__WriterLease):
+                    def cursor(self):
+                        cursor = _DeniedCursor(self)
+                        self.cursors.append(cursor)
+                        return cursor
+
+                manager = _cleanup_support__WriterManager()
+                manager.lease = _DeniedLease()
+                sessions = DatabaseSessionRegistry()
+                sessions.register(descriptor.database_id, "session-1")
+                writer = DatabaseProjectWriter(
+                    object(),
+                    registry,
+                    _cleanup_support__CredentialStore(),
+                    sessions,
+                )
+                writer._sql_connections = manager
+                calls = []
+                with self.assertRaises(SqlInfrastructureError):
+                    writer.execute(
+                        _cleanup_support_DatabaseMutationRequest(
+                            database_id=descriptor.database_id,
+                            session_id="session-1",
+                        ),
+                        lambda _recorder: calls.append("ran"),
+                    )
+                self.assertEqual(calls, [])
+                self.assertEqual(manager.lease.commits, 0)
+                self.assertEqual(manager.lease.rollbacks, 1)

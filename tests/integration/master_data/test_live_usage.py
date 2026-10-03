@@ -1,7 +1,8 @@
+import sqlite3
 import unittest
-from contextlib import nullcontext
+from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 from ost_visualizer.application.services.project_read_service import ProjectReadService
 from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
 from ost_visualizer.domain.entities.employee import Employee, PayClass
@@ -23,7 +24,56 @@ from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
 )
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import delete
+from ost_visualizer.infrastructure.events.event_bus import EventBus
+from tests.helpers.mdb.import_export_support import (
+    _SqliteConnection as _import_export_support__SqliteConnection,
+    _SqliteSchema as _import_export_support__SqliteSchema,
+)
 from tests.helpers.workspace_state import make_workspace_state_model
+from tests.presentation.dialogs.master_data_support import (
+    FakeIconProvider as _master_data_support_FakeIconProvider,
+)
+
+
+class _CountingMasterDataReader:
+    """Explicit reader fake: usage is read through the data service, counted."""
+
+    def __init__(self, data, employees, pay_classes, statuses):
+        self.usage_calls = 0
+        self._data = data
+        self._employees = employees
+        self._pay_classes = pay_classes
+        self._statuses = statuses
+
+    def get_master_data_uids_in_use(self, file_path, kind):
+        self.usage_calls += 1
+        return self._data.get_master_data_uids_in_use(file_path, kind)
+
+    def get_employees_and_pay_classes(self, _file_path):
+        return self._employees, self._pay_classes
+
+    def get_job_statuses(self, _file_path):
+        return self._statuses
+
+
+class _SqliteSettingsReader(SettingsReaderMixin):
+    """SettingsReaderMixin over an sqlite connection (Access stand-in)."""
+
+    def __init__(self, connection):
+        self._connection_ref = connection
+        self.failure = None
+
+    @contextmanager
+    def _connection(self, _file_path):
+        if self.failure is not None:
+            raise self.failure
+        with _import_export_support__SqliteConnection(
+            self._connection_ref
+        ) as connection:
+            yield connection
+
+    def _schema(self, _connection):
+        return _import_export_support__SqliteSchema(self._connection_ref)
 
 
 class MasterDataActionUsageTests(unittest.TestCase):
@@ -63,7 +113,7 @@ class MasterDataActionUsageTests(unittest.TestCase):
                 save = Mock(return_value=True)
                 usage = Mock(return_value={"2"})
                 dialog = cls(
-                    Mock(),
+                    _master_data_support_FakeIconProvider(),
                     make_workspace_state_model(),
                     save_fn=save,
                     used_uids_fn=usage,
@@ -124,7 +174,7 @@ class MasterDataActionUsageTests(unittest.TestCase):
                 ("job_statuses", "open_job_statuses_dialog"),
             ):
                 with self.subTest(sql=sql, kind=kind):
-                    data = ProjectDataService(Mock())
+                    data = ProjectDataService(None)
                     employees = [Employee("1", first_name="Same", pay_class_uid="1")]
                     pay_classes = [PayClass("1", "Same")]
                     statuses = [JobStatus("1", "Same")]
@@ -136,34 +186,29 @@ class MasterDataActionUsageTests(unittest.TestCase):
                         used_employee_uids={"1"},
                         used_job_status_uids={"1"},
                     )
-                    reader = Mock()
-                    reader.get_master_data_uids_in_use.side_effect = (
-                        data.get_master_data_uids_in_use
+                    reader = _CountingMasterDataReader(
+                        data, employees, pay_classes, statuses
                     )
-                    reader.get_employees_and_pay_classes.return_value = (
-                        employees,
-                        pay_classes,
-                    )
-                    reader.get_job_statuses.return_value = statuses
                     coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
                     coordinator._editable_master_data_file_path = lambda: "db"
-                    coordinator._project_write_service = Mock()
-                    coordinator._project_write_service.uses_sql_collaboration_mutations.return_value = (
-                        sql
+                    coordinator._project_write_service = SimpleNamespace(
+                        uses_sql_collaboration_mutations=lambda _file_path, sql=sql: sql
                     )
                     coordinator._project_read_service = ProjectReadService(reader)
                     coordinator.project_data = data
                     coordinator.ui_state_manager = SimpleNamespace(
                         get_selected_bid_ref=lambda: None
                     )
-                    coordinator._icon_provider = Mock()
+                    coordinator._icon_provider = _master_data_support_FakeIconProvider()
                     coordinator._workspace_state_model = make_workspace_state_model()
                     coordinator.main_window = None
-                    coordinator.event_bus = Mock()
+                    coordinator.event_bus = EventBus()
+                    interacted = []
 
                     def interact(dialog, *_args, **_kwargs):
+                        interacted.append(dialog)
                         try:
-                            reader.get_master_data_uids_in_use.assert_not_called()
+                            self.assertEqual(reader.usage_calls, 0)
                             dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
                             item = dialog.tree.currentItem()
                             # Same authoritative replacement used by SQL reconciliation;
@@ -193,10 +238,7 @@ class MasterDataActionUsageTests(unittest.TestCase):
                                 dialog._on_delete()
                                 warning.assert_called_once()
                                 self.assertIs(dialog.tree.currentItem(), item)
-                            self.assertEqual(
-                                reader.get_master_data_uids_in_use.call_count,
-                                0 if sql else 2,
-                            )
+                            self.assertEqual(reader.usage_calls, 0 if sql else 2)
                         finally:
                             dialog.cleanup()
                             delete(dialog)
@@ -211,37 +253,53 @@ class MasterDataActionUsageTests(unittest.TestCase):
                             coordinator.open_payroll_classes_dialog()
                         else:
                             coordinator.open_job_statuses_dialog()
+                    self.assertEqual(len(interacted), 1)
 
     def test_strict_mdb_usage_reuses_role_parsers_and_propagates_failure(self):
-        reader = SettingsReaderMixin()
-        connection = MagicMock()
-        reader._connection = Mock(return_value=nullcontext(connection))
-        reader._parse_used_employee_uids = Mock(return_value={"11"})
-        reader._parse_used_job_status_uids = Mock(return_value={"12"})
-        schema = Mock()
-        schema.optional_table_missing.return_value = False
-        schema.column_exists.return_value = True
-        reader._schema = Mock(return_value=schema)
-        cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchall.return_value = [(13,), (None,)]
+        # Real SettingsReaderMixin queries run against an in-memory sqlite
+        # stand-in for the Access database (the driver itself is not used).
+        database = sqlite3.connect(":memory:")
+        database.execute(
+            "CREATE TABLE Bids (UID INTEGER, EstimatorUID INTEGER, "
+            "PrManagerUID INTEGER, JobSiteManagerUID INTEGER, JobStatusUID INTEGER)"
+        )
+        database.executemany(
+            "INSERT INTO Bids VALUES (?, ?, ?, ?, ?)",
+            [
+                (1, 11, None, 14, 12),
+                (2, 11, 15, None, None),
+                (3, None, None, None, 12),
+            ],
+        )
+        database.execute("CREATE TABLE Employees (UID INTEGER, PayClassUID INTEGER)")
+        database.executemany(
+            "INSERT INTO Employees VALUES (?, ?)", [(1, 13), (2, 13), (3, None)]
+        )
+        reader = _SqliteSettingsReader(database)
         service = ProjectReadService(reader)
-        self.assertEqual(service.get_master_data_uids_in_use("db", "employees"), {"11"})
-        reader._parse_used_employee_uids.assert_called_once_with(connection)
+        self.assertEqual(
+            service.get_master_data_uids_in_use("db", "employees"),
+            {"11", "14", "15"},
+        )
         self.assertEqual(
             service.get_master_data_uids_in_use("db", "job_statuses"), {"12"}
         )
-        reader._parse_used_job_status_uids.assert_called_once_with(connection)
         self.assertEqual(
             service.get_master_data_uids_in_use("db", "pay_classes"), {"13"}
         )
-        self.assertIn(
-            "[PayClassUID] FROM [Employees]", cursor.execute.call_args.args[0]
-        )
-        schema.column_exists.return_value = False
-        self.assertEqual(
-            service.get_master_data_uids_in_use("db", "pay_classes"), set()
-        )
-        reader._connection.side_effect = RuntimeError("read failed")
+        with self.assertRaisesRegex(ValueError, "Unsupported master-data usage kind"):
+            service.get_master_data_uids_in_use("db", "layers")
+        # Older databases without the referencing columns report no usage.
+        legacy = sqlite3.connect(":memory:")
+        legacy.execute("CREATE TABLE Bids (UID INTEGER)")
+        legacy.execute("CREATE TABLE Employees (UID INTEGER)")
+        legacy_service = ProjectReadService(_SqliteSettingsReader(legacy))
+        for kind in ("employees", "job_statuses", "pay_classes"):
+            self.assertEqual(
+                legacy_service.get_master_data_uids_in_use("db", kind), set()
+            )
+        # A read failure is propagated, never reported as "not in use".
+        reader.failure = RuntimeError("read failed")
         for kind in ("employees", "job_statuses", "pay_classes"):
             with self.assertRaisesRegex(RuntimeError, "read failed"):
                 service.get_master_data_uids_in_use("db", kind)
@@ -261,7 +319,10 @@ class MasterDataActionUsageTests(unittest.TestCase):
             with self.subTest(dialog=cls.__name__):
                 usage = Mock(return_value=set())
                 dialog = cls(
-                    Mock(), make_workspace_state_model(), used_uids_fn=usage, **kwargs
+                    _master_data_support_FakeIconProvider(),
+                    make_workspace_state_model(),
+                    used_uids_fn=usage,
+                    **kwargs
                 )
                 try:
                     first, current = dialog.tree.topLevelItem(
@@ -302,7 +363,7 @@ class MasterDataActionUsageTests(unittest.TestCase):
             job_statuses=[JobStatus("1", "Same")],
         )
         parent = CoverSheetDialog(
-            Mock(),
+            _master_data_support_FakeIconProvider(),
             None,
             data,
             make_workspace_state_model(),
@@ -353,6 +414,10 @@ class MasterDataActionUsageTests(unittest.TestCase):
                 JobStatusesDialog, "exec", lambda dialog: check(dialog, status_usage)
             ):
                 parent._open_job_statuses_dialog()
+            # Each nested editor ran its own checks (two usage queries each).
+            self.assertEqual(employee_usage.call_count, 2)
+            self.assertEqual(pay_usage.call_count, 2)
+            self.assertEqual(status_usage.call_count, 2)
             self.assertEqual(parent.edit_project_name.text(), "Unsaved job")
             self.assertEqual(str(parent.combo_estimator.currentData()), "1")
             self.assertEqual(str(parent.combo_job_status.currentData()), "1")
@@ -373,7 +438,7 @@ class MasterDataActionUsageTests(unittest.TestCase):
                 usage = Mock(return_value=set())
                 save = Mock(return_value=True)
                 dialog = cls(
-                    Mock(),
+                    _master_data_support_FakeIconProvider(),
                     make_workspace_state_model(),
                     used_uids_fn=usage,
                     save_fn=save,
