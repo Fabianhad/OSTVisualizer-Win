@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
   "module_count": 529,
-  "method_count": 12628,
+  "method_count": 12648,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -20991,7 +20991,7 @@
       "duplicate_method_names": []
     },
     "tests/application/services/test_sql_collaboration_coordinator.py": {
-      "sha256": "a0915ca30af81dd9c5f74297335e163e02b4fd012000e143be3aaadd22e6e137",
+      "sha256": "f1e48f708a265af37b99fd601e6447d6e5cbf1a90e844a4cc4b7b452b1c5ec75",
       "methods": [
         {
           "name": "SqlCollaborationStartupCancellationTests.test_late_startup_result_does_not_start_more_work",
@@ -32636,7 +32636,7 @@
         },
         {
           "name": "SqlCollaborationOperationTerminalStatusContractTests.test_every_bounded_event_order_ends_with_exactly_one_terminal_status",
-          "line": 17237,
+          "line": 17236,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -32670,7 +32670,7 @@
         },
         {
           "name": "SqlCollaborationOperationTerminalStatusContractTests.test_a_duplicate_submission_of_a_live_id_is_rejected_without_touching_the_original",
-          "line": 17314,
+          "line": 17313,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -32721,7 +32721,7 @@
         },
         {
           "name": "SqlCollaborationOperationTerminalStatusContractTests.test_cancel_is_refused_once_execution_started_and_after_any_terminal_status",
-          "line": 17380,
+          "line": 17379,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -32756,7 +32756,7 @@
         },
         {
           "name": "SqlCollaborationOperationTerminalStatusContractTests.test_a_recovered_result_dispatched_twice_reaches_the_callback_once",
-          "line": 17432,
+          "line": 17431,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -32786,7 +32786,7 @@
         },
         {
           "name": "SqlCollaborationOperationTerminalStatusContractTests.test_an_uncertain_operation_survives_a_stop_and_a_restart_and_resolves_once",
-          "line": 17466,
+          "line": 17465,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -32845,7 +32845,7 @@
         },
         {
           "name": "SqlCollaborationOperationTerminalStatusContractTests.test_submissions_that_cannot_be_queued_report_one_rejection_and_leave_no_entry",
-          "line": 17555,
+          "line": 17554,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -91191,7 +91191,7 @@
       "duplicate_method_names": []
     },
     "tests/integration/conditions/test_duplicate_reassignment.py": {
-      "sha256": "377fbbe450aaddcb5ab26587bf169ef3e79801ffd96b0cb698bc85499aa47147",
+      "sha256": "88cfaa6ff98e44d9c2d2abedcd9f96922d198ccf79162af6a260603212e26252",
       "methods": [
         {
           "name": "ConditionDuplicateReassignmentTests.test_menu_position_and_loaded_page_enablement",
@@ -93097,7 +93097,7 @@
         },
         {
           "name": "ConditionDuplicateReassignmentGenericFailureTests.test_a_generic_error_from_the_duplicate_queue_call_leaves_nothing_behind",
-          "line": 1173,
+          "line": 1172,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -93124,7 +93124,7 @@
         },
         {
           "name": "ConditionDuplicateReassignmentGenericFailureTests.test_a_locked_bid_still_refuses_silently_and_leaves_nothing_behind",
-          "line": 1186,
+          "line": 1185,
           "assertions": [
             "self.assertEqual",
             "self.warning.assert_not_called",
@@ -93147,7 +93147,7 @@
         },
         {
           "name": "ConditionDuplicateReassignmentGenericFailureTests.test_a_control_submission_holds_every_piece_of_state_until_it_completes",
-          "line": 1193,
+          "line": 1192,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -93174,7 +93174,7 @@
         },
         {
           "name": "ConditionDuplicateReassignmentGenericFailureTests.test_a_generic_error_while_preparing_the_completion_leaves_nothing_behind",
-          "line": 1224,
+          "line": 1223,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -110324,11 +110324,11 @@
       "duplicate_method_names": []
     },
     "tests/integration/placement/test_annotation_preview_stacking.py": {
-      "sha256": "20ca8567d8dfb1a082e4d9624e8a45b430259022bd6a078f1a01326ad85d35ca",
+      "sha256": "77987d579b15a77d008abba05e870af030ab371d79a0e0b9ca0ee89cab078074",
       "methods": [
         {
           "name": "AnnotationPreviewStackingTests.test_line_arrow_rect_and_oval_previews_use_the_annotation_body_band",
-          "line": 112,
+          "line": 113,
           "assertions": [
             "self.assert_preview_matches_placed",
             "self.assertEqual"
@@ -110346,7 +110346,7 @@
         },
         {
           "name": "AnnotationPreviewStackingTests.test_highlight_preview_uses_the_paper_highlight_band",
-          "line": 121,
+          "line": 120,
           "assertions": [
             "self.assert_preview_matches_placed",
             "self.assertEqual",
@@ -110366,7 +110366,7 @@
         },
         {
           "name": "AnnotationPreviewStackingTests.test_named_view_preview_uses_the_annotation_body_band",
-          "line": 126,
+          "line": 125,
           "assertions": [
             "self.assert_preview_matches_placed",
             "self.assertEqual"
@@ -110383,7 +110383,7 @@
         },
         {
           "name": "AnnotationPreviewStackingTests.test_dimension_preview_uses_the_body_and_label_bands",
-          "line": 131,
+          "line": 139,
           "assertions": [
             "self.assert_preview_matches_placed",
             "self.assertEqual"
@@ -110400,7 +110400,7 @@
         },
         {
           "name": "AnnotationPreviewStackingTests.test_text_box_preview_uses_the_annotation_body_band",
-          "line": 135,
+          "line": 143,
           "assertions": [
             "self.assertEqual"
           ],
@@ -110416,7 +110416,7 @@
         },
         {
           "name": "AnnotationPreviewStackingTests.test_polygon_cloud_and_ink_previews_use_the_annotation_body_band",
-          "line": 141,
+          "line": 149,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -110443,7 +110443,7 @@
         },
         {
           "name": "AnnotationPreviewStackingTests.test_previews_stay_below_takeoff_labels",
-          "line": 165,
+          "line": 173,
           "assertions": [
             "self.assertLessEqual",
             "self.assertLess"
@@ -110887,11 +110887,11 @@
       "duplicate_method_names": []
     },
     "tests/integration/placement/test_preview_stacking.py": {
-      "sha256": "a8401a87810dda85b6fffd3438dcb536c9f4bc08285e09eee474daa24a374f19",
+      "sha256": "0115a378fb40a60c6cfc76b153574494c66ad3513d810815d88f5ff8b3c60d2f",
       "methods": [
         {
           "name": "PlacementPreviewStackingTests.test_linear_drag_preview_draws_below_the_annotation",
-          "line": 196,
+          "line": 197,
           "assertions": [
             "self.assert_preview_stacks_like_a_placed_takeoff"
           ],
@@ -110909,7 +110909,7 @@
         },
         {
           "name": "PlacementPreviewStackingTests.test_area_rectangle_drag_preview_draws_below_the_annotation",
-          "line": 203,
+          "line": 204,
           "assertions": [
             "self.assert_preview_stacks_like_a_placed_takeoff"
           ],
@@ -110927,7 +110927,7 @@
         },
         {
           "name": "PlacementPreviewStackingTests.test_area_polygon_preview_draws_below_the_annotation",
-          "line": 210,
+          "line": 211,
           "assertions": [
             "self.assert_preview_stacks_like_a_placed_takeoff"
           ],
@@ -110945,7 +110945,7 @@
         },
         {
           "name": "PlacementPreviewStackingTests.test_invalid_self_intersecting_area_preview_draws_below_the_annotation",
-          "line": 216,
+          "line": 217,
           "assertions": [
             "self.assert_preview_stacks_like_a_placed_takeoff"
           ],
@@ -110963,7 +110963,7 @@
         },
         {
           "name": "PlacementPreviewStackingTests.test_secondary_condition_previews_draw_below_the_annotation",
-          "line": 222,
+          "line": 223,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assert_preview_stacks_like_a_placed_takeoff"
@@ -110985,7 +110985,7 @@
         },
         {
           "name": "PlacementPreviewStackingTests.test_pattern_line_items_of_a_preview_share_the_preview_body_stacking",
-          "line": 231,
+          "line": 232,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assert_preview_stacks_like_a_placed_takeoff",
@@ -111010,7 +111010,7 @@
         },
         {
           "name": "PlacementPreviewStackingTests.test_right_angle_indicator_draws_below_the_annotation",
-          "line": 250,
+          "line": 251,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -111036,7 +111036,7 @@
         },
         {
           "name": "PlacementPreviewStackingTests.test_preview_handles_stay_above_the_annotation",
-          "line": 268,
+          "line": 269,
           "assertions": [
             "self.assertTrue",
             "self.assertGreater"
@@ -114974,11 +114974,11 @@
       "duplicate_method_names": []
     },
     "tests/integration/selection/test_annotation_rotation_handle.py": {
-      "sha256": "38ee6407a053fd7ca6a09d06597cec90305e6f08124473e093a08b7c060c7bbc",
+      "sha256": "3ab6ee3c77c8078eacf33836f26a34d6d5203a5e2630f28f122ce8bdc4a46277",
       "methods": [
         {
           "name": "TextAnnotationRotationHandleTests.test_unrotated_handle_sits_above_the_text_centre",
-          "line": 157,
+          "line": 159,
           "assertions": [
             "self.assert_handle_above_text_centre"
           ],
@@ -114994,7 +114994,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_handle_stays_above_text_centre_after_rotation_finishes",
-          "line": 161,
+          "line": 163,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -115028,7 +115028,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_second_rotation_keeps_the_handle_above_the_text_centre",
-          "line": 183,
+          "line": 185,
           "assertions": [
             "self.assert_handle_above_text_centre",
             "self.assertAlmostEqual",
@@ -115053,7 +115053,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_rotation_leaves_the_text_centre_in_the_model",
-          "line": 194,
+          "line": 196,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -115072,7 +115072,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_handle_is_above_the_text_centre_after_reselecting_a_rotated_text",
-          "line": 200,
+          "line": 202,
           "assertions": [
             "self.assertTrue",
             "self.assert_handle_above_text_centre"
@@ -115096,7 +115096,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_handle_is_above_the_text_centre_when_a_rotated_text_is_first_selected",
-          "line": 209,
+          "line": 211,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertTrue",
@@ -115121,7 +115121,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_handle_stays_above_text_centre_in_a_detached_style_view",
-          "line": 220,
+          "line": 222,
           "assertions": [
             "self.assert_handle_above_text_centre"
           ],
@@ -115141,7 +115141,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_multi_selection_pivot_matches_the_pivot_used_to_commit",
-          "line": 227,
+          "line": 229,
           "assertions": [
             "self.assertTrue",
             "self.assertAlmostEqual",
@@ -115168,7 +115168,7 @@
         },
         {
           "name": "TextAnnotationRotationHandleTests.test_handle_follows_the_page_scale_and_zoom",
-          "line": 249,
+          "line": 255,
           "assertions": [
             "self.assert_handle_above_text_centre"
           ],
@@ -262724,7 +262724,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/handlers/test_plan_view_action_handler.py": {
-      "sha256": "fa3cb6c82d630b1346c7190bcdc1d420a9743abfdcad39d44c1a22b3a77e4687",
+      "sha256": "1b911c4a14450ab26d16149be90f2e3bc48b2cd58e0adb3343badd303266a76e",
       "methods": [
         {
           "name": "PlanViewActionHandlerTests.test_multi_page_changes_publish_one_event_per_transaction",
@@ -278473,7 +278473,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise",
-          "line": 19526,
+          "line": 19528,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -278496,7 +278496,7 @@
         },
         {
           "name": "PlanViewActionHandlerNoSelectedBidFlushTests.test_the_real_access_manager_forbids_every_bid_less_plan_edit",
-          "line": 19645,
+          "line": 19648,
           "assertions": [
             "self.assertIsNone",
             "self.assertFalse",
@@ -278519,7 +278519,7 @@
         },
         {
           "name": "PlanViewActionHandlerNoSelectedBidFlushTests.test_every_flush_restores_and_writes_nothing_when_no_bid_is_selected",
-          "line": 19661,
+          "line": 19664,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -278560,7 +278560,7 @@
         },
         {
           "name": "PlanViewActionHandlerNoSelectedBidFlushTests.test_the_defensive_fallthrough_saves_locally_and_registers_history_without_a_bid",
-          "line": 19701,
+          "line": 19702,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -278596,7 +278596,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/handlers/test_project_write_handler.py": {
-      "sha256": "8dcffb88cb7e79ff026b3bcc4eef86ff90a00e8b5d83891940f9dc2c031ae4d4",
+      "sha256": "b037d668444433cd15852954c9e176fc5f74d6124d727f2820950cdfa0805e56",
       "methods": [
         {
           "name": "BidLockPermissionTests.test_project_delete_resolves_multi_selection_database_not_active_bid",
@@ -282200,7 +282200,7 @@
         },
         {
           "name": "ProjectWriteHandlerPasteOutcomeFromResultTests.test_esc_between_the_worker_result_and_the_finished_slot_keeps_a_committed_cut",
-          "line": 4332,
+          "line": 4334,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -282224,7 +282224,7 @@
         },
         {
           "name": "ProjectWriteHandlerPasteOutcomeFromResultTests.test_a_real_dialog_without_an_escape_reports_the_same_committed_cut",
-          "line": 4346,
+          "line": 4348,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -307431,11 +307431,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/utils/test_windows.py": {
-      "sha256": "a104533432c07adc42c6f2b9554f4fb66ed142df26376f08a686e067d9d0aec9",
+      "sha256": "ef2913355aebdae949ef1ec2615391a7e32ccd268d382ba30edb532070e1a9a8",
       "methods": [
         {
           "name": "WindowButtonNativeOwnershipTests.test_window_button_helpers_preserve_parent_and_sibling_native_ownership",
-          "line": 99,
+          "line": 125,
           "assertions": [
             "self.assertIsNone",
             "self.assertIs",
@@ -307467,7 +307467,7 @@
         },
         {
           "name": "WindowButtonNativeOwnershipTests.test_window_button_hints_are_not_changed_once_dialog_is_visible",
-          "line": 124,
+          "line": 150,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue"
@@ -307491,7 +307491,7 @@
         },
         {
           "name": "DialogLifecycleTests.test_fixed_width_auto_height_tracks_layout_spacing",
-          "line": 147,
+          "line": 173,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -307520,7 +307520,7 @@
         },
         {
           "name": "DialogLifecycleTests.test_fixed_width_auto_height_uses_height_for_width_of_wrapped_text",
-          "line": 165,
+          "line": 191,
           "assertions": [
             "self.assertEqual",
             "self.assertGreater"
@@ -307548,7 +307548,7 @@
         },
         {
           "name": "DialogLifecycleTests.test_initial_window_size_sets_size_and_minimum",
-          "line": 182,
+          "line": 208,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -307573,7 +307573,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_saved_size_wins_over_default_size",
-          "line": 222,
+          "line": 248,
           "assertions": [
             "self.assertEqual"
           ],
@@ -307592,7 +307592,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_default_size_is_used_without_saved_size",
-          "line": 229,
+          "line": 255,
           "assertions": [
             "self.assertEqual"
           ],
@@ -307610,7 +307610,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_size_is_bounded_by_minimum_hint_and_available_screen",
-          "line": 233,
+          "line": 259,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assertGreaterEqual",
@@ -307642,7 +307642,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_dialog_keeps_close_and_maximize_but_not_minimize_buttons",
-          "line": 247,
+          "line": 273,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -307665,7 +307665,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_finished_persists_size_and_maximized_state_once",
-          "line": 262,
+          "line": 288,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -307688,7 +307688,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_workspace_write_failure_on_finish_is_ignored",
-          "line": 273,
+          "line": 299,
           "assertions": [
             "update_state.assert_called_once"
           ],
@@ -307708,7 +307708,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_saved_maximized_state_is_applied_once_on_show",
-          "line": 283,
+          "line": 309,
           "assertions": [
             "show_maximized.assert_called_once_with"
           ],
@@ -307727,7 +307727,7 @@
         },
         {
           "name": "PersistentDialogWindowStateTests.test_not_maximized_dialog_is_not_maximized_on_show",
-          "line": 293,
+          "line": 319,
           "assertions": [
             "show_maximized.assert_not_called"
           ],
@@ -307740,6 +307740,407 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Re-read: without saved maximized state showMaximized is never called. Killed by an always-true restore check. No change.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_default_dialog_has_both_buttons_so_the_probe_can_see_them",
+          "line": 391,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "self._modal_dialog",
+            "self._show",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Control: an untouched parented modal Dialog shows WS_MINIMIZEBOX and WS_MAXIMIZEBOX on the Windows platform, proving the GetWindowLongW probe can see the buttons the other tests assert absent. Native only; skipped off the windows platform.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_remove_minimize_maximize_before_show_leaves_close_only",
+          "line": 396,
+          "assertions": [
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "dialog.windowHandle",
+            "remove_minimize_maximize",
+            "self._assert_close_only",
+            "self._modal_dialog",
+            "self._show",
+            "self.assertIsNone"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Regression for 5d7ad08: helper before show leaves the HWND without min/max and with caption and system menu. Failed before the fix (min bit set), passes after; killed by dropping the base hints, the show-time filter, or the Win32 removal.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_resizable_dialog_loses_the_maximize_button_qt_would_add_back",
+          "line": 402,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "QtCore.QSize",
+            "QtWidgets.QDialog",
+            "_native_style",
+            "dialog.hide",
+            "dialog.maximumSize",
+            "dialog.show",
+            "remove_minimize_maximize",
+            "self._assert_close_only",
+            "self._show",
+            "self.app.processEvents",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Qt re-adds WS_MAXIMIZEBOX to any dialog with an unbounded maximum size even with CustomizeWindowHint, so hints alone are not enough; asserts close-only for a resizable dialog on first and second show. Killed by removing the show-time filter.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_helper_called_twice_keeps_one_show_filter_with_latest_bits",
+          "line": 412,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "QtWidgets.QDialog",
+            "child.objectName",
+            "dialog.children",
+            "len",
+            "remove_minimize",
+            "remove_minimize_maximize",
+            "self._assert_maximize_only",
+            "self._show",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Exactly one show filter child exists after remove_minimize_maximize then remove_minimize, and the last call wins (maximize kept). Killed by duplicating the filter and by not updating its bits.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_remove_minimize_before_show_keeps_maximize_only",
+          "line": 424,
+          "assertions": [],
+          "calls": [
+            "QtWidgets.QDialog",
+            "remove_minimize",
+            "self._assert_maximize_only",
+            "self._show"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "remove_minimize before show clears min, keeps max, keeps caption and system menu on the real HWND. Killed by a variant that also drops maximize.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_helper_before_show_does_not_create_native_windows",
+          "line": 429,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertFalse",
+            "self.assertFalse",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "QtWidgets.QDialog",
+            "QtWidgets.QWidget",
+            "dialog.windowHandle",
+            "remove_minimize_maximize",
+            "self.assertFalse",
+            "self.assertIsNone",
+            "self.parent.testAttribute",
+            "sibling.testAttribute",
+            "sibling.windowHandle"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Helper before show leaves the dialog without a QWindow and does not give the parent or a sibling widget WA_NativeWindow; guards the 5d7ad08 cursor fix against a winId() fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_buttons_stay_removed_after_hide_and_show",
+          "line": 442,
+          "assertions": [],
+          "calls": [
+            "_native_style",
+            "check",
+            "dialog.hide",
+            "dialog.show",
+            "helper",
+            "self._modal_dialog",
+            "self._show",
+            "self.app.processEvents",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Both helpers: native bits stay cleared after hide then show. Killed by dropping the persistent show filter.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_buttons_stay_removed_after_reparenting_to_none",
+          "line": 457,
+          "assertions": [],
+          "calls": [
+            "_native_style",
+            "check",
+            "dialog.hide",
+            "dialog.setParent",
+            "dialog.show",
+            "helper",
+            "self._modal_dialog",
+            "self._show",
+            "self.app.processEvents",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Both helpers: native bits stay cleared after hide, setParent(None), show (window recreated). Killed by dropping the persistent show filter.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_show_filter_survives_python_garbage_collection",
+          "line": 472,
+          "assertions": [],
+          "calls": [
+            "gc.collect",
+            "remove_minimize_maximize",
+            "self._assert_close_only",
+            "self._modal_dialog",
+            "self._show"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Helper, gc.collect(), then show: still close-only. The filter keeps no Python-side state because PySide may recreate the wrapper of a parented QObject subclass (an earlier stateful version raised AttributeError in unrelated Options tests).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_helper_after_show_still_clears_native_bits",
+          "line": 478,
+          "assertions": [],
+          "calls": [
+            "_native_style",
+            "remove_minimize_maximize",
+            "self._assert_close_only",
+            "self._modal_dialog",
+            "self._show"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "After show the Qt hint step is skipped but the existing Win32 style removal still clears min/max on the live HWND (the showEvent paths).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_edit_condition_dialog_shows_only_the_close_button",
+          "line": 484,
+          "assertions": [
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "Condition",
+            "FakeReadService",
+            "dialog.windowHandle",
+            "self._assert_close_only",
+            "self._show",
+            "self.assertIsNone",
+            "with_workspace_state",
+            "with_workspace_state(EditConditionDialog)"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Real EditConditionDialog (helper in _setup_ui, no handle before show) ends close-only. Reported regression; failed before the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_setup_ui_dialog_shows_only_the_close_button",
+          "line": 500,
+          "assertions": [],
+          "calls": [
+            "SetScaleDialog",
+            "self._assert_close_only",
+            "self._show"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Real SetScaleDialog (_setup_ui group) ends close-only. Failed before the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_init_dialog_shows_only_the_close_button",
+          "line": 506,
+          "assertions": [],
+          "calls": [
+            "FontDefinition",
+            "FontDialog",
+            "self._assert_close_only",
+            "self._show"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Real FontDialog (__init__ group) ends close-only. Failed before the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_color_dialog_loses_min_max_before_exec",
+          "line": 512,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ColorButton",
+            "QtGui.QColor",
+            "_native_style",
+            "button._choose_color",
+            "dialog.close",
+            "dialog.show",
+            "int",
+            "len",
+            "patch.object",
+            "seen.append",
+            "self._assert_close_only",
+            "self.app.processEvents",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "ColorButton._choose_color with exec replaced by show-and-read: the real QColorDialog is close-only at exec time. Failed before the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_input_dialog_loses_min_max_before_exec",
+          "line": 528,
+          "assertions": [],
+          "calls": [
+            "QtWidgets.QInputDialog",
+            "remove_minimize_maximize",
+            "self._assert_close_only",
+            "self._show"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "QInputDialog with the helper before show is close-only. Failed before the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_persistent_state_dialog_keeps_maximize_but_not_minimize",
+          "line": 533,
+          "assertions": [],
+          "calls": [
+            "JobStatus",
+            "_master_data_support_FakeIconProvider",
+            "_master_data_support_MasterJobStatusesDialog",
+            "_native_style",
+            "dialog.hide",
+            "dialog.show",
+            "self._assert_maximize_only",
+            "self._show",
+            "self.app.processEvents"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Real master-data JobStatusesDialog (PersistentDialogWindowState): max kept, min cleared, again after re-show. Unchanged behavior pinned.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonNativeStyleTests.test_show_event_dialog_shows_only_the_close_button",
+          "line": 548,
+          "assertions": [],
+          "calls": [
+            "EmployeeDetailDialog",
+            "EmployeeRecord",
+            "PayClass",
+            "_master_data_support_FakeIconProvider",
+            "_native_style",
+            "dialog.hide",
+            "dialog.show",
+            "make_workspace_state_model",
+            "self._assert_close_only",
+            "self._show",
+            "self.app.processEvents"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Real EmployeeDetailDialog (helper in showEvent too): close-only, also after re-show.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonQtHintTests.test_remove_minimize_maximize_sets_customized_close_only_hints",
+          "line": 594,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self._hints",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Platform independent: before show windowFlags carries Customize, Title, SystemMenu, Close and neither min nor max, with no QWindow created. Killed by dropping the base hints.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonQtHintTests.test_remove_minimize_sets_customized_hints_with_maximize_kept",
+          "line": 607,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self._hints",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Platform independent: same base hints with maximize true and minimize false. Killed by a variant that drops maximize.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WindowButtonQtHintTests.test_hints_are_left_alone_on_a_visible_widget",
+          "line": 620,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "QtWidgets.QDialog",
+            "dialog.findChildren",
+            "dialog.hide",
+            "dialog.show",
+            "dialog.windowFlags",
+            "remove_minimize_maximize",
+            "self.addCleanup",
+            "self.app.processEvents",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Already-visible widget keeps its flags and gets no show filter (early return preserved).",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -318290,7 +318691,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/windows/components/test_window.py": {
-      "sha256": "981bcff48fe11deff33a3e14fe7a7ca56ace7fefa2fdf512c9874c62fe321e8f",
+      "sha256": "97b60095424ef9af14778929bfc7cea76fca61726f8de4615ab3fdb359bee9c1",
       "methods": [
         {
           "name": "WorkspaceStateCoordinatorDetachedWindowTests.test_detached_page_window_cleanup_releases_renderer_references",
@@ -327951,7 +328352,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_geometry_queue_error_frees_marks_preview_selection_and_lease",
-          "line": 11089,
+          "line": 11087,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -327983,7 +328384,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_geometry_queue_error_without_a_lease_or_history_service_frees_the_rest",
-          "line": 11108,
+          "line": 11106,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328011,7 +328412,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_geometry_queue_error_survives_a_failing_cleanup_and_frees_the_rest",
-          "line": 11126,
+          "line": 11124,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328044,7 +328445,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_property_queue_error_restores_the_edit_frees_marks_and_token",
-          "line": 11149,
+          "line": 11147,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328078,7 +328479,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_delete_queue_error_restores_the_selection_and_frees_marks_and_token",
-          "line": 11183,
+          "line": 11181,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328103,7 +328504,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_an_insert_queue_error_frees_the_token_and_adds_no_history",
-          "line": 11198,
+          "line": 11196,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328128,7 +328529,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_queue_error_during_history_replay_leaves_the_entry_replayable",
-          "line": 11211,
+          "line": 11209,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -328170,7 +328571,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise",
-          "line": 11288,
+          "line": 11286,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -332548,7 +332949,7 @@
       "duplicate_method_names": []
     },
     "tests/tools/test_audit_sql_integration_environment.py": {
-      "sha256": "56f74cff7fb4614864637f67b69fd818d7e741fce81f5654ccfa8bbc7ff48221",
+      "sha256": "2b36592a26164d7568341e99c8d4fc6b4d7680f1118dce6cdf98db40907554d8",
       "methods": [
         {
           "name": "AuditSqlIntegrationEnvironmentTests.test_healthy_environment_exits_zero_and_prints_every_count_once",
@@ -336116,7 +336517,7 @@
     }
   },
   "discovery": {
-    "count": 12628,
+    "count": 12648,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

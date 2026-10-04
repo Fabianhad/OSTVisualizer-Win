@@ -5,6 +5,14 @@ from ...domain.aggregates.workspace_state_aggregate import WorkspaceStateAggrega
 _GWL_STYLE = -16
 _WS_MINIMIZEBOX = 0x00020000
 _WS_MAXIMIZEBOX = 0x00010000
+_NATIVE_STYLE_FILTER_NAME = "windowButtonNativeStyle"
+_BITS_PROPERTY = "windowButtonStyleBits"
+_BASE_WINDOW_HINTS = (
+    QtCore.Qt.WindowType.CustomizeWindowHint,
+    QtCore.Qt.WindowType.WindowTitleHint,
+    QtCore.Qt.WindowType.WindowSystemMenuHint,
+    QtCore.Qt.WindowType.WindowCloseButtonHint,
+)
 
 
 def set_initial_window_size(widget, width: int, height: int) -> None:
@@ -26,8 +34,28 @@ def _set_qt_window_button_hints(
 ) -> None:
     if widget.isVisible():
         return
+    for hint in _BASE_WINDOW_HINTS:
+        widget.setWindowFlag(hint, True)
     widget.setWindowFlag(QtCore.Qt.WindowType.WindowMinimizeButtonHint, allow_minimize)
     widget.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, allow_maximize)
+
+
+class _NativeStyleOnShow(QtCore.QObject):
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QtCore.QEvent.Type.Show:
+            _remove_windows_style_bits(watched, int(self.property(_BITS_PROPERTY)))
+        return False
+
+
+def _remove_windows_style_bits_on_show(widget: QtWidgets.QWidget, bits: int) -> None:
+    if not isinstance(widget, QtWidgets.QWidget) or widget.isVisible():
+        return
+    existing = widget.findChild(_NativeStyleOnShow, _NATIVE_STYLE_FILTER_NAME)
+    if existing is None:
+        existing = _NativeStyleOnShow(widget)
+        existing.setObjectName(_NATIVE_STYLE_FILTER_NAME)
+        widget.installEventFilter(existing)
+    existing.setProperty(_BITS_PROPERTY, bits)
 
 
 def _remove_windows_style_bits(widget: QtWidgets.QWidget, bits: int) -> None:
@@ -45,11 +73,13 @@ def _remove_windows_style_bits(widget: QtWidgets.QWidget, bits: int) -> None:
 def remove_minimize_maximize(widget) -> None:
     _set_qt_window_button_hints(widget, allow_minimize=False, allow_maximize=False)
     _remove_windows_style_bits(widget, _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX)
+    _remove_windows_style_bits_on_show(widget, _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX)
 
 
 def remove_minimize(widget) -> None:
     _set_qt_window_button_hints(widget, allow_minimize=False, allow_maximize=True)
     _remove_windows_style_bits(widget, _WS_MINIMIZEBOX)
+    _remove_windows_style_bits_on_show(widget, _WS_MINIMIZEBOX)
 
 
 class PersistentDialogWindowState:

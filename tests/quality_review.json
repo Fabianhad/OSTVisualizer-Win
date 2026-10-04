@@ -31416,7 +31416,27 @@
         "PersistentDialogWindowStateTests.test_finished_persists_size_and_maximized_state_once": "Re-read: finished persists [380, 280] and maximized False once, a repeat writes nothing. Killed by removing the unchanged early return, hard-coding maximized, swapping width and height, and not connecting finished. No change.",
         "PersistentDialogWindowStateTests.test_workspace_write_failure_on_finish_is_ignored": "Re-read: Strengthened: the old test emitted finished, where Qt swallows slot exceptions, so removing the OSError handler still passed; the slot is now called directly with update_state patched, asserting one call. Killed by removing the except OSError.",
         "PersistentDialogWindowStateTests.test_saved_maximized_state_is_applied_once_on_show": "Re-read: saved maximized state calls showMaximized exactly once across two shows. Killed by not clearing the restore flag. No change.",
-        "PersistentDialogWindowStateTests.test_not_maximized_dialog_is_not_maximized_on_show": "Re-read: without saved maximized state showMaximized is never called. Killed by an always-true restore check. No change."
+        "PersistentDialogWindowStateTests.test_not_maximized_dialog_is_not_maximized_on_show": "Re-read: without saved maximized state showMaximized is never called. Killed by an always-true restore check. No change.",
+        "WindowButtonNativeStyleTests.test_default_dialog_has_both_buttons_so_the_probe_can_see_them": "Control: an untouched parented modal Dialog shows WS_MINIMIZEBOX and WS_MAXIMIZEBOX on the Windows platform, proving the GetWindowLongW probe can see the buttons the other tests assert absent. Native only; skipped off the windows platform.",
+        "WindowButtonNativeStyleTests.test_remove_minimize_maximize_before_show_leaves_close_only": "Regression for 5d7ad08: helper before show leaves the HWND without min/max and with caption and system menu. Failed before the fix (min bit set), passes after; killed by dropping the base hints, the show-time filter, or the Win32 removal.",
+        "WindowButtonNativeStyleTests.test_resizable_dialog_loses_the_maximize_button_qt_would_add_back": "Qt re-adds WS_MAXIMIZEBOX to any dialog with an unbounded maximum size even with CustomizeWindowHint, so hints alone are not enough; asserts close-only for a resizable dialog on first and second show. Killed by removing the show-time filter.",
+        "WindowButtonNativeStyleTests.test_helper_called_twice_keeps_one_show_filter_with_latest_bits": "Exactly one show filter child exists after remove_minimize_maximize then remove_minimize, and the last call wins (maximize kept). Killed by duplicating the filter and by not updating its bits.",
+        "WindowButtonNativeStyleTests.test_remove_minimize_before_show_keeps_maximize_only": "remove_minimize before show clears min, keeps max, keeps caption and system menu on the real HWND. Killed by a variant that also drops maximize.",
+        "WindowButtonNativeStyleTests.test_helper_before_show_does_not_create_native_windows": "Helper before show leaves the dialog without a QWindow and does not give the parent or a sibling widget WA_NativeWindow; guards the 5d7ad08 cursor fix against a winId() fix.",
+        "WindowButtonNativeStyleTests.test_buttons_stay_removed_after_hide_and_show": "Both helpers: native bits stay cleared after hide then show. Killed by dropping the persistent show filter.",
+        "WindowButtonNativeStyleTests.test_buttons_stay_removed_after_reparenting_to_none": "Both helpers: native bits stay cleared after hide, setParent(None), show (window recreated). Killed by dropping the persistent show filter.",
+        "WindowButtonNativeStyleTests.test_show_filter_survives_python_garbage_collection": "Helper, gc.collect(), then show: still close-only. The filter keeps no Python-side state because PySide may recreate the wrapper of a parented QObject subclass (an earlier stateful version raised AttributeError in unrelated Options tests).",
+        "WindowButtonNativeStyleTests.test_helper_after_show_still_clears_native_bits": "After show the Qt hint step is skipped but the existing Win32 style removal still clears min/max on the live HWND (the showEvent paths).",
+        "WindowButtonNativeStyleTests.test_edit_condition_dialog_shows_only_the_close_button": "Real EditConditionDialog (helper in _setup_ui, no handle before show) ends close-only. Reported regression; failed before the fix.",
+        "WindowButtonNativeStyleTests.test_setup_ui_dialog_shows_only_the_close_button": "Real SetScaleDialog (_setup_ui group) ends close-only. Failed before the fix.",
+        "WindowButtonNativeStyleTests.test_init_dialog_shows_only_the_close_button": "Real FontDialog (__init__ group) ends close-only. Failed before the fix.",
+        "WindowButtonNativeStyleTests.test_color_dialog_loses_min_max_before_exec": "ColorButton._choose_color with exec replaced by show-and-read: the real QColorDialog is close-only at exec time. Failed before the fix.",
+        "WindowButtonNativeStyleTests.test_input_dialog_loses_min_max_before_exec": "QInputDialog with the helper before show is close-only. Failed before the fix.",
+        "WindowButtonNativeStyleTests.test_persistent_state_dialog_keeps_maximize_but_not_minimize": "Real master-data JobStatusesDialog (PersistentDialogWindowState): max kept, min cleared, again after re-show. Unchanged behavior pinned.",
+        "WindowButtonNativeStyleTests.test_show_event_dialog_shows_only_the_close_button": "Real EmployeeDetailDialog (helper in showEvent too): close-only, also after re-show.",
+        "WindowButtonQtHintTests.test_remove_minimize_maximize_sets_customized_close_only_hints": "Platform independent: before show windowFlags carries Customize, Title, SystemMenu, Close and neither min nor max, with no QWindow created. Killed by dropping the base hints.",
+        "WindowButtonQtHintTests.test_remove_minimize_sets_customized_hints_with_maximize_kept": "Platform independent: same base hints with maximize true and minimize false. Killed by a variant that drops maximize.",
+        "WindowButtonQtHintTests.test_hints_are_left_alone_on_a_visible_widget": "Already-visible widget keeps its flags and gets no show filter (early return preserved)."
       }
     },
     "tests/presentation/utils/test_zoom_debouncer.py": {
@@ -36786,7 +36806,8 @@
     "firmware_1": "OSTV_RUN_WINDOWS_FIRMWARE_INTEGRATION=1 live firmware API; legitimate opt-in.",
     "corpus_1": "Optional local presentation corpus; legitimate; proven to detect corruption using a synthetic corpus.",
     "architecture_ledgers_3": "Gate fires because build/*.tsv local ledgers are untracked, absent, never committed and have no generator, so these contracts cannot run on a clean checkout. Their validators are now exercised on synthetic TSVs; the real ledger content remains unverified.",
-    "ungated": "6 test_sql_deployment_contracts tests (pure text scans) and 7 sql_admin tests no longer skip."
+    "ungated": "6 test_sql_deployment_contracts tests (pure text scans) and 7 sql_admin tests no longer skip.",
+    "window_style_1": "WindowButtonNativeStyleTests (tests/presentation/utils/test_windows.py) needs QT_QPA_PLATFORM=windows to read the real HWND style via GetWindowLongW; skips as a single class-level SkipTest (+1 skip) under the default offscreen run; legitimate. Run natively it executes 17 tests OK (it failed 11 of its own tests before the helper fix); the platform-independent WindowButtonQtHintTests (3) always run."
   },
   "final_fresh_pass": "not performed as a separate second pass; each test was read once against its production target with mutation checks",
   "intervening_user_task": {
@@ -36935,6 +36956,17 @@
       "architecture": "no violations",
       "compileall": 0,
       "diff_check": "clean (cr-at-eol)"
+    },
+    "window_button_styles_full_suite": {
+      "tests_run": 12624,
+      "skips": 42,
+      "result": "OK",
+      "seconds": 198.5,
+      "command": ".\u000benv\\Scripts\\python.exe -m unittest discover -s tests -t .",
+      "note": "skips are 41 before plus 1 from the new native-only class; the recorded 34 in earlier entries predates this run. Native run: QT_QPA_PLATFORM=windows test_windows + cursor modules + native ownership OK (43 tests).",
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean"
     }
   },
   "skip_observations": [
@@ -36945,6 +36977,10 @@
     {
       "module": "tests/integration/cursor/test_hotlink_lifecycle.py",
       "classification": "Two native Windows cursor tests skipped because application platform is offscreen; real cursor handles require Qt windows platform. Gate inspected; remaining integration quality review still pending."
+    },
+    {
+      "module": "tests/presentation/utils/test_windows.py",
+      "classification": "One class-level skip (WindowButtonNativeStyleTests) because the application platform is offscreen; real native window styles need the Qt windows platform. Gate inspected; ran 17/17 OK natively."
     }
   ],
   "reconciliation_2026-10-01": {

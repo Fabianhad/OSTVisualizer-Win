@@ -76,7 +76,12 @@ Threading and events:
 - Dialog window-button helpers use an existing `QWindow` handle for native style
   updates and Qt window hints before show. Never force `QWidget.winId()` on a
   parented dialog: it promotes unrelated parent/sibling widgets to native windows
-  and can strand their platform cursor on a hovered text editor's I-beam.
+  and can strand their platform cursor on a hovered text editor's I-beam. Before
+  show the helpers set `CustomizeWindowHint`, title, system-menu and close hints
+  plus explicit min/max values, because Qt's default dialog style keeps the native
+  minimize/maximize boxes even when `windowFlags()` reports them off; a show-time
+  event filter clears the Win32 style bits for resizable dialogs. Verify with
+  `GetWindowLongW` on the Windows platform, not `windowFlags()`.
 - Startup replaces the Windows platform's light-only Vista widget style with
   Fusion before creating any windows; keep the Windows 11 default style intact.
   Qt owns system theme detection, palettes, runtime palette propagation, and

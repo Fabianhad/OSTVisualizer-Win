@@ -56,6 +56,8 @@
   SQL edit leases or change sidebar selection after a pending save completes.
 - Opening Cover Sheet or other parented dialogs no longer leaves the I-beam
   cursor stuck over Projects, buttons, and other unrelated controls on Windows.
+- Edit Condition and the other fixed-chrome dialogs show only the close button
+  again; the cursor fix had left their minimize and maximize buttons visible.
 - Legacy Takeoff writes reject unsupported nondefault fields instead of silently
   losing parent, rotation, curve, negative quantity, or Bid Area state. Nested
   Backout vertex edits preserve their children. Parented Count/Linear paste and
