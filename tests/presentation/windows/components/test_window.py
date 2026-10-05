@@ -3439,9 +3439,9 @@ class DetachedPageViewWindowLoadPageContentTests(
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False
         window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(plan_view.view_state_for_next_load, (3.25, 120.0, 240.0))
         self.assertEqual(
-            (page.zoom_fac, page.current_x, page.current_y),
-            (3.25, 120.0, 240.0),
+            (page.zoom_fac, page.current_x, page.current_y), (1.0, 10.0, 20.0)
         )
         self.assertEqual(plan_view.load_calls[0]["page"], page)
         self.assertEqual(
@@ -3550,9 +3550,9 @@ class DetachedPageViewWindowLoadPageContentTests(
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False
         window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(plan_view.view_state_for_next_load, (3.25, 120.0, 240.0))
         self.assertEqual(
-            (page.zoom_fac, page.current_x, page.current_y),
-            (3.25, 120.0, 240.0),
+            (page.zoom_fac, page.current_x, page.current_y), (1.0, 10.0, 20.0)
         )
 
     def test_detached_refresh_ignores_main_window_page_state_when_cached(self):
@@ -3583,9 +3583,9 @@ class DetachedPageViewWindowLoadPageContentTests(
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False
         window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(plan_view.view_state_for_next_load, (4.0, 400.0, 800.0))
         self.assertEqual(
-            (page.zoom_fac, page.current_x, page.current_y),
-            (4.0, 400.0, 800.0),
+            (page.zoom_fac, page.current_x, page.current_y), (0.5, 5.0, 6.0)
         )
 
     def test_detached_hotlink_load_does_not_reuse_previous_window_camera(self):
@@ -3616,6 +3616,7 @@ class DetachedPageViewWindowLoadPageContentTests(
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False
         window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertIsNone(plan_view.view_state_for_next_load)
         self.assertEqual(
             (page.zoom_fac, page.current_x, page.current_y),
             (1.0, 10.0, 20.0),
@@ -4200,6 +4201,8 @@ _RECORDING_PLAN_VIEW_METHODS = (
     "restore_annotation_text_properties",
     "restore_annotation_styles",
     "mark_intelligent_paste_drag_pending",
+    "set_owns_page_view_state",
+    "set_view_state_for_next_load",
 )
 
 
@@ -6108,37 +6111,49 @@ class DetachedWindowLoadAndToolTests(unittest.TestCase):
         window._capture_refresh_view_state(page)
         self.assertEqual(window._page_view_states, {"5": (2.5, 30.0, 40.0)})
         self.assertEqual(
-            (page.zoom_fac, page.current_x, page.current_y), (2.5, 30.0, 40.0)
+            plan_view.calls_named("set_view_state_for_next_load")[-1],
+            (((2.5, 30.0, 40.0),), {}),
         )
         plan_view.is_view_state_stable = False
-        page.zoom_fac, page.current_x, page.current_y = 1.0, 1.0, 2.0
         window._capture_refresh_view_state(page)
         self.assertEqual(
-            (page.zoom_fac, page.current_x, page.current_y), (2.5, 30.0, 40.0)
+            plan_view.calls_named("set_view_state_for_next_load")[-1],
+            (((2.5, 30.0, 40.0),), {}),
         )
         window._page_view_states["5"] = (0.0, 9.0, 9.0)
-        page.zoom_fac, page.current_x, page.current_y = 1.0, 1.0, 2.0
+        before = len(plan_view.calls_named("set_view_state_for_next_load"))
         window._capture_refresh_view_state(page)
         self.assertEqual(
-            (page.zoom_fac, page.current_x, page.current_y), (1.0, 1.0, 2.0)
+            len(plan_view.calls_named("set_view_state_for_next_load")), before
         )
         window._page_view_states["5"] = (0.001, 9.0, 8.0)
         window._capture_refresh_view_state(page)
         self.assertEqual(
-            (page.zoom_fac, page.current_x, page.current_y), (0.001, 9.0, 8.0)
+            plan_view.calls_named("set_view_state_for_next_load")[-1],
+            (((0.001, 9.0, 8.0),), {}),
         )
         window._page_view_states.clear()
-        page.zoom_fac = 3.0
+        before = len(plan_view.calls_named("set_view_state_for_next_load"))
         window._capture_refresh_view_state(page)
-        self.assertEqual(page.zoom_fac, 3.0)
         window._navigation_source = "combobox"
         window._page_view_states["5"] = (7.0, 1.0, 1.0)
         window._capture_refresh_view_state(page)
-        self.assertEqual(page.zoom_fac, 3.0)
+        self.assertEqual(
+            len(plan_view.calls_named("set_view_state_for_next_load")), before
+        )
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y), (1.0, 1.0, 2.0)
+        )
         window._navigation_source = "refresh"
+        window._page_view_states["5"] = (6.0, 7.0, 8.0)
         window.plan_view = None
         window._capture_refresh_view_state(page)
-        self.assertEqual(page.zoom_fac, 3.0)
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y), (1.0, 1.0, 2.0)
+        )
+        self.assertEqual(
+            len(plan_view.calls_named("set_view_state_for_next_load")), before
+        )
         window.plan_view = plan_view
         window._remember_page_view_state("", 2.0, 1.0, 1.0)
         window._remember_page_view_state("p", 0.0, 1.0, 1.0)

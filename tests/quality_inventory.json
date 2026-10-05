@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
-  "module_count": 529,
-  "method_count": 12648,
+  "module_count": 530,
+  "method_count": 12682,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -543,6 +543,12 @@
       "decision": "Placement preview drew above annotations while the placed takeoff draws below",
       "status": "fixed",
       "outcome": "plan_view_z_order is the single z source: takeoff_z_value (moved from scene_builder) and TAKEOFF_PREVIEW_BODY_Z/OUTLINE_Z/INDICATOR_Z at a draw slot above every placed takeoff; scene_builder and the placement previews use them. Sibling: annotation previews (z 15/16) now use the annotation band the placed item uses (ANNOTATION_BODY_Z, DIMENSION_LABEL_Z, PAPER_HIGHLIGHT_Z). 15 new integration tests plus unit tests; 24 mutants killed (two survivors found and killed by adding the pattern-line and right-angle indicator cases). Handles and validity outlines intentionally stay above; paste-backout outline unchanged."
+    },
+    {
+      "id": "W1",
+      "decision": "Page scale change jumps the main view back (Bug A) and adopts the detached window's viewport (Bug B)",
+      "status": "fixed",
+      "outcome": "Root cause: scale-derived overlay units in the render identity (7a1754e) force a full reload that restores the Page's stale stored viewport, and the Page is shared with the detached window which overwrote it. Fix: a private per-view snapshot for appearance/calibration-only reloads and non-owning detached views. 34 real-view tests (15 behavioural tests failed against the unfixed source; each appearance test fails on its own), 29 mutants killed, 4 initial survivors killed by extra load-cycle tests. Siblings: scale from the detached window, invert, bitonal, show mode, overlay rect/rotation, remote SQL refresh, reloaded Page object, page switch with a detached window fixed; rename, zoom/fit after the change and page switch restore did not reproduce; page rotation, flip, size and replacing the image or overlay file change geometry and keep restoring the stored state; intentionally unfixed (reported)."
     },
     {
       "id": "OPEN-1",
@@ -119111,6 +119117,720 @@
           "review_note": "Retained: load_bid does not reach the reader while a mutation is in flight and afterwards the expected token is the committed one. Killed: removing the scope from load_bid, un-sharing the lock, removing the scope from the write path.",
           "second_pass_status": "second pass reviewed",
           "second_pass_note": "Second pass: genuine: the reload must not reach the reader while the mutation is in flight (bounded 0.25 s negative window) and afterwards the expected token is the committed one; strengthened in this pass with the positive control that the reload really reached the reader and with is_alive checks on both threads (a hung thread would otherwise leave reload_complete unset only by timeout). Mutant re-run: load_bid without the scope KILLED (by the window check; with the window forced to 0 the reload thread still enters the reader before the check, so the check is not starvation proof, see fixture_review)."
+        }
+      ],
+      "duplicate_method_names": []
+    },
+    "tests/integration/surfaces/test_page_scale_viewport.py": {
+      "sha256": "e08154912bc7d1052c3429b101a755ddd19bdad9042ab38e40bda04f975bb738",
+      "methods": [
+        {
+          "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_scrolled_main_view_does_not_jump_back_after_a_scale_change",
+          "line": 116,
+          "assertions": [
+            "self.assertGreater",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.assertGreater",
+            "self.assert_same_viewport",
+            "self.coordinator._on_page_metadata_changed",
+            "self.detached.hide",
+            "self.scroll_without_publishing",
+            "self.viewport_of",
+            "self.write_scale"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Bug A: no detached window; main view zoomed and scrolled down (scroll not published), then Set Scale through the real coordinator handler. Before the fix the visible centre went from y 816.9 back to 791.8 (the stale stored page state); now unchanged.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_main_view_keeps_its_viewport_while_a_detached_window_shows_a_section",
+          "line": 132,
+          "assertions": [
+            "self.assertNotAlmostEqual",
+            "self.assert_same_viewport",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "self.assertNotAlmostEqual",
+            "self.assert_same_viewport",
+            "self.publish_scale_event",
+            "self.scroll_without_publishing",
+            "self.viewport_of",
+            "self.write_scale",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Bug B: detached window zoomed into a section (different zoom and centre than the main view, asserted); scale change with the main handler first. Before the fix the main view took the detached zoom (0.357 to 0.538). Both viewports unchanged now.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_viewports_are_kept_when_the_detached_window_refreshes_first",
+          "line": 145,
+          "assertions": [
+            "self.assert_same_viewport",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "self.assert_same_viewport",
+            "self.publish_scale_event",
+            "self.scroll_without_publishing",
+            "self.viewport_of",
+            "self.write_scale",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Same with the detached window refreshing before the main view (event order must not matter).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_scale_change_started_from_the_detached_window_moves_neither_view",
+          "line": 155,
+          "assertions": [
+            "self.assertEqual",
+            "self.assert_same_viewport",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "requested.append",
+            "self.assertEqual",
+            "self.assert_same_viewport",
+            "self.detached._on_scale_changed",
+            "self.publish_scale_event",
+            "self.scroll_without_publishing",
+            "self.viewport_of",
+            "self.write_scale",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Scale chosen in the detached window: its scale callback writes the page like the coordinator and publishes the metadata event; neither the main view nor the detached view moves or resets.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_repeated_scale_changes_keep_both_viewports",
+          "line": 173,
+          "assertions": [
+            "self.assert_same_viewport",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "self.assert_same_viewport",
+            "self.publish_scale_event",
+            "self.scroll_without_publishing",
+            "self.viewport_of",
+            "self.write_scale",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Three consecutive scale changes (144, 96, 72) keep both viewports (no drift, no snapshot leaking between loads).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_main_view_ignores_state_written_to_the_shared_page_during_a_reload",
+          "line": 184,
+          "assertions": [
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.app.processEvents",
+            "self.assert_same_viewport",
+            "self.coordinator._on_page_metadata_changed",
+            "self.main.setVisible",
+            "self.scroll_without_publishing",
+            "self.viewport_of",
+            "self.write_scale"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Models the asynchronous load window: the main view is hidden so its reload cannot finish, the shared Page's stored state is overwritten as another window would (zoom 0.9, 100, 100), then the view is shown; it must restore its own snapshot, not the shared page. Kills the mutants that read the page instead of the private snapshot.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "AppearanceChangesKeepTheViewportTests.test_invert_keeps_the_viewport",
+          "line": 220,
+          "assertions": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "calls": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Sibling path: invert reloads the page through the identity-changed path; each appearance test builds its own view and stored state, scrolls (unpublished), changes one property and asserts transform, scrollbars and visible centre. Fails on its own against the unfixed reload (centre y 816.9 to 791.8) and when its key is dropped from the keep-set.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "AppearanceChangesKeepTheViewportTests.test_bitonal_keeps_the_viewport",
+          "line": 223,
+          "assertions": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "calls": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Same for bitonal (independent fresh view; fails on its own against the unfixed reload and when the bitonal key is dropped).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "AppearanceChangesKeepTheViewportTests.test_show_mode_keeps_the_viewport",
+          "line": 226,
+          "assertions": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "calls": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Same for the image show mode.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "AppearanceChangesKeepTheViewportTests.test_overlay_rect_keeps_the_viewport",
+          "line": 229,
+          "assertions": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "calls": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Same for the overlay rectangle.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "AppearanceChangesKeepTheViewportTests.test_overlay_rotation_keeps_the_viewport",
+          "line": 232,
+          "assertions": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "calls": [
+            "self.assert_change_keeps_the_viewport"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Same for the overlay rotation.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "AppearanceChangesKeepTheViewportTests.test_page_switch_still_restores_the_stored_page_state",
+          "line": 235,
+          "assertions": [
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.assertAlmostEqual",
+            "self.main.clear",
+            "self.main.get_view_state",
+            "self.scroll_without_publishing",
+            "self.viewer.update_plan_view"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Control (passes before and after): after clear and a reload of the page the stored zoom and centre are restored, so a page switch still uses the stored state.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "AppearanceChangesKeepTheViewportTests.test_geometry_changing_reloads_still_use_the_stored_page_state",
+          "line": 248,
+          "assertions": [
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.app.processEvents",
+            "self.assertAlmostEqual",
+            "self.main.get_view_state",
+            "self.main.verticalScrollBar",
+            "self.main.verticalScrollBar().setValue",
+            "self.scroll_without_publishing",
+            "self.viewer.update_plan_view"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Control (passes before and after): a flip changes geometry, so the stored page state (not the live viewport) is restored; the fix is not a blanket preserve.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_detached_zoom_does_not_change_the_page_state_the_main_view_restores",
+          "line": 268,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.main.get_view_state",
+            "self.scroll_without_publishing",
+            "self.stored",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "The detached window zoomed to a section must not write zoom_fac/current_x/current_y into the shared Page (it did, through the view's capture).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_main_view_returns_to_its_own_camera_after_a_page_switch",
+          "line": 278,
+          "assertions": [
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "Page",
+            "self._wait_for_pages_loaded",
+            "self.assertAlmostEqual",
+            "self.main.get_view_state",
+            "self.main.load_page",
+            "self.scroll_without_publishing",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Sibling path (page switch): main leaves the page, the detached window zooms, main returns; before the fix main restored the detached camera (0.3585 instead of its own 0.238).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_detached_window_keeps_its_camera_across_a_geometry_changing_refresh",
+          "line": 299,
+          "assertions": [
+            "self.assertEqual",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.assertEqual",
+            "self.assert_same_viewport",
+            "self.manager.refresh_active_view",
+            "self.stored",
+            "self.viewport_of",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A geometry-changing refresh of the detached window still restores its own camera, now handed to its view with set_view_state_for_next_load instead of written into the shared Page.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_main_view_state_is_still_stored_on_the_page_when_the_main_view_moves",
+          "line": 311,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertGreater"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.main.get_view_state",
+            "self.main.zoom_in",
+            "self.scroll_without_publishing",
+            "self.stored"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Control: the owning (main) view still stores its state on the page.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ViewStateOwnershipContractTests.test_only_appearance_and_calibration_changes_keep_the_view",
+          "line": 327,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertTrue",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "changing.items",
+            "keeping.items",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.identity",
+            "self.main._identity_change_keeps_view",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Table test of _identity_change_keeps_view: each appearance/calibration key keeps the view; page uid, index, image and overlay paths and signatures, rotation, flips, sizes and bid ref do not; identical identity keeps. Kills dropped-key and inverted-comparison mutants.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ViewStateOwnershipContractTests.test_identity_comparison_needs_a_loaded_page_with_the_same_fields",
+          "line": 365,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "dict",
+            "identity.pop",
+            "self.assertFalse",
+            "self.identity",
+            "self.main._identity_change_keeps_view",
+            "self.main.clear"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "No stored identity (after clear) or a different key set never keeps the view.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ViewStateOwnershipContractTests.test_a_view_that_does_not_own_the_page_state_publishes_without_storing_it",
+          "line": 373,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "len",
+            "published.append",
+            "self.assertEqual",
+            "self.side.get_view_state",
+            "self.side.page_view_state_changed.connect",
+            "self.side.zoom_in"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A non-owning view emits its live state through page_view_state_changed and leaves the Page fields untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ViewStateOwnershipContractTests.test_an_owning_view_stores_the_state_it_publishes",
+          "line": 386,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "published.append",
+            "self.assertEqual",
+            "self.main.get_view_state",
+            "self.main.page_view_state_changed.connect",
+            "self.main.zoom_in"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "The owning view stores exactly what it publishes (live state) on the Page.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ViewStateOwnershipContractTests.test_state_handed_to_the_next_load_wins_once_and_is_then_consumed",
+          "line": 396,
+          "assertions": [
+            "self.assertAlmostEqual",
+            "self.assertIsNone",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "range",
+            "self._wait_for_pages_loaded",
+            "self.assertAlmostEqual",
+            "self.assertIsNone",
+            "self.side.get_view_state",
+            "self.side.load_page",
+            "self.side.set_view_state_for_next_load",
+            "self.side.zoom_out",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "set_view_state_for_next_load restores that camera on the next load of the detached view and is consumed afterwards (also clears the snapshot at finalize).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ViewStateOwnershipContractTests.test_a_non_positive_state_handed_to_the_next_load_is_ignored",
+          "line": 413,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.assertIsNone",
+            "self.main.set_view_state_for_next_load",
+            "self.side.set_view_state_for_next_load",
+            "self.viewer.update_plan_view"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A zero-zoom state is dropped and does not leave a snapshot behind.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ViewStateOwnershipContractTests.test_the_preserved_state_is_dropped_by_the_next_load_that_does_not_keep_it",
+          "line": 422,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.assertIsNone",
+            "self.main.clear",
+            "self.scroll_without_publishing",
+            "self.viewer.update_plan_view",
+            "self.write_scale"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "The snapshot does not outlive its load: cleared after a kept reload finalizes and by the next load that does not keep the view.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LoadCycleViewStateTests.test_preserving_captures_the_live_state_of_this_view",
+          "line": 441,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.begin",
+            "self.main.get_view_state",
+            "self.scroll_without_publishing"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "_begin_load_cycle(preserve=True) snapshots this view's own zoom and centre and selects restore mode.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LoadCycleViewStateTests.test_state_handed_in_beats_the_live_state_when_preserving",
+          "line": 448,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.assertIsNone",
+            "self.begin",
+            "self.main.set_view_state_for_next_load",
+            "self.scroll_without_publishing"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "The explicitly handed camera takes precedence over the live capture and is consumed.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LoadCycleViewStateTests.test_state_handed_in_applies_without_preserving",
+          "line": 456,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.begin",
+            "self.main.set_view_state_for_next_load"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A handed camera applies even when the load does not preserve the live view.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LoadCycleViewStateTests.test_a_non_positive_state_handed_in_is_discarded_and_the_page_state_is_used",
+          "line": 463,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertIsNone",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.assertIsNone",
+            "self.begin",
+            "self.main._view_state_to_restore",
+            "self.main.set_view_state_for_next_load"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Zero-zoom handed state falls back to the page's stored state (restore mode from page).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LoadCycleViewStateTests.test_a_snapshot_left_by_an_earlier_load_never_reaches_the_next_one",
+          "line": 475,
+          "assertions": [
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "self.assertIsNone",
+            "self.begin"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A stale snapshot is cleared at the start of every load cycle.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LoadCycleViewStateTests.test_an_unreadable_live_state_falls_back_to_the_stored_page_state",
+          "line": 480,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "patch.object",
+            "self.assertEqual",
+            "self.assertIsNone",
+            "self.begin",
+            "self.main._view_state_to_restore"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "When the live centre cannot be read (patched to None) no snapshot is kept and the stored page state is restored; kills the zero-zoom snapshot mutant.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OtherPageUpdatePathsKeepTheViewportTests.test_a_remote_sql_page_update_keeps_the_viewport_and_the_detached_camera",
+          "line": 493,
+          "assertions": [
+            "self.assertIsNot",
+            "self.assert_same_viewport",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "SimpleNamespace",
+            "_RemotePlanIdentity",
+            "self._wait_for_pages_loaded",
+            "self.assertIsNot",
+            "self.assert_same_viewport",
+            "self.bus.publish",
+            "self.scroll_without_publishing",
+            "self.viewer._apply_plan_update",
+            "self.viewer._capture_plan_update",
+            "self.viewer._prepare_plan_update",
+            "self.viewport_of",
+            "self.write_scale",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Sibling path (remote SQL refresh): the viewer captures a snapshot with a remote identity (page deep-copied) and applies it, then the detached manager handles the event; both viewports kept. Failed before the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OtherPageUpdatePathsKeepTheViewportTests.test_a_reloaded_page_object_with_stale_stored_state_keeps_the_viewport",
+          "line": 523,
+          "assertions": [
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "deepcopy",
+            "self._wait_for_pages_loaded",
+            "self.assert_same_viewport",
+            "self.scroll_without_publishing",
+            "self.viewer.update_plan_view",
+            "self.viewport_of"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Sibling path (MDB/SQL reload): the project reload replaces the Page object (stale stored state 0.9/50/60, new scale); the viewport is kept. Failed before the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OtherPageUpdatePathsKeepTheViewportTests.test_zoom_and_fit_after_a_scale_change_work_from_the_kept_viewport",
+          "line": 534,
+          "assertions": [
+            "self.assertGreater",
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual",
+            "self.assertLess"
+          ],
+          "calls": [
+            "self.assertAlmostEqual",
+            "self.assertGreater",
+            "self.assertLess",
+            "self.main.reset_view",
+            "self.main.transform",
+            "self.main.transform().m11",
+            "self.main.zoom_in",
+            "self.publish_scale_event",
+            "self.scroll_without_publishing",
+            "self.viewport_of",
+            "self.write_scale"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Sibling path (zoom and fit after a scale change): zoom_in keeps the centre and reset_view fits the page after the scale change.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OtherPageUpdatePathsKeepTheViewportTests.test_renaming_a_page_does_not_touch_either_viewport",
+          "line": 547,
+          "assertions": [
+            "self.assert_same_viewport",
+            "self.assert_same_viewport"
+          ],
+          "calls": [
+            "self._wait_for_pages_loaded",
+            "self.assert_same_viewport",
+            "self.manager.refresh_active_view",
+            "self.scroll_without_publishing",
+            "self.viewer.update_plan_view",
+            "self.viewport_of",
+            "self.zoom_detached_to_a_section"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Sibling path (rename page): the refresh does not reload; both viewports untouched (passed before and after).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
         }
       ],
       "duplicate_method_names": []
@@ -307431,7 +308151,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/utils/test_windows.py": {
-      "sha256": "ef2913355aebdae949ef1ec2615391a7e32ccd268d382ba30edb532070e1a9a8",
+      "sha256": "dd275519a65c59ff13ab59a0ab3d5594bce016d91268a7d49eda60c732433c67",
       "methods": [
         {
           "name": "WindowButtonNativeOwnershipTests.test_window_button_helpers_preserve_parent_and_sibling_native_ownership",
@@ -307987,7 +308707,7 @@
         },
         {
           "name": "WindowButtonNativeStyleTests.test_init_dialog_shows_only_the_close_button",
-          "line": 506,
+          "line": 504,
           "assertions": [],
           "calls": [
             "FontDefinition",
@@ -308003,7 +308723,7 @@
         },
         {
           "name": "WindowButtonNativeStyleTests.test_color_dialog_loses_min_max_before_exec",
-          "line": 512,
+          "line": 510,
           "assertions": [
             "self.assertEqual"
           ],
@@ -308030,7 +308750,7 @@
         },
         {
           "name": "WindowButtonNativeStyleTests.test_input_dialog_loses_min_max_before_exec",
-          "line": 528,
+          "line": 526,
           "assertions": [],
           "calls": [
             "QtWidgets.QInputDialog",
@@ -308046,7 +308766,7 @@
         },
         {
           "name": "WindowButtonNativeStyleTests.test_persistent_state_dialog_keeps_maximize_but_not_minimize",
-          "line": 533,
+          "line": 531,
           "assertions": [],
           "calls": [
             "JobStatus",
@@ -308067,7 +308787,7 @@
         },
         {
           "name": "WindowButtonNativeStyleTests.test_show_event_dialog_shows_only_the_close_button",
-          "line": 548,
+          "line": 546,
           "assertions": [],
           "calls": [
             "EmployeeDetailDialog",
@@ -308090,7 +308810,7 @@
         },
         {
           "name": "WindowButtonQtHintTests.test_remove_minimize_maximize_sets_customized_close_only_hints",
-          "line": 594,
+          "line": 592,
           "assertions": [
             "self.assertEqual"
           ],
@@ -308106,7 +308826,7 @@
         },
         {
           "name": "WindowButtonQtHintTests.test_remove_minimize_sets_customized_hints_with_maximize_kept",
-          "line": 607,
+          "line": 605,
           "assertions": [
             "self.assertEqual"
           ],
@@ -308122,7 +308842,7 @@
         },
         {
           "name": "WindowButtonQtHintTests.test_hints_are_left_alone_on_a_visible_widget",
-          "line": 620,
+          "line": 618,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -318691,7 +319411,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/windows/components/test_window.py": {
-      "sha256": "97b60095424ef9af14778929bfc7cea76fca61726f8de4615ab3fdb359bee9c1",
+      "sha256": "aefc2ff144fb0199923a4b9d884088c7ded1ca0d743a705ad9dcc80a71ea6b2f",
       "methods": [
         {
           "name": "WorkspaceStateCoordinatorDetachedWindowTests.test_detached_page_window_cleanup_releases_renderer_references",
@@ -321386,6 +322106,7 @@
             "self.assertEqual",
             "self.assertEqual",
             "self.assertEqual",
+            "self.assertEqual",
             "self.assertEqual"
           ],
           "calls": [
@@ -321400,9 +322121,9 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Strengthened: besides applying the live camera and passing hidden layers, it now proves the live state is remembered in _page_view_states. Mutants (do not remember, drop non-positive guard, drop stability check, drop refresh-only check) KILLED.",
+          "review_note": "Updated contract: a refresh hands the live view state to the view with set_view_state_for_next_load and no longer writes it into the shared Page (page fields keep their values).",
           "second_pass_status": "second pass reviewed",
-          "second_pass_note": "Second pass: own verdict - refresh copies the live stable view state onto the Page before load and remembers it. Agrees. Sweep: 32 production mutants attributed to this test (0 killed only by it)."
+          "second_pass_note": "Updated contract: a refresh hands the live view state to the view with set_view_state_for_next_load and no longer writes it into the shared Page (page fields keep their values)."
         },
         {
           "name": "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_live_state_of_a_different_page",
@@ -321459,6 +322180,7 @@
           "line": 3523,
           "assertions": [
             "self.assertTrue",
+            "self.assertEqual",
             "self.assertEqual"
           ],
           "calls": [
@@ -321474,15 +322196,16 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Retained: an unstable live state falls back to the cached state. Mutants (no cache fallback, ignore stability) KILLED.",
+          "review_note": "Updated contract: when the live state is unstable the cached window camera is handed to the view; the Page is untouched.",
           "second_pass_status": "second pass reviewed",
-          "second_pass_note": "Second pass: own verdict - unstable live state falls back to the cached state (live state values differ, so the choice is observable). Agrees. Sweep: 29 production mutants attributed to this test (0 killed only by it)."
+          "second_pass_note": "Updated contract: when the live state is unstable the cached window camera is handed to the view; the Page is untouched."
         },
         {
           "name": "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_main_window_page_state_when_cached",
           "line": 3558,
           "assertions": [
             "self.assertTrue",
+            "self.assertEqual",
             "self.assertEqual"
           ],
           "calls": [
@@ -321498,15 +322221,16 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Retained: the page's own Main-window camera is overridden by this window's cached state on refresh. Mutant dropping the refresh check KILLED.",
+          "review_note": "Updated contract: the cached detached camera is handed to the view instead of the main window's page state; the Page keeps the main window's state.",
           "second_pass_status": "second pass reviewed",
-          "second_pass_note": "Second pass: own verdict - the cache beats the Page's own stored (Main window) camera. Agrees. Sweep: 29 production mutants attributed to this test (0 killed only by it)."
+          "second_pass_note": "Updated contract: the cached detached camera is handed to the view instead of the main window's page state; the Page keeps the main window's state."
         },
         {
           "name": "DetachedPageViewWindowLoadPageContentTests.test_detached_hotlink_load_does_not_reuse_previous_window_camera",
           "line": 3591,
           "assertions": [
             "self.assertTrue",
+            "self.assertIsNone",
             "self.assertEqual"
           ],
           "calls": [
@@ -321517,18 +322241,19 @@
             "Page",
             "SimpleNamespace",
             "self.assertEqual",
+            "self.assertIsNone",
             "self.assertTrue",
             "set"
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Retained: hotlink navigation keeps the page's camera even with a cached state. Mutant ignoring the navigation source KILLED.",
+          "review_note": "Also asserts nothing is handed to the view for a hotlink navigation.",
           "second_pass_status": "second pass reviewed",
-          "second_pass_note": "Second pass: own verdict - non-refresh navigation ignores the cache. Agrees. Sweep: 17 production mutants attributed to this test (0 killed only by it)."
+          "second_pass_note": "Also asserts nothing is handed to the view for a hotlink navigation."
         },
         {
           "name": "DetachedWindowRestoreLifecycleTests.test_late_page_delivery_does_not_repeat_initial_show_after_shutdown_hide",
-          "line": 3676,
+          "line": 3677,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -321558,7 +322283,7 @@
         },
         {
           "name": "DetachedWindowRestoreLifecycleTests.test_oversized_saved_geometry_is_left_to_qt_restore_without_extra_clamp",
-          "line": 3693,
+          "line": 3694,
           "assertions": [
             "self.assertTrue",
             "self.assertNotEqual",
@@ -321601,7 +322326,7 @@
         },
         {
           "name": "DetachedWindowRestoreLifecycleTests.test_state_flags_apply_without_saved_geometry",
-          "line": 3725,
+          "line": 3726,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -321630,7 +322355,7 @@
         },
         {
           "name": "DetachedWindowRestoreLifecycleTests.test_show_request_is_ignored_while_already_visible_or_closing",
-          "line": 3742,
+          "line": 3743,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -321658,7 +322383,7 @@
         },
         {
           "name": "DetachedWindowRestoreLifecycleTests.test_restore_preserves_normal_geometry_before_and_after_native_show",
-          "line": 3759,
+          "line": 3760,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -321691,7 +322416,7 @@
         },
         {
           "name": "DetachedPageViewWindowStaleTerminalDeliveryTests.test_duplicate_geometry_failure_keeps_the_newer_move_pending_and_unrestored",
-          "line": 3806,
+          "line": 3807,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321720,7 +322445,7 @@
         },
         {
           "name": "DetachedPageViewWindowStaleTerminalDeliveryTests.test_duplicate_property_failure_keeps_the_newer_edit_pending_and_unrestored",
-          "line": 3828,
+          "line": 3829,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321746,7 +322471,7 @@
         },
         {
           "name": "DetachedPageViewWindowStaleTerminalDeliveryTests.test_duplicate_delete_failure_keeps_the_newer_delete_pending",
-          "line": 3847,
+          "line": 3848,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321773,7 +322498,7 @@
         },
         {
           "name": "DetachedPageViewWindowLockedBidRefusalTests.test_a_refused_move_restores_the_preview_and_frees_the_state",
-          "line": 3930,
+          "line": 3931,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321800,7 +322525,7 @@
         },
         {
           "name": "DetachedPageViewWindowLockedBidRefusalTests.test_a_refused_move_ends_the_unconsumed_gesture_lease",
-          "line": 3949,
+          "line": 3950,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321832,7 +322557,7 @@
         },
         {
           "name": "DetachedPageViewWindowLockedBidRefusalTests.test_a_refused_text_edit_restores_the_text_and_frees_the_state",
-          "line": 3978,
+          "line": 3979,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321858,7 +322583,7 @@
         },
         {
           "name": "DetachedPageViewWindowLockedBidRefusalTests.test_a_refused_delete_restores_the_selection_and_frees_the_state",
-          "line": 3998,
+          "line": 3999,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321884,7 +322609,7 @@
         },
         {
           "name": "DetachedPageViewWindowLockedBidRefusalTests.test_a_refused_annotation_placement_leaves_no_forward_mutation",
-          "line": 4015,
+          "line": 4016,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321908,7 +322633,7 @@
         },
         {
           "name": "DetachedPageViewWindowBidLockedRejectionTests.test_a_rejected_move_restores_the_preview_once",
-          "line": 4083,
+          "line": 4084,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321930,7 +322655,7 @@
         },
         {
           "name": "DetachedPageViewWindowBidLockedRejectionTests.test_a_rejected_move_does_not_end_the_already_consumed_gesture_lease",
-          "line": 4095,
+          "line": 4096,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -321962,7 +322687,7 @@
         },
         {
           "name": "DetachedPageViewWindowBidLockedRejectionTests.test_a_rejected_text_edit_restores_the_text_once",
-          "line": 4124,
+          "line": 4125,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -321983,7 +322708,7 @@
         },
         {
           "name": "DetachedPageViewWindowBidLockedRejectionTests.test_a_rejected_delete_restores_the_selection_once",
-          "line": 4135,
+          "line": 4136,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -322004,7 +322729,7 @@
         },
         {
           "name": "DetachedPageViewWindowBidLockedRejectionTests.test_a_rejected_annotation_placement_leaves_no_forward_mutation",
-          "line": 4145,
+          "line": 4146,
           "assertions": [
             "self.assertEqual"
           ],
@@ -322024,7 +322749,7 @@
         },
         {
           "name": "DetachedWindowSecondPassTests.test_recording_plan_view_matches_the_real_plan_view_contract",
-          "line": 4347,
+          "line": 4350,
           "assertions": [
             "self.assertLessEqual",
             "self.assertIn",
@@ -322056,7 +322781,7 @@
         },
         {
           "name": "DetachedWindowSecondPassTests.test_constructor_defaults_and_plan_view_configuration",
-          "line": 4379,
+          "line": 4382,
           "assertions": [
             "self.assertIsInstance",
             "self.assertEqual",
@@ -322154,7 +322879,7 @@
         },
         {
           "name": "DetachedWindowSecondPassTests.test_options_are_normalised_and_forwarded_to_the_widgets",
-          "line": 4571,
+          "line": 4574,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -322209,7 +322934,7 @@
         },
         {
           "name": "DetachedWindowSecondPassTests.test_constructor_populates_the_navigation_when_a_bid_is_supplied",
-          "line": 4668,
+          "line": 4671,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322242,7 +322967,7 @@
         },
         {
           "name": "DetachedWindowSecondPassTests.test_editable_window_subscribes_to_lease_loss_and_view_window_has_no_editing_hooks",
-          "line": 4703,
+          "line": 4706,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322278,7 +323003,7 @@
         },
         {
           "name": "DetachedWindowSecondPassTests.test_plan_view_signals_reach_the_window_handlers",
-          "line": 4740,
+          "line": 4743,
           "assertions": [
             "self.assertEqual"
           ],
@@ -322318,7 +323043,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_previous_and_next_buttons_select_the_neighbouring_page",
-          "line": 4864,
+          "line": 4867,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322342,7 +323067,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_arrow_buttons_are_wired_to_the_navigation_handlers",
-          "line": 4895,
+          "line": 4898,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -322365,7 +323090,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_page_activation_selects_only_a_different_page_of_an_open_window",
-          "line": 4903,
+          "line": 4906,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -322383,7 +323108,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_page_combo_activation_signal_reaches_the_window",
-          "line": 4918,
+          "line": 4921,
           "assertions": [
             "self.assertEqual"
           ],
@@ -322400,7 +323125,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_arrow_state_follows_the_target_page_position",
-          "line": 4923,
+          "line": 4926,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322426,7 +323151,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_named_view_combo_lists_views_in_page_order_and_hides_orphans",
-          "line": 4962,
+          "line": 4965,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322456,7 +323181,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_named_view_selection_reports_the_view_and_resets_the_combo_silently",
-          "line": 4987,
+          "line": 4990,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322484,7 +323209,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_named_view_selection_ignores_closed_windows_missing_callbacks_and_bad_items",
-          "line": 5004,
+          "line": 5007,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322508,7 +323233,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_navigation_update_rebuilds_models_and_ignores_a_closing_window",
-          "line": 5028,
+          "line": 5031,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322543,7 +323268,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_takeoff_indicator_updates_are_ignored_for_blank_uids_and_closing_windows",
-          "line": 5057,
+          "line": 5060,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322566,7 +323291,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_page_labels_refresh_renames_matching_named_view_pages_only",
-          "line": 5082,
+          "line": 5085,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322589,7 +323314,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_scale_combo_selects_presets_adds_one_custom_entry_and_restores_signals",
-          "line": 5107,
+          "line": 5110,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322629,7 +323354,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_scale_activation_reports_the_displayed_page_and_scale",
-          "line": 5144,
+          "line": 5147,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -322655,7 +323380,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_update_page_scale_refreshes_overlays_in_place_or_falls_back_to_a_reload",
-          "line": 5167,
+          "line": 5170,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -322690,7 +323415,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_update_page_area_selection_refreshes_in_place_or_reloads",
-          "line": 5227,
+          "line": 5230,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -322719,7 +323444,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_current_area_selection_target_requires_a_live_loaded_matching_page",
-          "line": 5258,
+          "line": 5261,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -322751,7 +323476,7 @@
         },
         {
           "name": "DetachedWindowNavigationTests.test_apply_config_preferences_updates_every_option_and_the_widgets",
-          "line": 5291,
+          "line": 5294,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322791,7 +323516,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_show_when_page_ready_waits_for_the_page_with_a_single_timeout_timer",
-          "line": 5468,
+          "line": 5471,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -322819,7 +323544,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_show_when_page_ready_ignores_a_visible_window",
-          "line": 5492,
+          "line": 5495,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -322840,7 +323565,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_page_geometry_ready_stops_the_timeout_and_shows_the_requested_window",
-          "line": 5500,
+          "line": 5503,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -322869,7 +323594,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_page_loaded_stops_the_timeout_and_schedules_the_resize_focus",
-          "line": 5529,
+          "line": 5532,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322894,7 +323619,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_show_timeout_shows_with_a_warning_and_falls_back_to_a_deferred_focus",
-          "line": 5554,
+          "line": 5557,
           "assertions": [
             "self.assertEqual",
             "single_shot.assert_not_called",
@@ -322933,7 +323658,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_deferred_focus_fallback_never_touches_a_destroyed_or_closing_window",
-          "line": 5610,
+          "line": 5613,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -322958,7 +323683,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_resize_focus_is_scheduled_only_for_an_open_window_with_a_named_view_target",
-          "line": 5628,
+          "line": 5631,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -322985,7 +323710,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_resize_focus_waits_for_a_stable_view_then_focuses_and_reveals",
-          "line": 5671,
+          "line": 5674,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323012,7 +323737,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_resize_events_reschedule_a_pending_resize_focus",
-          "line": 5701,
+          "line": 5704,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -323033,7 +323758,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_show_initial_window_consumes_the_request_and_applies_the_saved_state",
-          "line": 5712,
+          "line": 5715,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse"
@@ -323055,7 +323780,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_show_initial_window_does_nothing_for_a_visible_window",
-          "line": 5736,
+          "line": 5739,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue"
@@ -323077,7 +323802,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_initial_window_state_is_copied_and_normalised",
-          "line": 5747,
+          "line": 5750,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -323107,7 +323832,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_blank_canvas_decision_follows_view_page_source_and_stability",
-          "line": 5769,
+          "line": 5772,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -323136,7 +323861,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_blank_canvas_is_started_once_and_revealed_once",
-          "line": 5816,
+          "line": 5819,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -323164,7 +323889,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_named_view_focus_needs_a_hotlink_style_source_and_a_ready_scene",
-          "line": 5838,
+          "line": 5841,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323205,7 +323930,7 @@
         },
         {
           "name": "DetachedWindowShowAndFocusTests.test_focusing_a_named_view_logs_a_failure_and_ignores_missing_targets",
-          "line": 5890,
+          "line": 5893,
           "assertions": [
             "self.assertEqual",
             "focus.assert_called_once_with",
@@ -323236,7 +323961,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_load_view_projects_the_page_into_the_plan_view_and_the_navigation",
-          "line": 5933,
+          "line": 5936,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -323277,7 +324002,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_load_view_stops_before_the_navigation_when_the_page_cannot_load",
-          "line": 5991,
+          "line": 5994,
           "assertions": [
             "self.assertEqual",
             "self.assertLogs"
@@ -323304,7 +324029,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_load_view_starts_or_reveals_the_blank_canvas_from_the_navigation_source",
-          "line": 6010,
+          "line": 6013,
           "assertions": [
             "self.assertEqual"
           ],
@@ -323322,7 +324047,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_load_view_resets_the_clipboard_for_the_new_context_and_refreshes_tools",
-          "line": 6023,
+          "line": 6026,
           "assertions": [
             "self.assertEqual",
             "self.assertIn"
@@ -323343,7 +324068,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_update_page_refreshes_the_displayed_page_as_a_refresh",
-          "line": 6039,
+          "line": 6042,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -323377,7 +324102,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_page_takeoff_indicator_follows_the_loaded_page",
-          "line": 6063,
+          "line": 6066,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323406,8 +324131,9 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_refresh_view_state_cache_is_keyed_by_text_uid_and_needs_a_positive_zoom",
-          "line": 6098,
+          "line": 6101,
           "assertions": [
+            "self.assertEqual",
             "self.assertEqual",
             "self.assertEqual",
             "self.assertEqual",
@@ -323422,6 +324148,8 @@
           ],
           "calls": [
             "Page",
+            "len",
+            "plan_view.calls_named",
             "self._window",
             "self.assertEqual",
             "self.assertNotIn",
@@ -323431,13 +324159,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: integer page uid keyed as text, stable live state captured, unstable falls back to the cache, zero-zoom cache ignored, tiny positive zoom accepted, non-refresh source and missing plan view ignored. Sound.",
+          "review_note": "Updated contract: the per-window camera cache (keyed by text uid, needs a positive zoom) is handed to the view through set_view_state_for_next_load; non-refresh navigation and missing plan view hand nothing; the Page is never written, including when the plan view is missing (cached camera present, Page fields asserted unchanged and nothing handed in).",
           "second_pass_status": "second pass reviewed",
-          "second_pass_note": "Second pass: own verdict - integer page uid keyed as text, stable live state captured, unstable falls back to the cache, zero-zoom cache ignored, tiny positive zoom accepted, non-refresh source and missing plan view ignored. Sound. Sweep: 119 production mutants attributed to this test (5 killed only by it)."
+          "second_pass_note": "Updated contract: the per-window camera cache (keyed by text uid, needs a positive zoom) is handed to the view through set_view_state_for_next_load; non-refresh navigation and missing plan view hand nothing; the Page is never written, including when the plan view is missing (cached camera present, Page fields asserted unchanged and nothing handed in)."
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_default_cursor_mode_selects_the_configured_button_or_pan",
-          "line": 6150,
+          "line": 6165,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -323468,7 +324196,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_cursor_buttons_drive_the_plan_view_cursor_mode_and_zoom_commands",
-          "line": 6190,
+          "line": 6205,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323500,7 +324228,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_annotation_tool_buttons_activate_a_placement_or_fall_back_to_the_default_mode",
-          "line": 6215,
+          "line": 6230,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -323537,7 +324265,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_cursor_mode_requests_pick_the_matching_button_without_unchecking_others",
-          "line": 6245,
+          "line": 6260,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -323577,7 +324305,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_tool_buttons_follow_the_placement_capability_and_leave_a_lost_placement",
-          "line": 6276,
+          "line": 6291,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -323613,7 +324341,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_access_state_projection_onto_the_plan_view_follows_the_inline_edit_rules",
-          "line": 6308,
+          "line": 6323,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323640,7 +324368,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_placement_and_text_edit_state_changes_are_announced_as_booleans",
-          "line": 6361,
+          "line": 6376,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -323661,7 +324389,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_annotation_style_refresh_and_name_validation_delegate_to_their_helpers",
-          "line": 6374,
+          "line": 6389,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -323690,7 +324418,7 @@
         },
         {
           "name": "DetachedWindowLoadAndToolTests.test_dropdown_popup_sizes_are_read_and_written_per_state_key",
-          "line": 6408,
+          "line": 6423,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323720,7 +324448,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_geometry_queue_arguments_and_history_replay_are_exact",
-          "line": 6503,
+          "line": 6518,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323764,7 +324492,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_geometry_completion_without_history_service_or_for_a_closing_window",
-          "line": 6558,
+          "line": 6573,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323795,7 +324523,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_geometry_failure_releases_the_forward_mutation_and_recoverable_results_wait",
-          "line": 6585,
+          "line": 6600,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323820,7 +324548,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_geometry_commit_keeps_a_changed_selection_and_a_replaced_page_out_of_history",
-          "line": 6604,
+          "line": 6619,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323844,7 +324572,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_geometry_failure_after_editing_was_lost_still_clears_pending_and_finishes",
-          "line": 6624,
+          "line": 6639,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323867,7 +324595,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_geometry_queue_failure_finishes_the_forward_mutation_and_reraises",
-          "line": 6637,
+          "line": 6652,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323889,7 +324617,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_property_queue_arguments_history_replay_and_empty_old_values_are_exact",
-          "line": 6649,
+          "line": 6664,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323925,7 +324653,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_property_completion_without_history_closing_and_changed_selection",
-          "line": 6701,
+          "line": 6716,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -323956,7 +324684,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_insert_queue_arguments_identity_and_history_replay_are_exact",
-          "line": 6735,
+          "line": 6750,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324005,7 +324733,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_insert_completion_edge_cases",
-          "line": 6793,
+          "line": 6808,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324031,7 +324759,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_text_commit_selects_and_reactivates_only_for_the_unchanged_context",
-          "line": 6823,
+          "line": 6838,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -324057,7 +324785,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_delete_queue_arguments_history_and_closing_notices_are_exact",
-          "line": 6859,
+          "line": 6874,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324103,7 +324831,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_delete_completion_for_a_closing_window_notifies_history_of_the_deletion",
-          "line": 6907,
+          "line": 6922,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324132,7 +324860,7 @@
         },
         {
           "name": "DetachedWindowSqlQueueTests.test_delete_queue_failure_finishes_the_forward_mutation_and_reraises",
-          "line": 6944,
+          "line": 6959,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324154,7 +324882,7 @@
         },
         {
           "name": "DetachedWindowCleanupSecondPassTests.test_every_cleanup_step_reports_its_own_failure_and_the_rest_still_runs",
-          "line": 7054,
+          "line": 7069,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324199,7 +324927,7 @@
         },
         {
           "name": "DetachedWindowCleanupSecondPassTests.test_cleanup_of_a_real_editable_window_disconnects_editing_collaborators",
-          "line": 7177,
+          "line": 7192,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertIsNotNone",
@@ -324251,7 +324979,7 @@
         },
         {
           "name": "DetachedWindowCleanupSecondPassTests.test_cleanup_of_a_window_without_optional_collaborators_skips_their_steps",
-          "line": 7221,
+          "line": 7236,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -324272,7 +325000,7 @@
         },
         {
           "name": "DetachedWindowCleanupSecondPassTests.test_cleanup_ends_a_held_geometry_lease_through_the_write_service",
-          "line": 7230,
+          "line": 7245,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -324296,7 +325024,7 @@
         },
         {
           "name": "DetachedWindowCleanupSecondPassTests.test_cleanup_of_a_destroyed_window_logs_and_finishes_instead_of_raising",
-          "line": 7249,
+          "line": 7264,
           "assertions": [
             "self.assertFalse",
             "self.assertIn",
@@ -324329,7 +325057,7 @@
         },
         {
           "name": "DetachedWindowCleanupSecondPassTests.test_closing_a_window_runs_cleanup_before_the_default_close_handling",
-          "line": 7268,
+          "line": 7283,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -324355,7 +325083,7 @@
         },
         {
           "name": "DetachedWindowCleanupSecondPassTests.test_second_cleanup_unsubscribes_a_bus_that_survived_the_first",
-          "line": 7280,
+          "line": 7295,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -324384,7 +325112,7 @@
         },
         {
           "name": "DetachedWindowDestroyedOwnerAndHotlinkHistoryTests.test_a_lease_grant_delivered_after_the_window_was_collected_is_ended",
-          "line": 7323,
+          "line": 7338,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual",
@@ -324412,7 +325140,7 @@
         },
         {
           "name": "DetachedWindowDestroyedOwnerAndHotlinkHistoryTests.test_sql_completions_delivered_after_the_window_was_collected_are_dropped",
-          "line": 7348,
+          "line": 7363,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -324452,7 +325180,7 @@
         },
         {
           "name": "DetachedWindowDestroyedOwnerAndHotlinkHistoryTests.test_hotlink_dialog_destroyed_while_open_writes_nothing",
-          "line": 7396,
+          "line": 7411,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324484,7 +325212,7 @@
         },
         {
           "name": "DetachedWindowDestroyedOwnerAndHotlinkHistoryTests.test_hotlink_dialog_returning_after_the_plan_view_was_destroyed_does_nothing",
-          "line": 7429,
+          "line": 7444,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -324513,7 +325241,7 @@
         },
         {
           "name": "DetachedWindowHotlinkHistoryDependencyTests.test_the_wrapper_warns_once_and_reraises_only_for_a_missing_hotlink_view",
-          "line": 7497,
+          "line": 7512,
           "assertions": [
             "warning.assert_not_called",
             "self.assertEqual",
@@ -324546,7 +325274,7 @@
         },
         {
           "name": "DetachedWindowHotlinkHistoryDependencyTests.test_local_hotlink_placement_history_warns_when_its_named_view_is_gone",
-          "line": 7527,
+          "line": 7542,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -324576,7 +325304,7 @@
         },
         {
           "name": "DetachedWindowHotlinkHistoryDependencyTests.test_local_hotlink_delete_history_warns_when_its_named_view_is_gone",
-          "line": 7555,
+          "line": 7570,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324603,7 +325331,7 @@
         },
         {
           "name": "DetachedWindowHotlinkHistoryDependencyTests.test_local_hotlink_paste_history_warns_when_its_named_view_is_gone",
-          "line": 7577,
+          "line": 7592,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -324635,7 +325363,7 @@
         },
         {
           "name": "DetachedWindowHotlinkHistoryDependencyTests.test_sql_hotlink_placement_history_warns_when_its_named_view_is_gone",
-          "line": 7599,
+          "line": 7614,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324669,7 +325397,7 @@
         },
         {
           "name": "DetachedWindowHotlinkHistoryDependencyTests.test_sql_hotlink_delete_history_warns_when_its_named_view_is_gone",
-          "line": 7638,
+          "line": 7653,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324698,7 +325426,7 @@
         },
         {
           "name": "DetachedWindowDuplicateAndInvalidatedCompletionTests.test_a_duplicate_committed_delivery_neither_clears_the_newer_pending_edit_nor_finishes_twice",
-          "line": 7692,
+          "line": 7707,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324730,7 +325458,7 @@
         },
         {
           "name": "DetachedWindowDuplicateAndInvalidatedCompletionTests.test_a_duplicate_committed_insert_delivery_reactivates_the_tool_and_binds_history_once",
-          "line": 7716,
+          "line": 7731,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324755,7 +325483,7 @@
         },
         {
           "name": "DetachedWindowDuplicateAndInvalidatedCompletionTests.test_completions_whose_forward_mutation_was_invalidated_record_no_history",
-          "line": 7738,
+          "line": 7753,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324784,7 +325512,7 @@
         },
         {
           "name": "DetachedWindowDuplicateAndInvalidatedCompletionTests.test_history_replay_uses_the_page_scale_captured_at_submission",
-          "line": 7772,
+          "line": 7787,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324807,7 +325535,7 @@
         },
         {
           "name": "DetachedWindowDuplicateAndInvalidatedCompletionTests.test_history_restore_uses_the_page_scale_captured_at_submission",
-          "line": 7796,
+          "line": 7811,
           "assertions": [
             "self.assertEqual"
           ],
@@ -324827,7 +325555,7 @@
         },
         {
           "name": "DetachedWindowDuplicateAndInvalidatedCompletionTests.test_inserted_annotation_history_restores_at_the_scale_captured_at_submission",
-          "line": 7810,
+          "line": 7825,
           "assertions": [
             "self.assertEqual"
           ],
@@ -324850,7 +325578,7 @@
         },
         {
           "name": "DetachedWindowDuplicateAndInvalidatedCompletionTests.test_a_view_window_never_offers_copy_even_for_a_selected_copyable_annotation",
-          "line": 7834,
+          "line": 7849,
           "assertions": [
             "self.assertEqual",
             "self.assertIs"
@@ -324872,7 +325600,7 @@
         },
         {
           "name": "DetachedWindowToolbarLayoutContractTests.test_the_annotation_window_toolbar_layout_follows_the_shared_constants",
-          "line": 7869,
+          "line": 7884,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324917,7 +325645,7 @@
         },
         {
           "name": "DetachedWindowToolbarLayoutContractTests.test_the_view_window_toolbar_keeps_full_margins_and_has_no_annotation_row",
-          "line": 7944,
+          "line": 7959,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324945,7 +325673,7 @@
         },
         {
           "name": "DetachedWindowToolbarLayoutContractTests.test_navigation_controls_have_their_fixed_sizes_tooltips_and_policies",
-          "line": 7968,
+          "line": 7983,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -324991,7 +325719,7 @@
         },
         {
           "name": "DetachedWindowToolbarLayoutContractTests.test_cursor_tools_are_exclusive_checkable_buttons_and_commands_are_not",
-          "line": 8001,
+          "line": 8016,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -325036,7 +325764,7 @@
         },
         {
           "name": "DetachedWindowToolbarLayoutContractTests.test_a_view_window_cursor_group_has_only_pan_and_zoom",
-          "line": 8041,
+          "line": 8056,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -325057,7 +325785,7 @@
         },
         {
           "name": "DetachedWindowHistoryGuardAndRefreshTests.test_undo_and_redo_requests_run_history_only_while_the_window_may_write",
-          "line": 8053,
+          "line": 8068,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325087,7 +325815,7 @@
         },
         {
           "name": "DetachedWindowHistoryGuardAndRefreshTests.test_a_view_window_never_runs_history_even_with_full_access",
-          "line": 8077,
+          "line": 8092,
           "assertions": [
             "self.assertEqual"
           ],
@@ -325112,7 +325840,7 @@
         },
         {
           "name": "DetachedWindowHistoryGuardAndRefreshTests.test_sql_queue_use_needs_a_database_path_a_service_and_the_service_opt_in",
-          "line": 8090,
+          "line": 8105,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -325137,7 +325865,7 @@
         },
         {
           "name": "DetachedWindowHistoryGuardAndRefreshTests.test_authoritative_refresh_preparation_ends_the_lease_then_prepares_the_plan_view",
-          "line": 8117,
+          "line": 8132,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325169,7 +325897,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_the_two_single_shot_timers_are_owned_by_the_window_and_wired_to_their_handlers",
-          "line": 8170,
+          "line": 8185,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -325198,7 +325926,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_every_dropdown_relays_its_popup_size_change_through_the_window_signal",
-          "line": 8194,
+          "line": 8209,
           "assertions": [
             "self.assertEqual"
           ],
@@ -325218,7 +325946,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_a_hotlink_click_on_the_plan_view_is_published_on_the_window_event_bus",
-          "line": 8209,
+          "line": 8224,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325242,7 +325970,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_the_constructor_stores_the_injected_collaborators_and_default_style_hooks",
-          "line": 8233,
+          "line": 8248,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -325265,7 +325993,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_initial_show_state_and_navigation_source_have_safe_values_before_they_are_supplied",
-          "line": 8255,
+          "line": 8270,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -325288,7 +326016,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_a_window_created_with_a_parent_widget_is_still_a_top_level_window",
-          "line": 8272,
+          "line": 8287,
           "assertions": [
             "self.assertIs",
             "self.assertTrue",
@@ -325315,7 +326043,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_unchecking_an_annotation_tool_does_not_start_a_placement",
-          "line": 8286,
+          "line": 8301,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -325341,7 +326069,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_annotation_tool_icons_are_coloured_once_for_all_tool_buttons",
-          "line": 8302,
+          "line": 8317,
           "assertions": [
             "colour.assert_called_once",
             "self.assertIs",
@@ -325363,7 +326091,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_the_annotation_row_ends_with_a_stretch_and_holds_one_split_button_per_tool",
-          "line": 8315,
+          "line": 8330,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -325393,7 +326121,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_page_labels_use_the_label_options_from_the_first_load",
-          "line": 8328,
+          "line": 8343,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325419,7 +326147,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_requesting_a_placement_without_registered_tool_buttons_is_ignored",
-          "line": 8353,
+          "line": 8368,
           "assertions": [
             "self.assertTrue"
           ],
@@ -325440,7 +326168,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_the_view_window_reports_placement_as_exactly_false",
-          "line": 8361,
+          "line": 8376,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -325465,7 +326193,7 @@
         },
         {
           "name": "DetachedWindowConstructionWiringTests.test_the_window_configuration_cannot_be_modified_after_creation",
-          "line": 8373,
+          "line": 8388,
           "assertions": [
             "self.assertRaises",
             "self.assertRaises"
@@ -325481,7 +326209,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_lease_for_other_resources_is_ended_and_the_geometry_is_queued_without_it",
-          "line": 8426,
+          "line": 8441,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -325505,7 +326233,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_lease_for_a_sibling_with_identical_dependencies_is_still_not_reused",
-          "line": 8439,
+          "line": 8454,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone"
@@ -325526,7 +326254,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_lease_whose_dependencies_changed_is_ended_and_not_reused",
-          "line": 8450,
+          "line": 8465,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -325549,7 +326277,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_granted_lease_is_reused_and_a_pending_request_is_not_repeated",
-          "line": 8463,
+          "line": 8478,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325577,7 +326305,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_lease_requests_without_a_usable_context_release_what_is_held",
-          "line": 8480,
+          "line": 8495,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -325606,7 +326334,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_selection_change_without_a_lease_does_not_touch_the_plan_view_leasing",
-          "line": 8507,
+          "line": 8522,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -325628,7 +326356,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_only_a_changed_selection_releases_the_lease",
-          "line": 8525,
+          "line": 8540,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -325653,7 +326381,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_sibling_with_identical_dependencies_gets_a_fresh_lease_request",
-          "line": 8539,
+          "line": 8554,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325674,7 +326402,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_selection_whose_dependencies_moved_gets_a_fresh_lease_request",
-          "line": 8548,
+          "line": 8563,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -325694,7 +326422,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_reused_lease_adopts_the_requested_selection",
-          "line": 8557,
+          "line": 8572,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -325719,7 +326447,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_pending_request_is_replaced_by_a_request_for_another_selection",
-          "line": 8569,
+          "line": 8584,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325743,7 +326471,7 @@
         },
         {
           "name": "DetachedWindowGestureLeaseLifecycleTests.test_a_lease_loss_also_forgets_the_leased_selection",
-          "line": 8580,
+          "line": 8595,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -325767,7 +326495,7 @@
         },
         {
           "name": "DetachedWindowScaleAndTakeoffProjectionTests.test_every_preset_scale_selects_its_own_entry_by_both_factors",
-          "line": 8604,
+          "line": 8619,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -325790,7 +326518,7 @@
         },
         {
           "name": "DetachedWindowScaleAndTakeoffProjectionTests.test_a_page_refresh_pushes_the_takeoff_indicators_to_the_page_combo",
-          "line": 8614,
+          "line": 8629,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325816,7 +326544,7 @@
         },
         {
           "name": "DetachedWindowScaleAndTakeoffProjectionTests.test_a_property_edit_ends_the_held_gesture_lease_before_queueing",
-          "line": 8633,
+          "line": 8648,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -325846,7 +326574,7 @@
         },
         {
           "name": "DetachedWindowPageScopeCaptureTests.test_geometry_across_pages_queues_each_page_once_in_key_order_and_skips_blank_pages",
-          "line": 8690,
+          "line": 8705,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325866,7 +326594,7 @@
         },
         {
           "name": "DetachedWindowPageScopeCaptureTests.test_a_page_missing_from_the_window_at_submission_keeps_the_result_out_of_history",
-          "line": 8719,
+          "line": 8734,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325891,7 +326619,7 @@
         },
         {
           "name": "DetachedWindowPreconditionBranchTests.test_the_blank_canvas_needs_each_named_view_precondition_on_its_own",
-          "line": 8763,
+          "line": 8778,
           "assertions": [
             "self.assertIs",
             "self.assertIs"
@@ -325916,7 +326644,7 @@
         },
         {
           "name": "DetachedWindowPreconditionBranchTests.test_the_blank_canvas_is_requested_for_a_missing_page_without_a_plan_view",
-          "line": 8781,
+          "line": 8796,
           "assertions": [
             "self.assertIs"
           ],
@@ -325935,7 +326663,7 @@
         },
         {
           "name": "DetachedWindowPreconditionBranchTests.test_revealing_the_blank_canvas_without_a_plan_view_keeps_it_pending",
-          "line": 8788,
+          "line": 8803,
           "assertions": [
             "self.assertTrue"
           ],
@@ -325952,7 +326680,7 @@
         },
         {
           "name": "DetachedWindowPreconditionBranchTests.test_named_view_focus_is_refused_for_each_missing_precondition_and_reveals",
-          "line": 8796,
+          "line": 8811,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -325985,7 +326713,7 @@
         },
         {
           "name": "DetachedWindowPreconditionBranchTests.test_page_loaded_and_timeout_tolerate_a_missing_show_timer",
-          "line": 8836,
+          "line": 8851,
           "assertions": [
             "self.assertTrue"
           ],
@@ -326005,7 +326733,7 @@
         },
         {
           "name": "DetachedWindowPreconditionBranchTests.test_the_timeout_requires_a_stable_view_and_stops_after_scheduling_the_focus",
-          "line": 8845,
+          "line": 8860,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326029,7 +326757,7 @@
         },
         {
           "name": "DetachedWindowLeaseAndContextGuardTests.test_releasing_a_lease_without_a_write_service_only_clears_local_state",
-          "line": 8876,
+          "line": 8891,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual",
@@ -326051,7 +326779,7 @@
         },
         {
           "name": "DetachedWindowLeaseAndContextGuardTests.test_a_loss_notice_without_a_held_lease_is_ignored",
-          "line": 8886,
+          "line": 8901,
           "assertions": [
             "self.assertEqual"
           ],
@@ -326072,7 +326800,7 @@
         },
         {
           "name": "DetachedWindowLeaseAndContextGuardTests.test_a_grant_after_edit_access_was_lost_is_ended_even_without_a_release",
-          "line": 8902,
+          "line": 8917,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -326097,7 +326825,7 @@
         },
         {
           "name": "DetachedWindowLeaseAndContextGuardTests.test_a_refused_lease_request_keeps_nothing_and_ends_no_handle",
-          "line": 8921,
+          "line": 8936,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -326122,7 +326850,7 @@
         },
         {
           "name": "DetachedWindowLeaseAndContextGuardTests.test_pending_marks_are_keyed_per_context_and_dropped_when_empty",
-          "line": 8931,
+          "line": 8946,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -326142,7 +326870,7 @@
         },
         {
           "name": "DetachedWindowLeaseAndContextGuardTests.test_helpers_tolerate_a_missing_plan_view_or_page_data",
-          "line": 8941,
+          "line": 8956,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326168,7 +326896,7 @@
         },
         {
           "name": "DetachedWindowLeaseAndContextGuardTests.test_the_annotation_context_needs_a_view_and_checks_identities_only_when_given",
-          "line": 8954,
+          "line": 8969,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -326192,7 +326920,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_local_position_moves_are_written_and_recorded_as_replayable_history",
-          "line": 9002,
+          "line": 9017,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326220,7 +326948,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_local_moves_without_a_previous_position_are_written_without_history",
-          "line": 9021,
+          "line": 9036,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326240,7 +326968,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_local_text_property_edits_are_written_and_recorded_as_replayable_history",
-          "line": 9030,
+          "line": 9045,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326268,7 +326996,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_edits_after_access_loss_are_restored_and_never_written",
-          "line": 9058,
+          "line": 9073,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326291,7 +327019,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_flushes_of_a_closing_or_writer_less_window_or_without_changes_do_nothing",
-          "line": 9073,
+          "line": 9088,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326317,7 +327045,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_flushes_without_a_database_path_or_a_view_are_ignored",
-          "line": 9112,
+          "line": 9127,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326342,7 +327070,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_sql_style_edits_use_the_style_kind_and_restore_styles_on_failure",
-          "line": 9141,
+          "line": 9156,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326364,7 +327092,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_a_selection_dropped_while_pending_is_restored_when_the_write_resolves",
-          "line": 9152,
+          "line": 9167,
           "assertions": [
             "self.assertEqual"
           ],
@@ -326387,7 +327115,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_a_selection_changed_by_the_user_survives_a_committed_delete",
-          "line": 9173,
+          "line": 9188,
           "assertions": [
             "self.assertEqual"
           ],
@@ -326407,7 +327135,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_a_created_annotation_without_a_resolvable_key_leaves_the_selection_alone",
-          "line": 9180,
+          "line": 9195,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326429,7 +327157,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_a_plain_insert_commit_never_reactivates_a_placement_tool",
-          "line": 9200,
+          "line": 9215,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -326450,7 +327178,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_queue_failures_of_properties_and_inserts_finish_the_forward_mutation_and_reraise",
-          "line": 9217,
+          "line": 9232,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326476,7 +327204,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_sql_insert_history_suspends_on_a_committed_undo_and_rebinds_on_the_restore",
-          "line": 9238,
+          "line": 9253,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326510,7 +327238,7 @@
         },
         {
           "name": "DetachedWindowLocalAndQueueBranchTests.test_copying_ignores_unknown_uids_and_a_view_window_has_no_clipboard_to_reset",
-          "line": 9285,
+          "line": 9300,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -326534,7 +327262,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_placement_handlers_write_nothing_for_each_missing_precondition",
-          "line": 9356,
+          "line": 9371,
           "assertions": [],
           "calls": [
             "changes.items",
@@ -326550,7 +327278,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_placement_handlers_ignore_blank_pages_and_names",
-          "line": 9368,
+          "line": 9383,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -326570,7 +327298,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_placement_commits_that_create_nothing_select_and_record_nothing",
-          "line": 9379,
+          "line": 9394,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326593,7 +327321,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_placement_commits_without_a_history_service_still_select_and_reactivate",
-          "line": 9397,
+          "line": 9412,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -326614,7 +327342,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_the_named_view_colour_applies_only_when_it_is_a_non_empty_string",
-          "line": 9426,
+          "line": 9441,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326635,7 +327363,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_the_hotlink_dialog_is_always_released_after_use",
-          "line": 9445,
+          "line": 9460,
           "assertions": [
             "self.assertEqual"
           ],
@@ -326659,7 +327387,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_delete_requests_ignore_a_closing_window_missing_collaborators_and_unknown_items",
-          "line": 9482,
+          "line": 9497,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326685,7 +327413,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_a_sql_delete_of_only_unknown_or_static_items_queues_nothing",
-          "line": 9512,
+          "line": 9527,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -326707,7 +327435,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_copy_requests_need_selection_a_clipboard_and_a_bid",
-          "line": 9523,
+          "line": 9538,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -326733,7 +327461,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_context_menu_commands_route_copy_and_paste_and_ignore_others",
-          "line": 9544,
+          "line": 9559,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326755,7 +327483,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_paste_needs_a_view_and_a_clipboard_that_actually_holds_annotations",
-          "line": 9559,
+          "line": 9574,
           "assertions": [
             "self.assertFalse",
             "self.assertIs",
@@ -326780,7 +327508,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_helpers_without_a_plan_view_return_empty_collections",
-          "line": 9576,
+          "line": 9591,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326802,7 +327530,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_a_local_paste_that_creates_nothing_records_no_history",
-          "line": 9583,
+          "line": 9598,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326827,7 +327555,7 @@
         },
         {
           "name": "DetachedWindowGuardMatrixTests.test_cleanup_unsubscribes_the_lease_loss_handler_and_drops_the_bus",
-          "line": 9598,
+          "line": 9613,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326849,7 +327577,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_a_closing_window_leaves_the_plan_view_alone_when_a_write_resolves",
-          "line": 9659,
+          "line": 9674,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326876,7 +327604,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_recoverable_results_keep_every_operation_in_flight",
-          "line": 9676,
+          "line": 9691,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326903,7 +327631,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_a_failed_write_finishes_the_forward_mutation_exactly_once",
-          "line": 9694,
+          "line": 9709,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326925,7 +327653,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_a_delete_commit_reselects_declined_items_that_the_pending_state_dropped",
-          "line": 9705,
+          "line": 9720,
           "assertions": [
             "self.assertEqual"
           ],
@@ -326951,7 +327679,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_property_completions_respect_navigation_page_replacement_and_access",
-          "line": 9732,
+          "line": 9747,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326977,7 +327705,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_an_insert_with_no_specs_queues_nothing",
-          "line": 9757,
+          "line": 9772,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -326996,7 +327724,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_pending_marks_are_keyed_by_text_even_for_numeric_bid_references",
-          "line": 9763,
+          "line": 9778,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327019,7 +327747,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_an_unresolvable_page_scope_is_only_deduplicated_once_for_identities",
-          "line": 9780,
+          "line": 9795,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -327046,7 +327774,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_the_context_check_never_confuses_an_unset_page_with_the_text_none",
-          "line": 9798,
+          "line": 9813,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse"
@@ -327065,7 +327793,7 @@
         },
         {
           "name": "DetachedWindowCompletionStateTests.test_numeric_identifiers_are_normalised_to_text_in_lease_and_queue_requests",
-          "line": 9809,
+          "line": 9824,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327102,7 +327830,7 @@
         },
         {
           "name": "DetachedWindowHistoryWiringTests.test_creation_history_replays_through_the_coordinator_and_project_data",
-          "line": 9941,
+          "line": 9956,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -327128,7 +327856,7 @@
         },
         {
           "name": "DetachedWindowHistoryWiringTests.test_creation_history_leaves_a_selection_made_on_another_page_alone",
-          "line": 9956,
+          "line": 9971,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -327153,7 +327881,7 @@
         },
         {
           "name": "DetachedWindowHistoryWiringTests.test_creation_history_stops_when_a_peer_window_deleted_the_annotation",
-          "line": 9968,
+          "line": 9983,
           "assertions": [
             "self.assertEqual",
             "self.assertRaises"
@@ -327176,7 +327904,7 @@
         },
         {
           "name": "DetachedWindowHistoryWiringTests.test_local_edit_history_stops_when_a_peer_window_deleted_the_annotation",
-          "line": 9979,
+          "line": 9994,
           "assertions": [
             "self.assertEqual",
             "self.assertRaises",
@@ -327205,7 +327933,7 @@
         },
         {
           "name": "DetachedWindowHistoryWiringTests.test_sql_edit_history_stops_when_a_peer_window_deleted_the_annotation",
-          "line": 10003,
+          "line": 10018,
           "assertions": [
             "self.assertEqual",
             "self.assertRaises",
@@ -327236,7 +327964,7 @@
         },
         {
           "name": "DetachedWindowHistoryWiringTests.test_local_delete_history_restores_through_the_coordinator_and_rebinds_for_redo",
-          "line": 10040,
+          "line": 10055,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -327262,7 +327990,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_local_flushes_without_a_database_path_reach_no_write_service",
-          "line": 10081,
+          "line": 10096,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327284,7 +328012,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_a_failed_local_style_save_restores_the_styles_without_history",
-          "line": 10096,
+          "line": 10111,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327302,7 +328030,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_local_flush_lists_are_copied_so_later_changes_do_not_alter_the_history",
-          "line": 10104,
+          "line": 10119,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327330,7 +328058,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_sql_flush_lists_are_copied_before_they_are_queued_and_replayed",
-          "line": 10148,
+          "line": 10163,
           "assertions": [
             "self.assertIsNot",
             "self.assertEqual"
@@ -327357,7 +328085,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_placement_specs_do_not_share_the_lists_and_dicts_the_plan_view_emitted",
-          "line": 10196,
+          "line": 10211,
           "assertions": [
             "self.assertIsNot",
             "self.assertIsNot",
@@ -327379,7 +328107,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_a_pasted_spec_does_not_share_the_clipboard_properties",
-          "line": 10214,
+          "line": 10229,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNot"
@@ -327403,7 +328131,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_paste_does_nothing_while_the_window_may_not_place_annotations",
-          "line": 10234,
+          "line": 10249,
           "assertions": [
             "self.assertEqual"
           ],
@@ -327423,7 +328151,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_paste_state_requires_the_same_database_and_a_writer_and_a_plan_view",
-          "line": 10242,
+          "line": 10257,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -327447,7 +328175,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_the_clipboard_is_dropped_when_the_window_moves_to_another_database",
-          "line": 10256,
+          "line": 10271,
           "assertions": [
             "self.assertFalse"
           ],
@@ -327469,7 +328197,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_the_copy_state_is_exactly_true_for_a_selected_copyable_annotation",
-          "line": 10265,
+          "line": 10280,
           "assertions": [
             "self.assertIs",
             "self.assertIs"
@@ -327489,7 +328217,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_a_local_paste_without_a_history_service_still_inserts_and_selects",
-          "line": 10272,
+          "line": 10287,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327510,7 +328238,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_delete_selection_updates_hand_the_plan_view_real_sets",
-          "line": 10282,
+          "line": 10297,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327548,7 +328276,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_a_deleted_named_view_without_a_resolver_has_no_linked_hotlinks",
-          "line": 10330,
+          "line": 10345,
           "assertions": [
             "confirm.assert_not_called",
             "self.assertEqual"
@@ -327571,7 +328299,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_the_area_placement_signal_always_announces_a_real_bool",
-          "line": 10348,
+          "line": 10363,
           "assertions": [
             "self.assertEqual"
           ],
@@ -327589,7 +328317,7 @@
         },
         {
           "name": "DetachedWindowLocalWriteAndClipboardGuardTests.test_constructor_and_navigation_updates_copy_the_named_view_list",
-          "line": 10356,
+          "line": 10371,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327609,7 +328337,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_a_placement_that_builds_no_spec_writes_nothing",
-          "line": 10382,
+          "line": 10397,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327629,7 +328357,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_placements_are_refused_without_the_placement_capability",
-          "line": 10394,
+          "line": 10409,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327650,7 +328378,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_a_hotlink_request_needs_a_page_and_a_two_value_position",
-          "line": 10406,
+          "line": 10421,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327669,7 +328397,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_a_window_that_closed_while_the_hotlink_dialog_was_open_writes_nothing",
-          "line": 10415,
+          "line": 10430,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327688,7 +328416,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_a_named_view_name_must_be_text_that_is_not_blank",
-          "line": 10430,
+          "line": 10445,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327706,7 +328434,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_a_text_annotation_needs_text_after_stringifying_the_property",
-          "line": 10437,
+          "line": 10452,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327725,7 +328453,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_sql_named_view_and_hotlink_commits_reactivate_their_own_tool",
-          "line": 10444,
+          "line": 10459,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327752,7 +328480,7 @@
         },
         {
           "name": "DetachedWindowPlacementBranchTests.test_an_enabled_placement_survives_an_access_refresh",
-          "line": 10473,
+          "line": 10488,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -327777,7 +328505,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_layout_and_icon_sizes_come_from_the_configured_constants",
-          "line": 10494,
+          "line": 10509,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327823,7 +328551,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_annotation_tools_start_disabled_and_carry_their_own_style_menus",
-          "line": 10541,
+          "line": 10556,
           "assertions": [
             "self.assertFalse",
             "self.assertIn",
@@ -327859,7 +328587,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_page_labels_keep_the_index_and_sheet_options_apart",
-          "line": 10573,
+          "line": 10588,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327881,7 +328609,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_scale_matching_uses_a_strict_one_nanounit_tolerance",
-          "line": 10581,
+          "line": 10596,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327901,7 +328629,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_a_blank_page_uid_never_marks_or_targets_anything",
-          "line": 10590,
+          "line": 10605,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone"
@@ -327924,7 +328652,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_page_updates_start_or_reveal_the_blank_canvas_and_refresh_the_combo",
-          "line": 10601,
+          "line": 10616,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327947,7 +328675,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_a_view_load_pushes_the_takeoff_indicators_to_the_page_combo",
-          "line": 10619,
+          "line": 10634,
           "assertions": [
             "self.assertEqual"
           ],
@@ -327970,7 +328698,7 @@
         },
         {
           "name": "DetachedWindowToolbarConstantWiringTests.test_the_constructor_passes_the_takeoff_set_to_the_first_page_combo_load",
-          "line": 10637,
+          "line": 10652,
           "assertions": [
             "self.assertEqual"
           ],
@@ -327990,7 +328718,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_a_lease_for_numeric_uids_is_kept_when_the_same_selection_is_reported_again",
-          "line": 10681,
+          "line": 10696,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328018,7 +328746,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_page_identities_match_numeric_and_text_uids_alike",
-          "line": 10708,
+          "line": 10723,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -328050,7 +328778,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_pending_marks_use_text_keys_for_path_like_references",
-          "line": 10721,
+          "line": 10736,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328071,7 +328799,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_numeric_insert_commits_select_the_created_item_and_record_text_payloads",
-          "line": 10732,
+          "line": 10747,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328100,7 +328828,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_numeric_delete_commits_notify_peers_with_text_identities",
-          "line": 10771,
+          "line": 10786,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328122,7 +328850,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_a_numeric_delete_restores_with_text_bid_identities_and_tuple_specs",
-          "line": 10787,
+          "line": 10802,
           "assertions": [
             "self.assertEqual",
             "self.assertIsInstance"
@@ -328144,7 +328872,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_page_scopes_are_deduplicated_and_blank_pages_are_left_out",
-          "line": 10799,
+          "line": 10814,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328166,7 +328894,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_geometry_without_a_previous_position_is_written_but_not_replayed",
-          "line": 10824,
+          "line": 10839,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328190,7 +328918,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_a_plan_view_that_returns_lists_still_yields_key_sets",
-          "line": 10843,
+          "line": 10858,
           "assertions": [
             "self.assertEqual",
             "self.assertIsInstance"
@@ -328209,7 +328937,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_a_numeric_page_uid_still_reaches_the_hotlink_choice_after_the_dialog",
-          "line": 10854,
+          "line": 10869,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328230,7 +328958,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_a_failed_numeric_delete_reselects_the_requested_item",
-          "line": 10881,
+          "line": 10896,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328251,7 +328979,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_a_page_listed_only_among_the_ordered_pages_still_counts_as_current",
-          "line": 10888,
+          "line": 10903,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328276,7 +329004,7 @@
         },
         {
           "name": "DetachedWindowIdentityNormalisationTests.test_a_pasted_pair_on_one_page_is_deleted_by_its_page_once",
-          "line": 10907,
+          "line": 10922,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328303,7 +329031,7 @@
         },
         {
           "name": "DetachedWindowAccessGateAndOptionalServiceTests.test_a_delete_request_is_ignored_while_editing_is_not_allowed",
-          "line": 10946,
+          "line": 10961,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328326,7 +329054,7 @@
         },
         {
           "name": "DetachedWindowAccessGateAndOptionalServiceTests.test_local_writes_without_a_history_service_still_complete_and_select",
-          "line": 10959,
+          "line": 10974,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328352,7 +329080,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_geometry_queue_error_frees_marks_preview_selection_and_lease",
-          "line": 11087,
+          "line": 11102,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328384,7 +329112,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_geometry_queue_error_without_a_lease_or_history_service_frees_the_rest",
-          "line": 11106,
+          "line": 11121,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328412,7 +329140,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_geometry_queue_error_survives_a_failing_cleanup_and_frees_the_rest",
-          "line": 11124,
+          "line": 11139,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328445,7 +329173,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_property_queue_error_restores_the_edit_frees_marks_and_token",
-          "line": 11147,
+          "line": 11162,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328479,7 +329207,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_delete_queue_error_restores_the_selection_and_frees_marks_and_token",
-          "line": 11181,
+          "line": 11196,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328504,7 +329232,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_an_insert_queue_error_frees_the_token_and_adds_no_history",
-          "line": 11196,
+          "line": 11211,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -328529,7 +329257,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_queue_error_during_history_replay_leaves_the_entry_replayable",
-          "line": 11209,
+          "line": 11224,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -328571,7 +329299,7 @@
         },
         {
           "name": "DetachedPageViewWindowQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise",
-          "line": 11286,
+          "line": 11301,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -336517,7 +337245,7 @@
     }
   },
   "discovery": {
-    "count": 12648,
+    "count": 12682,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

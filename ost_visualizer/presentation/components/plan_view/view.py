@@ -201,6 +201,17 @@ def _rects_nearly_equal(
 
 
 _SCENE_RECT_MARGIN = 50.0
+_VIEW_KEEPING_IDENTITY_KEYS = frozenset(
+    {
+        "show_mode",
+        "invert",
+        "bitonal",
+        "overlay_units_per_sheet_inch",
+        "overlay_rect",
+        "overlay_rotation",
+        "overlay_deskew",
+    }
+)
 
 
 class TakeoffPlanView(
@@ -250,6 +261,9 @@ class TakeoffPlanView(
     paste_requested = Signal()
     clipboard_changed = Signal()
     paste_backouts_placed = Signal(list, object)
+    _preserved_view_state: Optional[Tuple[float, float, float]] = None
+    _pending_load_view_state: Optional[Tuple[float, float, float]] = None
+    _owns_page_view_state: bool = True
     MIN_ZOOM = 0.05
     MAX_ZOOM = 16.0
     ZOOM_FACTOR = 1.15
@@ -2489,6 +2503,16 @@ class TakeoffPlanView(
             "overlay_deskew": page.deskew_rotation_overlay,
         }
 
+    def _identity_change_keeps_view(self, next_identity: Dict[str, object]) -> bool:
+        current = self._current_render_identity
+        if not current or current.keys() != next_identity.keys():
+            return False
+        return all(
+            current[key] == next_identity[key]
+            for key in current
+            if key not in _VIEW_KEEPING_IDENTITY_KEYS
+        )
+
     def get_coordinate_system(self):
         return self._scene_builder.get_coordinate_system()
 
@@ -2571,7 +2595,11 @@ class TakeoffPlanView(
     def _capture_view_state_to_page(
         self, page: Optional[Page], *, allow_pending_load: bool = False
     ) -> None:
-        if page is None or self._current_bid_page_uid != page.uid:
+        if (
+            page is None
+            or not self._owns_page_view_state
+            or self._current_bid_page_uid != page.uid
+        ):
             return
         if (
             not self._load_view_applied and not allow_pending_load
@@ -2595,11 +2623,21 @@ class TakeoffPlanView(
             not self._load_view_applied and not allow_pending_load
         ) or not self._scene.sceneRect().isValid():
             return
-        if page.zoom_fac <= 0:
+        if self._owns_page_view_state:
+            state = (page.zoom_fac, page.current_x, page.current_y)
+        else:
+            state = self.get_view_state()
+        if state[0] <= 0:
             return
-        self.page_view_state_changed.emit(
-            page.uid, page.zoom_fac, page.current_x, page.current_y
-        )
+        self.page_view_state_changed.emit(page.uid, *state)
+
+    def set_owns_page_view_state(self, owns: bool) -> None:
+        self._owns_page_view_state = bool(owns)
+
+    def set_view_state_for_next_load(
+        self, state: Optional[Tuple[float, float, float]]
+    ) -> None:
+        self._pending_load_view_state = state
 
     def _capture_scroll_state(self) -> None:
         h_scroll = self.horizontalScrollBar()
@@ -2624,11 +2662,19 @@ class TakeoffPlanView(
     def _begin_load_cycle(self, page: Page, preserve_current_view: bool) -> None:
         self._clear_missing_page_file_status()
         self._saved_scroll_state = None
+        self._preserved_view_state = None
         self._current_load_token = uuid.uuid4().hex
         if preserve_current_view:
             self._capture_view_state_to_page(page)
             self._capture_scroll_state()
-        if page.zoom_fac > 0:
+            own_state = self.get_view_state()
+            if own_state[0] > 0:
+                self._preserved_view_state = own_state
+        if self._pending_load_view_state is not None:
+            if self._pending_load_view_state[0] > 0:
+                self._preserved_view_state = self._pending_load_view_state
+            self._pending_load_view_state = None
+        if self._preserved_view_state is not None or page.zoom_fac > 0:
             self._load_initial_view_mode = "restore"
         elif self._default_auto_zoom_level > 0:
             self._load_initial_view_mode = "auto_zoom"
@@ -2653,17 +2699,19 @@ class TakeoffPlanView(
             self.page_geometry_ready.emit()
         self._finalize_page_load_if_ready()
 
+    def _view_state_to_restore(self) -> Tuple[float, float, float]:
+        if self._preserved_view_state is not None:
+            return self._preserved_view_state
+        page = self._current_page
+        return page.zoom_fac, page.current_x, page.current_y
+
     def _apply_current_view_contract(self, consume_scroll_state: bool) -> None:
         if (
             self._load_initial_view_mode == "restore"
             and self._current_page is not None
-            and self._current_page.zoom_fac > 0
+            and self._view_state_to_restore()[0] > 0
         ):
-            if not self.restore_view_state(
-                self._current_page.zoom_fac,
-                self._current_page.current_x,
-                self._current_page.current_y,
-            ):
+            if not self.restore_view_state(*self._view_state_to_restore()):
                 self.fit_to_page()
             elif consume_scroll_state:
                 self._restore_scroll_state()
@@ -2708,6 +2756,7 @@ class TakeoffPlanView(
         else:
             self._apply_current_view_contract(consume_scroll_state=True)
         self._saved_scroll_state = None
+        self._preserved_view_state = None
         self._load_view_applied = True
         if self._uses_dynamic_tile_coverage():
             self._update_tile_coverage(self.transform().m11())
@@ -4904,10 +4953,16 @@ class TakeoffPlanView(
             and self._current_render_identity == next_render_identity
             and has_loaded_visual_layer
         )
+        keeps_view_across_reload = (
+            not project_changed
+            and self._current_page is not None
+            and self._identity_change_keeps_view(next_render_identity)
+        )
         self._begin_load_cycle(
             page,
             preserve_current_view=(
-                (same_page_refresh or force_visual_reload) and self._load_view_applied
+                (same_page_refresh or force_visual_reload or keeps_view_across_reload)
+                and self._load_view_applied
             ),
         )
         if hidden_layer_uids is not None:

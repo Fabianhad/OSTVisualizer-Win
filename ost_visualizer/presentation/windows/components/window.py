@@ -470,6 +470,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._renderers.linear_geometry,
             self._renderers.prefetch_coordinator,
         )
+        self.plan_view.set_owns_page_view_state(False)
         self.plan_view.set_selection_enabled(self._selection_enabled())
         self.plan_view.set_editing_enabled(self._editing_enabled())
         self.plan_view.set_annotation_only_selection(
@@ -968,12 +969,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             state = self._page_view_states.get(str(page.uid))
         if state is None:
             return
-        zoom_fac, current_x, current_y = state
-        if zoom_fac <= 0:
+        if state[0] <= 0:
             return
-        page.zoom_fac = zoom_fac
-        page.current_x = current_x
-        page.current_y = current_y
+        self.plan_view.set_view_state_for_next_load(state)
 
     def _remember_page_view_state(
         self, page_uid: str, zoom_fac: float, current_x: float, current_y: float

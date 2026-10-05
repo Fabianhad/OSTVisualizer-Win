@@ -130,6 +130,10 @@ class FakeDetachedLoadPlanView:
         self.load_calls = []
         self.prefetch_calls = []
         self.clear_calls = 0
+        self.view_state_for_next_load = None
+
+    def set_view_state_for_next_load(self, state):
+        self.view_state_for_next_load = state
 
     @property
     def is_view_state_stable(self):

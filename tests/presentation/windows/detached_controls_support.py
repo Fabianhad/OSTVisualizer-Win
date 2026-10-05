@@ -123,6 +123,12 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
     def clear(self):
         self.current_page_uid = None
 
+    def set_owns_page_view_state(self, owns):
+        self.owns_page_view_state = owns
+
+    def set_view_state_for_next_load(self, state):
+        self.view_state_for_next_load = state
+
     def set_selection_enabled(self, enabled):
         self.selection_enabled = bool(enabled)
 

@@ -1169,6 +1169,17 @@
       ],
       "release_evidence": "none (UI only)",
       "affected_result": "Previews stack against annotations exactly as the placed item does"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/plan_view/view.py; ost_visualizer/presentation/windows/components/window.py",
+      "defect": "Changing the page scale (and other appearance/calibration updates) reloaded the page without keeping the view, restoring the Page's stale stored viewport; a detached window shared and overwrote that stored viewport",
+      "proof": "Real-view tests: main centre y 816.9 to 791.8 after Set Scale; main zoom 0.357 to the detached 0.538; bisect script first bad commit 7a1754e",
+      "fix": "TakeoffPlanView keeps a private snapshot of its own zoom and centre for reloads of the same page that differ only in appearance/calibration identity keys (_identity_change_keeps_view, _preserved_view_state); detached plan views are created non-owners of the Page view state (set_owns_page_view_state(False)) and receive their camera through set_view_state_for_next_load instead of writing it into the shared Page",
+      "tests": [
+        "tests/integration/surfaces/test_page_scale_viewport.py"
+      ],
+      "release_evidence": "none (UI only; Access and SQL persistence unchanged)",
+      "affected_result": "Each view keeps its own viewport across a page scale update and no view adopts another view's state"
     }
   ],
   "removed_tests": [
@@ -1207,6 +1218,10 @@
     {
       "test": "TakeoffPlanViewElementCenterAndRotateHandleTests.test_text_annotation_centre_is_its_anchor_unless_rotated_on_screen",
       "reason": "Pinned the defect (visible centre of a rotated text computed as top-left plus the rotated half extents); replaced by test_text_annotation_centre_is_its_anchor_whether_or_not_it_is_rotated."
+    },
+    {
+      "test": "AppearanceChangesKeepTheViewportTests.test_invert_bitonal_show_mode_and_overlay_changes_keep_the_viewport",
+      "reason": "Subtests shared one view, so after the first jump the stored state was no longer stale and only the invert subtest failed against the unfixed view.py; replaced by five independent tests."
     }
   ],
   "evidence": [
@@ -14163,6 +14178,24 @@
       "limitations": [
         "Offscreen Qt only; rendering of the stacking is asserted through z-values and QGraphicsScene.items order, not pixels.",
         "Placed takeoff in the stacking test is added through SceneBuilder, not through a real persisted drop."
+      ]
+    },
+    {
+      "batch": "page-scale-viewport",
+      "findings": [
+        "Root cause A: a scale change alters Page.overlay_units_per_sheet_inch, which commit 7a1754e added to the render identity; refresh_current_page_overlays therefore returns False and the coordinator falls back to load_page with an identity change, which never preserved the current view and restored Page.zoom_fac/current_x/current_y. Those stored values are only refreshed by zoom actions and right-button pan release, not by scrollbar or wheel scrolling, so they were stale.",
+        "Root cause B: the Page object is shared by the main view, the detached view (when no deep copy is made) and the detached window's refresh cache; the view's capture and AnnotationViewWindow._capture_refresh_view_state wrote the detached camera into the shared Page, and the main view restored it.",
+        "Regression: git bisect (script bisect_scale_view.py, offscreen, real view) over fc7f470..c9bb334 gives 7a1754e (2026-07-24, 'Fix calibrated overlays and cover sheet PDF indexes'), exact change: 'overlay_units_per_sheet_inch': page.overlay_units_per_sheet_inch added to TakeoffPlanView._build_render_identity. The parent 7a1754e^ preserves the viewport; fe047a0 and 5d7ad08 are already broken and not the cause. The shared-Page write by the detached window came in 92428ec (2026-06-18, 'Preserve detached view camera on refresh') and the shared capture in fc7f470; Bug B only surfaced once the main view reloaded without preserving its view (7a1754e).",
+        "Intentionally unfixed: page rotation, flip and size changes (and replacing the image or overlay file) change the page geometry and keep restoring the page's stored zoom and centre (same zoom, same fractional page position, not the same content). No test asserts the resulting position for rotation or size; the flip control asserts zoom and persisted y only.",
+        "Same stale-restore defect existed before 7a1754e for invert, bitonal, show mode and flip (verified at 7a1754e^ and fc7f470 with the same script); the fix covers invert, bitonal, show mode and the overlay rect, rotation and deskew keys; rotation, flip, size, image and overlay file changes change geometry and keep restoring the stored page state."
+      ],
+      "tests_added": [
+        "test_page_scale_viewport.py: 34 tests"
+      ],
+      "validation": "Focused: tests.integration.surfaces.test_page_scale_viewport (34), tests.presentation.windows, tests.presentation.components.plan_view, tests.integration all OK.",
+      "limitations": [
+        "Offscreen Qt with fake renderers: pages have no image, so asynchronous render completion is modelled by hiding the view during the reload.",
+        "SQL remote refresh is driven through ViewerSyncCoordinator._capture_plan_update/_apply_plan_update with a stand-in barrier, not a live SQL server."
       ]
     }
   ],
@@ -32281,12 +32314,12 @@
         "DetachedPageViewWindowLoadPageContentTests.test_detached_missing_page_reveals_deferred_named_view_canvas": "Retained: missing page clears the plan view, reveals the canvas and navigates to ''. Mutants (no reveal, no navigation reset) KILLED.",
         "DetachedPageViewWindowLoadPageContentTests.test_detached_page_load_failure_reveals_deferred_named_view_canvas": "Retained: load failure logs the exact message, clears, reveals and returns False. Mutants (no reveal, no clear) KILLED.",
         "DetachedPageViewWindowLoadPageContentTests.test_detached_prefetch_failure_preserves_loaded_page": "Retained: prefetch failure is logged, the loaded page is kept, load returns True and focus is attempted once. Mutants (return False on prefetch error, skip focus) KILLED.",
-        "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_preserves_live_view_state_before_page_reload": "Strengthened: besides applying the live camera and passing hidden layers, it now proves the live state is remembered in _page_view_states. Mutants (do not remember, drop non-positive guard, drop stability check, drop refresh-only check) KILLED.",
+        "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_preserves_live_view_state_before_page_reload": "Updated contract: a refresh hands the live view state to the view with set_view_state_for_next_load and no longer writes it into the shared Page (page fields keep their values).",
         "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_live_state_of_a_different_page": "Added: a stable plan view showing another page must not donate its camera to the refreshed page. Mutant dropping the current_page_uid comparison SURVIVED before, now KILLED.",
         "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_non_positive_live_zoom": "Added: a live zoom of 0 is neither applied nor remembered. Mutant dropping the zoom guard SURVIVED before, now KILLED.",
-        "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_uses_cached_view_state_when_live_state_unstable": "Retained: an unstable live state falls back to the cached state. Mutants (no cache fallback, ignore stability) KILLED.",
-        "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_main_window_page_state_when_cached": "Retained: the page's own Main-window camera is overridden by this window's cached state on refresh. Mutant dropping the refresh check KILLED.",
-        "DetachedPageViewWindowLoadPageContentTests.test_detached_hotlink_load_does_not_reuse_previous_window_camera": "Retained: hotlink navigation keeps the page's camera even with a cached state. Mutant ignoring the navigation source KILLED.",
+        "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_uses_cached_view_state_when_live_state_unstable": "Updated contract: when the live state is unstable the cached window camera is handed to the view; the Page is untouched.",
+        "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_main_window_page_state_when_cached": "Updated contract: the cached detached camera is handed to the view instead of the main window's page state; the Page keeps the main window's state.",
+        "DetachedPageViewWindowLoadPageContentTests.test_detached_hotlink_load_does_not_reuse_previous_window_camera": "Also asserts nothing is handed to the view for a hotlink navigation.",
         "DetachedWindowRestoreLifecycleTests.test_late_page_delivery_does_not_repeat_initial_show_after_shutdown_hide": "Strengthened: real windows; now asserts the first timeout show actually made the window visible (the old test could pass with no initial show at all). Late geometry-ready/timeout after a hide must not re-show or change the user's normal geometry (consume-initial-show-request contract). Mutants (do not consume the request, show on any geometry-ready/timeout) KILLED. Geometry values are set on the window itself so they are not font or screen dependent.",
         "DetachedWindowRestoreLifecycleTests.test_oversized_saved_geometry_is_left_to_qt_restore_without_extra_clamp": "Added: saves an oversized frame (-50,-40,2400x1900), uses a plain QMainWindow.restoreGeometry() as the oracle (premise asserted: Qt adjusted the geometry) and requires the detached window to end at exactly that normalGeometry for both window classes and both show paths. Covers the AGENTS 'no second frame-to-client clamp' contract; post-restore resize/move mutants KILLED, a clamp that equals Qt's own result is undetectable (equivalent).",
         "DetachedWindowRestoreLifecycleTests.test_state_flags_apply_without_saved_geometry": "Added: with an empty geometry blob the maximized and fullscreen flags alone decide the show mode. The mutant dropping the explicit showMaximized survived the old suite because restoreGeometry carried the state; now KILLED.",
@@ -32350,7 +32383,7 @@
         "DetachedWindowLoadAndToolTests.test_load_view_resets_the_clipboard_for_the_new_context_and_refreshes_tools": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: clipboard reset hook receives the new view first, tool refresh called; uses assertIn for the tools event (loose ordering) - acceptable. Sound.",
         "DetachedWindowLoadAndToolTests.test_update_page_refreshes_the_displayed_page_as_a_refresh": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: refresh source, takeoff set, one load_page; closing window ignores everything (calls empty); page-less update clears. Sound.",
         "DetachedWindowLoadAndToolTests.test_page_takeoff_indicator_follows_the_loaded_page": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: takeoff indicator truth table including None/blank takeoffs and missing page. Sound.",
-        "DetachedWindowLoadAndToolTests.test_refresh_view_state_cache_is_keyed_by_text_uid_and_needs_a_positive_zoom": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: integer page uid keyed as text, stable live state captured, unstable falls back to the cache, zero-zoom cache ignored, tiny positive zoom accepted, non-refresh source and missing plan view ignored. Sound.",
+        "DetachedWindowLoadAndToolTests.test_refresh_view_state_cache_is_keyed_by_text_uid_and_needs_a_positive_zoom": "Updated contract: the per-window camera cache (keyed by text uid, needs a positive zoom) is handed to the view through set_view_state_for_next_load; non-refresh navigation and missing plan view hand nothing; the Page is never written, including when the plan view is missing (cached camera present, Page fields asserted unchanged and nothing handed in).",
         "DetachedWindowLoadAndToolTests.test_default_cursor_mode_selects_the_configured_button_or_pan": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: configured select/zoom, unknown mode and a select-less window fall back to pan. Sound.",
         "DetachedWindowLoadAndToolTests.test_cursor_buttons_drive_the_plan_view_cursor_mode_and_zoom_commands": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: drives the real tool buttons and checks the recorded set_cursor_mode calls. WEAK as found: the call list [PAN, ZOOM, SELECT] was identical under a polarity swap of the zoom toggle lambda (the 'unchecked' event fires at the next tool change), so mutants #350/#351 survived. STRENGTHENED: the list is now asserted after every step ([PAN], [PAN, ZOOM], [PAN, ZOOM, SELECT]), which kills both swapped-ifexp and negated-condition mutants (verified by mutrun).",
         "DetachedWindowLoadAndToolTests.test_annotation_tool_buttons_activate_a_placement_or_fall_back_to_the_default_mode": "Added by sp3-a8 (earlier session, no ledger note) and credited at second pass: checked annotation button activates; refusal returns to select; return value normalised with assertIs (1/None); no access or no plan view false. Sound.",
@@ -32642,12 +32675,12 @@
           "DetachedPageViewWindowLoadPageContentTests.test_detached_missing_page_reveals_deferred_named_view_canvas": "Second pass: own verdict - page None clears the plan view, reveals the canvas and navigates to ''. STRENGTHENED: the return value is asserted with assertIs(..., False) (a 'return None' mutant survived assertFalse). Sweep: 10 production mutants attributed to this test (3 killed only by it).",
           "DetachedPageViewWindowLoadPageContentTests.test_detached_page_load_failure_reveals_deferred_named_view_canvas": "Second pass: own verdict - load_page raising: exact log message captured by a logger stub, plan view cleared, canvas revealed. STRENGTHENED: the return value is asserted with assertIs(..., False) (a 'return None' mutant survived assertFalse). Sweep: 14 production mutants attributed to this test (3 killed only by it).",
           "DetachedPageViewWindowLoadPageContentTests.test_detached_prefetch_failure_preserves_loaded_page": "Second pass: own verdict - prefetch raising keeps the loaded page, clear_calls 0, focus attempted with require_stable_view False. Agrees. Sweep: 18 production mutants attributed to this test (4 killed only by it).",
-          "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_preserves_live_view_state_before_page_reload": "Second pass: own verdict - refresh copies the live stable view state onto the Page before load and remembers it. Agrees. Sweep: 32 production mutants attributed to this test (0 killed only by it).",
+          "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_preserves_live_view_state_before_page_reload": "Updated contract: a refresh hands the live view state to the view with set_view_state_for_next_load and no longer writes it into the shared Page (page fields keep their values).",
           "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_live_state_of_a_different_page": "Second pass: own verdict - live state of another page is ignored and not cached. Agrees. Sweep: 19 production mutants attributed to this test (1 killed only by it).",
           "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_non_positive_live_zoom": "Second pass: own verdict - zoom 0 live state ignored and not cached. Agrees. Sweep: 22 production mutants attributed to this test (0 killed only by it).",
-          "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_uses_cached_view_state_when_live_state_unstable": "Second pass: own verdict - unstable live state falls back to the cached state (live state values differ, so the choice is observable). Agrees. Sweep: 29 production mutants attributed to this test (0 killed only by it).",
-          "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_main_window_page_state_when_cached": "Second pass: own verdict - the cache beats the Page's own stored (Main window) camera. Agrees. Sweep: 29 production mutants attributed to this test (0 killed only by it).",
-          "DetachedPageViewWindowLoadPageContentTests.test_detached_hotlink_load_does_not_reuse_previous_window_camera": "Second pass: own verdict - non-refresh navigation ignores the cache. Agrees. Sweep: 17 production mutants attributed to this test (0 killed only by it).",
+          "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_uses_cached_view_state_when_live_state_unstable": "Updated contract: when the live state is unstable the cached window camera is handed to the view; the Page is untouched.",
+          "DetachedPageViewWindowLoadPageContentTests.test_detached_refresh_ignores_main_window_page_state_when_cached": "Updated contract: the cached detached camera is handed to the view instead of the main window's page state; the Page keeps the main window's state.",
+          "DetachedPageViewWindowLoadPageContentTests.test_detached_hotlink_load_does_not_reuse_previous_window_camera": "Also asserts nothing is handed to the view for a hotlink navigation.",
           "DetachedWindowRestoreLifecycleTests.test_late_page_delivery_does_not_repeat_initial_show_after_shutdown_hide": "Second pass: own verdict - real windows: initial show consumed by the timeout path, hide (shutdown) retains the latest geometry, late page-ready/timeout events do not re-show or re-apply the saved geometry (AGENTS.md shutdown/capture rule). Platform: offscreen frames. Agrees. Sweep: 29 production mutants attributed to this test (0 killed only by it).",
           "DetachedWindowRestoreLifecycleTests.test_oversized_saved_geometry_is_left_to_qt_restore_without_extra_clamp": "Second pass: own verdict - compares with a plain restoreGeometry() reference window and asserts the premise that Qt adjusted the frame (assertNotEqual); post-restore resize/move mutants are killed, a clamp equal to Qt's own result is undetectable (first pass's equivalence claim stands for that narrow case). Agrees. Sweep: 31 production mutants attributed to this test (0 killed only by it).",
           "DetachedWindowRestoreLifecycleTests.test_state_flags_apply_without_saved_geometry": "Second pass: own verdict - maximized/fullscreen/normal without geometry (explicit showMaximized/showFullScreen paths). Agrees. Sweep: 17 production mutants attributed to this test (0 killed only by it).",
@@ -32711,7 +32744,7 @@
           "DetachedWindowLoadAndToolTests.test_load_view_resets_the_clipboard_for_the_new_context_and_refreshes_tools": "Second pass: own verdict - clipboard reset hook receives the new view first, tool refresh called; uses assertIn for the tools event (loose ordering) - acceptable. Sound. Sweep: 84 production mutants attributed to this test (2 killed only by it).",
           "DetachedWindowLoadAndToolTests.test_update_page_refreshes_the_displayed_page_as_a_refresh": "Second pass: own verdict - refresh source, takeoff set, one load_page; closing window ignores everything (calls empty); page-less update clears. Sound. Sweep: 119 production mutants attributed to this test (5 killed only by it).",
           "DetachedWindowLoadAndToolTests.test_page_takeoff_indicator_follows_the_loaded_page": "Second pass: own verdict - takeoff indicator truth table including None/blank takeoffs and missing page. Sound. Sweep: 103 production mutants attributed to this test (6 killed only by it).",
-          "DetachedWindowLoadAndToolTests.test_refresh_view_state_cache_is_keyed_by_text_uid_and_needs_a_positive_zoom": "Second pass: own verdict - integer page uid keyed as text, stable live state captured, unstable falls back to the cache, zero-zoom cache ignored, tiny positive zoom accepted, non-refresh source and missing plan view ignored. Sound. Sweep: 119 production mutants attributed to this test (5 killed only by it).",
+          "DetachedWindowLoadAndToolTests.test_refresh_view_state_cache_is_keyed_by_text_uid_and_needs_a_positive_zoom": "Updated contract: the per-window camera cache (keyed by text uid, needs a positive zoom) is handed to the view through set_view_state_for_next_load; non-refresh navigation and missing plan view hand nothing; the Page is never written, including when the plan view is missing (cached camera present, Page fields asserted unchanged and nothing handed in).",
           "DetachedWindowLoadAndToolTests.test_default_cursor_mode_selects_the_configured_button_or_pan": "Second pass: own verdict - configured select/zoom, unknown mode and a select-less window fall back to pan. Sound. Sweep: 107 production mutants attributed to this test (1 killed only by it).",
           "DetachedWindowLoadAndToolTests.test_cursor_buttons_drive_the_plan_view_cursor_mode_and_zoom_commands": "Second pass: own verdict - drives the real tool buttons and checks the recorded set_cursor_mode calls. WEAK as found: the call list [PAN, ZOOM, SELECT] was identical under a polarity swap of the zoom toggle lambda (the 'unchecked' event fires at the next tool change), so mutants #350/#351 survived. STRENGTHENED: the list is now asserted after every step ([PAN], [PAN, ZOOM], [PAN, ZOOM, SELECT]), which kills both swapped-ifexp and negated-condition mutants (verified by mutrun). Sweep: 105 production mutants attributed to this test (6 killed only by it).",
           "DetachedWindowLoadAndToolTests.test_annotation_tool_buttons_activate_a_placement_or_fall_back_to_the_default_mode": "Second pass: own verdict - checked annotation button activates; refusal returns to select; return value normalised with assertIs (1/None); no access or no plan view false. Sound. Sweep: 114 production mutants attributed to this test (7 killed only by it).",
@@ -36788,6 +36821,46 @@
         "AnnotationPreviewStackingTests.test_polygon_cloud_and_ink_previews_use_the_annotation_body_band": "Area and ink previews share the generic path helper; compared with the placed polygon band.",
         "AnnotationPreviewStackingTests.test_previews_stay_below_takeoff_labels": "No annotation preview exceeds the dimension label band, so none can cover takeoff labels (20)."
       }
+    },
+    "tests/integration/surfaces/test_page_scale_viewport.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real TakeoffPlanView (main, QGraphicsView with real scrollbars and transforms), a real AnnotationViewWindow with its real plan view, the real DetachedPageViewManager and ViewerSyncCoordinator over a real EventBus, and the real UIEventCoordinator._on_page_metadata_changed handler, built by calling CrossSurfacePresentationTests.setUp. Only the renderers and project data are the harness fakes (page 612x792 pts so persisted view coordinates convert). Views are panned with scrollbar values (which do not publish view state, like wheel scrolling) and zoomed with zoom_in; assertions compare the transform scale, scrollbar values and the visible scene centre before and after. Failed before the fix (15 failures against the unfixed source in a clean worktree).",
+      "reviewed_tests": {
+        "MainViewKeepsItsViewportOnScaleChangeTests.test_scrolled_main_view_does_not_jump_back_after_a_scale_change": "Bug A: no detached window; main view zoomed and scrolled down (scroll not published), then Set Scale through the real coordinator handler. Before the fix the visible centre went from y 816.9 back to 791.8 (the stale stored page state); now unchanged.",
+        "MainViewKeepsItsViewportOnScaleChangeTests.test_main_view_keeps_its_viewport_while_a_detached_window_shows_a_section": "Bug B: detached window zoomed into a section (different zoom and centre than the main view, asserted); scale change with the main handler first. Before the fix the main view took the detached zoom (0.357 to 0.538). Both viewports unchanged now.",
+        "MainViewKeepsItsViewportOnScaleChangeTests.test_viewports_are_kept_when_the_detached_window_refreshes_first": "Same with the detached window refreshing before the main view (event order must not matter).",
+        "MainViewKeepsItsViewportOnScaleChangeTests.test_scale_change_started_from_the_detached_window_moves_neither_view": "Scale chosen in the detached window: its scale callback writes the page like the coordinator and publishes the metadata event; neither the main view nor the detached view moves or resets.",
+        "MainViewKeepsItsViewportOnScaleChangeTests.test_repeated_scale_changes_keep_both_viewports": "Three consecutive scale changes (144, 96, 72) keep both viewports (no drift, no snapshot leaking between loads).",
+        "MainViewKeepsItsViewportOnScaleChangeTests.test_main_view_ignores_state_written_to_the_shared_page_during_a_reload": "Models the asynchronous load window: the main view is hidden so its reload cannot finish, the shared Page's stored state is overwritten as another window would (zoom 0.9, 100, 100), then the view is shown; it must restore its own snapshot, not the shared page. Kills the mutants that read the page instead of the private snapshot.",
+        "AppearanceChangesKeepTheViewportTests.test_invert_keeps_the_viewport": "Sibling path: invert reloads the page through the identity-changed path; each appearance test builds its own view and stored state, scrolls (unpublished), changes one property and asserts transform, scrollbars and visible centre. Fails on its own against the unfixed reload (centre y 816.9 to 791.8) and when its key is dropped from the keep-set.",
+        "AppearanceChangesKeepTheViewportTests.test_bitonal_keeps_the_viewport": "Same for bitonal (independent fresh view; fails on its own against the unfixed reload and when the bitonal key is dropped).",
+        "AppearanceChangesKeepTheViewportTests.test_show_mode_keeps_the_viewport": "Same for the image show mode.",
+        "AppearanceChangesKeepTheViewportTests.test_overlay_rect_keeps_the_viewport": "Same for the overlay rectangle.",
+        "AppearanceChangesKeepTheViewportTests.test_overlay_rotation_keeps_the_viewport": "Same for the overlay rotation.",
+        "AppearanceChangesKeepTheViewportTests.test_page_switch_still_restores_the_stored_page_state": "Control (passes before and after): after clear and a reload of the page the stored zoom and centre are restored, so a page switch still uses the stored state.",
+        "AppearanceChangesKeepTheViewportTests.test_geometry_changing_reloads_still_use_the_stored_page_state": "Control (passes before and after): a flip changes geometry, so the stored page state (not the live viewport) is restored; the fix is not a blanket preserve.",
+        "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_detached_zoom_does_not_change_the_page_state_the_main_view_restores": "The detached window zoomed to a section must not write zoom_fac/current_x/current_y into the shared Page (it did, through the view's capture).",
+        "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_main_view_returns_to_its_own_camera_after_a_page_switch": "Sibling path (page switch): main leaves the page, the detached window zooms, main returns; before the fix main restored the detached camera (0.3585 instead of its own 0.238).",
+        "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_detached_window_keeps_its_camera_across_a_geometry_changing_refresh": "A geometry-changing refresh of the detached window still restores its own camera, now handed to its view with set_view_state_for_next_load instead of written into the shared Page.",
+        "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_main_view_state_is_still_stored_on_the_page_when_the_main_view_moves": "Control: the owning (main) view still stores its state on the page.",
+        "ViewStateOwnershipContractTests.test_only_appearance_and_calibration_changes_keep_the_view": "Table test of _identity_change_keeps_view: each appearance/calibration key keeps the view; page uid, index, image and overlay paths and signatures, rotation, flips, sizes and bid ref do not; identical identity keeps. Kills dropped-key and inverted-comparison mutants.",
+        "ViewStateOwnershipContractTests.test_identity_comparison_needs_a_loaded_page_with_the_same_fields": "No stored identity (after clear) or a different key set never keeps the view.",
+        "ViewStateOwnershipContractTests.test_a_view_that_does_not_own_the_page_state_publishes_without_storing_it": "A non-owning view emits its live state through page_view_state_changed and leaves the Page fields untouched.",
+        "ViewStateOwnershipContractTests.test_an_owning_view_stores_the_state_it_publishes": "The owning view stores exactly what it publishes (live state) on the Page.",
+        "ViewStateOwnershipContractTests.test_state_handed_to_the_next_load_wins_once_and_is_then_consumed": "set_view_state_for_next_load restores that camera on the next load of the detached view and is consumed afterwards (also clears the snapshot at finalize).",
+        "ViewStateOwnershipContractTests.test_a_non_positive_state_handed_to_the_next_load_is_ignored": "A zero-zoom state is dropped and does not leave a snapshot behind.",
+        "ViewStateOwnershipContractTests.test_the_preserved_state_is_dropped_by_the_next_load_that_does_not_keep_it": "The snapshot does not outlive its load: cleared after a kept reload finalizes and by the next load that does not keep the view.",
+        "LoadCycleViewStateTests.test_preserving_captures_the_live_state_of_this_view": "_begin_load_cycle(preserve=True) snapshots this view's own zoom and centre and selects restore mode.",
+        "LoadCycleViewStateTests.test_state_handed_in_beats_the_live_state_when_preserving": "The explicitly handed camera takes precedence over the live capture and is consumed.",
+        "LoadCycleViewStateTests.test_state_handed_in_applies_without_preserving": "A handed camera applies even when the load does not preserve the live view.",
+        "LoadCycleViewStateTests.test_a_non_positive_state_handed_in_is_discarded_and_the_page_state_is_used": "Zero-zoom handed state falls back to the page's stored state (restore mode from page).",
+        "LoadCycleViewStateTests.test_a_snapshot_left_by_an_earlier_load_never_reaches_the_next_one": "A stale snapshot is cleared at the start of every load cycle.",
+        "LoadCycleViewStateTests.test_an_unreadable_live_state_falls_back_to_the_stored_page_state": "When the live centre cannot be read (patched to None) no snapshot is kept and the stored page state is restored; kills the zero-zoom snapshot mutant.",
+        "OtherPageUpdatePathsKeepTheViewportTests.test_a_remote_sql_page_update_keeps_the_viewport_and_the_detached_camera": "Sibling path (remote SQL refresh): the viewer captures a snapshot with a remote identity (page deep-copied) and applies it, then the detached manager handles the event; both viewports kept. Failed before the fix.",
+        "OtherPageUpdatePathsKeepTheViewportTests.test_a_reloaded_page_object_with_stale_stored_state_keeps_the_viewport": "Sibling path (MDB/SQL reload): the project reload replaces the Page object (stale stored state 0.9/50/60, new scale); the viewport is kept. Failed before the fix.",
+        "OtherPageUpdatePathsKeepTheViewportTests.test_zoom_and_fit_after_a_scale_change_work_from_the_kept_viewport": "Sibling path (zoom and fit after a scale change): zoom_in keeps the centre and reset_view fits the page after the scale change.",
+        "OtherPageUpdatePathsKeepTheViewportTests.test_renaming_a_page_does_not_touch_either_viewport": "Sibling path (rename page): the refresh does not reload; both viewports untouched (passed before and after)."
+      }
     }
   },
   "subsystems": {
@@ -36967,6 +37040,14 @@
       "architecture": "no violations",
       "compileall": 0,
       "diff_check": "clean"
+    },
+    "page_scale_viewport_full_suite": {
+      "tests_run": 12658,
+      "skips": 35,
+      "result": "OK",
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol)"
     }
   },
   "skip_observations": [
@@ -37955,6 +38036,12 @@
         "outcome": "plan_view_z_order is the single z source: takeoff_z_value (moved from scene_builder) and TAKEOFF_PREVIEW_BODY_Z/OUTLINE_Z/INDICATOR_Z at a draw slot above every placed takeoff; scene_builder and the placement previews use them. Sibling: annotation previews (z 15/16) now use the annotation band the placed item uses (ANNOTATION_BODY_Z, DIMENSION_LABEL_Z, PAPER_HIGHLIGHT_Z). 15 new integration tests plus unit tests; 24 mutants killed (two survivors found and killed by adding the pattern-line and right-angle indicator cases). Handles and validity outlines intentionally stay above; paste-backout outline unchanged."
       },
       {
+        "id": "W1",
+        "decision": "Page scale change jumps the main view back (Bug A) and adopts the detached window's viewport (Bug B)",
+        "status": "fixed",
+        "outcome": "Root cause: scale-derived overlay units in the render identity (7a1754e) force a full reload that restores the Page's stale stored viewport, and the Page is shared with the detached window which overwrote it. Fix: a private per-view snapshot for appearance/calibration-only reloads and non-owning detached views. 34 real-view tests (15 behavioural tests failed against the unfixed source; each appearance test fails on its own), 29 mutants killed, 4 initial survivors killed by extra load-cycle tests. Siblings: scale from the detached window, invert, bitonal, show mode, overlay rect/rotation, remote SQL refresh, reloaded Page object, page switch with a detached window fixed; rename, zoom/fit after the change and page switch restore did not reproduce; page rotation, flip, size and replacing the image or overlay file change geometry and keep restoring the stored state; intentionally unfixed (reported)."
+      },
+      {
         "id": "OPEN-1",
         "decision": "Annotation preflight scope (session conflict on DATABASE vs optimistic Bid-collection like Takeoffs)",
         "status": "open",
@@ -38041,6 +38128,103 @@
         "callout annotations are interactive and rotatable in the entity but no renderer draws them; _element_center would treat their position as points (not reproducible, not changed)",
         "paste-backout validity outline and placement handles keep z 15 on purpose",
         "rotation handle returns to the top position (-90 degrees) after a gesture for every rotatable type; unchanged by design",
+        "OPEN-1 annotation preflight scope and OPEN-2 schema validator scope untouched by instruction"
+      ]
+    },
+    "round7_2026-10-05_page_scale_viewport": {
+      "resolved": [
+        "W1 fixed (page scale change keeps each view's own viewport; regression commit 7a1754e)"
+      ],
+      "sibling_paths": [
+        {
+          "path": "scale change from the main window (Set Scale / combo)",
+          "reproduced": "yes (Bug A)",
+          "fixed": "yes"
+        },
+        {
+          "path": "scale change with a detached window open (Bug B)",
+          "reproduced": "yes",
+          "fixed": "yes"
+        },
+        {
+          "path": "scale change started from the detached window",
+          "reproduced": "yes",
+          "fixed": "yes"
+        },
+        {
+          "path": "overlay rect, overlay rotation, deskew",
+          "reproduced": "yes",
+          "fixed": "yes"
+        },
+        {
+          "path": "invert, bitonal",
+          "reproduced": "yes (also before 7a1754e)",
+          "fixed": "yes"
+        },
+        {
+          "path": "show mode",
+          "reproduced": "yes (also before 7a1754e)",
+          "fixed": "yes"
+        },
+        {
+          "path": "image adjustments that only change the color map or display mode",
+          "reproduced": "no (same-page refresh keeps the view)",
+          "fixed": "n/a"
+        },
+        {
+          "path": "rename page",
+          "reproduced": "no",
+          "fixed": "n/a"
+        },
+        {
+          "path": "page rotation, flip, size change",
+          "reproduced": "yes (restores the stored page state)",
+          "fixed": "no: intentionally unfixed; geometry changes keep restoring the stored page state (zoom kept, same fractional page position)"
+        },
+        {
+          "path": "replace page image or overlay file",
+          "reproduced": "not driven (changes geometry keys)",
+          "fixed": "no: intentionally unfixed; same geometry rule"
+        },
+        {
+          "path": "undo/redo of a scale change",
+          "reproduced": "covered by the scale path (same save and PAGE_METADATA_CHANGED events)",
+          "fixed": "yes (shared code)"
+        },
+        {
+          "path": "remote SQL page refresh and reconcile",
+          "reproduced": "yes",
+          "fixed": "yes"
+        },
+        {
+          "path": "deferred persistence projection / MDB or SQL reload replacing the Page object",
+          "reproduced": "yes",
+          "fixed": "yes"
+        },
+        {
+          "path": "cover sheet scale save (multi page)",
+          "reproduced": "same events as the scale path",
+          "fixed": "yes (shared code)"
+        },
+        {
+          "path": "page switch and return with a detached window open",
+          "reproduced": "yes (main adopted the detached camera)",
+          "fixed": "yes"
+        },
+        {
+          "path": "page switch restore of the stored state",
+          "reproduced": "no (control)",
+          "fixed": "n/a"
+        },
+        {
+          "path": "zoom and fit actions after the change",
+          "reproduced": "no",
+          "fixed": "n/a"
+        }
+      ],
+      "open_items": [
+        "rotation, flip and size changes (and replacing the image or overlay file) intentionally keep restoring the stored page state; the stored state itself is only refreshed by zoom actions and pan release, not by scrollbar or wheel scrolling",
+        "a freshly opened detached window still starts from the page stored state written by the main view",
         "OPEN-1 annotation preflight scope and OPEN-2 schema validator scope untouched by instruction"
       ]
     }
