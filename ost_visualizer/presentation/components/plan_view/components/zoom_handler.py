@@ -1,12 +1,13 @@
 import math
 from typing import Optional, Tuple
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsView
 from shiboken6 import isValid
 from ....modes.cursor import CURSOR_MODE_ANNOTATION_PLACE, CURSOR_MODE_PLACE
 
 _DISPLAY_ZOOM_RATIO = 0.333
+_FIT_IN_VIEW_MARGIN = 2
 
 
 class ZoomHandlerMixin:
@@ -21,6 +22,65 @@ class ZoomHandlerMixin:
         if not (math.isfinite(center.x()) and math.isfinite(center.y())):
             return None
         return center
+
+    def _remember_viewport_size(self) -> None:
+        if self.viewport().size().isValid():
+            self._last_visible_viewport_size = QSize(self.viewport().size())
+
+    def predicted_visible_scene_rect(self) -> QRectF:
+        size = self._last_visible_viewport_size
+        if (
+            self._load_view_applied
+            or self._current_page is None
+            or not self._load_geometry_ready
+            or size.width() <= 0
+            or size.height() <= 0
+        ):
+            return QRectF()
+        restored = self._predicted_restore_rect(size)
+        if restored is not None:
+            return restored
+        if self._load_initial_view_mode == "auto_zoom":
+            return QRectF()
+        return self._predicted_fit_rect(size)
+
+    def _predicted_restore_rect(self, size: QSize) -> Optional[QRectF]:
+        if self._load_initial_view_mode != "restore" or self._scene_scale <= 0:
+            return None
+        zoom_fac, center_x, center_y = self._view_state_to_restore()
+        center = self._persisted_coords_to_scene_center(center_x, center_y)
+        if center is None or not (
+            math.isfinite(center.x()) and math.isfinite(center.y())
+        ):
+            return None
+        scale = zoom_fac / (self._scene_scale * _DISPLAY_ZOOM_RATIO)
+        if not math.isfinite(scale) or scale < self.MIN_ZOOM or scale > self.MAX_ZOOM:
+            return None
+        page_rect = self._page_scene_rect()
+        if page_rect.isNull() or not page_rect.isValid():
+            return None
+        if not page_rect.contains(center):
+            return None
+        return self._viewport_rect_around(center, size, scale)
+
+    def _predicted_fit_rect(self, size: QSize) -> QRectF:
+        target = self._page_reset_scene_rect()
+        if target.isNull() or not target.isValid():
+            target = self._scene.sceneRect()
+        if not target.isValid():
+            return QRectF()
+        usable_width = max(1, size.width() - 2 * _FIT_IN_VIEW_MARGIN)
+        usable_height = max(1, size.height() - 2 * _FIT_IN_VIEW_MARGIN)
+        scale = min(usable_width / target.width(), usable_height / target.height())
+        return self._viewport_rect_around(target.center(), size, scale)
+
+    @staticmethod
+    def _viewport_rect_around(center: QPointF, size: QSize, scale: float) -> QRectF:
+        width = size.width() / scale
+        height = size.height() / scale
+        return QRectF(
+            center.x() - width / 2.0, center.y() - height / 2.0, width, height
+        )
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)

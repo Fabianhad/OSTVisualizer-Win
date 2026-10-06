@@ -268,6 +268,63 @@ class WorkspaceStateSerializationTests(unittest.TestCase):
         self.assertFalse(state.detached_windows.annotation_view.is_fullscreen)
 
 
+class PanSidebarWorkspaceStateTests(unittest.TestCase):
+    def test_pan_sidebar_defaults_to_hidden_with_no_saved_sizes(self):
+        state = TakeoffWorkspaceState()
+        self.assertIs(state.pan_sidebar_visible, False)
+        self.assertEqual(state.left_column_pan_first_sizes, [])
+        payload = state.to_dict()
+        self.assertIs(payload["pan_sidebar_visible"], False)
+        self.assertEqual(payload["left_column_pan_first_sizes"], [])
+
+    def test_visibility_and_vertical_sizes_round_trip(self):
+        state = WorkspaceState()
+        state.takeoff_workspace.pan_sidebar_visible = True
+        state.takeoff_workspace.left_column_pan_first_sizes = [640, 220]
+        restored = WorkspaceState.from_dict(state.to_dict())
+        self.assertIs(restored.takeoff_workspace.pan_sidebar_visible, True)
+        self.assertEqual(
+            restored.takeoff_workspace.left_column_pan_first_sizes, [640, 220]
+        )
+        again = WorkspaceState.from_dict(restored.to_dict())
+        self.assertEqual(again.to_dict(), restored.to_dict())
+
+    def test_old_files_without_the_keys_load_with_the_defaults(self):
+        old = TakeoffWorkspaceState.from_dict(
+            {
+                "conditions_sidebar_visible": False,
+                "layers_sidebar_visible": True,
+                "left_splitter_sizes": [300, 200],
+            }
+        )
+        self.assertIs(old.pan_sidebar_visible, False)
+        self.assertEqual(old.left_column_pan_first_sizes, [])
+        self.assertIs(old.conditions_sidebar_visible, False)
+        self.assertEqual(old.left_splitter_sizes, [300, 200])
+
+    def test_invalid_values_fall_back_without_touching_the_siblings(self):
+        state = TakeoffWorkspaceState.from_dict(
+            {
+                "pan_sidebar_visible": "yes",
+                "left_column_pan_first_sizes": ["a", -5, 7.9, None],
+                "layers_sidebar_visible": False,
+            }
+        )
+        self.assertIs(state.pan_sidebar_visible, False)
+        self.assertEqual(state.left_column_pan_first_sizes, [0, 7])
+        self.assertIs(state.layers_sidebar_visible, False)
+
+    def test_the_sibling_sidebar_keys_still_round_trip(self):
+        state = TakeoffWorkspaceState(
+            conditions_sidebar_visible=False,
+            layers_sidebar_visible=False,
+            left_splitter_sizes=[1, 2],
+            pan_sidebar_visible=True,
+        )
+        restored = TakeoffWorkspaceState.from_dict(state.to_dict())
+        self.assertEqual(restored, state)
+
+
 class WorkspaceFontColorCompatibilityTests(unittest.TestCase):
     def test_legacy_workspace_overlap_is_ignored_and_stripped(self):
         state = TakeoffWorkspaceState.from_dict(

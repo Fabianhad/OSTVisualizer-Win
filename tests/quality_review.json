@@ -1211,6 +1211,49 @@
       "tests": [],
       "release_evidence": "none",
       "affected_result": "no behavior change"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/pan_sidebar.py",
+      "defect": "A mouse move without the left button kept dragging (lost release), and page_cleared during a drag left the drag flag and closed-hand cursor set",
+      "proof": "DragRobustnessTests.test_a_lost_release_does_not_leave_the_drag_running, test_a_window_deactivation_followed_by_a_buttonless_move_ends_the_drag and test_clearing_the_page_during_a_drag_ends_it failed before the fix",
+      "fix": "mouseMoveEvent ends the drag when the left button is not held; _on_page_cleared clears the drag flag and the cursor",
+      "tests": [
+        "DragRobustnessTests"
+      ],
+      "release_evidence": "none (uncommitted feature)",
+      "affected_result": "The mini-map can no longer keep panning Main after a lost release"
+    },
+    {
+      "file": "ost_visualizer/presentation/main_window.py",
+      "defect": "Short or junk left-column size lists restored as [column, 0] and collapsed Conditions and Layers",
+      "proof": "Probe: sizes [500] and ['a', 5] gave [694, 0] after the Takeoff tab opened; test_short_or_corrupt_size_lists_never_collapse_the_top_sidebars",
+      "fix": "set_left_column_splitter_sizes ignores lists that do not have exactly two entries or sum to zero",
+      "tests": [
+        "PanSidebarWorkspaceTests.test_short_or_corrupt_size_lists_never_collapse_the_top_sidebars",
+        "PanSidebarWorkspaceTests.test_a_size_list_with_the_wrong_length_leaves_the_column_unchanged"
+      ],
+      "release_evidence": "none (uncommitted feature)",
+      "affected_result": "Corrupt size lists fall back to the default layout"
+    },
+    {
+      "file": "ost_visualizer/domain/entities/workspace_state.py",
+      "defect": "A workspace file written before the reorder with the key left_column_splitter_sizes ([top, pan]) was read as [pan, top] and swapped",
+      "proof": "Probe: [600, 220] restored with a 492 px Pan pane; test_a_file_saved_with_the_pre_reorder_size_key_is_not_read_swapped failed",
+      "fix": "The persisted key is now left_column_pan_first_sizes, so the old key is ignored and dropped on the next save",
+      "tests": [
+        "PanSidebarWorkspaceTests.test_a_file_saved_with_the_pre_reorder_size_key_is_not_read_swapped"
+      ],
+      "release_evidence": "none (uncommitted feature)",
+      "affected_result": "Old-order files cannot swap the sizes"
+    },
+    {
+      "file": "ost_visualizer/presentation/main_window.py",
+      "defect": "_ensure_pan_pane_visible kept a branch that gave a lone Pan pane the full height, which Qt already does (equivalent mutant)",
+      "proof": "In-memory mutation survived with the integration tests",
+      "fix": "Removed the branch",
+      "tests": [],
+      "release_evidence": "none",
+      "affected_result": "no behavior change"
     }
   ],
   "removed_tests": [
@@ -14256,6 +14299,29 @@
         "OSP packaging is verified up to the .ost member handed to the CAB writer (the native CAB packer is patched).",
         "3D, HTML, PDF and MCP names are intentionally unchanged and untested for the new options beyond their existing tests."
       ]
+    },
+    {
+      "batch": "pan-sidebar",
+      "findings": [
+        "Sidebar visibility and sizes are not Config settings: Conditions/Layers visibility and splitter sizes live in WorkspaceState.takeoff_workspace (workspace_state.json: conditions_sidebar_visible, layers_sidebar_visible, left_splitter_sizes, takeoff_splitter_sizes) with _coerce_bool/_coerce_int_list defaults, so keys missing from older files fall back to defaults and the schema version is unchanged. The Pan sidebar reuses that pattern: pan_sidebar_visible (default False, so existing layouts do not change) and left_column_pan_first_sizes.",
+        "View menu and view toolbar order were opposite (menu: Layers, Conditions; toolbar: Conditions, Layers; screen: Conditions above Layers). Chosen order Pan, Conditions, Layers everywhere (screen top to bottom, toolbar left to right, View menu; Pan on top at the user's request after first placing it last); a test asserts toolbar order equals menu order and the integration test asserts the real View menu.",
+        "The Pan pane is a new vertical left_column_splitter holding PanSidebar above the existing left_splitter, with left_column_pan_first_sizes stored as [pan, conditions+layers], so the two-pane assumptions in MainWindow and the coordinator (sizes[0]/sizes[1], previous[:2]) stay valid.",
+        "TakeoffPlanView emits nothing on pure scrolling, so the mini-map hooks the scroll bars (valueChanged/rangeChanged), zoom_changed, a viewport Resize event filter, page_geometry_ready, page_fully_loaded, page_cleared and a debounced scene.changed; centerOn publishes no page view state and changes no transform, so the mini-map never writes the stored camera.",
+        "Panning before is_view_state_stable would be overwritten by the load restore, so pointer input is gated on it; a drag in progress ends when the view stops being stable.",
+        "Bug hunt (reproduced with failing tests): (1) a buttonless mouse move after a lost release (window deactivation, modal dialog) kept panning the main view because _dragging was never cleared; (2) page_cleared during a drag left the closed-hand cursor and the drag flag set; (3) a size file written before the reorder ([top, pan]) was read as [pan, top] and swapped (pan 492 px instead of the saved 220); (4) a one-entry or junk size list ([500], ['a', 5]) restored as [column, 0], collapsing Conditions and Layers to zero height.",
+        "Not reproduced / reported only: scene.render on a destroyed scene (the scene is parented to the view and the view's destroyed signal ends the binding first); a visible Pan sidebar with no valid saved sizes restores at its 80 px minimum rather than the 220 px default when the Takeoff tab is inactive at startup (reachable only through hand-edited or corrupt files); flush_scheduled_refresh, thumbnail and thumbnail_render_count are public test seams used only by tests.",
+        "3D view follow-up: while Main shows the 3D view the 2D plan view is hidden, so a Page change cannot become stable and the mini-map had no rectangle until 2D was shown. TakeoffPlanView.predicted_visible_scene_rect (read-only) now returns the camera the view will apply on show: the saved or preserved camera when valid, otherwise the fitted page (including Qt's 2 px fitInView margin); the default auto-zoom is not predicted because it centers on the stale hidden view. It uses the last viewport size seen while the view was shown, and the mini-map clamps the center like centerOn. The prediction stays non-interactive and is compared with the real rectangle after the view is shown (within about one pixel).",
+        "Probe: with the Takeoff tab inactive the left column reports placeholder heights (30 px), so the default pan height can only be asserted with the Takeoff tab active (220 px)."
+      ],
+      "tests_added": [
+        "167 tests across 4 new modules and 5 existing modules"
+      ],
+      "validation": "Full suite: 12929 tests run, 35 skipped, OK. tools/check_architecture.py: all categories PASS. compileall -q ost_visualizer tests tools exit 0. git diff --check (core.whitespace=cr-at-eol) clean. Focused: pan sidebar, geometry, zoom handler, workspace, builder, menu, coordinator, icon and detached-window modules OK; in-memory mutants all killed or removed as redundant.",
+      "limitations": [
+        "Cursor shapes are read from the widget (offscreen platform); the real OS cursor image is not observed.",
+        "devicePixelRatio 2.0 is simulated by patching devicePixelRatioF; no real high-DPI screen was used.",
+        "Access and SQL parity: the sidebar stores only UI settings in workspace_state.json and never touches Page data, so there is no backend-specific behaviour to test."
+      ]
     }
   ],
   "modules": {
@@ -15153,7 +15219,12 @@
         "WorkspaceFontColorCompatibilityTests.test_legacy_workspace_overlap_is_ignored_and_stripped": "Retained: obsolete style/font/color overlap discarded, text alignment retained and serialization strips migrated fields without losing rectangle style.",
         "WorkspaceCorruptDimensionTests.test_nonfinite_schema_version_uses_current_schema_without_losing_other_state": "Added regression: NaN and both infinities fall back to current schema, preserving valid dialog state; infinity previously aborted deserialization.",
         "WorkspaceCorruptDimensionTests.test_nonfinite_saved_sizes_do_not_abort_unrelated_workspace_restoration": "Added regression: invalid dialog dimension and splitter member isolated from valid dialog and splitter siblings; infinity previously raised OverflowError.",
-        "WorkspaceCorruptDimensionTests.test_nonfinite_header_widths_do_not_discard_valid_sibling_columns": "Added regression: invalid width discarded without losing valid width/order; infinity previously aborted whole state."
+        "WorkspaceCorruptDimensionTests.test_nonfinite_header_widths_do_not_discard_valid_sibling_columns": "Added regression: invalid width discarded without losing valid width/order; infinity previously aborted whole state.",
+        "PanSidebarWorkspaceStateTests.test_pan_sidebar_defaults_to_hidden_with_no_saved_sizes": "Added: pan sidebar defaults to hidden with no saved sizes. TakeoffWorkspaceState keys pan_sidebar_visible (default hidden) and left_column_splitter_sizes: defaults, round trip, coercion, old files without the keys.",
+        "PanSidebarWorkspaceStateTests.test_visibility_and_vertical_sizes_round_trip": "Added: visibility and vertical sizes round trip. TakeoffWorkspaceState keys pan_sidebar_visible (default hidden) and left_column_splitter_sizes: defaults, round trip, coercion, old files without the keys.",
+        "PanSidebarWorkspaceStateTests.test_old_files_without_the_keys_load_with_the_defaults": "Added: old files without the keys load with the defaults. TakeoffWorkspaceState keys pan_sidebar_visible (default hidden) and left_column_splitter_sizes: defaults, round trip, coercion, old files without the keys.",
+        "PanSidebarWorkspaceStateTests.test_invalid_values_fall_back_without_touching_the_siblings": "Added: invalid values fall back without touching the siblings. TakeoffWorkspaceState keys pan_sidebar_visible (default hidden) and left_column_splitter_sizes: defaults, round trip, coercion, old files without the keys.",
+        "PanSidebarWorkspaceStateTests.test_the_sibling_sidebar_keys_still_round_trip": "Added: the sibling sidebar keys still round trip. TakeoffWorkspaceState keys pan_sidebar_visible (default hidden) and left_column_splitter_sizes: defaults, round trip, coercion, old files without the keys."
       }
     },
     "tests/domain/services/test_condition_quantity_service.py": {
@@ -19524,7 +19595,13 @@
         "ComponentBuilderLayoutTests.test_view_selector_shows_only_when_both_views_are_available": "Sequential visibility transitions verifying toolbar visibility, current index and stack resize. Sound; kept.",
         "ComponentBuilderLayoutTests.test_view_selector_handles_disabled_and_unavailable_views": "Strengthened: also re-enables both views (toolbar visible, selection preserved, no extra currentChanged) and the invisible+disabled 3D combination, in addition to the original enable/disable sequence.",
         "ComponentBuilderLayoutTests.test_view_selector_refresh_is_idempotent_and_preserves_valid_selection": "Added toolbar-hidden assertion in the single-available-view state; no spurious currentChanged emissions.",
-        "TakeoffToolbarVisibilityTests.test_wrapped_command_buttons_preserve_native_toolbar_presentation": "Verified by mutation that removing NoFocus or forcing autoRaise(False) fails every key. Strengthened: reference button values are pinned to literals (autoRaise True, NoFocus, IconOnly) so a changed reference cannot silently pass, each wrapped widget must be a QToolButton with the expected default action."
+        "TakeoffToolbarVisibilityTests.test_wrapped_command_buttons_preserve_native_toolbar_presentation": "Verified by mutation that removing NoFocus or forcing autoRaise(False) fails every key. Strengthened: reference button values are pinned to literals (autoRaise True, NoFocus, IconOnly) so a changed reference cannot silently pass, each wrapped widget must be a QToolButton with the expected default action.",
+        "SidebarToggleBuilderTests.test_the_toolbar_and_the_view_menu_list_the_sidebar_toggles_in_the_same_order": "Added: the toolbar and the view menu list the sidebar toggles in the same order. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
+        "SidebarToggleBuilderTests.test_the_toggles_follow_the_on_screen_sidebar_layout_top_to_bottom": "Added: the toggles follow the on screen sidebar layout top to bottom. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
+        "SidebarToggleBuilderTests.test_the_pan_toggle_is_checkable_labelled_and_themed_like_its_siblings": "Added: the pan toggle is checkable labelled and themed like its siblings. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
+        "SidebarToggleBuilderTests.test_the_pan_toggle_button_has_an_accessible_name_and_tooltip": "Added: the pan toggle button has an accessible name and tooltip. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
+        "SidebarToggleBuilderTests.test_the_pan_sidebar_starts_hidden_and_the_column_follows_the_two_sidebars": "Added: the pan sidebar starts hidden and the column follows the two sidebars. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
+        "SidebarToggleBuilderTests.test_the_column_keeps_the_sidebar_width_and_gives_the_spare_height_to_the_top": "Added: the column keeps the sidebar width and gives the spare height to the top. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers."
       }
     },
     "tests/presentation/components/plan_view/components/test_drag_handler.py": {
@@ -20018,7 +20095,19 @@
         "PlanViewInteractionTests.test_fit_to_page_falls_back_to_scene_rect_without_a_page_item": "ADDED: with no page item fit_to_page falls back to scene.sceneRect() with the same follow-up scale/zoom calls.",
         "PlanViewInteractionTests.test_zoom_to_rect_publishes_zoom_and_page_view_state": "Strengthened: previously only compared published values with each other. Now independent checks: zoom == m11*2*0.333, visible scene rect contains the 10%-margin rectangle (10,15,120,180) and is fitted (height < 200), centre y ~105, state tuple centre equals the persisted conversion (2/3 of scene centre). Kills no-fit, no-margin (y), publish and emit mutants.",
         "PlanViewInteractionTests.test_zoom_to_rect_applies_margin_on_the_binding_horizontal_axis": "ADDED: wide rectangle where width is binding so the x margin is observable (visible area contains (0,25,240,60) and width < 260). Kills the x-margin mutant that survived the tall-rectangle test.",
-        "PlanViewInteractionTests.test_zoom_to_rect_rejects_invalid_bounds_without_changing_view": "RENAMED from test_zoom_to_rect_rejects_non_finite_bounds_without_changing_view and extended with subTests for NaN, infinity, inverted x, zero height, negative margin and non-numeric input (each asserts unchanged transform and no zoom/state emission). Positive control is the publish test. Kills size-check and negative-margin mutants."
+        "PlanViewInteractionTests.test_zoom_to_rect_rejects_invalid_bounds_without_changing_view": "RENAMED from test_zoom_to_rect_rejects_non_finite_bounds_without_changing_view and extended with subTests for NaN, infinity, inverted x, zero height, negative margin and non-numeric input (each asserts unchanged transform and no zoom/state emission). Positive control is the publish test. Kills size-check and negative-margin mutants.",
+        "PredictedVisibleSceneRectTests.test_there_is_no_prediction_without_a_page_or_once_the_view_is_stable": "Added: there is no prediction without a page or once the view is stable. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_a_hidden_view_predicts_the_fitted_page": "Added: a hidden view predicts the fitted page. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_a_hidden_view_predicts_a_wide_page_fit_by_its_width": "Added: a hidden view predicts a wide page fit by its width. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_a_saved_zoom_outside_the_zoom_limits_is_predicted_as_the_fitted_page": "Added: a saved zoom outside the zoom limits is predicted as the fitted page. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_the_load_mode_chosen_at_load_time_wins_over_a_later_camera_write": "Added: the load mode chosen at load time wins over a later camera write. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_nothing_is_predicted_before_the_load_geometry_is_ready": "Added: nothing is predicted before the load geometry is ready. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_an_invalid_scene_extent_is_not_predicted": "Added: an invalid scene extent is not predicted. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_a_hidden_view_predicts_the_saved_camera": "Added: a hidden view predicts the saved camera. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_the_prediction_uses_the_last_visible_viewport_size_not_a_hidden_resize": "Added: the prediction uses the last visible viewport size not a hidden resize. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_the_default_auto_zoom_is_not_predicted": "Added: the default auto zoom is not predicted. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_a_view_that_was_never_shown_is_not_predicted": "Added: a view that was never shown is not predicted. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown.",
+        "PredictedVisibleSceneRectTests.test_predicting_never_changes_the_view_or_the_pages_camera": "Added: predicting never changes the view or the pages camera. TakeoffPlanView.predicted_visible_scene_rect: the read-only prediction of the camera a hidden, still-loading view will show (saved camera or fitted page), compared with the real view after it is shown."
       }
     },
     "tests/presentation/components/plan_view/test_view.py": {
@@ -23103,7 +23192,18 @@
         "WorkspaceStateCoordinatorDetachedWindowTests.test_tracked_window_destroy_drops_matching_reference": "Destroying the tracked window clears all three tracking maps. Sound as is.",
         "WorkspaceStateCoordinatorDetachedWindowTests.test_stale_window_destroy_keeps_replacement_tracking": "A stale window's destroy does not drop the replacement's tracking. Killed by the destroy-matching mutation.",
         "WorkspaceStateDropdownMergeTests.test_main_and_annotation_scale_popup_sizes_persist_independently": "Merge keeps main_scale while updating annotation_scale. Class renamed from DetachedPageViewManagerLifecycleTests (it only tests the coordinator's merge helper). Sound as is.",
-        "WorkspaceStateDropdownMergeTests.test_popup_size_merge_drops_unknown_invalid_and_extra_values_without_mutation": "New. Unknown keys, short/zero/negative values are dropped, extra entries truncated, previous values kept for invalid current ones, inputs not mutated and None inputs tolerated (killed by the merge-positive and unknown-key mutations)."
+        "WorkspaceStateDropdownMergeTests.test_popup_size_merge_drops_unknown_invalid_and_extra_values_without_mutation": "New. Unknown keys, short/zero/negative values are dropped, extra entries truncated, previous values kept for invalid current ones, inputs not mutated and None inputs tolerated (killed by the merge-positive and unknown-key mutations).",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_capture_records_pan_sidebar_visibility_and_column_sizes": "Added: capture records pan sidebar visibility and column sizes. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_capture_keeps_previous_column_sizes_while_the_pan_sidebar_is_hidden": "Added: capture keeps previous column sizes while the pan sidebar is hidden. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_capture_uses_current_column_sizes_while_the_pan_sidebar_is_visible": "Added: capture uses current column sizes while the pan sidebar is visible. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_capture_keeps_previous_column_sizes_when_the_column_is_not_visible": "Added: capture keeps previous column sizes when the column is not visible. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_capture_keeps_previous_column_sizes_when_the_total_is_zero": "Added: capture keeps previous column sizes when the total is zero. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_hidden_pan_preservation_ignores_an_unusable_previous_layout": "Added: hidden pan preservation ignores an unusable previous layout. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_show_main_window_schedules_the_column_size_restore": "Added: show main window schedules the column size restore. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_show_main_window_schedules_nothing_without_saved_column_sizes": "Added: show main window schedules nothing without saved column sizes. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_column_restore_after_show_is_ignored_after_cleanup": "Added: column restore after show is ignored after cleanup. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_restore_applies_pan_visibility_and_column_sizes_in_order": "Added: restore applies pan visibility and column sizes in order. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
+        "WorkspaceStateCoordinatorDetachedWindowTests.test_restore_skips_column_sizes_when_none_are_saved": "Added: restore skips column sizes when none are saved. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes."
       }
     },
     "tests/presentation/dialogs/cover_sheet/test_context.py": {
@@ -30385,7 +30485,9 @@
         "IconManagerPreferenceTests.test_text_format_icons_are_registered": "Pins the exact svg_name for the 10 text-format/project-tree/page-indicator IconIds and asserts the icon is non-null. Strengthened: now also renders a 24x24 pixmap and requires at least one visible (alpha>0) pixel, so an SVG that renders blank no longer passes.",
         "IconManagerPreferenceTests.test_every_registered_icon_has_an_existing_svg_that_renders": "Added. Walks every ICON_SPECS entry and requires the SVG file to exist under resources/icons and IconManager.icon to be non-null; catches a new spec pointing at a missing/typo'd asset.",
         "IconManagerPreferenceTests.test_colored_icon_recolors_every_visible_pixel": "Added. IconManager.colored_icon(FOLDER, '#ff0000') must contain visible pixels and every visible pixel must be pure red; guards the _FILL_RE recolor path and the cache key including the colour.",
-        "IconManagerPreferenceTests.test_apply_to_action_uses_registered_icon_and_ignores_unknown_keys": "Added. A registered action key (ACTION_RESET_VIEW) applies the RESET_VIEW icon (cacheKey equal to IconManager.icon), an unregistered key leaves the action icon null."
+        "IconManagerPreferenceTests.test_apply_to_action_uses_registered_icon_and_ignores_unknown_keys": "Added. A registered action key (ACTION_RESET_VIEW) applies the RESET_VIEW icon (cacheKey equal to IconManager.icon), an unregistered key leaves the action icon null.",
+        "IconManagerPreferenceTests.test_pan_sidebar_icon_exists_loads_is_registered_for_its_action_and_recolors": "Added: pan sidebar icon exists loads is registered for its action and recolors. The panorama icon file exists, loads, is registered for the pan_sidebar action, recolors every visible pixel and follows the light and dark palette.",
+        "IconManagerPreferenceTests.test_pan_sidebar_icon_follows_the_palette_for_light_and_dark_themes": "Added: pan sidebar icon follows the palette for light and dark themes. The panorama icon file exists, loads, is registered for the pan_sidebar action, recolors every visible pixel and follows the light and dark palette."
       }
     },
     "tests/presentation/managers/test_shortcut_manager.py": {
@@ -37048,6 +37150,161 @@
         "ConditionElevationExportOptionDialogWorkflowTests.test_a_cancelled_warning_saves_nothing_and_publishes_nothing": "Added: a cancelled warning saves nothing and publishes nothing. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning.",
         "ConditionElevationExportOptionDialogWorkflowTests.test_turning_an_option_back_off_persists_without_a_warning": "Added: turning an option back off persists without a warning. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning."
       }
+    },
+    "tests/presentation/utils/test_minimap_geometry.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Pure QRectF/QPointF/QSizeF geometry tests with explicit numbers; no widgets and no fixtures.",
+      "reviewed_tests": {
+        "FitRectTests.test_wide_source_is_fitted_to_the_width_and_centered_vertically": "Added: wide source is fitted to the width and centered vertically. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "FitRectTests.test_tall_source_is_fitted_to_the_height_and_centered_horizontally": "Added: tall source is fitted to the height and centered horizontally. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "FitRectTests.test_aspect_ratio_is_preserved": "Added: aspect ratio is preserved. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "FitRectTests.test_degenerate_inputs_give_an_empty_rect": "Added: degenerate inputs give an empty rect. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "SceneToMapRectTests.test_the_whole_source_maps_to_the_whole_map": "Added: the whole source maps to the whole map. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "SceneToMapRectTests.test_a_quarter_of_the_source_maps_to_a_quarter_of_the_map": "Added: a quarter of the source maps to a quarter of the map. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "SceneToMapRectTests.test_each_axis_is_scaled_by_its_own_map_to_source_ratio": "Added: each axis is scaled by its own map to source ratio. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "SceneToMapRectTests.test_a_visible_rect_larger_than_the_source_is_clamped_to_the_map": "Added: a visible rect larger than the source is clamped to the map. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "SceneToMapRectTests.test_a_visible_rect_hanging_over_an_edge_is_clipped_not_shifted": "Added: a visible rect hanging over an edge is clipped not shifted. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "SceneToMapRectTests.test_a_visible_rect_outside_the_source_is_empty": "Added: a visible rect outside the source is empty. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "SceneToMapRectTests.test_degenerate_inputs_give_an_empty_rect": "Added: degenerate inputs give an empty rect. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "MapToScenePointTests.test_map_corners_map_to_source_corners": "Added: map corners map to source corners. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "MapToScenePointTests.test_the_map_center_maps_to_the_source_center": "Added: the map center maps to the source center. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "MapToScenePointTests.test_points_outside_the_map_are_clamped_to_its_edges": "Added: points outside the map are clamped to its edges. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "MapToScenePointTests.test_round_trip_through_the_map_is_stable": "Added: round trip through the map is stable. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "MapToScenePointTests.test_degenerate_inputs_return_the_source_center": "Added: degenerate inputs return the source center. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClampCenterTests.test_a_center_inside_the_allowed_band_is_unchanged": "Added: a center inside the allowed band is unchanged. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClampCenterTests.test_the_center_is_clamped_so_the_visible_rect_stays_inside": "Added: the center is clamped so the visible rect stays inside. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClampCenterTests.test_an_axis_where_the_view_is_larger_than_the_source_is_centered": "Added: an axis where the view is larger than the source is centered. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClampCenterTests.test_a_view_exactly_as_large_as_the_source_is_centered": "Added: a view exactly as large as the source is centered. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClickAndDragTests.test_clicking_the_map_center_centers_the_view_on_the_source_center": "Added: clicking the map center centers the view on the source center. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClickAndDragTests.test_clicking_near_an_edge_keeps_the_view_inside_the_source": "Added: clicking near an edge keeps the view inside the source. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClickAndDragTests.test_clicking_outside_the_map_clamps_to_the_nearest_allowed_center": "Added: clicking outside the map clamps to the nearest allowed center. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClickAndDragTests.test_grab_offset_is_the_pointer_position_relative_to_the_view_center": "Added: grab offset is the pointer position relative to the view center. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClickAndDragTests.test_dragging_moves_the_view_with_the_pointer_keeping_the_grab_offset": "Added: dragging moves the view with the pointer keeping the grab offset. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClickAndDragTests.test_dragging_without_moving_leaves_the_center_unchanged": "Added: dragging without moving leaves the center unchanged. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers.",
+        "ClickAndDragTests.test_dragging_past_the_map_is_clamped_inside_the_source": "Added: dragging past the map is clamped inside the source. Pure mini-map geometry (fit, scene-to-map, map-to-scene, clamps, click centering, drag offset) with exact expected numbers."
+      }
+    },
+    "tests/presentation/components/test_pan_sidebar.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real offscreen PanSidebar bound to a real TakeoffPlanView with real scroll bars (Page 612x792, 9 zoom-ins for a pan range); events are sent with QMouseEvent through QApplication.sendEvent; cursors are read from the widget; unstable-view cases patch only the is_view_state_stable property.",
+      "reviewed_tests": {
+        "EmptyStateTests.test_a_sidebar_without_a_plan_view_is_empty": "Added: a sidebar without a plan view is empty. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "EmptyStateTests.test_a_bound_view_without_a_page_is_empty": "Added: a bound view without a page is empty. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "EmptyStateTests.test_loading_a_page_leaves_the_empty_state": "Added: loading a page leaves the empty state. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "EmptyStateTests.test_clearing_the_page_returns_to_the_empty_state": "Added: clearing the page returns to the empty state. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "EmptyStateTests.test_clicking_the_empty_state_does_nothing": "Added: clicking the empty state does nothing. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_the_visible_rect_matches_the_geometry_mapping_of_the_view": "Added: the visible rect matches the geometry mapping of the view. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_the_visible_rect_follows_scrolling_in_both_directions": "Added: the visible rect follows scrolling in both directions. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_the_visible_rect_shrinks_when_zooming_in_and_grows_when_zooming_out": "Added: the visible rect shrinks when zooming in and grows when zooming out. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_the_visible_rect_follows_a_view_resize": "Added: the visible rect follows a view resize. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_the_sidebar_repaints_on_scroll_zoom_and_resize_without_rendering": "Added: the sidebar repaints on scroll zoom and resize without rendering. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_a_view_that_is_not_the_bound_one_does_not_drive_the_sidebar": "Added: a view that is not the bound one does not drive the sidebar. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_unbinding_stops_the_sidebar_following_the_view": "Added: unbinding stops the sidebar following the view. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_unbinding_removes_the_viewport_event_filter": "Added: unbinding removes the viewport event filter. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "VisibleRectTrackingTests.test_a_deleted_plan_view_leaves_a_safe_empty_sidebar": "Added: a deleted plan view leaves a safe empty sidebar. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "RepaintTests.test_each_view_signal_alone_repaints_the_sidebar": "Added: each view signal alone repaints the sidebar. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "RepaintTests.test_an_unbound_sidebar_is_not_repainted_by_the_old_view": "Added: an unbound sidebar is not repainted by the old view. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_hovering_the_rectangle_shows_the_open_hand_and_leaving_it_resets": "Added: hovering the rectangle shows the open hand and leaving it resets. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_pressing_the_rectangle_shows_the_closed_hand_and_release_the_open_hand": "Added: pressing the rectangle shows the closed hand and release the open hand. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_releasing_another_button_does_not_end_the_drag": "Added: releasing another button does not end the drag. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_releasing_outside_the_rectangle_restores_the_default_cursor": "Added: releasing outside the rectangle restores the default cursor. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_dragging_pans_the_main_view_with_the_pointer": "Added: dragging pans the main view with the pointer. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_dragging_keeps_the_grab_offset_inside_the_rectangle": "Added: dragging keeps the grab offset inside the rectangle. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_dragging_never_changes_the_zoom": "Added: dragging never changes the zoom. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_clicking_outside_the_rectangle_centers_the_view_there": "Added: clicking outside the rectangle centers the view there. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_clicking_near_an_edge_keeps_the_view_inside_the_page_extent": "Added: clicking near an edge keeps the view inside the page extent. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_clicking_never_changes_the_zoom": "Added: clicking never changes the zoom. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_only_the_left_button_pans": "Added: only the left button pans. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_leaving_the_widget_and_hiding_it_restore_the_cursor": "Added: leaving the widget and hiding it restore the cursor. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_a_hidden_drag_does_not_keep_panning_after_the_sidebar_is_shown_again": "Added: a hidden drag does not keep panning after the sidebar is shown again. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PointerTests.test_no_global_override_cursor_or_native_window_is_used": "Added: no global override cursor or native window is used. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "StabilityGateTests.test_pressing_and_dragging_do_nothing_until_the_main_view_is_stable": "Added: pressing and dragging do nothing until the main view is stable. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "StabilityGateTests.test_a_drag_in_progress_stops_when_the_main_view_becomes_unstable": "Added: a drag in progress stops when the main view becomes unstable. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "StabilityGateTests.test_hovering_the_rectangle_shows_no_hand_until_the_view_is_stable": "Added: hovering the rectangle shows no hand until the view is stable. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "StabilityGateTests.test_panning_works_once_the_view_becomes_stable": "Added: panning works once the view becomes stable. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "NoCameraWriteTests.test_pointer_use_never_writes_the_pages_stored_camera": "Added: pointer use never writes the pages stored camera. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "NoCameraWriteTests.test_the_sidebar_does_not_toggle_the_views_page_state_ownership": "Added: the sidebar does not toggle the views page state ownership. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "FeedbackLoopTests.test_scene_changes_during_a_drag_do_not_schedule_a_render": "Added: scene changes during a drag do not schedule a render. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "FeedbackLoopTests.test_a_drag_move_causes_a_bounded_number_of_scroll_changes_and_no_renders": "Added: a drag move causes a bounded number of scroll changes and no renders. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "FeedbackLoopTests.test_the_view_settles_after_the_drag_without_further_scroll_events": "Added: the view settles after the drag without further scroll events. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_the_thumbnail_is_rendered_at_the_map_pixel_size": "Added: the thumbnail is rendered at the map pixel size. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_the_thumbnail_follows_the_device_pixel_ratio": "Added: the thumbnail follows the device pixel ratio. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_the_thumbnail_size_is_capped": "Added: the thumbnail size is capped. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_a_page_load_renders_the_thumbnail_once_per_load": "Added: a page load renders the thumbnail once per load. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_each_page_load_signal_alone_schedules_a_refresh": "Added: each page load signal alone schedules a refresh. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_nothing_is_rendered_while_the_sidebar_is_hidden": "Added: nothing is rendered while the sidebar is hidden. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_showing_a_stale_hidden_sidebar_renders_it_once": "Added: showing a stale hidden sidebar renders it once. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_a_scale_change_reload_refreshes_the_thumbnail": "Added: a scale change reload refreshes the thumbnail. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_invert_bitonal_and_show_mode_reloads_refresh_the_thumbnail": "Added: invert bitonal and show mode reloads refresh the thumbnail. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_inverting_the_page_changes_the_rendered_page_color": "Added: inverting the page changes the rendered page color. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_scene_changes_trigger_a_debounced_refresh": "Added: scene changes trigger a debounced refresh. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "ThumbnailTests.test_the_visible_rect_is_drawn_inverted_and_the_rest_normally": "Added: the visible rect is drawn inverted and the rest normally. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_a_lost_release_does_not_leave_the_drag_running": "Added: a lost release does not leave the drag running. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_a_window_deactivation_followed_by_a_buttonless_move_ends_the_drag": "Added: a window deactivation followed by a buttonless move ends the drag. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_clearing_the_page_during_a_drag_ends_it": "Added: clearing the page during a drag ends it. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_rebinding_during_a_drag_ends_it_without_moving_either_view": "Added: rebinding during a drag ends it without moving either view. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_deleting_the_view_during_a_drag_ends_it": "Added: deleting the view during a drag ends it. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_other_buttons_never_pan_or_change_the_cursor": "Added: other buttons never pan or change the cursor. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_a_double_click_centers_like_a_click_and_ends_cleanly": "Added: a double click centers like a click and ends cleanly. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_the_sidebar_never_takes_keyboard_focus_or_promotes_native_windows": "Added: the sidebar never takes keyboard focus or promotes native windows. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "DragRobustnessTests.test_wheel_events_are_left_to_the_parent": "Added: wheel events are left to the parent. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PageShapeTests.test_a_tiny_page_is_usable": "Added: a tiny page is usable. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PageShapeTests.test_a_huge_page_is_usable_and_the_thumbnail_stays_capped": "Added: a huge page is usable and the thumbnail stays capped. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PageShapeTests.test_a_page_smaller_than_the_viewport_maps_to_the_whole_page": "Added: a page smaller than the viewport maps to the whole page. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PageShapeTests.test_a_rotated_page_gets_a_map_with_the_scene_aspect_ratio": "Added: a rotated page gets a map with the scene aspect ratio. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PageShapeTests.test_flipped_pages_render_and_pan": "Added: flipped pages render and pan. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "PageShapeTests.test_rapid_page_switches_render_at_most_once_per_load": "Added: rapid page switches render at most once per load. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_a_page_with_a_saved_camera_shows_its_viewport_while_the_view_is_hidden": "Added: a page with a saved camera shows its viewport while the view is hidden. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_a_saved_camera_at_the_page_edge_is_clamped_like_the_view_clamps_it": "Added: a saved camera at the page edge is clamped like the view clamps it. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_a_page_without_a_saved_camera_shows_the_fitted_page_while_hidden": "Added: a page without a saved camera shows the fitted page while hidden. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_a_saved_camera_outside_the_page_falls_back_to_the_fitted_page": "Added: a saved camera outside the page falls back to the fitted page. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_a_scale_change_reload_while_hidden_keeps_the_preserved_camera": "Added: a scale change reload while hidden keeps the preserved camera. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_the_default_auto_zoom_has_no_prediction_while_hidden": "Added: the default auto zoom has no prediction while hidden. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_a_view_that_was_never_shown_has_no_prediction": "Added: a view that was never shown has no prediction. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_the_prediction_is_not_interactive_and_writes_nothing": "Added: the prediction is not interactive and writes nothing. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh.",
+        "HiddenViewPredictionTests.test_the_hidden_view_prediction_is_painted_on_the_sidebar": "Added: the hidden view prediction is painted on the sidebar. Real PanSidebar and real TakeoffPlanView offscreen: tracking, pointer/cursor behaviour, stability gate, no stored-camera writes, no feedback loops, thumbnail size/cap/hidden/refresh."
+      }
+    },
+    "tests/integration/lifecycle/test_pan_sidebar_workspace.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real MainWindow via configure_application with Path.home patched to a temp dir and a real workspace_state.json; windows are shown for geometry; the Takeoff tab is activated where real splitter heights matter.",
+      "reviewed_tests": {
+        "PanSidebarWorkspaceTests.test_the_main_plan_view_is_bound_and_the_pan_sidebar_starts_hidden": "Added: the main plan view is bound and the pan sidebar starts hidden. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_the_button_the_menu_and_the_setter_stay_in_sync": "Added: the button the menu and the setter stay in sync. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_the_view_menu_lists_the_sidebars_in_the_toolbar_order": "Added: the view menu lists the sidebars in the toolbar order. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_with_the_other_sidebars_hidden_shows_the_column": "Added: showing the pan sidebar with the other sidebars hidden shows the column. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_restores_a_usable_height": "Added: showing the pan sidebar restores a usable height. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_the_pan_sidebar_alone_takes_the_whole_column_height": "Added: the pan sidebar alone takes the whole column height. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_again_restores_its_last_height": "Added: showing the pan sidebar again restores its last height. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_visibility_and_vertical_size_persist_across_a_restart": "Added: visibility and vertical size persist across a restart. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_a_hidden_pan_sidebar_persists_as_hidden_and_keeps_its_last_size": "Added: a hidden pan sidebar persists as hidden and keeps its last size. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_old_workspace_files_without_the_keys_start_with_the_sidebar_hidden": "Added: old workspace files without the keys start with the sidebar hidden. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_toggling_the_pan_toggle_requests_a_workspace_save": "Added: toggling the pan toggle requests a workspace save. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_moving_the_column_splitter_requests_a_workspace_save": "Added: moving the column splitter requests a workspace save. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_reset_to_defaults_hides_the_pan_sidebar": "Added: reset to defaults hides the pan sidebar. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_a_file_saved_with_the_pre_reorder_size_key_is_not_read_swapped": "Added: a file saved with the pre reorder size key is not read swapped. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_short_or_corrupt_size_lists_never_collapse_the_top_sidebars": "Added: short or corrupt size lists never collapse the top sidebars. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_oversized_size_lists_use_only_the_two_panes": "Added: oversized size lists use only the two panes. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_saved_sizes_survive_a_startup_where_the_takeoff_tab_is_inactive": "Added: saved sizes survive a startup where the takeoff tab is inactive. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_alone_restores_the_sidebar_column_width": "Added: showing the pan sidebar alone restores the sidebar column width. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_expands_a_column_the_user_collapsed": "Added: showing the pan sidebar expands a column the user collapsed. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_a_size_list_with_the_wrong_length_leaves_the_column_unchanged": "Added: a size list with the wrong length leaves the column unchanged. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_hiding_all_three_sidebars_keeps_the_saved_column_width": "Added: hiding all three sidebars keeps the saved column width. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_the_pan_toggle_keeps_its_state_across_tab_switches_and_follows_the_tab": "Added: the pan toggle keeps its state across tab switches and follows the tab. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_the_sidebar_toggles_have_distinct_accessible_names_and_no_shortcuts": "Added: the sidebar toggles have distinct accessible names and no shortcuts. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_switching_pages_on_the_3d_view_still_shows_the_2d_viewport": "Added: switching pages on the 3d view still shows the 2d viewport. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_the_menu_actions_use_the_shared_toggle_icon": "Added: the menu actions use the shared toggle icon. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset."
+      }
+    },
+    "tests/integration/surfaces/test_pan_sidebar_detached.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "ViewportHarness (real main plan view plus a real detached window plan view and coordinator) with a real PanSidebar bound to the main view.",
+      "reviewed_tests": {
+        "PanSidebarFollowsOnlyTheMainViewTests.test_the_mini_map_tracks_the_main_view": "Added: the mini map tracks the main view. Detached windows never drive the mini-map: scrolling, zooming and page changes of the detached view leave it untouched, and dragging it pans only Main.",
+        "PanSidebarFollowsOnlyTheMainViewTests.test_scrolling_and_zooming_a_detached_window_does_not_move_the_mini_map": "Added: scrolling and zooming a detached window does not move the mini map. Detached windows never drive the mini-map: scrolling, zooming and page changes of the detached view leave it untouched, and dragging it pans only Main.",
+        "PanSidebarFollowsOnlyTheMainViewTests.test_dragging_the_mini_map_pans_the_main_view_and_not_the_detached_window": "Added: dragging the mini map pans the main view and not the detached window. Detached windows never drive the mini-map: scrolling, zooming and page changes of the detached view leave it untouched, and dragging it pans only Main.",
+        "PanSidebarFollowsOnlyTheMainViewTests.test_switching_the_detached_window_page_does_not_refresh_the_thumbnail": "Added: switching the detached window page does not refresh the thumbnail. Detached windows never drive the mini-map: scrolling, zooming and page changes of the detached view leave it untouched, and dragging it pans only Main."
+      }
     }
   },
   "subsystems": {
@@ -37131,23 +37388,23 @@
   },
   "latest_validation": {
     "full_suite": {
-      "tests_run": 8669,
-      "skips": 30,
-      "seconds": 170.65,
+      "tests_run": 12929,
+      "skips": 35,
+      "seconds": 248.6,
       "result": "OK",
-      "command": ".\\venv\\Scripts\\python.exe -m unittest discover -s tests -t . -v"
+      "command": ".\\venv\\Scripts\\python.exe -m unittest discover -s tests -t ."
     },
     "discovery": {
-      "defined": 8676,
-      "discovered": 8676,
+      "defined": 12953,
+      "discovered": 12953,
       "duplicate_ids": 0,
       "missing_definitions": 0,
       "errors": 0
     },
     "architecture_checker": "tools/check_architecture.py full scan: all 7 categories PASS",
     "compileall": "compileall -q ost_visualizer tests tools exit 0",
-    "diff_check": "git diff --check reports only CR-at-EOL on added lines of the CRLF files .gitignore and AGENTS.md (consistent with their existing endings); with core.whitespace=cr-at-eol it is clean (exit 0)",
-    "line_endings": "per-file style snapshot check: no file changed line-ending style",
+    "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+    "line_endings": "AGENTS.md, CHANGELOG.md, README.md and the ledgers keep their original line-ending style (CRLF counts grew only by the inserted lines); source and test files stay LF",
     "vulture_black_ruff": "unavailable (cannot install)",
     "limits": "SQL Server only against fakes (live SQL tests skipped); Access real in tests/integration/mdb (ODBC/DAO/ADOX) plus sqlite stand-ins elsewhere; native C++ not mutated or rebuilt.",
     "second_pass_full_suite": {
@@ -37251,7 +37508,8 @@
       "architecture": "no violations",
       "compileall": 0,
       "diff_check": "clean (cr-at-eol)"
-    }
+    },
+    "pan_sidebar_batch": "pan-sidebar 3D-view follow-up 2026-10-06: predicted 2D viewport while the 2D view is hidden; full suite 12929 OK (35 skipped), architecture PASS, compileall 0, git diff --check clean"
   },
   "skip_observations": [
     {
@@ -38257,6 +38515,12 @@
         "outcome": "Scope confirmed (only this feature's files). Regex move verified identical to HEAD (pattern and flags) and callers pass (edit-condition dialog, project_write_service, metric switch, bid_data_reader). Fixed: legacy ' @ 12\"' text no longer stripped (explicit @T/@B only), only the last elevation is stripped (matches parse_elevation), collision note whitespace collapsed, style. Added keyboard (Space) activation, draft-not-dirty after cancel, focus order and handler note tests; 11 new mutants killed, one equivalent guard removed. Not reproduced (reported only): CSV collision tuple computed after the file write inside the same try, case-sensitive grouping, text after a valid elevation prefix dropped like the app's value definition, NBSP/curly quotes/lowercase markers not stripped like the app's own parser."
       },
       {
+        "id": "Y1",
+        "decision": "Pan sidebar: docked mini-map of the active Main plan view",
+        "status": "implemented",
+        "outcome": "PanSidebar (presentation/components) with pure geometry in presentation/utils/minimap_geometry.py; hidden by default; View toolbar toggle (first sidebar toggle) and View menu item share one QAction; visibility and vertical size persist in workspace_state.json (pan_sidebar_visible, left_column_pan_first_sizes) through the coordinator capture/restore/reset; follows only Main's plan view, pans with centerOn only when the view is stable, never changes zoom or writes zoom_fac/current_x/current_y, widget-local open/closed hand cursors; thumbnail rendered at the widget's pixel size (capped at 1024) and never while hidden. View menu reordered to Pan, Conditions, Layers to match the toolbar and the screen. While the 2D view is hidden behind the 3D view the mini-map draws the predicted 2D viewport. Tests written first against real widgets; about 100 in-memory mutants killed, the equivalent ones removed or covered by new tests."
+      },
+      {
         "id": "OPEN-1",
         "decision": "Annotation preflight scope (session conflict on DATABASE vs optimistic Bid-collection like Takeoffs)",
         "status": "open",
@@ -38453,6 +38717,16 @@
         "a name that carries two valid elevations loses one per call (only the last is removed, like parse_elevation); not idempotent for those names by design",
         "feet-only elevations such as @T 5 followed by a foot mark are not derived as z values by position_parser (pre-existing word-boundary quirk, unchanged); stripping handles them",
         "3D, HTML and PDF exports still write condition names with elevations by design (the warning says so)",
+        "OPEN-1 annotation preflight scope and OPEN-2 schema validator scope untouched by instruction"
+      ]
+    },
+    "round9_2026-10-06_pan_sidebar": {
+      "resolved": [
+        "Y1 implemented: Pan sidebar (docked mini-map of Main's plan view), hidden by default, View toolbar toggle and View menu item"
+      ],
+      "order": "Pan, Conditions, Layers on screen (top to bottom), in the view toolbar and in the View menu; the View menu previously listed Layers before Conditions.",
+      "persistence": "WorkspaceState.takeoff_workspace.pan_sidebar_visible (default False) and left_column_splitter_sizes ([pan, conditions+layers]); not Config; missing keys in older files fall back to the defaults.",
+      "open_items": [
         "OPEN-1 annotation preflight scope and OPEN-2 schema validator scope untouched by instruction"
       ]
     }

@@ -542,6 +542,13 @@ Persistence:
   Classes use their configured initial sizes. Do not store these values in
   QSettings or as opaque Qt geometry. Standard Qt dialogs retain their native
   sizing behavior and are not brought into this application-dialog policy.
+- The Pan sidebar is a mini-map of only the Main plan view, whose visibility (default
+  hidden) and height persist in `WorkspaceState.takeoff_workspace` as
+  `pan_sidebar_visible` and `left_column_pan_first_sizes`, that pans with `centerOn`
+  only once the view state is stable (showing the view's read-only predicted camera
+  while the view is hidden and loading), never changes zoom or writes a Page's
+  `zoom_fac`/`current_x`/`current_y`, and sets its open/closed hand cursors on its
+  own widget only.
 - Font and color creation defaults plus the live inactive-object color belong to
   `Config` in `config.json`. Workspace annotation styles retain only alignment
   and unrelated tool defaults; explicit font and color columns on existing

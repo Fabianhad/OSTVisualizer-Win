@@ -219,6 +219,8 @@ class TakeoffWorkspaceState:
     layers_sidebar_visible: bool = True
     takeoff_splitter_sizes: List[int] = field(default_factory=list)
     left_splitter_sizes: List[int] = field(default_factory=list)
+    pan_sidebar_visible: bool = False
+    left_column_pan_first_sizes: List[int] = field(default_factory=list)
     dropdown_popup_sizes: Dict[str, List[int]] = field(default_factory=dict)
     conditions_group_by_type: bool = True
     summary_group_by_area: bool = True
@@ -235,6 +237,8 @@ class TakeoffWorkspaceState:
             "layers_sidebar_visible": self.layers_sidebar_visible,
             "takeoff_splitter_sizes": list(self.takeoff_splitter_sizes),
             "left_splitter_sizes": list(self.left_splitter_sizes),
+            "pan_sidebar_visible": self.pan_sidebar_visible,
+            "left_column_pan_first_sizes": list(self.left_column_pan_first_sizes),
             "dropdown_popup_sizes": {
                 str(key): list(value)
                 for key, value in self.dropdown_popup_sizes.items()
@@ -275,6 +279,10 @@ class TakeoffWorkspaceState:
             ),
             takeoff_splitter_sizes=_coerce_int_list(data.get("takeoff_splitter_sizes")),
             left_splitter_sizes=_coerce_int_list(data.get("left_splitter_sizes")),
+            pan_sidebar_visible=_coerce_bool(data.get("pan_sidebar_visible"), False),
+            left_column_pan_first_sizes=_coerce_int_list(
+                data.get("left_column_pan_first_sizes")
+            ),
             dropdown_popup_sizes=_coerce_size_dict(data.get("dropdown_popup_sizes")),
             conditions_group_by_type=_coerce_bool(
                 data.get("conditions_group_by_type"), True

@@ -3,11 +3,16 @@ import unittest
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from ost_visualizer.presentation.actions.action_ids import ACTION_RESET_VIEW
+from ost_visualizer.presentation.actions.action_ids import (
+    ACTION_PAN_SIDEBAR,
+    ACTION_RESET_VIEW,
+)
 from ost_visualizer.presentation.configurators.window_configurator import (
     resource_path,
 )
+from ost_visualizer.presentation.utils import themed_icon
 from ost_visualizer.presentation.managers.icon_manager import (
+    ACTION_ICONS,
     ICON_SPECS,
     IconId,
     IconManager,
@@ -97,6 +102,61 @@ class IconManagerPreferenceTests(unittest.TestCase):
         self.assertTrue(visible)
         for color in visible:
             self.assertEqual((color.red(), color.green(), color.blue()), (255, 0, 0))
+
+    def test_pan_sidebar_icon_exists_loads_is_registered_for_its_action_and_recolors(
+        self,
+    ):
+        svg_name = "panorama_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+        path = Path(resource_path("resources", "icons", svg_name))
+        self.assertTrue(path.is_file())
+        self.assertIn('fill="#e3e3e3"', path.read_text(encoding="utf-8"))
+        self.assertEqual(ICON_SPECS[IconId.PAN_SIDEBAR].svg_name, svg_name)
+        self.assertEqual(ACTION_ICONS[ACTION_PAN_SIDEBAR], IconId.PAN_SIDEBAR)
+        self.assertFalse(IconManager.icon(IconId.PAN_SIDEBAR).isNull())
+        action = QtGui.QAction("Pan Sidebar")
+        IconManager.apply_to_action(action, ACTION_PAN_SIDEBAR)
+        self.assertFalse(action.icon().isNull())
+        self.assertEqual(
+            action.icon().cacheKey(), IconManager.icon(IconId.PAN_SIDEBAR).cacheKey()
+        )
+        red = IconManager.colored_icon(IconId.PAN_SIDEBAR, "#ff0000")
+        image = red.pixmap(24, 24).toImage()
+        visible = [
+            image.pixelColor(x, y)
+            for x in range(image.width())
+            for y in range(image.height())
+            if image.pixelColor(x, y).alpha() > 0
+        ]
+        self.assertTrue(visible)
+        for color in visible:
+            self.assertEqual((color.red(), color.green(), color.blue()), (255, 0, 0))
+
+    def test_pan_sidebar_icon_follows_the_palette_for_light_and_dark_themes(self):
+        original = self.app.palette()
+
+        def restore():
+            self.app.setPalette(original)
+            themed_icon.rebuild_all_icons()
+
+        self.addCleanup(restore)
+        action = QtGui.QAction("Pan Sidebar")
+        IconManager.apply_to_action(action, ACTION_PAN_SIDEBAR)
+        for text_color in ("#101010", "#f0f0f0", "#101010"):
+            with self.subTest(text_color=text_color):
+                palette = QtGui.QPalette(original)
+                palette.setColor(
+                    QtGui.QPalette.ColorRole.WindowText, QtGui.QColor(text_color)
+                )
+                self.app.setPalette(palette)
+                themed_icon.rebuild_all_icons()
+                image = action.icon().pixmap(24, 24).toImage()
+                solid = {
+                    image.pixelColor(x, y).name()
+                    for x in range(image.width())
+                    for y in range(image.height())
+                    if image.pixelColor(x, y).alpha() == 255
+                }
+                self.assertEqual(solid, {text_color})
 
     def test_apply_to_action_uses_registered_icon_and_ignores_unknown_keys(self):
         action = QtGui.QAction("Undo")

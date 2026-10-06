@@ -4,6 +4,17 @@
 
 ### Added
 
+- **View > Pan Sidebar** (also the first sidebar toggle in the view toolbar) docks a
+  mini-map of the current Page above the Conditions and Layers sidebars. It shows the
+  visible area as an inverted rectangle that follows scrolling, zooming, resizing, and
+  Page changes; drag it (open/closed hand) to pan Main's 2D Plan view, or click
+  elsewhere to center there. It never changes the zoom or the Page's saved view and
+  ignores detached windows. While Main shows the 3D view, a Page change still draws the
+  rectangle the 2D view will show (its saved camera or the fitted Page), without
+  allowing panning until the 2D view is visible again. The sidebar is hidden by default so existing layouts do
+  not change; its visibility and height are restored on the next start. The View menu
+  now lists Pan, Conditions, then Layers, matching the toolbar and the on-screen
+  sidebar order (it previously listed Layers before Conditions).
 - **Options > Export > Condition Names** adds two options, off by default, that
   drop the last explicit `@T`/`@B` elevation suffix (for example ` @T 745' 0"`, never
   text such as `@ 12" OC`) from condition names in

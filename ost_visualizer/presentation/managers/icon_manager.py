@@ -18,6 +18,7 @@ from ..actions.action_ids import (
     ACTION_MESH_WINDOW,
     ACTION_MOVE_OVERLAY_IMAGE,
     ACTION_NEW_DATABASE,
+    ACTION_PAN_SIDEBAR,
     ACTION_NEW_FOLDER,
     ACTION_NEW_PROJECT,
     ACTION_NEXT_PAGE,
@@ -84,6 +85,7 @@ class IconId(Enum):
     COVER_SHEET = "cover_sheet"
     LAYERS_SIDEBAR = "layers_sidebar"
     CONDITIONS_SIDEBAR = "conditions_sidebar"
+    PAN_SIDEBAR = "pan_sidebar"
     SELECT_ALL = "select_all"
     UNSELECT_ALL = "unselect_all"
     MOVE_UP = "move_up"
@@ -191,6 +193,7 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     IconId.CONDITIONS_SIDEBAR: IconSpec(
         "lists_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
+    IconId.PAN_SIDEBAR: IconSpec("panorama_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
     IconId.SELECT_ALL: IconSpec(
         "select_check_box_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
@@ -279,6 +282,7 @@ ACTION_ICONS: Dict[str, IconId] = {
     ACTION_SHOW_COVER_SHEET: IconId.COVER_SHEET,
     ACTION_LAYERS_SIDEBAR: IconId.LAYERS_SIDEBAR,
     ACTION_CONDITIONS_SIDEBAR: IconId.CONDITIONS_SIDEBAR,
+    ACTION_PAN_SIDEBAR: IconId.PAN_SIDEBAR,
     ACTION_MOVE_OVERLAY_IMAGE: IconId.MOVE_OVERLAY_IMAGE,
 }
 IconTarget = Union[QtGui.QAction, QtWidgets.QAbstractButton]

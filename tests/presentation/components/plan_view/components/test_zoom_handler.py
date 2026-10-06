@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 from ost_visualizer.presentation.components.plan_view.components.zoom_handler import (
@@ -46,6 +47,7 @@ from tests.presentation.components.plan_view.overlay_support import (
 )
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import delete, isValid
+import tests.integration.surfaces.test_presentation as presentation_tests
 from tests.presentation.components.plan_view.overlay_support import (
     FakeAnnotationRenderer,
     FakeColorService,
@@ -525,3 +527,191 @@ class PlanViewInteractionTests(unittest.TestCase):
                 self.assertEqual(zoom_values, [])
                 self.assertEqual(state_values, [])
         view.cleanup()
+
+
+class PredictedVisibleSceneRectTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        self.view = TakeoffPlanView(
+            color_service=presentation_tests.FakeColorService(),
+            **vars(presentation_tests.renderers()),
+        )
+        self.addCleanup(lambda: delete(self.view) if isValid(self.view) else None)
+        self.view.resize(400, 300)
+
+    def pump(self):
+        for _ in range(3):
+            self.app.processEvents()
+
+    def load(self, page):
+        self.view.load_page(
+            page=page,
+            takeoffs=[],
+            conditions={},
+            color_map={},
+            bid_ref=presentation_tests.BidRef("bid.mdb", "1"),
+        )
+        self.pump()
+
+    def page(self, uid, **fields):
+        return Page(uid=uid, name=uid, width_pts=612.0, height_pts=792.0, **fields)
+
+    def shown_rect(self):
+        return self.view.mapToScene(self.view.viewport().rect()).boundingRect()
+
+    def assert_same_rect(self, predicted, actual):
+        self.assertFalse(predicted.isEmpty())
+        pixel = 1.0 / self.view.transform().m11()
+        self.assertAlmostEqual(predicted.x(), actual.x(), delta=1.5 * pixel)
+        self.assertAlmostEqual(predicted.y(), actual.y(), delta=1.5 * pixel)
+        self.assertAlmostEqual(predicted.width(), actual.width(), delta=0.01 * pixel)
+        self.assertAlmostEqual(predicted.height(), actual.height(), delta=0.01 * pixel)
+
+    def test_there_is_no_prediction_without_a_page_or_once_the_view_is_stable(self):
+        self.assertTrue(self.view.predicted_visible_scene_rect().isEmpty())
+        self.view.show()
+        self.load(self.page("a"))
+        self.assertTrue(self.view.is_view_state_stable)
+        self.assertTrue(self.view.predicted_visible_scene_rect().isEmpty())
+
+    def test_a_hidden_view_predicts_the_fitted_page(self):
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        self.load(self.page("b"))
+        predicted = self.view.predicted_visible_scene_rect()
+        self.view.show()
+        self.pump()
+        self.assert_same_rect(predicted, self.shown_rect())
+
+    def test_a_hidden_view_predicts_a_wide_page_fit_by_its_width(self):
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        self.load(Page(uid="wide", name="wide", width_pts=1200.0, height_pts=300.0))
+        predicted = self.view.predicted_visible_scene_rect()
+        self.view.show()
+        self.pump()
+        self.assert_same_rect(predicted, self.shown_rect())
+
+    def test_a_saved_zoom_outside_the_zoom_limits_is_predicted_as_the_fitted_page(
+        self,
+    ):
+        self.view.show()
+        self.load(self.page("a"))
+        for zoom in (1e-9, 1e6):
+            with self.subTest(zoom_fac=zoom):
+                self.view.hide()
+                self.load(
+                    self.page(
+                        f"z{zoom}", zoom_fac=zoom, current_x=100.0, current_y=100.0
+                    )
+                )
+                predicted = self.view.predicted_visible_scene_rect()
+                self.view.show()
+                self.pump()
+                self.assert_same_rect(predicted, self.shown_rect())
+
+    def test_the_load_mode_chosen_at_load_time_wins_over_a_later_camera_write(self):
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        page = self.page("b")
+        self.load(page)
+        page.zoom_fac, page.current_x, page.current_y = 0.5, 100.0, 100.0
+        predicted = self.view.predicted_visible_scene_rect()
+        self.view.show()
+        self.pump()
+        self.assert_same_rect(predicted, self.shown_rect())
+
+    def test_nothing_is_predicted_before_the_load_geometry_is_ready(self):
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        self.load(self.page("b"))
+        self.assertFalse(self.view.predicted_visible_scene_rect().isEmpty())
+        self.view._load_geometry_ready = False
+        self.assertTrue(self.view.predicted_visible_scene_rect().isEmpty())
+
+    def test_an_invalid_scene_extent_is_not_predicted(self):
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        self.load(self.page("b"))
+        with mock.patch.object(
+            self.view, "_page_reset_scene_rect", return_value=QtCore.QRectF()
+        ), mock.patch.object(
+            self.view._scene, "sceneRect", return_value=QtCore.QRectF()
+        ):
+            self.assertTrue(self.view.predicted_visible_scene_rect().isEmpty())
+
+    def test_a_hidden_view_predicts_the_saved_camera(self):
+        self.view.show()
+        self.load(self.page("a"))
+        for _ in range(5):
+            self.view.zoom_in()
+        self.pump()
+        zoom, x, y = self.view.get_view_state()
+        self.view.hide()
+        self.load(self.page("b", zoom_fac=zoom, current_x=x, current_y=y))
+        predicted = self.view.predicted_visible_scene_rect()
+        self.view.show()
+        self.pump()
+        self.assert_same_rect(predicted, self.shown_rect())
+
+    def test_the_prediction_uses_the_last_visible_viewport_size_not_a_hidden_resize(
+        self,
+    ):
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        self.view.resize(200, 100)
+        QtWidgets.QApplication.sendEvent(
+            self.view,
+            QtGui.QResizeEvent(QtCore.QSize(200, 100), QtCore.QSize(400, 300)),
+        )
+        self.load(self.page("b"))
+        predicted = self.view.predicted_visible_scene_rect()
+        self.view.resize(400, 300)
+        self.view.show()
+        self.pump()
+        self.assert_same_rect(predicted, self.shown_rect())
+
+    def test_the_default_auto_zoom_is_not_predicted(self):
+        self.view.set_default_auto_zoom_level(100)
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        self.load(self.page("b"))
+        self.assertTrue(self.view.predicted_visible_scene_rect().isEmpty())
+
+    def test_a_view_that_was_never_shown_is_not_predicted(self):
+        self.load(self.page("a"))
+        self.assertTrue(self.view.predicted_visible_scene_rect().isEmpty())
+
+    def test_predicting_never_changes_the_view_or_the_pages_camera(self):
+        self.view.show()
+        self.load(self.page("a"))
+        self.view.hide()
+        page = self.page("b", zoom_fac=0.5, current_x=10.0, current_y=20.0)
+        self.load(page)
+        transform = self.view.transform()
+        scrolls = (
+            self.view.horizontalScrollBar().value(),
+            self.view.verticalScrollBar().value(),
+        )
+        self.view.predicted_visible_scene_rect()
+        self.assertEqual(self.view.transform(), transform)
+        self.assertEqual(
+            (
+                self.view.horizontalScrollBar().value(),
+                self.view.verticalScrollBar().value(),
+            ),
+            scrolls,
+        )
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y), (0.5, 10.0, 20.0)
+        )

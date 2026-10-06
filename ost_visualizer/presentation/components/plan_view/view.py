@@ -404,6 +404,7 @@ class TakeoffPlanView(
         self._rubber_band: Optional[QRubberBand] = None
         self._rubber_band_origin = None
         self._load_initial_view_mode: str = "fit"
+        self._last_visible_viewport_size: QtCore.QSize = QtCore.QSize()
         self._default_auto_zoom_level: int = 0
         self._load_geometry_ready: bool = False
         self._load_view_applied: bool = False
@@ -802,6 +803,7 @@ class TakeoffPlanView(
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._remember_viewport_size()
         self._position_condition_text_toolbar()
         self._position_viewport_overlay_bars()
         self._update_overlay_move_handle_position()

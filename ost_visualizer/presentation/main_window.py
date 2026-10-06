@@ -46,6 +46,7 @@ from .actions.action_ids import (
     ACTION_DELETE,
     ACTION_DUPLICATE,
     ACTION_LAYERS_SIDEBAR,
+    ACTION_PAN_SIDEBAR,
     ACTION_NEW_DATABASE,
     ACTION_NEW_FOLDER,
     ACTION_NEW_PROJECT,
@@ -72,6 +73,7 @@ from .config import (
     OVERLAY_TOOLS_TOOLBAR_LABEL,
     PLAN_TOOLS_TOOLBAR_LABEL,
     SHOW_TOOLBARS_MENU_TITLE,
+    PAN_SIDEBAR_DEFAULT_HEIGHT,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
@@ -273,6 +275,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_takeoff_splitter_sizes = self.get_takeoff_splitter_sizes()
         self._left_splitter = components.left_splitter
         self._last_left_splitter_sizes = self.get_left_splitter_sizes()
+        self._left_column_splitter = components.left_column_splitter
+        self._last_left_column_splitter_sizes = []
+        self._pan_sidebar = components.pan_sidebar
+        self._pan_toggle_action = components.pan_toggle_action
         self._layers_toggle_action = components.layers_toggle_action
         self._conditions_toggle_action = components.conditions_toggle_action
         self._annotation_window_action = components.annotation_window_action
@@ -286,6 +292,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._conditions_toggle_action.toggled.connect(
             self.set_conditions_sidebar_visible
         )
+        self._pan_toggle_action.toggled.connect(self.set_pan_sidebar_visible)
+        self._pan_sidebar.bind_plan_view(self.plan_view)
         self._workspace_toolbar_visibility = {
             self.MAIN_TOOLBAR_KEY: True,
             self.VIEW_TOOLBAR_KEY: True,
@@ -505,8 +513,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     for key in PLAN_TOOL_ACTION_KEYS
                 },
                 ACTION_BACKOUT_MODE: components.backout_action,
-                ACTION_LAYERS_SIDEBAR: components.layers_toggle_action,
+                ACTION_PAN_SIDEBAR: components.pan_toggle_action,
                 ACTION_CONDITIONS_SIDEBAR: components.conditions_toggle_action,
+                ACTION_LAYERS_SIDEBAR: components.layers_toggle_action,
                 ACTION_STATUS_BAR: self._status_bar_action,
                 ACTION_ANNOTATION_WINDOW: components.annotation_window_action,
             },
@@ -1791,6 +1800,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def get_conditions_toggle_action(self) -> QtGui.QAction:
         return self._conditions_toggle_action
 
+    def get_pan_toggle_action(self) -> QtGui.QAction:
+        return self._pan_toggle_action
+
+    def get_left_column_splitter(self) -> QtWidgets.QSplitter:
+        return self._left_column_splitter
+
     def get_mesh_window_action(self) -> QtGui.QAction:
         return self._mesh_window_action
 
@@ -1973,10 +1988,28 @@ class MainWindow(QtWidgets.QMainWindow):
         action.setVisible(visible)
 
     def _sync_left_splitter_visibility(self) -> None:
-        self._left_splitter.setVisible(
+        left_shown = (
             not self._conditions_sidebar.isHidden()
             or not self._bid_layers_sidebar.isHidden()
         )
+        self._left_splitter.setVisible(left_shown)
+        self._left_column_splitter.setVisible(
+            left_shown or not self._pan_sidebar.isHidden()
+        )
+
+    def is_pan_sidebar_visible(self) -> bool:
+        return not self._pan_sidebar.isHidden()
+
+    def set_pan_sidebar_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if self._pan_toggle_action.isChecked() != visible:
+            self._pan_toggle_action.setChecked(visible)
+            return
+        self._pan_sidebar.setVisible(visible)
+        self._sync_left_splitter_visibility()
+        if visible:
+            self._ensure_sidebar_column_visible()
+            self._ensure_pan_pane_visible()
 
     def is_layers_sidebar_visible(self) -> bool:
         return not self._bid_layers_sidebar.isHidden()
@@ -2046,6 +2079,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(cleaned) >= 2 and cleaned[0] > 0 and cleaned[1] > 0:
             self._last_left_splitter_sizes = cleaned
         self._left_splitter.setSizes(cleaned)
+
+    def get_left_column_splitter_sizes(self) -> list[int]:
+        sizes = [max(0, int(size)) for size in self._left_column_splitter.sizes()]
+        if len(sizes) >= 2 and sizes[0] > 0 and sizes[1] > 0:
+            self._last_left_column_splitter_sizes = sizes
+        return sizes
+
+    def set_left_column_splitter_sizes(self, sizes: list[int]) -> None:
+        cleaned = [max(0, int(size)) for size in sizes]
+        if len(cleaned) != 2 or sum(cleaned) <= 0:
+            return
+        if cleaned[0] > 0 and cleaned[1] > 0:
+            self._last_left_column_splitter_sizes = cleaned
+        self._left_column_splitter.setSizes(cleaned)
 
     def get_takeoff_dropdown_popup_sizes(self) -> dict[str, list[int]]:
         sizes = {"main_page": self.takeoff_sidebar.get_popup_size()}
@@ -2126,6 +2173,19 @@ class MainWindow(QtWidgets.QMainWindow):
         other_index = 1 - index
         sizes[other_index] = max(1, total - restored)
         self._left_splitter.setSizes(sizes)
+
+    def _ensure_pan_pane_visible(self) -> None:
+        sizes = self.get_left_column_splitter_sizes()
+        if len(sizes) < 2 or sizes[0] > 0:
+            return
+        total = max(sum(sizes), self._left_column_splitter.height(), 2)
+        saved = self._last_left_column_splitter_sizes
+        if len(saved) >= 2 and saved[0] > 0 and saved[1] > 0:
+            pan = round(total * saved[0] / (saved[0] + saved[1]))
+        else:
+            pan = PAN_SIDEBAR_DEFAULT_HEIGHT
+        pan = min(max(1, pan), max(1, total - 1))
+        self._left_column_splitter.setSizes([pan, max(1, total - pan)])
 
     @staticmethod
     def _has_valid_left_splitter_sizes(sizes: list[int]) -> bool:

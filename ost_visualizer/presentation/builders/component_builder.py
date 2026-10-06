@@ -23,6 +23,7 @@ from ..adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ..components.condition_summary import ConditionSummaryTab
 from ..components.conditions_sidebar import ConditionsSidebar
 from ..components.layers_sidebar import BidLayersSidebar
+from ..components.pan_sidebar import PanSidebar
 from ..components.mesh_view import OpenGLViewer
 from ..components.page_combo import PageComboBox
 from ..components.page_settings_bar import PageSettingsBar
@@ -264,6 +265,9 @@ class ComponentBundle:
     view_window_action: QtGui.QAction
     place_action: QtGui.QAction = None
     mesh_window_action: QtGui.QAction = None
+    pan_sidebar: PanSidebar = None
+    left_column_splitter: QtWidgets.QSplitter = None
+    pan_toggle_action: QtGui.QAction = None
     plan_view_handler: object = None
     undo_service: object = None
 
@@ -1159,18 +1163,32 @@ class ComponentBuilder:
         left_splitter.setMinimumWidth(SIDEBAR_MIN_WIDTH)
         left_splitter.setStretchFactor(0, 1)
         left_splitter.setStretchFactor(1, 1)
+        pan_sidebar = PanSidebar(takeoff_tab)
+        pan_sidebar.setVisible(False)
+        left_column_splitter = QtWidgets.QSplitter(
+            QtCore.Qt.Orientation.Vertical, takeoff_tab
+        )
+        left_column_splitter.addWidget(pan_sidebar)
+        left_column_splitter.addWidget(left_splitter)
+        left_column_splitter.setMinimumWidth(SIDEBAR_MIN_WIDTH)
+        left_column_splitter.setStretchFactor(0, 0)
+        left_column_splitter.setStretchFactor(1, 1)
+        left_column_splitter.setCollapsible(0, False)
+        left_column_splitter.setCollapsible(1, True)
         takeoff_splitter = QtWidgets.QSplitter(
             QtCore.Qt.Orientation.Horizontal, takeoff_tab
         )
-        takeoff_splitter.addWidget(left_splitter)
+        takeoff_splitter.addWidget(left_column_splitter)
         takeoff_splitter.addWidget(viewer_container)
         takeoff_splitter.setStretchFactor(0, 0)
         takeoff_splitter.setStretchFactor(1, 1)
 
         def _sync_left_sidebar_visibility() -> None:
-            left_splitter.setVisible(
+            left_splitter_shown = (
                 not conditions_sidebar.isHidden() or not bid_layers_sidebar.isHidden()
             )
+            left_splitter.setVisible(left_splitter_shown)
+            left_column_splitter.setVisible(left_splitter_shown)
 
         layers_toggle_action = QtGui.QAction("Layers Sidebar", viewer_container)
         layers_toggle_action.setCheckable(True)
@@ -1182,6 +1200,15 @@ class ComponentBuilder:
         conditions_toggle_action.setChecked(not conditions_sidebar.isHidden())
         conditions_toggle_action.setToolTip("Hide/Show Conditions Sidebar")
         IconManager.apply(conditions_toggle_action, IconId.CONDITIONS_SIDEBAR)
+        pan_toggle_action = QtGui.QAction("Pan Sidebar", viewer_container)
+        pan_toggle_action.setCheckable(True)
+        pan_toggle_action.setChecked(not pan_sidebar.isHidden())
+        pan_toggle_action.setToolTip("Hide/Show Pan Sidebar")
+        IconManager.apply(pan_toggle_action, IconId.PAN_SIDEBAR)
+        workspace_view_toolbar.addAction(pan_toggle_action)
+        workspace_view_toolbar.widgetForAction(pan_toggle_action).setAccessibleName(
+            "Pan Sidebar"
+        )
         workspace_view_toolbar.addAction(conditions_toggle_action)
         workspace_view_toolbar.addAction(layers_toggle_action)
         workspace_view_toolbar.addAction(ann_action)
@@ -1335,6 +1362,9 @@ class ComponentBuilder:
             view_window_action=view_window_action,
             place_action=place_action,
             mesh_window_action=mesh_window_action,
+            pan_sidebar=pan_sidebar,
+            left_column_splitter=left_column_splitter,
+            pan_toggle_action=pan_toggle_action,
             plan_view_handler=_plan_view_handler,
             undo_service=_undo_svc,
         )

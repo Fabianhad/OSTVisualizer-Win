@@ -5,7 +5,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
     WorkspaceStateCoordinator,
 )
+from ost_visualizer.presentation.interfaces.i_workspace_shell import IWorkspaceShell
 from types import SimpleNamespace
+from unittest import mock
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
 )
@@ -46,6 +48,9 @@ class _SplitterCaptureShell:
         conditions_visible=True,
         layers_visible=True,
         summary_grouping=None,
+        column_sizes=None,
+        column_visible=True,
+        pan_visible=False,
     ):
         self._summary_grouping = summary_grouping or ConditionSummaryGrouping(
             by_type=True, by_area=True
@@ -56,6 +61,20 @@ class _SplitterCaptureShell:
         self._left_visible = left_visible
         self._conditions_visible = conditions_visible
         self._layers_visible = layers_visible
+        self._column_sizes = column_sizes if column_sizes is not None else [600, 220]
+        self._column_visible = column_visible
+        self._pan_visible = pan_visible
+
+    def get_left_column_splitter_sizes(self):
+        return list(self._column_sizes)
+
+    def get_left_column_splitter(self):
+        return _detached_support_FakeSplitterForSidebarSizes(
+            visible=self._column_visible
+        )
+
+    def is_pan_sidebar_visible(self):
+        return self._pan_visible
 
     def get_takeoff_splitter_sizes(self):
         return list(self._takeoff_sizes)
@@ -158,10 +177,12 @@ _CLEANUP_SIGNAL_NAMES = (
     "view-stack",
     "takeoff-splitter",
     "left-splitter",
+    "column-splitter",
     "popup",
     "page-settings",
     "layers",
     "conditions-action",
+    "pan-action",
     "status",
     "mesh",
     "annotation",
@@ -202,6 +223,7 @@ def _build_cleanup_coordinator(failing_filter_attempts=1):
     view_stack = SimpleNamespace(currentChanged=Signal("view-stack"))
     takeoff_splitter = SimpleNamespace(splitterMoved=Signal("takeoff-splitter"))
     left_splitter = SimpleNamespace(splitterMoved=Signal("left-splitter"))
+    column_splitter = SimpleNamespace(splitterMoved=Signal("column-splitter"))
     takeoff_sidebar = SimpleNamespace(
         popup_size_changed=Signal("popup"),
         active_page_changed=Signal("active-page"),
@@ -212,6 +234,7 @@ def _build_cleanup_coordinator(failing_filter_attempts=1):
         for name in (
             "layers",
             "conditions-action",
+            "pan-action",
             "status",
             "mesh",
             "annotation",
@@ -226,10 +249,12 @@ def _build_cleanup_coordinator(failing_filter_attempts=1):
         get_view_stack=lambda: view_stack,
         get_takeoff_splitter=lambda: takeoff_splitter,
         get_left_splitter=lambda: left_splitter,
+        get_left_column_splitter=lambda: column_splitter,
         takeoff_sidebar=takeoff_sidebar,
         get_page_settings_bar=lambda: page_settings,
         get_layers_toggle_action=lambda: actions["layers"],
         get_conditions_toggle_action=lambda: actions["conditions-action"],
+        get_pan_toggle_action=lambda: actions["pan-action"],
         get_status_bar_action=lambda: actions["status"],
         get_mesh_window_action=lambda: actions["mesh"],
         get_annotation_window_action=lambda: actions["annotation"],
@@ -346,6 +371,15 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
 
             def get_left_splitter(self):
                 return _detached_support_FakeSplitterForSidebarSizes(visible=False)
+
+            def get_left_column_splitter_sizes(self):
+                return [600, 220]
+
+            def get_left_column_splitter(self):
+                return _detached_support_FakeSplitterForSidebarSizes(visible=False)
+
+            def is_pan_sidebar_visible(self):
+                return False
 
             def is_conditions_sidebar_visible(self):
                 return True
@@ -487,6 +521,113 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertEqual(captured.takeoff_workspace.takeoff_splitter_sizes, [47, 47])
         self.assertEqual(captured.takeoff_workspace.left_splitter_sizes, [12, 12])
 
+    def test_capture_records_pan_sidebar_visibility_and_column_sizes(self):
+        for visible in (True, False):
+            with self.subTest(pan_visible=visible):
+                coordinator = _capture_coordinator(
+                    _SplitterCaptureShell(
+                        takeoff_sizes=[300, 700],
+                        left_sizes=[180, 240],
+                        column_sizes=[500, 260],
+                        pan_visible=visible,
+                    ),
+                    previous_takeoff_sizes=[],
+                    previous_left_sizes=[],
+                )
+                workspace = coordinator._capture_current_state().takeoff_workspace
+                self.assertIs(workspace.pan_sidebar_visible, visible)
+                self.assertEqual(workspace.left_column_pan_first_sizes, [500, 260])
+
+    def test_capture_keeps_previous_column_sizes_while_the_pan_sidebar_is_hidden(
+        self,
+    ):
+        coordinator = _capture_coordinator(
+            _SplitterCaptureShell(
+                takeoff_sizes=[300, 700],
+                left_sizes=[180, 240],
+                column_sizes=[900, 0],
+                pan_visible=False,
+            ),
+            previous_takeoff_sizes=[],
+            previous_left_sizes=[],
+        )
+        coordinator._state.takeoff_workspace.left_column_pan_first_sizes = [640, 260]
+        captured = coordinator._capture_current_state().takeoff_workspace
+        self.assertEqual(captured.left_column_pan_first_sizes, [640, 260])
+        self.assertFalse(captured.pan_sidebar_visible)
+
+    def test_capture_uses_current_column_sizes_while_the_pan_sidebar_is_visible(self):
+        coordinator = _capture_coordinator(
+            _SplitterCaptureShell(
+                takeoff_sizes=[300, 700],
+                left_sizes=[180, 240],
+                column_sizes=[500, 300],
+                pan_visible=True,
+            ),
+            previous_takeoff_sizes=[],
+            previous_left_sizes=[],
+        )
+        coordinator._state.takeoff_workspace.left_column_pan_first_sizes = [640, 260]
+        captured = coordinator._capture_current_state().takeoff_workspace
+        self.assertEqual(captured.left_column_pan_first_sizes, [500, 300])
+        self.assertTrue(captured.pan_sidebar_visible)
+
+    def test_capture_keeps_previous_column_sizes_when_the_column_is_not_visible(
+        self,
+    ):
+        coordinator = _capture_coordinator(
+            _SplitterCaptureShell(
+                takeoff_sizes=[300, 700],
+                left_sizes=[180, 240],
+                column_sizes=[12, 12],
+                column_visible=False,
+                pan_visible=True,
+            ),
+            previous_takeoff_sizes=[],
+            previous_left_sizes=[],
+        )
+        coordinator._state.takeoff_workspace.left_column_pan_first_sizes = [640, 260]
+        captured = coordinator._capture_current_state().takeoff_workspace
+        self.assertEqual(captured.left_column_pan_first_sizes, [640, 260])
+
+    def test_capture_keeps_previous_column_sizes_when_the_total_is_zero(self):
+        coordinator = _capture_coordinator(
+            _SplitterCaptureShell(
+                takeoff_sizes=[300, 700],
+                left_sizes=[180, 240],
+                column_sizes=[0, 0],
+                pan_visible=True,
+            ),
+            previous_takeoff_sizes=[],
+            previous_left_sizes=[],
+        )
+        coordinator._state.takeoff_workspace.left_column_pan_first_sizes = [640, 260]
+        captured = coordinator._capture_current_state().takeoff_workspace
+        self.assertEqual(captured.left_column_pan_first_sizes, [640, 260])
+
+    def test_hidden_pan_preservation_ignores_an_unusable_previous_layout(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._shell = _SplitterCaptureShell(
+            takeoff_sizes=[], left_sizes=[], pan_visible=False
+        )
+        for previous in ([], [220], [0, 380], [220, 0]):
+            with self.subTest(previous=previous):
+                self.assertEqual(
+                    coordinator._preserve_hidden_column_sizes([700, 0], previous),
+                    [700, 0],
+                )
+        self.assertEqual(
+            coordinator._preserve_hidden_column_sizes([700, 0], [640, 260, 40]),
+            [640, 260],
+        )
+        coordinator._shell = _SplitterCaptureShell(
+            takeoff_sizes=[], left_sizes=[], pan_visible=True
+        )
+        self.assertEqual(
+            coordinator._preserve_hidden_column_sizes([500, 300], [640, 260]),
+            [500, 300],
+        )
+
     def test_capture_restores_collapsed_takeoff_pane_when_both_sidebars_hidden(self):
         coordinator = _capture_coordinator(
             _SplitterCaptureShell(
@@ -571,6 +712,15 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
 
             def get_left_splitter(self):
                 return _detached_support_FakeSplitterForSidebarSizes(visible=True)
+
+            def get_left_column_splitter_sizes(self):
+                return [600, 220]
+
+            def get_left_column_splitter(self):
+                return _detached_support_FakeSplitterForSidebarSizes(visible=True)
+
+            def is_pan_sidebar_visible(self):
+                return False
 
             def is_conditions_sidebar_visible(self):
                 return True
@@ -1216,10 +1366,92 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._shell = SimpleNamespace(
             set_takeoff_splitter_sizes=lambda sizes: calls.append(("takeoff", sizes)),
             set_left_splitter_sizes=lambda sizes: calls.append(("left", sizes)),
+            set_left_column_splitter_sizes=lambda sizes: calls.append(
+                ("column", sizes)
+            ),
         )
         coordinator._restore_takeoff_splitter_sizes_after_show([100, 200])
         coordinator._restore_left_splitter_sizes_after_show([30, 70])
-        self.assertEqual(calls, [("takeoff", [100, 200]), ("left", [30, 70])])
+        coordinator._restore_column_sizes_after_show([640, 260])
+        self.assertEqual(
+            calls,
+            [("takeoff", [100, 200]), ("left", [30, 70]), ("column", [640, 260])],
+        )
+
+    def test_show_main_window_schedules_the_column_size_restore(self):
+        shell = mock.create_autospec(IWorkspaceShell, instance=True)
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = False
+        coordinator._shell = shell
+        coordinator._state = WorkspaceState()
+        coordinator._pending_takeoff_splitter_sizes = []
+        coordinator._pending_splitter_sizes = []
+        coordinator._pending_column_splitter_sizes = [640, 260]
+        scheduled = []
+        with mock.patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, callback: scheduled.append((delay, callback)),
+        ):
+            coordinator.show_main_window()
+        self.assertEqual([delay for delay, _callback in scheduled], [0])
+        shell.set_left_column_splitter_sizes.assert_not_called()
+        scheduled[0][1]()
+        shell.set_left_column_splitter_sizes.assert_called_once_with([640, 260])
+
+    def test_show_main_window_schedules_nothing_without_saved_column_sizes(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = False
+        coordinator._shell = mock.create_autospec(IWorkspaceShell, instance=True)
+        coordinator._state = WorkspaceState()
+        coordinator._pending_takeoff_splitter_sizes = []
+        coordinator._pending_splitter_sizes = []
+        coordinator._pending_column_splitter_sizes = []
+        with mock.patch.object(QtCore.QTimer, "singleShot") as single_shot:
+            coordinator.show_main_window()
+        single_shot.assert_not_called()
+
+    def test_column_restore_after_show_is_ignored_after_cleanup(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = True
+        coordinator._shell = None
+        coordinator._restore_column_sizes_after_show([640, 260])
+
+    def test_restore_applies_pan_visibility_and_column_sizes_in_order(self):
+        shell = mock.create_autospec(IWorkspaceShell, instance=True)
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._shell = shell
+        coordinator._state = WorkspaceState()
+        coordinator._state.takeoff_workspace.pan_sidebar_visible = True
+        coordinator._pending_splitter_sizes = [30, 70]
+        coordinator._pending_column_splitter_sizes = [640, 260]
+        coordinator._pending_takeoff_splitter_sizes = []
+        coordinator._restore_main_window_state = lambda _state: None
+        coordinator.restore_initial_state()
+        names = [entry[0] for entry in shell.mock_calls]
+        shell.set_pan_sidebar_visible.assert_called_once_with(True)
+        shell.set_left_column_splitter_sizes.assert_called_once_with([640, 260])
+        self.assertLess(
+            names.index("set_layers_sidebar_visible"),
+            names.index("set_pan_sidebar_visible"),
+        )
+        self.assertLess(
+            names.index("set_left_splitter_sizes"),
+            names.index("set_left_column_splitter_sizes"),
+        )
+
+    def test_restore_skips_column_sizes_when_none_are_saved(self):
+        shell = mock.create_autospec(IWorkspaceShell, instance=True)
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._shell = shell
+        coordinator._state = WorkspaceState()
+        coordinator._pending_splitter_sizes = []
+        coordinator._pending_column_splitter_sizes = []
+        coordinator._pending_takeoff_splitter_sizes = []
+        coordinator._restore_main_window_state = lambda _state: None
+        coordinator.restore_initial_state()
+        shell.set_pan_sidebar_visible.assert_called_once_with(False)
+        shell.set_left_column_splitter_sizes.assert_not_called()
 
     def test_reset_to_defaults_persists_default_workspace_and_reapplies_state(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
@@ -1236,6 +1468,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._state.takeoff_workspace.active_view = "2d"
         coordinator._pending_takeoff_splitter_sizes = [100, 200]
         coordinator._pending_splitter_sizes = [30, 70]
+        coordinator._pending_column_splitter_sizes = [640, 260]
         coordinator._pending_mesh_restore = True
         coordinator._pending_annotation_restore = True
         coordinator._pending_view_restore = True
@@ -1248,6 +1481,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertEqual(coordinator._state, WorkspaceState())
         self.assertEqual(coordinator._pending_takeoff_splitter_sizes, [])
         self.assertEqual(coordinator._pending_splitter_sizes, [])
+        self.assertEqual(coordinator._pending_column_splitter_sizes, [])
         self.assertFalse(coordinator._pending_mesh_restore)
         self.assertFalse(coordinator._pending_annotation_restore)
         self.assertFalse(coordinator._pending_view_restore)
@@ -1354,6 +1588,12 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
 
             def get_left_splitter_sizes(self):
                 return [180, 240]
+
+            def get_left_column_splitter_sizes(self):
+                return [600, 220]
+
+            def is_pan_sidebar_visible(self):
+                return False
 
             def is_conditions_sidebar_visible(self):
                 return True

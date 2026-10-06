@@ -22,6 +22,7 @@ from ..actions.action_ids import (
     ACTION_NEW_FOLDER,
     ACTION_NEW_PROJECT,
     ACTION_NEXT_PAGE,
+    ACTION_PAN_SIDEBAR,
     ACTION_OPEN_FILES,
     ACTION_PREVIOUS_PAGE,
     ACTION_REMOVE_OVERLAY_IMAGE,
@@ -358,8 +359,9 @@ class MenuController:
             ACTION_ZOOM_IN,
             ACTION_ZOOM_OUT,
             ACTION_RESET_VIEW,
-            ACTION_LAYERS_SIDEBAR,
+            ACTION_PAN_SIDEBAR,
             ACTION_CONDITIONS_SIDEBAR,
+            ACTION_LAYERS_SIDEBAR,
             ACTION_ANNOTATION_WINDOW,
         ):
             action = self._actions.get(action_key)

@@ -54,6 +54,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._pending_splitter_sizes = list(
             self._state.takeoff_workspace.left_splitter_sizes
         )
+        self._pending_column_splitter_sizes = list(
+            self._state.takeoff_workspace.left_column_pan_first_sizes
+        )
         self._save_timer = QtCore.QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(self.SAVE_DEBOUNCE_MS)
@@ -76,6 +79,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._shell.get_view_stack().currentChanged.connect(self.request_save)
         self._shell.get_takeoff_splitter().splitterMoved.connect(self.request_save)
         self._shell.get_left_splitter().splitterMoved.connect(self.request_save)
+        self._shell.get_left_column_splitter().splitterMoved.connect(self.request_save)
         self._shell.takeoff_sidebar.popup_size_changed.connect(
             self._on_dropdown_size_changed
         )
@@ -84,6 +88,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         self._shell.get_layers_toggle_action().toggled.connect(self.request_save)
         self._shell.get_conditions_toggle_action().toggled.connect(self.request_save)
+        self._shell.get_pan_toggle_action().toggled.connect(self.request_save)
         self._shell.get_status_bar_action().toggled.connect(self.request_save)
         self._shell.get_mesh_window_action().toggled.connect(
             self._on_mesh_window_toggled
@@ -119,6 +124,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._shell.set_layers_sidebar_visible(
             self._state.takeoff_workspace.layers_sidebar_visible
         )
+        self._shell.set_pan_sidebar_visible(
+            self._state.takeoff_workspace.pan_sidebar_visible
+        )
         self._shell.set_workspace_toolbar_visibility_state(
             {
                 "main_toolbar": self._state.toolbar_visibility.main_toolbar_visible,
@@ -131,6 +139,10 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         if self._pending_splitter_sizes:
             self._shell.set_left_splitter_sizes(self._pending_splitter_sizes)
+        if self._pending_column_splitter_sizes:
+            self._shell.set_left_column_splitter_sizes(
+                self._pending_column_splitter_sizes
+            )
         if self._pending_takeoff_splitter_sizes:
             self._shell.set_takeoff_splitter_sizes(self._pending_takeoff_splitter_sizes)
         self._shell.set_takeoff_dropdown_popup_sizes(
@@ -179,6 +191,12 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                     sizes
                 ),
             )
+        if self._pending_column_splitter_sizes:
+            column_sizes = list(self._pending_column_splitter_sizes)
+            QtCore.QTimer.singleShot(
+                0,
+                lambda sizes=column_sizes: self._restore_column_sizes_after_show(sizes),
+            )
 
     def _restore_takeoff_splitter_sizes_after_show(self, sizes: list[int]) -> None:
         if self._cleaned_up:
@@ -189,6 +207,11 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         if self._cleaned_up:
             return
         self._shell.set_left_splitter_sizes(sizes)
+
+    def _restore_column_sizes_after_show(self, sizes: list[int]) -> None:
+        if self._cleaned_up:
+            return
+        self._shell.set_left_column_splitter_sizes(sizes)
 
     def restore_deferred_state(self) -> None:
         if self._cleaned_up:
@@ -246,6 +269,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._state = WorkspaceState()
         self._pending_takeoff_splitter_sizes = []
         self._pending_splitter_sizes = []
+        self._pending_column_splitter_sizes = []
         self._pending_mesh_restore = False
         self._pending_annotation_restore = False
         self._pending_view_restore = False
@@ -309,6 +333,10 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 self.request_save,
             ),
             lambda: self._disconnect(
+                self._shell.get_left_column_splitter().splitterMoved,
+                self.request_save,
+            ),
+            lambda: self._disconnect(
                 self._shell.takeoff_sidebar.popup_size_changed,
                 self._on_dropdown_size_changed,
             ),
@@ -322,6 +350,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             lambda: self._disconnect(
                 self._shell.get_conditions_toggle_action().toggled,
                 self.request_save,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_pan_toggle_action().toggled, self.request_save
             ),
             lambda: self._disconnect(
                 self._shell.get_status_bar_action().toggled, self.request_save
@@ -709,6 +740,20 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             splitter_sizes,
             previous_splitter_sizes,
         )
+        column_sizes = self._shell.get_left_column_splitter_sizes()
+        previous_column_sizes = list(
+            previous.takeoff_workspace.left_column_pan_first_sizes
+        )
+        if (
+            previous_column_sizes
+            and not self._shell.get_left_column_splitter().isVisible()
+        ):
+            column_sizes = previous_column_sizes
+        elif sum(column_sizes) <= 0 and previous_column_sizes:
+            column_sizes = previous_column_sizes
+        column_sizes = self._preserve_hidden_column_sizes(
+            column_sizes, previous_column_sizes
+        )
         state = WorkspaceState()
         current_state = self.workspace_state_model.state
         state.header_layouts = current_state.header_layouts
@@ -744,6 +789,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         state.takeoff_workspace.layers_sidebar_visible = (
             self._shell.is_layers_sidebar_visible()
         )
+        state.takeoff_workspace.pan_sidebar_visible = (
+            self._shell.is_pan_sidebar_visible()
+        )
         toolbar_visibility = self._shell.get_workspace_toolbar_visibility_state()
         state.toolbar_visibility.main_toolbar_visible = toolbar_visibility.get(
             "main_toolbar", True
@@ -755,6 +803,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             "plan_tools_toolbar", True
         )
         state.takeoff_workspace.left_splitter_sizes = splitter_sizes
+        state.takeoff_workspace.left_column_pan_first_sizes = column_sizes
         state.takeoff_workspace.takeoff_splitter_sizes = takeoff_splitter_sizes
         state.takeoff_workspace.dropdown_popup_sizes = (
             self._capture_dropdown_popup_sizes(
@@ -835,6 +884,17 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             not self._shell.is_conditions_sidebar_visible()
             or not self._shell.is_layers_sidebar_visible()
         ):
+            return previous[:2]
+        return sizes
+
+    def _preserve_hidden_column_sizes(
+        self, current_sizes: list[int], previous_sizes: list[int]
+    ) -> list[int]:
+        sizes = [max(0, int(size)) for size in current_sizes]
+        previous = [max(0, int(size)) for size in previous_sizes]
+        if len(previous) < 2 or previous[0] <= 0 or previous[1] <= 0:
+            return sizes
+        if not self._shell.is_pan_sidebar_visible():
             return previous[:2]
         return sizes
 

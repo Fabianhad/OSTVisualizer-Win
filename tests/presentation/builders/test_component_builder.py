@@ -1,5 +1,13 @@
 import unittest
 from types import SimpleNamespace
+from ost_visualizer.presentation.actions.action_ids import (
+    ACTION_CONDITIONS_SIDEBAR,
+    ACTION_LAYERS_SIDEBAR,
+    ACTION_PAN_SIDEBAR,
+)
+from ost_visualizer.presentation.components.menu_builder import MenuBuilder
+from ost_visualizer.presentation.config import SIDEBAR_MIN_WIDTH
+from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from ost_visualizer.presentation.builders.component_builder import (
     _PlanRibbonToolBar,
     _PlanToolbarLayoutSyncFilter,
@@ -316,3 +324,96 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
                 self.assertEqual(
                     button.toolButtonStyle(), native_button.toolButtonStyle()
                 )
+
+
+class SidebarToggleBuilderTests(unittest.TestCase):
+    _main_components = cross_surface.SceneControlPresentationTests._main_components
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        _toolbar_visibility_support_register_test_fonts()
+
+    def setUp(self):
+        self.bundle, _zoom = self._main_components()
+        self.addCleanup(self.app.processEvents)
+
+    def sidebar_actions(self):
+        return {
+            ACTION_CONDITIONS_SIDEBAR: self.bundle.conditions_toggle_action,
+            ACTION_LAYERS_SIDEBAR: self.bundle.layers_toggle_action,
+            ACTION_PAN_SIDEBAR: self.bundle.pan_toggle_action,
+        }
+
+    def test_the_toolbar_and_the_view_menu_list_the_sidebar_toggles_in_the_same_order(
+        self,
+    ):
+        by_action = {id(action): key for key, action in self.sidebar_actions().items()}
+        toolbar_order = [
+            by_action[id(action)]
+            for action in self.bundle.view_toolbar.actions()
+            if id(action) in by_action
+        ]
+        menu_items = MenuBuilder(None, {})._get_menu_definition()["View"]
+        menu_order = [
+            item[1]
+            for item in menu_items
+            if item[0] == "shared" and item[1] in self.sidebar_actions()
+        ]
+        expected = [
+            ACTION_PAN_SIDEBAR,
+            ACTION_CONDITIONS_SIDEBAR,
+            ACTION_LAYERS_SIDEBAR,
+        ]
+        self.assertEqual(toolbar_order, expected)
+        self.assertEqual(menu_order, expected)
+        self.assertEqual(toolbar_order, menu_order)
+
+    def test_the_toggles_follow_the_on_screen_sidebar_layout_top_to_bottom(self):
+        bundle = self.bundle
+        left = bundle.left_splitter
+        self.assertIs(left.widget(0), bundle.conditions_sidebar)
+        self.assertIs(left.widget(1), bundle.bid_layers_sidebar)
+        column = bundle.left_column_splitter
+        self.assertIs(column.widget(0), bundle.pan_sidebar)
+        self.assertIs(column.widget(1), left)
+        self.assertEqual(column.orientation(), QtCore.Qt.Orientation.Vertical)
+        self.assertIs(bundle.takeoff_splitter.widget(0), column)
+
+    def test_the_pan_toggle_is_checkable_labelled_and_themed_like_its_siblings(self):
+        pan = self.bundle.pan_toggle_action
+        sibling = self.bundle.layers_toggle_action
+        self.assertTrue(pan.isCheckable())
+        self.assertEqual(pan.isChecked(), not self.bundle.pan_sidebar.isHidden())
+        self.assertEqual(pan.text(), "Pan Sidebar")
+        self.assertEqual(pan.toolTip(), "Hide/Show Pan Sidebar")
+        self.assertFalse(pan.icon().isNull())
+        self.assertEqual(
+            pan.icon().cacheKey(), IconManager.icon(IconId.PAN_SIDEBAR).cacheKey()
+        )
+        self.assertEqual(pan.isCheckable(), sibling.isCheckable())
+        self.assertIs(pan.parent(), sibling.parent())
+
+    def test_the_pan_toggle_button_has_an_accessible_name_and_tooltip(self):
+        button = self.bundle.view_toolbar.widgetForAction(self.bundle.pan_toggle_action)
+        self.assertIsInstance(button, QtWidgets.QToolButton)
+        self.assertEqual(button.accessibleName(), "Pan Sidebar")
+        self.assertEqual(button.toolTip(), "Hide/Show Pan Sidebar")
+        self.assertTrue(button.isCheckable())
+
+    def test_the_pan_sidebar_starts_hidden_and_the_column_follows_the_two_sidebars(
+        self,
+    ):
+        self.assertTrue(self.bundle.pan_sidebar.isHidden())
+        self.assertFalse(self.bundle.pan_toggle_action.isChecked())
+        self.assertFalse(self.bundle.left_column_splitter.isHidden())
+
+    def test_the_column_keeps_the_sidebar_width_and_gives_the_spare_height_to_the_top(
+        self,
+    ):
+        column = self.bundle.left_column_splitter
+        self.assertEqual(column.minimumWidth(), SIDEBAR_MIN_WIDTH)
+        self.assertEqual(column.widget(0).sizePolicy().verticalStretch(), 0)
+        self.assertEqual(column.widget(1).sizePolicy().verticalStretch(), 1)
+        self.assertFalse(column.isCollapsible(0))
+        self.assertTrue(column.isCollapsible(1))
