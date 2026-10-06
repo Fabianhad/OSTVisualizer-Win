@@ -169,3 +169,37 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
         for value in (None, "line_annotation_tool", [False]):
             with self.subTest(value=value), self.assertRaises(TypeError):
                 Config.from_dict({"hidden_takeoff_toolbar_items": value})
+
+
+class ConditionElevationExportOptionTests(unittest.TestCase):
+    FIELDS = (
+        "ost_osp_export_drop_condition_elevation",
+        "csv_export_drop_condition_elevation",
+    )
+
+    def test_both_options_default_off_and_legacy_payloads_keep_them_off(self):
+        config = Config()
+        legacy = Config.from_dict({"show_toolbar_text": False})
+        for field in self.FIELDS:
+            with self.subTest(field=field):
+                self.assertIs(getattr(config, field), False)
+                self.assertIs(getattr(legacy, field), False)
+                self.assertIs(config.to_dict()[field], False)
+
+    def test_each_option_round_trips_independently(self):
+        for field in self.FIELDS:
+            with self.subTest(field=field):
+                changed = Config(**{field: True})
+                payload = changed.to_dict()
+                self.assertIs(payload[field], True)
+                for other in self.FIELDS:
+                    if other != field:
+                        self.assertIs(payload[other], False)
+                self.assertEqual(Config.from_dict(payload), changed)
+
+    def test_non_boolean_values_are_rejected_with_the_key_name(self):
+        for field in self.FIELDS:
+            for value in ("true", 1, None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaisesRegex(TypeError, field):
+                        Config.from_dict({field: value})

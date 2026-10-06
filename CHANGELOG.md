@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Options > Export > Condition Names** adds two options, off by default, that
+  drop the last explicit `@T`/`@B` elevation suffix (for example ` @T 745' 0"`, never
+  text such as `@ 12" OC`) from condition names in
+  OST/OSP exports and in Summary CSV exports. Each option confirms before it turns
+  on: OST/OSP files written this way carry no elevation data, so importing them
+  back leaves every element without its elevation, while the CSV option is for
+  templates that expect CSV data without elevations. 3D, HTML and PDF exports are
+  unchanged. Stored conditions are never modified, and conditions whose names
+  become identical stay separate and are reported after the export.
 - **Options > Takeoff Toolbar** configures all 24 controls in Main's horizontal
   Takeoff strip, including annotation tools, navigation and zoom selectors, and
   grouped Scale/Area settings. Apply/OK persists visibility across restarts without

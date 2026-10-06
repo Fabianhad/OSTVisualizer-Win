@@ -152,6 +152,7 @@ OPTIONS_GROUP_CONFIRMATIONS = "Confirmations"
 OPTIONS_GROUP_AUTO_ZOOM = "Default Auto-Zoom Level"
 OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS = "PDF Annotation Captions"
 OPTIONS_GROUP_ELEVATION_CALLOUTS = "Elevation Callouts"
+OPTIONS_GROUP_CONDITION_NAMES = "Condition Names"
 OPTIONS_DEFERRED_TOOLTIP = "This option is planned but is not available yet."
 OPTIONS_LABEL_RESET_ALL_SETTINGS = "Reset All Settings"
 OPTIONS_LABEL_ENABLE_PDF_ANNOTATION_CAPTIONS = "Enable PDF annotation captions"
@@ -160,6 +161,29 @@ OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS = (
 )
 OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS = (
     "Include elevation callouts in PDF export"
+)
+OPTIONS_LABEL_OST_OSP_DROP_ELEVATION = (
+    "Drop elevations from condition names in OST/OSP exports"
+)
+OPTIONS_LABEL_CSV_DROP_ELEVATION = (
+    "Drop elevations from condition names in Summary CSV exports"
+)
+OPTIONS_WARNING_TITLE_DROP_ELEVATION = "Drop Elevations from Condition Names"
+OPTIONS_WARNING_OST_OSP_DROP_ELEVATION = (
+    "Exported OST and OSP files will lose all elevation data: every condition "
+    "name is written without its elevation. Importing such a file back into a "
+    "project leaves every element without its elevation.\n\n"
+    "This option is intended for On-Screen Takeoff users who expect condition "
+    "names without elevations. 3D (OBJ, DXF, FBX), HTML and PDF exports are "
+    "unchanged.\n\n"
+    "Turn this option on?"
+)
+OPTIONS_WARNING_CSV_DROP_ELEVATION = (
+    "Summary CSV exports will write condition names without their elevation. "
+    "Use this only for templates that expect CSV data without elevations.\n\n"
+    "OST/OSP exports, 3D (OBJ, DXF, FBX), HTML and PDF exports are unchanged by "
+    "this option.\n\n"
+    "Turn this option on?"
 )
 OPTIONS_LABEL_ELEVATION_CALLOUT_CONDITION = "Condition"
 OPTIONS_LABEL_ELEVATION_CALLOUT_TOP = "Top Elevation"

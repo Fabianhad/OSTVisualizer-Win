@@ -6,7 +6,7 @@ from tests.presentation.dialogs.options.preference_support import (
 )
 from tests.helpers.call_recorder import SingleCallRecorder
 from shiboken6 import delete, isValid
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config,
     build_codex_config_toml,
@@ -21,16 +21,22 @@ from ost_visualizer.presentation.config import (
     OPTIONS_DEFERRED_PREFERENCE_CHECKS,
     OPTIONS_DIALOG_TITLE,
     OPTIONS_GROUP_AUTO_ZOOM,
+    OPTIONS_GROUP_CONDITION_NAMES,
     OPTIONS_GROUP_CONFIRMATIONS,
     OPTIONS_GROUP_PREFERENCES,
     OPTIONS_GROUP_SNAP_ANGLE,
+    OPTIONS_LABEL_CSV_DROP_ELEVATION,
     OPTIONS_LABEL_GRAYSCALE,
+    OPTIONS_LABEL_OST_OSP_DROP_ELEVATION,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_EXPORT,
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
+    OPTIONS_WARNING_CSV_DROP_ELEVATION,
+    OPTIONS_WARNING_OST_OSP_DROP_ELEVATION,
+    OPTIONS_WARNING_TITLE_DROP_ELEVATION,
     OPTIONS_WINDOW_WIDTH,
     RELAXED_SPACING,
     TAB_INDEX_TAKEOFF,
@@ -108,10 +114,10 @@ class DialogPreferenceTests(unittest.TestCase):
             export_tab = dialog._export_tab
             self.assertEqual(export_tab.layout().spacing(), RELAXED_SPACING)
             export_groups = export_tab.findChildren(QtWidgets.QGroupBox)
-            self.assertEqual(len(export_groups), 2)
+            self.assertEqual(len(export_groups), 3)
             self.assertEqual(
                 [group.layout().spacing() for group in export_groups],
-                [COMPACT_SPACING] * 2,
+                [COMPACT_SPACING] * 3,
             )
         finally:
             dialog.close()
@@ -982,3 +988,258 @@ class OptionsDialogFontColorTests(unittest.TestCase):
             )
         finally:
             dialog.close()
+
+
+_DIALOG_CONFIRM = "ost_visualizer.presentation.dialogs.options.dialog.confirm"
+
+
+class ConditionElevationExportOptionDialogTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _preferences_support__app()
+        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def make(self, config=None, **kwargs):
+        saved = []
+        dialog = OptionsDialog(
+            config or Config(), apply_callback=saved.append, **kwargs
+        )
+        self.addCleanup(lambda: delete(dialog) if isValid(dialog) else None)
+        self.addCleanup(dialog.close)
+        return dialog, saved
+
+    def test_both_checkboxes_live_in_the_export_tab_and_default_off(self):
+        dialog, _saved = self.make()
+        export_tab = dialog._export_tab
+        self.assertIs(
+            dialog._ost_osp_drop_elevation_check,
+            export_tab.ost_osp_drop_elevation_check,
+        )
+        self.assertIs(
+            dialog._csv_drop_elevation_check, export_tab.csv_drop_elevation_check
+        )
+        for check in (
+            dialog._ost_osp_drop_elevation_check,
+            dialog._csv_drop_elevation_check,
+        ):
+            self.assertTrue(export_tab.isAncestorOf(check))
+            self.assertFalse(check.isChecked())
+            self.assertTrue(check.isEnabled())
+        self.assertIn(
+            OPTIONS_GROUP_CONDITION_NAMES,
+            [group.title() for group in export_tab.findChildren(QtWidgets.QGroupBox)],
+        )
+        self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
+        self.assertNotEqual(
+            dialog._ost_osp_drop_elevation_check.text(),
+            dialog._csv_drop_elevation_check.text(),
+        )
+
+    def test_the_option_labels_name_their_export(self):
+        dialog, _saved = self.make()
+        self.assertEqual(
+            dialog._ost_osp_drop_elevation_check.text(),
+            OPTIONS_LABEL_OST_OSP_DROP_ELEVATION,
+        )
+        self.assertEqual(
+            dialog._csv_drop_elevation_check.text(), OPTIONS_LABEL_CSV_DROP_ELEVATION
+        )
+        self.assertIn("OST", OPTIONS_LABEL_OST_OSP_DROP_ELEVATION)
+        self.assertIn("OSP", OPTIONS_LABEL_OST_OSP_DROP_ELEVATION)
+        self.assertIn("Summary CSV", OPTIONS_LABEL_CSV_DROP_ELEVATION)
+
+    def test_enabling_the_ost_osp_option_warns_and_confirming_keeps_it(self):
+        dialog, saved = self.make()
+        with mock.patch(_DIALOG_CONFIRM, return_value=True) as confirm:
+            dialog._ost_osp_drop_elevation_check.click()
+        self.assertEqual(confirm.call_count, 1)
+        args = confirm.call_args.args
+        self.assertIs(args[0], dialog)
+        self.assertEqual(args[1], OPTIONS_WARNING_TITLE_DROP_ELEVATION)
+        self.assertEqual(args[2], OPTIONS_WARNING_OST_OSP_DROP_ELEVATION)
+        self.assertTrue(dialog._ost_osp_drop_elevation_check.isChecked())
+        self.assertFalse(dialog._csv_drop_elevation_check.isChecked())
+        self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+        dialog.accept()
+        self.assertEqual(len(saved), 1)
+        self.assertTrue(saved[0].ost_osp_export_drop_condition_elevation)
+        self.assertFalse(saved[0].csv_export_drop_condition_elevation)
+
+    def test_cancelling_the_ost_osp_warning_leaves_the_option_off(self):
+        dialog, saved = self.make()
+        with mock.patch(_DIALOG_CONFIRM, return_value=False) as confirm:
+            dialog._ost_osp_drop_elevation_check.click()
+        self.assertEqual(confirm.call_count, 1)
+        self.assertFalse(dialog._ost_osp_drop_elevation_check.isChecked())
+        self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
+        dialog.accept()
+        self.assertEqual(saved, [])
+
+    def test_enabling_the_csv_option_warns_and_confirm_or_cancel_decide(self):
+        dialog, saved = self.make()
+        with mock.patch(_DIALOG_CONFIRM, return_value=False) as confirm:
+            dialog._csv_drop_elevation_check.click()
+        self.assertEqual(confirm.call_args.args[2], OPTIONS_WARNING_CSV_DROP_ELEVATION)
+        self.assertFalse(dialog._csv_drop_elevation_check.isChecked())
+        with mock.patch(_DIALOG_CONFIRM, return_value=True) as confirm:
+            dialog._csv_drop_elevation_check.click()
+        self.assertEqual(confirm.call_count, 1)
+        self.assertTrue(dialog._csv_drop_elevation_check.isChecked())
+        dialog.accept()
+        self.assertTrue(saved[0].csv_export_drop_condition_elevation)
+        self.assertFalse(saved[0].ost_osp_export_drop_condition_elevation)
+
+    def test_the_two_warnings_explain_their_own_option_and_the_unchanged_exports(self):
+        ost = OPTIONS_WARNING_OST_OSP_DROP_ELEVATION
+        csv = OPTIONS_WARNING_CSV_DROP_ELEVATION
+        self.assertIn("lose all elevation data", ost)
+        self.assertIn("without its elevation", ost)
+        self.assertIn("On-Screen Takeoff", ost)
+        self.assertIn("expect CSV data without elevations", csv)
+        for message in (ost, csv):
+            self.assertIn("3D", message)
+            self.assertIn("HTML", message)
+            self.assertIn("PDF", message)
+            self.assertIn("unchanged", message)
+
+    def test_loading_a_saved_enabled_option_does_not_warn(self):
+        with mock.patch(_DIALOG_CONFIRM) as confirm:
+            dialog, _saved = self.make(
+                Config(
+                    ost_osp_export_drop_condition_elevation=True,
+                    csv_export_drop_condition_elevation=True,
+                )
+            )
+            self.app.processEvents()
+        confirm.assert_not_called()
+        self.assertTrue(dialog._ost_osp_drop_elevation_check.isChecked())
+        self.assertTrue(dialog._csv_drop_elevation_check.isChecked())
+        self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
+
+    def test_disabling_an_enabled_option_does_not_warn(self):
+        dialog, saved = self.make(
+            Config(
+                ost_osp_export_drop_condition_elevation=True,
+                csv_export_drop_condition_elevation=True,
+            )
+        )
+        with mock.patch(_DIALOG_CONFIRM) as confirm:
+            dialog._ost_osp_drop_elevation_check.click()
+            dialog._csv_drop_elevation_check.click()
+        confirm.assert_not_called()
+        self.assertFalse(dialog._ost_osp_drop_elevation_check.isChecked())
+        self.assertFalse(dialog._csv_drop_elevation_check.isChecked())
+        dialog.accept()
+        self.assertFalse(saved[0].ost_osp_export_drop_condition_elevation)
+        self.assertFalse(saved[0].csv_export_drop_condition_elevation)
+
+    def test_programmatic_changes_never_warn(self):
+        dialog, _saved = self.make()
+        with mock.patch(_DIALOG_CONFIRM) as confirm:
+            dialog._ost_osp_drop_elevation_check.setChecked(True)
+            dialog._csv_drop_elevation_check.setChecked(True)
+        confirm.assert_not_called()
+
+    def test_reset_all_settings_turns_both_off_without_a_second_warning(self):
+        dialog, _saved = self.make(
+            Config(
+                ost_osp_export_drop_condition_elevation=True,
+                csv_export_drop_condition_elevation=True,
+            ),
+            reset_callback=Config,
+        )
+        with mock.patch(_DIALOG_CONFIRM, return_value=True) as confirm:
+            _preferences_support__reset_all_button(dialog).click()
+        self.assertEqual(confirm.call_count, 1)
+        self.assertEqual(confirm.call_args.args[1], OPTIONS_LABEL_RESET_ALL_SETTINGS)
+        self.assertFalse(dialog._ost_osp_drop_elevation_check.isChecked())
+        self.assertFalse(dialog._csv_drop_elevation_check.isChecked())
+
+    def test_cancelling_the_dialog_after_confirming_discards_the_option(self):
+        dialog, saved = self.make()
+        with mock.patch(_DIALOG_CONFIRM, return_value=True):
+            dialog._ost_osp_drop_elevation_check.click()
+        dialog.reject()
+        self.assertEqual(saved, [])
+
+    def test_the_two_options_change_independently_in_the_collected_config(self):
+        dialog, _saved = self.make()
+        with mock.patch(_DIALOG_CONFIRM, return_value=True):
+            dialog._csv_drop_elevation_check.click()
+        collected = dialog._collect_widget_config()
+        self.assertTrue(collected.csv_export_drop_condition_elevation)
+        self.assertFalse(collected.ost_osp_export_drop_condition_elevation)
+        with mock.patch(_DIALOG_CONFIRM, return_value=True):
+            dialog._ost_osp_drop_elevation_check.click()
+        collected = dialog._collect_widget_config()
+        self.assertTrue(collected.ost_osp_export_drop_condition_elevation)
+        self.assertTrue(collected.csv_export_drop_condition_elevation)
+
+    def press_space(self, check):
+        QtTest.QTest.keyClick(check, QtCore.Qt.Key.Key_Space)
+        self.app.processEvents()
+
+    def test_keyboard_activation_warns_exactly_like_a_click(self):
+        for name, message in (
+            ("_ost_osp_drop_elevation_check", OPTIONS_WARNING_OST_OSP_DROP_ELEVATION),
+            ("_csv_drop_elevation_check", OPTIONS_WARNING_CSV_DROP_ELEVATION),
+        ):
+            with self.subTest(check=name):
+                dialog, saved = self.make()
+                dialog.show()
+                check = getattr(dialog, name)
+                with mock.patch(_DIALOG_CONFIRM, return_value=False) as confirm:
+                    self.press_space(check)
+                self.assertEqual(confirm.call_count, 1)
+                self.assertEqual(confirm.call_args.args[2], message)
+                self.assertFalse(check.isChecked())
+                with mock.patch(_DIALOG_CONFIRM, return_value=True) as confirm:
+                    self.press_space(check)
+                self.assertEqual(confirm.call_count, 1)
+                self.assertTrue(check.isChecked())
+                with mock.patch(_DIALOG_CONFIRM) as confirm:
+                    self.press_space(check)
+                confirm.assert_not_called()
+                self.assertFalse(check.isChecked())
+                self.assertEqual(saved, [])
+
+    def test_a_cancelled_warning_leaves_no_pending_changes_for_either_option(self):
+        for name in ("_ost_osp_drop_elevation_check", "_csv_drop_elevation_check"):
+            with self.subTest(check=name):
+                dialog, saved = self.make()
+                with mock.patch(_DIALOG_CONFIRM, return_value=False):
+                    getattr(dialog, name).click()
+                self.assertFalse(dialog._has_pending_changes())
+                self.assertEqual(
+                    dialog._collect_widget_config(), dialog._applied_config
+                )
+                self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
+                dialog.accept()
+                self.assertEqual(saved, [])
+
+    def test_the_checkboxes_are_labelled_focusable_and_follow_the_callout_controls(
+        self,
+    ):
+        dialog, _saved = self.make()
+        export_tab = dialog._export_tab
+        order = [
+            widget
+            for widget in export_tab.findChildren(QtWidgets.QCheckBox)
+            if widget.focusPolicy() != QtCore.Qt.FocusPolicy.NoFocus
+        ]
+        ost = dialog._ost_osp_drop_elevation_check
+        csv = dialog._csv_drop_elevation_check
+        self.assertEqual(order[-2:], [ost, csv])
+        self.assertLess(
+            order.index(dialog._pdf_elevation_callouts_check), order.index(ost)
+        )
+        for check in (ost, csv):
+            self.assertTrue(check.text())
+            self.assertNotEqual(check.focusPolicy(), QtCore.Qt.FocusPolicy.NoFocus)
+            self.assertEqual(check.accessibleName(), "")
+            self.assertTrue(check.text().startswith("Drop elevations"))

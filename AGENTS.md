@@ -496,6 +496,17 @@ Persistence:
 
 - JSON state lives under `~/.ost_visualizer/`.
 - Durable preferences belong in `config.json`.
+- Options > Export > Condition Names (`Config.ost_osp_export_drop_condition_elevation`
+  and `Config.csv_export_drop_condition_elevation`, both default off) drop the
+  elevation suffix (the last explicit `@T`/`@B` marker plus a valid elevation, raw or
+  XML-escaped; legacy ` @ 12"` text and earlier markers are kept)
+  from condition names only in OST/OSP and Summary CSV exports, through
+  `domain/services/elevation.strip_elevation_suffix`. Stripping applies to copies at
+  export time (`strip_raw_condition_elevations`, the CSV name cell), never to stored
+  Conditions or the database; 3D, HTML, PDF and MCP output are unchanged. Names that
+  become identical stay separate entries and are listed (three plus a count) in the
+  success message. Enabling an option confirms in the Options dialog; loading,
+  Reset and disabling never prompt.
 - Main's horizontal Takeoff strip uses `Config.hidden_takeoff_toolbar_items` and
   the ordered descriptors in `plan_tool_registry`. Options owns drafts until
   Apply/OK; ConfigService and APP_CONFIG_UPDATED own persistence and live

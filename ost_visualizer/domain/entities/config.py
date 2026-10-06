@@ -90,6 +90,8 @@ class Config:
     elevation_callout_include_cubic_yards: bool = True
     html_elevation_callout_color: str = DEFAULT_ELEVATION_CALLOUT_COLOR
     pdf_elevation_callout_color: str = DEFAULT_ELEVATION_CALLOUT_COLOR
+    ost_osp_export_drop_condition_elevation: bool = False
+    csv_export_drop_condition_elevation: bool = False
     default_text_font: FontDefinition = DEFAULT_TEXT_FONT
     default_area_label_font: FontDefinition = DEFAULT_AREA_LABEL_FONT
     default_dimension_annotation_font: FontDefinition = (
@@ -160,6 +162,12 @@ class Config:
             ),
             "html_elevation_callout_color": self.html_elevation_callout_color,
             "pdf_elevation_callout_color": self.pdf_elevation_callout_color,
+            "ost_osp_export_drop_condition_elevation": (
+                self.ost_osp_export_drop_condition_elevation
+            ),
+            "csv_export_drop_condition_elevation": (
+                self.csv_export_drop_condition_elevation
+            ),
             "default_text_font": self.default_text_font.to_dict(),
             "default_area_label_font": self.default_area_label_font.to_dict(),
             "default_dimension_annotation_font": (
@@ -316,6 +324,14 @@ class Config:
         if "pdf_elevation_callout_color" in data:
             config.pdf_elevation_callout_color = str(
                 data["pdf_elevation_callout_color"]
+            )
+        if "ost_osp_export_drop_condition_elevation" in data:
+            config.ost_osp_export_drop_condition_elevation = _config_bool(
+                data, "ost_osp_export_drop_condition_elevation"
+            )
+        if "csv_export_drop_condition_elevation" in data:
+            config.csv_export_drop_condition_elevation = _config_bool(
+                data, "csv_export_drop_condition_elevation"
             )
         if "default_text_font" in data:
             config.default_text_font = FontDefinition.from_dict(

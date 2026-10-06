@@ -13,6 +13,10 @@ from ...application.dtos.export_dto import (
 )
 from ...application.dtos.page_export_data_dto import PageExportData
 from ...domain.entities.annotation_caption import AnnotationCaptionId
+from ...domain.services.elevation import (
+    elevation_name_collisions,
+    strip_raw_condition_elevations,
+)
 from ...domain.entities.file_extensions import (
     CSV_EXTENSION,
     PDF_EXTENSION,
@@ -34,6 +38,30 @@ def _path_identity(path: str) -> str:
     elif folded.startswith("\\\\?\\"):
         resolved = resolved[4:]
     return os.path.normcase(resolved)
+
+
+_COLLISION_NOTE_MAX_NAMES = 3
+
+
+def _elevation_collision_note(collisions) -> str:
+    if not collisions:
+        return ""
+    shown = ", ".join(
+        f'"{" ".join(name.split())}" ({count})'
+        for name, count in collisions[:_COLLISION_NOTE_MAX_NAMES]
+    )
+    hidden = len(collisions) - _COLLISION_NOTE_MAX_NAMES
+    if hidden > 0:
+        shown += f" and {hidden} more"
+    subject = (
+        "1 condition name became"
+        if len(collisions) == 1
+        else f"{len(collisions)} condition names became"
+    )
+    return (
+        f"\n\nNote: dropping elevations made {subject} identical ({shown}). "
+        "Each condition was still exported as its own entry; none were merged."
+    )
 
 
 def _progress_callback(
@@ -312,12 +340,16 @@ class ExportHandler:
         result = self.summary_csv_export_service.export_current_summary(
             grouping,
             filename,
+            strip_condition_elevations=(
+                self.config_model.snapshot().csv_export_drop_condition_elevation
+            ),
         )
         if result.success:
             show_info(
                 self.window,
                 "Export Complete",
-                f"Successfully exported Summary to {filename}",
+                f"Successfully exported Summary to {filename}"
+                + _elevation_collision_note(result.elevation_name_collisions),
             )
             return
         if result.error_code == ExportErrorCode.NO_DATA:
@@ -409,6 +441,16 @@ class ExportHandler:
             raw_data = self._database_reader.get_raw_bid_data(
                 bid_ref.file_path, bid_ref.bid_uid
             )
+            collisions = ()
+            if self.config_model.snapshot().ost_osp_export_drop_condition_elevation:
+                collisions = tuple(
+                    elevation_name_collisions(
+                        row["Name"]
+                        for row in raw_data.bid_tables.get("BidConditions", [])
+                        if "Name" in row
+                    )
+                )
+                raw_data = strip_raw_condition_elevations(raw_data)
             reporter = ProgressReporter()
             dialog = ProgressDialog(
                 filename,
@@ -433,7 +475,8 @@ class ExportHandler:
                 show_info(
                     self.window,
                     "Export Complete",
-                    f"Successfully exported bid to {filename}",
+                    f"Successfully exported bid to {filename}"
+                    + _elevation_collision_note(collisions),
                 )
                 return
             self._report_export_failure(format_name, result, worker_error)

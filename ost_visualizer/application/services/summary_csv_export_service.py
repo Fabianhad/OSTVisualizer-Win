@@ -4,6 +4,10 @@ import io
 from dataclasses import dataclass
 from typing import Callable, List, Sequence, Tuple
 from ...domain.entities.file_extensions import CSV_EXTENSION
+from ...domain.services.elevation import (
+    elevation_name_collisions,
+    strip_elevation_suffix,
+)
 from ...domain.services.project_data_service import ProjectDataService
 from ...domain.services.uom_service import get_uom_label
 from ..dtos.condition_summary_dtos import (
@@ -55,7 +59,10 @@ class SummaryCsvExportService:
         return f"{bid_name} Summary{CSV_EXTENSION}"
 
     def export_current_summary(
-        self, grouping: ConditionSummaryGrouping, filename: str
+        self,
+        grouping: ConditionSummaryGrouping,
+        filename: str,
+        strip_condition_elevations: bool = False,
     ) -> ExportResultDto:
         root = self.build_current_summary(grouping)
         if root is None or not root.children:
@@ -66,7 +73,7 @@ class SummaryCsvExportService:
                 error_code=ExportErrorCode.NO_DATA,
             )
         try:
-            csv_text = self.to_csv_text(root, grouping)
+            csv_text = self.to_csv_text(root, grouping, strip_condition_elevations)
             if not csv_text:
                 return ExportResultDto(
                     success=False,
@@ -76,8 +83,16 @@ class SummaryCsvExportService:
                 )
             with open(filename, "w", encoding="utf-8", newline="") as handle:
                 handle.write(csv_text)
+            collisions = (
+                tuple(elevation_name_collisions(self._condition_names(root)))
+                if strip_condition_elevations
+                else ()
+            )
             return ExportResultDto(
-                success=True, page_count=1, format_name=self.FORMAT_NAME
+                success=True,
+                page_count=1,
+                format_name=self.FORMAT_NAME,
+                elevation_name_collisions=collisions,
             )
         except OSError as exc:
             return ExportResultDto(
@@ -116,9 +131,12 @@ class SummaryCsvExportService:
         )
 
     def to_csv_text(
-        self, root: ConditionSummaryNode, grouping: ConditionSummaryGrouping
+        self,
+        root: ConditionSummaryNode,
+        grouping: ConditionSummaryGrouping,
+        strip_condition_elevations: bool = False,
     ) -> str:
-        rows = self.to_csv_rows(root, grouping)
+        rows = self.to_csv_rows(root, grouping, strip_condition_elevations)
         if not rows:
             return ""
         buffer = io.StringIO()
@@ -127,12 +145,30 @@ class SummaryCsvExportService:
         return buffer.getvalue()
 
     def to_csv_rows(
-        self, root: ConditionSummaryNode, grouping: ConditionSummaryGrouping
+        self,
+        root: ConditionSummaryNode,
+        grouping: ConditionSummaryGrouping,
+        strip_condition_elevations: bool = False,
     ) -> List[List[str]]:
         export_rows: List[_ExportRow] = []
         self._collect_rows(root, (), {}, export_rows)
         export_rows = self._sort_rows(export_rows, grouping)
-        return [self._format_row(row, grouping) for row in export_rows]
+        return [
+            self._format_row(row, grouping, strip_condition_elevations)
+            for row in export_rows
+        ]
+
+    @staticmethod
+    def _condition_names(root: ConditionSummaryNode) -> List[str]:
+        names: dict[str, str] = {}
+        pending = [root]
+        while pending:
+            node = pending.pop()
+            if node.kind == SUMMARY_NODE_CONDITION:
+                key = node.condition_uid or node.values.number
+                names.setdefault(key, node.values.name)
+            pending.extend(node.children)
+        return list(names.values())
 
     def _collect_rows(
         self,
@@ -276,9 +312,17 @@ class SummaryCsvExportService:
         return order
 
     def _format_row(
-        self, row: _ExportRow, grouping: ConditionSummaryGrouping
+        self,
+        row: _ExportRow,
+        grouping: ConditionSummaryGrouping,
+        strip_condition_elevations: bool = False,
     ) -> List[str]:
         values = row.values
+        condition_name = (
+            strip_elevation_suffix(values.name)
+            if strip_condition_elevations
+            else values.name
+        )
         first_folder = row.folder_path[0] if row.folder_path else ""
         pre_type_group = row.area
         if row.kind == SUMMARY_NODE_MULTI_AREA_TOTAL:
@@ -294,7 +338,7 @@ class SummaryCsvExportService:
             pre_type_group,
             row.type_name if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
             values.number if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
-            values.name if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
+            condition_name if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
             (
                 self._format_height(values.height_inches)
                 if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL

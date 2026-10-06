@@ -116,7 +116,7 @@ def _make_export_handler(**overrides):
     default_bid = SimpleNamespace(name="Bid")
     constructor_options = {
         "window": None,
-        "config_model": SimpleNamespace(),
+        "config_model": SimpleNamespace(snapshot=lambda: Config()),
         "export_service": SimpleNamespace(),
         "summary_csv_export_service": SimpleNamespace(),
         "pdf_exporter": SimpleNamespace(),
@@ -1587,7 +1587,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         try:
             service = SimpleNamespace(
                 default_filename=lambda: "Bid Summary.csv",
-                export_current_summary=lambda used_grouping, filename: calls.append(
+                export_current_summary=lambda used_grouping, filename, **_options: calls.append(
                     (used_grouping, filename)
                 )
                 or ExportResultDto(success=True, format_name="Summary CSV"),
@@ -1634,7 +1634,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         try:
             service = SimpleNamespace(
                 default_filename=lambda: "Bid Summary.csv",
-                export_current_summary=lambda _grouping, _filename: ExportResultDto(
+                export_current_summary=lambda _grouping, _filename, **_options: ExportResultDto(
                     success=False,
                     format_name="Summary CSV",
                     error_message="No summary rows are available to export.",
@@ -1681,7 +1681,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             ),
             summary_csv_export_service=SimpleNamespace(
                 default_filename=lambda: "Bid Summary.csv",
-                export_current_summary=lambda _grouping, _filename: calls.append(True)
+                export_current_summary=lambda _grouping, _filename, **_options: calls.append(
+                    True
+                )
                 or ExportResultDto(success=True, format_name="Summary CSV"),
             ),
         )
@@ -1729,7 +1731,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     ),
                     summary_csv_export_service=SimpleNamespace(
                         default_filename=lambda name=default_name: name,
-                        export_current_summary=lambda _grouping, filename: calls.append(
+                        export_current_summary=lambda _grouping, filename, **_options: calls.append(
                             filename
                         )
                         or ExportResultDto(success=True, format_name="Summary CSV"),
@@ -1761,7 +1763,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
                 summary_csv_export_service=SimpleNamespace(
                     default_filename=lambda: "Bid Summary.csv",
-                    export_current_summary=lambda _grouping, _filename: calls.append(
+                    export_current_summary=lambda _grouping, _filename, **_options: calls.append(
                         True
                     )
                     or result,
@@ -1814,3 +1816,355 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertEqual(cancelled_calls, [])
         info.assert_not_called()
         warning.assert_not_called()
+
+
+def _condition_rows():
+    return [
+        {"UID": "1", "Name": "Wall @T 5' 0\"", "Type": "0"},
+        {"UID": "2", "Name": "Wall @B 2&apos; 0&quot;", "Type": "0"},
+        {"UID": "3", "Name": "Plain", "Type": "0"},
+    ]
+
+
+def _raw_with(rows):
+    return RawBidData(
+        bid_row={"UID": "bid-1", "Name": "Bid"},
+        bid_tables={"BidConditions": rows},
+        page_tables={},
+        global_tables={},
+    )
+
+
+class ConditionElevationOstOspExportTests(unittest.TestCase):
+    def run_export(self, method, *, config, raw_data, locator="bid.mdb"):
+        seen = []
+        bid = SimpleNamespace(name="Bid")
+        reader_calls = []
+        database_reader = SimpleNamespace(
+            get_raw_bid_data=lambda file_path, bid_uid: reader_calls.append(
+                (file_path, bid_uid)
+            )
+            or raw_data
+        )
+
+        class _Exporter:
+            def export(self_inner, raw, filename, *args, **kwargs):
+                seen.append(raw)
+                return SimpleNamespace(success=True)
+
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=lambda: config),
+            database_reader=database_reader,
+            ost_exporter=_Exporter(),
+            osp_exporter=_Exporter(),
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: SimpleNamespace(
+                    file_path=locator, bid_uid="bid-1"
+                ),
+                get_current_bid=lambda: bid,
+            ),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("output.file", ""),
+            ),
+            patch.object(
+                export_handler_module, "ProgressDialog", _ImmediateProgressDialog
+            ),
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(export_handler_module, "show_critical") as critical,
+        ):
+            getattr(handler, method)()
+        critical.assert_not_called()
+        return seen, info, reader_calls
+
+    @staticmethod
+    def names(raw):
+        return [row.get("Name") for row in raw.bid_tables["BidConditions"]]
+
+    def test_option_off_passes_the_exact_raw_data_through_for_ost_and_osp(self):
+        for method in ("export_as_ost", "export_as_osp"):
+            with self.subTest(method=method):
+                raw = _raw_with(_condition_rows())
+                seen, info, _calls = self.run_export(
+                    method, config=Config(), raw_data=raw
+                )
+                self.assertEqual(len(seen), 1)
+                self.assertIs(seen[0], raw)
+                self.assertEqual(
+                    info.call_args.args[2], "Successfully exported bid to output.file"
+                )
+
+    def test_option_on_exports_stripped_names_for_ost_and_osp(self):
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        for method in ("export_as_ost", "export_as_osp"):
+            with self.subTest(method=method):
+                seen, _info, _calls = self.run_export(
+                    method, config=config, raw_data=_raw_with(_condition_rows())
+                )
+                self.assertEqual(self.names(seen[0]), ["Wall", "Wall", "Plain"])
+                self.assertEqual(
+                    [row["UID"] for row in seen[0].bid_tables["BidConditions"]],
+                    ["1", "2", "3"],
+                )
+
+    def test_the_raw_data_read_from_the_database_is_never_modified(self):
+        raw = _raw_with(_condition_rows())
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        seen, _info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=raw
+        )
+        self.assertIsNot(seen[0], raw)
+        self.assertEqual(raw.bid_tables["BidConditions"], _condition_rows())
+
+    def test_the_csv_option_does_not_change_ost_or_osp_exports(self):
+        config = Config(csv_export_drop_condition_elevation=True)
+        raw = _raw_with(_condition_rows())
+        seen, _info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=raw
+        )
+        self.assertIs(seen[0], raw)
+
+    def test_access_and_sql_locators_produce_identical_exports(self):
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        exported = {}
+        for label, locator in (
+            ("access", "C:/bids/one.mdb"),
+            ("sql", "sql-database-id"),
+        ):
+            seen, _info, calls = self.run_export(
+                "export_as_ost",
+                config=config,
+                raw_data=_raw_with(_condition_rows()),
+                locator=locator,
+            )
+            self.assertEqual(calls, [(locator, "bid-1")])
+            exported[label] = seen[0]
+        self.assertEqual(exported["access"], exported["sql"])
+
+    def test_colliding_names_stay_separate_and_are_reported_in_the_success_note(self):
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        seen, info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=_raw_with(_condition_rows())
+        )
+        self.assertEqual(len(seen[0].bid_tables["BidConditions"]), 3)
+        message = info.call_args.args[2]
+        self.assertTrue(message.startswith("Successfully exported bid to output.file"))
+        self.assertIn("1 condition name became identical", message)
+        self.assertIn('"Wall" (2)', message)
+
+    def test_no_note_is_added_without_collisions_or_with_the_option_off(self):
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        distinct = _raw_with(
+            [
+                {"UID": "1", "Name": "A @T 5' 0\"", "Type": "0"},
+                {"UID": "2", "Name": "B @T 5' 0\"", "Type": "0"},
+            ]
+        )
+        _seen, info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=distinct
+        )
+        self.assertEqual(
+            info.call_args.args[2], "Successfully exported bid to output.file"
+        )
+        _seen, info, _calls = self.run_export(
+            "export_as_ost", config=Config(), raw_data=_raw_with(_condition_rows())
+        )
+        self.assertEqual(
+            info.call_args.args[2], "Successfully exported bid to output.file"
+        )
+
+    def test_the_collision_note_is_capped_at_three_names_plus_a_count(self):
+        rows = []
+        for index, name in enumerate(("A", "B", "C", "D", "E"), start=1):
+            rows.append({"UID": f"{index}a", "Name": f"{name} @T 5' 0\"", "Type": "0"})
+            rows.append({"UID": f"{index}b", "Name": f"{name} @B 2' 0\"", "Type": "0"})
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        _seen, info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=_raw_with(rows)
+        )
+        message = info.call_args.args[2]
+        self.assertIn("5 condition names became identical", message)
+        for shown in ('"A" (2)', '"B" (2)', '"C" (2)'):
+            self.assertIn(shown, message)
+        for hidden in ('"D"', '"E"'):
+            self.assertNotIn(hidden, message)
+        self.assertIn("and 2 more", message)
+
+    def test_names_with_newlines_tabs_and_quotes_keep_the_note_on_one_line(self):
+        rows = [
+            {"UID": "1", "Name": "A\nB @T 5' 0\"", "Type": "0"},
+            {"UID": "2", "Name": "A\nB @B 2' 0\"", "Type": "0"},
+            {"UID": "3", "Name": "C\tD @T 5' 0\"", "Type": "0"},
+            {"UID": "4", "Name": "C\tD @B 2' 0\"", "Type": "0"},
+            {"UID": "5", "Name": 'Say "hi" @T 5\' 0"', "Type": "0"},
+            {"UID": "6", "Name": 'Say "hi" @B 2\' 0"', "Type": "0"},
+        ]
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        seen, info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=_raw_with(rows)
+        )
+        message = info.call_args.args[2]
+        self.assertIn("3 condition names became identical", message)
+        note = message.split("Note:", 1)[1]
+        self.assertNotIn("\t", note)
+        self.assertEqual(note.count("\n"), 0)
+        for shown in ('"A B" (2)', '"C D" (2)', '"Say "hi"" (2)'):
+            self.assertIn(shown, note)
+        self.assertEqual(self.names(seen[0])[0], "A\nB")
+        self.assertEqual(self.names(seen[0])[2], "C\tD")
+
+    def test_three_way_collision_counts_every_condition_once(self):
+        rows = [
+            {"UID": "1", "Name": "Wall @T 5' 0\"", "Type": "0"},
+            {"UID": "2", "Name": "Wall @B 2' 0\"", "Type": "0"},
+            {"UID": "3", "Name": "Wall", "Type": "0"},
+            {"UID": "4", "Name": "wall @T 1' 0\"", "Type": "0"},
+            {"UID": "5", "Name": "Wall  @T 9' 0\"", "Type": "0"},
+        ]
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        _seen, info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=_raw_with(rows)
+        )
+        message = info.call_args.args[2]
+        self.assertIn("1 condition name became identical", message)
+        self.assertIn('"Wall" (4)', message)
+        self.assertNotIn('"wall"', message)
+
+    def test_a_collision_note_never_turns_a_successful_export_into_a_failure(self):
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        seen, info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=_raw_with(_condition_rows())
+        )
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(info.call_count, 1)
+        self.assertEqual(info.call_args.args[1], "Export Complete")
+        self.assertIn("became identical", info.call_args.args[2])
+
+    def test_condition_rows_without_a_name_do_not_break_the_export(self):
+        rows = _condition_rows() + [{"UID": "9", "Type": "0"}]
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        seen, info, _calls = self.run_export(
+            "export_as_ost", config=config, raw_data=_raw_with(rows)
+        )
+        self.assertEqual(self.names(seen[0]), ["Wall", "Wall", "Plain", None])
+        self.assertIn("became identical", info.call_args.args[2])
+
+    def test_a_failed_export_reports_the_failure_without_a_collision_note(self):
+        config = Config(ost_osp_export_drop_condition_elevation=True)
+        raw = _raw_with(_condition_rows())
+        bid = SimpleNamespace(name="Bid")
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=lambda: config),
+            database_reader=SimpleNamespace(get_raw_bid_data=lambda *_args: raw),
+            ost_exporter=SimpleNamespace(
+                export=lambda *_args, **_kwargs: ExportResultDto(
+                    success=False, format_name="OST", error_message="disk is full"
+                )
+            ),
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
+                get_current_bid=lambda: bid,
+            ),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("output.ost", ""),
+            ),
+            patch.object(
+                export_handler_module, "ProgressDialog", _ImmediateProgressDialog
+            ),
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module, "show_warning") as warning,
+        ):
+            handler.export_as_ost()
+        info.assert_not_called()
+        shown = [
+            call.args[2] for call in critical.call_args_list + warning.call_args_list
+        ]
+        self.assertTrue(shown)
+        self.assertTrue(all("became identical" not in text for text in shown))
+
+
+class ConditionElevationSummaryCsvHandlerTests(unittest.TestCase):
+    def run_export(self, *, config, result):
+        calls = []
+        bid = SimpleNamespace(name="Bid")
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=lambda: config),
+            window=SimpleNamespace(
+                get_summary_grouping=lambda: ConditionSummaryGrouping(by_type=True)
+            ),
+            summary_csv_export_service=SimpleNamespace(
+                default_filename=lambda: "Bid Summary.csv",
+                export_current_summary=lambda grouping, filename, **options: calls.append(
+                    (grouping, filename, options)
+                )
+                or result,
+            ),
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
+                get_current_bid=lambda: bid,
+            ),
+        )
+        handler._export_context_is_current = lambda *_args: True
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("summary.csv", ""),
+            ),
+            patch.object(export_handler_module, "show_info") as info,
+        ):
+            handler.export_summary_csv()
+        return calls, info
+
+    def test_the_option_state_is_passed_to_the_service(self):
+        result = ExportResultDto(True, page_count=1, format_name="Summary CSV")
+        for flag in (False, True):
+            with self.subTest(flag=flag):
+                calls, _info = self.run_export(
+                    config=Config(csv_export_drop_condition_elevation=flag),
+                    result=result,
+                )
+                self.assertEqual(len(calls), 1)
+                self.assertIs(calls[0][2]["strip_condition_elevations"], flag)
+
+    def test_the_ost_option_does_not_reach_the_csv_service(self):
+        result = ExportResultDto(True, page_count=1, format_name="Summary CSV")
+        calls, _info = self.run_export(
+            config=Config(ost_osp_export_drop_condition_elevation=True), result=result
+        )
+        self.assertIs(calls[0][2]["strip_condition_elevations"], False)
+
+    def test_collisions_from_the_service_are_added_to_the_success_message(self):
+        result = ExportResultDto(
+            True,
+            page_count=1,
+            format_name="Summary CSV",
+            elevation_name_collisions=(("Wall", 2), ("Slab", 3)),
+        )
+        _calls, info = self.run_export(
+            config=Config(csv_export_drop_condition_elevation=True), result=result
+        )
+        message = info.call_args.args[2]
+        self.assertTrue(
+            message.startswith("Successfully exported Summary to summary.csv")
+        )
+        self.assertIn("2 condition names became identical", message)
+        self.assertIn('"Wall" (2)', message)
+        self.assertIn('"Slab" (3)', message)
+
+    def test_the_message_is_unchanged_without_collisions(self):
+        result = ExportResultDto(True, page_count=1, format_name="Summary CSV")
+        _calls, info = self.run_export(
+            config=Config(csv_export_drop_condition_elevation=True), result=result
+        )
+        self.assertEqual(
+            info.call_args.args[2], "Successfully exported Summary to summary.csv"
+        )

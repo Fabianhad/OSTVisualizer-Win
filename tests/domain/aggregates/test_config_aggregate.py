@@ -93,3 +93,33 @@ class ConfigAggregateUpdateTests(unittest.TestCase):
             aggregate.update_options(replace(expected, default_hotlink_color="#654321"))
         self.assertEqual(repository.saved, [expected])
         self.assertEqual(aggregate.snapshot(), expected)
+
+
+class ConditionElevationExportOptionAggregateTests(unittest.TestCase):
+    def test_both_options_survive_validation_and_report_their_own_changes(self):
+        for field in (
+            "ost_osp_export_drop_condition_elevation",
+            "csv_export_drop_condition_elevation",
+        ):
+            with self.subTest(field=field):
+                repository = _ConfigRepository(Config())
+                aggregate = ConfigAggregate(repository)
+                draft = replace(aggregate.snapshot(), **{field: True})
+                self.assertEqual(aggregate.update_options(draft), [field])
+                self.assertIs(getattr(aggregate.snapshot(), field), True)
+                self.assertIs(getattr(repository.saved[-1], field), True)
+                reloaded = ConfigAggregate(repository)
+                self.assertIs(getattr(reloaded.snapshot(), field), True)
+
+    def test_saved_options_are_not_reset_by_loading_other_fields(self):
+        repository = _ConfigRepository(
+            Config(
+                ost_osp_export_drop_condition_elevation=True,
+                csv_export_drop_condition_elevation=True,
+                show_toolbar_text=False,
+            )
+        )
+        snapshot = ConfigAggregate(repository).snapshot()
+        self.assertTrue(snapshot.ost_osp_export_drop_condition_elevation)
+        self.assertTrue(snapshot.csv_export_drop_condition_elevation)
+        self.assertFalse(snapshot.show_toolbar_text)

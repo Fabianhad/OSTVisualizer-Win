@@ -1,8 +1,11 @@
+import html
 from dataclasses import dataclass
 from math import isfinite
-from typing import Optional
+from typing import Iterable, Optional
+from ..dtos.raw_bid_data_dto import RawBidData
 from ..entities.condition import Condition
 from .dimension_format_service import inches_to_display
+from .elevation_text import is_strippable_elevation_text
 
 
 @dataclass
@@ -98,4 +101,58 @@ def resolve_condition_elevation_bounds(
         base_name=parts.base_name.strip(),
         top=reference + vertical_size,
         bottom=reference,
+    )
+
+
+def _unescaped(text: str) -> str:
+    current = text
+    for _ in range(2):
+        decoded = html.unescape(current)
+        if decoded == current:
+            break
+        current = decoded
+    return current
+
+
+_EXPLICIT_MARKERS = (" @T", " @B")
+
+
+def strip_elevation_suffix(name: str) -> str:
+    parts = parse_elevation(name)
+    if not name[len(parts.base_name) :].startswith(_EXPLICIT_MARKERS):
+        return name
+    if not is_strippable_elevation_text(_unescaped(parts.value).strip()):
+        return name
+    base_name = parts.base_name.rstrip()
+    return base_name if base_name else name
+
+
+def elevation_name_collisions(names: Iterable[str]) -> list[tuple[str, int]]:
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        groups.setdefault(strip_elevation_suffix(name), []).append(name)
+    return [
+        (stripped, len(originals))
+        for stripped, originals in groups.items()
+        if len(set(originals)) > 1
+    ]
+
+
+def strip_raw_condition_elevations(raw_data: RawBidData) -> RawBidData:
+    bid_tables = dict(raw_data.bid_tables)
+    rows = bid_tables.get("BidConditions")
+    if rows is not None:
+        bid_tables["BidConditions"] = [
+            (
+                {**row, "Name": strip_elevation_suffix(row["Name"])}
+                if "Name" in row
+                else dict(row)
+            )
+            for row in rows
+        ]
+    return RawBidData(
+        bid_row=raw_data.bid_row,
+        bid_tables=bid_tables,
+        page_tables=raw_data.page_tables,
+        global_tables=raw_data.global_tables,
     )

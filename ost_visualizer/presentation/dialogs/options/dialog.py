@@ -13,6 +13,9 @@ from ...config import (
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
+    OPTIONS_WARNING_CSV_DROP_ELEVATION,
+    OPTIONS_WARNING_OST_OSP_DROP_ELEVATION,
+    OPTIONS_WARNING_TITLE_DROP_ELEVATION,
     OPTIONS_WINDOW_WIDTH,
 )
 from ...utils.messagebox import confirm, show_warning
@@ -105,6 +108,10 @@ class OptionsDialog(QtWidgets.QDialog):
         self._pdf_elevation_callout_color_button = (
             self._export_tab.pdf_elevation_callout_color_button
         )
+        self._ost_osp_drop_elevation_check = (
+            self._export_tab.ost_osp_drop_elevation_check
+        )
+        self._csv_drop_elevation_check = self._export_tab.csv_drop_elevation_check
         self._tabs.addTab(self._export_tab, OPTIONS_TAB_EXPORT)
         self._mcp_setup_tab = McpSetupTab(
             self._tabs,
@@ -302,6 +309,12 @@ class OptionsDialog(QtWidgets.QDialog):
         self._pdf_elevation_callout_color_button.set_color(
             QtGui.QColor(self._applied_config.pdf_elevation_callout_color)
         )
+        self._ost_osp_drop_elevation_check.setChecked(
+            self._applied_config.ost_osp_export_drop_condition_elevation
+        )
+        self._csv_drop_elevation_check.setChecked(
+            self._applied_config.csv_export_drop_condition_elevation
+        )
         self._fonts_colors_tab.load_config(self._applied_config)
         self._export_tab.update_callout_controls_enabled()
 
@@ -338,9 +351,23 @@ class OptionsDialog(QtWidgets.QDialog):
             self._html_elevation_callouts_check,
             self._pdf_elevation_callouts_check,
             *self._export_tab.callout_content_checks,
+            self._ost_osp_drop_elevation_check,
+            self._csv_drop_elevation_check,
         )
         for button in buttons:
             button.toggled.connect(self._update_apply_enabled)
+        self._ost_osp_drop_elevation_check.clicked.connect(
+            lambda: self._confirm_drop_elevation(
+                self._ost_osp_drop_elevation_check,
+                OPTIONS_WARNING_OST_OSP_DROP_ELEVATION,
+            )
+        )
+        self._csv_drop_elevation_check.clicked.connect(
+            lambda: self._confirm_drop_elevation(
+                self._csv_drop_elevation_check,
+                OPTIONS_WARNING_CSV_DROP_ELEVATION,
+            )
+        )
         self._display_modes_sync_check.toggled.connect(
             self._sync_display_modes_when_enabled
         )
@@ -469,8 +496,21 @@ class OptionsDialog(QtWidgets.QDialog):
             pdf_elevation_callout_color=(
                 self._pdf_elevation_callout_color_button.color().name()
             ),
+            ost_osp_export_drop_condition_elevation=(
+                self._ost_osp_drop_elevation_check.isChecked()
+            ),
+            csv_export_drop_condition_elevation=(
+                self._csv_drop_elevation_check.isChecked()
+            ),
         )
         return self._fonts_colors_tab.apply_to_config(config)
+
+    def _confirm_drop_elevation(self, check: QtWidgets.QCheckBox, message: str) -> None:
+        if not check.isChecked():
+            return
+        if confirm(self, OPTIONS_WARNING_TITLE_DROP_ELEVATION, message):
+            return
+        check.setChecked(False)
 
     def _selected_display_mode(self, target: str) -> str:
         if target == "3d":

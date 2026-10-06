@@ -707,5 +707,217 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
                 self.assertEqual(output.read_bytes(), b"previous export")
 
 
+class SummaryCsvDropElevationTests(unittest.TestCase):
+    NAME_CELL = 5
+
+    def setUp(self):
+        self.summary_service = ConditionSummaryService()
+        self.folders = {
+            "level": BidConditionFolder(uid="level", name="Level @T 9' 0\""),
+        }
+        self.conditions = {
+            "c1": self._condition("c1", 1, "Wall @T 5' 0\""),
+            "c2": self._condition("c2", 2, "Wall @B 2&apos; 0&quot;"),
+            "c3": self._condition("c3", 3, "Slab @T 1' 0\""),
+            "c4": self._condition("c4", 4, "Plain"),
+            "c5": self._condition("c5", 5, "Meeting @T later"),
+        }
+        self.pages = [Page(uid="p1", name="Page 1", sequence=1)]
+        self.areas = [
+            BidArea(uid="a1", bid_uid="bid", parent_uid="", name="Area", sequence=1)
+        ]
+        self.takeoffs = [
+            Takeoff(uid=f"t{index}", condition_uid=uid, page_uid="p1", area_uid="a1")
+            for index, uid in enumerate(self.conditions, start=1)
+        ]
+        self.project_data = _ProjectData(
+            self.conditions, self.folders, self.takeoffs, self.pages
+        )
+        self.csv_service = SummaryCsvExportService(
+            self.project_data, _ProjectRead(self.areas), self.summary_service
+        )
+        self.original = {
+            uid: (condition.name, condition.z_value, condition.is_top)
+            for uid, condition in self.conditions.items()
+        }
+
+    @staticmethod
+    def _condition(uid, ref_no, name):
+        return Condition(
+            uid=uid,
+            name=name,
+            condition_type=Condition.TYPE_COUNT,
+            cdn_type_uid="type",
+            cdn_type_name="Type",
+            folder_uid="level",
+            uom1=UOM_EACH,
+            calc_type1=CALC_COUNT,
+            uom2=UOM_SQUARE_FEET,
+            uom3=UOM_CUBIC_YARDS,
+            ref_no=ref_no,
+            z_value=60.0,
+            is_top=True,
+        )
+
+    def _write(self, grouping, **options):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "summary.csv"
+            result = self.csv_service.export_current_summary(
+                grouping, str(output), **options
+            )
+            with output.open(encoding="utf-8", newline="") as handle:
+                return result, list(csv.reader(handle))
+
+    def _names(self, rows):
+        return [row[self.NAME_CELL] for row in rows]
+
+    def test_default_keeps_every_name_exactly_as_stored(self):
+        result, rows = self._write(ConditionSummaryGrouping())
+        self.assertTrue(result.success)
+        self.assertEqual(
+            sorted(self._names(rows)),
+            sorted(condition.name for condition in self.conditions.values()),
+        )
+        self.assertEqual(result.elevation_name_collisions, ())
+
+    def test_option_off_explicitly_matches_the_default(self):
+        _, default_rows = self._write(ConditionSummaryGrouping())
+        _, off_rows = self._write(
+            ConditionSummaryGrouping(), strip_condition_elevations=False
+        )
+        self.assertEqual(default_rows, off_rows)
+
+    def test_option_on_writes_names_without_elevations(self):
+        result, rows = self._write(
+            ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(
+            sorted(self._names(rows)),
+            ["Meeting @T later", "Plain", "Slab", "Wall", "Wall"],
+        )
+
+    def test_every_other_cell_is_unchanged_by_the_option(self):
+        _, off_rows = self._write(ConditionSummaryGrouping())
+        _, on_rows = self._write(
+            ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        self.assertEqual(len(on_rows), len(off_rows))
+        for off, on in zip(off_rows, on_rows):
+            without_name_off = off[: self.NAME_CELL] + off[self.NAME_CELL + 1 :]
+            without_name_on = on[: self.NAME_CELL] + on[self.NAME_CELL + 1 :]
+            self.assertEqual(without_name_on, without_name_off)
+
+    def test_folder_names_keep_their_text_even_when_it_looks_like_an_elevation(self):
+        _, rows = self._write(
+            ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        self.assertTrue(all(row[0] == "Level @T 9' 0\"" for row in rows))
+
+    def test_every_grouping_strips_every_row_kind(self):
+        for grouping in (
+            ConditionSummaryGrouping(),
+            ConditionSummaryGrouping(by_type=True),
+            ConditionSummaryGrouping(by_page=True),
+            ConditionSummaryGrouping(by_area=True),
+            ConditionSummaryGrouping(by_page=True, by_area=True),
+            ConditionSummaryGrouping(by_type=True, by_page=True, by_area=True),
+        ):
+            with self.subTest(grouping=grouping):
+                _, rows = self._write(grouping, strip_condition_elevations=True)
+                for name in self._names(rows):
+                    self.assertNotIn(" @B", name)
+                    self.assertNotIn("&apos;", name)
+                    self.assertNotIn(" @T 5", name)
+
+    def test_colliding_conditions_stay_separate_rows_and_are_reported(self):
+        result, rows = self._write(
+            ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        walls = [row for row in rows if row[self.NAME_CELL] == "Wall"]
+        self.assertEqual(len(walls), 2)
+        self.assertEqual({row[4] for row in walls}, {"1", "2"})
+        self.assertEqual(result.elevation_name_collisions, (("Wall", 2),))
+
+    def test_no_collision_is_reported_when_names_stay_distinct(self):
+        del self.conditions["c2"]
+        self.takeoffs[:] = [t for t in self.takeoffs if t.condition_uid != "c2"]
+        result, _rows = self._write(
+            ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        self.assertEqual(result.elevation_name_collisions, ())
+
+    def test_collisions_are_not_reported_when_the_option_is_off(self):
+        result, _rows = self._write(ConditionSummaryGrouping())
+        self.assertEqual(result.elevation_name_collisions, ())
+
+    def test_conditions_without_takeoffs_do_not_cause_collisions(self):
+        self.conditions["unused"] = self._condition("unused", 9, "Slab @B 3' 0\"")
+        result, _rows = self._write(
+            ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        self.assertEqual(result.elevation_name_collisions, (("Wall", 2),))
+
+    def test_source_conditions_and_the_summary_tree_are_never_modified(self):
+        root = self.csv_service.build_current_summary(ConditionSummaryGrouping())
+        before = repr(root)
+        self.csv_service.to_csv_rows(
+            root, ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        self.csv_service.to_csv_text(
+            root, ConditionSummaryGrouping(), strip_condition_elevations=True
+        )
+        self._write(ConditionSummaryGrouping(), strip_condition_elevations=True)
+        self.assertEqual(repr(root), before)
+        self.assertEqual(
+            {uid: (c.name, c.z_value, c.is_top) for uid, c in self.conditions.items()},
+            self.original,
+        )
+
+    def test_only_condition_nodes_count_and_each_condition_counts_once(self):
+        def values(name):
+            return ConditionSummaryValues(name=name)
+
+        root = ConditionSummaryNode(
+            kind=SUMMARY_NODE_ROOT,
+            values=values("Wall @B 1' 0\""),
+            children=[
+                ConditionSummaryNode(
+                    kind=SUMMARY_NODE_FOLDER,
+                    label="F",
+                    values=values("Wall @T 2' 0\""),
+                    children=[
+                        ConditionSummaryNode(
+                            kind=SUMMARY_NODE_CONDITION,
+                            condition_uid="c1",
+                            values=values("Wall @T 5' 0\""),
+                        ),
+                        ConditionSummaryNode(
+                            kind=SUMMARY_NODE_CONDITION,
+                            condition_uid="c1",
+                            values=values("Wall @T 5' 0\""),
+                        ),
+                    ],
+                )
+            ],
+        )
+        self.assertEqual(
+            SummaryCsvExportService._condition_names(root), ["Wall @T 5' 0\""]
+        )
+
+    def test_no_data_result_carries_no_collisions(self):
+        self.takeoffs[:] = []
+        result, _rows = (
+            self.csv_service.export_current_summary(
+                ConditionSummaryGrouping(),
+                str(Path(tempfile.gettempdir()) / "ost-no-data.csv"),
+                strip_condition_elevations=True,
+            ),
+            None,
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(result.elevation_name_collisions, ())
+
+
 if __name__ == "__main__":
     unittest.main()

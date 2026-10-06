@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
-  "module_count": 530,
-  "method_count": 12682,
+  "module_count": 534,
+  "method_count": 12786,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -549,6 +549,18 @@
       "decision": "Page scale change jumps the main view back (Bug A) and adopts the detached window's viewport (Bug B)",
       "status": "fixed",
       "outcome": "Root cause: scale-derived overlay units in the render identity (7a1754e) force a full reload that restores the Page's stale stored viewport, and the Page is shared with the detached window which overwrote it. Fix: a private per-view snapshot for appearance/calibration-only reloads and non-owning detached views. 34 real-view tests (15 behavioural tests failed against the unfixed source; each appearance test fails on its own), 29 mutants killed, 4 initial survivors killed by extra load-cycle tests. Siblings: scale from the detached window, invert, bitonal, show mode, overlay rect/rotation, remote SQL refresh, reloaded Page object, page switch with a detached window fixed; rename, zoom/fit after the change and page switch restore did not reproduce; page rotation, flip, size and replacing the image or overlay file change geometry and keep restoring the stored state; intentionally unfixed (reported)."
+    },
+    {
+      "id": "X1",
+      "decision": "Options > Export > Condition Names: drop the elevation suffix from condition names in OST/OSP and in Summary CSV exports",
+      "status": "implemented",
+      "outcome": "Two Config booleans (default off) with checkboxes in a new Condition Names group of the Export tab; enabling either confirms through the Options dialog (clicked-only, so load, Reset and disable never prompt) and the warning texts state that 3D, HTML and PDF exports are unchanged. Shared pure strip_elevation_suffix in domain (last explicit @T/@B marker plus a valid elevation, raw or XML-escaped, never strips a name to empty, leaves 'Meeting @T later' and legacy ' @ 12\" OC' text alone; see X2). Applied only to copies: strip_raw_condition_elevations for OST/OSP in ExportHandler._export_bid_file, the CSV name cell in SummaryCsvExportService. Collisions keep separate entries and are reported in the success message (three names plus a count). Tests written first; the position_parser regex move is gated by characterization tests; about 90 in-memory mutants killed, equivalent ones removed from the code."
+    },
+    {
+      "id": "X2",
+      "decision": "Review of the condition elevation export options (uncommitted diff)",
+      "status": "fixed",
+      "outcome": "Scope confirmed (only this feature's files). Regex move verified identical to HEAD (pattern and flags) and callers pass (edit-condition dialog, project_write_service, metric switch, bid_data_reader). Fixed: legacy ' @ 12\"' text no longer stripped (explicit @T/@B only), only the last elevation is stripped (matches parse_elevation), collision note whitespace collapsed, style. Added keyboard (Space) activation, draft-not-dirty after cancel, focus order and handler note tests; 11 new mutants killed, one equivalent guard removed. Not reproduced (reported only): CSV collision tuple computed after the file write inside the same try, case-sensitive grouping, text after a valid elevation prefix dropped like the app's value definition, NBSP/curly quotes/lowercase markers not stripped like the app's own parser."
     },
     {
       "id": "OPEN-1",
@@ -33489,7 +33501,7 @@
       "duplicate_method_names": []
     },
     "tests/application/services/test_summary_csv_export_service.py": {
-      "sha256": "29ab0e66e8815ec8374f29e621c46fd8c0d1bf622d0e3c8579d1948b31fa2ddb",
+      "sha256": "8699460a02263f2dd558a3bcdc449b83f1522911535d62b2e2be2de0f61259f2",
       "methods": [
         {
           "name": "SummaryCsvExportServiceTests.test_no_grouping_csv_matches_example_structure",
@@ -33932,6 +33944,262 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added: NaN quantity fails actual integer formatter, returns UNEXPECTED with message/no success count and leaves existing destination bytes intact.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_default_keeps_every_name_exactly_as_stored",
+          "line": 774,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "self._names",
+            "self._write",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.conditions.values",
+            "sorted"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: default keeps every name exactly as stored. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_option_off_explicitly_matches_the_default",
+          "line": 783,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "self._write",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: option off explicitly matches the default. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_option_on_writes_names_without_elevations",
+          "line": 790,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "self._names",
+            "self._write",
+            "self.assertEqual",
+            "self.assertTrue",
+            "sorted"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: option on writes names without elevations. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_every_other_cell_is_unchanged_by_the_option",
+          "line": 800,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "len",
+            "self._write",
+            "self.assertEqual",
+            "zip"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: every other cell is unchanged by the option. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_folder_names_keep_their_text_even_when_it_looks_like_an_elevation",
+          "line": 811,
+          "assertions": [
+            "self.assertTrue"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "all",
+            "self._write",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: folder names keep their text even when it looks like an elevation. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_every_grouping_strips_every_row_kind",
+          "line": 817,
+          "assertions": [
+            "self.assertNotIn",
+            "self.assertNotIn",
+            "self.assertNotIn"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "self._names",
+            "self._write",
+            "self.assertNotIn",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: every grouping strips every row kind. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_colliding_conditions_stay_separate_rows_and_are_reported",
+          "line": 833,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "len",
+            "self._write",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: colliding conditions stay separate rows and are reported. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_no_collision_is_reported_when_names_stay_distinct",
+          "line": 842,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "self._write",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: no collision is reported when names stay distinct. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_collisions_are_not_reported_when_the_option_is_off",
+          "line": 850,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "self._write",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: collisions are not reported when the option is off. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_conditions_without_takeoffs_do_not_cause_collisions",
+          "line": 854,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "self._condition",
+            "self._write",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: conditions without takeoffs do not cause collisions. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_source_conditions_and_the_summary_tree_are_never_modified",
+          "line": 861,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "repr",
+            "self._write",
+            "self.assertEqual",
+            "self.conditions.items",
+            "self.csv_service.build_current_summary",
+            "self.csv_service.to_csv_rows",
+            "self.csv_service.to_csv_text"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: source conditions and the summary tree are never modified. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_only_condition_nodes_count_and_each_condition_counts_once",
+          "line": 880,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryNode",
+            "ConditionSummaryValues",
+            "SummaryCsvExportService._condition_names",
+            "self.assertEqual",
+            "values"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: only condition nodes count and each condition counts once. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SummaryCsvDropElevationTests.test_no_data_result_carries_no_collisions",
+          "line": 911,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ConditionSummaryGrouping",
+            "Path",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.csv_service.export_current_summary",
+            "str",
+            "tempfile.gettempdir"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: no data result carries no collisions. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -42045,7 +42313,7 @@
       "duplicate_method_names": []
     },
     "tests/domain/aggregates/test_config_aggregate.py": {
-      "sha256": "3ab184fa6a621014af6ca3641c0e0057debdcb6d91adee3340fdf5ce25d73beb",
+      "sha256": "eb174a7401e903c4d4b0f0d0f1b95217ebf1febc551b65358bb24ae82abebba5",
       "methods": [
         {
           "name": "ConfigAggregateValidationTests.test_validation_constants_are_immutable_shared_state",
@@ -42151,6 +42419,56 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added: exact changed keys, saved config, authoritative state, and rollback on failed subsequent save. No broad mock interception.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionAggregateTests.test_both_options_survive_validation_and_report_their_own_changes",
+          "line": 99,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertIs"
+          ],
+          "calls": [
+            "Config",
+            "ConfigAggregate",
+            "_ConfigRepository",
+            "aggregate.snapshot",
+            "aggregate.update_options",
+            "getattr",
+            "reloaded.snapshot",
+            "replace",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: both options survive validation and report their own changes. ConfigAggregate copies both new fields (a missing copy would silently reset a saved option) and reports their own changed keys.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionAggregateTests.test_saved_options_are_not_reset_by_loading_other_fields",
+          "line": 114,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertTrue",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "Config",
+            "ConfigAggregate",
+            "ConfigAggregate(repository).snapshot",
+            "_ConfigRepository",
+            "self.assertFalse",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: saved options are not reset by loading other fields. ConfigAggregate copies both new fields (a missing copy would silently reset a saved option) and reports their own changed keys.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -42488,7 +42806,7 @@
       "duplicate_method_names": []
     },
     "tests/domain/entities/test_config.py": {
-      "sha256": "75e2098a9db3856cffa9dbbffde116ed371f6cebedcb1b831ce276c12a6bdda6",
+      "sha256": "f47f1a847ac3310b1572f7f4afbcc600c163e97a1838e6e7e3d0165bab7e7a2f",
       "methods": [
         {
           "name": "ConfigValidationTests.test_config_rejects_truthy_string_for_boolean_field",
@@ -42691,6 +43009,67 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Retained: None, scalar string and wrong element type exercise malformed toolbar preferences independently.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionTests.test_both_options_default_off_and_legacy_payloads_keep_them_off",
+          "line": 180,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertIs"
+          ],
+          "calls": [
+            "Config",
+            "Config.from_dict",
+            "config.to_dict",
+            "getattr",
+            "self.assertIs",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: both options default off and legacy payloads keep them off. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionTests.test_each_option_round_trips_independently",
+          "line": 189,
+          "assertions": [
+            "self.assertIs",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "calls": [
+            "Config",
+            "Config.from_dict",
+            "changed.to_dict",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: each option round trips independently. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionTests.test_non_boolean_values_are_rejected_with_the_key_name",
+          "line": 200,
+          "assertions": [
+            "self.assertRaisesRegex"
+          ],
+          "calls": [
+            "Config.from_dict",
+            "self.assertRaisesRegex",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: non boolean values are rejected with the key name. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -44183,11 +44562,11 @@
       "duplicate_method_names": []
     },
     "tests/domain/services/test_elevation.py": {
-      "sha256": "5d74f264887e53c7288f2182aed6b4be4b9533d27558a1bac6002a562952fb8d",
+      "sha256": "11516819218a97943b0f19a247323aa9298a6a3f216205cb7bdc83e846514173",
       "methods": [
         {
           "name": "ParseElevationTests.test_last_explicit_marker_wins_and_legacy_marker_means_bottom",
-          "line": 12,
+          "line": 16,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -44204,7 +44583,7 @@
         },
         {
           "name": "ParseElevationTests.test_empty_and_unmarked_names_do_not_invent_an_elevation",
-          "line": 23,
+          "line": 27,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -44224,7 +44603,7 @@
         },
         {
           "name": "ResolveConditionElevationBoundsTests.test_top_area_uses_thickness_and_bottom_linear_uses_height",
-          "line": 31,
+          "line": 35,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -44242,7 +44621,7 @@
         },
         {
           "name": "ResolveConditionElevationBoundsTests.test_mismatched_marker_and_invalid_dimensions_do_not_produce_bounds",
-          "line": 55,
+          "line": 59,
           "assertions": [
             "self.assertIsNone",
             "self.assertIsNone"
@@ -44261,7 +44640,7 @@
         },
         {
           "name": "FormatStructuralElevationTests.test_signed_subfoot_values_keep_explicit_zero_feet",
-          "line": 72,
+          "line": 76,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -44273,6 +44652,528 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Retained: exact zero and negative subfoot literal labels protect sign/explicit-feet convention.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_the_documented_example_drops_the_elevation",
+          "line": 85,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the documented example drops the elevation. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_xml_escaped_quotes_are_matched_like_raw_quotes",
+          "line": 89,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: xml escaped quotes are matched like raw quotes. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_names_that_carry_escapes_in_the_base_keep_them",
+          "line": 100,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names that carry escapes in the base keep them. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_names_without_an_elevation_are_returned_unchanged",
+          "line": 104,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names without an elevation are returned unchanged. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_explicit_top_and_bottom_markers_are_dropped",
+          "line": 115,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: explicit top and bottom markers are dropped. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_the_legacy_marker_is_never_stripped_so_ordinary_text_survives",
+          "line": 119,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the legacy marker is never stripped so ordinary text survives. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_an_explicit_elevation_after_legacy_looking_text_still_strips",
+          "line": 134,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: an explicit elevation after legacy looking text still strips. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_feet_inches_variants",
+          "line": 140,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: feet inches variants. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_metric_variants",
+          "line": 157,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: metric variants. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_a_marker_that_is_not_followed_by_an_elevation_is_not_an_elevation",
+          "line": 169,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a marker that is not followed by an elevation is not an elevation. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_marker_text_elsewhere_in_the_name_is_kept",
+          "line": 181,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: marker text elsewhere in the name is kept. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_a_valid_elevation_takes_everything_after_the_marker_with_it",
+          "line": 194,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a valid elevation takes everything after the marker with it. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_only_the_last_elevation_is_dropped",
+          "line": 197,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "parse_elevation",
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: only the last elevation is dropped. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_a_name_that_carries_two_elevations_loses_one_per_call",
+          "line": 208,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a name that carries two elevations loses one per call. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_surrounding_whitespace_does_not_leak_into_the_result",
+          "line": 213,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: surrounding whitespace does not leak into the result. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_empty_blank_and_elevation_only_names_are_returned_unchanged",
+          "line": 216,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: empty blank and elevation only names are returned unchanged. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_the_function_is_idempotent",
+          "line": 221,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.subTest",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the function is idempotent. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripElevationSuffixTests.test_the_condition_object_is_never_touched_by_stripping_its_name",
+          "line": 236,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Condition",
+            "self.assertEqual",
+            "strip_elevation_suffix"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the condition object is never touched by stripping its name. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationNameCollisionTests.test_names_that_only_differ_by_elevation_collide",
+          "line": 247,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "elevation_name_collisions",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names that only differ by elevation collide. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationNameCollisionTests.test_conditions_that_already_share_a_name_are_not_reported",
+          "line": 251,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "elevation_name_collisions",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: conditions that already share a name are not reported. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationNameCollisionTests.test_distinct_names_do_not_collide",
+          "line": 259,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "elevation_name_collisions",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: distinct names do not collide. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationNameCollisionTests.test_empty_input",
+          "line": 264,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "elevation_name_collisions",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: empty input. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationNameCollisionTests.test_the_count_includes_every_condition_even_with_repeated_names",
+          "line": 267,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "elevation_name_collisions",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the count includes every condition even with repeated names. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationNameCollisionTests.test_collisions_keep_first_seen_order_and_count_every_condition",
+          "line": 271,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "elevation_name_collisions",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: collisions keep first seen order and count every condition. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripRawConditionElevationsTests.test_condition_names_lose_their_elevation_and_nothing_else_changes",
+          "line": 296,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_raw_bid_data",
+            "row.get",
+            "self.assertEqual",
+            "strip_raw_condition_elevations"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: condition names lose their elevation and nothing else changes. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripRawConditionElevationsTests.test_the_source_data_is_never_modified",
+          "line": 316,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIsNot",
+            "self.assertIsNot",
+            "self.assertIsNot",
+            "self.assertIsNot"
+          ],
+          "calls": [
+            "_raw_bid_data",
+            "self.assertEqual",
+            "self.assertIsNot",
+            "strip_raw_condition_elevations",
+            "zip"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the source data is never modified. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripRawConditionElevationsTests.test_unrelated_tables_are_shared_not_copied",
+          "line": 330,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertIs"
+          ],
+          "calls": [
+            "_raw_bid_data",
+            "self.assertIs",
+            "strip_raw_condition_elevations"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: unrelated tables are shared not copied. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripRawConditionElevationsTests.test_data_without_a_conditions_table_is_returned_as_an_equal_copy",
+          "line": 340,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIsNot"
+          ],
+          "calls": [
+            "RawBidData",
+            "self.assertEqual",
+            "self.assertIsNot",
+            "strip_raw_condition_elevations"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: data without a conditions table is returned as an equal copy. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripRawConditionElevationsTests.test_stripping_twice_gives_the_same_names",
+          "line": 346,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_raw_bid_data",
+            "self.assertEqual",
+            "strip_raw_condition_elevations"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: stripping twice gives the same names. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "StripRawConditionElevationsTests.test_collisions_can_be_computed_from_the_untouched_rows",
+          "line": 351,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_raw_bid_data",
+            "elevation_name_collisions",
+            "row.get",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: collisions can be computed from the untouched rows. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -44404,6 +45305,88 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Retained: real early-return path, explicit None and no unnecessary dependency work; subject itself is not patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
+    "tests/domain/services/test_elevation_text.py": {
+      "sha256": "1144d588bd0db0ccc432fc25408f34033247d9c18309de6471ea9e75caf8e77c",
+      "methods": [
+        {
+          "name": "ElevationTextTests.test_the_six_published_patterns_drive_the_validity_check",
+          "line": 10,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "is_elevation_text",
+            "len",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the six published patterns drive the validity check. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationTextTests.test_feet_alone_is_not_valid_for_derivation_but_is_strippable",
+          "line": 16,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "is_elevation_text",
+            "is_strippable_elevation_text",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: feet alone is not valid for derivation but is strippable. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationTextTests.test_everything_valid_is_strippable",
+          "line": 22,
+          "assertions": [
+            "self.assertTrue"
+          ],
+          "calls": [
+            "is_strippable_elevation_text",
+            "self.assertTrue",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: everything valid is strippable. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationTextTests.test_text_that_is_not_an_elevation_is_neither",
+          "line": 27,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "is_elevation_text",
+            "is_strippable_elevation_text",
+            "self.assertFalse",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: text that is not an elevation is neither. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -71991,6 +72974,133 @@
       ],
       "duplicate_method_names": []
     },
+    "tests/infrastructure/parsers/test_position_parser.py": {
+      "sha256": "91e5a20f8dc42e4057f7d357591160b9af0e90257cdd396099003a25c4fa305f",
+      "methods": [
+        {
+          "name": "ElevationTextValidityCharacterizationTests.test_every_accepted_elevation_text_shape",
+          "line": 10,
+          "assertions": [
+            "self.assertTrue"
+          ],
+          "calls": [
+            "position_parser._is_valid_elevation_text",
+            "self.assertTrue",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: every accepted elevation text shape. Characterization gate written before moving the regexes: accepted and rejected elevation text shapes of position_parser._is_valid_elevation_text.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ElevationTextValidityCharacterizationTests.test_every_rejected_elevation_text_shape",
+          "line": 33,
+          "assertions": [
+            "self.assertFalse"
+          ],
+          "calls": [
+            "position_parser._is_valid_elevation_text",
+            "self.assertFalse",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: every rejected elevation text shape. Characterization gate written before moving the regexes: accepted and rejected elevation text shapes of position_parser._is_valid_elevation_text.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExtractZValueCharacterizationTests.test_top_and_bottom_imperial_values",
+          "line": 45,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "extract_z_value_from_name",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: top and bottom imperial values. Characterization of extract_z_value_from_name (top/bottom, imperial, metric, invalid) before and after the regex move.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExtractZValueCharacterizationTests.test_metric_values_are_converted_to_inches",
+          "line": 50,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "extract_z_value_from_name",
+            "self.assertAlmostEqual",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: metric values are converted to inches. Characterization of extract_z_value_from_name (top/bottom, imperial, metric, invalid) before and after the regex move.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExtractZValueCharacterizationTests.test_names_without_a_valid_elevation_have_none",
+          "line": 55,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "extract_z_value_from_name",
+            "self.assertEqual",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names without a valid elevation have none. Characterization of extract_z_value_from_name (top/bottom, imperial, metric, invalid) before and after the regex move.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConvertElevationInNameCharacterizationTests.test_imperial_to_metric_and_back",
+          "line": 62,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "convert_elevation_in_name",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: imperial to metric and back. Characterization of convert_elevation_in_name (imperial/metric switch) before and after the regex move.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConvertElevationInNameCharacterizationTests.test_names_without_a_full_elevation_are_left_alone",
+          "line": 70,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "convert_elevation_in_name",
+            "self.assertEqual",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names without a full elevation are left alone. Characterization of convert_elevation_in_name (imperial/metric switch) before and after the regex move.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
     "tests/infrastructure/persistence/repositories/test_file_project_repository.py": {
       "sha256": "67b2627c2298f8ba9a547b9c8b43f88690705759726b291bfb5875c857109085",
       "methods": [
@@ -98976,6 +100086,153 @@
       ],
       "duplicate_method_names": []
     },
+    "tests/integration/import_export/test_condition_elevation_export.py": {
+      "sha256": "49649be5a3dc4061209784637d87c31cd763c655ce56e417922c0d8e5cdb35cc",
+      "methods": [
+        {
+          "name": "ConditionElevationExportEndToEndTests.test_ost_export_keeps_every_name_exactly_when_the_option_is_off",
+          "line": 120,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_names",
+            "list",
+            "self.assertEqual",
+            "self.export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: ost export keeps every name exactly when the option is off. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportEndToEndTests.test_ost_export_writes_names_without_elevations_when_on",
+          "line": 124,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_names",
+            "list",
+            "self.assertEqual",
+            "self.export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: ost export writes names without elevations when on. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportEndToEndTests.test_the_csv_option_does_not_change_the_ost_export",
+          "line": 131,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_names",
+            "list",
+            "self.assertEqual",
+            "self.export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the csv option does not change the ost export. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportEndToEndTests.test_osp_package_carries_the_stripped_names_inside_its_ost",
+          "line": 137,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_names",
+            "len",
+            "list",
+            "member.write_bytes",
+            "self.assertEqual",
+            "self.export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: osp package carries the stripped names inside its ost. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportEndToEndTests.test_osp_package_keeps_names_when_the_option_is_off",
+          "line": 149,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_names",
+            "list",
+            "member.write_bytes",
+            "self.assertEqual",
+            "self.export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: osp package keeps names when the option is off. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportEndToEndTests.test_source_rows_are_unchanged_after_every_export",
+          "line": 156,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "list",
+            "self.assertEqual",
+            "self.export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: source rows are unchanged after every export. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportEndToEndTests.test_colliding_conditions_are_both_exported_with_their_own_uids",
+          "line": 168,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "ET.parse",
+            "ET.parse(destination).getroot",
+            "c.get",
+            "len",
+            "root.findall",
+            "self.assertEqual",
+            "self.export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: colliding conditions are both exported with their own uids. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
     "tests/integration/import_export/test_master_data_reconciliation.py": {
       "sha256": "7c89a5bae3791442a7f25e250fb0f6a25473e24b526a93e1e58a729139d2797a",
       "methods": [
@@ -111123,6 +112380,180 @@
       ],
       "duplicate_method_names": []
     },
+    "tests/integration/preferences/test_condition_elevation_export_options.py": {
+      "sha256": "8cdb4cd7a2031cb1512fb4f796bfe867bc7eba1bd5b1c4d1baa3e1d6e512c1b4",
+      "methods": [
+        {
+          "name": "ConditionElevationExportOptionPersistenceTests.test_both_options_persist_through_the_json_repository_independently",
+          "line": 32,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "ConfigAggregate",
+            "JsonConfigRepository",
+            "JsonConfigRepository(config_path=path).load",
+            "Path",
+            "aggregate.snapshot",
+            "enumerate",
+            "getattr",
+            "json.loads",
+            "path.read_text",
+            "repository.save",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.subTest",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: both options persist through the json repository independently. Real JsonConfigRepository and ConfigAggregate: independent round trip, JSON on disk, files from before the options, invalid types.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionPersistenceTests.test_a_config_file_from_before_the_options_loads_with_both_off",
+          "line": 53,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "ConfigAggregate",
+            "ConfigAggregate(JsonConfigRepository(config_path=path)).snapshot",
+            "JsonConfigRepository",
+            "Path",
+            "getattr",
+            "json.dumps",
+            "path.write_text",
+            "self.assertFalse",
+            "self.assertIs",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a config file from before the options loads with both off. Real JsonConfigRepository and ConfigAggregate: independent round trip, JSON on disk, files from before the options, invalid types.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionPersistenceTests.test_a_non_boolean_value_resets_the_file_to_defaults_with_both_off",
+          "line": 62,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "ConfigAggregate",
+            "ConfigAggregate(JsonConfigRepository(config_path=path)).snapshot",
+            "JsonConfigRepository",
+            "Path",
+            "json.dumps",
+            "path.write_text",
+            "self.assertEqual",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a non boolean value resets the file to defaults with both off. Real JsonConfigRepository and ConfigAggregate: independent round trip, JSON on disk, files from before the options, invalid types.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogWorkflowTests.test_apply_after_a_confirmed_warning_saves_publishes_and_survives_reopen",
+          "line": 101,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertEqual",
+            "confirm.assert_not_called",
+            "self.assertTrue",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "_app_config_event",
+            "_apply_button",
+            "_apply_button(dialog).click",
+            "confirm.assert_not_called",
+            "dialog._ost_osp_drop_elevation_check.click",
+            "len",
+            "patch",
+            "reopened._csv_drop_elevation_check.isChecked",
+            "reopened._ost_osp_drop_elevation_check.isChecked",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertIs",
+            "self.assertTrue",
+            "self.open_dialog"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: apply after a confirmed warning saves publishes and survives reopen. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogWorkflowTests.test_a_cancelled_warning_saves_nothing_and_publishes_nothing",
+          "line": 116,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "calls": [
+            "dialog._csv_drop_elevation_check.click",
+            "dialog.accept",
+            "getattr",
+            "patch",
+            "self.aggregate.snapshot",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.open_dialog"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a cancelled warning saves nothing and publishes nothing. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogWorkflowTests.test_turning_an_option_back_off_persists_without_a_warning",
+          "line": 125,
+          "assertions": [
+            "confirm.assert_not_called",
+            "self.assertIs",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_app_config_event",
+            "_apply_button",
+            "_apply_button(dialog).click",
+            "confirm.assert_not_called",
+            "dialog._csv_drop_elevation_check.click",
+            "patch",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.event_bus.events.clear",
+            "self.open_dialog",
+            "self.repository.saved.clear",
+            "self.service.update_app_options"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: turning an option back off persists without a warning. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
     "tests/integration/preferences/test_elevation_callouts.py": {
       "sha256": "864ed0411097d2a9b3206f4535d06e333a9f44a857afc5d8d27f3fca21b943d2",
       "methods": [
@@ -119122,11 +120553,11 @@
       "duplicate_method_names": []
     },
     "tests/integration/surfaces/test_page_scale_viewport.py": {
-      "sha256": "e08154912bc7d1052c3429b101a755ddd19bdad9042ab38e40bda04f975bb738",
+      "sha256": "5259015cbf4a9ac229f1058b645c9e35c61c30752a6e2a7841ba5748089d8e5c",
       "methods": [
         {
           "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_scrolled_main_view_does_not_jump_back_after_a_scale_change",
-          "line": 116,
+          "line": 118,
           "assertions": [
             "self.assertGreater",
             "self.assert_same_viewport"
@@ -119149,7 +120580,7 @@
         },
         {
           "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_main_view_keeps_its_viewport_while_a_detached_window_shows_a_section",
-          "line": 132,
+          "line": 134,
           "assertions": [
             "self.assertNotAlmostEqual",
             "self.assert_same_viewport",
@@ -119172,7 +120603,7 @@
         },
         {
           "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_viewports_are_kept_when_the_detached_window_refreshes_first",
-          "line": 145,
+          "line": 147,
           "assertions": [
             "self.assert_same_viewport",
             "self.assert_same_viewport"
@@ -119193,7 +120624,7 @@
         },
         {
           "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_scale_change_started_from_the_detached_window_moves_neither_view",
-          "line": 155,
+          "line": 157,
           "assertions": [
             "self.assertEqual",
             "self.assert_same_viewport",
@@ -119218,7 +120649,7 @@
         },
         {
           "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_repeated_scale_changes_keep_both_viewports",
-          "line": 173,
+          "line": 175,
           "assertions": [
             "self.assert_same_viewport",
             "self.assert_same_viewport"
@@ -119239,7 +120670,7 @@
         },
         {
           "name": "MainViewKeepsItsViewportOnScaleChangeTests.test_main_view_ignores_state_written_to_the_shared_page_during_a_reload",
-          "line": 184,
+          "line": 186,
           "assertions": [
             "self.assert_same_viewport"
           ],
@@ -119261,7 +120692,7 @@
         },
         {
           "name": "AppearanceChangesKeepTheViewportTests.test_invert_keeps_the_viewport",
-          "line": 220,
+          "line": 222,
           "assertions": [
             "self.assert_change_keeps_the_viewport"
           ],
@@ -119276,7 +120707,7 @@
         },
         {
           "name": "AppearanceChangesKeepTheViewportTests.test_bitonal_keeps_the_viewport",
-          "line": 223,
+          "line": 225,
           "assertions": [
             "self.assert_change_keeps_the_viewport"
           ],
@@ -119291,7 +120722,7 @@
         },
         {
           "name": "AppearanceChangesKeepTheViewportTests.test_show_mode_keeps_the_viewport",
-          "line": 226,
+          "line": 228,
           "assertions": [
             "self.assert_change_keeps_the_viewport"
           ],
@@ -119306,7 +120737,7 @@
         },
         {
           "name": "AppearanceChangesKeepTheViewportTests.test_overlay_rect_keeps_the_viewport",
-          "line": 229,
+          "line": 231,
           "assertions": [
             "self.assert_change_keeps_the_viewport"
           ],
@@ -119321,7 +120752,7 @@
         },
         {
           "name": "AppearanceChangesKeepTheViewportTests.test_overlay_rotation_keeps_the_viewport",
-          "line": 232,
+          "line": 234,
           "assertions": [
             "self.assert_change_keeps_the_viewport"
           ],
@@ -119336,7 +120767,7 @@
         },
         {
           "name": "AppearanceChangesKeepTheViewportTests.test_page_switch_still_restores_the_stored_page_state",
-          "line": 235,
+          "line": 237,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -119358,7 +120789,7 @@
         },
         {
           "name": "AppearanceChangesKeepTheViewportTests.test_geometry_changing_reloads_still_use_the_stored_page_state",
-          "line": 248,
+          "line": 250,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -119381,7 +120812,7 @@
         },
         {
           "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_detached_zoom_does_not_change_the_page_state_the_main_view_restores",
-          "line": 268,
+          "line": 270,
           "assertions": [
             "self.assertEqual"
           ],
@@ -119400,7 +120831,7 @@
         },
         {
           "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_main_view_returns_to_its_own_camera_after_a_page_switch",
-          "line": 278,
+          "line": 280,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -119423,7 +120854,7 @@
         },
         {
           "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_detached_window_keeps_its_camera_across_a_geometry_changing_refresh",
-          "line": 299,
+          "line": 301,
           "assertions": [
             "self.assertEqual",
             "self.assert_same_viewport"
@@ -119445,7 +120876,7 @@
         },
         {
           "name": "DetachedWindowDoesNotWriteIntoTheSharedPageTests.test_main_view_state_is_still_stored_on_the_page_when_the_main_view_moves",
-          "line": 311,
+          "line": 313,
           "assertions": [
             "self.assertEqual",
             "self.assertGreater"
@@ -119466,7 +120897,7 @@
         },
         {
           "name": "ViewStateOwnershipContractTests.test_only_appearance_and_calibration_changes_keep_the_view",
-          "line": 327,
+          "line": 329,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -119533,7 +120964,7 @@
         },
         {
           "name": "ViewStateOwnershipContractTests.test_an_owning_view_stores_the_state_it_publishes",
-          "line": 386,
+          "line": 390,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -119553,7 +120984,7 @@
         },
         {
           "name": "ViewStateOwnershipContractTests.test_state_handed_to_the_next_load_wins_once_and_is_then_consumed",
-          "line": 396,
+          "line": 402,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertIsNone",
@@ -119578,7 +121009,7 @@
         },
         {
           "name": "ViewStateOwnershipContractTests.test_a_non_positive_state_handed_to_the_next_load_is_ignored",
-          "line": 413,
+          "line": 419,
           "assertions": [
             "self.assertIsNone",
             "self.assertIsNone"
@@ -119598,7 +121029,7 @@
         },
         {
           "name": "ViewStateOwnershipContractTests.test_the_preserved_state_is_dropped_by_the_next_load_that_does_not_keep_it",
-          "line": 422,
+          "line": 428,
           "assertions": [
             "self.assertIsNone",
             "self.assertIsNone"
@@ -119619,7 +121050,7 @@
         },
         {
           "name": "LoadCycleViewStateTests.test_preserving_captures_the_live_state_of_this_view",
-          "line": 441,
+          "line": 447,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -119638,7 +121069,7 @@
         },
         {
           "name": "LoadCycleViewStateTests.test_state_handed_in_beats_the_live_state_when_preserving",
-          "line": 448,
+          "line": 454,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone"
@@ -119658,7 +121089,7 @@
         },
         {
           "name": "LoadCycleViewStateTests.test_state_handed_in_applies_without_preserving",
-          "line": 456,
+          "line": 462,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -119676,7 +121107,7 @@
         },
         {
           "name": "LoadCycleViewStateTests.test_a_non_positive_state_handed_in_is_discarded_and_the_page_state_is_used",
-          "line": 463,
+          "line": 469,
           "assertions": [
             "self.assertIsNone",
             "self.assertIsNone",
@@ -119698,7 +121129,7 @@
         },
         {
           "name": "LoadCycleViewStateTests.test_a_snapshot_left_by_an_earlier_load_never_reaches_the_next_one",
-          "line": 475,
+          "line": 481,
           "assertions": [
             "self.assertIsNone"
           ],
@@ -119714,7 +121145,7 @@
         },
         {
           "name": "LoadCycleViewStateTests.test_an_unreadable_live_state_falls_back_to_the_stored_page_state",
-          "line": 480,
+          "line": 486,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual",
@@ -119735,7 +121166,7 @@
         },
         {
           "name": "OtherPageUpdatePathsKeepTheViewportTests.test_a_remote_sql_page_update_keeps_the_viewport_and_the_detached_camera",
-          "line": 493,
+          "line": 499,
           "assertions": [
             "self.assertIsNot",
             "self.assert_same_viewport",
@@ -119764,7 +121195,7 @@
         },
         {
           "name": "OtherPageUpdatePathsKeepTheViewportTests.test_a_reloaded_page_object_with_stale_stored_state_keeps_the_viewport",
-          "line": 523,
+          "line": 529,
           "assertions": [
             "self.assert_same_viewport"
           ],
@@ -119784,7 +121215,7 @@
         },
         {
           "name": "OtherPageUpdatePathsKeepTheViewportTests.test_zoom_and_fit_after_a_scale_change_work_from_the_kept_viewport",
-          "line": 534,
+          "line": 540,
           "assertions": [
             "self.assertGreater",
             "self.assertAlmostEqual",
@@ -119812,7 +121243,7 @@
         },
         {
           "name": "OtherPageUpdatePathsKeepTheViewportTests.test_renaming_a_page_does_not_touch_either_viewport",
-          "line": 547,
+          "line": 553,
           "assertions": [
             "self.assert_same_viewport",
             "self.assert_same_viewport"
@@ -240702,11 +242133,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/dialogs/options/test_dialog.py": {
-      "sha256": "5316d98c1e56ae173e29a18252a4a990d148849fb2cf7c14fb045618d7e7d142",
+      "sha256": "cf38241f6fd6d68722c1734f32d4354f870b467505e91e2474f5f90dce528f89",
       "methods": [
         {
           "name": "DialogPreferenceTests.test_options_group_boxes_use_explicit_density_spacing",
-          "line": 80,
+          "line": 86,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -240747,13 +242178,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "STRENGTHENED. all()-over-possibly-empty comprehensions replaced by explicit count checks (2 lower columns, 2 export groups) and exact spacing lists.",
+          "review_note": "Export tab now has three group boxes (PDF Annotation Captions, Elevation Callouts, Condition Names), all with compact spacing; the Options tab groups are unchanged.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_loads_persisted_preferences",
-          "line": 120,
+          "line": 126,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -240856,7 +242287,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_crosshair_color_preview_is_square_and_not_stylesheet_colored",
-          "line": 197,
+          "line": 203,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -240887,7 +242318,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_does_not_show_auto_dimension_lines_preference",
-          "line": 208,
+          "line": 214,
           "assertions": [
             "self.assertIn",
             "self.assertNotIn",
@@ -240910,7 +242341,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_crosshair_color_picker_accept_updates_pending_color_only",
-          "line": 218,
+          "line": 224,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -240950,7 +242381,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_crosshair_color_picker_cancel_keeps_previous_color",
-          "line": 271,
+          "line": 277,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -240980,7 +242411,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_color_picker_stops_when_button_is_destroyed",
-          "line": 313,
+          "line": 319,
           "assertions": [
             "self.assertFalse"
           ],
@@ -241004,7 +242435,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_repeated_options_color_picker_cancellation_releases_dialogs",
-          "line": 334,
+          "line": 340,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -241031,7 +242462,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_removes_inactive_unsupported_options",
-          "line": 360,
+          "line": 366,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -241057,7 +242488,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_apply_button_starts_disabled",
-          "line": 372,
+          "line": 378,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertFalse"
@@ -241079,7 +242510,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_contains_reset_all_settings_button",
-          "line": 379,
+          "line": 385,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertEqual"
@@ -241101,7 +242532,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_enables_apply_for_implemented_changes",
-          "line": 386,
+          "line": 392,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse"
@@ -241124,7 +242555,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_apply_success_commits_config_and_clears_pending",
-          "line": 395,
+          "line": 401,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -241155,7 +242586,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_applied_config_becomes_new_pending_baseline",
-          "line": 418,
+          "line": 424,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue"
@@ -241179,7 +242610,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_ok_without_changes_accepts_without_callback",
-          "line": 428,
+          "line": 434,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -241199,7 +242630,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_all_settings_restores_defaults",
-          "line": 435,
+          "line": 441,
           "assertions": [
             "self.assertTrue",
             "reset_callback.assert_called_once",
@@ -241259,7 +242690,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_all_settings_loads_callback_result",
-          "line": 485,
+          "line": 491,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -241299,7 +242730,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_all_settings_no_keeps_pending_changes",
-          "line": 510,
+          "line": 516,
           "assertions": [
             "self.assertTrue",
             "confirm.assert_called_once",
@@ -241333,7 +242764,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_apply_failure_keeps_pending_changes",
-          "line": 528,
+          "line": 534,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -241366,7 +242797,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_ok_failure_does_not_accept",
-          "line": 554,
+          "line": 560,
           "assertions": [
             "warning.assert_called_once_with",
             "self.assertNotEqual",
@@ -241399,7 +242830,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_uses_x_only_window_chrome",
-          "line": 579,
+          "line": 585,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -241428,7 +242859,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_contains_options_export_and_mcp_setup_tabs",
-          "line": 589,
+          "line": 595,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -241453,7 +242884,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_tab_defaults_off_with_every_caption_unselected_and_disabled",
-          "line": 599,
+          "line": 605,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -241481,7 +242912,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_tab_callout_defaults_preserve_html_and_leave_pdf_disabled",
-          "line": 611,
+          "line": 617,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -241532,7 +242963,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_callout_options_ok_and_reset_use_existing_lifecycle",
-          "line": 640,
+          "line": 646,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -241573,7 +243004,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_callout_content_preserved_while_both_exports_disabled",
-          "line": 670,
+          "line": 676,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -241603,7 +243034,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_caption_selections_survive_master_disable_and_reenable",
-          "line": 683,
+          "line": 689,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -241639,7 +243070,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_mcp_setup_tab_contains_existing_setup_controls",
-          "line": 703,
+          "line": 709,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -241679,7 +243110,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_mcp_setup_tab_copy_action_preserves_options_apply_state",
-          "line": 730,
+          "line": 736,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -241716,7 +243147,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_result_path_runs_lifecycle_cleanup",
-          "line": 754,
+          "line": 760,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -241741,7 +243172,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_accept_and_close_paths_run_lifecycle_cleanup",
-          "line": 771,
+          "line": 777,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -241771,7 +243202,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_failure_keeps_current_settings",
-          "line": 789,
+          "line": 795,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -241804,7 +243235,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_disabled_controls_do_not_enable_apply",
-          "line": 816,
+          "line": 822,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -241837,7 +243268,7 @@
         },
         {
           "name": "OptionsDialogFontColorTests.test_options_tab_order_rows_and_stable_ids",
-          "line": 853,
+          "line": 859,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -241873,7 +243304,7 @@
         },
         {
           "name": "OptionsDialogFontColorTests.test_options_font_color_values_are_staged_through_apply",
-          "line": 894,
+          "line": 900,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -241916,7 +243347,7 @@
         },
         {
           "name": "OptionsDialogFontColorTests.test_options_font_values_are_staged_through_apply",
-          "line": 950,
+          "line": 956,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -241949,6 +243380,412 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "NEW. Real FontDialog driven via patched exec (size 48 + OK): font staged in widget config, not applied until Apply, only the Text font differs from defaults.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_both_checkboxes_live_in_the_export_tab_and_default_off",
+          "line": 1014,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertIn",
+            "self.assertFalse",
+            "self.assertNotEqual",
+            "self.assertTrue",
+            "self.assertFalse",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "_preferences_support__apply_button",
+            "_preferences_support__apply_button(dialog).isEnabled",
+            "check.isChecked",
+            "check.isEnabled",
+            "dialog._csv_drop_elevation_check.text",
+            "dialog._ost_osp_drop_elevation_check.text",
+            "export_tab.findChildren",
+            "export_tab.isAncestorOf",
+            "group.title",
+            "self.assertFalse",
+            "self.assertIn",
+            "self.assertIs",
+            "self.assertNotEqual",
+            "self.assertTrue",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: both checkboxes live in the export tab and default off. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_the_option_labels_name_their_export",
+          "line": 1036,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn"
+          ],
+          "calls": [
+            "dialog._csv_drop_elevation_check.text",
+            "dialog._ost_osp_drop_elevation_check.text",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the option labels name their export. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_enabling_the_ost_osp_option_warns_and_confirming_keeps_it",
+          "line": 1049,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "_preferences_support__apply_button",
+            "_preferences_support__apply_button(dialog).isEnabled",
+            "dialog._csv_drop_elevation_check.isChecked",
+            "dialog._ost_osp_drop_elevation_check.click",
+            "dialog._ost_osp_drop_elevation_check.isChecked",
+            "dialog.accept",
+            "len",
+            "mock.patch",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertIs",
+            "self.assertTrue",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: enabling the ost osp option warns and confirming keeps it. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_cancelling_the_ost_osp_warning_leaves_the_option_off",
+          "line": 1066,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_preferences_support__apply_button",
+            "_preferences_support__apply_button(dialog).isEnabled",
+            "dialog._ost_osp_drop_elevation_check.click",
+            "dialog._ost_osp_drop_elevation_check.isChecked",
+            "dialog.accept",
+            "mock.patch",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: cancelling the ost osp warning leaves the option off. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_enabling_the_csv_option_warns_and_confirm_or_cancel_decide",
+          "line": 1076,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.assertTrue",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "dialog._csv_drop_elevation_check.click",
+            "dialog._csv_drop_elevation_check.isChecked",
+            "dialog.accept",
+            "mock.patch",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: enabling the csv option warns and confirm or cancel decide. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_the_two_warnings_explain_their_own_option_and_the_unchanged_exports",
+          "line": 1090,
+          "assertions": [
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn"
+          ],
+          "calls": [
+            "self.assertIn"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the two warnings explain their own option and the unchanged exports. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_loading_a_saved_enabled_option_does_not_warn",
+          "line": 1103,
+          "assertions": [
+            "confirm.assert_not_called",
+            "self.assertTrue",
+            "self.assertTrue",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "Config",
+            "_preferences_support__apply_button",
+            "_preferences_support__apply_button(dialog).isEnabled",
+            "confirm.assert_not_called",
+            "dialog._csv_drop_elevation_check.isChecked",
+            "dialog._ost_osp_drop_elevation_check.isChecked",
+            "mock.patch",
+            "self.app.processEvents",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: loading a saved enabled option does not warn. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_disabling_an_enabled_option_does_not_warn",
+          "line": 1117,
+          "assertions": [
+            "confirm.assert_not_called",
+            "self.assertFalse",
+            "self.assertFalse",
+            "self.assertFalse",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "Config",
+            "confirm.assert_not_called",
+            "dialog._csv_drop_elevation_check.click",
+            "dialog._csv_drop_elevation_check.isChecked",
+            "dialog._ost_osp_drop_elevation_check.click",
+            "dialog._ost_osp_drop_elevation_check.isChecked",
+            "dialog.accept",
+            "mock.patch",
+            "self.assertFalse",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: disabling an enabled option does not warn. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_programmatic_changes_never_warn",
+          "line": 1134,
+          "assertions": [
+            "confirm.assert_not_called"
+          ],
+          "calls": [
+            "confirm.assert_not_called",
+            "dialog._csv_drop_elevation_check.setChecked",
+            "dialog._ost_osp_drop_elevation_check.setChecked",
+            "mock.patch",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: programmatic changes never warn. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_reset_all_settings_turns_both_off_without_a_second_warning",
+          "line": 1141,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertFalse"
+          ],
+          "calls": [
+            "Config",
+            "_preferences_support__reset_all_button",
+            "_preferences_support__reset_all_button(dialog).click",
+            "dialog._csv_drop_elevation_check.isChecked",
+            "dialog._ost_osp_drop_elevation_check.isChecked",
+            "mock.patch",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: reset all settings turns both off without a second warning. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_cancelling_the_dialog_after_confirming_discards_the_option",
+          "line": 1156,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "dialog._ost_osp_drop_elevation_check.click",
+            "dialog.reject",
+            "mock.patch",
+            "self.assertEqual",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: cancelling the dialog after confirming discards the option. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_the_two_options_change_independently_in_the_collected_config",
+          "line": 1163,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "dialog._collect_widget_config",
+            "dialog._csv_drop_elevation_check.click",
+            "dialog._ost_osp_drop_elevation_check.click",
+            "mock.patch",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.make"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the two options change independently in the collected config. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_keyboard_activation_warns_exactly_like_a_click",
+          "line": 1180,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertEqual",
+            "self.assertTrue",
+            "confirm.assert_not_called",
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "check.isChecked",
+            "confirm.assert_not_called",
+            "dialog.show",
+            "getattr",
+            "mock.patch",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.make",
+            "self.press_space",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: keyboard activation warns exactly like a click. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_a_cancelled_warning_leaves_no_pending_changes_for_either_option",
+          "line": 1204,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_preferences_support__apply_button",
+            "_preferences_support__apply_button(dialog).isEnabled",
+            "dialog._collect_widget_config",
+            "dialog._has_pending_changes",
+            "dialog.accept",
+            "getattr",
+            "getattr(dialog, name).click",
+            "mock.patch",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.make",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a cancelled warning leaves no pending changes for either option. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationExportOptionDialogTests.test_the_checkboxes_are_labelled_focusable_and_follow_the_callout_controls",
+          "line": 1216,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertLess",
+            "self.assertTrue",
+            "self.assertNotEqual",
+            "self.assertEqual",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "check.accessibleName",
+            "check.focusPolicy",
+            "check.text",
+            "check.text().startswith",
+            "export_tab.findChildren",
+            "order.index",
+            "self.assertEqual",
+            "self.assertLess",
+            "self.assertNotEqual",
+            "self.assertTrue",
+            "self.make",
+            "widget.focusPolicy"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the checkboxes are labelled focusable and follow the callout controls. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -258101,7 +259938,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/handlers/test_export_handler.py": {
-      "sha256": "d8a5bb9716371275be09aaf4fe71ef1c09ada9a22a76ba8f34cbdbf2c7b07fc9",
+      "sha256": "db1d2ce7c29e2b160d18bab3a6d7bbb58954f0751ea855206f8cd379559f7603",
       "methods": [
         {
           "name": "ExportHandlerPdfFilenameTests.test_bid_export_stops_after_progress_parent_is_destroyed",
@@ -259124,6 +260961,386 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "New: failed export -> exact 'Error creating Summary CSV export' critical; cancelled dialog does not export.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_option_off_passes_the_exact_raw_data_through_for_ost_and_osp",
+          "line": 1885,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "len",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.run_export",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: option off passes the exact raw data through for ost and osp. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_option_on_exports_stripped_names_for_ost_and_osp",
+          "line": 1898,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "self.assertEqual",
+            "self.names",
+            "self.run_export",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: option on exports stripped names for ost and osp. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_the_raw_data_read_from_the_database_is_never_modified",
+          "line": 1911,
+          "assertions": [
+            "self.assertIsNot",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "self.assertEqual",
+            "self.assertIsNot",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the raw data read from the database is never modified. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_the_csv_option_does_not_change_ost_or_osp_exports",
+          "line": 1920,
+          "assertions": [
+            "self.assertIs"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "self.assertIs",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the csv option does not change ost or osp exports. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_access_and_sql_locators_produce_identical_exports",
+          "line": 1926,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "self.assertEqual",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: access and sql locators produce identical exports. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_colliding_names_stay_separate_and_are_reported_in_the_success_note",
+          "line": 1940,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.assertIn",
+            "self.assertIn"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "len",
+            "message.startswith",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertTrue",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: colliding names stay separate and are reported in the success note. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_no_note_is_added_without_collisions_or_with_the_option_off",
+          "line": 1951,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "self.assertEqual",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: no note is added without collisions or with the option off. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_the_collision_note_is_capped_at_three_names_plus_a_count",
+          "line": 1972,
+          "assertions": [
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertNotIn"
+          ],
+          "calls": [
+            "Config",
+            "_raw_with",
+            "enumerate",
+            "rows.append",
+            "self.assertIn",
+            "self.assertNotIn",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the collision note is capped at three names plus a count. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_names_with_newlines_tabs_and_quotes_keep_the_note_on_one_line",
+          "line": 1989,
+          "assertions": [
+            "self.assertIn",
+            "self.assertNotIn",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIn"
+          ],
+          "calls": [
+            "Config",
+            "_raw_with",
+            "message.split",
+            "note.count",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertNotIn",
+            "self.names",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names with newlines tabs and quotes keep the note on one line. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_three_way_collision_counts_every_condition_once",
+          "line": 2012,
+          "assertions": [
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertNotIn"
+          ],
+          "calls": [
+            "Config",
+            "_raw_with",
+            "self.assertIn",
+            "self.assertNotIn",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: three way collision counts every condition once. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_a_collision_note_never_turns_a_successful_export_into_a_failure",
+          "line": 2029,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIn"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "len",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a collision note never turns a successful export into a failure. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_condition_rows_without_a_name_do_not_break_the_export",
+          "line": 2039,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIn"
+          ],
+          "calls": [
+            "Config",
+            "_condition_rows",
+            "_raw_with",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.names",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: condition rows without a name do not break the export. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationOstOspExportTests.test_a_failed_export_reports_the_failure_without_a_collision_note",
+          "line": 2048,
+          "assertions": [
+            "info.assert_not_called",
+            "self.assertTrue",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "BidRef",
+            "Config",
+            "ExportResultDto",
+            "SimpleNamespace",
+            "_condition_rows",
+            "_make_export_handler",
+            "_raw_with",
+            "all",
+            "handler.export_as_ost",
+            "info.assert_not_called",
+            "patch.object",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a failed export reports the failure without a collision note. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationSummaryCsvHandlerTests.test_the_option_state_is_passed_to_the_service",
+          "line": 2118,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "calls": [
+            "Config",
+            "ExportResultDto",
+            "len",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.run_export",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the option state is passed to the service. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationSummaryCsvHandlerTests.test_the_ost_option_does_not_reach_the_csv_service",
+          "line": 2129,
+          "assertions": [
+            "self.assertIs"
+          ],
+          "calls": [
+            "Config",
+            "ExportResultDto",
+            "self.assertIs",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the ost option does not reach the csv service. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationSummaryCsvHandlerTests.test_collisions_from_the_service_are_added_to_the_success_message",
+          "line": 2136,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn"
+          ],
+          "calls": [
+            "Config",
+            "ExportResultDto",
+            "message.startswith",
+            "self.assertIn",
+            "self.assertTrue",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: collisions from the service are added to the success message. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionElevationSummaryCsvHandlerTests.test_the_message_is_unchanged_without_collisions",
+          "line": 2152,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Config",
+            "ExportResultDto",
+            "self.assertEqual",
+            "self.run_export"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the message is unchanged without collisions. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -337245,7 +339462,7 @@
     }
   },
   "discovery": {
-    "count": 12682,
+    "count": 12786,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 ExportProgressCallback = Callable[[int, int, str], None]
 
@@ -28,6 +28,7 @@ class ExportResultDto:
     format_name: str = ""
     error_message: Optional[str] = None
     error_code: Optional[ExportErrorCode] = None
+    elevation_name_collisions: Tuple[Tuple[str, int], ...] = ()
 
     def __bool__(self) -> bool:
         return self.success

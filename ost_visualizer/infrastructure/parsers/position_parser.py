@@ -3,38 +3,15 @@ from functools import lru_cache
 from typing import Tuple
 from ...domain.services.dimension_format_service import inches_to_display
 from ...domain.services.elevation import parse_elevation, reassemble_elevation
-
-_IMPERIAL_FEET_INCHES = re.compile(
-    r"^-?\s*\d+\s*[\'′]\s*(?:-?\s*)?\s*\d+(?:\s+\d+/\d+)?\s*\"", re.IGNORECASE
+from ...domain.services.elevation_text import (
+    IMPERIAL_FEET_INCHES as _IMPERIAL_FEET_INCHES,
+    IMPERIAL_FEET_ONLY as _IMPERIAL_FEET_ONLY,
+    IMPERIAL_INCHES_ONLY as _IMPERIAL_INCHES_ONLY,
+    METRIC_CM_ONLY as _METRIC_CM_ONLY,
+    METRIC_METERS_ONLY as _METRIC_METERS_ONLY,
+    METRIC_M_PLUS_CM as _METRIC_M_PLUS_CM,
+    is_elevation_text as _is_valid_elevation_text,
 )
-_IMPERIAL_FEET_ONLY = re.compile(r"^-?\s*\d+\s*[\'′]\b", re.IGNORECASE)
-_IMPERIAL_INCHES_ONLY = re.compile(
-    r"^-?\s*(?:\d+(?:\s+\d+/\d+)?|\d+/\d+)\s*\"", re.IGNORECASE
-)
-_METRIC_M_PLUS_CM = re.compile(
-    r"^-?\s*\d+(?:[\.,]\d+)?\s*m\s*(?:and|\+)?\s*-?\s*\d+(?:[\.,]\d+)?\s*cm",
-    re.IGNORECASE,
-)
-_METRIC_METERS_ONLY = re.compile(
-    r"^-?\s*\d+(?:[\.,]\d+)?\s*(?:m|meters?)\b", re.IGNORECASE
-)
-_METRIC_CM_ONLY = re.compile(
-    r"^-?\s*\d+(?:[\.,]\d+)?\s*(?:cm|centimeters?)\b", re.IGNORECASE
-)
-
-
-def _is_valid_elevation_text(text: str) -> bool:
-    return any(
-        p.match(text)
-        for p in (
-            _IMPERIAL_FEET_INCHES,
-            _IMPERIAL_FEET_ONLY,
-            _IMPERIAL_INCHES_ONLY,
-            _METRIC_M_PLUS_CM,
-            _METRIC_METERS_ONLY,
-            _METRIC_CM_ONLY,
-        )
-    )
 
 
 def cm_to_inches(cm: float) -> float:

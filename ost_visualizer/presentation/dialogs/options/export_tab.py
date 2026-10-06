@@ -7,8 +7,10 @@ from ....domain.entities.annotation_caption import (
 from ...components.color_button import ColorButton
 from ...config import (
     COMPACT_SPACING,
+    OPTIONS_GROUP_CONDITION_NAMES,
     OPTIONS_GROUP_ELEVATION_CALLOUTS,
     OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS,
+    OPTIONS_LABEL_CSV_DROP_ELEVATION,
     OPTIONS_LABEL_ELEVATION_CALLOUT_BOTTOM,
     OPTIONS_LABEL_ELEVATION_CALLOUT_CONDITION,
     OPTIONS_LABEL_ELEVATION_CALLOUT_CUBIC_YARDS,
@@ -17,6 +19,7 @@ from ...config import (
     OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR,
     OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
+    OPTIONS_LABEL_OST_OSP_DROP_ELEVATION,
     OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
     RELAXED_SPACING,
 )
@@ -115,6 +118,20 @@ class ExportTab(QtWidgets.QWidget):
         )
         callout_layout.addLayout(color_layout)
         layout.addWidget(callout_group)
+        names_group = QtWidgets.QGroupBox(OPTIONS_GROUP_CONDITION_NAMES, self)
+        names_layout = QtWidgets.QVBoxLayout(names_group)
+        names_layout.setSpacing(COMPACT_SPACING)
+        self.ost_osp_drop_elevation_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_OST_OSP_DROP_ELEVATION,
+            names_group,
+        )
+        self.csv_drop_elevation_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_CSV_DROP_ELEVATION,
+            names_group,
+        )
+        names_layout.addWidget(self.ost_osp_drop_elevation_check)
+        names_layout.addWidget(self.csv_drop_elevation_check)
+        layout.addWidget(names_group)
         layout.addStretch(1)
         self.captions_enabled_check.toggled.connect(self._update_caption_checks_enabled)
         self.html_elevation_callouts_check.toggled.connect(

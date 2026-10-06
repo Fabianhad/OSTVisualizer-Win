@@ -1180,6 +1180,37 @@
       ],
       "release_evidence": "none (UI only; Access and SQL persistence unchanged)",
       "affected_result": "Each view keeps its own viewport across a page scale update and no view adopts another view's state"
+    },
+    {
+      "file": "ost_visualizer/domain/services/elevation.py",
+      "defect": "strip_elevation_suffix removed the legacy ' @ 12\"' text of names such as 'Rebar #5 @ 12\" OC' and, by repeating until nothing was left, a second valid marker such as 'Wall @T 4\\' @T 5\\''",
+      "proof": "Probe before the fix: 'Rebar #5 @ 12\" OC' -> 'Rebar #5', 'Cut @ 12\" o.c.' -> 'Cut', \"Wall @T 4' @T 5'\" -> 'Wall'; failing tests 12 subtests",
+      "fix": "Only an explicit ' @T'/' @B' marker is stripped (checked on the text the parser removes) and only the last elevation is removed, i.e. the parser's base name; the redundant empty-value guard was removed (equivalent mutant)",
+      "tests": [
+        "StripElevationSuffixTests"
+      ],
+      "release_evidence": "none (new feature, not yet released)",
+      "affected_result": "Names keep legacy spacing text and earlier markers; one elevation is removed per call"
+    },
+    {
+      "file": "ost_visualizer/presentation/handlers/export_handler.py",
+      "defect": "A condition name with a newline or tab broke the collision note layout",
+      "proof": "test_names_with_newlines_tabs_and_quotes_keep_the_note_on_one_line failed",
+      "fix": "Display names in the note have their whitespace collapsed; exported names are untouched",
+      "tests": [
+        "ConditionElevationOstOspExportTests"
+      ],
+      "release_evidence": "none",
+      "affected_result": "Collision note stays on one line per name"
+    },
+    {
+      "file": "ost_visualizer/infrastructure/parsers/position_parser.py",
+      "defect": "One blank line before cm_to_inches after the regex move (style)",
+      "proof": "diff inspection",
+      "fix": "Two blank lines",
+      "tests": [],
+      "release_evidence": "none",
+      "affected_result": "no behavior change"
     }
   ],
   "removed_tests": [
@@ -1222,6 +1253,14 @@
     {
       "test": "AppearanceChangesKeepTheViewportTests.test_invert_bitonal_show_mode_and_overlay_changes_keep_the_viewport",
       "reason": "Subtests shared one view, so after the first jump the stored state was no longer stale and only the invert subtest failed against the unfixed view.py; replaced by five independent tests."
+    },
+    {
+      "test": "StripElevationSuffixTests.test_top_bottom_and_legacy_markers_are_all_dropped",
+      "reason": "Pinned stripping of the legacy ' @' marker, which also removed ordinary text such as 'Rebar #5 @ 12\" OC'; replaced by test_explicit_top_and_bottom_markers_are_dropped and test_the_legacy_marker_is_never_stripped_so_ordinary_text_survives."
+    },
+    {
+      "test": "StripElevationSuffixTests.test_two_elevations_are_both_dropped",
+      "reason": "Pinned the repeat-to-fixed-point loop that over-stripped a second marker; replaced by test_only_the_last_elevation_is_dropped and test_a_name_that_carries_two_elevations_loses_one_per_call."
     }
   ],
   "evidence": [
@@ -14197,6 +14236,26 @@
         "Offscreen Qt with fake renderers: pages have no image, so asynchronous render completion is modelled by hiding the view during the reload.",
         "SQL remote refresh is driven through ViewerSyncCoordinator._capture_plan_update/_apply_plan_update with a stand-in barrier, not a live SQL server."
       ]
+    },
+    {
+      "batch": "condition-elevation-export-options",
+      "findings": [
+        "Elevation is not a separate field: BidConditions.Name only (no elevation/Z column in the Access reference schema or the SQL model derived from it); z_value/is_top are re-derived from the name on every read (bid_data_reader) and the write layer drops them, so the suffix lives and dies in the name text.",
+        "Existing parsing: domain/services/elevation.py (last ' @T'/' @B' marker wins, legacy ' @' = bottom) and the value regexes in infrastructure/parsers/position_parser.py. The regexes were moved to domain/services/elevation_text.py (layering: application and presentation cannot import infrastructure) with position_parser re-importing them; a characterization test gates the move.",
+        "Quirk kept as is: the feet-only pattern needs a word character right after the foot mark, so '@T 5\\'' is not a valid elevation for derivation (z stays 0) although users read it as one; stripping uses an extra end-anchored feet-only pattern so '@T 5\\'' is still dropped, without changing z-value derivation.",
+        "Export paths that write condition names: OST and OSP (raw rows via get_raw_bid_data, same code for Access and SQL), Summary CSV (in-memory model), 3D OBJ/FBX/DXF material and layer names, HTML scene JSON, PDF /Label captions, MCP (read-only, Access-only, no export tools). Only OST/OSP and Summary CSV are affected by the new options; Summary CSV is the only user-facing CSV/data export (verified by grep).",
+        "No unique index on BidConditions.Name and the OST importer never dedupes names, so duplicate condition names are valid; collisions after stripping keep one entry per condition and are listed in the success message (three names plus a count).",
+        "Stored names are not unescaped on read; double-escaped &amp;apos;/&amp;quot; would defeat the existing derivation, so the strip function unescapes the elevation value up to twice before validating it."
+      ],
+      "tests_added": [
+        "105 tests across 10 modules (4 new modules)"
+      ],
+      "validation": "Focused: tests.domain, tests.infrastructure.parsers, tests.presentation.dialogs.options, tests.presentation.handlers.test_export_handler, tests.application.services.test_summary_csv_export_service, tests.integration.import_export, tests.integration.preferences all OK.",
+      "limitations": [
+        "No live SQL Server: SQL parity is shown with a backend-neutral raw reader fake (same rows for an Access path and a SQL database id); OST/OSP export code is shared for both backends.",
+        "OSP packaging is verified up to the .ost member handed to the CAB writer (the native CAB packer is patched).",
+        "3D, HTML, PDF and MCP names are intentionally unchanged and untested for the new options beyond their existing tests."
+      ]
     }
   ],
   "modules": {
@@ -14878,7 +14937,9 @@
         "ConfigAggregateValidationTests.test_validation_constants_are_immutable_shared_state": "Strengthened: immutable type plus independent member values and actual acceptance without corrective persistence; empty allowed-set mutant killed.",
         "ConfigAggregateFontColorTests.test_invalid_new_fields_are_corrected_independently": "Strengthened: verifies corrected snapshot is exactly persisted once and caller input remains unchanged; pure domain execution.",
         "ConfigAggregateUpdateTests.test_no_change_does_not_save_and_returned_snapshot_is_detached": "Added: real no-op update, no save, and defensive snapshot mutation.",
-        "ConfigAggregateUpdateTests.test_success_saves_exact_changes_and_failure_preserves_previous_config": "Added: exact changed keys, saved config, authoritative state, and rollback on failed subsequent save. No broad mock interception."
+        "ConfigAggregateUpdateTests.test_success_saves_exact_changes_and_failure_preserves_previous_config": "Added: exact changed keys, saved config, authoritative state, and rollback on failed subsequent save. No broad mock interception.",
+        "ConditionElevationExportOptionAggregateTests.test_both_options_survive_validation_and_report_their_own_changes": "Added: both options survive validation and report their own changes. ConfigAggregate copies both new fields (a missing copy would silently reset a saved option) and reports their own changed keys.",
+        "ConditionElevationExportOptionAggregateTests.test_saved_options_are_not_reset_by_loading_other_fields": "Added: saved options are not reset by loading other fields. ConfigAggregate copies both new fields (a missing copy would silently reset a saved option) and reports their own changed keys."
       }
     },
     "tests/domain/aggregates/test_file_state_aggregate.py": {
@@ -15034,7 +15095,10 @@
         "ElevationCalloutConfigTests.test_independent_callout_settings_round_trip_in_existing_config_payload": "Retained: contrasting HTML/PDF switches, content selections and colors survive whole Config equality.",
         "PdfAnnotationCaptionSettingsTests.test_missing_caption_configuration_uses_disabled_empty_defaults": "Retained: missing-key deserialization yields disabled and canonical empty caption state.",
         "PdfAnnotationCaptionSettingsTests.test_each_caption_identifier_loads_and_saves_independently": "Strengthened: independent nine persisted IDs and exact production order. Cases no longer disappear if the implementation-owned iterable becomes empty.",
-        "TakeoffToolbarPreferencesTests.test_invalid_preference_uses_existing_config_validation_contract": "Retained: None, scalar string and wrong element type exercise malformed toolbar preferences independently."
+        "TakeoffToolbarPreferencesTests.test_invalid_preference_uses_existing_config_validation_contract": "Retained: None, scalar string and wrong element type exercise malformed toolbar preferences independently.",
+        "ConditionElevationExportOptionTests.test_both_options_default_off_and_legacy_payloads_keep_them_off": "Added: both options default off and legacy payloads keep them off. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
+        "ConditionElevationExportOptionTests.test_each_option_round_trips_independently": "Added: each option round trips independently. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
+        "ConditionElevationExportOptionTests.test_non_boolean_values_are_rejected_with_the_key_name": "Added: non boolean values are rejected with the key name. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing."
       }
     },
     "tests/domain/entities/test_database_descriptor.py": {
@@ -15110,7 +15174,37 @@
         "ParseElevationTests.test_empty_and_unmarked_names_do_not_invent_an_elevation": "Retained: empty/unmarked values and blank/nonblank reassembly with canonical trimming.",
         "ResolveConditionElevationBoundsTests.test_top_area_uses_thickness_and_bottom_linear_uses_height": "Retained: contrasting irrelevant dimensions ensure correct area thickness versus linear height and top/bottom direction.",
         "ResolveConditionElevationBoundsTests.test_mismatched_marker_and_invalid_dimensions_do_not_produce_bounds": "Retained: valid-size mismatched marker and matched-marker zero/negative/nonfinite dimensions fail independently; companion provides positives.",
-        "FormatStructuralElevationTests.test_signed_subfoot_values_keep_explicit_zero_feet": "Retained: exact zero and negative subfoot literal labels protect sign/explicit-feet convention."
+        "FormatStructuralElevationTests.test_signed_subfoot_values_keep_explicit_zero_feet": "Retained: exact zero and negative subfoot literal labels protect sign/explicit-feet convention.",
+        "StripElevationSuffixTests.test_the_documented_example_drops_the_elevation": "Added: the documented example drops the elevation. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_xml_escaped_quotes_are_matched_like_raw_quotes": "Added: xml escaped quotes are matched like raw quotes. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_names_that_carry_escapes_in_the_base_keep_them": "Added: names that carry escapes in the base keep them. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_names_without_an_elevation_are_returned_unchanged": "Added: names without an elevation are returned unchanged. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_feet_inches_variants": "Added: feet inches variants. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_metric_variants": "Added: metric variants. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_a_marker_that_is_not_followed_by_an_elevation_is_not_an_elevation": "Added: a marker that is not followed by an elevation is not an elevation. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_marker_text_elsewhere_in_the_name_is_kept": "Added: marker text elsewhere in the name is kept. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_a_valid_elevation_takes_everything_after_the_marker_with_it": "Added: a valid elevation takes everything after the marker with it. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_surrounding_whitespace_does_not_leak_into_the_result": "Added: surrounding whitespace does not leak into the result. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_empty_blank_and_elevation_only_names_are_returned_unchanged": "Added: empty blank and elevation only names are returned unchanged. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_the_function_is_idempotent": "Added: the function is idempotent. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_the_condition_object_is_never_touched_by_stripping_its_name": "Added: the condition object is never touched by stripping its name. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "ElevationNameCollisionTests.test_names_that_only_differ_by_elevation_collide": "Added: names that only differ by elevation collide. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+        "ElevationNameCollisionTests.test_conditions_that_already_share_a_name_are_not_reported": "Added: conditions that already share a name are not reported. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+        "ElevationNameCollisionTests.test_distinct_names_do_not_collide": "Added: distinct names do not collide. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+        "ElevationNameCollisionTests.test_empty_input": "Added: empty input. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+        "ElevationNameCollisionTests.test_the_count_includes_every_condition_even_with_repeated_names": "Added: the count includes every condition even with repeated names. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+        "ElevationNameCollisionTests.test_collisions_keep_first_seen_order_and_count_every_condition": "Added: collisions keep first seen order and count every condition. elevation_name_collisions: reports names that became identical only because of stripping (distinct originals), counts every condition, keeps first-seen order.",
+        "StripRawConditionElevationsTests.test_condition_names_lose_their_elevation_and_nothing_else_changes": "Added: condition names lose their elevation and nothing else changes. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+        "StripRawConditionElevationsTests.test_the_source_data_is_never_modified": "Added: the source data is never modified. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+        "StripRawConditionElevationsTests.test_unrelated_tables_are_shared_not_copied": "Added: unrelated tables are shared not copied. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+        "StripRawConditionElevationsTests.test_data_without_a_conditions_table_is_returned_as_an_equal_copy": "Added: data without a conditions table is returned as an equal copy. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+        "StripRawConditionElevationsTests.test_stripping_twice_gives_the_same_names": "Added: stripping twice gives the same names. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+        "StripRawConditionElevationsTests.test_collisions_can_be_computed_from_the_untouched_rows": "Added: collisions can be computed from the untouched rows. strip_raw_condition_elevations on RawBidData: returns a copy whose BidConditions rows are new dicts with stripped Name; source and every other table are untouched or shared.",
+        "StripElevationSuffixTests.test_explicit_top_and_bottom_markers_are_dropped": "Added: explicit top and bottom markers are dropped. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_the_legacy_marker_is_never_stripped_so_ordinary_text_survives": "Added: the legacy marker is never stripped so ordinary text survives. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_an_explicit_elevation_after_legacy_looking_text_still_strips": "Added: an explicit elevation after legacy looking text still strips. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_only_the_last_elevation_is_dropped": "Added: only the last elevation is dropped. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched.",
+        "StripElevationSuffixTests.test_a_name_that_carries_two_elevations_loses_one_per_call": "Added: a name that carries two elevations loses one per call. Shared pure function strip_elevation_suffix (domain). Table-style checks on plain strings; the Condition object test proves the stored object is untouched."
       }
     },
     "tests/domain/services/test_elevation_callout_service.py": {
@@ -16013,7 +16107,20 @@
         "SummaryCsvExportServiceTests.test_no_data_does_not_create_or_overwrite_destination": "Added: missing Bid and no placed Takeoffs report exact NO_DATA DTO without creating file or modifying existing bytes; missing Bid performs no Area reads.",
         "SummaryCsvExportServiceTests.test_nonempty_folder_without_export_rows_is_no_data": "Added: typed folder-only tree crosses actual collection/serialization path and returns exact NO_DATA before creating output.",
         "SummaryCsvExportServiceTests.test_destination_failure_is_reported_and_retry_writes_complete_summary": "Added: real missing destination directory yields WRITE_FAILED/no output; creating directory permits retry with whole persisted row equality.",
-        "SummaryCsvExportServiceTests.test_invalid_quantity_returns_unexpected_without_overwriting_destination": "Added: NaN quantity fails actual integer formatter, returns UNEXPECTED with message/no success count and leaves existing destination bytes intact."
+        "SummaryCsvExportServiceTests.test_invalid_quantity_returns_unexpected_without_overwriting_destination": "Added: NaN quantity fails actual integer formatter, returns UNEXPECTED with message/no success count and leaves existing destination bytes intact.",
+        "SummaryCsvDropElevationTests.test_default_keeps_every_name_exactly_as_stored": "Added: default keeps every name exactly as stored. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_option_off_explicitly_matches_the_default": "Added: option off explicitly matches the default. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_option_on_writes_names_without_elevations": "Added: option on writes names without elevations. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_every_other_cell_is_unchanged_by_the_option": "Added: every other cell is unchanged by the option. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_folder_names_keep_their_text_even_when_it_looks_like_an_elevation": "Added: folder names keep their text even when it looks like an elevation. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_every_grouping_strips_every_row_kind": "Added: every grouping strips every row kind. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_colliding_conditions_stay_separate_rows_and_are_reported": "Added: colliding conditions stay separate rows and are reported. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_no_collision_is_reported_when_names_stay_distinct": "Added: no collision is reported when names stay distinct. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_collisions_are_not_reported_when_the_option_is_off": "Added: collisions are not reported when the option is off. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_conditions_without_takeoffs_do_not_cause_collisions": "Added: conditions without takeoffs do not cause collisions. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_source_conditions_and_the_summary_tree_are_never_modified": "Added: source conditions and the summary tree are never modified. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_only_condition_nodes_count_and_each_condition_counts_once": "Added: only condition nodes count and each condition counts once. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
+        "SummaryCsvDropElevationTests.test_no_data_result_carries_no_collisions": "Added: no data result carries no collisions. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module."
       }
     },
     "tests/application/services/test_file_loading_service.py": {
@@ -26874,7 +26981,7 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Checked preference_support helpers (_apply_button, _reset_all_button, _visible_texts), SingleCallRecorder, OptionsDialog and its tab widgets (options/export/fonts_colors/mcp), ColorButton lifecycle. QColorDialog replacement is restored in finally or via mock.patch.object; confirm/show_warning patched at the dialog module. Real widgets throughout.",
       "reviewed_tests": {
-        "DialogPreferenceTests.test_options_group_boxes_use_explicit_density_spacing": "STRENGTHENED. all()-over-possibly-empty comprehensions replaced by explicit count checks (2 lower columns, 2 export groups) and exact spacing lists.",
+        "DialogPreferenceTests.test_options_group_boxes_use_explicit_density_spacing": "Export tab now has three group boxes (PDF Annotation Captions, Elevation Callouts, Condition Names), all with compact spacing; the Options tab groups are unchanged.",
         "DialogPreferenceTests.test_options_dialog_loads_persisted_preferences": "STRENGTHENED. Config bound to a variable; added negative radio assertions and a round trip _collect_widget_config() == persisted plus Apply disabled, so any field not loaded/collected is caught.",
         "DialogPreferenceTests.test_options_crosshair_color_preview_is_square_and_not_stylesheet_colored": "Fixed-size square and empty stylesheet before/after set_color. Sound.",
         "DialogPreferenceTests.test_options_dialog_does_not_show_auto_dimension_lines_preference": "STRENGTHENED. Added positive anchor (grayscale label present) so the assertNotIn checks cannot pass over an empty label set.",
@@ -26909,7 +27016,22 @@
         "DialogPreferenceTests.test_options_dialog_disabled_controls_do_not_enable_apply": "STRENGTHENED. Clicking a disabled checkbox is a no-op so the old test proved nothing (and could pick a caption check). Now locates exactly the deferred checks by label, asserts disabled, programmatically toggles each and asserts Apply stays disabled and the collected config equals defaults.",
         "OptionsDialogFontColorTests.test_options_tab_order_rows_and_stable_ids": "Tab order, exact font/color row labels, stable ids and excluded legacy labels. Sound.",
         "OptionsDialogFontColorTests.test_options_font_color_values_are_staged_through_apply": "STRENGTHENED. Added: collected vs applied config before Apply, exactly one apply call, only inactive_object_color differs from defaults, and reject() does not add an apply call.",
-        "OptionsDialogFontColorTests.test_options_font_values_are_staged_through_apply": "NEW. Real FontDialog driven via patched exec (size 48 + OK): font staged in widget config, not applied until Apply, only the Text font differs from defaults."
+        "OptionsDialogFontColorTests.test_options_font_values_are_staged_through_apply": "NEW. Real FontDialog driven via patched exec (size 48 + OK): font staged in widget config, not applied until Apply, only the Text font differs from defaults.",
+        "ConditionElevationExportOptionDialogTests.test_both_checkboxes_live_in_the_export_tab_and_default_off": "Added: both checkboxes live in the export tab and default off. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_the_option_labels_name_their_export": "Added: the option labels name their export. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_enabling_the_ost_osp_option_warns_and_confirming_keeps_it": "Added: enabling the ost osp option warns and confirming keeps it. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_cancelling_the_ost_osp_warning_leaves_the_option_off": "Added: cancelling the ost osp warning leaves the option off. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_enabling_the_csv_option_warns_and_confirm_or_cancel_decide": "Added: enabling the csv option warns and confirm or cancel decide. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_the_two_warnings_explain_their_own_option_and_the_unchanged_exports": "Added: the two warnings explain their own option and the unchanged exports. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_loading_a_saved_enabled_option_does_not_warn": "Added: loading a saved enabled option does not warn. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_disabling_an_enabled_option_does_not_warn": "Added: disabling an enabled option does not warn. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_programmatic_changes_never_warn": "Added: programmatic changes never warn. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_reset_all_settings_turns_both_off_without_a_second_warning": "Added: reset all settings turns both off without a second warning. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_cancelling_the_dialog_after_confirming_discards_the_option": "Added: cancelling the dialog after confirming discards the option. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_the_two_options_change_independently_in_the_collected_config": "Added: the two options change independently in the collected config. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_keyboard_activation_warns_exactly_like_a_click": "Added: keyboard activation warns exactly like a click. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_a_cancelled_warning_leaves_no_pending_changes_for_either_option": "Added: a cancelled warning leaves no pending changes for either option. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ConditionElevationExportOptionDialogTests.test_the_checkboxes_are_labelled_focusable_and_follow_the_callout_controls": "Added: the checkboxes are labelled focusable and follow the callout controls. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config."
       }
     },
     "tests/presentation/dialogs/options/test_font_dialog.py": {
@@ -28052,7 +28174,24 @@
         "ExportHandlerPdfFilenameTests.test_summary_csv_export_reports_empty_data_as_warning": "Sound: exact (title, message) of the NO_DATA warning list; no critical.",
         "ExportHandlerPdfFilenameTests.test_summary_csv_export_cancels_when_bid_changes_in_native_save_dialog": "Strengthened: show_warning was patched without assertion; now asserts the exact cancelled warning to the window and no success info.",
         "ExportHandlerPdfFilenameTests.test_summary_csv_export_normalizes_default_and_chosen_extension": "New: default filename and chosen filename get .csv when missing and keep an existing upper-case .CSV.",
-        "ExportHandlerPdfFilenameTests.test_summary_csv_export_reports_failure_and_ignores_cancelled_dialog": "New: failed export -> exact 'Error creating Summary CSV export' critical; cancelled dialog does not export."
+        "ExportHandlerPdfFilenameTests.test_summary_csv_export_reports_failure_and_ignores_cancelled_dialog": "New: failed export -> exact 'Error creating Summary CSV export' critical; cancelled dialog does not export.",
+        "ConditionElevationOstOspExportTests.test_option_off_passes_the_exact_raw_data_through_for_ost_and_osp": "Added: option off passes the exact raw data through for ost and osp. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_option_on_exports_stripped_names_for_ost_and_osp": "Added: option on exports stripped names for ost and osp. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_the_raw_data_read_from_the_database_is_never_modified": "Added: the raw data read from the database is never modified. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_the_csv_option_does_not_change_ost_or_osp_exports": "Added: the csv option does not change ost or osp exports. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_access_and_sql_locators_produce_identical_exports": "Added: access and sql locators produce identical exports. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_colliding_names_stay_separate_and_are_reported_in_the_success_note": "Added: colliding names stay separate and are reported in the success note. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_no_note_is_added_without_collisions_or_with_the_option_off": "Added: no note is added without collisions or with the option off. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_the_collision_note_is_capped_at_three_names_plus_a_count": "Added: the collision note is capped at three names plus a count. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_condition_rows_without_a_name_do_not_break_the_export": "Added: condition rows without a name do not break the export. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_a_failed_export_reports_the_failure_without_a_collision_note": "Added: a failed export reports the failure without a collision note. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationSummaryCsvHandlerTests.test_the_option_state_is_passed_to_the_service": "Added: the option state is passed to the service. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
+        "ConditionElevationSummaryCsvHandlerTests.test_the_ost_option_does_not_reach_the_csv_service": "Added: the ost option does not reach the csv service. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
+        "ConditionElevationSummaryCsvHandlerTests.test_collisions_from_the_service_are_added_to_the_success_message": "Added: collisions from the service are added to the success message. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
+        "ConditionElevationSummaryCsvHandlerTests.test_the_message_is_unchanged_without_collisions": "Added: the message is unchanged without collisions. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
+        "ConditionElevationOstOspExportTests.test_names_with_newlines_tabs_and_quotes_keep_the_note_on_one_line": "Added: names with newlines tabs and quotes keep the note on one line. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_three_way_collision_counts_every_condition_once": "Added: three way collision counts every condition once. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ConditionElevationOstOspExportTests.test_a_collision_note_never_turns_a_successful_export_into_a_failure": "Added: a collision note never turns a successful export into a failure. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched."
       }
     },
     "tests/presentation/handlers/test_file_operation_handler.py": {
@@ -36861,6 +37000,54 @@
         "OtherPageUpdatePathsKeepTheViewportTests.test_zoom_and_fit_after_a_scale_change_work_from_the_kept_viewport": "Sibling path (zoom and fit after a scale change): zoom_in keeps the centre and reset_view fits the page after the scale change.",
         "OtherPageUpdatePathsKeepTheViewportTests.test_renaming_a_page_does_not_touch_either_viewport": "Sibling path (rename page): the refresh does not reload; both viewports untouched (passed before and after)."
       }
+    },
+    "tests/domain/services/test_elevation_text.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Domain unit tests for the elevation text patterns; no fixtures.",
+      "reviewed_tests": {
+        "ElevationTextTests.test_the_six_published_patterns_drive_the_validity_check": "Added: the six published patterns drive the validity check. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
+        "ElevationTextTests.test_feet_alone_is_not_valid_for_derivation_but_is_strippable": "Added: feet alone is not valid for derivation but is strippable. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
+        "ElevationTextTests.test_everything_valid_is_strippable": "Added: everything valid is strippable. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
+        "ElevationTextTests.test_text_that_is_not_an_elevation_is_neither": "Added: text that is not an elevation is neither. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping."
+      }
+    },
+    "tests/infrastructure/parsers/test_position_parser.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Characterization tests of position_parser written BEFORE moving its regexes into the domain; they pass before and after the move and gate it together with test_elevation, test_settings_operations (metric switch), test_bid_data_reader and the edit-condition tests.",
+      "reviewed_tests": {
+        "ElevationTextValidityCharacterizationTests.test_every_accepted_elevation_text_shape": "Added: every accepted elevation text shape. Characterization gate written before moving the regexes: accepted and rejected elevation text shapes of position_parser._is_valid_elevation_text.",
+        "ElevationTextValidityCharacterizationTests.test_every_rejected_elevation_text_shape": "Added: every rejected elevation text shape. Characterization gate written before moving the regexes: accepted and rejected elevation text shapes of position_parser._is_valid_elevation_text.",
+        "ExtractZValueCharacterizationTests.test_top_and_bottom_imperial_values": "Added: top and bottom imperial values. Characterization of extract_z_value_from_name (top/bottom, imperial, metric, invalid) before and after the regex move.",
+        "ExtractZValueCharacterizationTests.test_metric_values_are_converted_to_inches": "Added: metric values are converted to inches. Characterization of extract_z_value_from_name (top/bottom, imperial, metric, invalid) before and after the regex move.",
+        "ExtractZValueCharacterizationTests.test_names_without_a_valid_elevation_have_none": "Added: names without a valid elevation have none. Characterization of extract_z_value_from_name (top/bottom, imperial, metric, invalid) before and after the regex move.",
+        "ConvertElevationInNameCharacterizationTests.test_imperial_to_metric_and_back": "Added: imperial to metric and back. Characterization of convert_elevation_in_name (imperial/metric switch) before and after the regex move.",
+        "ConvertElevationInNameCharacterizationTests.test_names_without_a_full_elevation_are_left_alone": "Added: names without a full elevation are left alone. Characterization of convert_elevation_in_name (imperial/metric switch) before and after the regex move."
+      }
+    },
+    "tests/integration/import_export/test_condition_elevation_export.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real handler, real OstExporter, real OspExporter (only the CAB packer and the dialogs are patched); minimal RawBidData with the documented example name, an XML-escaped name, a name with @T text that is not an elevation, plain names.",
+      "reviewed_tests": {
+        "ConditionElevationExportEndToEndTests.test_ost_export_keeps_every_name_exactly_when_the_option_is_off": "Added: ost export keeps every name exactly when the option is off. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+        "ConditionElevationExportEndToEndTests.test_ost_export_writes_names_without_elevations_when_on": "Added: ost export writes names without elevations when on. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+        "ConditionElevationExportEndToEndTests.test_the_csv_option_does_not_change_the_ost_export": "Added: the csv option does not change the ost export. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+        "ConditionElevationExportEndToEndTests.test_osp_package_carries_the_stripped_names_inside_its_ost": "Added: osp package carries the stripped names inside its ost. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+        "ConditionElevationExportEndToEndTests.test_osp_package_keeps_names_when_the_option_is_off": "Added: osp package keeps names when the option is off. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+        "ConditionElevationExportEndToEndTests.test_source_rows_are_unchanged_after_every_export": "Added: source rows are unchanged after every export. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
+        "ConditionElevationExportEndToEndTests.test_colliding_conditions_are_both_exported_with_their_own_uids": "Added: colliding conditions are both exported with their own uids. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator."
+      }
+    },
+    "tests/integration/preferences/test_condition_elevation_export_options.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real JsonConfigRepository in a temp dir and the real dialog/service stack with the repository and event bus fakes of the Options tests.",
+      "reviewed_tests": {
+        "ConditionElevationExportOptionPersistenceTests.test_both_options_persist_through_the_json_repository_independently": "Added: both options persist through the json repository independently. Real JsonConfigRepository and ConfigAggregate: independent round trip, JSON on disk, files from before the options, invalid types.",
+        "ConditionElevationExportOptionPersistenceTests.test_a_config_file_from_before_the_options_loads_with_both_off": "Added: a config file from before the options loads with both off. Real JsonConfigRepository and ConfigAggregate: independent round trip, JSON on disk, files from before the options, invalid types.",
+        "ConditionElevationExportOptionPersistenceTests.test_a_non_boolean_value_resets_the_file_to_defaults_with_both_off": "Added: a non boolean value resets the file to defaults with both off. Real JsonConfigRepository and ConfigAggregate: independent round trip, JSON on disk, files from before the options, invalid types.",
+        "ConditionElevationExportOptionDialogWorkflowTests.test_apply_after_a_confirmed_warning_saves_publishes_and_survives_reopen": "Added: apply after a confirmed warning saves publishes and survives reopen. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning.",
+        "ConditionElevationExportOptionDialogWorkflowTests.test_a_cancelled_warning_saves_nothing_and_publishes_nothing": "Added: a cancelled warning saves nothing and publishes nothing. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning.",
+        "ConditionElevationExportOptionDialogWorkflowTests.test_turning_an_option_back_off_persists_without_a_warning": "Added: turning an option back off persists without a warning. Full stack OptionsDialog -> ConfigService -> repository fake and event bus: confirmed enable persists and publishes, cancel saves nothing, disabling persists without a warning."
+      }
     }
   },
   "subsystems": {
@@ -37043,6 +37230,22 @@
     },
     "page_scale_viewport_full_suite": {
       "tests_run": 12658,
+      "skips": 35,
+      "result": "OK",
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol)"
+    },
+    "condition_elevation_export_options_full_suite": {
+      "tests_run": 12753,
+      "skips": 35,
+      "result": "OK",
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol)"
+    },
+    "condition_elevation_export_options_review_full_suite": {
+      "tests_run": 12762,
       "skips": 35,
       "result": "OK",
       "architecture": "no violations",
@@ -38042,6 +38245,18 @@
         "outcome": "Root cause: scale-derived overlay units in the render identity (7a1754e) force a full reload that restores the Page's stale stored viewport, and the Page is shared with the detached window which overwrote it. Fix: a private per-view snapshot for appearance/calibration-only reloads and non-owning detached views. 34 real-view tests (15 behavioural tests failed against the unfixed source; each appearance test fails on its own), 29 mutants killed, 4 initial survivors killed by extra load-cycle tests. Siblings: scale from the detached window, invert, bitonal, show mode, overlay rect/rotation, remote SQL refresh, reloaded Page object, page switch with a detached window fixed; rename, zoom/fit after the change and page switch restore did not reproduce; page rotation, flip, size and replacing the image or overlay file change geometry and keep restoring the stored state; intentionally unfixed (reported)."
       },
       {
+        "id": "X1",
+        "decision": "Options > Export > Condition Names: drop the elevation suffix from condition names in OST/OSP and in Summary CSV exports",
+        "status": "implemented",
+        "outcome": "Two Config booleans (default off) with checkboxes in a new Condition Names group of the Export tab; enabling either confirms through the Options dialog (clicked-only, so load, Reset and disable never prompt) and the warning texts state that 3D, HTML and PDF exports are unchanged. Shared pure strip_elevation_suffix in domain (last explicit @T/@B marker plus a valid elevation, raw or XML-escaped, never strips a name to empty, leaves 'Meeting @T later' and legacy ' @ 12\" OC' text alone; see X2). Applied only to copies: strip_raw_condition_elevations for OST/OSP in ExportHandler._export_bid_file, the CSV name cell in SummaryCsvExportService. Collisions keep separate entries and are reported in the success message (three names plus a count). Tests written first; the position_parser regex move is gated by characterization tests; about 90 in-memory mutants killed, equivalent ones removed from the code."
+      },
+      {
+        "id": "X2",
+        "decision": "Review of the condition elevation export options (uncommitted diff)",
+        "status": "fixed",
+        "outcome": "Scope confirmed (only this feature's files). Regex move verified identical to HEAD (pattern and flags) and callers pass (edit-condition dialog, project_write_service, metric switch, bid_data_reader). Fixed: legacy ' @ 12\"' text no longer stripped (explicit @T/@B only), only the last elevation is stripped (matches parse_elevation), collision note whitespace collapsed, style. Added keyboard (Space) activation, draft-not-dirty after cancel, focus order and handler note tests; 11 new mutants killed, one equivalent guard removed. Not reproduced (reported only): CSV collision tuple computed after the file write inside the same try, case-sensitive grouping, text after a valid elevation prefix dropped like the app's value definition, NBSP/curly quotes/lowercase markers not stripped like the app's own parser."
+      },
+      {
         "id": "OPEN-1",
         "decision": "Annotation preflight scope (session conflict on DATABASE vs optimistic Bid-collection like Takeoffs)",
         "status": "open",
@@ -38225,6 +38440,19 @@
       "open_items": [
         "rotation, flip and size changes (and replacing the image or overlay file) intentionally keep restoring the stored page state; the stored state itself is only refreshed by zoom actions and pan release, not by scrollbar or wheel scrolling",
         "a freshly opened detached window still starts from the page stored state written by the main view",
+        "OPEN-1 annotation preflight scope and OPEN-2 schema validator scope untouched by instruction"
+      ]
+    },
+    "round8_2026-10-06_condition_elevation_export_options": {
+      "resolved": [
+        "X1 implemented: Export tab options to drop the elevation suffix from condition names (OST/OSP and Summary CSV)",
+        "X2 review: legacy marker text and a second marker are no longer stripped; collision note whitespace collapsed"
+      ],
+      "collision_behavior": "Conditions are never renamed or merged; each keeps its UID/row; exports stay valid because BidConditions.Name has no unique index; names that became identical are listed in the success message (three names plus a count), same rule for OST/OSP and CSV.",
+      "open_items": [
+        "a name that carries two valid elevations loses one per call (only the last is removed, like parse_elevation); not idempotent for those names by design",
+        "feet-only elevations such as @T 5 followed by a foot mark are not derived as z values by position_parser (pre-existing word-boundary quirk, unchanged); stripping handles them",
+        "3D, HTML and PDF exports still write condition names with elevations by design (the warning says so)",
         "OPEN-1 annotation preflight scope and OPEN-2 schema validator scope untouched by instruction"
       ]
     }
