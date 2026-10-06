@@ -6,7 +6,13 @@ from ost_visualizer.presentation.visualization.utils.image_effects import (
     page_effect_paper_color,
     tint_image,
 )
+from ost_visualizer.presentation.visualization.utils import ost_image
+from ost_visualizer.presentation.visualization.utils.image_bands import BAND_PIXELS
 from PySide6 import QtCore, QtGui, QtWidgets
+from tests.presentation.visualization.utils.image_op_spy import (
+    largest_operation,
+    recorded_image_operations,
+)
 
 
 def _app():
@@ -117,6 +123,85 @@ class InvertImageTests(unittest.TestCase):
         self.assertEqual(result.pixelColor(0, 0).getRgb(), (245, 235, 225, 128))
         self.assertEqual(result.pixelColor(1, 0).getRgb(), (0, 0, 0, 255))
         self.assertEqual(source.pixelColor(0, 0).getRgb(), (10, 20, 30, 128))
+
+
+def _large_frame(width=1100, height=800):
+    image = QtGui.QImage(width, height, QtGui.QImage.Format.Format_ARGB32)
+    destination = image.bits()
+    size = len(destination)
+    pattern = bytes((index * 37 + 11) % 256 for index in range(251))
+    destination[:] = (pattern * (size // len(pattern) + 1))[:size]
+    return image
+
+
+def _whole_image_bitonal(image):
+    result = image.convertToFormat(QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    painter = QtGui.QPainter(result)
+    painter.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_Darken)
+    painter.fillRect(result.rect(), QtGui.QColor(220, 220, 220))
+    painter.end()
+    return result
+
+
+def _whole_image_invert(image):
+    inverted = image.copy()
+    inverted.invertPixels(QtGui.QImage.InvertMode.InvertRgb)
+    return inverted
+
+
+def _whole_image_tint(image, r, g, b):
+    gray = image.convertToFormat(QtGui.QImage.Format.Format_Grayscale8)
+    width, height = gray.width(), gray.height()
+    per_line = gray.bytesPerLine()
+    raw = bytes(gray.constBits())
+    data = b"".join(
+        raw[row * per_line : row * per_line + width] for row in range(height)
+    )
+    result = ost_image.tint_grayscale(data, width, height, r, g, b, 235)
+    return QtGui.QImage(
+        result.to_bytes(), width, height, QtGui.QImage.Format.Format_ARGB32
+    ).copy()
+
+
+class LargeFrameEffectTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def assert_banded_and_identical(self, effect, reference, image):
+        self.assertGreater(image.width() * image.height(), 2 * BAND_PIXELS)
+        expected = reference(image)
+        with recorded_image_operations() as operations:
+            actual = effect(image)
+        self.assertEqual(actual.format(), expected.format())
+        self.assertEqual(bytes(actual.constBits()), bytes(expected.constBits()))
+        self.assertLessEqual(largest_operation(operations), BAND_PIXELS)
+
+    def test_bitonal_on_a_large_frame_is_banded_and_unchanged(self):
+        self.assert_banded_and_identical(
+            bitonal_image, _whole_image_bitonal, _large_frame()
+        )
+
+    def test_invert_on_a_large_frame_is_banded_and_unchanged(self):
+        self.assert_banded_and_identical(
+            invert_image, _whole_image_invert, _large_frame()
+        )
+
+    def test_tint_on_a_large_frame_is_banded_and_unchanged(self):
+        self.assert_banded_and_identical(
+            lambda image: tint_image(image, 80, 80, 255),
+            lambda image: _whole_image_tint(image, 80, 80, 255),
+            _large_frame(),
+        )
+
+    def test_bitonal_and_invert_together_on_a_large_frame_are_banded_and_unchanged(
+        self,
+    ):
+        self.assert_banded_and_identical(
+            lambda image: apply_page_image_effects(image, invert=True, bitonal=True),
+            lambda image: _whole_image_invert(_whole_image_bitonal(image)),
+            _large_frame(),
+        )
 
 
 class PageImageEffectTests(unittest.TestCase):

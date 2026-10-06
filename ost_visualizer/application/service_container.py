@@ -21,8 +21,6 @@ class ServiceContainer:
             if self._singletons[name] is None:
                 self._singletons[name] = self._factories[name]()
             return self._singletons[name]
-        if name in self._factories:
-            return self._factories[name]()
         raise KeyError(f"Service '{name}' not found")
 
     def get_by_interface(self, iface: Type) -> List[Any]:

@@ -16,6 +16,10 @@ from ost_visualizer.presentation.visualization.pdf.services.composite_renderer i
 from ost_visualizer.presentation.visualization.utils.source_signature import (
     invalidate_source_files,
 )
+from ost_visualizer.presentation.visualization.utils.image_bands import BAND_PIXELS
+from tests.presentation.visualization.utils.image_op_spy import (
+    recorded_image_operations,
+)
 from PySide6.QtCore import QMarginsF, QRectF, QSizeF
 from PySide6.QtGui import QColor, QImage, QPageSize, QPainter, QPdfWriter
 
@@ -80,6 +84,22 @@ class RasterViewportCompositionTests(unittest.TestCase):
             rotation,
             cancelled_check=cancelled,
         )
+
+    def test_a_large_overlay_crop_is_copied_in_bands_without_changing_the_frame(self):
+        big_path = str(Path(self.directory.name) / "big_overlay.tif")
+        big = QImage(1600, 1200, QImage.Format.Format_RGB32)
+        big.fill(QColor("blue"))
+        big.setDotsPerMeterX(2835)
+        big.setDotsPerMeterY(2835)
+        self.assertTrue(big.save(big_path))
+        page = replace(self.page, overlay_image_path=big_path)
+        with recorded_image_operations() as operations:
+            frame = self.render(page=page)
+        self.assertIsNotNone(frame)
+        copies = [pixels for name, pixels in operations if name == "copy"]
+        self.assertGreater(len(copies), 1)
+        self.assertLessEqual(max(copies), BAND_PIXELS)
+        self.assertGreater(frame.width() * frame.height(), 0)
 
     def test_matching_consumers_reuse_raster_composition_and_source_loads(self):
         with patch.object(

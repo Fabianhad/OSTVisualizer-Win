@@ -1254,6 +1254,45 @@
       "tests": [],
       "release_evidence": "none",
       "affected_result": "no behavior change"
+    },
+    {
+      "file": "ost_visualizer/application/service_container.py",
+      "defect": "ServiceContainer.get() kept a plain-factory branch (name in _factories but not in _singletons) that no public method can reach",
+      "proof": "Line trace of the whole suite never executed it; an in-memory mutant removing it survived the container, builder, orchestrator, app controller, config and lifecycle tests",
+      "fix": "Removed the unreachable branch",
+      "tests": [
+        "tests.application.test_service_container"
+      ],
+      "release_evidence": "none",
+      "affected_result": "no behavior change"
+    },
+    {
+      "file": "ost_visualizer/presentation/builders/component_builder.py",
+      "defect": "Dragging the Pan handle (or resizing the window) also resized the Layers sidebar because left_splitter distributed the height change over Conditions and Layers (stretch 1, 1)",
+      "proof": "Real MainWindow tests failed before the fix: Pan -60 px gave Conditions +30 and Layers +30; showing Pan and a 120 px taller window changed Layers",
+      "fix": "left_splitter.setStretchFactor(1, 0): Conditions absorbs, Layers keeps its height",
+      "tests": [
+        "PanSidebarWorkspaceTests.test_dragging_the_top_handle_only_resizes_the_adjacent_panes",
+        "PanSidebarWorkspaceTests.test_showing_and_hiding_the_pan_sidebar_keeps_the_layers_height",
+        "PanSidebarWorkspaceTests.test_resizing_the_window_keeps_the_pan_and_layers_heights",
+        "SidebarToggleBuilderTests.test_the_conditions_pane_absorbs_height_changes_and_layers_keeps_its_size"
+      ],
+      "release_evidence": "Pan sidebar is unreleased; Layers no longer grows with the window",
+      "affected_result": "Layers sidebar height is stable when the window or Pan pane is resized"
+    },
+    {
+      "file": "ost_visualizer/presentation/visualization/utils/image_bands.py",
+      "defect": "Render workers ran whole-frame QImage conversions, copies, inversion and darkening as single GIL-holding calls, stalling the GUI thread for tens of milliseconds per composite frame",
+      "proof": "GIL probe and isolated frame probe (GUI max loop gap 62-79 ms); band-limit tests fail without the helpers",
+      "fix": "Banded helpers (BAND_PIXELS) used by image_effects, PageRenderer and the composite overlay crop",
+      "tests": [
+        "BandedImageTests",
+        "LargeFrameEffectTests",
+        "PageRendererPreferenceTests.test_large_pdf_renders_convert_in_bands_without_changing_the_picture",
+        "RasterViewportCompositionTests.test_a_large_overlay_crop_is_copied_in_bands_without_changing_the_frame"
+      ],
+      "release_evidence": "none",
+      "affected_result": "Same pixels; GUI thread blocked about 25 ms instead of about 65 ms per large frame"
     }
   ],
   "removed_tests": [
@@ -14322,6 +14361,53 @@
         "devicePixelRatio 2.0 is simulated by patching devicePixelRatioF; no real high-DPI screen was used.",
         "Access and SQL parity: the sidebar stores only UI settings in workspace_state.json and never touches Page data, so there is no backend-specific behaviour to test."
       ]
+    },
+    {
+      "batch": "service-container-tests",
+      "findings": [
+        "tests/README.md described layout_inventory.json and execution_inventory.json as if committed, but neither was ever in git history (the commit that added the README and tools/inventory_test_layout.py, 6e53a5b, did not include them) and no test reads them. layout_inventory.json is generated on demand by tools/inventory_test_layout.py (verified: 609 production and 538 test modules); execution_inventory.json is an optional input with no generator in the repository. The README now says so and no file was restored.",
+        "ServiceContainer.get() has a plain-factory branch (name in _factories without _singletons) that no public method can reach: register_singleton always fills both maps and clear empties all three. An in-memory mutant removing it survives the container, builder, orchestrator, app controller and config tests. Reported only; not removed.",
+        "A singleton whose factory returns None is re-created on every get, because None is the 'not created yet' marker. Not pinned by a test; reported only."
+      ],
+      "tests_added": [
+        "26 tests in 1 new module (tests/application/test_service_container.py)"
+      ],
+      "validation": "Full suite: 12955 tests run, 35 skipped, OK. tests/architecture 88 tests OK (3 skipped). tools/check_architecture.py: all categories PASS. compileall -q ost_visualizer tests tools exit 0. git diff --check (core.whitespace=cr-at-eol) clean. 20 in-memory mutants of service_container.py killed.",
+      "limitations": [
+        "The tests pass on the existing implementation, so failing-first evidence is the in-memory mutation check, not a red run."
+      ]
+    },
+    {
+      "batch": "service-container-followups",
+      "findings": [
+        "Coverage evidence that ServiceContainer.get() never reached the plain-factory branch: a line trace (sys.settrace; coverage is not installed) of the whole suite (12955 tests) recorded lines 17-24 and 26 of get() but never line 25. The traced run itself reported failures, which were not investigated (tracing slows timing-sensitive tests); the untraced suite is the pass/fail evidence. Statically, nothing outside service_container.py references _factories or a register_factory, and register_singleton always fills both maps while clear empties all three.",
+        "No registered singleton factory can return None: the 12 register_singleton calls are 8 lambdas constructing service classes in service_builder, three annotation_view_builder methods returning _create_shared_manager (which returns the injected view_manager_factory result; the production factory in config/di_config.py returns QtMainHotlinkViewManager, QtAnnotationViewManager or QtViewWindowManager instances) and the open_annotation_view_use_case factory constructing OpenAnnotationViewUseCase. di_config, use_case_builder, app_controller and main_window use register_instance only. The None marker therefore stays and its behaviour is documented by a test."
+      ],
+      "tests_added": [
+        "3 tests added to tests/application/test_service_container.py"
+      ],
+      "validation": "Full suite: 12958 tests run, 35 skipped, OK. tests/architecture 88 tests OK (3 skipped). tools/check_architecture.py: all categories PASS. compileall exit 0. git diff --check clean. tests.application 1401, tests.config 9 and tests.integration.lifecycle 32 OK. 21 in-memory mutants of service_container.py killed.",
+      "limitations": [
+        "coverage.py is not installed and cannot be installed here, so reachability was shown with a stdlib line trace plus a static search."
+      ]
+    },
+    {
+      "batch": "ui-fixes-splitter-and-gil",
+      "findings": [
+        "Issue 1 root cause: left_splitter (Conditions above Layers) had stretch factors (1, 1). The Pan handle only moves the outer left_column_splitter, but the nested left_splitter received the whole height change and distributed it by stretch, so Layers shrank or grew with it (Pan 60 px smaller: Conditions +30, Layers +30 before; window height +120: both panes grew). Fix: Layers stretch 0 (setStretchFactor(1, 0)). Persisted keys, hidden-pane size preservation, _ensure_* helpers and the two-pane assumptions are unchanged; with Conditions or Layers hidden the single visible pane was already adjacent and absorbed the change.",
+        "Issue 2 profile (real PDFRenderingService, 5477x3651 composite base, 2592x1728 pt page, offscreen): a scroll step costs about 3.5 ms at 1200x800 and 9 ms at 2560x1400 and is almost entirely Qt painting (drawImage of the frame plus the low-res base under it, about 25% of the step; ARGB32 versus RGB32/premultiplied made no measurable difference); there are zero render requests, scene.changed emissions or thumbnail renders during scrolling because ZoomDebouncer waits 125 ms; the Pan sidebar adds nothing (8.91 ms with it, 8.89 without; 3 thumbnail renders in total).",
+        "Issue 2 root cause: when scrolling pauses, a visible-frame composite is rendered on the PDFRenderWorker thread. The pdfium and ost_image natives release the GIL (module_pdf.cpp), but every PySide QImage/QPainter call holds it for its whole duration: probe on a 5000x2800 image gives copy 12 ms (GUI loop gap 10 ms), convertToFormat 14 (11), convert plus Darken fill 34 (31), against a pure Python 132 ms loop that only delayed the GUI 19 ms. In the real frame pipeline (invert plus bitonal, 1900x1100 composite frame) the GUI thread was blocked up to 62-79 ms per frame; the worker profile showed convertToFormat (4 calls of 13-20 ms), tint_image, copy, fillRect and invertPixels as whole-image calls.",
+        "Fix: presentation/visualization/utils/image_bands.py runs conversion, copy, region copy, invert and bitonal darkening in bands of at most BAND_PIXELS (262144) pixels, writing each band into the result buffer, so the output is byte-identical; images up to one band, indexed images and null images use the original whole-image call. Used by image_effects (tint, invert, bitonal), PageRenderer (pdfium result conversion) and the composite overlay crop. Measured isolated frame (render plus effects): GUI max loop gap 62-79 ms before, 22-31 ms after; the worker pays about 14 ms more CPU per frame (effects 8 ms to 23 ms, render 215 to 255 ms) and the frame arrives slightly later.",
+        "Remaining GIL holders in the frame pipeline (not changed): ost_pdf result.to_bytes copies, the Python bytes()/join in tint_image, QPainter.drawImage of the overlay and base into the frame, and QImage allocation; the GUI max gap is still about 22-30 ms per frame. GUI-thread use of pdfium_lock in placement_mode (snap preview) can also wait for a worker frame render in placement tools; not touched."
+      ],
+      "tests_added": [
+        "26 tests: 13 new module, 13 added to existing modules"
+      ],
+      "validation": "Full suite: 12984 tests run, 35 skipped, OK. tools/check_architecture.py: all categories PASS. compileall exit 0. git diff --check (core.whitespace=cr-at-eol) clean. In-memory mutants of image_bands, image_effects, page_renderer, composite_renderer and the splitter stretch killed (one survivor, the indexed-image guard, got a test and was killed).",
+      "limitations": [
+        "Stall durations are wall-clock measurements on this machine (offscreen, software raster) and are reported as evidence, not asserted; the regression tests assert deterministic per-call pixel counts and byte equality.",
+        "The real display, device pixel ratio and GPU compositing of the user's machine were not observed; a 4K viewport would scale the painting share of a scroll step."
+      ]
     }
   ],
   "modules": {
@@ -19601,7 +19687,8 @@
         "SidebarToggleBuilderTests.test_the_pan_toggle_is_checkable_labelled_and_themed_like_its_siblings": "Added: the pan toggle is checkable labelled and themed like its siblings. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
         "SidebarToggleBuilderTests.test_the_pan_toggle_button_has_an_accessible_name_and_tooltip": "Added: the pan toggle button has an accessible name and tooltip. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
         "SidebarToggleBuilderTests.test_the_pan_sidebar_starts_hidden_and_the_column_follows_the_two_sidebars": "Added: the pan sidebar starts hidden and the column follows the two sidebars. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
-        "SidebarToggleBuilderTests.test_the_column_keeps_the_sidebar_width_and_gives_the_spare_height_to_the_top": "Added: the column keeps the sidebar width and gives the spare height to the top. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers."
+        "SidebarToggleBuilderTests.test_the_column_keeps_the_sidebar_width_and_gives_the_spare_height_to_the_top": "Added: the column keeps the sidebar width and gives the spare height to the top. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
+        "SidebarToggleBuilderTests.test_the_conditions_pane_absorbs_height_changes_and_layers_keeps_its_size": "Added: the conditions pane absorbs height changes and layers keeps its size. Left splitter stretch factors: Conditions absorbs height changes, Layers keeps its size."
       }
     },
     "tests/presentation/components/plan_view/components/test_drag_handler.py": {
@@ -31859,7 +31946,8 @@
         "PageRendererLifecycleTests.test_raster_native_scale_preserves_source_pixels_without_upsampling": "Sound: exact native size and pixel colors vs 3x upsampled size; no change.",
         "PageRendererPreferenceTests.test_page_renderer_reopens_same_path_pdf_when_file_signature_changes": "Rewritten with ordered open/close event log (cached on unchanged signature, close then reopen on change) replacing assertGreaterEqual(close_calls, 2); temp dir instead of shared TEMP file.",
         "PageRendererPreferenceTests.test_pdf_frame_render_matches_full_page_orientation": "Strengthened: frame vs full comparison alone could pass if both were wrong; now exact expected corner colors per rotation 0/90/180/270 and sizes.",
-        "PageRendererPreferenceTests.test_pdf_subframe_render_matches_full_page_crop": "Strengthened: exact frame sizes and a probe pixel color per frame (red, white, yellow) so an all-blank match cannot pass; pixel-by-pixel crop comparison kept."
+        "PageRendererPreferenceTests.test_pdf_subframe_render_matches_full_page_crop": "Strengthened: exact frame sizes and a probe pixel color per frame (red, white, yellow) so an all-blank match cannot pass; pixel-by-pixel crop comparison kept.",
+        "PageRendererPreferenceTests.test_large_pdf_renders_convert_in_bands_without_changing_the_picture": "Added: large pdf renders convert in bands without changing the picture. Large PDF page and frame renders convert the pdfium result in bands and keep the picture."
       }
     },
     "tests/presentation/visualization/pdf/renderers/test_pattern_renderer.py": {
@@ -32440,7 +32528,11 @@
         "InvertImageTests.test_invert_image_inverts_rgb_keeps_alpha_and_leaves_source_unchanged": "Added: RGB inverted, alpha 128 preserved, original untouched; kills InvertRgba and in-place mutants.",
         "PageImageEffectTests.test_paper_color_follows_bitonal_then_invert": "Added: paper colour for the four flag combinations (255, 220, 0, 35).",
         "PageImageEffectTests.test_no_effects_returns_the_same_image_object": "Added: no flags returns the same QImage object (the early return is an equivalent mutant since the fall-through also returns the input).",
-        "PageImageEffectTests.test_effects_render_paper_exactly_as_the_paper_color_predicts": "Added: rendering white paper with each effect combination equals page_effect_paper_color (relational), and ink 0 with both effects is 255, which pins bitonal-before-invert ordering (swapped order is killed)."
+        "PageImageEffectTests.test_effects_render_paper_exactly_as_the_paper_color_predicts": "Added: rendering white paper with each effect combination equals page_effect_paper_color (relational), and ink 0 with both effects is 255, which pins bitonal-before-invert ordering (swapped order is killed).",
+        "LargeFrameEffectTests.test_bitonal_on_a_large_frame_is_banded_and_unchanged": "Added: bitonal on a large frame is banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations.",
+        "LargeFrameEffectTests.test_invert_on_a_large_frame_is_banded_and_unchanged": "Added: invert on a large frame is banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations.",
+        "LargeFrameEffectTests.test_tint_on_a_large_frame_is_banded_and_unchanged": "Added: tint on a large frame is banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations.",
+        "LargeFrameEffectTests.test_bitonal_and_invert_together_on_a_large_frame_are_banded_and_unchanged": "Added: bitonal and invert together on a large frame are banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations."
       }
     },
     "tests/presentation/visualization/utils/test_mesh.py": {
@@ -36457,7 +36549,8 @@
         "RasterViewportCompositionTests.test_raster_metadata_fallback_reuses_decoded_overlay": "Retained: fallback decode and frame render counted once for two consumers, nothing cached, then normal render caches. Mutant killed: cacheable guard removed.",
         "RasterViewportCompositionTests.test_overlay_only_missing_source_retries_before_allocating_canvas": "Retained: no canvas drawn for a missing overlay, recovery draws once for both renderers. Mutant killed: overlay-only key without file signature (module run with the native-plane test).",
         "RasterViewportCompositionTests.test_same_page_uid_in_other_database_does_not_reuse_wrong_pixels": "Retained: BidRef is part of the key, other database never reuses pixels; positive control that the first remains cached.",
-        "RasterViewportCompositionTests.test_clear_composites_during_render_never_stores_the_cleared_result": "Added: nothing covered the generation check in PageCache.get_composite. A render in flight when clear_composites runs still returns its pixels but must not repopulate the cache, and a later render recomputes and caches. Mutants killed: generation guard removed, clear_composites not bumping the generation (both SURVIVED the original ten tests)."
+        "RasterViewportCompositionTests.test_clear_composites_during_render_never_stores_the_cleared_result": "Added: nothing covered the generation check in PageCache.get_composite. A render in flight when clear_composites runs still returns its pixels but must not repopulate the cache, and a later render recomputes and caches. Mutants killed: generation guard removed, clear_composites not bumping the generation (both SURVIVED the original ten tests).",
+        "RasterViewportCompositionTests.test_a_large_overlay_crop_is_copied_in_bands_without_changing_the_frame": "Added: a large overlay crop is copied in bands without changing the frame. A large raster overlay crop in a composite frame is copied in bands."
       }
     },
     "tests/integration/rendering/test_threejs_mesh_footprint.py": {
@@ -37293,7 +37386,13 @@
         "PanSidebarWorkspaceTests.test_the_pan_toggle_keeps_its_state_across_tab_switches_and_follows_the_tab": "Added: the pan toggle keeps its state across tab switches and follows the tab. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
         "PanSidebarWorkspaceTests.test_the_sidebar_toggles_have_distinct_accessible_names_and_no_shortcuts": "Added: the sidebar toggles have distinct accessible names and no shortcuts. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
         "PanSidebarWorkspaceTests.test_switching_pages_on_the_3d_view_still_shows_the_2d_viewport": "Added: switching pages on the 3d view still shows the 2d viewport. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
-        "PanSidebarWorkspaceTests.test_the_menu_actions_use_the_shared_toggle_icon": "Added: the menu actions use the shared toggle icon. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset."
+        "PanSidebarWorkspaceTests.test_the_menu_actions_use_the_shared_toggle_icon": "Added: the menu actions use the shared toggle icon. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_dragging_the_top_handle_only_resizes_the_adjacent_panes": "Added: dragging the top handle only resizes the adjacent panes. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+        "PanSidebarWorkspaceTests.test_dragging_the_top_handle_with_conditions_hidden_resizes_only_layers": "Added: dragging the top handle with conditions hidden resizes only layers. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+        "PanSidebarWorkspaceTests.test_dragging_the_top_handle_with_layers_hidden_resizes_only_conditions": "Added: dragging the top handle with layers hidden resizes only conditions. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+        "PanSidebarWorkspaceTests.test_showing_and_hiding_the_pan_sidebar_keeps_the_layers_height": "Added: showing and hiding the pan sidebar keeps the layers height. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+        "PanSidebarWorkspaceTests.test_resizing_the_window_keeps_the_pan_and_layers_heights": "Added: resizing the window keeps the pan and layers heights. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+        "PanSidebarWorkspaceTests.test_sizes_after_a_top_handle_drag_survive_a_restart": "Added: sizes after a top handle drag survive a restart. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved."
       }
     },
     "tests/integration/surfaces/test_pan_sidebar_detached.py": {
@@ -37304,6 +37403,60 @@
         "PanSidebarFollowsOnlyTheMainViewTests.test_scrolling_and_zooming_a_detached_window_does_not_move_the_mini_map": "Added: scrolling and zooming a detached window does not move the mini map. Detached windows never drive the mini-map: scrolling, zooming and page changes of the detached view leave it untouched, and dragging it pans only Main.",
         "PanSidebarFollowsOnlyTheMainViewTests.test_dragging_the_mini_map_pans_the_main_view_and_not_the_detached_window": "Added: dragging the mini map pans the main view and not the detached window. Detached windows never drive the mini-map: scrolling, zooming and page changes of the detached view leave it untouched, and dragging it pans only Main.",
         "PanSidebarFollowsOnlyTheMainViewTests.test_switching_the_detached_window_page_does_not_refresh_the_thumbnail": "Added: switching the detached window page does not refresh the thumbnail. Detached windows never drive the mini-map: scrolling, zooming and page changes of the detached view leave it untouched, and dragging it pans only Main."
+      }
+    },
+    "tests/application/test_service_container.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Plain in-memory ServiceContainer with counting factories and small marker classes; no Qt, infrastructure or mocks. The container is the real class under test.",
+      "reviewed_tests": {
+        "RegisterInstanceTests.test_get_returns_the_registered_instance_itself": "Added: get returns the registered instance itself. register_instance stores the object itself, replaces on re-registration and is per container.",
+        "RegisterInstanceTests.test_falsy_instances_are_returned_not_treated_as_missing": "Added: falsy instances are returned not treated as missing. register_instance stores the object itself, replaces on re-registration and is per container.",
+        "RegisterInstanceTests.test_registering_the_same_name_again_replaces_the_instance": "Added: registering the same name again replaces the instance. register_instance stores the object itself, replaces on re-registration and is per container.",
+        "RegisterInstanceTests.test_names_are_independent": "Added: names are independent. register_instance stores the object itself, replaces on re-registration and is per container.",
+        "RegisterInstanceTests.test_containers_do_not_share_registrations": "Added: containers do not share registrations. register_instance stores the object itself, replaces on re-registration and is per container.",
+        "RegisterSingletonTests.test_registering_a_singleton_does_not_create_it": "Added: registering a singleton does not create it. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+        "RegisterSingletonTests.test_the_first_get_creates_it_and_later_gets_return_the_same_object": "Added: the first get creates it and later gets return the same object. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+        "RegisterSingletonTests.test_each_singleton_is_created_independently_and_only_when_requested": "Added: each singleton is created independently and only when requested. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+        "RegisterSingletonTests.test_a_factory_that_builds_a_service_may_get_other_services": "Added: a factory that builds a service may get other services. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+        "RegisterSingletonTests.test_a_factory_error_propagates_and_the_next_get_retries": "Added: a factory error propagates and the next get retries. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+        "RegisterSingletonTests.test_registering_a_singleton_again_replaces_the_factory_and_cached_object": "Added: registering a singleton again replaces the factory and cached object. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+        "GetTests.test_a_missing_name_raises_a_key_error_naming_the_service": "Added: a missing name raises a key error naming the service. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+        "GetTests.test_names_are_exact_and_case_sensitive": "Added: names are exact and case sensitive. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+        "GetTests.test_a_registered_instance_wins_over_a_singleton_of_the_same_name": "Added: a registered instance wins over a singleton of the same name. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+        "GetTests.test_an_instance_registered_first_still_wins_over_a_later_singleton": "Added: an instance registered first still wins over a later singleton. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+        "GetByInterfaceTests.test_it_returns_instances_that_are_instances_of_the_interface": "Added: it returns instances that are instances of the interface. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+        "GetByInterfaceTests.test_a_subclass_interface_excludes_its_parent": "Added: a subclass interface excludes its parent. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+        "GetByInterfaceTests.test_created_singletons_are_included": "Added: created singletons are included. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+        "GetByInterfaceTests.test_uncreated_singletons_are_neither_created_nor_included": "Added: uncreated singletons are neither created nor included. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+        "GetByInterfaceTests.test_instances_come_before_created_singletons": "Added: instances come before created singletons. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+        "GetByInterfaceTests.test_nothing_registered_or_nothing_matching_gives_an_empty_list": "Added: nothing registered or nothing matching gives an empty list. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+        "GetByInterfaceTests.test_the_result_is_a_new_list_each_call": "Added: the result is a new list each call. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+        "ClearTests.test_clear_removes_instances_and_created_and_uncreated_singletons": "Added: clear removes instances and created and uncreated singletons. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+        "ClearTests.test_clear_never_calls_a_pending_factory": "Added: clear never calls a pending factory. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+        "ClearTests.test_a_cleared_container_accepts_new_registrations": "Added: a cleared container accepts new registrations. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+        "ClearTests.test_clearing_an_empty_container_is_harmless": "Added: clearing an empty container is harmless. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+        "RegisterSingletonTests.test_a_factory_that_returns_none_is_called_again_on_every_get": "Added: documents the current contract that a singleton factory returning None is called again on every get (None is the not-created marker) and is never listed by get_by_interface. No registered production singleton factory can return None, so this is a pinned contract, not a used path.",
+        "RegisterSingletonTests.test_falsy_products_are_cached_like_any_other_product": "Added: singleton products that are falsy but not None (0, empty string, empty list, False) are created once and cached. Kills the mutant that tests truthiness instead of None.",
+        "ClearTests.test_clear_releases_the_factories": "Added: clear() releases the registered factories (weak reference dies after clear and gc). Kills the mutant that leaves _factories populated, which is otherwise unobservable."
+      }
+    },
+    "tests/presentation/visualization/utils/test_image_bands.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real QImage data built from a repeating byte pattern (fast, deterministic); expected results are the whole-image Qt operations; the spy in image_op_spy.py wraps QImage.convertToFormat/copy/invertPixels and QPainter.fillRect and records pixels per native call. No mocks of the helpers under test.",
+      "reviewed_tests": {
+        "BandedImageTests.test_conversion_matches_the_whole_image_conversion": "Added: conversion matches the whole image conversion. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_copy_matches_the_source_and_is_independent_of_it": "Added: copy matches the source and is independent of it. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_region_copy_matches_the_whole_image_region_copy": "Added: region copy matches the whole image region copy. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_a_large_region_copy_is_banded": "Added: a large region copy is banded. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_inversion_matches_the_whole_image_inversion_and_leaves_the_source": "Added: inversion matches the whole image inversion and leaves the source. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_darkening_matches_the_whole_image_darkening": "Added: darkening matches the whole image darkening. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_image_metadata_survives_every_operation": "Added: image metadata survives every operation. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_no_native_operation_exceeds_the_band_size_on_a_large_image": "Added: no native operation exceeds the band size on a large image. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_a_small_image_is_processed_by_single_whole_image_operations": "Added: a small image is processed by single whole image operations. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_every_band_of_a_tall_narrow_image_stays_within_the_limit": "Added: every band of a tall narrow image stays within the limit. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_a_single_very_wide_row_is_still_processed": "Added: a single very wide row is still processed. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_indexed_images_keep_their_color_table": "Added: indexed images keep their color table. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+        "BandedImageTests.test_a_null_image_gives_a_null_image": "Added: a null image gives a null image. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap)."
       }
     }
   },
@@ -37388,15 +37541,15 @@
   },
   "latest_validation": {
     "full_suite": {
-      "tests_run": 12929,
+      "tests_run": 12984,
       "skips": 35,
-      "seconds": 248.6,
+      "seconds": 246.2,
       "result": "OK",
       "command": ".\\venv\\Scripts\\python.exe -m unittest discover -s tests -t ."
     },
     "discovery": {
-      "defined": 12953,
-      "discovered": 12953,
+      "defined": 13008,
+      "discovered": 13008,
       "duplicate_ids": 0,
       "missing_definitions": 0,
       "errors": 0
@@ -37509,7 +37662,9 @@
       "compileall": 0,
       "diff_check": "clean (cr-at-eol)"
     },
-    "pan_sidebar_batch": "pan-sidebar 3D-view follow-up 2026-10-06: predicted 2D viewport while the 2D view is hidden; full suite 12929 OK (35 skipped), architecture PASS, compileall 0, git diff --check clean"
+    "pan_sidebar_batch": "pan-sidebar 3D-view follow-up 2026-10-06: predicted 2D viewport while the 2D view is hidden; full suite 12929 OK (35 skipped), architecture PASS, compileall 0, git diff --check clean",
+    "service_container_batch": "2026-10-06 follow-ups: unreachable plain-factory branch removed, None-factory contract pinned; full suite 12958 OK (35 skipped), tests/architecture OK, check_architecture PASS, compileall 0, git diff --check clean",
+    "ui_fixes_batch": "2026-10-06: left-column splitter stretch (Layers keeps its height) and banded QImage operations on render workers; full suite 12984 OK (35 skipped), check_architecture PASS, compileall 0, git diff --check clean"
   },
   "skip_observations": [
     {
@@ -38519,6 +38674,24 @@
         "decision": "Pan sidebar: docked mini-map of the active Main plan view",
         "status": "implemented",
         "outcome": "PanSidebar (presentation/components) with pure geometry in presentation/utils/minimap_geometry.py; hidden by default; View toolbar toggle (first sidebar toggle) and View menu item share one QAction; visibility and vertical size persist in workspace_state.json (pan_sidebar_visible, left_column_pan_first_sizes) through the coordinator capture/restore/reset; follows only Main's plan view, pans with centerOn only when the view is stable, never changes zoom or writes zoom_fac/current_x/current_y, widget-local open/closed hand cursors; thumbnail rendered at the widget's pixel size (capped at 1024) and never while hidden. View menu reordered to Pan, Conditions, Layers to match the toolbar and the screen. While the 2D view is hidden behind the 3D view the mini-map draws the predicted 2D viewport. Tests written first against real widgets; about 100 in-memory mutants killed, the equivalent ones removed or covered by new tests."
+      },
+      {
+        "id": "Z1",
+        "decision": "tests/README.md inventory references and direct ServiceContainer tests",
+        "status": "implemented",
+        "outcome": "README corrected to the generated layout map and the optional, uncommitted execution snapshot (nothing restored, no test needs either file). New tests/application/test_service_container.py covers register_instance, register_singleton (lazy, once, per name, retry after error, replacement), get (KeyError text, exact names, instance precedence), get_by_interface (isinstance, instances before singletons, uncreated singletons neither created nor listed, fresh list) and clear; 20 in-memory mutants killed. The unreachable plain-factory branch in get() and the None-product re-creation quirk are reported, not changed."
+      },
+      {
+        "id": "Z2",
+        "decision": "ServiceContainer follow-ups: dead branch and None-returning factories",
+        "status": "implemented",
+        "outcome": "The unreachable plain-factory branch in get() was removed after a whole-suite line trace and a static caller check showed it was never reached. No registered singleton factory can return None (12 register_singleton sites reviewed), so the private-sentinel change was not needed; the current contract (a None product is rebuilt on every get) is pinned by a test, together with falsy-product caching and factory release on clear. 21 in-memory mutants of the container are killed."
+      },
+      {
+        "id": "Z3",
+        "decision": "Left column splitter resizing and scroll freezes on composite Plans",
+        "status": "implemented",
+        "outcome": "Layers stretch set to 0 so only the Conditions pane absorbs Pan-handle and window height changes (real-window tests for shrink, grow, Conditions or Layers hidden, Pan toggle, window resize and restart). Scroll freeze traced to PySide QImage calls holding the GIL on render workers; large conversions, effects, tints and overlay crops now run in BAND_PIXELS bands with byte-identical output (GUI stall per composite frame about 65 ms to about 25 ms). Scrolling itself, the Pan sidebar and the debounce were measured and are not causes; remaining GIL holders and the placement-mode pdfium_lock use are reported, not changed."
       },
       {
         "id": "OPEN-1",

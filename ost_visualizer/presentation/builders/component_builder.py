@@ -1162,7 +1162,7 @@ class ComponentBuilder:
         left_splitter.addWidget(bid_layers_sidebar)
         left_splitter.setMinimumWidth(SIDEBAR_MIN_WIDTH)
         left_splitter.setStretchFactor(0, 1)
-        left_splitter.setStretchFactor(1, 1)
+        left_splitter.setStretchFactor(1, 0)
         pan_sidebar = PanSidebar(takeoff_tab)
         pan_sidebar.setVisible(False)
         left_column_splitter = QtWidgets.QSplitter(

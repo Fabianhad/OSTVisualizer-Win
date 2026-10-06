@@ -17,6 +17,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from tests.presentation.dialogs.options.preference_support import (
     _app as _preferences_support__app,
 )
+from ost_visualizer.presentation.visualization.utils.image_bands import BAND_PIXELS
+from tests.presentation.visualization.utils.image_op_spy import (
+    largest_operation,
+    recorded_image_operations,
+)
 from tests.presentation.components.plan_view.visible_frame_support import (
     _write_colored_corner_pdf as _preferences_support__write_colored_corner_pdf,
 )
@@ -208,6 +213,42 @@ class PageRendererPreferenceTests(unittest.TestCase):
                 self.assertEqual((frame.width(), frame.height()), (frame_w, frame_h))
                 self.assertEqual(sample_corners(full), corners)
                 self.assertEqual(sample_corners(frame), corners)
+
+    def test_large_pdf_renders_convert_in_bands_without_changing_the_picture(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        pdf_path = Path(temp_dir.name) / "ostv_large_frame.pdf"
+        _preferences_support__write_colored_corner_pdf(pdf_path)
+        renderer = PageRenderer()
+        self.addCleanup(renderer.close)
+        red, yellow = (255, 0, 0), (255, 255, 0)
+        for label, render in (
+            ("page", lambda: renderer.render(str(pdf_path), 0, 8.0, 0)),
+            (
+                "frame",
+                lambda: renderer.render_frame(
+                    str(pdf_path), 0, 8.0, 0.0, 0.0, 200.0, 100.0, 0
+                ),
+            ),
+        ):
+            with self.subTest(render=label):
+                with recorded_image_operations() as operations:
+                    image = render()
+                self.assertEqual((image.width(), image.height()), (1600, 800))
+                self.assertGreater(image.width() * image.height(), 2 * BAND_PIXELS)
+                self.assertEqual(
+                    image.format(), QtGui.QImage.Format.Format_ARGB32_Premultiplied
+                )
+                top_left = image.pixelColor(10, 10)
+                bottom_right = image.pixelColor(image.width() - 10, image.height() - 10)
+                self.assertEqual(
+                    (top_left.red(), top_left.green(), top_left.blue()), red
+                )
+                self.assertEqual(
+                    (bottom_right.red(), bottom_right.green(), bottom_right.blue()),
+                    yellow,
+                )
+                self.assertLessEqual(largest_operation(operations), BAND_PIXELS)
 
     def test_pdf_subframe_render_matches_full_page_crop(self):
         temp_dir = tempfile.TemporaryDirectory()

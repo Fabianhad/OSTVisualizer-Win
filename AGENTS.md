@@ -549,6 +549,12 @@ Persistence:
   while the view is hidden and loading), never changes zoom or writes a Page's
   `zoom_fac`/`current_x`/`current_y`, and sets its open/closed hand cursors on its
   own widget only.
+- In the left column the Conditions pane (stretch 1) absorbs height changes from the
+  Pan handle and window resizes while the Layers pane (stretch 0) keeps its height.
+- PySide holds the GIL for each QImage/QPainter call, so Plan View render workers
+  must not run one native pixel operation over a whole large frame: conversion,
+  copy, invert, bitonal, tint and overlay crops use `visualization/utils/image_bands.py`,
+  which caps each call at `BAND_PIXELS` so the GUI thread keeps running.
 - Font and color creation defaults plus the live inactive-object color belong to
   `Config` in `config.json`. Workspace annotation styles retain only alignment
   and unrelated tool defaults; explicit font and color columns on existing

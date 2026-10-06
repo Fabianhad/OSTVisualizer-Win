@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
-  "module_count": 538,
-  "method_count": 12953,
+  "module_count": 540,
+  "method_count": 13008,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -567,6 +567,24 @@
       "decision": "Pan sidebar: docked mini-map of the active Main plan view",
       "status": "implemented",
       "outcome": "PanSidebar (presentation/components) with pure geometry in presentation/utils/minimap_geometry.py; hidden by default; View toolbar toggle (first sidebar toggle) and View menu item share one QAction; visibility and vertical size persist in workspace_state.json (pan_sidebar_visible, left_column_pan_first_sizes) through the coordinator capture/restore/reset; follows only Main's plan view, pans with centerOn only when the view is stable, never changes zoom or writes zoom_fac/current_x/current_y, widget-local open/closed hand cursors; thumbnail rendered at the widget's pixel size (capped at 1024) and never while hidden. View menu reordered to Pan, Conditions, Layers to match the toolbar and the screen. While the 2D view is hidden behind the 3D view the mini-map draws the predicted 2D viewport. Tests written first against real widgets; about 100 in-memory mutants killed, the equivalent ones removed or covered by new tests."
+    },
+    {
+      "id": "Z1",
+      "decision": "tests/README.md inventory references and direct ServiceContainer tests",
+      "status": "implemented",
+      "outcome": "README corrected to the generated layout map and the optional, uncommitted execution snapshot (nothing restored, no test needs either file). New tests/application/test_service_container.py covers register_instance, register_singleton (lazy, once, per name, retry after error, replacement), get (KeyError text, exact names, instance precedence), get_by_interface (isinstance, instances before singletons, uncreated singletons neither created nor listed, fresh list) and clear; 20 in-memory mutants killed. The unreachable plain-factory branch in get() and the None-product re-creation quirk are reported, not changed."
+    },
+    {
+      "id": "Z2",
+      "decision": "ServiceContainer follow-ups: dead branch and None-returning factories",
+      "status": "implemented",
+      "outcome": "The unreachable plain-factory branch in get() was removed after a whole-suite line trace and a static caller check showed it was never reached. No registered singleton factory can return None (12 register_singleton sites reviewed), so the private-sentinel change was not needed; the current contract (a None product is rebuilt on every get) is pinned by a test, together with falsy-product caching and factory release on clear. 21 in-memory mutants of the container are killed."
+    },
+    {
+      "id": "Z3",
+      "decision": "Left column splitter resizing and scroll freezes on composite Plans",
+      "status": "implemented",
+      "outcome": "Layers stretch set to 0 so only the Conditions pane absorbs Pan-handle and window height changes (real-window tests for shrink, grow, Conditions or Layers hidden, Pan toggle, window resize and restart). Scroll freeze traced to PySide QImage calls holding the GIL on render workers; large conversions, effects, tints and overlay crops now run in BAND_PIXELS bands with byte-identical output (GUI stall per composite frame about 65 ms to about 25 ms). Scrolling itself, the Pan sidebar and the debounce were measured and are not causes; remaining GIL holders and the placement-mode pdfium_lock use are reported, not changed."
     },
     {
       "id": "OPEN-1",
@@ -36146,6 +36164,636 @@
       ],
       "duplicate_method_names": []
     },
+    "tests/application/test_service_container.py": {
+      "sha256": "6026f056c1b399459367aafcc38506ee4e0e43aa4535b35dd66ccacc5d0b447a",
+      "methods": [
+        {
+          "name": "RegisterInstanceTests.test_get_returns_the_registered_instance_itself",
+          "line": 32,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Unrelated",
+            "container.get",
+            "container.register_instance",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: get returns the registered instance itself. register_instance stores the object itself, replaces on re-registration and is per container.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterInstanceTests.test_falsy_instances_are_returned_not_treated_as_missing",
+          "line": 39,
+          "assertions": [
+            "self.assertIs"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "container.get",
+            "container.register_instance",
+            "self.assertIs",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: falsy instances are returned not treated as missing. register_instance stores the object itself, replaces on re-registration and is per container.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterInstanceTests.test_registering_the_same_name_again_replaces_the_instance",
+          "line": 51,
+          "assertions": [
+            "self.assertIs"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Unrelated",
+            "container.get",
+            "container.register_instance",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: registering the same name again replaces the instance. register_instance stores the object itself, replaces on re-registration and is per container.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterInstanceTests.test_names_are_independent",
+          "line": 58,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Unrelated",
+            "container.get",
+            "container.register_instance",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names are independent. register_instance stores the object itself, replaces on re-registration and is per container.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterInstanceTests.test_containers_do_not_share_registrations",
+          "line": 66,
+          "assertions": [
+            "self.assertRaises"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Unrelated",
+            "first.register_instance",
+            "second.get",
+            "self.assertRaises"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: containers do not share registrations. register_instance stores the object itself, replaces on re-registration and is per container.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_registering_a_singleton_does_not_create_it",
+          "line": 74,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.register_singleton",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: registering a singleton does not create it. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_the_first_get_creates_it_and_later_gets_return_the_same_object",
+          "line": 80,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertIsInstance"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.get",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertIsInstance"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the first get creates it and later gets return the same object. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_each_singleton_is_created_independently_and_only_when_requested",
+          "line": 90,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIsNot"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.get",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIsNot"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: each singleton is created independently and only when requested. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_a_factory_that_builds_a_service_may_get_other_services",
+          "line": 102,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Unrelated",
+            "container.get",
+            "container.register_instance",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a factory that builds a service may get other services. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_a_factory_that_returns_none_is_called_again_on_every_get",
+          "line": 110,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertIsNone",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "calls.append",
+            "container.get",
+            "container.get_by_interface",
+            "container.register_singleton",
+            "len",
+            "self.assertEqual",
+            "self.assertIsNone"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: documents the current contract that a singleton factory returning None is called again on every get (None is the not-created marker) and is never listed by get_by_interface. No registered production singleton factory can return None, so this is a pinned contract, not a used path.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_falsy_products_are_cached_like_any_other_product",
+          "line": 124,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.get",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: singleton products that are falsy but not None (0, empty string, empty list, False) are created once and cached. Kills the mutant that tests truthiness instead of None.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_a_factory_error_propagates_and_the_next_get_retries",
+          "line": 134,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertRaises"
+          ],
+          "calls": [
+            "RuntimeError",
+            "ServiceContainer",
+            "Unrelated",
+            "attempts.append",
+            "container.get",
+            "container.register_singleton",
+            "len",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertRaises"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a factory error propagates and the next get retries. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegisterSingletonTests.test_registering_a_singleton_again_replaces_the_factory_and_cached_object",
+          "line": 151,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIsNot",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.get",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertIsNot"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: registering a singleton again replaces the factory and cached object. register_singleton is lazy, created once, per-name, retried after a factory error and replaced on re-registration.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetTests.test_a_missing_name_raises_a_key_error_naming_the_service",
+          "line": 167,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "container.get",
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a missing name raises a key error naming the service. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetTests.test_names_are_exact_and_case_sensitive",
+          "line": 173,
+          "assertions": [
+            "self.assertRaises"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Unrelated",
+            "container.get",
+            "container.register_instance",
+            "self.assertRaises",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: names are exact and case sensitive. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetTests.test_a_registered_instance_wins_over_a_singleton_of_the_same_name",
+          "line": 181,
+          "assertions": [
+            "self.assertIs",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "Unrelated",
+            "container.get",
+            "container.register_instance",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a registered instance wins over a singleton of the same name. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetTests.test_an_instance_registered_first_still_wins_over_a_later_singleton",
+          "line": 190,
+          "assertions": [
+            "self.assertIs",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "Unrelated",
+            "container.get",
+            "container.register_instance",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: an instance registered first still wins over a later singleton. get raises KeyError with the service name, is exact-name and gives registered instances precedence over singletons.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetByInterfaceTests.test_it_returns_instances_that_are_instances_of_the_interface",
+          "line": 201,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertIn"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Shutdownable",
+            "ShutdownableChild",
+            "Unrelated",
+            "container.get_by_interface",
+            "container.register_instance",
+            "len",
+            "self.assertEqual",
+            "self.assertIn"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: it returns instances that are instances of the interface. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetByInterfaceTests.test_a_subclass_interface_excludes_its_parent",
+          "line": 212,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Shutdownable",
+            "ShutdownableChild",
+            "container.get_by_interface",
+            "container.register_instance",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a subclass interface excludes its parent. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetByInterfaceTests.test_created_singletons_are_included",
+          "line": 219,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "ShutdownableChild",
+            "container.get",
+            "container.get_by_interface",
+            "container.register_singleton",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: created singletons are included. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetByInterfaceTests.test_uncreated_singletons_are_neither_created_nor_included",
+          "line": 226,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "ShutdownableChild",
+            "container.get_by_interface",
+            "container.register_singleton",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: uncreated singletons are neither created nor included. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetByInterfaceTests.test_instances_come_before_created_singletons",
+          "line": 234,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "Shutdownable",
+            "ShutdownableChild",
+            "container.get",
+            "container.get_by_interface",
+            "container.register_instance",
+            "container.register_singleton",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: instances come before created singletons. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetByInterfaceTests.test_nothing_registered_or_nothing_matching_gives_an_empty_list",
+          "line": 242,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Unrelated",
+            "container.get_by_interface",
+            "container.register_instance",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: nothing registered or nothing matching gives an empty list. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "GetByInterfaceTests.test_the_result_is_a_new_list_each_call",
+          "line": 248,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "Shutdownable",
+            "container.get_by_interface",
+            "container.register_instance",
+            "first.clear",
+            "len",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the result is a new list each call. get_by_interface uses isinstance over instances then created singletons, never creates pending singletons and returns a fresh list.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ClearTests.test_clear_removes_instances_and_created_and_uncreated_singletons",
+          "line": 257,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "Shutdownable",
+            "container.clear",
+            "container.get",
+            "container.get_by_interface",
+            "container.register_instance",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertRaises",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: clear removes instances and created and uncreated singletons. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ClearTests.test_clear_releases_the_factories",
+          "line": 270,
+          "assertions": [
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.clear",
+            "container.register_singleton",
+            "gc.collect",
+            "reference",
+            "self.assertIsNone",
+            "weakref.ref"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: clear() releases the registered factories (weak reference dies after clear and gc). Kills the mutant that leaves _factories populated, which is otherwise unobservable.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ClearTests.test_clear_never_calls_a_pending_factory",
+          "line": 280,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.clear",
+            "container.register_singleton",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: clear never calls a pending factory. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ClearTests.test_a_cleared_container_accepts_new_registrations",
+          "line": 287,
+          "assertions": [
+            "self.assertIsNot",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CountingFactory",
+            "ServiceContainer",
+            "container.clear",
+            "container.get",
+            "container.register_singleton",
+            "self.assertEqual",
+            "self.assertIsNot"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a cleared container accepts new registrations. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ClearTests.test_clearing_an_empty_container_is_harmless",
+          "line": 298,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "ServiceContainer",
+            "container.clear",
+            "container.get_by_interface",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: clearing an empty container is harmless. clear drops instances and created/uncreated singletons without calling factories and allows new registrations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
     "tests/application/use_cases/annotation_view/test_open_annotation_view_use_case.py": {
       "sha256": "bbe19d29571933d3ea1427268f8a6c98d55c9c62e735f02bad09a4751150c008",
       "methods": [
@@ -44030,7 +44678,7 @@
       "duplicate_method_names": []
     },
     "tests/domain/entities/test_workspace_state.py": {
-      "sha256": "32388f0382c3d32df22c4f57e126845f0e2d0b4a80efaf9dabd485a85825945a",
+      "sha256": "7dd1aa7e9ce0673ab10d698a1aa5bf1c3641d5607f290c637adb69aee21ff6e7",
       "methods": [
         {
           "name": "WorkspaceStateSerializationTests.test_unsaved_and_explicitly_collapsed_project_expansion_remain_distinct_on_reload",
@@ -44327,7 +44975,7 @@
         },
         {
           "name": "PanSidebarWorkspaceStateTests.test_old_files_without_the_keys_load_with_the_defaults",
-          "line": 290,
+          "line": 292,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -44347,7 +44995,7 @@
         },
         {
           "name": "PanSidebarWorkspaceStateTests.test_invalid_values_fall_back_without_touching_the_siblings",
-          "line": 303,
+          "line": 305,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -44366,7 +45014,7 @@
         },
         {
           "name": "PanSidebarWorkspaceStateTests.test_the_sibling_sidebar_keys_still_round_trip",
-          "line": 315,
+          "line": 317,
           "assertions": [
             "self.assertEqual"
           ],
@@ -44384,7 +45032,7 @@
         },
         {
           "name": "WorkspaceFontColorCompatibilityTests.test_legacy_workspace_overlap_is_ignored_and_stripped",
-          "line": 327,
+          "line": 329,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -44408,7 +45056,7 @@
         },
         {
           "name": "WorkspaceCorruptDimensionTests.test_nonfinite_schema_version_uses_current_schema_without_losing_other_state",
-          "line": 355,
+          "line": 357,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -44427,7 +45075,7 @@
         },
         {
           "name": "WorkspaceCorruptDimensionTests.test_nonfinite_saved_sizes_do_not_abort_unrelated_workspace_restoration",
-          "line": 368,
+          "line": 370,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -44446,7 +45094,7 @@
         },
         {
           "name": "WorkspaceCorruptDimensionTests.test_nonfinite_header_widths_do_not_discard_valid_sibling_columns",
-          "line": 384,
+          "line": 386,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -100925,7 +101573,7 @@
       "duplicate_method_names": []
     },
     "tests/integration/lifecycle/test_pan_sidebar_workspace.py": {
-      "sha256": "fcbdc2cebeba4a8c04bfce3a9011597610359f60a1487673b13f421c88603097",
+      "sha256": "e780f6b967f57293eb60dd3eb524cd8ce789e6274fd96bdb6dab56a63027c825",
       "methods": [
         {
           "name": "PanSidebarWorkspaceTests.test_the_main_plan_view_is_bound_and_the_pan_sidebar_starts_hidden",
@@ -101104,7 +101752,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_again_restores_its_last_height",
-          "line": 191,
+          "line": 189,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -101127,7 +101775,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_visibility_and_vertical_size_persist_across_a_restart",
-          "line": 207,
+          "line": 205,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -101167,7 +101815,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_a_hidden_pan_sidebar_persists_as_hidden_and_keeps_its_last_size",
-          "line": 235,
+          "line": 233,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -101243,7 +101891,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_moving_the_column_splitter_requests_a_workspace_save",
-          "line": 285,
+          "line": 287,
           "assertions": [
             "self.assertTrue"
           ],
@@ -101263,7 +101911,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_reset_to_defaults_hides_the_pan_sidebar",
-          "line": 297,
+          "line": 299,
           "assertions": [
             "self.assertFalse"
           ],
@@ -101284,7 +101932,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_a_file_saved_with_the_pre_reorder_size_key_is_not_read_swapped",
-          "line": 322,
+          "line": 324,
           "assertions": [
             "self.assertNotIn",
             "self.assertEqual",
@@ -101312,7 +101960,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_short_or_corrupt_size_lists_never_collapse_the_top_sidebars",
-          "line": 336,
+          "line": 338,
           "assertions": [
             "self.assertGreater",
             "self.assertGreater"
@@ -101333,7 +101981,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_oversized_size_lists_use_only_the_two_panes",
-          "line": 348,
+          "line": 350,
           "assertions": [
             "self.assertGreater",
             "self.assertGreater"
@@ -101353,7 +102001,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_saved_sizes_survive_a_startup_where_the_takeoff_tab_is_inactive",
-          "line": 358,
+          "line": 360,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -101375,7 +102023,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_alone_restores_the_sidebar_column_width",
-          "line": 370,
+          "line": 374,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -101406,7 +102054,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_expands_a_column_the_user_collapsed",
-          "line": 387,
+          "line": 391,
           "assertions": [
             "self.assertEqual",
             "self.assertGreater",
@@ -101433,7 +102081,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_a_size_list_with_the_wrong_length_leaves_the_column_unchanged",
-          "line": 401,
+          "line": 405,
           "assertions": [
             "self.assertEqual"
           ],
@@ -101456,7 +102104,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_hiding_all_three_sidebars_keeps_the_saved_column_width",
-          "line": 414,
+          "line": 418,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -101488,7 +102136,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_the_pan_toggle_keeps_its_state_across_tab_switches_and_follows_the_tab",
-          "line": 433,
+          "line": 437,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -101518,7 +102166,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_the_sidebar_toggles_have_distinct_accessible_names_and_no_shortcuts",
-          "line": 453,
+          "line": 457,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -101551,7 +102199,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_switching_pages_on_the_3d_view_still_shows_the_2d_viewport",
-          "line": 473,
+          "line": 478,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -101594,8 +102242,154 @@
           "second_pass_note": ""
         },
         {
+          "name": "PanSidebarWorkspaceTests.test_dragging_the_top_handle_only_resizes_the_adjacent_panes",
+          "line": 542,
+          "assertions": [
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertAlmostEqual",
+            "self.assertEqual",
+            "self.drag_top_handle",
+            "self.open_takeoff_with_pan",
+            "self.pane_heights",
+            "self.subTest",
+            "self.window",
+            "win.get_left_splitter_sizes"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: dragging the top handle only resizes the adjacent panes. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PanSidebarWorkspaceTests.test_dragging_the_top_handle_with_conditions_hidden_resizes_only_layers",
+          "line": 556,
+          "assertions": [
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "self.app.processEvents",
+            "self.assertAlmostEqual",
+            "self.drag_top_handle",
+            "self.open_takeoff_with_pan",
+            "self.pane_heights",
+            "self.subTest",
+            "self.window",
+            "win.set_conditions_sidebar_visible"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: dragging the top handle with conditions hidden resizes only layers. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PanSidebarWorkspaceTests.test_dragging_the_top_handle_with_layers_hidden_resizes_only_conditions",
+          "line": 569,
+          "assertions": [
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "self.app.processEvents",
+            "self.assertAlmostEqual",
+            "self.drag_top_handle",
+            "self.open_takeoff_with_pan",
+            "self.pane_heights",
+            "self.subTest",
+            "self.window",
+            "win.set_layers_sidebar_visible"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: dragging the top handle with layers hidden resizes only conditions. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PanSidebarWorkspaceTests.test_showing_and_hiding_the_pan_sidebar_keeps_the_layers_height",
+          "line": 582,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.app.processEvents",
+            "self.assertEqual",
+            "self.open_takeoff_with_pan",
+            "self.window",
+            "win._bid_layers_sidebar.height",
+            "win.set_pan_sidebar_visible"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: showing and hiding the pan sidebar keeps the layers height. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PanSidebarWorkspaceTests.test_resizing_the_window_keeps_the_pan_and_layers_heights",
+          "line": 593,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.app.processEvents",
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.open_takeoff_with_pan",
+            "self.pane_heights",
+            "self.window",
+            "win.height",
+            "win.resize",
+            "win.width"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: resizing the window keeps the pan and layers heights. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PanSidebarWorkspaceTests.test_sizes_after_a_top_handle_drag_survive_a_restart",
+          "line": 607,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "first._bid_layers_sidebar.height",
+            "first._workspace_state_coordinator.flush",
+            "second._bid_layers_sidebar.height",
+            "second.get_left_column_splitter_sizes",
+            "second.get_left_splitter_sizes",
+            "self.assertAlmostEqual",
+            "self.assertEqual",
+            "self.drag_top_handle",
+            "self.open_takeoff_with_pan",
+            "self.saved_takeoff_workspace",
+            "self.show_like_startup_then_open_takeoff",
+            "self.window"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: sizes after a top handle drag survive a restart. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "PanSidebarWorkspaceTests.test_the_menu_actions_use_the_shared_toggle_icon",
-          "line": 512,
+          "line": 624,
           "assertions": [
             "self.assertEqual"
           ],
@@ -116821,11 +117615,48 @@
       "duplicate_method_names": []
     },
     "tests/integration/rendering/test_raster_composition.py": {
-      "sha256": "1a75fd563a520a43ccf72b9de2d26b30527dacda78781aa73236cd60b636ec82",
+      "sha256": "79f31e4a2af9398a7dd7866dc04a8da48045e34db4ed90e715a7e6594183f729",
       "methods": [
         {
+          "name": "RasterViewportCompositionTests.test_a_large_overlay_crop_is_copied_in_bands_without_changing_the_frame",
+          "line": 88,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertIsNotNone",
+            "self.assertGreater",
+            "self.assertLessEqual",
+            "self.assertGreater"
+          ],
+          "calls": [
+            "Path",
+            "QColor",
+            "QImage",
+            "big.fill",
+            "big.save",
+            "big.setDotsPerMeterX",
+            "big.setDotsPerMeterY",
+            "frame.height",
+            "frame.width",
+            "len",
+            "max",
+            "recorded_image_operations",
+            "replace",
+            "self.assertGreater",
+            "self.assertIsNotNone",
+            "self.assertLessEqual",
+            "self.assertTrue",
+            "self.render",
+            "str"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a large overlay crop is copied in bands without changing the frame. A large raster overlay crop in a composite frame is copied in bands.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "RasterViewportCompositionTests.test_matching_consumers_reuse_raster_composition_and_source_loads",
-          "line": 84,
+          "line": 104,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertEqual",
@@ -116849,7 +117680,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_revision_replacement_preserves_metadata_but_changes_pixels",
-          "line": 105,
+          "line": 125,
           "assertions": [
             "self.assertEqual",
             "self.assertNotEqual",
@@ -116873,7 +117704,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_frame_inputs_invalidate_but_downstream_effects_do_not",
-          "line": 116,
+          "line": 136,
           "assertions": [
             "self.assertIs",
             "self.assertIsNot",
@@ -116898,7 +117729,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_missing_overlay_and_metadata_fallback_are_not_cached",
-          "line": 140,
+          "line": 160,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertEqual",
@@ -116928,7 +117759,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_concurrent_raster_consumers_share_work_and_cancel_independently",
-          "line": 157,
+          "line": 177,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertEqual",
@@ -116973,7 +117804,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_old_raster_completion_cannot_replace_new_source",
-          "line": 218,
+          "line": 238,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -117011,7 +117842,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_partial_and_unknown_sources_retry_without_compositing",
-          "line": 246,
+          "line": 266,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertEqual",
@@ -117046,7 +117877,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_raster_metadata_fallback_reuses_decoded_overlay",
-          "line": 283,
+          "line": 303,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertEqual",
@@ -117072,7 +117903,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_overlay_only_missing_source_retries_before_allocating_canvas",
-          "line": 313,
+          "line": 333,
           "assertions": [
             "self.assertIsNone",
             "self.assertIsNone",
@@ -117104,7 +117935,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_same_page_uid_in_other_database_does_not_reuse_wrong_pixels",
-          "line": 332,
+          "line": 352,
           "assertions": [
             "self.assertNotEqual",
             "self.assertIs",
@@ -117133,7 +117964,7 @@
         },
         {
           "name": "RasterViewportCompositionTests.test_clear_composites_during_render_never_stores_the_cleared_result",
-          "line": 350,
+          "line": 370,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -129789,7 +130620,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/builders/test_component_builder.py": {
-      "sha256": "f1e08fba1b41926c7e680a7ad3e88c2f230a8c54ccc9f73257881c56bee9c776",
+      "sha256": "3fe492765b1fe5e5b03f06bf75a25a88b14cd43340d7b754aebf709d19dbd85c",
       "methods": [
         {
           "name": "ComponentBuilderLayoutTests.test_plan_toolbar_layout_filter_coalesces_event_burst",
@@ -130162,7 +130993,7 @@
         },
         {
           "name": "SidebarToggleBuilderTests.test_the_toggles_follow_the_on_screen_sidebar_layout_top_to_bottom",
-          "line": 368,
+          "line": 372,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -130187,7 +131018,7 @@
         },
         {
           "name": "SidebarToggleBuilderTests.test_the_pan_toggle_is_checkable_labelled_and_themed_like_its_siblings",
-          "line": 379,
+          "line": 383,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -130225,7 +131056,7 @@
         },
         {
           "name": "SidebarToggleBuilderTests.test_the_pan_toggle_button_has_an_accessible_name_and_tooltip",
-          "line": 393,
+          "line": 397,
           "assertions": [
             "self.assertIsInstance",
             "self.assertEqual",
@@ -130249,7 +131080,7 @@
         },
         {
           "name": "SidebarToggleBuilderTests.test_the_pan_sidebar_starts_hidden_and_the_column_follows_the_two_sidebars",
-          "line": 402,
+          "line": 404,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -130270,7 +131101,7 @@
         },
         {
           "name": "SidebarToggleBuilderTests.test_the_column_keeps_the_sidebar_width_and_gives_the_spare_height_to_the_top",
-          "line": 409,
+          "line": 411,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -130293,6 +131124,30 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added: the column keeps the sidebar width and gives the spare height to the top. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SidebarToggleBuilderTests.test_the_conditions_pane_absorbs_height_changes_and_layers_keeps_its_size",
+          "line": 421,
+          "assertions": [
+            "self.assertIs",
+            "self.assertIs",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "left.widget",
+            "left.widget(0).sizePolicy",
+            "left.widget(0).sizePolicy().verticalStretch",
+            "left.widget(1).sizePolicy",
+            "left.widget(1).sizePolicy().verticalStretch",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: the conditions pane absorbs height changes and layers keeps its size. Left splitter stretch factors: Conditions absorbs height changes, Layers keeps its size.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -159718,7 +160573,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/components/plan_view/components/test_zoom_handler.py": {
-      "sha256": "5dcf09fb16b02065899058821d6bc1d3604b5f970c22b39738048c8af81f6b6f",
+      "sha256": "cc0ed07f214f1c42a4d1ed7900a3ed105e5c468514b68b0cca8b2a384bc076af",
       "methods": [
         {
           "name": "ZoomHandlerPreferenceTests.test_crosshair_repaints_on_vertical_and_horizontal_scroll",
@@ -160207,7 +161062,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_the_load_mode_chosen_at_load_time_wins_over_a_later_camera_write",
-          "line": 614,
+          "line": 618,
           "assertions": [
             "self.assert_same_rect"
           ],
@@ -160229,7 +161084,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_nothing_is_predicted_before_the_load_geometry_is_ready",
-          "line": 626,
+          "line": 630,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue"
@@ -160252,7 +161107,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_an_invalid_scene_extent_is_not_predicted",
-          "line": 635,
+          "line": 639,
           "assertions": [
             "self.assertTrue"
           ],
@@ -160275,7 +161130,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_a_hidden_view_predicts_the_saved_camera",
-          "line": 647,
+          "line": 651,
           "assertions": [
             "self.assert_same_rect"
           ],
@@ -160300,7 +161155,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_the_prediction_uses_the_last_visible_viewport_size_not_a_hidden_resize",
-          "line": 661,
+          "line": 665,
           "assertions": [
             "self.assert_same_rect"
           ],
@@ -160326,7 +161181,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_the_default_auto_zoom_is_not_predicted",
-          "line": 678,
+          "line": 683,
           "assertions": [
             "self.assertTrue"
           ],
@@ -160348,7 +161203,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_a_view_that_was_never_shown_is_not_predicted",
-          "line": 686,
+          "line": 691,
           "assertions": [
             "self.assertTrue"
           ],
@@ -160367,7 +161222,7 @@
         },
         {
           "name": "PredictedVisibleSceneRectTests.test_predicting_never_changes_the_view_or_the_pages_camera",
-          "line": 690,
+          "line": 695,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -195556,7 +196411,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/components/test_pan_sidebar.py": {
-      "sha256": "96eb7f96b7f0f07428b9a8435e50487d1d7556e076febb76c065e80795ceb07f",
+      "sha256": "4bd2b178e3ada394a1355df7c5e05b040cc171905827e586802585de21741c69",
       "methods": [
         {
           "name": "EmptyStateTests.test_a_sidebar_without_a_plan_view_is_empty",
@@ -195836,7 +196691,7 @@
         },
         {
           "name": "VisibleRectTrackingTests.test_a_view_that_is_not_the_bound_one_does_not_drive_the_sidebar",
-          "line": 260,
+          "line": 262,
           "assertions": [
             "self.assertEqual"
           ],
@@ -195870,7 +196725,7 @@
         },
         {
           "name": "VisibleRectTrackingTests.test_unbinding_stops_the_sidebar_following_the_view",
-          "line": 284,
+          "line": 286,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue"
@@ -195893,7 +196748,7 @@
         },
         {
           "name": "VisibleRectTrackingTests.test_unbinding_removes_the_viewport_event_filter",
-          "line": 293,
+          "line": 295,
           "assertions": [
             "self.assertGreater",
             "self.assertEqual"
@@ -195923,7 +196778,7 @@
         },
         {
           "name": "VisibleRectTrackingTests.test_a_deleted_plan_view_leaves_a_safe_empty_sidebar",
-          "line": 308,
+          "line": 310,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue"
@@ -195946,7 +196801,7 @@
         },
         {
           "name": "RepaintTests.test_each_view_signal_alone_repaints_the_sidebar",
-          "line": 343,
+          "line": 345,
           "assertions": [
             "update.assert_called"
           ],
@@ -195966,7 +196821,7 @@
         },
         {
           "name": "RepaintTests.test_an_unbound_sidebar_is_not_repainted_by_the_old_view",
-          "line": 351,
+          "line": 353,
           "assertions": [
             "update.assert_not_called"
           ],
@@ -195987,7 +196842,7 @@
         },
         {
           "name": "PointerTests.test_hovering_the_rectangle_shows_the_open_hand_and_leaving_it_resets",
-          "line": 365,
+          "line": 367,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -196010,7 +196865,7 @@
         },
         {
           "name": "PointerTests.test_pressing_the_rectangle_shows_the_closed_hand_and_release_the_open_hand",
-          "line": 373,
+          "line": 375,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -196034,7 +196889,7 @@
         },
         {
           "name": "PointerTests.test_releasing_another_button_does_not_end_the_drag",
-          "line": 385,
+          "line": 387,
           "assertions": [
             "self.assertEqual",
             "self.assertNotEqual",
@@ -196063,7 +196918,7 @@
         },
         {
           "name": "PointerTests.test_releasing_outside_the_rectangle_restores_the_default_cursor",
-          "line": 403,
+          "line": 405,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196087,7 +196942,7 @@
         },
         {
           "name": "PointerTests.test_dragging_pans_the_main_view_with_the_pointer",
-          "line": 413,
+          "line": 415,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -196120,7 +196975,7 @@
         },
         {
           "name": "PointerTests.test_dragging_keeps_the_grab_offset_inside_the_rectangle",
-          "line": 427,
+          "line": 429,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -196152,7 +197007,7 @@
         },
         {
           "name": "PointerTests.test_dragging_never_changes_the_zoom",
-          "line": 440,
+          "line": 442,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196178,7 +197033,7 @@
         },
         {
           "name": "PointerTests.test_clicking_outside_the_rectangle_centers_the_view_there",
-          "line": 451,
+          "line": 453,
           "assertions": [
             "self.assertFalse",
             "self.assertAlmostEqual",
@@ -196217,7 +197072,7 @@
         },
         {
           "name": "PointerTests.test_clicking_near_an_edge_keeps_the_view_inside_the_page_extent",
-          "line": 469,
+          "line": 471,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assertGreaterEqual"
@@ -196248,7 +197103,7 @@
         },
         {
           "name": "PointerTests.test_clicking_never_changes_the_zoom",
-          "line": 481,
+          "line": 483,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196270,7 +197125,7 @@
         },
         {
           "name": "PointerTests.test_only_the_left_button_pans",
-          "line": 490,
+          "line": 492,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196292,7 +197147,7 @@
         },
         {
           "name": "PointerTests.test_leaving_the_widget_and_hiding_it_restore_the_cursor",
-          "line": 507,
+          "line": 509,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -196321,7 +197176,7 @@
         },
         {
           "name": "PointerTests.test_a_hidden_drag_does_not_keep_panning_after_the_sidebar_is_shown_again",
-          "line": 522,
+          "line": 526,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196346,7 +197201,7 @@
         },
         {
           "name": "PointerTests.test_no_global_override_cursor_or_native_window_is_used",
-          "line": 535,
+          "line": 539,
           "assertions": [
             "self.assertIsNone",
             "self.assertFalse",
@@ -196377,7 +197232,7 @@
         },
         {
           "name": "StabilityGateTests.test_pressing_and_dragging_do_nothing_until_the_main_view_is_stable",
-          "line": 549,
+          "line": 553,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -196415,7 +197270,7 @@
         },
         {
           "name": "StabilityGateTests.test_a_drag_in_progress_stops_when_the_main_view_becomes_unstable",
-          "line": 573,
+          "line": 577,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -196449,7 +197304,7 @@
         },
         {
           "name": "StabilityGateTests.test_hovering_the_rectangle_shows_no_hand_until_the_view_is_stable",
-          "line": 595,
+          "line": 599,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196472,7 +197327,7 @@
         },
         {
           "name": "StabilityGateTests.test_panning_works_once_the_view_becomes_stable",
-          "line": 608,
+          "line": 612,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -196508,7 +197363,7 @@
         },
         {
           "name": "NoCameraWriteTests.test_pointer_use_never_writes_the_pages_stored_camera",
-          "line": 636,
+          "line": 640,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -196537,7 +197392,7 @@
         },
         {
           "name": "NoCameraWriteTests.test_the_sidebar_does_not_toggle_the_views_page_state_ownership",
-          "line": 654,
+          "line": 662,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue"
@@ -196555,7 +197410,7 @@
         },
         {
           "name": "FeedbackLoopTests.test_scene_changes_during_a_drag_do_not_schedule_a_render",
-          "line": 662,
+          "line": 670,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -196583,7 +197438,7 @@
         },
         {
           "name": "FeedbackLoopTests.test_a_drag_move_causes_a_bounded_number_of_scroll_changes_and_no_renders",
-          "line": 679,
+          "line": 687,
           "assertions": [
             "self.assertLessEqual",
             "self.assertEqual"
@@ -196617,7 +197472,7 @@
         },
         {
           "name": "FeedbackLoopTests.test_the_view_settles_after_the_drag_without_further_scroll_events",
-          "line": 698,
+          "line": 708,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196647,7 +197502,7 @@
         },
         {
           "name": "ThumbnailTests.test_the_thumbnail_is_rendered_at_the_map_pixel_size",
-          "line": 714,
+          "line": 726,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -196672,7 +197527,7 @@
         },
         {
           "name": "ThumbnailTests.test_the_thumbnail_follows_the_device_pixel_ratio",
-          "line": 722,
+          "line": 734,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -196698,7 +197553,7 @@
         },
         {
           "name": "ThumbnailTests.test_the_thumbnail_size_is_capped",
-          "line": 731,
+          "line": 743,
           "assertions": [
             "self.assertLessEqual",
             "self.assertLessEqual",
@@ -196724,7 +197579,7 @@
         },
         {
           "name": "ThumbnailTests.test_a_page_load_renders_the_thumbnail_once_per_load",
-          "line": 743,
+          "line": 757,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assertGreater",
@@ -196747,7 +197602,7 @@
         },
         {
           "name": "ThumbnailTests.test_each_page_load_signal_alone_schedules_a_refresh",
-          "line": 758,
+          "line": 772,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196766,7 +197621,7 @@
         },
         {
           "name": "ThumbnailTests.test_nothing_is_rendered_while_the_sidebar_is_hidden",
-          "line": 768,
+          "line": 782,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196787,7 +197642,7 @@
         },
         {
           "name": "ThumbnailTests.test_showing_a_stale_hidden_sidebar_renders_it_once",
-          "line": 783,
+          "line": 797,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196808,7 +197663,7 @@
         },
         {
           "name": "ThumbnailTests.test_a_scale_change_reload_refreshes_the_thumbnail",
-          "line": 799,
+          "line": 813,
           "assertions": [
             "self.assertGreater"
           ],
@@ -196827,7 +197682,7 @@
         },
         {
           "name": "ThumbnailTests.test_invert_bitonal_and_show_mode_reloads_refresh_the_thumbnail",
-          "line": 810,
+          "line": 824,
           "assertions": [
             "self.assertGreater"
           ],
@@ -196848,7 +197703,7 @@
         },
         {
           "name": "ThumbnailTests.test_inverting_the_page_changes_the_rendered_page_color",
-          "line": 840,
+          "line": 855,
           "assertions": [
             "self.assertNotEqual"
           ],
@@ -196876,7 +197731,7 @@
         },
         {
           "name": "ThumbnailTests.test_scene_changes_trigger_a_debounced_refresh",
-          "line": 854,
+          "line": 869,
           "assertions": [
             "self.assertEqual"
           ],
@@ -196897,7 +197752,7 @@
         },
         {
           "name": "ThumbnailTests.test_the_visible_rect_is_drawn_inverted_and_the_rest_normally",
-          "line": 863,
+          "line": 878,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -196952,7 +197807,7 @@
         },
         {
           "name": "DragRobustnessTests.test_a_lost_release_does_not_leave_the_drag_running",
-          "line": 916,
+          "line": 935,
           "assertions": [
             "self.assertEqual",
             "self.assertNotEqual"
@@ -196977,7 +197832,7 @@
         },
         {
           "name": "DragRobustnessTests.test_a_window_deactivation_followed_by_a_buttonless_move_ends_the_drag",
-          "line": 926,
+          "line": 945,
           "assertions": [
             "self.assertEqual"
           ],
@@ -197001,7 +197856,7 @@
         },
         {
           "name": "DragRobustnessTests.test_clearing_the_page_during_a_drag_ends_it",
-          "line": 938,
+          "line": 957,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -197027,7 +197882,7 @@
         },
         {
           "name": "DragRobustnessTests.test_rebinding_during_a_drag_ends_it_without_moving_either_view",
-          "line": 950,
+          "line": 969,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -197056,7 +197911,7 @@
         },
         {
           "name": "DragRobustnessTests.test_deleting_the_view_during_a_drag_ends_it",
-          "line": 965,
+          "line": 984,
           "assertions": [
             "self.assertEqual"
           ],
@@ -197081,7 +197936,7 @@
         },
         {
           "name": "DragRobustnessTests.test_other_buttons_never_pan_or_change_the_cursor",
-          "line": 975,
+          "line": 994,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -197108,7 +197963,7 @@
         },
         {
           "name": "DragRobustnessTests.test_a_double_click_centers_like_a_click_and_ends_cleanly",
-          "line": 993,
+          "line": 1012,
           "assertions": [
             "self.assertEqual",
             "self.assertNotEqual"
@@ -197137,7 +197992,7 @@
         },
         {
           "name": "DragRobustnessTests.test_the_sidebar_never_takes_keyboard_focus_or_promotes_native_windows",
-          "line": 1006,
+          "line": 1025,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -197172,7 +198027,7 @@
         },
         {
           "name": "DragRobustnessTests.test_wheel_events_are_left_to_the_parent",
-          "line": 1022,
+          "line": 1041,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -197200,7 +198055,7 @@
         },
         {
           "name": "PageShapeTests.test_a_tiny_page_is_usable",
-          "line": 1073,
+          "line": 1092,
           "assertions": [
             "self.assert_usable",
             "self.assert_usable"
@@ -197219,7 +198074,7 @@
         },
         {
           "name": "PageShapeTests.test_a_huge_page_is_usable_and_the_thumbnail_stays_capped",
-          "line": 1079,
+          "line": 1098,
           "assertions": [
             "self.assert_usable",
             "self.assert_usable"
@@ -197239,7 +198094,7 @@
         },
         {
           "name": "PageShapeTests.test_a_page_smaller_than_the_viewport_maps_to_the_whole_page",
-          "line": 1086,
+          "line": 1105,
           "assertions": [
             "self.assert_usable",
             "self.assertAlmostEqual",
@@ -197270,7 +198125,7 @@
         },
         {
           "name": "PageShapeTests.test_a_rotated_page_gets_a_map_with_the_scene_aspect_ratio",
-          "line": 1098,
+          "line": 1119,
           "assertions": [
             "self.assert_usable",
             "self.assertAlmostEqual",
@@ -197297,7 +198152,7 @@
         },
         {
           "name": "PageShapeTests.test_flipped_pages_render_and_pan",
-          "line": 1111,
+          "line": 1132,
           "assertions": [
             "self.assert_usable",
             "self.assert_usable"
@@ -197320,7 +198175,7 @@
         },
         {
           "name": "PageShapeTests.test_rapid_page_switches_render_at_most_once_per_load",
-          "line": 1120,
+          "line": 1141,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assertLessEqual"
@@ -197342,7 +198197,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_a_page_with_a_saved_camera_shows_its_viewport_while_the_view_is_hidden",
-          "line": 1165,
+          "line": 1186,
           "assertions": [
             "self.assertFalse",
             "self.assert_rects_match"
@@ -197364,7 +198219,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_a_saved_camera_at_the_page_edge_is_clamped_like_the_view_clamps_it",
-          "line": 1175,
+          "line": 1196,
           "assertions": [
             "self.assert_rects_match"
           ],
@@ -197384,7 +198239,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_a_page_without_a_saved_camera_shows_the_fitted_page_while_hidden",
-          "line": 1182,
+          "line": 1203,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -197412,7 +198267,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_a_saved_camera_outside_the_page_falls_back_to_the_fitted_page",
-          "line": 1190,
+          "line": 1215,
           "assertions": [
             "self.assert_rects_match"
           ],
@@ -197432,7 +198287,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_a_scale_change_reload_while_hidden_keeps_the_preserved_camera",
-          "line": 1199,
+          "line": 1224,
           "assertions": [
             "self.assert_rects_match"
           ],
@@ -197455,7 +198310,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_the_default_auto_zoom_has_no_prediction_while_hidden",
-          "line": 1215,
+          "line": 1240,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue"
@@ -197477,7 +198332,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_a_view_that_was_never_shown_has_no_prediction",
-          "line": 1222,
+          "line": 1247,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue"
@@ -197500,7 +198355,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_the_prediction_is_not_interactive_and_writes_nothing",
-          "line": 1236,
+          "line": 1261,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -197539,7 +198394,7 @@
         },
         {
           "name": "HiddenViewPredictionTests.test_the_hidden_view_prediction_is_painted_on_the_sidebar",
-          "line": 1259,
+          "line": 1286,
           "assertions": [
             "self.assertEqual"
           ],
@@ -319065,11 +319920,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/pdf/renderers/test_page_renderer.py": {
-      "sha256": "e72a95941ec674881e97ffdde79eade4bb560ab0dfd7f041d48ce901bd37c0e4",
+      "sha256": "05ccf453a91dcb3fd413dab372f505ba2025ad5172d477263f2ea1d4b3cdf3c5",
       "methods": [
         {
           "name": "PageRendererLifecycleTests.test_failed_pdf_open_clears_cached_path_before_reopen",
-          "line": 47,
+          "line": 52,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -319097,7 +319952,7 @@
         },
         {
           "name": "PageRendererLifecycleTests.test_raster_native_scale_preserves_source_pixels_without_upsampling",
-          "line": 72,
+          "line": 77,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertIsNotNone",
@@ -319134,7 +319989,7 @@
         },
         {
           "name": "PageRendererPreferenceTests.test_page_renderer_reopens_same_path_pdf_when_file_signature_changes",
-          "line": 115,
+          "line": 120,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -319163,7 +320018,7 @@
         },
         {
           "name": "PageRendererPreferenceTests.test_pdf_frame_render_matches_full_page_orientation",
-          "line": 157,
+          "line": 162,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -319201,8 +320056,52 @@
           "second_pass_note": ""
         },
         {
+          "name": "PageRendererPreferenceTests.test_large_pdf_renders_convert_in_bands_without_changing_the_picture",
+          "line": 217,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertLessEqual"
+          ],
+          "calls": [
+            "PageRenderer",
+            "Path",
+            "_preferences_support__write_colored_corner_pdf",
+            "bottom_right.blue",
+            "bottom_right.green",
+            "bottom_right.red",
+            "image.format",
+            "image.height",
+            "image.pixelColor",
+            "image.width",
+            "largest_operation",
+            "recorded_image_operations",
+            "render",
+            "renderer.render",
+            "renderer.render_frame",
+            "self.addCleanup",
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.assertLessEqual",
+            "self.subTest",
+            "str",
+            "tempfile.TemporaryDirectory",
+            "top_left.blue",
+            "top_left.green",
+            "top_left.red"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: large pdf renders convert in bands without changing the picture. Large PDF page and frame renders convert the pdfium result in bands and keep the picture.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "PageRendererPreferenceTests.test_pdf_subframe_render_matches_full_page_crop",
-          "line": 212,
+          "line": 250,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325457,12 +326356,342 @@
       ],
       "duplicate_method_names": []
     },
+    "tests/presentation/visualization/utils/test_image_bands.py": {
+      "sha256": "3118211a124ceaa5d4102eb66c070c4b41e158159d2b81396647531a456b44ae",
+      "methods": [
+        {
+          "name": "BandedImageTests.test_conversion_matches_the_whole_image_conversion",
+          "line": 50,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "actual.format",
+            "actual.size",
+            "convert_to_format",
+            "expected.format",
+            "expected.size",
+            "pattern_image",
+            "pixel_bytes",
+            "self.assertEqual",
+            "self.subTest",
+            "source.convertToFormat"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: conversion matches the whole image conversion. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_copy_matches_the_source_and_is_independent_of_it",
+          "line": 66,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertNotEqual"
+          ],
+          "calls": [
+            "QtGui.QColor",
+            "copy_image",
+            "pattern_image",
+            "pixel_bytes",
+            "self.assertEqual",
+            "self.assertNotEqual",
+            "self.subTest",
+            "source.setPixelColor"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: copy matches the source and is independent of it. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_region_copy_matches_the_whole_image_region_copy",
+          "line": 75,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "actual.format",
+            "actual.size",
+            "copy_region",
+            "expected.format",
+            "expected.size",
+            "pattern_image",
+            "pixel_bytes",
+            "self.assertEqual",
+            "self.subTest",
+            "source.copy"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: region copy matches the whole image region copy. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_a_large_region_copy_is_banded",
+          "line": 85,
+          "assertions": [
+            "self.assertGreater",
+            "self.assertLessEqual"
+          ],
+          "calls": [
+            "copy_region",
+            "largest_operation",
+            "len",
+            "pattern_image",
+            "recorded_image_operations",
+            "self.assertGreater",
+            "self.assertLessEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a large region copy is banded. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_inversion_matches_the_whole_image_inversion_and_leaves_the_source",
+          "line": 92,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "actual.format",
+            "expected.invertPixels",
+            "inverted_rgb",
+            "pattern_image",
+            "pixel_bytes",
+            "self.assertEqual",
+            "self.subTest",
+            "source.copy",
+            "source.format"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: inversion matches the whole image inversion and leaves the source. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_darkening_matches_the_whole_image_darkening",
+          "line": 104,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "QtGui.QColor",
+            "QtGui.QPainter",
+            "actual.format",
+            "darkened_premultiplied",
+            "expected.rect",
+            "painter.end",
+            "painter.fillRect",
+            "painter.setCompositionMode",
+            "pattern_image",
+            "pixel_bytes",
+            "self.assertEqual",
+            "self.subTest",
+            "source.convertToFormat"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: darkening matches the whole image darkening. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_image_metadata_survives_every_operation",
+          "line": 120,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "QtGui.QColor",
+            "convert_to_format",
+            "copy_image",
+            "darkened_premultiplied",
+            "inverted_rgb",
+            "pattern_image",
+            "result.devicePixelRatio",
+            "result.dotsPerMeterX",
+            "result.dotsPerMeterY",
+            "self.assertEqual",
+            "self.subTest",
+            "source.setDevicePixelRatio",
+            "source.setDotsPerMeterX",
+            "source.setDotsPerMeterY"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: image metadata survives every operation. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_no_native_operation_exceeds_the_band_size_on_a_large_image",
+          "line": 136,
+          "assertions": [
+            "self.assertGreater",
+            "self.assertTrue",
+            "self.assertLessEqual"
+          ],
+          "calls": [
+            "QtGui.QColor",
+            "convert_to_format",
+            "copy_image",
+            "darkened_premultiplied",
+            "inverted_rgb",
+            "largest_operation",
+            "operation",
+            "pattern_image",
+            "recorded_image_operations",
+            "self.assertGreater",
+            "self.assertLessEqual",
+            "self.assertTrue",
+            "self.subTest",
+            "source.height",
+            "source.width"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: no native operation exceeds the band size on a large image. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_a_small_image_is_processed_by_single_whole_image_operations",
+          "line": 152,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "convert_to_format",
+            "pattern_image",
+            "recorded_image_operations",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a small image is processed by single whole image operations. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_every_band_of_a_tall_narrow_image_stays_within_the_limit",
+          "line": 158,
+          "assertions": [
+            "self.assertLessEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "convert_to_format",
+            "largest_operation",
+            "pattern_image",
+            "pixel_bytes",
+            "recorded_image_operations",
+            "self.assertEqual",
+            "self.assertLessEqual",
+            "source.convertToFormat"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: every band of a tall narrow image stays within the limit. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_a_single_very_wide_row_is_still_processed",
+          "line": 165,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "convert_to_format",
+            "pattern_image",
+            "pixel_bytes",
+            "self.assertEqual",
+            "source.convertToFormat"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a single very wide row is still processed. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_indexed_images_keep_their_color_table",
+          "line": 170,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "QtGui.QImage",
+            "QtGui.qRgb",
+            "bytes",
+            "copied.colorTable",
+            "copied.format",
+            "copy_image",
+            "len",
+            "pixel_bytes",
+            "range",
+            "self.assertEqual",
+            "source.bits",
+            "source.colorTable",
+            "source.setColorTable"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: indexed images keep their color table. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BandedImageTests.test_a_null_image_gives_a_null_image",
+          "line": 180,
+          "assertions": [
+            "self.assertTrue"
+          ],
+          "calls": [
+            "QtGui.QColor",
+            "QtGui.QImage",
+            "convert_to_format",
+            "copy_image",
+            "copy_region",
+            "darkened_premultiplied",
+            "inverted_rgb",
+            "operation",
+            "operation().isNull",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: a null image gives a null image. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
     "tests/presentation/visualization/utils/test_image_effects.py": {
-      "sha256": "b02f567d0c7863e11ff1baee8595bfa81e314146c9e3ef77571fca82e2b92735",
+      "sha256": "00411b44a0092f73adf6854adf4c0fe6b73183ea1bd9907fad0ef3236b57cafd",
       "methods": [
         {
           "name": "TintImageTests.test_tint_image_ignores_grayscale_scanline_padding",
-          "line": 35,
+          "line": 41,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -325486,7 +326715,7 @@
         },
         {
           "name": "TintImageTests.test_tint_image_alpha_scales_with_darkness_below_white_threshold",
-          "line": 49,
+          "line": 55,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325515,7 +326744,7 @@
         },
         {
           "name": "BitonalImageTests.test_bitonal_image_ignores_null_image_without_qpainter_warning",
-          "line": 75,
+          "line": 81,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -325538,7 +326767,7 @@
         },
         {
           "name": "BitonalImageTests.test_bitonal_image_clamps_paper_to_220_and_keeps_darker_pixels",
-          "line": 92,
+          "line": 98,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -325560,7 +326789,7 @@
         },
         {
           "name": "InvertImageTests.test_invert_image_inverts_rgb_keeps_alpha_and_leaves_source_unchanged",
-          "line": 112,
+          "line": 118,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325585,8 +326814,77 @@
           "second_pass_note": ""
         },
         {
+          "name": "LargeFrameEffectTests.test_bitonal_on_a_large_frame_is_banded_and_unchanged",
+          "line": 178,
+          "assertions": [
+            "self.assert_banded_and_identical"
+          ],
+          "calls": [
+            "_large_frame",
+            "self.assert_banded_and_identical"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: bitonal on a large frame is banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LargeFrameEffectTests.test_invert_on_a_large_frame_is_banded_and_unchanged",
+          "line": 183,
+          "assertions": [
+            "self.assert_banded_and_identical"
+          ],
+          "calls": [
+            "_large_frame",
+            "self.assert_banded_and_identical"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: invert on a large frame is banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LargeFrameEffectTests.test_tint_on_a_large_frame_is_banded_and_unchanged",
+          "line": 188,
+          "assertions": [
+            "self.assert_banded_and_identical"
+          ],
+          "calls": [
+            "_large_frame",
+            "_whole_image_tint",
+            "self.assert_banded_and_identical",
+            "tint_image"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: tint on a large frame is banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "LargeFrameEffectTests.test_bitonal_and_invert_together_on_a_large_frame_are_banded_and_unchanged",
+          "line": 195,
+          "assertions": [
+            "self.assert_banded_and_identical"
+          ],
+          "calls": [
+            "_large_frame",
+            "_whole_image_bitonal",
+            "_whole_image_invert",
+            "apply_page_image_effects",
+            "self.assert_banded_and_identical"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: bitonal and invert together on a large frame are banded and unchanged. Large-frame invert, bitonal, tint and combined effects are banded (no native call over BAND_PIXELS) and byte-identical to the whole-image implementations.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "PageImageEffectTests.test_paper_color_follows_bitonal_then_invert",
-          "line": 127,
+          "line": 210,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -325609,7 +326907,7 @@
         },
         {
           "name": "PageImageEffectTests.test_no_effects_returns_the_same_image_object",
-          "line": 138,
+          "line": 221,
           "assertions": [
             "self.assertIs"
           ],
@@ -325626,7 +326924,7 @@
         },
         {
           "name": "PageImageEffectTests.test_effects_render_paper_exactly_as_the_paper_color_predicts",
-          "line": 142,
+          "line": 225,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -343786,7 +345084,7 @@
     }
   },
   "discovery": {
-    "count": 12953,
+    "count": 13008,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

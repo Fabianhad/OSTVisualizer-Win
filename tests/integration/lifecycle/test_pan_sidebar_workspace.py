@@ -514,6 +514,114 @@ class PanSidebarWorkspaceTests(unittest.TestCase):
             self.assertAlmostEqual(predicted.width(), actual.width(), delta=2.0)
             self.assertAlmostEqual(predicted.height(), actual.height(), delta=2.0)
 
+    def open_takeoff_with_pan(self, win):
+        win.show()
+        win.tab_widget.setCurrentIndex(TAB_INDEX_TAKEOFF)
+        win.set_pan_sidebar_visible(True)
+        self.app.processEvents()
+        column_height = sum(win.get_left_column_splitter_sizes())
+        win.set_left_column_splitter_sizes([200, column_height - 200])
+        self.app.processEvents()
+        left_height = sum(win.get_left_splitter_sizes())
+        win.set_left_splitter_sizes([left_height // 2, left_height - left_height // 2])
+        self.app.processEvents()
+
+    def pane_heights(self, win):
+        return (
+            win._pan_sidebar.height(),
+            win._conditions_sidebar.height(),
+            win._bid_layers_sidebar.height(),
+        )
+
+    def drag_top_handle(self, win, delta):
+        column = win.get_left_column_splitter()
+        column.moveSplitter(column.sizes()[0] + delta, 1)
+        self.app.processEvents()
+
+    def test_dragging_the_top_handle_only_resizes_the_adjacent_panes(self):
+        for delta in (-60, 60):
+            with self.subTest(delta=delta):
+                with self.window() as win:
+                    self.open_takeoff_with_pan(win)
+                    pan, conditions, layers = self.pane_heights(win)
+                    split = win.get_left_splitter_sizes()
+                    self.drag_top_handle(win, delta)
+                    new_pan, new_conditions, new_layers = self.pane_heights(win)
+                    self.assertAlmostEqual(new_pan, pan + delta, delta=2)
+                    self.assertAlmostEqual(new_conditions, conditions - delta, delta=2)
+                    self.assertEqual(new_layers, layers)
+                    self.assertEqual(win.get_left_splitter_sizes()[1], split[1])
+
+    def test_dragging_the_top_handle_with_conditions_hidden_resizes_only_layers(self):
+        for delta in (-50, 50):
+            with self.subTest(delta=delta):
+                with self.window() as win:
+                    self.open_takeoff_with_pan(win)
+                    win.set_conditions_sidebar_visible(False)
+                    self.app.processEvents()
+                    pan, _conditions, layers = self.pane_heights(win)
+                    self.drag_top_handle(win, delta)
+                    new_pan, _new_conditions, new_layers = self.pane_heights(win)
+                    self.assertAlmostEqual(new_pan, pan + delta, delta=2)
+                    self.assertAlmostEqual(new_layers, layers - delta, delta=2)
+
+    def test_dragging_the_top_handle_with_layers_hidden_resizes_only_conditions(self):
+        for delta in (-50, 50):
+            with self.subTest(delta=delta):
+                with self.window() as win:
+                    self.open_takeoff_with_pan(win)
+                    win.set_layers_sidebar_visible(False)
+                    self.app.processEvents()
+                    pan, conditions, _layers = self.pane_heights(win)
+                    self.drag_top_handle(win, delta)
+                    new_pan, new_conditions, _new_layers = self.pane_heights(win)
+                    self.assertAlmostEqual(new_pan, pan + delta, delta=2)
+                    self.assertAlmostEqual(new_conditions, conditions - delta, delta=2)
+
+    def test_showing_and_hiding_the_pan_sidebar_keeps_the_layers_height(self):
+        with self.window() as win:
+            self.open_takeoff_with_pan(win)
+            layers = win._bid_layers_sidebar.height()
+            win.set_pan_sidebar_visible(False)
+            self.app.processEvents()
+            self.assertEqual(win._bid_layers_sidebar.height(), layers)
+            win.set_pan_sidebar_visible(True)
+            self.app.processEvents()
+            self.assertEqual(win._bid_layers_sidebar.height(), layers)
+
+    def test_resizing_the_window_keeps_the_pan_and_layers_heights(self):
+        with self.window() as win:
+            self.open_takeoff_with_pan(win)
+            pan, conditions, layers = self.pane_heights(win)
+            win.resize(win.width(), win.height() + 120)
+            self.app.processEvents()
+            new_pan, new_conditions, new_layers = self.pane_heights(win)
+            self.assertEqual(new_pan, pan)
+            self.assertEqual(new_layers, layers)
+            self.assertGreater(new_conditions, conditions)
+            win.resize(win.width(), win.height() - 120)
+            self.app.processEvents()
+            self.assertEqual(self.pane_heights(win), (pan, conditions, layers))
+
+    def test_sizes_after_a_top_handle_drag_survive_a_restart(self):
+        with self.window() as first:
+            self.open_takeoff_with_pan(first)
+            self.drag_top_handle(first, -40)
+            layers = first._bid_layers_sidebar.height()
+            first._workspace_state_coordinator.flush()
+            saved = self.saved_takeoff_workspace()
+        with self.window() as second:
+            self.show_like_startup_then_open_takeoff(second)
+            self.assertEqual(
+                second.get_left_splitter_sizes()[1], saved["left_splitter_sizes"][1]
+            )
+            self.assertAlmostEqual(second._bid_layers_sidebar.height(), layers, delta=3)
+            self.assertAlmostEqual(
+                second.get_left_column_splitter_sizes()[0],
+                saved["left_column_pan_first_sizes"][0],
+                delta=3,
+            )
+
     def test_the_menu_actions_use_the_shared_toggle_icon(self):
         with self.window() as win:
             toggle = win.get_pan_toggle_action()

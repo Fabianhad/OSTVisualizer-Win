@@ -417,3 +417,10 @@ class SidebarToggleBuilderTests(unittest.TestCase):
         self.assertEqual(column.widget(1).sizePolicy().verticalStretch(), 1)
         self.assertFalse(column.isCollapsible(0))
         self.assertTrue(column.isCollapsible(1))
+
+    def test_the_conditions_pane_absorbs_height_changes_and_layers_keeps_its_size(self):
+        left = self.bundle.left_splitter
+        self.assertIs(left.widget(0), self.bundle.conditions_sidebar)
+        self.assertIs(left.widget(1), self.bundle.bid_layers_sidebar)
+        self.assertEqual(left.widget(0).sizePolicy().verticalStretch(), 1)
+        self.assertEqual(left.widget(1).sizePolicy().verticalStretch(), 0)

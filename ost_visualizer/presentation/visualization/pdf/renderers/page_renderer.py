@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
 from .....application.render_quality import RASTER_NATIVE_RENDER_SCALE
 from .....domain.entities.file_extensions import TIFF_EXTENSIONS, is_pdf_suffix
+from ...utils.image_bands import convert_to_format
 from ...utils.source_signature import SourceFileSignature, source_file_signature
 from .. import ost_pdf
 from ..pdfium_lock import pdfium_lock
@@ -130,7 +131,7 @@ class PageRenderer:
             result.stride,
             QImage.Format.Format_ARGB32,
         )
-        return qimage.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        return convert_to_format(qimage, QImage.Format.Format_ARGB32_Premultiplied)
 
     def _render_image(
         self,
@@ -208,7 +209,7 @@ class PageRenderer:
             result.stride,
             QImage.Format.Format_ARGB32,
         )
-        return qimage.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        return convert_to_format(qimage, QImage.Format.Format_ARGB32_Premultiplied)
 
     def get_page_count(self, file_path: str) -> int:
         path = Path(file_path)

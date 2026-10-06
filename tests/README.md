@@ -49,22 +49,25 @@ factories remain available to preserve existing workflow behavior.
 
 ## Coverage map
 
-`layout_inventory.json` inventories production classes, methods, private
-helpers, explicit failure/lifecycle paths, primary-test locations, and test
-imports/calls. Regenerate it with:
+`tools/inventory_test_layout.py` inventories production classes, methods,
+private helpers, explicit failure/lifecycle paths, primary-test locations, and
+test imports/calls. The map is generated on demand and is not committed;
+write it to any path, for example:
 
 ```powershell
-.\venv\Scripts\python.exe tools/inventory_test_layout.py --output tests/layout_inventory.json --prefix no_such_test
+.\venv\Scripts\python.exe tools/inventory_test_layout.py --output $env:TEMP\layout_inventory.json --prefix no_such_test
 ```
 
-The static map is supplemented by `execution_inventory.json`, a snapshot of
-Python function calls during the migration's full-suite run. It records the
-test count and outcome. Discovery/import-time execution is excluded. Child
-processes and native Qt worker threads are not comprehensively observed.
-This is **not** statement or branch coverage: an import does not prove execution,
-and a call does not prove every branch. Class declarations naturally have no
-matching function-call entry. The snapshot describes its recorded run, not
-future edits. Regenerating the static map alone does not rerun call observation.
+By default the map is static analysis only. The tool also reads an optional
+`tests/execution_inventory.json`, a snapshot of Python function calls recorded
+during a full-suite run that records the test count and outcome. That snapshot
+was never committed and nothing in the repository generates it, so supply your
+own recording if you want observed calls in the map. Discovery/import-time
+execution is excluded from such a snapshot, and child processes and native Qt
+worker threads are not comprehensively observed. Neither file is
+statement or branch coverage: an import does not prove execution, and a call
+does not prove every branch. Class declarations naturally have no matching
+function-call entry. A snapshot describes its recorded run, not future edits.
 
 Entries without primary tests distinguish interface/data contracts, constants,
 thin delegation, integration/neighbor references, observed indirect calls, and
@@ -83,8 +86,9 @@ The file-association CLI has dedicated argument/default-path and failure tests
 with the registrar replaced at its boundary; no registry changes are made.
 
 Per-source reasons and the complete list of modules without primary tests live
-in `source_to_tests` in the JSON map. An integration reference is not a claim of
-complete coverage. Unobserved methods remain visible for future targeted work.
+in `source_to_tests` in the generated map. An integration reference is not a
+claim of complete coverage. Unobserved methods remain visible for future
+targeted work.
 New direct unit coverage belongs at the listed primary path; cross-system
 coverage belongs in the appropriate integration category.
 

@@ -355,9 +355,7 @@ def _read_wireguard_peer_record(
         or allowed
         in {network.network.network_address, network.network.broadcast_address}
     ):
-        raise RuntimeError(
-            f"Invalid or duplicate WireGuard peer address: {path.name}"
-        )
+        raise RuntimeError(f"Invalid or duplicate WireGuard peer address: {path.name}")
     used_addresses.add(allowed)
     return name, public_key, allowed
 

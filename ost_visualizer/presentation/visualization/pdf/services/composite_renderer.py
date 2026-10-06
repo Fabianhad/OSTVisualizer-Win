@@ -16,6 +16,7 @@ from .....domain.entities.file_extensions import (
 )
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
+from ...utils.image_bands import copy_region
 from ...utils.image_effects import tint_image
 from ..page_cache import PageCache
 
@@ -588,7 +589,8 @@ class CompositeRenderer:
         source_frame_h_i = source_bottom_i - source_top_i
         if source_frame_w_i <= 0 or source_frame_h_i <= 0:
             return False
-        blue_frame_source = blue_source.copy(
+        blue_frame_source = copy_region(
+            blue_source,
             source_left_i,
             source_top_i,
             source_frame_w_i,

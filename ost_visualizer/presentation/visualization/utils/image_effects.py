@@ -1,9 +1,15 @@
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtGui import QColor, QImage
 from ..utils import ost_image
+from .image_bands import (
+    convert_to_format,
+    copy_image,
+    darkened_premultiplied,
+    inverted_rgb,
+)
 
 
 def tint_image(image: QImage, r: int, g: int, b: int) -> QImage:
-    gray = image.convertToFormat(QImage.Format.Format_Grayscale8)
+    gray = convert_to_format(image, QImage.Format.Format_Grayscale8)
     w = gray.width()
     h = gray.height()
     bytes_per_line = gray.bytesPerLine()
@@ -16,24 +22,15 @@ def tint_image(image: QImage, r: int, g: int, b: int) -> QImage:
             for row in range(h)
         )
     result = ost_image.tint_grayscale(gray_data, w, h, r, g, b, 235)
-    return QImage(result.to_bytes(), w, h, QImage.Format.Format_ARGB32).copy()
+    return copy_image(QImage(result.to_bytes(), w, h, QImage.Format.Format_ARGB32))
 
 
 def invert_image(image: QImage) -> QImage:
-    inverted = image.copy()
-    inverted.invertPixels(QImage.InvertMode.InvertRgb)
-    return inverted
+    return inverted_rgb(image)
 
 
 def bitonal_image(image: QImage) -> QImage:
-    result = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
-    if result.isNull():
-        return result
-    painter = QPainter(result)
-    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Darken)
-    painter.fillRect(result.rect(), QColor(220, 220, 220))
-    painter.end()
-    return result
+    return darkened_premultiplied(image, QColor(220, 220, 220))
 
 
 def page_effect_paper_color(*, invert: bool = False, bitonal: bool = False) -> QColor:

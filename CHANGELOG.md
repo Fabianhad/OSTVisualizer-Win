@@ -11,7 +11,9 @@
   elsewhere to center there. It never changes the zoom or the Page's saved view and
   ignores detached windows. While Main shows the 3D view, a Page change still draws the
   rectangle the 2D view will show (its saved camera or the fitted Page), without
-  allowing panning until the 2D view is visible again. The sidebar is hidden by default so existing layouts do
+  allowing panning until the 2D view is visible again. Dragging the Pan pane's handle
+  or resizing the window changes only the Conditions pane; Layers keeps its height.
+  The sidebar is hidden by default so existing layouts do
   not change; its visibility and height are restored on the next start. The View menu
   now lists Pan, Conditions, then Layers, matching the toolbar and the on-screen
   sidebar order (it previously listed Layers before Conditions).
@@ -57,6 +59,11 @@
 
 ### Fixed
 
+- Scrolling and zooming a Plan with composite, inverted, or bitonal images no longer
+  stalls the interface while frames render: large image conversions, effects, tints,
+  and overlay crops on the render threads now run in small bands, so the main thread
+  is blocked for a few milliseconds instead of tens (about 65 ms down to 25 ms in
+  a 1900 x 1100 composite frame). Rendered pixels are unchanged.
 - SQL session cleanup rejects every queued write and releases all queued edit
   drafts even if a UI callback cannot be dispatched, preventing other pending
   work from being stranded after disconnection. Undelivered write completions
