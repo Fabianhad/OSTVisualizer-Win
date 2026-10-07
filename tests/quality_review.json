@@ -14408,6 +14408,22 @@
         "Stall durations are wall-clock measurements on this machine (offscreen, software raster) and are reported as evidence, not asserted; the regression tests assert deterministic per-call pixel counts and byte equality.",
         "The real display, device pixel ratio and GPU compositing of the user's machine were not observed; a 4K viewport would scale the painting share of a scroll step."
       ]
+    },
+    {
+      "batch": "export-tab-side-by-side-layout",
+      "findings": [
+        "Previous layout: ExportTab used one QVBoxLayout (spacing RELAXED_SPACING 15, margins 9) stacking three QGroupBoxes full width (captions 716x276, callouts 716x238, condition names 716x84 at y 9/300/553) with a trailing stretch; groups had Preferred/Preferred policies, no minimum sizes, internal QVBoxLayouts at COMPACT_SPACING 5, no stretch factors. The dialog is fixed at OPTIONS_WINDOW_WIDTH 760 and auto-height (tab minimumSizeHint 411x646, dialog 731 high).",
+        "New layout: the same root QVBoxLayout holds a margin-0 QHBoxLayout (spacing RELAXED_SPACING) with the captions and callouts boxes, each stretch 1 and AlignTop (351 and 350 wide at y 9), then the Condition Names box full width (716) and the trailing stretch. Tab minimumSizeHint is now 530x393 and the dialog 605 high. Widgets, object names, creation (tab) order, setting keys, confirm-on-enable behaviour, dialog.py aliases and persistence are untouched."
+      ],
+      "files": [
+        "ost_visualizer/presentation/dialogs/options/export_tab.py",
+        "tests/presentation/dialogs/options/test_dialog.py",
+        "CHANGELOG.md"
+      ],
+      "tests_added": [
+        "6 tests in ExportTabSideBySideLayoutTests"
+      ],
+      "validation": "Full suite: 12990 tests run, 42 skipped, OK. tools/check_architecture.py: no violations. compileall exit 0. git diff --check (cr-at-eol) clean. In-memory mutants (unequal stretch, names in top row, row spacing 0, vertical stack, callouts bottom-aligned) all killed; nothing mutated on disk."
     }
   ],
   "modules": {
@@ -27218,7 +27234,13 @@
         "ConditionElevationExportOptionDialogTests.test_the_two_options_change_independently_in_the_collected_config": "Added: the two options change independently in the collected config. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
         "ConditionElevationExportOptionDialogTests.test_keyboard_activation_warns_exactly_like_a_click": "Added: keyboard activation warns exactly like a click. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
         "ConditionElevationExportOptionDialogTests.test_a_cancelled_warning_leaves_no_pending_changes_for_either_option": "Added: a cancelled warning leaves no pending changes for either option. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
-        "ConditionElevationExportOptionDialogTests.test_the_checkboxes_are_labelled_focusable_and_follow_the_callout_controls": "Added: the checkboxes are labelled focusable and follow the callout controls. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config."
+        "ConditionElevationExportOptionDialogTests.test_the_checkboxes_are_labelled_focusable_and_follow_the_callout_controls": "Added: the checkboxes are labelled focusable and follow the callout controls. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+        "ExportTabSideBySideLayoutTests.test_captions_and_callouts_boxes_share_one_top_aligned_row": "NEW. Real OptionsDialog shown offscreen: captions and callouts boxes have the same y, captions left of callouts, widths within 1 px, gap equals RELAXED_SPACING. Mutants (unequal stretch, row spacing 0, callouts bottom-aligned, vertical stack) killed in memory.",
+        "ExportTabSideBySideLayoutTests.test_condition_names_box_sits_below_and_spans_the_row": "NEW. Condition Names is below both top boxes, left/right edges match the row, width equals both boxes plus the gap, vertical gap equals RELAXED_SPACING. Mutant placing it in the top row killed.",
+        "ExportTabSideBySideLayoutTests.test_nothing_is_clipped_at_the_dialog_size_and_at_larger_sizes": "NEW. At the fixed dialog size and after resizing to 1300x900, groups meet their minimumSizeHint and every checkbox/label meets its size hints and stays inside its group. ColorButton is a fixed 24 px swatch and is only containment-checked.",
+        "ExportTabSideBySideLayoutTests.test_export_tab_fits_at_its_own_minimum_size_and_when_widened": "NEW. Standalone ExportTab at its minimumSizeHint (530 wide, under the dialog tab width) and at 1400x900 has nothing clipped.",
+        "ExportTabSideBySideLayoutTests.test_tab_order_still_walks_the_controls_in_creation_order": "NEW. Focus chain through the Export tab equals master check, captions in ANNOTATION_CAPTION_ORDER, HTML/PDF callout checks, four content checks, both colour buttons, then the two Condition Names checks. Pins that the layout change did not alter tab order.",
+        "ExportTabSideBySideLayoutTests.test_group_boxes_keep_their_internal_spacing_and_the_tab_spacing": "NEW. Tab layout spacing stays RELAXED_SPACING and all three group layouts keep COMPACT_SPACING."
       }
     },
     "tests/presentation/dialogs/options/test_font_dialog.py": {
@@ -37664,7 +37686,16 @@
     },
     "pan_sidebar_batch": "pan-sidebar 3D-view follow-up 2026-10-06: predicted 2D viewport while the 2D view is hidden; full suite 12929 OK (35 skipped), architecture PASS, compileall 0, git diff --check clean",
     "service_container_batch": "2026-10-06 follow-ups: unreachable plain-factory branch removed, None-factory contract pinned; full suite 12958 OK (35 skipped), tests/architecture OK, check_architecture PASS, compileall 0, git diff --check clean",
-    "ui_fixes_batch": "2026-10-06: left-column splitter stretch (Layers keeps its height) and banded QImage operations on render workers; full suite 12984 OK (35 skipped), check_architecture PASS, compileall 0, git diff --check clean"
+    "ui_fixes_batch": "2026-10-06: left-column splitter stretch (Layers keeps its height) and banded QImage operations on render workers; full suite 12984 OK (35 skipped), check_architecture PASS, compileall 0, git diff --check clean",
+    "export_tab_side_by_side_full_suite": {
+      "tests_run": 12990,
+      "skips": 42,
+      "result": "OK",
+      "seconds": 208.7,
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol)"
+    }
   },
   "skip_observations": [
     {

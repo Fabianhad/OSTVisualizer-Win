@@ -1,4 +1,4 @@
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from ....application.dtos.annotation_caption_dto import ANNOTATION_CAPTION_SPECS
 from ....domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
@@ -34,6 +34,10 @@ class ExportTab(QtWidgets.QWidget):
     def _setup_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(RELAXED_SPACING)
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(RELAXED_SPACING)
+        layout.addLayout(top_row)
         group = QtWidgets.QGroupBox(OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS, self)
         group_layout = QtWidgets.QVBoxLayout(group)
         group_layout.setSpacing(COMPACT_SPACING)
@@ -51,7 +55,7 @@ class ExportTab(QtWidgets.QWidget):
             self.caption_checks[caption_id] = check
             caption_layout.addWidget(check)
         group_layout.addLayout(caption_layout)
-        layout.addWidget(group)
+        top_row.addWidget(group, 1, QtCore.Qt.AlignmentFlag.AlignTop)
         callout_group = QtWidgets.QGroupBox(OPTIONS_GROUP_ELEVATION_CALLOUTS, self)
         callout_layout = QtWidgets.QVBoxLayout(callout_group)
         callout_layout.setSpacing(COMPACT_SPACING)
@@ -117,7 +121,7 @@ class ExportTab(QtWidgets.QWidget):
             self.pdf_elevation_callout_color_button,
         )
         callout_layout.addLayout(color_layout)
-        layout.addWidget(callout_group)
+        top_row.addWidget(callout_group, 1, QtCore.Qt.AlignmentFlag.AlignTop)
         names_group = QtWidgets.QGroupBox(OPTIONS_GROUP_CONDITION_NAMES, self)
         names_layout = QtWidgets.QVBoxLayout(names_group)
         names_layout.setSpacing(COMPACT_SPACING)

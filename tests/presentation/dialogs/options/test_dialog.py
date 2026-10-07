@@ -22,6 +22,8 @@ from ost_visualizer.presentation.config import (
     OPTIONS_DIALOG_TITLE,
     OPTIONS_GROUP_AUTO_ZOOM,
     OPTIONS_GROUP_CONDITION_NAMES,
+    OPTIONS_GROUP_ELEVATION_CALLOUTS,
+    OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS,
     OPTIONS_GROUP_CONFIRMATIONS,
     OPTIONS_GROUP_PREFERENCES,
     OPTIONS_GROUP_SNAP_ANGLE,
@@ -1243,3 +1245,173 @@ class ConditionElevationExportOptionDialogTests(unittest.TestCase):
             self.assertNotEqual(check.focusPolicy(), QtCore.Qt.FocusPolicy.NoFocus)
             self.assertEqual(check.accessibleName(), "")
             self.assertTrue(check.text().startswith("Drop elevations"))
+
+
+class ExportTabSideBySideLayoutTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _preferences_support__app()
+        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def make_shown_tab(self):
+        dialog = OptionsDialog(Config())
+        self.addCleanup(lambda: delete(dialog) if isValid(dialog) else None)
+        self.addCleanup(dialog.close)
+        dialog._tabs.setCurrentWidget(dialog._export_tab)
+        dialog.show()
+        self.app.processEvents()
+        return dialog, dialog._export_tab
+
+    def groups_by_title(self, export_tab):
+        return {
+            group.title(): group
+            for group in export_tab.findChildren(QtWidgets.QGroupBox)
+        }
+
+    def assert_nothing_clipped(self, export_tab):
+        for group in export_tab.findChildren(QtWidgets.QGroupBox):
+            self.assertGreaterEqual(
+                group.width(), group.minimumSizeHint().width(), group.title()
+            )
+            self.assertGreaterEqual(
+                group.height(), group.minimumSizeHint().height(), group.title()
+            )
+            self.assertTrue(export_tab.rect().contains(group.geometry()), group.title())
+        for widget in (
+            *export_tab.findChildren(QtWidgets.QCheckBox),
+            *export_tab.findChildren(QtWidgets.QLabel),
+            *export_tab.findChildren(QtWidgets.QAbstractButton),
+        ):
+            group = next(
+                parent
+                for parent in iter_parents(widget)
+                if isinstance(parent, QtWidgets.QGroupBox)
+            )
+            top_left = widget.mapTo(group, QtCore.QPoint(0, 0))
+            visible = QtCore.QRect(top_left, widget.size())
+            self.assertTrue(
+                group.rect().contains(visible),
+                widget.text() if hasattr(widget, "text") else widget,
+            )
+            if isinstance(widget, (QtWidgets.QCheckBox, QtWidgets.QLabel)):
+                self.assertGreaterEqual(
+                    widget.width(), widget.minimumSizeHint().width(), repr(widget)
+                )
+                self.assertGreaterEqual(
+                    widget.width(), widget.sizeHint().width(), repr(widget)
+                )
+
+    def test_captions_and_callouts_boxes_share_one_top_aligned_row(self):
+        _dialog, export_tab = self.make_shown_tab()
+        groups = self.groups_by_title(export_tab)
+        captions = groups[OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS]
+        callouts = groups[OPTIONS_GROUP_ELEVATION_CALLOUTS]
+        self.assertEqual(captions.geometry().y(), callouts.geometry().y())
+        self.assertLess(captions.geometry().right(), callouts.geometry().left())
+        self.assertLessEqual(
+            abs(captions.width() - callouts.width()),
+            1,
+        )
+        gap = callouts.geometry().left() - captions.geometry().right() - 1
+        self.assertEqual(gap, RELAXED_SPACING)
+
+    def test_condition_names_box_sits_below_and_spans_the_row(self):
+        _dialog, export_tab = self.make_shown_tab()
+        groups = self.groups_by_title(export_tab)
+        captions = groups[OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS]
+        callouts = groups[OPTIONS_GROUP_ELEVATION_CALLOUTS]
+        names = groups[OPTIONS_GROUP_CONDITION_NAMES]
+        self.assertGreater(
+            names.geometry().top(),
+            max(captions.geometry().bottom(), callouts.geometry().bottom()),
+        )
+        self.assertEqual(names.geometry().left(), captions.geometry().left())
+        self.assertEqual(names.geometry().right(), callouts.geometry().right())
+        self.assertEqual(
+            names.width(), captions.width() + RELAXED_SPACING + callouts.width()
+        )
+        self.assertEqual(
+            names.geometry().top()
+            - max(captions.geometry().bottom(), callouts.geometry().bottom())
+            - 1,
+            RELAXED_SPACING,
+        )
+
+    def test_nothing_is_clipped_at_the_dialog_size_and_at_larger_sizes(self):
+        dialog, export_tab = self.make_shown_tab()
+        self.assertGreaterEqual(
+            export_tab.width(), export_tab.minimumSizeHint().width()
+        )
+        self.assert_nothing_clipped(export_tab)
+        dialog.setMinimumSize(0, 0)
+        dialog.setMaximumSize(QtCore.QSize(16777215, 16777215))
+        dialog.resize(1300, 900)
+        self.app.processEvents()
+        self.assert_nothing_clipped(export_tab)
+
+    def test_export_tab_fits_at_its_own_minimum_size_and_when_widened(self):
+        from ost_visualizer.presentation.dialogs.options.export_tab import ExportTab
+
+        export_tab = ExportTab()
+        self.addCleanup(lambda: delete(export_tab) if isValid(export_tab) else None)
+        export_tab.show()
+        export_tab.resize(export_tab.minimumSizeHint())
+        self.app.processEvents()
+        self.assertLessEqual(
+            export_tab.minimumSizeHint().width(), OPTIONS_WINDOW_WIDTH - 2 * 9
+        )
+        self.assert_nothing_clipped(export_tab)
+        export_tab.resize(1400, 900)
+        self.app.processEvents()
+        self.assert_nothing_clipped(export_tab)
+
+    def test_tab_order_still_walks_the_controls_in_creation_order(self):
+        dialog, export_tab = self.make_shown_tab()
+        expected = [
+            export_tab.captions_enabled_check,
+            *(export_tab.caption_checks[cid] for cid in ANNOTATION_CAPTION_ORDER),
+            export_tab.html_elevation_callouts_check,
+            export_tab.pdf_elevation_callouts_check,
+            export_tab.elevation_callout_condition_check,
+            export_tab.elevation_callout_top_check,
+            export_tab.elevation_callout_bottom_check,
+            export_tab.elevation_callout_cubic_yards_check,
+            export_tab.html_elevation_callout_color_button,
+            export_tab.pdf_elevation_callout_color_button,
+            export_tab.ost_osp_drop_elevation_check,
+            export_tab.csv_drop_elevation_check,
+        ]
+        chain = []
+        widget = export_tab.captions_enabled_check
+        while True:
+            if export_tab.isAncestorOf(widget) and (
+                widget.focusPolicy() != QtCore.Qt.FocusPolicy.NoFocus
+            ):
+                chain.append(widget)
+            widget = widget.nextInFocusChain()
+            if widget is export_tab.captions_enabled_check:
+                break
+        self.assertEqual(chain, expected)
+
+    def test_group_boxes_keep_their_internal_spacing_and_the_tab_spacing(self):
+        _dialog, export_tab = self.make_shown_tab()
+        self.assertEqual(export_tab.layout().spacing(), RELAXED_SPACING)
+        self.assertEqual(
+            [
+                group.layout().spacing()
+                for group in export_tab.findChildren(QtWidgets.QGroupBox)
+            ],
+            [COMPACT_SPACING] * 3,
+        )
+
+
+def iter_parents(widget):
+    parent = widget.parentWidget()
+    while parent is not None:
+        yield parent
+        parent = parent.parentWidget()

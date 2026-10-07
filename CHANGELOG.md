@@ -26,6 +26,7 @@
   templates that expect CSV data without elevations. 3D, HTML and PDF exports are
   unchanged. Stored conditions are never modified, and conditions whose names
   become identical stay separate and are reported after the export.
+- **Options > Export** now shows PDF Annotation Captions and Elevation Callouts side by side, with Condition Names across the full width below them.
 - **Options > Takeoff Toolbar** configures all 24 controls in Main's horizontal
   Takeoff strip, including annotation tools, navigation and zoom selectors, and
   grouped Scale/Area settings. Apply/OK persists visibility across restarts without

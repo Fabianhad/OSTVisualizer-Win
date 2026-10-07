@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
   "module_count": 540,
-  "method_count": 13008,
+  "method_count": 13014,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -101573,7 +101573,7 @@
       "duplicate_method_names": []
     },
     "tests/integration/lifecycle/test_pan_sidebar_workspace.py": {
-      "sha256": "e780f6b967f57293eb60dd3eb524cd8ce789e6274fd96bdb6dab56a63027c825",
+      "sha256": "5d20bd65cd8f85bd94d9048962d1f55ea54ae8b29dbe73d3b8ee52ceda5c156f",
       "methods": [
         {
           "name": "PanSidebarWorkspaceTests.test_the_main_plan_view_is_bound_and_the_pan_sidebar_starts_hidden",
@@ -102243,7 +102243,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_dragging_the_top_handle_only_resizes_the_adjacent_panes",
-          "line": 542,
+          "line": 541,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -102268,7 +102268,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_dragging_the_top_handle_with_conditions_hidden_resizes_only_layers",
-          "line": 556,
+          "line": 555,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -102291,7 +102291,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_dragging_the_top_handle_with_layers_hidden_resizes_only_conditions",
-          "line": 569,
+          "line": 568,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -102314,7 +102314,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_showing_and_hiding_the_pan_sidebar_keeps_the_layers_height",
-          "line": 582,
+          "line": 581,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -102335,7 +102335,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_resizing_the_window_keeps_the_pan_and_layers_heights",
-          "line": 593,
+          "line": 592,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -102361,7 +102361,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_sizes_after_a_top_handle_drag_survive_a_restart",
-          "line": 607,
+          "line": 606,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -102389,7 +102389,7 @@
         },
         {
           "name": "PanSidebarWorkspaceTests.test_the_menu_actions_use_the_shared_toggle_icon",
-          "line": 624,
+          "line": 625,
           "assertions": [
             "self.assertEqual"
           ],
@@ -246581,11 +246581,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/dialogs/options/test_dialog.py": {
-      "sha256": "fa819efa2ce7eff7455374da6ad4fd9d322c1771b605f143a19068a90ad04e2a",
+      "sha256": "3663b404b7db3b89904eb8bcafdd0dc41973bab1f54b508e883495d8e9c5969c",
       "methods": [
         {
           "name": "DialogPreferenceTests.test_options_group_boxes_use_explicit_density_spacing",
-          "line": 86,
+          "line": 88,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -246632,7 +246632,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_loads_persisted_preferences",
-          "line": 126,
+          "line": 128,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -246735,7 +246735,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_crosshair_color_preview_is_square_and_not_stylesheet_colored",
-          "line": 203,
+          "line": 205,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -246766,7 +246766,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_does_not_show_auto_dimension_lines_preference",
-          "line": 214,
+          "line": 216,
           "assertions": [
             "self.assertIn",
             "self.assertNotIn",
@@ -246789,7 +246789,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_crosshair_color_picker_accept_updates_pending_color_only",
-          "line": 224,
+          "line": 226,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -246829,7 +246829,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_crosshair_color_picker_cancel_keeps_previous_color",
-          "line": 277,
+          "line": 279,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -246859,7 +246859,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_color_picker_stops_when_button_is_destroyed",
-          "line": 319,
+          "line": 321,
           "assertions": [
             "self.assertFalse"
           ],
@@ -246883,7 +246883,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_repeated_options_color_picker_cancellation_releases_dialogs",
-          "line": 340,
+          "line": 342,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -246910,7 +246910,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_removes_inactive_unsupported_options",
-          "line": 366,
+          "line": 368,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -246936,7 +246936,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_apply_button_starts_disabled",
-          "line": 378,
+          "line": 380,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertFalse"
@@ -246958,7 +246958,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_contains_reset_all_settings_button",
-          "line": 385,
+          "line": 387,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertEqual"
@@ -246980,7 +246980,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_enables_apply_for_implemented_changes",
-          "line": 392,
+          "line": 394,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse"
@@ -247003,7 +247003,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_apply_success_commits_config_and_clears_pending",
-          "line": 401,
+          "line": 403,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -247034,7 +247034,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_applied_config_becomes_new_pending_baseline",
-          "line": 424,
+          "line": 426,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue"
@@ -247058,7 +247058,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_ok_without_changes_accepts_without_callback",
-          "line": 434,
+          "line": 436,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -247078,7 +247078,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_all_settings_restores_defaults",
-          "line": 441,
+          "line": 443,
           "assertions": [
             "self.assertTrue",
             "reset_callback.assert_called_once",
@@ -247138,7 +247138,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_all_settings_loads_callback_result",
-          "line": 491,
+          "line": 493,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -247178,7 +247178,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_all_settings_no_keeps_pending_changes",
-          "line": 516,
+          "line": 518,
           "assertions": [
             "self.assertTrue",
             "confirm.assert_called_once",
@@ -247212,7 +247212,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_apply_failure_keeps_pending_changes",
-          "line": 534,
+          "line": 536,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -247245,7 +247245,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_ok_failure_does_not_accept",
-          "line": 560,
+          "line": 562,
           "assertions": [
             "warning.assert_called_once_with",
             "self.assertNotEqual",
@@ -247278,7 +247278,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_uses_x_only_window_chrome",
-          "line": 585,
+          "line": 587,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -247307,7 +247307,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_contains_options_export_and_mcp_setup_tabs",
-          "line": 595,
+          "line": 597,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -247332,7 +247332,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_tab_defaults_off_with_every_caption_unselected_and_disabled",
-          "line": 605,
+          "line": 607,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -247360,7 +247360,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_tab_callout_defaults_preserve_html_and_leave_pdf_disabled",
-          "line": 617,
+          "line": 619,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -247411,7 +247411,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_callout_options_ok_and_reset_use_existing_lifecycle",
-          "line": 646,
+          "line": 648,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -247452,7 +247452,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_callout_content_preserved_while_both_exports_disabled",
-          "line": 676,
+          "line": 678,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -247482,7 +247482,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_export_caption_selections_survive_master_disable_and_reenable",
-          "line": 689,
+          "line": 691,
           "assertions": [
             "self.assertFalse",
             "self.assertFalse",
@@ -247518,7 +247518,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_mcp_setup_tab_contains_existing_setup_controls",
-          "line": 709,
+          "line": 711,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -247558,7 +247558,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_mcp_setup_tab_copy_action_preserves_options_apply_state",
-          "line": 736,
+          "line": 738,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -247595,7 +247595,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_result_path_runs_lifecycle_cleanup",
-          "line": 760,
+          "line": 762,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -247620,7 +247620,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_accept_and_close_paths_run_lifecycle_cleanup",
-          "line": 777,
+          "line": 779,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -247650,7 +247650,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_reset_failure_keeps_current_settings",
-          "line": 795,
+          "line": 797,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -247683,7 +247683,7 @@
         },
         {
           "name": "DialogPreferenceTests.test_options_dialog_disabled_controls_do_not_enable_apply",
-          "line": 822,
+          "line": 824,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -247716,7 +247716,7 @@
         },
         {
           "name": "OptionsDialogFontColorTests.test_options_tab_order_rows_and_stable_ids",
-          "line": 859,
+          "line": 861,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -247752,7 +247752,7 @@
         },
         {
           "name": "OptionsDialogFontColorTests.test_options_font_color_values_are_staged_through_apply",
-          "line": 900,
+          "line": 902,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -247795,7 +247795,7 @@
         },
         {
           "name": "OptionsDialogFontColorTests.test_options_font_values_are_staged_through_apply",
-          "line": 956,
+          "line": 958,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -247833,7 +247833,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_both_checkboxes_live_in_the_export_tab_and_default_off",
-          "line": 1016,
+          "line": 1018,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -247869,7 +247869,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_the_option_labels_name_their_export",
-          "line": 1043,
+          "line": 1045,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -247892,7 +247892,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_enabling_the_ost_osp_option_warns_and_confirming_keeps_it",
-          "line": 1056,
+          "line": 1058,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -247928,7 +247928,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_cancelling_the_ost_osp_warning_leaves_the_option_off",
-          "line": 1073,
+          "line": 1075,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -247954,7 +247954,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_enabling_the_csv_option_warns_and_confirm_or_cancel_decide",
-          "line": 1083,
+          "line": 1085,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -247981,7 +247981,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_the_two_warnings_explain_their_own_option_and_the_unchanged_exports",
-          "line": 1097,
+          "line": 1099,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -248003,7 +248003,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_loading_a_saved_enabled_option_does_not_warn",
-          "line": 1110,
+          "line": 1112,
           "assertions": [
             "confirm.assert_not_called",
             "self.assertTrue",
@@ -248031,7 +248031,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_disabling_an_enabled_option_does_not_warn",
-          "line": 1124,
+          "line": 1126,
           "assertions": [
             "confirm.assert_not_called",
             "self.assertFalse",
@@ -248059,7 +248059,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_programmatic_changes_never_warn",
-          "line": 1141,
+          "line": 1143,
           "assertions": [
             "confirm.assert_not_called"
           ],
@@ -248078,7 +248078,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_reset_all_settings_turns_both_off_without_a_second_warning",
-          "line": 1148,
+          "line": 1150,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -248104,7 +248104,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_cancelling_the_dialog_after_confirming_discards_the_option",
-          "line": 1163,
+          "line": 1165,
           "assertions": [
             "self.assertEqual"
           ],
@@ -248123,7 +248123,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_the_two_options_change_independently_in_the_collected_config",
-          "line": 1170,
+          "line": 1172,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -248147,7 +248147,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_keyboard_activation_warns_exactly_like_a_click",
-          "line": 1187,
+          "line": 1189,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -248179,7 +248179,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_a_cancelled_warning_leaves_no_pending_changes_for_either_option",
-          "line": 1211,
+          "line": 1213,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -248208,7 +248208,7 @@
         },
         {
           "name": "ConditionElevationExportOptionDialogTests.test_the_checkboxes_are_labelled_focusable_and_follow_the_callout_controls",
-          "line": 1225,
+          "line": 1227,
           "assertions": [
             "self.assertEqual",
             "self.assertLess",
@@ -248234,6 +248234,169 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added: the checkboxes are labelled focusable and follow the callout controls. Real OptionsDialog offscreen with the confirm helper patched at the dialog module: placement in the Export tab, defaults, warning on enable (clicked, so load/Reset/programmatic never prompt), confirm keeps and cancel reverts, collected config.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExportTabSideBySideLayoutTests.test_captions_and_callouts_boxes_share_one_top_aligned_row",
+          "line": 1305,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertLess",
+            "self.assertLessEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "abs",
+            "callouts.geometry",
+            "callouts.geometry().left",
+            "callouts.geometry().y",
+            "callouts.width",
+            "captions.geometry",
+            "captions.geometry().right",
+            "captions.geometry().y",
+            "captions.width",
+            "self.assertEqual",
+            "self.assertLess",
+            "self.assertLessEqual",
+            "self.groups_by_title",
+            "self.make_shown_tab"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "NEW. Real OptionsDialog shown offscreen: captions and callouts boxes have the same y, captions left of callouts, widths within 1 px, gap equals RELAXED_SPACING. Mutants (unequal stretch, row spacing 0, callouts bottom-aligned, vertical stack) killed in memory.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExportTabSideBySideLayoutTests.test_condition_names_box_sits_below_and_spans_the_row",
+          "line": 1319,
+          "assertions": [
+            "self.assertGreater",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "callouts.geometry",
+            "callouts.geometry().bottom",
+            "callouts.geometry().right",
+            "callouts.width",
+            "captions.geometry",
+            "captions.geometry().bottom",
+            "captions.geometry().left",
+            "captions.width",
+            "max",
+            "names.geometry",
+            "names.geometry().left",
+            "names.geometry().right",
+            "names.geometry().top",
+            "names.width",
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.groups_by_title",
+            "self.make_shown_tab"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "NEW. Condition Names is below both top boxes, left/right edges match the row, width equals both boxes plus the gap, vertical gap equals RELAXED_SPACING. Mutant placing it in the top row killed.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExportTabSideBySideLayoutTests.test_nothing_is_clipped_at_the_dialog_size_and_at_larger_sizes",
+          "line": 1341,
+          "assertions": [
+            "self.assertGreaterEqual",
+            "self.assert_nothing_clipped",
+            "self.assert_nothing_clipped"
+          ],
+          "calls": [
+            "QtCore.QSize",
+            "dialog.resize",
+            "dialog.setMaximumSize",
+            "dialog.setMinimumSize",
+            "export_tab.minimumSizeHint",
+            "export_tab.minimumSizeHint().width",
+            "export_tab.width",
+            "self.app.processEvents",
+            "self.assertGreaterEqual",
+            "self.assert_nothing_clipped",
+            "self.make_shown_tab"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "NEW. At the fixed dialog size and after resizing to 1300x900, groups meet their minimumSizeHint and every checkbox/label meets its size hints and stays inside its group. ColorButton is a fixed 24 px swatch and is only containment-checked.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExportTabSideBySideLayoutTests.test_export_tab_fits_at_its_own_minimum_size_and_when_widened",
+          "line": 1353,
+          "assertions": [
+            "self.assertLessEqual",
+            "self.assert_nothing_clipped",
+            "self.assert_nothing_clipped"
+          ],
+          "calls": [
+            "ExportTab",
+            "delete",
+            "export_tab.minimumSizeHint",
+            "export_tab.minimumSizeHint().width",
+            "export_tab.resize",
+            "export_tab.show",
+            "isValid",
+            "self.addCleanup",
+            "self.app.processEvents",
+            "self.assertLessEqual",
+            "self.assert_nothing_clipped"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "NEW. Standalone ExportTab at its minimumSizeHint (530 wide, under the dialog tab width) and at 1400x900 has nothing clipped.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExportTabSideBySideLayoutTests.test_tab_order_still_walks_the_controls_in_creation_order",
+          "line": 1369,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "chain.append",
+            "export_tab.isAncestorOf",
+            "self.assertEqual",
+            "self.make_shown_tab",
+            "widget.focusPolicy",
+            "widget.nextInFocusChain"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "NEW. Focus chain through the Export tab equals master check, captions in ANNOTATION_CAPTION_ORDER, HTML/PDF callout checks, four content checks, both colour buttons, then the two Condition Names checks. Pins that the layout change did not alter tab order.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ExportTabSideBySideLayoutTests.test_group_boxes_keep_their_internal_spacing_and_the_tab_spacing",
+          "line": 1397,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "export_tab.findChildren",
+            "export_tab.layout",
+            "export_tab.layout().spacing",
+            "group.layout",
+            "group.layout().spacing",
+            "self.assertEqual",
+            "self.make_shown_tab"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "NEW. Tab layout spacing stays RELAXED_SPACING and all three group layouts keep COMPACT_SPACING.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -319920,7 +320083,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/pdf/renderers/test_page_renderer.py": {
-      "sha256": "05ccf453a91dcb3fd413dab372f505ba2025ad5172d477263f2ea1d4b3cdf3c5",
+      "sha256": "a1cb41c34967af47028f7632f10d02c3583a9c5ba7419a9c158bd5081f99c163",
       "methods": [
         {
           "name": "PageRendererLifecycleTests.test_failed_pdf_open_clears_cached_path_before_reopen",
@@ -320101,7 +320264,7 @@
         },
         {
           "name": "PageRendererPreferenceTests.test_pdf_subframe_render_matches_full_page_crop",
-          "line": 250,
+          "line": 253,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326357,7 +326520,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/utils/test_image_bands.py": {
-      "sha256": "3118211a124ceaa5d4102eb66c070c4b41e158159d2b81396647531a456b44ae",
+      "sha256": "150a2944c71b8686c3c02b90d1ef98ed1d3e3a8b965d287cbac9cd869d9e0ecd",
       "methods": [
         {
           "name": "BandedImageTests.test_conversion_matches_the_whole_image_conversion",
@@ -326387,7 +326550,7 @@
         },
         {
           "name": "BandedImageTests.test_copy_matches_the_source_and_is_independent_of_it",
-          "line": 66,
+          "line": 68,
           "assertions": [
             "self.assertEqual",
             "self.assertNotEqual"
@@ -326410,7 +326573,7 @@
         },
         {
           "name": "BandedImageTests.test_region_copy_matches_the_whole_image_region_copy",
-          "line": 75,
+          "line": 77,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326436,7 +326599,7 @@
         },
         {
           "name": "BandedImageTests.test_a_large_region_copy_is_banded",
-          "line": 85,
+          "line": 87,
           "assertions": [
             "self.assertGreater",
             "self.assertLessEqual"
@@ -326458,7 +326621,7 @@
         },
         {
           "name": "BandedImageTests.test_inversion_matches_the_whole_image_inversion_and_leaves_the_source",
-          "line": 92,
+          "line": 94,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326483,7 +326646,7 @@
         },
         {
           "name": "BandedImageTests.test_darkening_matches_the_whole_image_darkening",
-          "line": 104,
+          "line": 106,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -326511,7 +326674,7 @@
         },
         {
           "name": "BandedImageTests.test_image_metadata_survives_every_operation",
-          "line": 120,
+          "line": 122,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326541,7 +326704,7 @@
         },
         {
           "name": "BandedImageTests.test_no_native_operation_exceeds_the_band_size_on_a_large_image",
-          "line": 136,
+          "line": 138,
           "assertions": [
             "self.assertGreater",
             "self.assertTrue",
@@ -326572,7 +326735,7 @@
         },
         {
           "name": "BandedImageTests.test_a_small_image_is_processed_by_single_whole_image_operations",
-          "line": 152,
+          "line": 154,
           "assertions": [
             "self.assertEqual"
           ],
@@ -326590,7 +326753,7 @@
         },
         {
           "name": "BandedImageTests.test_every_band_of_a_tall_narrow_image_stays_within_the_limit",
-          "line": 158,
+          "line": 160,
           "assertions": [
             "self.assertLessEqual",
             "self.assertEqual"
@@ -326613,7 +326776,7 @@
         },
         {
           "name": "BandedImageTests.test_a_single_very_wide_row_is_still_processed",
-          "line": 165,
+          "line": 169,
           "assertions": [
             "self.assertEqual"
           ],
@@ -326632,7 +326795,7 @@
         },
         {
           "name": "BandedImageTests.test_indexed_images_keep_their_color_table",
-          "line": 170,
+          "line": 176,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326661,7 +326824,7 @@
         },
         {
           "name": "BandedImageTests.test_a_null_image_gives_a_null_image",
-          "line": 180,
+          "line": 188,
           "assertions": [
             "self.assertTrue"
           ],
@@ -326687,7 +326850,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/utils/test_image_effects.py": {
-      "sha256": "00411b44a0092f73adf6854adf4c0fe6b73183ea1bd9907fad0ef3236b57cafd",
+      "sha256": "319951ddeab289c099e8322057b5458c33ff323b249f1e11f1cb359ee90b5999",
       "methods": [
         {
           "name": "TintImageTests.test_tint_image_ignores_grayscale_scanline_padding",
@@ -326815,7 +326978,7 @@
         },
         {
           "name": "LargeFrameEffectTests.test_bitonal_on_a_large_frame_is_banded_and_unchanged",
-          "line": 178,
+          "line": 180,
           "assertions": [
             "self.assert_banded_and_identical"
           ],
@@ -326831,7 +326994,7 @@
         },
         {
           "name": "LargeFrameEffectTests.test_invert_on_a_large_frame_is_banded_and_unchanged",
-          "line": 183,
+          "line": 185,
           "assertions": [
             "self.assert_banded_and_identical"
           ],
@@ -326847,7 +327010,7 @@
         },
         {
           "name": "LargeFrameEffectTests.test_tint_on_a_large_frame_is_banded_and_unchanged",
-          "line": 188,
+          "line": 190,
           "assertions": [
             "self.assert_banded_and_identical"
           ],
@@ -326865,7 +327028,7 @@
         },
         {
           "name": "LargeFrameEffectTests.test_bitonal_and_invert_together_on_a_large_frame_are_banded_and_unchanged",
-          "line": 195,
+          "line": 197,
           "assertions": [
             "self.assert_banded_and_identical"
           ],
@@ -326884,7 +327047,7 @@
         },
         {
           "name": "PageImageEffectTests.test_paper_color_follows_bitonal_then_invert",
-          "line": 210,
+          "line": 212,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -326907,7 +327070,7 @@
         },
         {
           "name": "PageImageEffectTests.test_no_effects_returns_the_same_image_object",
-          "line": 221,
+          "line": 223,
           "assertions": [
             "self.assertIs"
           ],
@@ -326924,7 +327087,7 @@
         },
         {
           "name": "PageImageEffectTests.test_effects_render_paper_exactly_as_the_paper_color_predicts",
-          "line": 225,
+          "line": 227,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -345084,7 +345247,7 @@
     }
   },
   "discovery": {
-    "count": 13008,
+    "count": 13014,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],
