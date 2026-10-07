@@ -18,6 +18,13 @@ from ...domain.services.takeoff_domain_service import (
     takeoffs_can_reassign_to_condition,
 )
 from ..dtos.active_bid_locked_error import ActiveBidLockedError
+from ..dtos.ai_changeset_write_dtos import (
+    AiChangesetCommit,
+    AiChangesetUndoPlan,
+    AiChangesetWritePlan,
+    AiChangesetWriteResult,
+    AiScaleUndoPlan,
+)
 from ..dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     ChangeOperation,
@@ -3630,6 +3637,356 @@ class ProjectWriteService(DatabaseMutationWriteService):
             rejection_reason=mutation.rejection_reason,
         )
 
+    def execute_ai_changeset_local(
+        self, database_id: str, bid_uid: str, plan: AiChangesetWritePlan
+    ) -> AiChangesetCommit:
+        if self.uses_sql_collaboration_mutations(database_id):
+            raise ValueError("SQL AI changesets must use the collaboration queue")
+        resources, dependencies = self._ai_changeset_resources(bid_uid, plan)
+        return self._execute_ai_mutation(
+            database_id,
+            bid_uid,
+            resources,
+            dependencies,
+            self._ai_changeset_work(database_id, bid_uid, plan),
+        )
+
+    def queue_ai_changeset(
+        self,
+        database_id: str,
+        bid_uid: str,
+        plan: AiChangesetWritePlan,
+        callback: Callable[[QueuedMutationResult], None],
+    ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
+        resources, dependencies = self._ai_changeset_resources(bid_uid, plan)
+        payload = ProjectWritePayload.from_values(
+            "apply_ai_changeset", {"plan": asdict(plan)}
+        )
+        return self._queue_project_write(
+            database_id,
+            bid_uid,
+            payload,
+            resources,
+            callback,
+            self._ai_changeset_work(database_id, bid_uid, plan),
+            _ai_changeset_authoritative_result,
+            dependency_resources=dependencies,
+            owning_surface="ai-takeoff",
+        )
+
+    def execute_ai_changeset_undo_local(
+        self, database_id: str, bid_uid: str, plan: AiChangesetUndoPlan
+    ) -> AiChangesetCommit:
+        if self.uses_sql_collaboration_mutations(database_id):
+            raise ValueError("SQL AI changesets must use the collaboration queue")
+        return self._execute_ai_mutation(
+            database_id,
+            bid_uid,
+            self._ai_undo_resources(bid_uid, plan),
+            (),
+            self._ai_undo_work(database_id, bid_uid, plan),
+        )
+
+    def queue_ai_changeset_undo(
+        self,
+        database_id: str,
+        bid_uid: str,
+        plan: AiChangesetUndoPlan,
+        callback: Callable[[QueuedMutationResult], None],
+    ) -> int:
+        self._require_unlocked_active_bid(database_id, bid_uid)
+        payload = ProjectWritePayload.from_values(
+            "undo_ai_changeset", {"plan": asdict(plan)}
+        )
+        return self._queue_project_write(
+            database_id,
+            bid_uid,
+            payload,
+            self._ai_undo_resources(bid_uid, plan),
+            callback,
+            self._ai_undo_work(database_id, bid_uid, plan),
+            lambda _value: AuthoritativeMutationResult(
+                affected_condition_uids=tuple(plan.condition_uids),
+                affected_families=("takeoffs", "conditions"),
+            ),
+            owning_surface="ai-takeoff",
+        )
+
+    def execute_ai_scale_undo_local(
+        self, database_id: str, bid_uid: str, plan: AiScaleUndoPlan
+    ) -> AiChangesetCommit:
+        if self.uses_sql_collaboration_mutations(database_id):
+            raise ValueError("SQL AI changesets must use the collaboration queue")
+        bid_value = int(bid_uid)
+        resources = (
+            ResourceRef("page", plan.page_uid, bid_value),
+            *(
+                ResourceRef("takeoff", uid, bid_value)
+                for uid, _position in plan.positions
+            ),
+        )
+
+        def work(recorder):
+            if not self._save_page_scale.execute(
+                database_id, plan.page_uid, plan.scale_factor1, plan.scale_factor2
+            ):
+                raise RuntimeError("The previous page scale could not be restored.")
+            if plan.positions and not self._save_takeoff_positions.execute(
+                database_id, [(uid, list(position)) for uid, position in plan.positions]
+            ):
+                raise RuntimeError(
+                    "The previous takeoff positions could not be restored."
+                )
+            for resource in resources:
+                recorder.record(resource, ChangeOperation.UPDATE)
+            return AiChangesetWriteResult(None, False, (), ())
+
+        return self._execute_ai_mutation(
+            database_id,
+            bid_uid,
+            tuple(sorted(set(resources))),
+            (),
+            work,
+            page_scale_uids=(plan.page_uid,),
+        )
+
+    def _execute_ai_mutation(
+        self,
+        database_id: str,
+        bid_uid: str,
+        resources: tuple[ResourceRef, ...],
+        dependencies: tuple[ResourceRef, ...],
+        work,
+        *,
+        page_scale_uids: tuple[str, ...] = (),
+    ) -> AiChangesetCommit:
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            database_id, str(bid_uid)
+        ):
+            return AiChangesetCommit(False, message="The bid is locked.", locked=True)
+        try:
+            mutation = self._execute_database_mutation(
+                database_id,
+                tuple(sorted({*resources, *dependencies})),
+                work,
+                publish_conflict_event=False,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return AiChangesetCommit(False, message=str(exc))
+        if mutation.outcome_status != MutationOutcomeStatus.COMMITTED:
+            locked = mutation.rejection_reason == MutationRejectionReason.BID_LOCKED
+            message = (
+                mutation.conflict.reason
+                if mutation.conflict is not None
+                else (
+                    "The bid is locked."
+                    if locked
+                    else "The database rejected the change."
+                )
+            )
+            return AiChangesetCommit(
+                False,
+                message=message,
+                locked=locked,
+                conflict=mutation.conflict is not None,
+            )
+        self.reload_and_notify(database_id, page_scale_uids=page_scale_uids)
+        return AiChangesetCommit(True, mutation.value)
+
+    @staticmethod
+    def _ai_changeset_resources(
+        bid_uid: str, plan: AiChangesetWritePlan
+    ) -> tuple[tuple[ResourceRef, ...], tuple[ResourceRef, ...]]:
+        bid_value = int(bid_uid)
+        resources = [ResourceRef("takeoffs_collection", str(bid_uid), bid_value)]
+        if plan.conditions:
+            resources.append(
+                ResourceRef("conditions_collection", str(bid_uid), bid_value)
+            )
+        dependencies = {
+            *(
+                ResourceRef("page", str(item.page_uid), bid_value)
+                for item in plan.takeoffs
+            ),
+            *(
+                ResourceRef("condition", str(uid), bid_value)
+                for uid in plan.existing_condition_uids
+            ),
+        }
+        if plan.existing_folder_uid:
+            dependencies.add(
+                ResourceRef(
+                    "condition_folder", str(plan.existing_folder_uid), bid_value
+                )
+            )
+        return tuple(resources), tuple(sorted(dependencies))
+
+    def _ai_changeset_work(
+        self, database_id: str, bid_uid: str, plan: AiChangesetWritePlan
+    ):
+        bid_value = int(bid_uid)
+
+        def work(recorder):
+            folder_uid = plan.existing_folder_uid
+            created_folder = False
+            if plan.conditions and not folder_uid:
+                new_folder = self._insert_condition_folder.execute(
+                    database_id, bid_uid, plan.folder_name, None
+                )
+                if new_folder is None:
+                    raise RuntimeError("The AI condition folder could not be created.")
+                folder_uid = str(new_folder)
+                created_folder = True
+                recorder.record(
+                    ResourceRef("condition_folder", folder_uid, bid_value),
+                    ChangeOperation.CREATE,
+                )
+            condition_uids = {}
+            for key, spec in plan.conditions:
+                new_uid = self._insert_condition.execute(
+                    database_id, bid_uid, replace(spec, folder_uid=folder_uid)
+                )
+                if new_uid is None:
+                    raise RuntimeError("An AI condition could not be created.")
+                condition_uids[key] = str(new_uid)
+                recorder.record(
+                    ResourceRef("condition", str(new_uid), bid_value),
+                    ChangeOperation.CREATE,
+                )
+            primary_specs = [
+                InsertTakeoffSpec(
+                    condition_uid=condition_uids.get(
+                        item.condition_key, item.condition_key
+                    ),
+                    page_uid=str(item.page_uid),
+                    area_uid=item.area_uid,
+                    position=list(item.position),
+                )
+                for item in plan.takeoffs
+            ]
+            primary_uids = self._insert_ai_takeoffs(database_id, bid_uid, primary_specs)
+            hole_specs = [
+                InsertTakeoffSpec(
+                    condition_uid=spec.condition_uid,
+                    page_uid=spec.page_uid,
+                    area_uid=spec.area_uid,
+                    position=list(hole),
+                    parent_uid=parent_uid,
+                )
+                for item, spec, parent_uid in zip(
+                    plan.takeoffs, primary_specs, primary_uids
+                )
+                for hole in item.holes
+            ]
+            hole_uids = (
+                self._insert_ai_takeoffs(database_id, bid_uid, hole_specs)
+                if hole_specs
+                else []
+            )
+            for new_uid in (*primary_uids, *hole_uids):
+                recorder.record(
+                    ResourceRef("takeoff", str(new_uid), bid_value),
+                    ChangeOperation.CREATE,
+                )
+            recorder.record(
+                ResourceRef("takeoffs_collection", str(bid_uid), bid_value),
+                ChangeOperation.UPDATE,
+            )
+            if plan.conditions:
+                recorder.record(
+                    ResourceRef("conditions_collection", str(bid_uid), bid_value),
+                    ChangeOperation.UPDATE,
+                )
+            return AiChangesetWriteResult(
+                folder_uid=folder_uid,
+                created_folder=created_folder,
+                condition_uids=tuple(condition_uids.items()),
+                takeoff_uids=tuple(str(uid) for uid in (*primary_uids, *hole_uids)),
+            )
+
+        return work
+
+    def _insert_ai_takeoffs(
+        self, database_id: str, bid_uid: str, specs: List[InsertTakeoffSpec]
+    ) -> List[str]:
+        if not specs:
+            return []
+        new_uids = [
+            str(uid)
+            for uid in (
+                self._insert_takeoffs.execute(database_id, bid_uid, specs) or ()
+            )
+            if uid is not None
+        ]
+        if len(new_uids) != len(specs) or len(set(new_uids)) != len(new_uids):
+            raise RuntimeError("The AI takeoff insertion was incomplete.")
+        return new_uids
+
+    @staticmethod
+    def _ai_undo_resources(
+        bid_uid: str, plan: AiChangesetUndoPlan
+    ) -> tuple[ResourceRef, ...]:
+        bid_value = int(bid_uid)
+        resources = {
+            ResourceRef("takeoffs_collection", str(bid_uid), bid_value),
+            *(ResourceRef("takeoff", str(uid), bid_value) for uid in plan.takeoff_uids),
+            *(
+                ResourceRef("condition", str(uid), bid_value)
+                for uid in plan.condition_uids
+            ),
+        }
+        if plan.condition_uids or plan.folder_uid:
+            resources.add(ResourceRef("conditions_collection", str(bid_uid), bid_value))
+        if plan.folder_uid:
+            resources.add(
+                ResourceRef("condition_folder", str(plan.folder_uid), bid_value)
+            )
+        return tuple(sorted(resources))
+
+    def _ai_undo_work(self, database_id: str, bid_uid: str, plan: AiChangesetUndoPlan):
+        bid_value = int(bid_uid)
+
+        def work(recorder):
+            if plan.takeoff_uids and not self._delete_takeoffs.execute(
+                database_id, list(plan.takeoff_uids)
+            ):
+                raise RuntimeError("The AI takeoffs could not be removed.")
+            if plan.condition_uids and not self._delete_conditions.execute(
+                database_id, bid_uid, list(plan.condition_uids)
+            ):
+                raise RuntimeError("The AI conditions could not be removed.")
+            if plan.folder_uid and not self._delete_condition_folders.execute(
+                database_id, [plan.folder_uid]
+            ):
+                raise RuntimeError("The AI condition folder could not be removed.")
+            for uid in plan.takeoff_uids:
+                recorder.record(
+                    ResourceRef("takeoff", str(uid), bid_value), ChangeOperation.DELETE
+                )
+            for uid in plan.condition_uids:
+                recorder.record(
+                    ResourceRef("condition", str(uid), bid_value),
+                    ChangeOperation.DELETE,
+                )
+            if plan.folder_uid:
+                recorder.record(
+                    ResourceRef("condition_folder", str(plan.folder_uid), bid_value),
+                    ChangeOperation.DELETE,
+                )
+            recorder.record(
+                ResourceRef("takeoffs_collection", str(bid_uid), bid_value),
+                ChangeOperation.UPDATE,
+            )
+            if plan.condition_uids or plan.folder_uid:
+                recorder.record(
+                    ResourceRef("conditions_collection", str(bid_uid), bid_value),
+                    ChangeOperation.UPDATE,
+                )
+            return AiChangesetWriteResult(None, False, (), ())
+
+        return work
+
     def queue_page_settings(
         self,
         database_id: str,
@@ -6868,3 +7225,24 @@ class ProjectWriteService(DatabaseMutationWriteService):
             write_success=True,
             reload_success=reload_success,
         )
+
+
+def _ai_changeset_authoritative_result(
+    value: AiChangesetWriteResult,
+) -> AuthoritativeMutationResult:
+    folder_map = (("0", str(value.folder_uid)),) if value.created_folder else ()
+    return AuthoritativeMutationResult(
+        created_resource_ids=tuple(value.takeoff_uids),
+        created_uid_maps=(
+            ("condition_folders", folder_map),
+            ("conditions", tuple(value.condition_uids)),
+            (
+                "takeoffs",
+                tuple(
+                    (str(index), uid) for index, uid in enumerate(value.takeoff_uids)
+                ),
+            ),
+        ),
+        affected_condition_uids=tuple(uid for _key, uid in value.condition_uids),
+        affected_families=("takeoffs", "conditions"),
+    )

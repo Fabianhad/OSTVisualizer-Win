@@ -3,11 +3,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from ost_visualizer.domain.entities.ai_takeoff import (
     SIDECAR_LOAD_CORRUPT,
     SIDECAR_LOAD_FOUND,
     SIDECAR_LOAD_MISSING,
     SIDECAR_SCHEMA_VERSION,
+    AiTakeoffSidecar,
 )
 from ost_visualizer.infrastructure.persistence.repositories.json_ai_takeoff_sidecar_repository import (
     MAX_SIDECAR_BYTES,
@@ -101,9 +103,64 @@ class JsonAiTakeoffSidecarRepositoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.repository.load(key)
 
-    def test_repository_offers_no_write_methods(self):
+    def test_repository_offers_only_load_and_save(self):
         public = {name for name in dir(self.repository) if not name.startswith("_")}
-        self.assertEqual(public, {"load"})
+        self.assertEqual(public, {"load", "save"})
+
+
+class JsonAiTakeoffSidecarSaveTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name) / "bids"
+        self.repository = JsonAiTakeoffSidecarRepository(self.directory)
+        self.sidecar = AiTakeoffSidecar.from_dict(_valid())
+
+    def test_save_round_trips_atomically_without_leftovers(self):
+        self.repository.save(self.sidecar)
+        self.assertEqual(
+            sorted(p.name for p in self.directory.iterdir()), [f"{KEY}.json"]
+        )
+        loaded = self.repository.load(KEY)
+        self.assertEqual(
+            (loaded.state, loaded.sidecar), (SIDECAR_LOAD_FOUND, self.sidecar)
+        )
+        data = json.loads((self.directory / f"{KEY}.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["schema_version"], 1)
+
+    def test_a_failed_replace_keeps_the_previous_file_and_removes_the_temp(self):
+        self.repository.save(self.sidecar)
+        before = (self.directory / f"{KEY}.json").read_bytes()
+        changed = AiTakeoffSidecar.from_dict(
+            dict(
+                _valid(), levels=[{"uid": "L1", "name": "Changed", "top_elev_in": 1.0}]
+            )
+        )
+        with patch("os.replace", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                self.repository.save(changed)
+        self.assertEqual((self.directory / f"{KEY}.json").read_bytes(), before)
+        self.assertEqual(
+            sorted(p.name for p in self.directory.iterdir()), [f"{KEY}.json"]
+        )
+
+    def test_invalid_keys_and_oversized_sidecars_are_refused(self):
+        from dataclasses import replace
+
+        with self.assertRaises(ValueError):
+            self.repository.save(replace(self.sidecar, bid_key="../x"))
+        huge = AiTakeoffSidecar.from_dict(
+            dict(
+                _valid(),
+                levels=[
+                    {"uid": f"L{index}", "name": "x" * 2000, "top_elev_in": 1.0}
+                    for index in range(3000)
+                ],
+            )
+        )
+        with self.assertRaises(ValueError):
+            self.repository.save(huge)
+        self.assertFalse(self.directory.exists())
 
 
 if __name__ == "__main__":

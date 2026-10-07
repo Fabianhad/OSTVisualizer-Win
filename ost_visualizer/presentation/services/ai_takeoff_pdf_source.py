@@ -28,6 +28,9 @@ class PageCachePdfSource:
         self._renderer_factory = renderer_factory
         self._geometry_reader_factory = geometry_reader_factory
 
+    def release(self) -> None:
+        self._page_cache.clear()
+
     def get_page_info(self, file_path: str, page_index: int) -> PdfPageInfoDto:
         status = _file_status(file_path)
         if status is not None:

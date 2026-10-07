@@ -261,7 +261,9 @@ class BridgeProtocolTests(BridgeTestCase):
             threading, "excepthook", lambda args: failures.append(repr(args.exc_value))
         ):
             worker = threading.Thread(
-                target=lambda: bridge._run_worker_job(None, lambda: ok_result({}))
+                target=lambda: bridge._run_worker_job(
+                    None, ("list_sheets", {}), lambda: ok_result({})
+                )
             )
             worker.start()
             worker.join(5)

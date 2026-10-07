@@ -1,22 +1,9 @@
 import math
-import ntpath
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
-from ...domain.entities.ai_takeoff import (
-    ASSUMPTION_STATUSES,
-    FINGERPRINT_OK,
-    SIDECAR_LOAD_CORRUPT,
-    SIDECAR_LOAD_MISSING,
-    SidecarFingerprint,
-    ai_takeoff_bid_key,
-    compare_fingerprints,
-)
+from ...domain.entities.ai_takeoff import ASSUMPTION_STATUSES, FINGERPRINT_OK
 from ...domain.entities.condition import Condition
-from ...domain.entities.database_descriptor import (
-    DatabaseBackend,
-    DatabaseDescriptor,
-    SqlServerDatabaseLocation,
-)
+from ...domain.entities.database_descriptor import DatabaseDescriptor
 from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.services.condition_quantity_service import compute_page_quantities
 from ...domain.services.uom_service import get_uom_label
@@ -28,9 +15,6 @@ from ..dtos.ai_takeoff_dtos import (
     RENDER_DEFAULT_DPI,
     RENDER_MAX_DPI,
     RENDER_MAX_LONG_SIDE_PX,
-    SIDECAR_CORRUPT,
-    SIDECAR_EMPTY,
-    SIDECAR_UNAVAILABLE_NO_DATABASE_GUID,
     STATUS_EMPTY,
     STATUS_NOT_PDF,
     STATUS_OK,
@@ -47,6 +31,7 @@ from ..dtos.ai_takeoff_dtos import (
 )
 from ..interfaces.i_ai_takeoff_sidecar_repository import IAiTakeoffSidecarRepository
 from ..interfaces.i_pdf_metadata_provider import IPdfMetadataProvider
+from .ai_takeoff_sidecar_service import load_sidecar_context
 
 QUANTITY_DECIMALS = 4
 POINTS_PER_INCH = 72.0
@@ -265,6 +250,33 @@ class AiTakeoffReadService:
             {"page_uid": snapshot.uid, "segments": page}, _page_status(page, meta), meta
         )
 
+    def open_bid_ref(self):
+        return self._open_bid(None).bid_ref
+
+    def page_entity(self, page_uid: Any):
+        self._open_bid(None)
+        page = (
+            self._project_data.get_page(page_uid) if isinstance(page_uid, str) else None
+        )
+        if page is None:
+            raise AiTakeoffRequestError(ERROR_NOT_FOUND, "Unknown page_uid")
+        return page
+
+    def page_segments_pts(self, snapshot: PageSnapshot, box: Optional[tuple]) -> tuple:
+        frame = self._raw_frame(snapshot)
+        if isinstance(frame, str):
+            return frame, []
+        segments = []
+        for segment in self._pdf_source.get_vector_segments(
+            snapshot.image_path, snapshot.page_index
+        ):
+            p1 = _raw_to_page(segment.x1, segment.y1, frame)
+            p2 = _raw_to_page(segment.x2, segment.y2, frame)
+            if box is not None and not _intersects(_bounds((p1, p2)), box):
+                continue
+            segments.append((p1[0], p1[1], p2[0], p2[1]))
+        return STATUS_OK, segments
+
     def plan_crop(
         self, snapshot: PageSnapshot, crop_pts: Any = None, dpi: Any = None
     ) -> CropPlan:
@@ -389,32 +401,16 @@ class AiTakeoffReadService:
         return rows
 
     def _sidecar(self, open_bid: _OpenBid):
-        descriptor = self._descriptor_resolver(open_bid.bid_ref.file_path)
-        if descriptor is None:
-            descriptor = DatabaseDescriptor.for_access(open_bid.bid_ref.file_path)
-        guid = ""
-        if isinstance(descriptor.location, SqlServerDatabaseLocation):
-            guid = descriptor.location.database_guid
-        bid_key = ai_takeoff_bid_key(descriptor.backend, open_bid.bid.uid, guid)
-        if bid_key is None:
-            if descriptor.backend == DatabaseBackend.SQL_SERVER:
-                return SIDECAR_UNAVAILABLE_NO_DATABASE_GUID, None
-            return SIDECAR_EMPTY, None
-        load = self._sidecar_repository.load(bid_key)
-        if load.state == SIDECAR_LOAD_MISSING:
-            return SIDECAR_EMPTY, None
-        if load.state == SIDECAR_LOAD_CORRUPT or load.sidecar is None:
-            return SIDECAR_CORRUPT, None
-        current = SidecarFingerprint(
-            database_id=descriptor.database_id,
-            bid_name=str(open_bid.bid.name or ""),
-            page_count=len(open_bid.pages),
-            first_page_pdf_source=_first_pdf_source(open_bid.pages),
+        context = load_sidecar_context(
+            open_bid.bid_ref,
+            open_bid.bid,
+            open_bid.pages,
+            self._descriptor_resolver,
+            self._sidecar_repository,
         )
-        status = compare_fingerprints(load.sidecar.fingerprint, current)
-        if status != FINGERPRINT_OK:
-            return status, None
-        return FINGERPRINT_OK, load.sidecar
+        if context.status != FINGERPRINT_OK:
+            return context.status, None
+        return FINGERPRINT_OK, context.sidecar
 
     def _raw_frame(self, snapshot: PageSnapshot):
         if not snapshot.is_pdf:
@@ -427,13 +423,6 @@ class AiTakeoffReadService:
             info.crop_height_pts or info.media_height_pts or info.effective_height_pts
         )
         return float(raw_w), float(raw_h), int(info.intrinsic_rotation or 0) % 360
-
-
-def _first_pdf_source(pages: list) -> str:
-    for page in pages:
-        if page.image_path:
-            return ntpath.basename(page.image_path.replace("/", "\\"))
-    return ""
 
 
 def _ost_per_page_point(page) -> Optional[float]:

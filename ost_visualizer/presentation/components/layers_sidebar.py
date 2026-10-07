@@ -393,6 +393,10 @@ class BidLayersSidebar(QtWidgets.QWidget):
             self._interactive and can_modify and row < len(self._layers) - 1
         )
 
+    def selected_layer_uid(self) -> Optional[str]:
+        layer = self._get_selected_layer()
+        return None if layer is None else layer.uid
+
     def _get_selected_layer(self) -> Optional[BidLayer]:
         if not self._selected_uid:
             return None

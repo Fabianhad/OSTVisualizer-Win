@@ -42,6 +42,66 @@ M1A_COMMAND_ARGUMENTS = {
     COMMAND_LIST_LEVELS: frozenset({"bid_uid"}),
     COMMAND_LIST_ASSUMPTIONS: frozenset({"bid_uid", "status"}),
 }
+COMMAND_PROPOSE_SCALE = "propose_scale"
+COMMAND_FIND_REGIONS = "find_regions"
+COMMAND_PROPOSE_ELEMENT = "propose_element"
+COMMAND_APPLY_CHANGESET = "apply_changeset"
+COMMAND_DISCARD_CHANGESET = "discard_changeset"
+COMMAND_UNDO_LAST_AI_CHANGESET = "undo_last_ai_changeset"
+COMMAND_RENDER_3D = "render_3d"
+COMMAND_UPDATE_ASSUMPTION = "update_assumption"
+M1B_COMMANDS = (
+    COMMAND_PROPOSE_SCALE,
+    COMMAND_FIND_REGIONS,
+    COMMAND_PROPOSE_ELEMENT,
+    COMMAND_APPLY_CHANGESET,
+    COMMAND_DISCARD_CHANGESET,
+    COMMAND_UNDO_LAST_AI_CHANGESET,
+    COMMAND_RENDER_3D,
+    COMMAND_UPDATE_ASSUMPTION,
+)
+M1B_COMMAND_ARGUMENTS = {
+    COMMAND_PROPOSE_SCALE: frozenset(
+        {"page_uid", "p1_pts", "p2_pts", "real_in", "preset", "reason", "sheet_ref"}
+    ),
+    COMMAND_FIND_REGIONS: frozenset(
+        {"page_uid", "bbox_pts", "gap_close_in", "seed_pts"}
+    ),
+    COMMAND_PROPOSE_ELEMENT: frozenset(
+        {
+            "kind",
+            "page_uid",
+            "polygon_ost",
+            "region_id",
+            "holes_ost",
+            "thickness_in",
+            "top_elev_in",
+            "level_id",
+            "name",
+            "summary",
+            "condition_uid",
+        }
+    ),
+    COMMAND_APPLY_CHANGESET: frozenset({"changeset_id"}),
+    COMMAND_DISCARD_CHANGESET: frozenset({"changeset_id"}),
+    COMMAND_UNDO_LAST_AI_CHANGESET: frozenset({"bid_uid"}),
+    COMMAND_RENDER_3D: frozenset({"bid_uid", "view"}),
+    COMMAND_UPDATE_ASSUMPTION: frozenset(
+        {
+            "changeset_id",
+            "op",
+            "assumption_id",
+            "subject",
+            "target_key",
+            "value",
+            "reason",
+            "sheet_ref",
+            "length_in",
+        }
+    ),
+}
+AI_TAKEOFF_COMMANDS = M1A_COMMANDS + M1B_COMMANDS
+AI_TAKEOFF_COMMAND_ARGUMENTS = {**M1A_COMMAND_ARGUMENTS, **M1B_COMMAND_ARGUMENTS}
 STATUS_OK = "ok"
 STATUS_EMPTY = "empty"
 STATUS_TRUNCATED = "truncated"

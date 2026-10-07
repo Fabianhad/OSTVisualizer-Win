@@ -4,12 +4,11 @@
 
 ### Added
 
-- **AI takeoff tools (preview, read-only).** A second MCP helper,
+- **AI takeoff tools (preview).** A second MCP helper,
   `ostv-takeoff-mcp.exe`, lets an AI client such as Claude Desktop read the bid
   open in the running app: sheets with scale, PNG crops of PDF pages with
   pixel-to-page and page-to-OST transforms, drawing text, PDF line segments,
-  quantities by condition or page, and AI levels and assumptions (empty until a
-  later version can create them). It cannot change the bid. Turn it on in
+  quantities by condition or page, and AI levels and assumptions. Turn it on in
   **Tools > Options > MCP Setup** (off by default; needs a license and an open
   bid) and copy the AI takeoff setup JSON from the same tab. The helper connects
   only to the running app over a pipe limited to your Windows account, with a key
@@ -17,6 +16,26 @@
   without control or text-direction characters. If the app does not answer within
   two minutes the tool reports a timeout instead of waiting, and too many parallel
   requests get a "busy" answer.
+- **AI takeoff proposals with approval in the app.** The AI takeoff helper can
+  now propose a page scale from two points, find closed areas in a PDF's lines
+  (reporting any gaps it closed), propose slabs from them, show a top view of the
+  bid, and add or revise assumptions. Nothing is written until you accept the
+  change in the review window that opens in OST Visualizer: it shows the outlines
+  on the plan, the added area and volume, and the AI's assumptions, and Accept
+  stays off until every high-impact assumption (scale, thickness, top elevation,
+  or a gap over 12 in) is accepted or overridden by you. An accepted change is
+  one undo step; new slab conditions go in an `AI <date> <time>` folder on the
+  selected layer with the top elevation in the `@T` suffix. Changes are capped
+  (200 takeoffs, 25 new conditions, five waiting per bid), expire after 30
+  minutes, and are refused if a page or condition they touch changed; if the AI
+  edits an assumption while you review, the window refreshes and asks you to
+  check again. Undo never removes takeoffs you drew on an AI condition. Locked
+  bids are respected. On SQL Server bids changes cannot be applied yet (the AI
+  gets a clear "sql_apply_unavailable" answer); reading and proposing still
+  work. Settled assumptions are kept on this computer, a moved database is
+  relinked only after you confirm for the same bid that is still open, and each AI
+  call and decision is logged to a user-only audit file without arguments,
+  images, paths or the session key.
 - **View > Pan Sidebar** (also the first sidebar toggle in the view toolbar) docks a
   mini-map of the current Page above the Conditions and Layers sidebars. It shows the
   visible area as an inverted rectangle that follows scrolling, zooming, resizing, and

@@ -88,6 +88,12 @@ class PageCachePdfSourceTests(unittest.TestCase):
                 self.assertTrue(0.0 < run.top - run.bottom < 20.0)
                 self.assertTrue(0.0 < run.right - run.left < 60.0)
 
+    def test_release_closes_cached_pdfs_so_the_file_can_be_removed(self):
+        self.source.get_text_runs(str(self.pdf), 0)
+        self.source.release()
+        self.pdf.unlink()
+        self.assertFalse(self.pdf.exists())
+
     def test_missing_pdfs_give_no_runs_or_segments(self):
         missing = str(self.directory / "missing.pdf")
         self.assertEqual(self.source.get_text_runs(missing, 0), [])

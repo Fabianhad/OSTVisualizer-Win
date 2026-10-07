@@ -26692,3 +26692,51 @@ class TakeoffPlanViewOverlayMoveCommitSweepTests(_TakeoffPlanViewOverlayRefreshF
             QtCore.qInstallMessageHandler(previous)
         self.assertEqual(messages, [])
         self.assertEqual((pixmap.width(), pixmap.height()), (26, 26))
+
+
+class AiChangesetPreviewTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def _view(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene = QGraphicsScene()
+        view._current_bid_page_uid = "page-1"
+        view._ai_preview_items = []
+        view._current_page_transform = lambda: None
+        view._scene_builder = SimpleNamespace(
+            get_coordinate_system=lambda: SimpleNamespace(
+                view_scale=2.0, scale_ratio=144.0
+            )
+        )
+        return view
+
+    def test_ghost_rings_are_drawn_on_the_current_page_in_scene_coordinates(self):
+        from ost_visualizer.presentation.scene.plan_view_z_order import AI_PREVIEW_Z
+
+        view = self._view()
+        square = (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0)
+        view.set_ai_preview("page-1", [square, square])
+        items = [
+            item for item in view._scene.items() if isinstance(item, QGraphicsPathItem)
+        ]
+        self.assertEqual(len(items), 2)
+        rect = items[0].path().boundingRect()
+        self.assertEqual((rect.width(), rect.height()), (480.0, 360.0))
+        self.assertEqual(items[0].zValue(), AI_PREVIEW_Z)
+        self.assertEqual(items[0].pen().style(), Qt.PenStyle.DashLine)
+        self.assertFalse(
+            items[0].flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        )
+        view.clear_ai_preview()
+        self.assertEqual(view._scene.items(), [])
+
+    def test_other_pages_and_replacements(self):
+        view = self._view()
+        square = (0.0, 0.0, 10.0, 0.0, 10.0, 10.0)
+        view.set_ai_preview("page-2", [square])
+        self.assertEqual(view._scene.items(), [])
+        view.set_ai_preview("page-1", [square])
+        view.set_ai_preview("page-1", [square])
+        self.assertEqual(len(view._scene.items()), 1)

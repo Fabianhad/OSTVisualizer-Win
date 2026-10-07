@@ -1415,6 +1415,181 @@
       ],
       "release_evidence": "unreleased (M1a)",
       "affected_result": "Bounded load per session; cleaner untrusted text"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_changeset_approval.py",
+      "defect": "AiChangesetPlanPreview.show called plan_view.current_page_uid() but the real TakeoffPlanView exposes a property, so every apply_changeset on the real window raised TypeError and returned unexpected_error",
+      "proof": "test_m1b_golden_end_to_end F1 failed with 'NoneType' object is not callable; PlanPreviewTests made the fake a property and failed before the fix",
+      "fix": "Read current_page_uid as a property",
+      "tests": [
+        "PlanPreviewTests.test_only_takeoffs_on_the_shown_page_are_previewed_with_their_holes",
+        "M1bGoldenEndToEndTests"
+      ],
+      "release_evidence": "Unreleased M1b code",
+      "affected_result": "apply_changeset returns pending_approval and shows the ghost preview"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_takeoff_pdf_source.py; ost_visualizer/presentation/main_window.py",
+      "defect": "The shared AI PDF source cached open documents and MainWindow cleanup never released them, so the PDF stayed locked after the window closed",
+      "proof": "test_m1a_end_to_end failed with PermissionError [WinError 32] on f1.pdf at temp cleanup after the M1b wiring; test_release_closes_cached_pdfs_so_the_file_can_be_removed",
+      "fix": "PageCachePdfSource.release clears the page cache; MainWindow cleanup calls it after the AI takeoff bridge",
+      "tests": [
+        "PageCachePdfSourceTests.test_release_closes_cached_pdfs_so_the_file_can_be_removed",
+        "MainWindowDeferredShutdownTests"
+      ],
+      "release_evidence": "Unreleased M1b wiring",
+      "affected_result": "PDF files can be moved or deleted after the app closes"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_changeset_store.py; ost_visualizer/domain/entities/ai_changeset.py; ost_visualizer/presentation/services/ai_changeset_approval.py; ost_visualizer/presentation/dialogs/ai_changeset_review_dialog.py",
+      "defect": "The review dialog did not follow AI changes made through update_assumption while it was open, and the user's per-row Accept and the Accept button were bound to ids only, so a value or changeset the user never saw could be accepted",
+      "proof": "ReviewIntegrityTests: revise 8 -> 80 then click Accept on the row showing 8 accepted 80; an unseen added assumption was applied",
+      "fix": "AiChangeset.revision is bumped by every assumption change; the controller passes the dialog's shown revision to approve/accept/override; a mismatch raises changed_during_review and refreshes the dialog",
+      "tests": [
+        "ReviewIntegrityTests.test_a_value_revised_by_the_ai_after_display_is_never_accepted",
+        "ReviewIntegrityTests.test_accept_refuses_a_changeset_the_ai_changed_after_display"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "The user only accepts what the dialog shows"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/undo_redo_service.py; ost_visualizer/presentation/services/ai_changeset_applier.py",
+      "defect": "undo_last_ai_changeset from the pipe left the 'AI: ...' entry on the user's undo stack; its undo then always failed and stayed on top, so Edit > Undo could no longer reach any older entry",
+      "proof": "Real Access test: after apply and pipe undo, undo.undo() never reached the user's entry",
+      "fix": "push_for_bid returns the entry; UndoRedoService.discard_entry removes a ready entry; the applier discards its entry after a successful undo that did not come from the stack",
+      "tests": [
+        "AiChangesetApplierAccessTests.test_a_pipe_undo_leaves_the_users_older_undo_entries_reachable",
+        "UndoRedoServiceLabelTests.test_a_ready_entry_can_be_discarded_from_anywhere_in_history"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "Edit > Undo keeps working after the AI undoes a changeset"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_tokens.py; ost_visualizer/presentation/services/ai_changeset_applier.py",
+      "defect": "Undo checked only the AI's own takeoffs and condition rows, so a takeoff the user drew on an AI condition was deleted with the condition",
+      "proof": "Real Access probe: after the user's insert and the AI undo, BidTakeoffs was empty",
+      "fix": "A condition_takeoffs:<uid> token (digest of the takeoff uids using that condition) is part of the resulting tokens; undo is refused with stale_changeset when it changed",
+      "tests": [
+        "AiChangesetApplierAccessTests.test_undo_never_removes_a_takeoff_the_user_drew_on_the_ai_condition",
+        "ProjectDataTokenReaderTests.test_condition_membership_tokens_follow_which_takeoffs_use_a_condition"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "No user takeoff is lost by an AI undo"
+    },
+    {
+      "file": "ost_visualizer/presentation/dialogs/ai_changeset_review_dialog.py",
+      "defect": "Pressing Enter after typing an override rejected the whole changeset (Reject was the first auto-default button); with Accept focused earlier it could apply instead",
+      "proof": "QTest Enter in the override field produced reject_requested and status rejected",
+      "fix": "No dialog button is a default or auto-default button; Enter in an override field applies that row's override",
+      "tests": [
+        "ReviewIntegrityTests.test_enter_in_an_override_field_overrides_and_never_rejects_or_applies"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "Enter never accepts or rejects a changeset"
+    },
+    {
+      "file": "ost_visualizer/presentation/dialogs/ai_changeset_review_dialog.py",
+      "defect": "The approval dialog showed AI summary, values, reasons and sheet references raw: bidi and control characters could reorder or hide text and unbounded text could push the buttons away",
+      "proof": "The summary label kept U+202E and 2000+ characters",
+      "fix": "All dialog text goes through UntrustedText (controls and bidi removed, 500-character cap)",
+      "tests": [
+        "ReviewIntegrityTests.test_ai_text_is_shown_without_controls_and_capped"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "The approval surface cannot be spoofed by AI text"
+    },
+    {
+      "file": "ost_visualizer/domain/entities/ai_changeset.py; ost_visualizer/presentation/dialogs/ai_changeset_review_dialog.py; ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "User overrides bypassed the proposal limits: any finite top elevation (1e300 gives a 300+ character condition name for a VARCHAR(255) column) and any positive thickness were accepted",
+      "proof": "valid_override accepted 1e300; real Access test: approve passed with a 1e300 override",
+      "fix": "MAX_SLAB_THICKNESS_IN and MAX_ABS_TOP_ELEVATION_IN moved to the domain; resolved_conditions and valid_override enforce them",
+      "tests": [
+        "AiChangesetApplierAccessTests.test_an_out_of_range_elevation_override_is_never_written",
+        "GeometryAndRangeTests.test_resolved_values_outside_the_proposal_limits_are_unresolved",
+        "ReviewIntegrityTests.test_out_of_range_overrides_are_refused"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "Out-of-range values never reach the database"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "A cached find_regions result kept OST coordinates computed at the page scale of that moment; after a scale change propose_element wrote the region at the old scale while the fresh base tokens hid it",
+      "proof": "RegionScaleTests: propose_element succeeded after halving the page scale",
+      "fix": "The region record keeps ost_per_page_point; a different scale is refused with not_found",
+      "tests": [
+        "RegionScaleTests.test_a_region_found_at_another_scale_is_refused"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "Slabs are never written at a stale scale"
+    },
+    {
+      "file": "ost_visualizer/domain/entities/ai_changeset.py",
+      "defect": "Explicit holes_ost were never checked against the slab outline, so a hole outside, crossing or equal to the outline was written as a child takeoff and subtracted area",
+      "proof": "GeometryAndRangeTests: ProposedTakeoff.validate accepted outside, crossing and larger holes",
+      "fix": "validate requires each hole to be smaller than the outline, with every vertex inside or on it and no edge properly crossing it",
+      "tests": [
+        "GeometryAndRangeTests.test_holes_must_lie_inside_their_polygon"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "invalid_geometry instead of wrong quantities"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_changeset_store.py",
+      "defect": "The store kept every closed changeset for the whole session, so a propose/discard loop from the pipe grew memory without bound",
+      "proof": "RetentionTests: the first of 1001 discarded changesets was still stored",
+      "fix": "At most MAX_CLOSED_CHANGESETS (100) discarded, rejected, expired, stale, failed or undone changesets are kept; open_for_bid only reads open ones; the unused is_fresh was removed",
+      "tests": [
+        "RetentionTests.test_closed_changesets_do_not_accumulate"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "Bounded memory per session"
+    },
+    {
+      "file": "ost_visualizer/domain/entities/ai_changeset.py; ost_visualizer/application/services/ai_takeoff_proposal_service.py; ost_visualizer/presentation/services/ai_changeset_applier.py; ost_visualizer/config/di_config.py; ost_visualizer/presentation/main_window.py",
+      "defect": "AI changesets could be applied to SQL Server bids through the unverified queue path",
+      "proof": "SqlApplyTests and SqlBackstopTests failed before the change",
+      "fix": "apply_blocked_reason on the database descriptor, exposed as ai_takeoff_apply_gate; apply_changeset and the applier refuse with sql_apply_unavailable",
+      "tests": [
+        "SqlApplyTests.test_sql_bids_keep_proposals_but_cannot_be_applied",
+        "SqlBackstopTests.test_sql_bids_are_never_applied_or_undone",
+        "MainWindowStartupTests.test_main_window_constructs_from_configured_application"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "No AI write reaches a SQL Server bid"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_changeset_approval.py",
+      "defect": "An exception raised while starting an apply (for example ActiveBidLockedError from a queued write) left the changeset in applying until restart",
+      "proof": "ApplyExceptionTests failed before the change",
+      "fix": "accept catches the exception, logs it and marks a changeset still applying as failed",
+      "tests": [
+        "ApplyExceptionTests.test_an_exception_while_applying_never_leaves_the_changeset_applying"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "No changeset stays applying"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_sidecar_rebind_prompt.py; ost_visualizer/application/services/ai_takeoff_sidecar_service.py; ost_visualizer/domain/entities/ai_takeoff.py",
+      "defect": "Yes in the rebind prompt rebound whatever bid was open at click time, even another bid than the one asked about",
+      "proof": "RebindBidSwitchPromptTests: bid 2's sidecar was rewritten after a switch",
+      "fix": "The prompt captures bid_key at offer; rebind(expected_bid_key) refuses with bid_changed; the prompt reports and offers again",
+      "tests": [
+        "RebindBidSwitchPromptTests.test_a_bid_switch_before_yes_is_refused_and_reported",
+        "RebindBidSwitchTests.test_rebind_refuses_when_the_open_bid_is_not_the_expected_one"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "Only the bid the user confirmed is rebound"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_changeset_store.py",
+      "defect": "Changeset expiry followed the wall clock, so a clock change extended or shortened the 30 minutes",
+      "proof": "MonotonicExpiryTests failed before the change",
+      "fix": "The default clock is time.monotonic",
+      "tests": [
+        "MonotonicExpiryTests.test_expiry_follows_the_monotonic_clock_not_the_wall_clock"
+      ],
+      "release_evidence": "Unreleased M1b",
+      "affected_result": "Expiry is exactly 30 minutes of elapsed time"
     }
   ],
   "removed_tests": [
@@ -1465,6 +1640,22 @@
     {
       "test": "StripElevationSuffixTests.test_two_elevations_are_both_dropped",
       "reason": "Pinned the repeat-to-fixed-point loop that over-stripped a second marker; replaced by test_only_the_last_elevation_is_dropped and test_a_name_that_carries_two_elevations_loses_one_per_call."
+    },
+    {
+      "test": "tests/infrastructure/persistence/repositories/test_json_ai_takeoff_sidecar_repository.py::JsonAiTakeoffSidecarRepositoryTests.test_repository_offers_no_write_methods",
+      "reason": "M1b adds save by design; replaced by test_repository_offers_only_load_and_save."
+    },
+    {
+      "test": "tests/mcp_takeoff/test_tool_catalog.py::ToolCatalogTests.test_exactly_the_seven_m1a_tools_in_order",
+      "reason": "The catalog now has 15 tools; replaced by test_the_m1a_tools_then_the_m1b_tools_under_the_cap."
+    },
+    {
+      "test": "tests/mcp_takeoff/test_tool_catalog.py::ToolCatalogTests.test_no_tool_can_write_approve_or_accept",
+      "reason": "Write tools exist in M1b; the approval/accept/status guarantee moved to test_no_tool_can_approve_accept_or_set_a_status."
+    },
+    {
+      "test": "tests/mcp_takeoff/test_tool_catalog.py::ToolCatalogTests.test_page_tools_require_a_page_and_others_default_to_the_open_bid",
+      "reason": "Rewritten for 15 tools as test_required_arguments."
     }
   ],
   "evidence": [
@@ -14631,6 +14822,68 @@
         "PDF UserUnit is not applied to the origin (same as the existing size handling).",
         "Not exercised: the Nuitka-built helpers loading ost_pdf_writer at runtime from the desktop distribution (same mechanism as ost_pdf), real Claude Desktop, multi-user hosts."
       ]
+    },
+    {
+      "batch": "ai-takeoff-m1b-changesets-approval-apply",
+      "findings": [
+        "M1b implemented approval-first: changeset model and store (caps, 30 min expiry, touched-only tokens, stale_changeset, high-impact assumption gating), in-app review dialog and controller (the pipe only reaches the AiChangesetProposals facade), one composite ProjectWriteService mutation per changeset (Access direct, SQL queue) with ActiveBidWriteGuard and lease mapping, one labelled undo entry and exact undo, sidecar writes and rebind confirmation, the audit log, and tools 8-15.",
+        "The F1-F3 golden end-to-end test found two production defects that unit fakes hid: AiChangesetPlanPreview called PlanView.current_page_uid as a method (it is a property), so apply_changeset failed with unexpected_error on the real window; and MainWindow never released the AI PDF source, so the PDF stayed open after shutdown (PermissionError on temp cleanup in the M1a end-to-end test). Both fixed with failing tests first.",
+        "tools/check_architecture.py flagged four presentation imports of application/services (AppliedChangeset, SidecarWriteRefused, the store type); AppliedChangeset moved to application/dtos/ai_changeset_write_dtos.py, SidecarWriteRefused to domain/entities/ai_takeoff.py, and presentation no longer names AiChangesetStore.",
+        "The first full-suite run found the proxy tests still pinned to the 7-tool M1a catalog (updated to the 15-tool catalog with approval names as the unknown tools) and RegionTooComplex with a pass body (now a docstring-only body per the empty-construct convention).",
+        "In-memory mutation run over 27 M1b invariants: 23 killed at first, 4 survivors (changeset vertex cap +1, request_apply freshness skipped, undo deleting a reused folder, sidecar replace instead of merge) each closed with a new test; all 27 killed after. No mutant touched the disk."
+      ],
+      "tests_added": [
+        "154 tests: 135 in 15 new modules, 19 added to 7 existing modules; 4 tests replaced (see removed_tests)"
+      ],
+      "validation": "2026-10-07 M1b: focused AI takeoff 182 OK; mcp_takeoff 44, mcp_server 137 (unchanged), integration/ai_takeoff 10 (real Access, F1-F3 golden end to end over the real proxy and pipe), integration/lifecycle 38, architecture 102 (3 skipped), presentation/services 280, application 1490 OK; full suite 13309 OK (35 skipped, 271 s); check_architecture PASS; compileall 0; git diff --check clean; untracked files whitespace-clean; 27 in-memory mutants all killed",
+      "limitations": [
+        "The SQL Server apply and undo paths (queue_ai_changeset, queue_ai_changeset_undo, queue_page_setting_if_sql) are tested only against write-service stand-ins; no live SQL Server run.",
+        "Cross-user refusal on the takeoff pipe is still unverified (needs a second Windows account).",
+        "Not exercised: real Claude Desktop, the Nuitka-built helper against the M1b catalog, packaged helpers loading ost_pdf_writer.",
+        "GUI-thread time for find_regions snapshots, apply and token reads was not measured on large real bids; geometry and rendering run on workers.",
+        "render_sheet overlay_ids remain a no-op; render_3d supports view=top only; propose_element supports kind=slab only.",
+        "Sidecar duplicate/delete lifecycle (copy on bid duplicate, trash on delete) is not implemented."
+      ]
+    },
+    {
+      "batch": "ai-takeoff-m1b-bug-hunt",
+      "findings": [
+        "Bug hunt on the uncommitted M1b work: 9 defects reproduced with failing tests first (3 on real Access, 6 with the real store, dialog and proposal service) and fixed with the smallest change; see production_fixes.",
+        "Checked and found sound: approve re-checks blocking assumptions and freshness; double Accept, Accept after discard/expiry/stale and Reject after apply are refused; no pipe command, tool argument, sidecar content or audit path reaches approve/accept/override or ProjectWriteService; caps at the exact boundary; touched-only tokens; atomic rollback on a missing owner; locked Access bids; bid switch or page/condition change between propose and Accept gives stale_changeset; a bogus or foreign condition_uid is refused by the infrastructure owner check and rolled back; sidecar text round-trips; audit fields cleaned and capped; dialog labels plain text; ghost items survive scene clears (isValid); render_3d snapshot is light and meshing runs on a worker; planar regions handle bow-ties, tiny, huge, NaN/inf, nested and touching inputs.",
+        "Hygiene: AiChangesetStore.is_fresh had no caller and was removed; UndoRedoService.undo_label is read only by tests (kept as the label accessor).",
+        "In-memory mutation: 23 mutants on the fixes, 21 killed at first; the hole-area and edge-crossing checks survived until the outline-equal and L-notch cases were added; all 23 killed. The 27 M1b mutants were re-run against the new code (one snippet updated for the revision check); all killed."
+      ],
+      "tests_added": [
+        "14 tests added to 7 existing modules"
+      ],
+      "validation": "2026-10-07 M1b bug hunt: baseline full suite 13309 OK (35 skipped); after fixes focused 233 OK; integration/ai_takeoff 13 (real Access), mcp_takeoff 44, mcp_server 137, integration/lifecycle 38, architecture 102 (3 skipped), presentation/services 286, presentation/dialogs 416, application 1493, domain 254 OK; full suite 13323 OK (35 skipped, 290 s); check_architecture PASS; compileall 0; git diff --check clean; untracked whitespace-clean; 23 fix mutants and 27 M1b mutants killed in memory",
+      "limitations": [
+        "Suspected, not reproduced (needs live SQL Server): queue_ai_changeset and queue_page_setting_if_sql raise ActiveBidLockedError for a locked SQL bid instead of returning a result; the applier does not catch it, so the changeset would stay in applying and keep an open slot until restart.",
+        "Changeset expiry uses wall-clock time; a system clock change shortens or extends the 30 minutes.",
+        "Two app instances writing the same sidecar can lose an update (read-modify-replace without a file lock).",
+        "The rebind prompt rebinds whatever bid is open when Yes is clicked; if the user switched to another rebind_required bid meanwhile, that bid is rebound.",
+        "A propose_element condition_uid outside the open bid is accepted at proposal time and only refused (rolled back) when the user accepts.",
+        "The ghost preview is cleared by a page change and not redrawn when the user returns while the dialog is open; holes are drawn as filled outlines.",
+        "restrict_to_current_user can raise pywintypes.error (not an OSError) on a filesystem without ACL support. The first audit write always comes from a pipe tool call, whose hook catches every exception, and the ACL is only applied when the directory is created, so the MainWindow audit path (which catches only OSError and ValueError) is not reached with it; but the directory then keeps its inherited permissions without notice. Not reproduced (needs such a filesystem)."
+      ]
+    },
+    {
+      "batch": "ai-takeoff-sql-apply-rebind-monotonic",
+      "findings": [
+        "Applying AI changesets is disabled on SQL Server bids until live-SQL verification: apply_changeset returns sql_apply_unavailable before any approval request (descriptor backend check through the ai_takeoff_apply_gate DI service) and the applier refuses apply and undo as a backstop. Read tools and proposals stay available.",
+        "AiChangesetApprovalController.accept catches exceptions raised while starting an apply and marks a changeset still in applying as failed.",
+        "The rebind prompt captures the bid_key it asks about and the service refuses rebind for any other open bid (bid_changed); the prompt reports it in a non-modal notice and offers again later.",
+        "AiChangesetStore defaults to time.monotonic for created_at and expiry; created_at is used only for expiry.",
+        "In-memory mutation: 13 mutants; 11 killed at first, the DI hand-off to the proposal service and the re-offer after a refused rebind survived until the startup and prompt tests were extended; all 13 killed."
+      ],
+      "tests_added": [
+        "6 tests added to 6 existing modules; 2 tests re-read"
+      ],
+      "validation": "2026-10-07 three fixes: focused 127 OK; integration/ai_takeoff 13 (real Access), mcp_takeoff 44, mcp_server 137, integration/lifecycle 38, architecture 102 (3 skipped), presentation/services 289, presentation/dialogs 416, application 1496, domain 254, infrastructure/persistence 69 OK; full suite 13329 OK (35 skipped, 283 s); check_architecture PASS; compileall 0; git diff --check clean; 13 in-memory mutants killed",
+      "limitations": [
+        "SQL Server apply stays disabled until it is verified against a live server; the queue code paths are kept but unreachable from the UI.",
+        "The rebind refusal notice is non-modal and offered again only after the next rebind_suggested signal for that bid."
+      ]
     }
   ],
   "modules": {
@@ -21466,7 +21719,9 @@
         "TakeoffPlanViewOverlayMoveCommitSweepTests.test_the_outlined_icon_pixmap_completes_its_painting_without_qt_warnings": "Added: _outlined_icon_pixmap returns a 26x26 pixmap and produces no Qt warnings (documents that the two painter.end() removals are unobservable: the painter ends itself on destruction).",
         "TakeoffPlanViewChangedOverlayRefreshSweepTests.test_a_refresh_request_is_not_skipped_when_equal_annotations_share_one_identity": "Added: Equal incoming and current annotation dicts whose two entries share one (uid,type) identity cannot be told apart, so _can_skip_unchanged_overlay_refresh refuses to skip; kills dropping the ambiguity guard and the swapped-argument variant.",
         "TakeoffPlanViewElementCenterAndRotateHandleTests.test_text_annotation_centre_is_its_anchor_whether_or_not_it_is_rotated": "Replaces the old test that pinned the buggy behaviour (a rotated text box rotated about its top-left corner on screen): the centre of a text annotation is its stored anchor in ost and screen mode for no rotation, 90, 180 and 1 radian rotations and a zero-height box. Unit-level; the real renderer and drag are in test_annotation_rotation_handle.py.",
-        "PdfTextSelectionTests.test_extracted_text_is_mapped_from_the_visible_box_origin": "Added: the real PDFRenderingService._execute_pdf_text on the same three fixtures feeds TakeoffPlanView._on_pdf_text_extracted; the mapped GRID run, its first character box and its size match the drawn position. Failed before the fix by 100 pt (CropBox) and 50 pt (MediaBox)."
+        "PdfTextSelectionTests.test_extracted_text_is_mapped_from_the_visible_box_origin": "Added: the real PDFRenderingService._execute_pdf_text on the same three fixtures feeds TakeoffPlanView._on_pdf_text_extracted; the mapped GRID run, its first character box and its size match the drawn position. Failed before the fix by 100 pt (CropBox) and 50 pt (MediaBox).",
+        "AiChangesetPreviewTests.test_ghost_rings_are_drawn_on_the_current_page_in_scene_coordinates": "Added: set_ai_preview draws one dashed, non-interactive path per ring at AI_PREVIEW_Z on the shown page.",
+        "AiChangesetPreviewTests.test_other_pages_and_replacements": "Added: rings for another page draw nothing; a second call replaces the first; clear_ai_preview removes them."
       }
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -21626,7 +21881,8 @@
         "LayersSidebarInteractionTests.test_layers_sidebar_inline_rename_rejects_blank_and_trims_name": "Reviewed: blank reverts, trimmed rename emits. Duplicate and locked cases split into the new sibling test.",
         "LayersSidebarInteractionTests.test_layers_sidebar_inline_rename_rejects_duplicates_and_ignores_locked_rows": "New: locked/template rows are not editable and ignore text edits; case-insensitive duplicate shows 'Duplicate Layer' warning and reverts; unchanged name emits nothing. Mutations no_dup_rename and locked_not_ignored killed.",
         "LayersSidebarInteractionTests.test_layers_sidebar_inline_rename_reverts_after_access_loss": "Strengthened: edit triggers become NoEditTriggers and restoring access allows the rename to emit (positive control).",
-        "LayersSidebarInteractionTests.test_layers_sidebar_access_loss_cancels_pending_new_layer_editor": "Strengthened: editor signal disconnected and Add button disabled after access loss. Mutation pending_not_removed_on_access_loss killed."
+        "LayersSidebarInteractionTests.test_layers_sidebar_access_loss_cancels_pending_new_layer_editor": "Strengthened: editor signal disconnected and Add button disabled after access loss. Mutation pending_not_removed_on_access_loss killed.",
+        "LayersSidebarInteractionTests.test_selected_layer_uid_reports_only_a_loaded_selection": "Added: selected_layer_uid returns the selected row's uid and None with no selection or no loaded layers."
       }
     },
     "tests/presentation/components/test_menu_builder.py": {
@@ -31511,7 +31767,9 @@
         "UndoRedoServiceBidLockedRejectionTests.test_a_bid_locked_undo_rejection_keeps_the_entry_ready_and_replayable": "Added (B4): a REJECTED/bid_locked completion of an undo replay (delivered twice) returns the entry to READY on the undo stack with one change notification, no log, and the same entry replays again and then moves to the redo stack. Mutants killed: CONFLICTED instead of READY, in-flight guard not released, terminal-delivery guard dropped.",
         "UndoRedoServiceBidLockedRejectionTests.test_a_bid_locked_redo_rejection_keeps_the_entry_ready_and_replayable": "Added (B4): same for a redo replay (entry stays on the redo stack, replays again).",
         "UndoRedoServiceBidLockedRejectionTests.test_a_conflict_outcome_still_marks_the_entry_conflicted": "Added (B4): negative control: CONFLICT still marks the entry CONFLICTED and blocks a new replay.",
-        "UndoRedoServiceBidLockedRejectionTests.test_a_rejection_without_a_reason_is_also_a_plain_refusal": "Added (B4): pin: REJECTED without the reason also returns the entry to READY (existing behaviour)."
+        "UndoRedoServiceBidLockedRejectionTests.test_a_rejection_without_a_reason_is_also_a_plain_refusal": "Added (B4): pin: REJECTED without the reason also returns the entry to READY (existing behaviour).",
+        "UndoRedoServiceLabelTests.test_entries_carry_an_optional_label_for_the_top_of_the_stack": "Added: push_for_bid's label is reported by undo_label for the top entry and is empty without one.",
+        "UndoRedoServiceLabelTests.test_a_ready_entry_can_be_discarded_from_anywhere_in_history": "Added: push_for_bid returns the entry (None for another bid); discard_entry removes a ready entry from the middle of the stack once, and never an entry whose undo is pending."
       }
     },
     "tests/presentation/test_main_window.py": {
@@ -31550,8 +31808,8 @@
         "MainWindowDeferredShutdownTests.test_app_close_waits_asynchronously_for_critical_sql_mutations": "Sound: shutdown requested only after the async drain callback; window stays hidden.",
         "MainWindowDeferredShutdownTests.test_repeated_close_does_not_schedule_duplicate_shutdown": "Sound: second close ignored, one hide, one timer.",
         "MainWindowDeferredShutdownTests.test_completed_shutdown_exits_the_qt_event_loop_after_resource_cleanup": "Stub window close runs every resource cleanup in order (deferred persistence, workspace, event, UI event, license, access, MCP context bridge, AI takeoff bridge, lifecycle) before the Qt close and quit.",
-        "MainWindowDeferredShutdownTests.test_completed_shutdown_finalization_is_idempotent": "A second close after finalization repeats no cleanup; the sequence includes the AI takeoff bridge cleanup after the MCP context bridge.",
-        "MainWindowDeferredShutdownTests.test_completed_shutdown_continues_after_independent_cleanup_failures": "Independent cleanup failures are logged and the remaining steps, including the AI takeoff bridge cleanup, still run.",
+        "MainWindowDeferredShutdownTests.test_completed_shutdown_finalization_is_idempotent": "Re-read after M1b: the expected order now has the AI review cleanup, the rebind prompt cleanup and the AI PDF release after the takeoff bridge cleanup and before lifecycle shutdown; stubs added for the three new members.",
+        "MainWindowDeferredShutdownTests.test_completed_shutdown_continues_after_independent_cleanup_failures": "Re-read after M1b: same three new steps; failures elsewhere still do not stop them.",
         "MainWindowDeferredShutdownTests.test_access_only_close_flushes_page_state_before_collaboration_shutdown": "Sound: hide, flush, shutdown order.",
         "MainWindowDeferredShutdownTests.test_collaboration_cleanup_failure_cannot_be_bypassed_by_a_second_close": "Sound: failure re-shows once, shows critical once, second close ignored without calling close.",
         "MainWindowTitleRefreshTests.test_refresh_uses_default_when_nothing_selected": "Sound: default title.",
@@ -36038,7 +36296,7 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Read MainWindow construction, configure_application, component_builder (left splitter) and presentation.config.SIDEBAR_MIN_WIDTH. Real DI container, application controller and MainWindow with temp home, patched logger factory, suppressed QTimer.singleShot and a font-resolution seam (offscreen Qt has no fonts). The pinned 320 is an explicit setMinimumWidth value, not font metrics.",
       "reviewed_tests": {
-        "MainWindowStartupTests.test_main_window_constructs_from_configured_application": "Real MainWindow from configure_application: access manager, workspace model, detached managers and left splitter wiring; also the AI takeoff bridge is created with exactly the seven M1a commands, the read service comes from DI, the session token file is written under the patched home, access is denied while the option is off, and cleanup removes the token."
+        "MainWindowStartupTests.test_main_window_constructs_from_configured_application": "Re-read: the real DI graph's ai_takeoff_apply_gate passes an Access path and blocks a registered SQL Server descriptor, and the configured proposal service refuses apply_changeset for a SQL changeset with sql_apply_unavailable."
       }
     },
     "tests/integration/lifecycle/test_scripted_presentation.py": {
@@ -37722,14 +37980,16 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Static catalog compared to the DTO command and argument table; schemas inspected directly.",
       "reviewed_tests": {
-        "ToolCatalogTests.test_exactly_the_seven_m1a_tools_in_order": "Added: exactly the seven m1a tools in order. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
         "ToolCatalogTests.test_schema_properties_match_the_bridge_argument_table": "Added: schema properties match the bridge argument table. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
-        "ToolCatalogTests.test_no_tool_can_write_approve_or_accept": "Added: no tool can write approve or accept. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
         "ToolCatalogTests.test_schemas_are_closed_objects_without_forbidden_parameters": "Added: schemas are closed objects without forbidden parameters. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
-        "ToolCatalogTests.test_page_tools_require_a_page_and_others_default_to_the_open_bid": "Added: page tools require a page and others default to the open bid. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
         "ToolCatalogTests.test_render_sheet_limits_dpi_and_documents_overlay_ids_as_a_no_op": "Added: render sheet limits dpi and documents overlay ids as a no op. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
         "ToolCatalogTests.test_text_bearing_tools_warn_that_drawing_text_is_untrusted_data": "Added: text bearing tools warn that drawing text is untrusted data. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
-        "ToolCatalogTests.test_tool_items_are_mcp_tool_descriptors": "Added: tool items are mcp tool descriptors. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning."
+        "ToolCatalogTests.test_tool_items_are_mcp_tool_descriptors": "Added: tool items are mcp tool descriptors. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_the_m1a_tools_then_the_m1b_tools_under_the_cap": "Added (replaces test_exactly_the_seven_m1a_tools_in_order): 15 tools in plan order, M1a first, at most MAX_TOOLS, names equal AI_TAKEOFF_COMMANDS.",
+        "ToolCatalogTests.test_no_tool_can_approve_accept_or_set_a_status": "Added (replaces test_no_tool_can_write_approve_or_accept): no tool name contains an approval verb and no tool except list_assumptions (a read filter) takes a status argument.",
+        "ToolCatalogTests.test_required_arguments": "Added (replaces test_page_tools_require_a_page_and_others_default_to_the_open_bid): page tools require page_uid, bid-level tools require nothing, and the M1b tools require exactly their identifying arguments (points, bbox, kind/page, changeset_id, op).",
+        "ToolCatalogTests.test_update_assumption_can_only_add_or_revise": "Added: op enum is exactly add/revise and the description says the AI cannot accept.",
+        "ToolCatalogTests.test_apply_only_asks_the_user": "Added: apply_changeset's description says it returns pending_approval and that the user decides in the app."
       }
     },
     "tests/mcp_takeoff/test_pipe_client.py": {
@@ -37753,8 +38013,8 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "A recording fake client returns bridge envelopes; outputs go to a temporary directory with a fixed clock and nonce.",
       "reviewed_tests": {
-        "TakeoffProxyTests.test_lists_the_catalog_tools": "Added: lists the catalog tools. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
-        "TakeoffProxyTests.test_unknown_tools_never_reach_the_app": "Added: unknown tools never reach the app. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_lists_the_catalog_tools": "Re-read after M1b: tools/list equals AI_TAKEOFF_COMMANDS (15 tools, M1a first).",
+        "TakeoffProxyTests.test_unknown_tools_never_reach_the_app": "Re-read after M1b: update_assumption and apply_changeset are now catalog tools, so the unknown names are approve_changeset, accept_assumption, get_context and the empty name; none reaches the pipe.",
         "TakeoffProxyTests.test_successful_results_become_text_and_structured_content": "Added: successful results become text and structured content. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
         "TakeoffProxyTests.test_errors_are_flagged": "Added: errors are flagged. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
         "TakeoffProxyTests.test_small_png_is_returned_as_image_content_and_stripped_from_json": "Added: small png is returned as image content and stripped from json. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
@@ -37762,7 +38022,7 @@
         "TakeoffProxyTests.test_large_json_is_saved_to_a_file_with_a_preview": "Added: large json is saved to a file with a preview. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
         "TakeoffProxyTests.test_save_failures_still_return_a_bounded_preview": "Added: save failures still return a bounded preview. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
         "MainTests.test_only_the_log_level_argument_exists": "Added: only the log level argument exists. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
-        "MainTests.test_main_serves_stdio_with_the_catalog": "Added: main serves stdio with the catalog. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "MainTests.test_main_serves_stdio_with_the_catalog": "Re-read after M1b: the stdio tools/list answer equals the 15-tool catalog.",
         "TakeoffProxyTests.test_png_save_failures_still_return_the_result_without_the_image": "Added (bug hunt): a large PNG whose artifact save fails returns the rest of the result with file_saved False and the error text, like the JSON spill; before the fix the OSError escaped call_tool and the whole result was lost.",
         "MainTests.test_real_stdio_is_utf8_whatever_the_windows_code_page": "Added (bug hunt): runs the real proxy module in a fresh interpreter without PYTHONIOENCODING/PYTHONUTF8 (console code page cp1252) and HOME/USERPROFILE in a temporary directory; a BOM-prefixed first line, a non-cp1252 method name and raw UTF-8 bytes undefined in cp1252 are all answered in order. Before the fix the process died with UnicodeEncodeError.",
         "MainTests.test_main_switches_code_page_stdio_to_utf8": "Added (bug hunt): in-process variant with cp1252 TextIOWrapper stdin/stdout patched into sys, so in-memory mutation of main.py is observable; BOM, non-cp1252 and UTF-8-only input decode correctly."
@@ -37816,7 +38076,10 @@
         "JsonAiTakeoffSidecarRepositoryTests.test_corrupt_files_are_reported_and_never_rewritten": "Added: corrupt files are reported and never rewritten. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
         "JsonAiTakeoffSidecarRepositoryTests.test_found_files_are_never_rewritten": "Added: found files are never rewritten. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
         "JsonAiTakeoffSidecarRepositoryTests.test_keys_that_could_escape_the_directory_are_rejected": "Added: keys that could escape the directory are rejected. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
-        "JsonAiTakeoffSidecarRepositoryTests.test_repository_offers_no_write_methods": "Added: repository offers no write methods. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method."
+        "JsonAiTakeoffSidecarRepositoryTests.test_repository_offers_only_load_and_save": "Added (replaces test_repository_offers_no_write_methods): the repository's public surface is load and save only.",
+        "JsonAiTakeoffSidecarSaveTests.test_save_round_trips_atomically_without_leftovers": "Added: save then load returns the same sidecar with schema version 1 and no temp file remains.",
+        "JsonAiTakeoffSidecarSaveTests.test_a_failed_replace_keeps_the_previous_file_and_removes_the_temp": "Added: os.replace raising leaves the previous bytes untouched and removes the temp file.",
+        "JsonAiTakeoffSidecarSaveTests.test_invalid_keys_and_oversized_sidecars_are_refused": "Added: path-like or malformed keys raise ValueError and payloads over 5 MB are refused without creating a file."
       }
     },
     "tests/application/services/test_ai_takeoff_read_service.py": {
@@ -37861,7 +38124,8 @@
         "PageCachePdfSourceTests.test_text_runs_are_extracted_in_raw_pdf_space": "Added: text runs are extracted in raw pdf space. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
         "PageCachePdfSourceTests.test_vector_segments_are_extracted": "Added: vector segments are extracted. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
         "PageCachePdfSourceTests.test_missing_pdfs_give_no_runs_or_segments": "Added: missing pdfs give no runs or segments. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
-        "PageCachePdfSourceTests.test_raw_coordinates_start_at_the_visible_box_origin": "Added (bug hunt): real PDFs with CropBox [100 100 512 692] and MediaBox origin (100, 100); segments and text runs come back relative to the visible-box origin (left, bottom, top and right checked). Failed before the fix with absolute user-space coordinates (150, 600)."
+        "PageCachePdfSourceTests.test_raw_coordinates_start_at_the_visible_box_origin": "Added (bug hunt): real PDFs with CropBox [100 100 512 692] and MediaBox origin (100, 100); segments and text runs come back relative to the visible-box origin (left, bottom, top and right checked). Failed before the fix with absolute user-space coordinates (150, 600).",
+        "PageCachePdfSourceTests.test_release_closes_cached_pdfs_so_the_file_can_be_removed": "Added: after a text read, release() closes the cached document so the PDF can be deleted on Windows (the M1b wiring kept f1.pdf open in the M1a end-to-end test)."
       }
     },
     "tests/presentation/services/test_ai_takeoff_crop_renderer.py": {
@@ -37929,7 +38193,12 @@
         "AiTakeoffReadOnlySliceTests.test_the_takeoff_surface_is_the_seven_read_tools_under_the_cap": "Added: the takeoff surface is the seven read tools under the cap. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
         "AiTakeoffReadOnlySliceTests.test_the_read_server_is_untouched_by_the_takeoff_slice": "Added: the read server is untouched by the takeoff slice. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
         "AiTakeoffPackagingTests.test_component_script_builds_the_takeoff_helper_on_its_own": "Added: component script builds the takeoff helper on its own. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
-        "AiTakeoffPackagingTests.test_release_build_copies_the_takeoff_helper_next_to_the_desktop_exe": "Added: release build copies the takeoff helper next to the desktop exe. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe."
+        "AiTakeoffPackagingTests.test_release_build_copies_the_takeoff_helper_next_to_the_desktop_exe": "Added: release build copies the takeoff helper next to the desktop exe. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffApprovalSliceTests.test_m1b_production_code_has_no_comments_or_reflection": "Added: every M1b production module is tokenized; no COMMENT tokens and no getattr/setattr/hasattr names.",
+        "AiTakeoffApprovalSliceTests.test_ai_takeoff_sources_hold_no_raw_bidi_or_control_characters": "Added: M1a, M1b, proxy and entry-point sources contain no raw bidi formatting or Cc characters other than tab/newline/CR (the Write tool had once inserted raw bidi characters into escapes).",
+        "AiTakeoffApprovalSliceTests.test_no_pipe_reachable_module_names_an_approval_or_write_path": "Added: the bridge, write commands, proposal service, catalog and proxy contain none of approve, reject, accept_assumption, override_assumption, mark_applied/failed/undone, AiChangesetStore, the applier, the approval controller, the review dialog or ProjectWriteService as NAME tokens.",
+        "AiTakeoffApprovalSliceTests.test_the_proposal_facade_offers_no_approval_method": "Added: AiChangesetProposals' public surface is exactly add, get, discard, request_apply, add_assumption, revise_assumption, last_applied and applied_record.",
+        "AiTakeoffApprovalSliceTests.test_the_takeoff_surface_is_fifteen_tools_under_the_cap": "Added: M1B_COMMANDS in plan order, AI_TAKEOFF_COMMANDS = M1A + M1B, at most MAX_EXPOSED_TOOLS, and no command name contains approve or accept."
       }
     },
     "tests/presentation/visualization/pdf/test_pdf_visible_origin.py": {
@@ -37939,6 +38208,250 @@
         "ReadVisibleBoxOriginTests.test_real_pdf_with_an_asymmetric_crop_box": "Added: CropBox [120 40 520 640] gives (120, 40), so x and y are not swapped (the swapped-axes mutant survived every symmetric fixture).",
         "ReadVisibleBoxOriginTests.test_each_page_uses_its_own_box": "Added: page 0 and page 1 return their own visible-box lower-left corners.",
         "ReadVisibleBoxOriginTests.test_unreadable_geometry_falls_back_to_the_page_origin": "Added: out-of-range and negative page indexes, a missing file and a reader that raises all give (0, 0); the warning names RuntimeError and never the path in the exception text."
+      }
+    },
+    "tests/domain/entities/test_ai_changeset.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Pure domain values: frozen AiChangeset/ProposedTakeoff/ProposedCondition/ChangesetAssumption built in memory; caps exercised at exactly the limit and one over (200 takeoffs, 25 conditions, 2,000 vertices per polygon or hole, exactly 20,000 and 20,001 per changeset).",
+      "reviewed_tests": {
+        "ChangesetCapTests.test_caps_match_the_plan": "Reviewed (new M1b module, written before the code): caps match the plan.",
+        "ChangesetCapTests.test_a_changeset_inside_every_cap_validates": "Reviewed (new M1b module, written before the code): a changeset inside every cap validates.",
+        "ChangesetCapTests.test_each_cap_is_enforced_at_its_boundary": "Reviewed (new M1b module, written before the code): each cap is enforced at its boundary.",
+        "ChangesetCapTests.test_vertex_counts_include_holes": "Reviewed (new M1b module, written before the code): vertex counts include holes.",
+        "ChangesetCapTests.test_malformed_polygons_are_invalid_geometry": "Reviewed (new M1b module, written before the code): malformed polygons are invalid geometry.",
+        "ChangesetLifecycleTests.test_expiry_is_thirty_minutes_after_proposal": "Reviewed (new M1b module, written before the code): expiry is thirty minutes after proposal.",
+        "ChangesetLifecycleTests.test_touched_resources_are_the_pages_and_existing_conditions_it_depends_on": "Reviewed (new M1b module, written before the code): touched resources are the pages and existing conditions it depends on.",
+        "AssumptionGatingTests.test_scale_thickness_and_elevation_are_high_impact": "Reviewed (new M1b module, written before the code): scale thickness and elevation are high impact.",
+        "AssumptionGatingTests.test_closing_segments_over_twelve_inches_are_high_impact": "Reviewed (new M1b module, written before the code): closing segments over twelve inches are high impact.",
+        "AssumptionGatingTests.test_only_open_high_impact_assumptions_block": "Reviewed (new M1b module, written before the code): only open high impact assumptions block.",
+        "AssumptionGatingTests.test_resolved_values_follow_overrides": "Reviewed (new M1b module, written before the code): resolved values follow overrides.",
+        "AssumptionGatingTests.test_unresolved_values_cannot_be_applied": "Reviewed (new M1b module, written before the code): unresolved values cannot be applied.",
+        "QuantityDeltaTests.test_area_and_volume_per_condition_subtract_holes": "Reviewed (new M1b module, written before the code): area and volume per condition subtract holes.",
+        "QuantityDeltaTests.test_unresolved_thickness_has_no_volume_until_an_assumption_resolves_it": "Reviewed (new M1b module, written before the code): unresolved thickness has no volume until an assumption resolves it.",
+        "QuantityDeltaTests.test_existing_conditions_are_listed_by_uid": "Reviewed (new M1b module, written before the code): existing conditions are listed by uid.",
+        "ConditionNameTests.test_top_elevation_uses_the_at_t_suffix": "Reviewed (new M1b module, written before the code): top elevation uses the at t suffix.",
+        "ConditionNameTests.test_base_names_are_cleaned_and_bounded": "Reviewed (new M1b module, written before the code): base names are cleaned and bounded.",
+        "GeometryAndRangeTests.test_holes_must_lie_inside_their_polygon": "Added: holes outside, crossing, larger than or equal to the outline, and a hole whose edge cuts an L-slab's notch are invalid_geometry; a hole in one arm and a hole touching the outline are valid. Failed before the fix.",
+        "GeometryAndRangeTests.test_resolved_values_outside_the_proposal_limits_are_unresolved": "Added: overrides of 1e300 and 100001 in top elevation and 121 in thickness are assumption_unresolved; 120 in and -100000 in resolve. Failed before the fix."
+      }
+    },
+    "tests/application/services/test_ai_changeset_store.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real AiChangesetStore with an injectable clock, a dict-backed token reader that records calls, and a counting uid factory; the AiChangesetProposals facade is the object under test for pipe-side behaviour.",
+      "reviewed_tests": {
+        "ProposalTests.test_add_assigns_an_id_the_clock_and_the_touched_base_tokens": "Reviewed (new M1b module, written before the code): add assigns an id the clock and the touched base tokens.",
+        "ProposalTests.test_caps_are_checked_before_storing": "Reviewed (new M1b module, written before the code): caps are checked before storing.",
+        "ProposalTests.test_at_most_five_open_changesets_per_bid": "Reviewed (new M1b module, written before the code): at most five open changesets per bid.",
+        "ProposalTests.test_changesets_expire_thirty_minutes_after_proposal": "Reviewed (new M1b module, written before the code): changesets expire thirty minutes after proposal.",
+        "ProposalTests.test_unknown_ids_are_not_found": "Reviewed (new M1b module, written before the code): unknown ids are not found.",
+        "ProposalTests.test_discard_closes_an_open_changeset_only": "Reviewed (new M1b module, written before the code): discard closes an open changeset only.",
+        "FreshnessTests.test_apply_request_waits_for_approval": "Reviewed (new M1b module, written before the code): apply request waits for approval.",
+        "FreshnessTests.test_only_touched_objects_make_a_changeset_stale": "Reviewed (new M1b module, written before the code): only touched objects make a changeset stale.",
+        "FreshnessTests.test_an_apply_request_on_a_touched_change_is_stale": "Reviewed (new M1b module, written before the code): an apply request on a touched change is stale.",
+        "ApprovalTests.test_high_impact_open_assumptions_block_approval": "Reviewed (new M1b module, written before the code): high impact open assumptions block approval.",
+        "ApprovalTests.test_approval_requires_an_apply_request_first": "Reviewed (new M1b module, written before the code): approval requires an apply request first.",
+        "ApprovalTests.test_accept_and_reject": "Reviewed (new M1b module, written before the code): accept and reject.",
+        "ApprovalTests.test_applied_and_undone_are_recorded_per_bid": "Reviewed (new M1b module, written before the code): applied and undone are recorded per bid.",
+        "ProposalFacadeTests.test_the_facade_offers_no_way_to_approve_or_accept": "Reviewed (new M1b module, written before the code): the facade offers no way to approve or accept.",
+        "ProposalFacadeTests.test_assumption_updates_never_change_status": "Reviewed (new M1b module, written before the code): assumption updates never change status.",
+        "RetentionTests.test_closed_changesets_do_not_accumulate": "Added: 1000 propose/discard cycles on a real store forget the oldest discarded changeset (not_found) but keep the latest one and the applied changeset with its last_applied record. Failed before the fix (every closed changeset was kept).",
+        "MonotonicExpiryTests.test_expiry_follows_the_monotonic_clock_not_the_wall_clock": "Added: with the default clock, wall-clock jumps of plus and minus two hours change nothing at 1799 s of monotonic time and the changeset expires at 1800 s. Failed before the fix (the store followed time.time)."
+      }
+    },
+    "tests/application/services/test_ai_takeoff_tokens.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real ProjectDataTokenReader over a small in-memory project-data stand-in (pages, takeoffs, conditions, open bid ref); tokens compared before and after single-field edits.",
+      "reviewed_tests": {
+        "ProjectDataTokenReaderTests.test_tokens_are_stable_while_nothing_changes": "Reviewed (new M1b module, written before the code): tokens are stable while nothing changes.",
+        "ProjectDataTokenReaderTests.test_each_touched_object_change_changes_only_its_token": "Reviewed (new M1b module, written before the code): each touched object change changes only its token.",
+        "ProjectDataTokenReaderTests.test_unrelated_objects_do_not_change_tokens": "Reviewed (new M1b module, written before the code): unrelated objects do not change tokens.",
+        "ProjectDataTokenReaderTests.test_another_open_bid_or_missing_objects_never_match": "Reviewed (new M1b module, written before the code): another open bid or missing objects never match.",
+        "ProjectDataTokenReaderTests.test_takeoff_tokens_follow_one_takeoff": "Reviewed (new M1b module, written before the code): takeoff tokens follow one takeoff.",
+        "ProjectDataTokenReaderTests.test_condition_membership_tokens_follow_which_takeoffs_use_a_condition": "Added: condition_takeoffs tokens ignore position edits, change when a takeoff is added to or moved off a condition, and leave other conditions' tokens alone."
+      }
+    },
+    "tests/application/services/test_ai_takeoff_proposal_service.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real AiTakeoffProposalService with the real AiChangesetStore/facade, the real scale presets and planar-region code, and the real AiTakeoffReadService over the M1a project/PDF stand-ins (inherited ServiceTestCase); the raster fill is a recording stand-in so the vector-first/raster-fallback order is observable.",
+      "reviewed_tests": {
+        "ScaleProposalTests.test_a_measured_distance_matching_a_preset_proposes_it": "Reviewed (new M1b module, written before the code): a measured distance matching a preset proposes it.",
+        "ScaleProposalTests.test_a_distance_far_from_any_preset_proposes_a_custom_scale": "Reviewed (new M1b module, written before the code): a distance far from any preset proposes a custom scale.",
+        "ScaleProposalTests.test_a_named_preset_with_a_check_distance": "Reviewed (new M1b module, written before the code): a named preset with a check distance.",
+        "ScaleProposalTests.test_invalid_scale_requests": "Reviewed (new M1b module, written before the code): invalid scale requests.",
+        "FindRegionTests.test_regions_come_back_in_ost_inches_with_ids_and_gaps": "Reviewed (new M1b module, written before the code): regions come back in ost inches with ids and gaps.",
+        "FindRegionTests.test_a_seed_selects_the_containing_region_and_raster_runs_only_as_fallback": "Reviewed (new M1b module, written before the code): a seed selects the containing region and raster runs only as fallback.",
+        "FindRegionTests.test_scale_must_be_set_and_boxes_are_required": "Reviewed (new M1b module, written before the code): scale must be set and boxes are required.",
+        "ElementProposalTests.test_a_complete_slab_needs_no_assumptions": "Reviewed (new M1b module, written before the code): a complete slab needs no assumptions.",
+        "ElementProposalTests.test_missing_thickness_and_elevation_become_high_impact_assumptions": "Reviewed (new M1b module, written before the code): missing thickness and elevation become high impact assumptions.",
+        "ElementProposalTests.test_region_gaps_become_closing_segment_assumptions": "Reviewed (new M1b module, written before the code): region gaps become closing segment assumptions.",
+        "ElementProposalTests.test_invalid_elements": "Reviewed (new M1b module, written before the code): invalid elements.",
+        "ElementProposalTests.test_a_long_untrusted_name_is_cleaned": "Reviewed (new M1b module, written before the code): a long untrusted name is cleaned.",
+        "ChangesetLifecycleTests.test_update_assumption_adds_and_revises_but_never_accepts": "Reviewed (new M1b module, written before the code): update assumption adds and revises but never accepts.",
+        "ChangesetLifecycleTests.test_apply_only_asks_for_approval_and_discard_closes": "Reviewed (new M1b module, written before the code): apply only asks for approval and discard closes.",
+        "ChangesetLifecycleTests.test_impacts_reported_for_normal_assumptions": "Reviewed (new M1b module, written before the code): impacts reported for normal assumptions.",
+        "RegionScaleTests.test_a_region_found_at_another_scale_is_refused": "Added: a region found at one page scale is refused (not_found) by propose_element after the page scale changes, and accepted again once the scale is back; area matches. Failed before the fix (the old-scale polygon was proposed).",
+        "SqlApplyTests.test_sql_bids_keep_proposals_but_cannot_be_applied": "Added: a real SqlServerDatabaseLocation descriptor for the open bid; propose_element and propose_scale still work, apply_changeset raises sql_apply_unavailable (message names SQL Server) and the changeset stays proposed; the same service on an Access bid returns pending_approval. Failed before the fix."
+      }
+    },
+    "tests/application/services/test_ai_takeoff_sidecar_service.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real AiTakeoffSidecarService and JsonAiTakeoffSidecarRepository on a temporary home, reusing the M1a read-service project stand-in; sidecar files are written raw to force each status and compared byte-for-byte and by mtime when a write must be refused.",
+      "reviewed_tests": {
+        "RecordAssumptionTests.test_a_missing_sidecar_is_created_with_the_current_fingerprint": "Reviewed (new M1b module, written before the code): a missing sidecar is created with the current fingerprint.",
+        "RecordAssumptionTests.test_an_ok_sidecar_keeps_its_data_and_updates_by_uid": "Reviewed (new M1b module, written before the code): an ok sidecar keeps its data and updates by uid.",
+        "RecordAssumptionTests.test_assumptions_not_in_the_write_are_kept": "Reviewed (new M1b module, written before the code): assumptions not in the write are kept.",
+        "RecordAssumptionTests.test_rebind_mismatch_and_corrupt_sidecars_are_never_written": "Reviewed (new M1b module, written before the code): rebind mismatch and corrupt sidecars are never written.",
+        "RecordAssumptionTests.test_sql_without_a_database_guid_writes_nothing": "Reviewed (new M1b module, written before the code): sql without a database guid writes nothing.",
+        "BidKeyTests.test_the_key_needs_no_sidecar_read": "Reviewed (new M1b module, written before the code): the key needs no sidecar read.",
+        "RebindTests.test_rebind_keeps_the_data_and_takes_the_current_database": "Reviewed (new M1b module, written before the code): rebind keeps the data and takes the current database.",
+        "RebindTests.test_rebind_is_refused_for_every_other_status": "Reviewed (new M1b module, written before the code): rebind is refused for every other status.",
+        "RebindBidSwitchTests.test_rebind_refuses_when_the_open_bid_is_not_the_expected_one": "Added: rebind with another expected bid_key raises SidecarWriteRefused(bid_changed) and leaves the file byte-identical; the matching key rebinds."
+      }
+    },
+    "tests/domain/services/test_ai_planar_regions.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "find_planar_regions on hand-built segment lists in page points: rectangle, L-slab with a drawn hole, a 6 pt gap, crossings, slanted T-junction, duplicates/overlaps, dangling lines and the 4,000-segment cap; areas asserted exactly.",
+      "reviewed_tests": {
+        "PlanarRegionTests.test_a_rectangle_gives_one_region_with_its_area": "Reviewed (new M1b module, written before the code): a rectangle gives one region with its area.",
+        "PlanarRegionTests.test_an_l_slab_with_a_drawn_hole_has_the_hole_subtracted": "Reviewed (new M1b module, written before the code): an l slab with a drawn hole has the hole subtracted.",
+        "PlanarRegionTests.test_a_gap_up_to_the_closing_distance_is_closed_and_reported": "Reviewed (new M1b module, written before the code): a gap up to the closing distance is closed and reported.",
+        "PlanarRegionTests.test_crossing_lines_are_split_into_faces": "Reviewed (new M1b module, written before the code): crossing lines are split into faces.",
+        "PlanarRegionTests.test_t_junctions_and_near_misses_within_tolerance_connect": "Reviewed (new M1b module, written before the code): t junctions and near misses within tolerance connect.",
+        "PlanarRegionTests.test_duplicate_and_overlapping_lines_do_not_create_extra_faces": "Reviewed (new M1b module, written before the code): duplicate and overlapping lines do not create extra faces.",
+        "PlanarRegionTests.test_dangling_lines_are_ignored": "Reviewed (new M1b module, written before the code): dangling lines are ignored.",
+        "PlanarRegionTests.test_too_many_segments_are_refused": "Reviewed (new M1b module, written before the code): too many segments are refused.",
+        "PlanarRegionTests.test_rings_and_points": "Reviewed (new M1b module, written before the code): rings and points."
+      }
+    },
+    "tests/infrastructure/persistence/test_ai_takeoff_audit_log.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real AiTakeoffAuditLog on a temporary directory with a fixed clock and a recording secure_directory hook; the ACL test calls the real restrict_to_current_user and reads the DACL back with pywin32.",
+      "reviewed_tests": {
+        "AuditEntryTests.test_entries_are_appended_with_only_the_planned_fields": "Reviewed (new M1b module, written before the code): entries are appended with only the planned fields.",
+        "AuditEntryTests.test_argument_hashes_are_stable_and_never_contain_the_arguments": "Reviewed (new M1b module, written before the code): argument hashes are stable and never contain the arguments.",
+        "AuditEntryTests.test_text_fields_are_bounded_and_control_free": "Reviewed (new M1b module, written before the code): text fields are bounded and control free.",
+        "AuditEntryTests.test_unkeyed_bids_use_a_shared_file_and_bad_keys_are_refused": "Reviewed (new M1b module, written before the code): unkeyed bids use a shared file and bad keys are refused.",
+        "AuditRotationTests.test_limits_match_the_plan": "Reviewed (new M1b module, written before the code): limits match the plan.",
+        "AuditRotationTests.test_files_rotate_at_the_size_limit_and_keep_five": "Reviewed (new M1b module, written before the code): files rotate at the size limit and keep five.",
+        "AuditRotationTests.test_rotated_files_older_than_the_retention_are_removed": "Reviewed (new M1b module, written before the code): rotated files older than the retention are removed.",
+        "AuditAclTests.test_the_directory_access_list_grants_only_the_current_user": "Reviewed (new M1b module, written before the code): the directory access list grants only the current user."
+      }
+    },
+    "tests/integration/ai_takeoff/test_ai_changeset_access_roundtrip.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real Access .mdb created by DatabaseCreator and seeded by MdbWriter in a child process (Access task ceiling); the real configured application graph loads the bid and the real ProjectWriteService writes; dump_tables compares Bids, BidPages, BidConditionFolders, BidConditions and BidTakeoffs before apply and after undo.",
+      "reviewed_tests": {
+        "AiChangesetAccessRoundTripTests.test_apply_creates_folder_condition_and_takeoffs_and_undo_restores_exactly": "Reviewed (new M1b module, written before the code): apply creates folder condition and takeoffs and undo restores exactly.",
+        "AiChangesetAccessRoundTripTests.test_a_failure_part_way_leaves_nothing_behind": "Reviewed (new M1b module, written before the code): a failure part way leaves nothing behind.",
+        "AiChangesetAccessRoundTripTests.test_a_locked_bid_writes_nothing": "Reviewed (new M1b module, written before the code): a locked bid writes nothing.",
+        "AiChangesetAccessRoundTripTests.test_reusing_the_session_folder_creates_no_second_folder": "Reviewed (new M1b module, written before the code): reusing the session folder creates no second folder.",
+        "AiChangesetAccessRoundTripTests.test_scale_undo_restores_the_scale_and_takeoff_positions_exactly": "Reviewed (new M1b module, written before the code): scale undo restores the scale and takeoff positions exactly.",
+        "AiChangesetApplierAccessTests.test_a_pipe_undo_leaves_the_users_older_undo_entries_reachable": "Added: real Access bid, real write service, store, token reader, applier and UndoRedoService; after an AI apply and a pipe-path undo, Edit > Undo reaches the user's older entry. Failed before the fix (the dead AI entry stayed on top and every undo failed).",
+        "AiChangesetApplierAccessTests.test_undo_never_removes_a_takeoff_the_user_drew_on_the_ai_condition": "Added: after an AI apply the user inserts a takeoff on the AI condition through the real write service; the AI undo is refused with stale_changeset and the Access tables are unchanged. Failed before the fix: the undo deleted the condition and the user's takeoff (probe: BidTakeoffs empty afterwards).",
+        "AiChangesetApplierAccessTests.test_an_out_of_range_elevation_override_is_never_written": "Added: an override of 1e300 in top elevation makes approve fail with assumption_unresolved and the Access tables stay unchanged. Failed before the fix (approve passed and the 300-character name would reach a VARCHAR(255) column)."
+      }
+    },
+    "tests/integration/ai_takeoff/test_m1b_golden_end_to_end.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "F1-F3 synthetic PDFs (40'x30' rectangle; L-slab with a 10'x8' hole; rectangle with a 6 in gap) linked to a real Access bid at 1/8\"=1'; an offscreen MainWindow on the real configured graph with the real TakeoffCommandBridge on a unique pipe name; the real TakeoffProxy and TakeoffPipeClient drive list_sheets, find_regions, propose_element, apply_changeset, update_assumption, get_quantities, list_assumptions and undo_last_ai_changeset; approval is done by clicking the real review dialog. Polygons are compared by a sampled Hausdorff distance and quantities against analytic values within the plan tolerances; the table dump after undo equals the dump before apply. Drawing text and the changeset summary carry an injected instruction.",
+      "reviewed_tests": {
+        "M1bGoldenEndToEndTests.test_f1_rectangle_slab": "F1 over the real proxy and pipe: vector region within 0.5 in Hausdorff, 1200 SF and 29.63 CY within 0.1%, no high-impact assumption so Accept is enabled, pending_approval leaves the database unchanged, an update_assumption 'accept' op is refused, the applied takeoff matches, the undo entry is 'AI: <summary>', undo restores the tables exactly, the audit has applied/undone and no token, home path or .pdf. Found two production defects on first run (plan preview called the current_page_uid property; MainWindow kept the PDF open) and one test-setup gap (undo stack bound to the active bid).",
+        "M1bGoldenEndToEndTests.test_f2_l_slab_with_a_hole": "F2: L-slab with a drawn hole; the seed picks the slab face, one hole is returned and written as a child takeoff; 970 SF and the 10 in volume within 0.25%, outer and hole within 0.5 in; the missing top elevation is a blocking assumption until the user overrides it to 1200 in the dialog; list_assumptions then reports sidecar ok with the overridden assumption.",
+        "M1bGoldenEndToEndTests.test_f3_outline_with_a_six_inch_gap": "F3: the 6 in gap is closed with gap_close_in 12 and reported as a normal-impact closing segment; the missing thickness blocks Accept until overridden to 6 in; polygon within 1.0 in and 1200 SF / 22.22 CY within 0.5%; undo restores the tables exactly."
+      }
+    },
+    "tests/presentation/services/test_ai_changeset_applier.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real AiChangesetApplier, AiChangesetStore, ProjectDataTokenReader and UndoRedoService against a write-service stand-in that mimics execute/queue results (including QueuedMutationResult with UUID operation ids) and a project-data stand-in holding folders, conditions and takeoffs; audit and sidecar hooks are recording lambdas.",
+      "reviewed_tests": {
+        "ElementApplyTests.test_slab_conditions_follow_the_conventions": "Reviewed (new M1b module, written before the code): slab conditions follow the conventions.",
+        "ElementApplyTests.test_existing_conditions_are_referenced_not_created": "Reviewed (new M1b module, written before the code): existing conditions are referenced not created.",
+        "ElementApplyTests.test_the_session_folder_is_reused_while_it_exists": "Reviewed (new M1b module, written before the code): the session folder is reused while it exists.",
+        "ElementApplyTests.test_denied_access_writes_nothing": "Reviewed (new M1b module, written before the code): denied access writes nothing.",
+        "ElementApplyTests.test_locked_and_conflicting_writes_map_to_plan_error_codes": "Reviewed (new M1b module, written before the code): locked and conflicting writes map to plan error codes.",
+        "ElementApplyTests.test_sql_bids_use_the_collaboration_queue": "Reviewed (new M1b module, written before the code): sql bids use the collaboration queue.",
+        "AssumptionPersistenceTests.test_applied_assumptions_are_recorded_with_their_final_values": "Reviewed (new M1b module, written before the code): applied assumptions are recorded with their final values.",
+        "AssumptionPersistenceTests.test_a_refused_sidecar_never_undoes_a_committed_apply": "Reviewed (new M1b module, written before the code): a refused sidecar never undoes a committed apply.",
+        "UndoTests.test_undo_removes_what_it_created_and_the_empty_session_folder": "Reviewed (new M1b module, written before the code): undo removes what it created and the empty session folder.",
+        "UndoTests.test_the_folder_stays_when_other_conditions_use_it": "Reviewed (new M1b module, written before the code): the folder stays when other conditions use it.",
+        "UndoTests.test_a_reused_folder_is_never_removed_even_when_empty": "Reviewed (new M1b module, written before the code): a reused folder is never removed even when empty.",
+        "UndoTests.test_undo_is_refused_when_created_objects_changed": "Reviewed (new M1b module, written before the code): undo is refused when created objects changed.",
+        "UndoTests.test_only_applied_changesets_can_be_undone": "Reviewed (new M1b module, written before the code): only applied changesets can be undone.",
+        "UndoTests.test_the_undo_stack_entry_undoes_and_never_redoes": "Reviewed (new M1b module, written before the code): the undo stack entry undoes and never redoes.",
+        "ScaleTests.test_scale_apply_and_exact_undo": "Reviewed (new M1b module, written before the code): scale apply and exact undo.",
+        "ScaleTests.test_a_refused_scale_write_reports_the_lock": "Reviewed (new M1b module, written before the code): a refused scale write reports the lock.",
+        "SqlBackstopTests.test_sql_bids_are_never_applied_or_undone": "Added: an applier whose gate reports SQL refuses both apply and undo with sql_apply_unavailable and never calls the write service. Failed before the fix."
+      }
+    },
+    "tests/presentation/services/test_ai_changeset_approval.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real AiChangesetReviewDialog and AiChangesetApprovalController with the real store, a recording applier and a recording preview; buttons are clicked through Qt; the plan preview uses a duck-typed plan view whose current_page_uid is a property like the real view.",
+      "reviewed_tests": {
+        "ReviewDialogTests.test_untrusted_text_is_shown_as_plain_text": "Reviewed (new M1b module, written before the code): untrusted text is shown as plain text.",
+        "ReviewDialogTests.test_quantity_delta_and_ghost_preview": "Reviewed (new M1b module, written before the code): quantity delta and ghost preview.",
+        "ReviewDialogTests.test_the_sql_note_appears_only_for_sql_bids": "Reviewed (new M1b module, written before the code): the sql note appears only for sql bids.",
+        "ReviewDialogTests.test_requesting_again_reuses_the_open_dialog": "Reviewed (new M1b module, written before the code): requesting again reuses the open dialog.",
+        "ApprovalFlowTests.test_accept_is_disabled_until_high_impact_assumptions_are_resolved": "Reviewed (new M1b module, written before the code): accept is disabled until high impact assumptions are resolved.",
+        "ApprovalFlowTests.test_accepting_an_assumption_as_proposed": "Reviewed (new M1b module, written before the code): accepting an assumption as proposed.",
+        "ApprovalFlowTests.test_invalid_overrides_are_refused_in_the_dialog": "Reviewed (new M1b module, written before the code): invalid overrides are refused in the dialog.",
+        "ApprovalFlowTests.test_reject_records_the_decision": "Reviewed (new M1b module, written before the code): reject records the decision.",
+        "ApprovalFlowTests.test_closing_the_dialog_leaves_the_request_pending": "Reviewed (new M1b module, written before the code): closing the dialog leaves the request pending.",
+        "ApprovalFlowTests.test_failed_applies_are_reported_and_marked": "Reviewed (new M1b module, written before the code): failed applies are reported and marked.",
+        "ApprovalFlowTests.test_stale_changesets_cannot_be_accepted": "Reviewed (new M1b module, written before the code): stale changesets cannot be accepted.",
+        "PlanPreviewTests.test_only_takeoffs_on_the_shown_page_are_previewed_with_their_holes": "Reviewed (new M1b module, written before the code): only takeoffs on the shown page are previewed with their holes.",
+        "ReviewIntegrityTests.test_a_value_revised_by_the_ai_after_display_is_never_accepted": "Added: the AI revises a shown thickness assumption from 8 to 80 through the proposals facade while the real dialog is open; the per-row Accept is refused, the dialog refreshes to 80 with an error, and only a second click accepts 80. Failed before the fix (80 was accepted although 8 was shown).",
+        "ReviewIntegrityTests.test_accept_refuses_a_changeset_the_ai_changed_after_display": "Added: the AI adds an assumption while the dialog is open; Accept is refused without calling the applier and the dialog refreshes to show it; a second Accept applies. Failed before the fix (the unseen change was applied).",
+        "ReviewIntegrityTests.test_enter_in_an_override_field_overrides_and_never_rejects_or_applies": "Added: QTest typing and Enter in the override field overrides that assumption; Enter in another override field with Accept enabled and previously focused neither applies nor rejects. Failed before the fix (Enter rejected the whole changeset).",
+        "ReviewIntegrityTests.test_out_of_range_overrides_are_refused": "Added: valid_override refuses 1e300 and 100000.5 in top elevation and 120.5 in thickness, accepts -100000 and 120. Failed before the fix.",
+        "ReviewIntegrityTests.test_ai_text_is_shown_without_controls_and_capped": "Added: summary, value, reason and sheet with RLO, LRI, RLM and ESC and 2000-character text are shown without those characters and at most 500 characters. Failed before the fix (the summary label kept U+202E).",
+        "ApplyExceptionTests.test_an_exception_while_applying_never_leaves_the_changeset_applying": "Added: an applier that raises (as the SQL queue does for a locked bid) when the real dialog's Accept is clicked leaves the changeset failed, emits failed, logs the exception and shows a generic error without the exception text. Failed before the fix (the exception escaped and the changeset stayed applying)."
+      }
+    },
+    "tests/presentation/services/test_ai_region_raster.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "raster_fill_region on hand-built page-point segment lists with a spy on QImage band operations and a worker-thread run.",
+      "reviewed_tests": {
+        "RasterFillTests.test_a_closed_outline_is_filled_from_the_seed_to_its_lines": "Reviewed (new M1b module, written before the code): a closed outline is filled from the seed to its lines.",
+        "RasterFillTests.test_gaps_up_to_the_pen_width_are_closed_and_wider_gaps_leak": "Reviewed (new M1b module, written before the code): gaps up to the pen width are closed and wider gaps leak.",
+        "RasterFillTests.test_a_seed_on_a_line_or_outside_the_box_finds_nothing": "Reviewed (new M1b module, written before the code): a seed on a line or outside the box finds nothing.",
+        "RasterFillTests.test_large_boxes_are_capped_and_no_image_operation_exceeds_a_band": "Reviewed (new M1b module, written before the code): large boxes are capped and no image operation exceeds a band.",
+        "RasterFillTests.test_runs_on_a_worker_thread": "Reviewed (new M1b module, written before the code): runs on a worker thread."
+      }
+    },
+    "tests/presentation/services/test_ai_render_3d.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "render_top_view and AiTopViewSource on small hand-built meshes; band spy and worker-thread run.",
+      "reviewed_tests": {
+        "TopViewTests.test_meshes_are_drawn_from_above_with_extent_and_elevations": "Reviewed (new M1b module, written before the code): meshes are drawn from above with extent and elevations.",
+        "TopViewTests.test_an_empty_model_returns_no_image": "Reviewed (new M1b module, written before the code): an empty model returns no image.",
+        "TopViewTests.test_no_image_operation_exceeds_a_band_and_it_runs_on_a_worker": "Reviewed (new M1b module, written before the code): no image operation exceeds a band and it runs on a worker."
+      }
+    },
+    "tests/presentation/services/test_ai_sidecar_rebind_prompt.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real AiSidecarRebindPrompt with a recording sidecar-service stand-in; QMessageBox answers driven through the non-modal box's buttons.",
+      "reviewed_tests": {
+        "RebindPromptTests.test_rebind_required_offers_a_confirmation_once_per_bid": "Reviewed (new M1b module, written before the code): rebind required offers a confirmation once per bid.",
+        "RebindPromptTests.test_yes_rebinds_and_no_leaves_it": "Re-read: the stand-in now records the expected bid_key and the test checks the prompt passes the key it asked about.",
+        "RebindPromptTests.test_other_statuses_never_offer_a_rebind": "Reviewed (new M1b module, written before the code): other statuses never offer a rebind.",
+        "RebindPromptTests.test_a_refused_rebind_is_reported_not_raised": "Reviewed (new M1b module, written before the code): a refused rebind is reported not raised.",
+        "RebindBidSwitchPromptTests.test_a_bid_switch_before_yes_is_refused_and_reported": "Added: real AiTakeoffSidecarService and JSON repository with two rebind_required bids; the prompt opens for bid 1, the open bid switches to bid 2, Yes leaves both sidecars byte-identical and shows a non-modal notice with the reason; back on bid 1 the prompt is offered again and Yes rebinds bid 1 only. Failed before the fix (bid 2's sidecar was rewritten)."
+      }
+    },
+    "tests/presentation/services/test_ai_takeoff_write_commands.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real TakeoffCommandBridge on a unique pipe name with the real AiTakeoffWriteCommands and a temporary token file, driven by the M1a bridge test client; the read service, proposal service, proposals facade, undo callback and top view are recording stand-ins, so these tests cover routing, argument tables, worker hand-off, DeferredReply, audit and denial, while geometry is covered by the proposal-service and golden tests.",
+      "reviewed_tests": {
+        "WriteCommandBridgeTests.test_the_command_table_is_the_fifteen_declared_tools": "Reviewed (new M1b module, written before the code): the command table is the fifteen declared tools.",
+        "WriteCommandBridgeTests.test_no_bridge_code_can_approve_accept_or_reject": "Reviewed (new M1b module, written before the code): no bridge code can approve accept or reject.",
+        "WriteCommandBridgeTests.test_update_assumption_cannot_carry_a_status": "Reviewed (new M1b module, written before the code): update assumption cannot carry a status.",
+        "WriteCommandBridgeTests.test_apply_changeset_asks_the_app_only_while_pending": "Reviewed (new M1b module, written before the code): apply changeset asks the app only while pending.",
+        "WriteCommandBridgeTests.test_regions_and_3d_run_on_worker_threads": "Reviewed (new M1b module, written before the code): regions and 3d run on worker threads.",
+        "WriteCommandBridgeTests.test_undo_replies_when_the_deferred_undo_finishes": "Reviewed (new M1b module, written before the code): undo replies when the deferred undo finishes.",
+        "WriteCommandBridgeTests.test_other_bids_are_refused": "Reviewed (new M1b module, written before the code): other bids are refused.",
+        "WriteCommandBridgeTests.test_every_command_is_audited_without_the_token": "Reviewed (new M1b module, written before the code): every command is audited without the token.",
+        "WriteCommandBridgeTests.test_a_rebind_required_read_suggests_a_rebind": "Reviewed (new M1b module, written before the code): a rebind required read suggests a rebind.",
+        "WriteCommandBridgeTests.test_feature_denied_still_blocks_write_tools": "Reviewed (new M1b module, written before the code): feature denied still blocks write tools."
       }
     }
   },
@@ -38023,11 +38536,11 @@
   },
   "latest_validation": {
     "full_suite": {
-      "tests_run": 12984,
+      "tests_run": 13329,
       "skips": 35,
-      "seconds": 246.2,
+      "seconds": 282.8,
       "result": "OK",
-      "command": ".\\venv\\Scripts\\python.exe -m unittest discover -s tests -t ."
+      "command": ".\u000benv\\Scripts\\python.exe -m unittest discover -s tests -t ."
     },
     "discovery": {
       "defined": 13008,
@@ -38197,7 +38710,10 @@
       "architecture": "no violations",
       "compileall": 0,
       "diff_check": "clean (cr-at-eol)"
-    }
+    },
+    "ai_takeoff_m1b": "Focused AI takeoff 182 OK; mcp_takeoff 44, mcp_server 137, integration/ai_takeoff 10, integration/lifecycle 38, architecture 102 (3 skipped), presentation/services 280, application 1490 OK; 27 in-memory mutants killed; unverified: live SQL Server apply/undo, cross-user pipe refusal, real Claude Desktop, Nuitka helper with the M1b catalog, GUI-thread budget on large bids",
+    "ai_takeoff_m1b_bug_hunt": "9 defects fixed with failing tests first (3 on real Access); focused 233, integration/ai_takeoff 13, architecture 102 (3 skipped), application 1493, presentation/services 286, presentation/dialogs 416 OK; 50 in-memory mutants killed",
+    "ai_takeoff_three_fixes": "SQL apply disabled (sql_apply_unavailable), apply exceptions marked failed, rebind bound to the asked bid, monotonic expiry; focused 127 OK; 13 in-memory mutants killed"
   },
   "skip_observations": [
     {
@@ -39249,6 +39765,37 @@
         "decision": "Follow-ups: visible-box origin in all PDF text/segment callers, proxy read timeout, bridge worker/connection/idle caps and untrusted-text control stripping",
         "status": "implemented",
         "outcome": "Placement-mode snapping, plan-view PDF text selection and the read server's PDF summaries now subtract the visible-box origin (shared presentation helper; importlib-loaded reader in infrastructure), each reproduced first on offset, MediaBox-origin and rotated fixtures. Proxy reads time out after PIPE_READ_TIMEOUT_SECONDS with app_timeout. Bridge caps workers (2), connections (8) and idle requests (10 s) with busy/invalid_argument answers. UntrustedText strips Cc and bidi formatting characters. M1b not started."
+      },
+      {
+        "id": "Z8",
+        "decision": "AI takeoff M1b: tools 8-15, approval UI, per-session folder, sidecar writes and rebind, audit, caps",
+        "status": "implemented",
+        "outcome": "Approval exists only in the app (store methods not reachable from the pipe; architecture test). apply_changeset only returns pending_approval until the user accepts in the review dialog. Elements apply as one composite mutation with one 'AI: ...' undo entry; real Access round trip and F1-F3 golden end-to-end over the real proxy and pipe restore the tables exactly on undo. Read server and M1a behaviour unchanged; overlays in render_sheet still a no-op.",
+        "tests": [
+          "tests/integration/ai_takeoff/test_m1b_golden_end_to_end.py",
+          "tests/integration/ai_takeoff/test_ai_changeset_access_roundtrip.py",
+          "tests/architecture/test_ai_takeoff_rules.py"
+        ]
+      },
+      {
+        "id": "Z9",
+        "decision": "Bug hunt on uncommitted AI takeoff M1b",
+        "status": "fixed",
+        "outcome": "Fixed: review integrity (revision binding), dead undo entry after a pipe undo, undo deleting user takeoffs on AI conditions, Enter rejecting the changeset, raw AI text in the dialog, unbounded overrides, stale-scale regions, holes outside the outline, unbounded closed-changeset retention. Suspected, not reproduced: SQL queue lock raising past the applier, wall-clock expiry, concurrent sidecar writers, rebind after a bid switch.",
+        "tests": [
+          "tests/integration/ai_takeoff/test_ai_changeset_access_roundtrip.py",
+          "tests/presentation/services/test_ai_changeset_approval.py"
+        ]
+      },
+      {
+        "id": "Z10",
+        "decision": "Disable AI apply on SQL Server bids, rebind bid capture, monotonic expiry",
+        "status": "fixed",
+        "outcome": "SQL Server bids: read and propose only, apply/undo refused with sql_apply_unavailable until live-SQL verification; apply exceptions never leave applying; rebind bound to the bid asked about; monotonic expiry.",
+        "tests": [
+          "tests/application/services/test_ai_takeoff_proposal_service.py",
+          "tests/presentation/services/test_ai_sidecar_rebind_prompt.py"
+        ]
       },
       {
         "id": "OPEN-1",

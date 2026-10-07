@@ -42,6 +42,15 @@ def ai_takeoff_bid_key(
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:BID_KEY_LENGTH]
 
 
+SIDECAR_BID_CHANGED = "bid_changed"
+
+
+class SidecarWriteRefused(Exception):
+    def __init__(self, status: str):
+        super().__init__(f"The AI sidecar is {status}; nothing was written.")
+        self.status = status
+
+
 @dataclass(frozen=True)
 class SidecarFingerprint:
     database_id: str

@@ -168,6 +168,8 @@ class M1aEndToEndTests(unittest.TestCase):
             finally:
                 if win is not None:
                     win._ai_takeoff_bridge.cleanup()
+                    win._ai_approval.cleanup()
+                    controller.get_service("ai_takeoff_pdf_source").release()
                     win._mcp_context_bridge.cleanup()
                     win._workspace_state_coordinator.cleanup()
                     win.event_coordinator.cleanup()

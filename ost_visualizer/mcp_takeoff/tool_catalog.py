@@ -1,13 +1,21 @@
 import copy
 from dataclasses import dataclass
 from ..application.dtos.ai_takeoff_dtos import (
+    COMMAND_APPLY_CHANGESET,
+    COMMAND_DISCARD_CHANGESET,
+    COMMAND_FIND_REGIONS,
     COMMAND_GET_QUANTITIES,
     COMMAND_LIST_ASSUMPTIONS,
     COMMAND_LIST_LEVELS,
     COMMAND_LIST_SEGMENTS,
     COMMAND_LIST_SHEETS,
     COMMAND_LIST_TEXT,
+    COMMAND_PROPOSE_ELEMENT,
+    COMMAND_PROPOSE_SCALE,
+    COMMAND_RENDER_3D,
     COMMAND_RENDER_SHEET,
+    COMMAND_UNDO_LAST_AI_CHANGESET,
+    COMMAND_UPDATE_ASSUMPTION,
     MAX_LIMIT,
     OVERLAY_NOT_SUPPORTED_UNTIL_M1B,
     RENDER_DEFAULT_DPI,
@@ -35,6 +43,25 @@ _BBOX_PTS = {
     "description": "[left, top, right, bottom] in page points (72 per inch, "
     "top-left origin).",
 }
+_POINT_PTS = {
+    "type": "array",
+    "items": {"type": "number"},
+    "minItems": 2,
+    "maxItems": 2,
+    "description": "[x, y] in page points.",
+}
+_POLYGON_OST = {
+    "type": "array",
+    "items": {"type": "number"},
+    "minItems": 6,
+    "description": "Flat [x1, y1, x2, y2, ...] in OST inches.",
+}
+_CHANGESET_ID = {"type": "string", "description": "changeset_id from a propose tool."}
+_SHORT_TEXT = {"type": "string", "maxLength": 500}
+CHANGESET_NOTE = (
+    "Nothing is written: the result is a changeset that the user must approve "
+    "in OST Visualizer."
+)
 
 
 @dataclass(frozen=True)
@@ -158,6 +185,136 @@ TOOLS = (
                     "enum": ["open", "accepted", "overridden"],
                 },
             }
+        ),
+    ),
+    ToolSpec(
+        COMMAND_PROPOSE_SCALE,
+        "Propose a page scale from two points and their real distance and/or a "
+        "named scale preset. Returns the scale, its error against the measured "
+        "distance and a high-impact assumption the user must accept. "
+        + CHANGESET_NOTE
+        + " "
+        + UNTRUSTED_NOTE,
+        _schema(
+            {
+                "page_uid": _PAGE_UID,
+                "p1_pts": _POINT_PTS,
+                "p2_pts": _POINT_PTS,
+                "real_in": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Real distance between the points in inches.",
+                },
+                "preset": {
+                    "type": "string",
+                    "description": 'A scale label such as 1/4" = 1\' 0" or sf1:sf2.',
+                },
+                "reason": _SHORT_TEXT,
+                "sheet_ref": _SHORT_TEXT,
+            },
+            ("page_uid", "p1_pts", "p2_pts"),
+        ),
+    ),
+    ToolSpec(
+        COMMAND_FIND_REGIONS,
+        "Find closed regions formed by PDF lines inside a box (planar faces, "
+        "with a raster fill fallback from a seed point). Gaps up to gap_close_in "
+        "are closed and reported; leak_risk is true when a gap was closed or a "
+        "fill escaped.",
+        _schema(
+            {
+                "page_uid": _PAGE_UID,
+                "bbox_pts": _BBOX_PTS,
+                "gap_close_in": {"type": "number", "minimum": 0, "maximum": 48},
+                "seed_pts": _POINT_PTS,
+            },
+            ("page_uid", "bbox_pts"),
+        ),
+    ),
+    ToolSpec(
+        COMMAND_PROPOSE_ELEMENT,
+        "Propose a slab from a polygon in OST inches or a find_regions region. "
+        "A missing thickness or top elevation becomes a high-impact assumption; "
+        "closed gaps become closing-segment assumptions. "
+        + CHANGESET_NOTE
+        + " "
+        + UNTRUSTED_NOTE,
+        _schema(
+            {
+                "kind": {"type": "string", "enum": ["slab"]},
+                "page_uid": _PAGE_UID,
+                "polygon_ost": _POLYGON_OST,
+                "region_id": {"type": "string"},
+                "holes_ost": {"type": "array", "items": _POLYGON_OST},
+                "thickness_in": {"type": "number", "exclusiveMinimum": 0},
+                "top_elev_in": {"type": "number"},
+                "level_id": {"type": "string"},
+                "name": {"type": "string", "maxLength": 200},
+                "summary": _SHORT_TEXT,
+                "condition_uid": {
+                    "type": "string",
+                    "description": "Existing condition to use instead of a new one.",
+                },
+            },
+            ("kind", "page_uid"),
+        ),
+    ),
+    ToolSpec(
+        COMMAND_APPLY_CHANGESET,
+        "Ask the user to apply a changeset. Returns pending_approval until the "
+        "user accepts or rejects it in OST Visualizer; call again to see the "
+        "result. The AI cannot approve. " + UNTRUSTED_NOTE,
+        _schema({"changeset_id": _CHANGESET_ID}, ("changeset_id",)),
+    ),
+    ToolSpec(
+        COMMAND_DISCARD_CHANGESET,
+        "Discard an open changeset. " + UNTRUSTED_NOTE,
+        _schema({"changeset_id": _CHANGESET_ID}, ("changeset_id",)),
+    ),
+    ToolSpec(
+        COMMAND_UNDO_LAST_AI_CHANGESET,
+        "Undo the most recent applied AI changeset of the open bid, if nothing it "
+        "created was edited since.",
+        _schema({"bid_uid": _BID_UID}),
+    ),
+    ToolSpec(
+        COMMAND_RENDER_3D,
+        "Render the open bid's 3D model from above to PNG with its extent in "
+        "model units and its elevation range.",
+        _schema(
+            {
+                "bid_uid": _BID_UID,
+                "view": {"type": "string", "enum": ["top"], "default": "top"},
+            }
+        ),
+    ),
+    ToolSpec(
+        COMMAND_UPDATE_ASSUMPTION,
+        "Add or revise an assumption of an open changeset. Revising reopens it. "
+        "The AI cannot accept or override assumptions; only the user can, in OST "
+        "Visualizer. " + UNTRUSTED_NOTE,
+        _schema(
+            {
+                "changeset_id": _CHANGESET_ID,
+                "op": {"type": "string", "enum": ["add", "revise"]},
+                "assumption_id": {"type": "string"},
+                "subject": {
+                    "type": "string",
+                    "enum": [
+                        "scale",
+                        "thickness",
+                        "top_elevation",
+                        "closing_segment",
+                        "other",
+                    ],
+                },
+                "target_key": {"type": "string"},
+                "value": _SHORT_TEXT,
+                "reason": _SHORT_TEXT,
+                "sheet_ref": _SHORT_TEXT,
+                "length_in": {"type": "number", "minimum": 0},
+            },
+            ("changeset_id", "op"),
         ),
     ),
 )

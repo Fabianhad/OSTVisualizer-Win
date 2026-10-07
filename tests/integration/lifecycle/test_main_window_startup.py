@@ -4,14 +4,28 @@ import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from ost_visualizer.application.dtos.ai_takeoff_dtos import M1A_COMMANDS
+from ost_visualizer.application.dtos.ai_takeoff_dtos import (
+    AI_TAKEOFF_COMMANDS,
+    AiTakeoffRequestError,
+)
+from ost_visualizer.domain.entities.ai_changeset import (
+    KIND_ELEMENTS,
+    AiChangeset,
+    ProposedCondition,
+    ProposedTakeoff,
+)
 from ost_visualizer.application.services.ai_takeoff_read_service import (
     AiTakeoffReadService,
 )
 from ost_visualizer.config.di_config import configure_application
+from ost_visualizer.domain.entities.database_descriptor import (
+    DatabaseDescriptor,
+    SqlServerDatabaseLocation,
+)
 from ost_visualizer.infrastructure.logging.logger_factory import LoggerFactory
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.services.ai_takeoff_bridge import (
@@ -74,7 +88,7 @@ class MainWindowStartupTests(unittest.TestCase):
                 self.assertIs(left_splitter.widget(1), window._bid_layers_sidebar)
                 bridge = window._ai_takeoff_bridge
                 self.assertIsInstance(bridge, TakeoffCommandBridge)
-                self.assertEqual(bridge.commands, M1A_COMMANDS)
+                self.assertEqual(bridge.commands, AI_TAKEOFF_COMMANDS)
                 self.assertIsInstance(
                     controller.get_service("ai_takeoff_read_service"),
                     AiTakeoffReadService,
@@ -84,6 +98,51 @@ class MainWindowStartupTests(unittest.TestCase):
                 )
                 self.assertTrue(token_path.is_file())
                 self.assertFalse(window._ai_takeoff_access_allowed())
+                for name in (
+                    "ai_changeset_store",
+                    "ai_changeset_proposals",
+                    "ai_takeoff_sidecar_service",
+                    "ai_takeoff_proposal_service",
+                    "ai_takeoff_audit_log",
+                ):
+                    self.assertIsNotNone(controller.get_service(name))
+                self.assertIsNotNone(window._ai_approval)
+                self.assertIsNotNone(window._ai_applier)
+                gate = controller.get_service("ai_takeoff_apply_gate")
+                self.assertEqual(gate(str(app_data_dir / "job.mdb")), "")
+                sql = DatabaseDescriptor.for_sql_server(
+                    SqlServerDatabaseLocation(
+                        server="srv", database="ost", database_guid="g-1"
+                    ),
+                    schema_version=1,
+                )
+                controller._database_descriptor_registry.register(sql)
+                self.assertIn("SQL Server", gate(sql.database_id))
+                proposed = controller.get_service("ai_changeset_proposals").add(
+                    AiChangeset(
+                        uid="",
+                        database_id=sql.database_id,
+                        bid_uid="7",
+                        bid_key="",
+                        kind=KIND_ELEMENTS,
+                        created_at=0.0,
+                        conditions=(ProposedCondition("c1", "Slab", 8.0, 0.0),),
+                        takeoffs=(
+                            ProposedTakeoff(
+                                "t1", "p1", "c1", (0.0, 0.0, 10.0, 0.0, 10.0, 10.0)
+                            ),
+                        ),
+                    )
+                )
+                with self.assertRaises(AiTakeoffRequestError) as raised:
+                    controller.get_service(
+                        "ai_takeoff_proposal_service"
+                    ).apply_changeset(proposed.uid)
+                self.assertEqual(raised.exception.code, "sql_apply_unavailable")
+                self.assertIn(
+                    "Options > MCP Setup",
+                    window._ai_takeoff_write_denial(SimpleNamespace(kind="elements")),
+                )
                 window._ai_takeoff_bridge.cleanup()
                 self.assertFalse(token_path.exists())
             finally:

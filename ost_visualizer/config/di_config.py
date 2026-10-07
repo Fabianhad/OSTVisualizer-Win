@@ -6,7 +6,17 @@ from ..application.dtos.ai_takeoff_dtos import (
     AI_TAKEOFF_SIDECAR_DIR_NAME,
 )
 from ..application.service_container import ServiceContainer
+from ..application.services.ai_changeset_store import (
+    AiChangesetProposals,
+    AiChangesetStore,
+)
+from ..domain.entities.ai_changeset import apply_blocked_reason
+from ..application.services.ai_takeoff_proposal_service import (
+    AiTakeoffProposalService,
+)
 from ..application.services.ai_takeoff_read_service import AiTakeoffReadService
+from ..application.services.ai_takeoff_sidecar_service import AiTakeoffSidecarService
+from ..application.services.ai_takeoff_tokens import ProjectDataTokenReader
 from ..application.services.conflict_resolution_service import ConflictResolutionService
 from ..application.services.database_capability_service import DatabaseCapabilityService
 from ..application.services.database_concurrency_token_service import (
@@ -27,6 +37,7 @@ from ..infrastructure.database.descriptor_registry import DatabaseDescriptorRegi
 from ..infrastructure.database.entity_version_reader import DatabaseEntityVersionReader
 from ..infrastructure.events.event_bus import EventBus
 from ..infrastructure.logging.logger_factory import LoggerFactory
+from ..infrastructure.persistence.ai_takeoff_audit_log import AiTakeoffAuditLog
 from ..infrastructure.persistence.repositories.json_ai_takeoff_sidecar_repository import (
     JsonAiTakeoffSidecarRepository,
 )
@@ -50,7 +61,9 @@ from ..infrastructure.sql.workspace_state_repository import SqlWorkspaceStateRep
 from ..presentation.managers.annotation_view_manager import QtAnnotationViewManager
 from ..presentation.managers.main_hotlink_view_manager import QtMainHotlinkViewManager
 from ..presentation.managers.view_window_manager import QtViewWindowManager
+from ..presentation.services.ai_region_raster import raster_fill_region
 from ..presentation.services.ai_takeoff_pdf_source import PageCachePdfSource
+from ..presentation.utils.scales import ALL_SCALES
 from ..presentation.services.qt_scene_notifier import QtSceneNotifier
 from ..presentation.visualization.pdf.page_cache import PageCache
 from ..presentation.utils.qt_callback_bridge import OstSignaler, QtCallbackBridge
@@ -216,14 +229,68 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         "ai_takeoff_pdf_source", lambda: PageCachePdfSource(PageCache())
     )
     container.register_singleton(
+        "ai_takeoff_sidecar_repository",
+        lambda: JsonAiTakeoffSidecarRepository(
+            get_app_data_dir() / AI_TAKEOFF_DIR_NAME / AI_TAKEOFF_SIDECAR_DIR_NAME
+        ),
+    )
+    container.register_singleton(
         "ai_takeoff_read_service",
         lambda: AiTakeoffReadService(
             container.get("project_data_service"),
             container.get("ai_takeoff_pdf_source"),
-            JsonAiTakeoffSidecarRepository(
-                get_app_data_dir() / AI_TAKEOFF_DIR_NAME / AI_TAKEOFF_SIDECAR_DIR_NAME
-            ),
+            container.get("ai_takeoff_sidecar_repository"),
             descriptor_registry.resolve,
         ),
     )
+    container.register_singleton(
+        "ai_takeoff_sidecar_service",
+        lambda: AiTakeoffSidecarService(
+            container.get("project_data_service"),
+            container.get("ai_takeoff_sidecar_repository"),
+            descriptor_registry.resolve,
+        ),
+    )
+    container.register_singleton(
+        "ai_takeoff_token_reader",
+        lambda: ProjectDataTokenReader(container.get("project_data_service")),
+    )
+    container.register_singleton(
+        "ai_changeset_store",
+        lambda: AiChangesetStore(token_reader=container.get("ai_takeoff_token_reader")),
+    )
+    container.register_singleton(
+        "ai_changeset_proposals",
+        lambda: AiChangesetProposals(container.get("ai_changeset_store")),
+    )
+    container.register_singleton(
+        "ai_takeoff_apply_gate",
+        lambda: lambda database_id: apply_blocked_reason(
+            descriptor_registry.resolve(database_id)
+        ),
+    )
+    container.register_singleton(
+        "ai_takeoff_proposal_service",
+        lambda: AiTakeoffProposalService(
+            read_service=container.get("ai_takeoff_read_service"),
+            proposals=container.get("ai_changeset_proposals"),
+            presets=ALL_SCALES,
+            raster_fill=raster_fill_region,
+            level_uids=lambda: _sidecar_level_uids(
+                container.get("ai_takeoff_sidecar_service")
+            ),
+            apply_blocked=container.get("ai_takeoff_apply_gate"),
+        ),
+    )
+    container.register_singleton(
+        "ai_takeoff_audit_log",
+        lambda: AiTakeoffAuditLog(get_app_data_dir() / AI_TAKEOFF_DIR_NAME / "audit"),
+    )
     return container
+
+
+def _sidecar_level_uids(sidecar_service) -> set:
+    context = sidecar_service.context()
+    if context.sidecar is None or context.status != "ok":
+        return set()
+    return {level.uid for level in context.sidecar.levels}

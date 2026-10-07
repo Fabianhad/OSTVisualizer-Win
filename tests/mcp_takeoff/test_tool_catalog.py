@@ -1,6 +1,7 @@
 import unittest
 from ost_visualizer.application.dtos.ai_takeoff_dtos import (
-    M1A_COMMAND_ARGUMENTS,
+    AI_TAKEOFF_COMMAND_ARGUMENTS,
+    AI_TAKEOFF_COMMANDS,
     M1A_COMMANDS,
     MAX_EXPOSED_TOOLS,
     RENDER_MAX_DPI,
@@ -17,21 +18,15 @@ FORBIDDEN_PARAMETER_FRAGMENTS = (
     "accept",
     "file",
 )
-WRITE_VERBS = (
-    "approve",
-    "accept",
-    "apply",
-    "update",
-    "delete",
-    "create",
-    "set_",
-    "save",
-)
+APPROVAL_VERBS = ("approve", "accept", "reject", "confirm", "set_status")
 
 
 class ToolCatalogTests(unittest.TestCase):
-    def test_exactly_the_seven_m1a_tools_in_order(self):
-        self.assertEqual(tuple(tool.name for tool in TOOLS), M1A_COMMANDS)
+    def test_the_m1a_tools_then_the_m1b_tools_under_the_cap(self):
+        names = tuple(tool.name for tool in TOOLS)
+        self.assertEqual(names, AI_TAKEOFF_COMMANDS)
+        self.assertEqual(names[:7], M1A_COMMANDS)
+        self.assertEqual(len(TOOLS), 15)
         self.assertLessEqual(len(TOOLS), MAX_EXPOSED_TOOLS)
 
     def test_schema_properties_match_the_bridge_argument_table(self):
@@ -39,14 +34,28 @@ class ToolCatalogTests(unittest.TestCase):
             with self.subTest(tool=tool.name):
                 self.assertEqual(
                     set(tool.input_schema["properties"]),
-                    M1A_COMMAND_ARGUMENTS[tool.name],
+                    AI_TAKEOFF_COMMAND_ARGUMENTS[tool.name],
                 )
 
-    def test_no_tool_can_write_approve_or_accept(self):
+    def test_no_tool_can_approve_accept_or_set_a_status(self):
         for tool in TOOLS:
-            for verb in WRITE_VERBS:
+            for verb in APPROVAL_VERBS:
                 with self.subTest(tool=tool.name, verb=verb):
                     self.assertNotIn(verb, tool.name)
+            if tool.name != "list_assumptions":
+                self.assertNotIn("status", tool.input_schema["properties"])
+
+    def test_update_assumption_can_only_add_or_revise(self):
+        tool = next(tool for tool in TOOLS if tool.name == "update_assumption")
+        properties = tool.input_schema["properties"]
+        self.assertEqual(properties["op"]["enum"], ["add", "revise"])
+        self.assertNotIn("accepted", str(properties))
+        self.assertIn("cannot accept", tool.description)
+
+    def test_apply_only_asks_the_user(self):
+        tool = next(tool for tool in TOOLS if tool.name == "apply_changeset")
+        self.assertIn("pending_approval", tool.description)
+        self.assertIn("user", tool.description)
 
     def test_schemas_are_closed_objects_without_forbidden_parameters(self):
         for tool in TOOLS:
@@ -60,7 +69,7 @@ class ToolCatalogTests(unittest.TestCase):
                     for fragment in FORBIDDEN_PARAMETER_FRAGMENTS:
                         self.assertNotIn(fragment, name.lower())
 
-    def test_page_tools_require_a_page_and_others_default_to_the_open_bid(self):
+    def test_required_arguments(self):
         required = {
             tool.name: set(tool.input_schema.get("required", [])) for tool in TOOLS
         }
@@ -71,8 +80,16 @@ class ToolCatalogTests(unittest.TestCase):
             "get_quantities",
             "list_levels",
             "list_assumptions",
+            "undo_last_ai_changeset",
+            "render_3d",
         ):
             self.assertEqual(required[name], set())
+        self.assertEqual(required["propose_scale"], {"page_uid", "p1_pts", "p2_pts"})
+        self.assertEqual(required["find_regions"], {"page_uid", "bbox_pts"})
+        self.assertEqual(required["propose_element"], {"kind", "page_uid"})
+        for name in ("apply_changeset", "discard_changeset"):
+            self.assertEqual(required[name], {"changeset_id"})
+        self.assertEqual(required["update_assumption"], {"changeset_id", "op"})
 
     def test_render_sheet_limits_dpi_and_documents_overlay_ids_as_a_no_op(self):
         render = next(tool for tool in TOOLS if tool.name == "render_sheet")
@@ -91,6 +108,11 @@ class ToolCatalogTests(unittest.TestCase):
             "get_quantities",
             "list_levels",
             "list_assumptions",
+            "propose_scale",
+            "propose_element",
+            "apply_changeset",
+            "discard_changeset",
+            "update_assumption",
         ):
             tool = next(tool for tool in TOOLS if tool.name == name)
             with self.subTest(tool=name):
@@ -98,7 +120,7 @@ class ToolCatalogTests(unittest.TestCase):
 
     def test_tool_items_are_mcp_tool_descriptors(self):
         items = tool_items()
-        self.assertEqual([item["name"] for item in items], list(M1A_COMMANDS))
+        self.assertEqual([item["name"] for item in items], list(AI_TAKEOFF_COMMANDS))
         for item in items:
             self.assertEqual(set(item), {"name", "description", "inputSchema"})
         items[0]["inputSchema"]["properties"]["injected"] = {}

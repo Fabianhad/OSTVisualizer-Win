@@ -5,11 +5,17 @@ import subprocess
 import sys
 import tempfile
 import tokenize
+import unicodedata
 import unittest
 from pathlib import Path
 from ost_visualizer.application.dtos.ai_takeoff_dtos import (
+    AI_TAKEOFF_COMMANDS,
     M1A_COMMANDS,
+    M1B_COMMANDS,
     MAX_EXPOSED_TOOLS,
+)
+from ost_visualizer.application.services.ai_changeset_store import (
+    AiChangesetProposals,
 )
 from tests.paths import REPO_ROOT
 
@@ -32,6 +38,63 @@ M1A_PRODUCTION_FILES = (
     "presentation/services/ai_takeoff_crop_renderer.py",
     "presentation/services/ai_takeoff_pdf_source.py",
 )
+M1B_PRODUCTION_FILES = (
+    "application/dtos/ai_changeset_write_dtos.py",
+    "application/dtos/ai_takeoff_audit_dtos.py",
+    "application/services/ai_changeset_store.py",
+    "application/services/ai_takeoff_proposal_service.py",
+    "application/services/ai_takeoff_sidecar_service.py",
+    "application/services/ai_takeoff_tokens.py",
+    "domain/entities/ai_changeset.py",
+    "domain/services/ai_planar_regions.py",
+    "infrastructure/persistence/ai_takeoff_audit_log.py",
+    "presentation/dialogs/ai_changeset_review_dialog.py",
+    "presentation/services/ai_changeset_applier.py",
+    "presentation/services/ai_changeset_approval.py",
+    "presentation/services/ai_region_raster.py",
+    "presentation/services/ai_render_3d.py",
+    "presentation/services/ai_sidecar_rebind_prompt.py",
+    "presentation/services/ai_takeoff_write_commands.py",
+)
+PIPE_REACHABLE_FILES = (
+    "presentation/services/ai_takeoff_bridge.py",
+    "presentation/services/ai_takeoff_write_commands.py",
+    "application/services/ai_takeoff_proposal_service.py",
+    "mcp_takeoff/tool_catalog.py",
+    "mcp_takeoff/proxy.py",
+)
+APPROVAL_NAMES = (
+    "approve",
+    "reject",
+    "accept_assumption",
+    "override_assumption",
+    "mark_applied",
+    "mark_failed",
+    "mark_undone",
+    "AiChangesetStore",
+    "AiChangesetApplier",
+    "AiChangesetApprovalController",
+    "AiChangesetReviewDialog",
+    "ProjectWriteService",
+    "project_write_service",
+)
+BIDI_CONTROLS = frozenset(
+    chr(code)
+    for code in (
+        0x061C,
+        0x200E,
+        0x200F,
+        0x202A,
+        0x202B,
+        0x202C,
+        0x202D,
+        0x202E,
+        0x2066,
+        0x2067,
+        0x2068,
+        0x2069,
+    )
+)
 WRITE_PATH_TOKENS = (
     "ProjectWriteService",
     "project_write_service",
@@ -47,6 +110,22 @@ def _proxy_sources(test_case):
     files = sorted((PACKAGE / "mcp_takeoff").glob("*.py"))
     test_case.assertEqual({path.name for path in files}, _PROXY_MODULES)
     return files
+
+
+def _m1b_sources(test_case):
+    files = [PACKAGE / relative for relative in M1B_PRODUCTION_FILES]
+    for path in files:
+        test_case.assertTrue(path.is_file(), path)
+    return files
+
+
+def _name_tokens(path):
+    source = path.read_text(encoding="utf-8")
+    return {
+        token.string
+        for token in tokenize.generate_tokens(io.StringIO(source).readline)
+        if token.type == tokenize.NAME
+    }
 
 
 def _m1a_sources(test_case):
@@ -176,6 +255,75 @@ class AiTakeoffReadOnlySliceTests(unittest.TestCase):
             self.assertEqual(len(server.list_prompts()), 7)
             self.assertEqual(len(server.list_resources()), 1)
             self.assertEqual(len(server.list_resource_templates()), 4)
+
+
+class AiTakeoffApprovalSliceTests(unittest.TestCase):
+    def test_m1b_production_code_has_no_comments_or_reflection(self):
+        for path in _m1b_sources(self):
+            source = path.read_text(encoding="utf-8")
+            for token in tokenize.generate_tokens(io.StringIO(source).readline):
+                with self.subTest(path=path.name, line=token.start[0]):
+                    self.assertNotEqual(token.type, tokenize.COMMENT)
+                    if token.type == tokenize.NAME:
+                        self.assertNotIn(
+                            token.string, ("getattr", "setattr", "hasattr")
+                        )
+
+    def test_ai_takeoff_sources_hold_no_raw_bidi_or_control_characters(self):
+        for path in _m1a_sources(self) + _m1b_sources(self):
+            text = path.read_text(encoding="utf-8")
+            for index, character in enumerate(text):
+                if character in BIDI_CONTROLS or (
+                    unicodedata.category(character) == "Cc"
+                    and character not in "\t\n\r"
+                ):
+                    self.fail(f"{path.name} has U+{ord(character):04X} at {index}")
+
+    def test_no_pipe_reachable_module_names_an_approval_or_write_path(self):
+        for relative in PIPE_REACHABLE_FILES:
+            path = PACKAGE / relative
+            self.assertTrue(path.is_file(), path)
+            names = _name_tokens(path)
+            for name in APPROVAL_NAMES:
+                self.assertNotIn(name, names, f"{name} should not appear in {path}")
+
+    def test_the_proposal_facade_offers_no_approval_method(self):
+        public = {
+            name for name in vars(AiChangesetProposals) if not name.startswith("_")
+        }
+        self.assertEqual(
+            public,
+            {
+                "add",
+                "get",
+                "discard",
+                "request_apply",
+                "add_assumption",
+                "revise_assumption",
+                "last_applied",
+                "applied_record",
+            },
+        )
+
+    def test_the_takeoff_surface_is_fifteen_tools_under_the_cap(self):
+        self.assertEqual(
+            M1B_COMMANDS,
+            (
+                "propose_scale",
+                "find_regions",
+                "propose_element",
+                "apply_changeset",
+                "discard_changeset",
+                "undo_last_ai_changeset",
+                "render_3d",
+                "update_assumption",
+            ),
+        )
+        self.assertEqual(AI_TAKEOFF_COMMANDS, M1A_COMMANDS + M1B_COMMANDS)
+        self.assertLessEqual(len(AI_TAKEOFF_COMMANDS), MAX_EXPOSED_TOOLS)
+        for name in AI_TAKEOFF_COMMANDS:
+            self.assertNotIn("approve", name)
+            self.assertNotIn("accept", name)
 
 
 class AiTakeoffPackagingTests(unittest.TestCase):

@@ -528,6 +528,8 @@ class ProjectWritePayload:
 
     def __post_init__(self) -> None:
         if self.write_kind not in {
+            "apply_ai_changeset",
+            "undo_ai_changeset",
             "create_condition",
             "create_condition_folder",
             "create_bid",

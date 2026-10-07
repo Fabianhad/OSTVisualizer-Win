@@ -368,14 +368,46 @@ visible to MCP clients.
 
 A second, opt-in MCP helper, `ostv-takeoff-mcp.exe`, lets an AI client read the
 bid that is open in the running desktop app so it can help with a concrete
-takeoff from structural PDFs. This first version is read-only. It offers seven
-tools: `list_sheets`, `render_sheet` (a PNG crop, at most 200 DPI and 1600 px),
+takeoff from structural PDFs. It offers seven read tools:
+`list_sheets`, `render_sheet` (a PNG crop, at most 200 DPI and 1600 px),
 `list_text`, `list_segments`, `get_quantities`, `list_levels` and
 `list_assumptions`. Coordinates come back in page points and OST inches, and
 images include the pixel-to-page and page-to-OST transforms. Text from drawings
 and names is marked `untrusted` and capped at 500 characters, so the client
 treats it as data, never as instructions. Large results are saved under
 `~/.ost_visualizer/mcp_takeoff_outputs/` and returned as a file reference.
+
+Eight more tools let the AI propose changes, but nothing is written until you
+accept it in OST Visualizer: `propose_scale` (a page scale from two points),
+`find_regions` (closed areas from the drawing's lines, with any gaps it had to
+close), `propose_element` (a slab from a region or polygon), `apply_changeset`,
+`discard_changeset`, `undo_last_ai_changeset`, `render_3d` (a top view of the
+bid) and `update_assumption` (the AI can add or revise an assumption, never
+accept one).
+
+When the AI asks to apply a changeset, a review window opens in the app. It
+shows the outlines on the plan, the added area and volume, and every
+assumption the AI made, such as a missing slab thickness or a gap it closed.
+Accept stays off until you accept or override each high-impact assumption
+(scale, thickness, top elevation, or a closing segment over 12 in). Accepting
+writes the change as one step: new slab conditions go in a folder named
+`AI <date> <time>` on the layer selected in Layers (or Default), with the top
+elevation in the `@T` name suffix. **Edit > Undo** or the AI's
+`undo_last_ai_changeset` removes it again. A changeset can hold at most
+200 takeoffs and 25 new conditions, and at most five can wait per bid. Each
+expires after 30 minutes, and it is refused if a page or condition it touches
+has changed since the AI proposed it. If the AI changes an assumption while the
+window is open, the window updates and asks you to check it again before
+anything is accepted.
+
+Assumptions you settle are kept with the bid on this computer under
+`~/.ost_visualizer/ai_takeoff/bids/`; on SQL Server bids other users do not see
+them. On SQL Server bids the AI can read and propose, but changes cannot be
+applied yet. If the database moved, the app asks once before linking the saved
+data to it, and does nothing if you switched bids before answering. Each tool
+call and decision is logged to
+`~/.ost_visualizer/ai_takeoff/audit/` without arguments, images, paths or the
+session key.
 
 To use it:
 

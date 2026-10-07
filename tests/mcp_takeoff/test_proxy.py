@@ -9,7 +9,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
-from ost_visualizer.application.dtos.ai_takeoff_dtos import M1A_COMMANDS
+from ost_visualizer.application.dtos.ai_takeoff_dtos import AI_TAKEOFF_COMMANDS
 from ost_visualizer.mcp_takeoff import main as main_module
 from ost_visualizer.mcp_takeoff.protocol import JsonRpcError
 from ost_visualizer.mcp_takeoff.proxy import TakeoffProxy
@@ -64,12 +64,12 @@ class TakeoffProxyTests(unittest.TestCase):
     def test_lists_the_catalog_tools(self):
         _client, proxy = self.proxy({})
         self.assertEqual(
-            [tool["name"] for tool in proxy.list_tools()], list(M1A_COMMANDS)
+            [tool["name"] for tool in proxy.list_tools()], list(AI_TAKEOFF_COMMANDS)
         )
 
     def test_unknown_tools_never_reach_the_app(self):
         client, proxy = self.proxy({})
-        for name in ("update_assumption", "apply_changeset", "get_context", ""):
+        for name in ("approve_changeset", "accept_assumption", "get_context", ""):
             with self.subTest(name=name):
                 with self.assertRaises(JsonRpcError):
                     proxy.call_tool(name, {})
@@ -243,7 +243,7 @@ class MainTests(unittest.TestCase):
             response = json.loads(stdout.getvalue())
             self.assertEqual(
                 [tool["name"] for tool in response["result"]["tools"]],
-                list(M1A_COMMANDS),
+                list(AI_TAKEOFF_COMMANDS),
             )
             self.assertTrue((Path(directory) / "mcp_takeoff.log").exists())
 

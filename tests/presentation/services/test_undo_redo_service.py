@@ -447,6 +447,53 @@ class UndoRedoServiceTests(unittest.TestCase):
         self.assertFalse(self.service.can_redo())
 
 
+class UndoRedoServiceLabelTests(unittest.TestCase):
+    def setUp(self):
+        self.service = UndoRedoService()
+        self.service.set_active_bid(BidRef("database", "7"))
+
+    def test_entries_carry_an_optional_label_for_the_top_of_the_stack(self):
+        self.assertEqual(self.service.undo_label(), "")
+        self.service.push_local(lambda: True, lambda: True)
+        self.assertEqual(self.service.undo_label(), "")
+        self.service.push_local(lambda: True, lambda: False, label="AI: 1 slab")
+        self.assertEqual(self.service.undo_label(), "AI: 1 slab")
+        self.service.push_for_bid(
+            BidRef("database", "7"),
+            lambda complete: None,
+            lambda complete: None,
+            label="AI: scale",
+        )
+        self.assertEqual(self.service.undo_label(), "AI: scale")
+        self.service.push(lambda complete: None, lambda complete: None)
+        self.assertEqual(self.service.undo_label(), "")
+
+    def test_a_ready_entry_can_be_discarded_from_anywhere_in_history(self):
+        bid_ref = BidRef("database", "7")
+        undone = []
+        older = self.service.push_for_bid(
+            bid_ref, lambda complete: undone.append("older"), lambda complete: None
+        )
+        discarded = self.service.push_for_bid(
+            bid_ref, lambda complete: undone.append("discarded"), lambda complete: None
+        )
+        newer = self.service.push_for_bid(
+            bid_ref, lambda complete: undone.append("newer"), lambda complete: None
+        )
+        self.assertIsNotNone(older)
+        self.assertIsNone(
+            self.service.push_for_bid(
+                BidRef("database", "8"), lambda complete: None, lambda complete: None
+            )
+        )
+        self.assertTrue(self.service.discard_entry(discarded))
+        self.assertFalse(self.service.discard_entry(discarded))
+        self.assertEqual(self.service._undo_stack, [older, newer])
+        newer.state = MutationHistoryState.UNDO_PENDING
+        self.assertFalse(self.service.discard_entry(newer))
+        self.assertEqual(self.service._undo_stack, [older, newer])
+
+
 class MdbSqlBehaviorParityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

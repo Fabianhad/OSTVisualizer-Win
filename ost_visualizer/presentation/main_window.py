@@ -1,5 +1,7 @@
+import getpass
 import logging
 import threading
+from datetime import datetime
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Callable, Optional
@@ -98,6 +100,17 @@ from .managers.shortcut_manager import ShortcutManager
 from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
 from .services.bid_clipboard_service import BidClipboardService
+from ..application.dtos.ai_takeoff_audit_dtos import AuditEntry, hash_arguments
+from ..domain.entities.ai_changeset import KIND_SCALE
+from ..domain.entities.area import UNASSIGNED_AREA_UID
+from .services.ai_changeset_applier import AiChangesetApplier
+from .services.ai_changeset_approval import (
+    AiChangesetApprovalController,
+    AiChangesetPlanPreview,
+)
+from .services.ai_render_3d import AiTopViewSource
+from .services.ai_sidecar_rebind_prompt import AiSidecarRebindPrompt
+from .services.ai_takeoff_write_commands import AiTakeoffWriteCommands
 from .services.ai_takeoff_bridge import (
     TakeoffCommandBridge,
     ai_takeoff_session_token_path,
@@ -401,6 +414,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.handlers.ui_event.set_bid_layers_sidebar(components.bid_layers_sidebar)
         self.handlers.ui_event.set_undo_service(components.undo_service)
+        self._undo_service = components.undo_service
         container = QtWidgets.QWidget()
         container_layout = QtWidgets.QVBoxLayout(container)
         container_layout.setContentsMargins(*MAIN_MARGINS)
@@ -574,13 +588,62 @@ class MainWindow(QtWidgets.QMainWindow):
             parent=self,
         )
         self._mcp_context_bridge.start()
+        self._ai_store = app_controller.get_service("ai_changeset_store")
+        self._ai_sidecars = app_controller.get_service("ai_takeoff_sidecar_service")
+        self._ai_audit_log = app_controller.get_service("ai_takeoff_audit_log")
+        self._ai_applier = AiChangesetApplier(
+            write_service=self._project_write_service,
+            project_data=self._project_data_service,
+            undo_service=self._undo_service,
+            store=self._ai_store,
+            token_reader=app_controller.get_service("ai_takeoff_token_reader"),
+            access_check=self._ai_takeoff_write_denial,
+            layer_uid=self._ai_takeoff_layer_uid,
+            area_uid=self._ai_takeoff_area_uid,
+            session_folder_name=datetime.now().strftime("AI %Y-%m-%d %H:%M"),
+            audit=self._record_ai_event,
+            record_assumptions=self._ai_sidecars.record_assumptions,
+            apply_blocked=app_controller.get_service("ai_takeoff_apply_gate"),
+        )
+        self._ai_approval = AiChangesetApprovalController(
+            self._ai_store,
+            self._ai_applier,
+            AiChangesetPlanPreview(lambda: self.plan_view),
+            is_sql=self._project_write_service.uses_sql_collaboration_mutations,
+            parent_widget=lambda: self,
+            parent=self,
+        )
+        self._ai_approval.changeset_finished.connect(self._on_ai_changeset_finished)
+        self._ai_rebind_prompt = AiSidecarRebindPrompt(
+            self._ai_sidecars, lambda: self, parent=self
+        )
+        ai_read_service = app_controller.get_service("ai_takeoff_read_service")
+        self._ai_pdf_source = app_controller.get_service("ai_takeoff_pdf_source")
         self._ai_takeoff_bridge = TakeoffCommandBridge(
-            read_service=app_controller.get_service("ai_takeoff_read_service"),
-            pdf_source=app_controller.get_service("ai_takeoff_pdf_source"),
+            read_service=ai_read_service,
+            pdf_source=self._ai_pdf_source,
             access_allowed=self._ai_takeoff_access_allowed,
             token_path=ai_takeoff_session_token_path(),
             parent=self,
+            write_commands=AiTakeoffWriteCommands(
+                read_service=ai_read_service,
+                proposal_service=app_controller.get_service(
+                    "ai_takeoff_proposal_service"
+                ),
+                proposals=app_controller.get_service("ai_changeset_proposals"),
+                undo=self._ai_applier.undo,
+                top_view=AiTopViewSource(
+                    self._project_data_service,
+                    app_controller.get_service(
+                        "visualization_provider"
+                    ).get_mesh_generator(),
+                    lambda: self._config_model.snapshot().inactive_object_color,
+                ),
+                apply_requested=self._ai_approval.on_apply_requested,
+            ),
+            audit=self._record_ai_tool,
         )
+        self._ai_takeoff_bridge.rebind_suggested.connect(self._ai_rebind_prompt.offer)
         self._ai_takeoff_bridge.start()
         self.update_dialog_requested.connect(self._show_update_dialog)
         self._update_service = self._resolve_update_service()
@@ -1195,6 +1258,71 @@ class MainWindow(QtWidgets.QMainWindow):
         return bool(
             self._config_model.snapshot().ai_takeoff_enabled
             and self.ui_access_manager.is_allowed(Feature.AI_TAKEOFF)
+        )
+
+    def _ai_takeoff_write_denial(self, changeset) -> str:
+        if not self._ai_takeoff_access_allowed():
+            return (
+                "AI takeoff is turned off or unavailable for the open bid. Turn it "
+                "on in Tools > Options > MCP Setup."
+            )
+        features = (
+            (Feature.EDIT_PAGE_SETTINGS,)
+            if changeset.kind == KIND_SCALE
+            else (Feature.PLACE_PLAN_ITEMS, Feature.EDIT_CONDITION_STRUCTURE)
+        )
+        if not all(self.ui_access_manager.is_allowed(feature) for feature in features):
+            return "You cannot make this change in the open bid."
+        return ""
+
+    def _ai_takeoff_layer_uid(self):
+        selected = self._bid_layers_sidebar.selected_layer_uid()
+        if selected:
+            return selected
+        for layer in self._project_data_service.get_bid_layer_snapshot():
+            if layer.name == "Default":
+                return layer.uid
+        return None
+
+    def _ai_takeoff_area_uid(self, page_uid: str) -> str:
+        selections = self._project_data_service.get_page_area_selections()
+        return selections.get(page_uid) or UNASSIGNED_AREA_UID
+
+    def _record_ai_audit(self, entry: AuditEntry) -> None:
+        try:
+            self._ai_audit_log.record(self._ai_sidecars.bid_key(), entry)
+        except (OSError, ValueError) as exc:
+            logger.warning("AI takeoff audit entry not written: %s", type(exc).__name__)
+
+    def _record_ai_tool(self, tool: str, arguments: dict, outcome: str) -> None:
+        self._record_ai_audit(
+            AuditEntry(
+                event="tool",
+                tool=tool,
+                input_hash=hash_arguments(arguments),
+                changeset_id=str(arguments.get("changeset_id") or ""),
+                outcome=outcome,
+            )
+        )
+
+    def _record_ai_event(self, event: str, details: dict) -> None:
+        self._record_ai_audit(
+            AuditEntry(
+                event=event,
+                changeset_id=str(details.get("changeset_id") or ""),
+                approver=getpass.getuser() if event in ("applied", "undone") else "",
+                outcome=event,
+            )
+        )
+
+    def _on_ai_changeset_finished(self, uid: str, status: str) -> None:
+        self._record_ai_audit(
+            AuditEntry(
+                event="decision",
+                changeset_id=uid,
+                approver=getpass.getuser(),
+                outcome=status,
+            )
         )
 
     def _resolve_update_service(self):
@@ -2515,6 +2643,9 @@ class MainWindow(QtWidgets.QMainWindow):
             ("clean up UI access manager", self.ui_access_manager.cleanup),
             ("clean up MCP context bridge", self._mcp_context_bridge.cleanup),
             ("clean up AI takeoff bridge", self._ai_takeoff_bridge.cleanup),
+            ("clean up AI changeset review", self._ai_approval.cleanup),
+            ("clean up AI sidecar prompt", self._ai_rebind_prompt.cleanup),
+            ("release AI takeoff PDF files", self._ai_pdf_source.release),
             (
                 "shut down application lifecycle services",
                 lambda: self.app_controller.get_service(

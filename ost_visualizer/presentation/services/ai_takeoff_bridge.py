@@ -11,6 +11,8 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from shiboken6 import isValid
 from ...application.dtos.ai_takeoff_dtos import (
     AI_TAKEOFF_BRIDGE_SERVER_NAME,
+    AI_TAKEOFF_COMMAND_ARGUMENTS,
+    AI_TAKEOFF_COMMANDS,
     AI_TAKEOFF_DIR_NAME,
     AI_TAKEOFF_SESSION_TOKEN_FILE_NAME,
     APP_DATA_DIR_NAME,
@@ -27,13 +29,13 @@ from ...application.dtos.ai_takeoff_dtos import (
     ERROR_UNAUTHORIZED,
     ERROR_UNEXPECTED,
     ERROR_UNKNOWN_COMMAND,
-    M1A_COMMAND_ARGUMENTS,
-    M1A_COMMANDS,
+    SIDECAR_REBIND_REQUIRED,
     AiTakeoffRequestError,
     error_result,
     ok_result,
 )
 from .ai_takeoff_crop_renderer import render_crop_png
+from .ai_takeoff_write_commands import DeferredReply
 
 logger = logging.getLogger(__name__)
 MAX_REQUEST_BYTES = 64 * 1024
@@ -56,6 +58,7 @@ def ai_takeoff_session_token_path() -> Path:
 
 class TakeoffCommandBridge(QtCore.QObject):
     _job_finished = QtCore.Signal(object, object)
+    rebind_suggested = QtCore.Signal()
 
     def __init__(
         self,
@@ -69,6 +72,10 @@ class TakeoffCommandBridge(QtCore.QObject):
         max_workers: int = MAX_CONCURRENT_WORKERS,
         max_connections: int = MAX_OPEN_CONNECTIONS,
         idle_timeout_ms: int = IDLE_REQUEST_TIMEOUT_MS,
+        write_commands=None,
+        audit: Callable[
+            [str, dict, str], None
+        ] = lambda _tool, _arguments, _outcome: None,
     ):
         super().__init__(parent)
         self._read_service = read_service
@@ -97,10 +104,13 @@ class TakeoffCommandBridge(QtCore.QObject):
             COMMAND_LIST_LEVELS: self._list_levels,
             COMMAND_LIST_ASSUMPTIONS: self._list_assumptions,
         }
+        if write_commands is not None:
+            self._commands.update(write_commands.handlers())
+        self._audit = audit
 
     @property
     def commands(self) -> tuple:
-        return tuple(name for name in M1A_COMMANDS if name in self._commands)
+        return tuple(name for name in AI_TAKEOFF_COMMANDS if name in self._commands)
 
     def start(self) -> bool:
         if self._server is None:
@@ -237,7 +247,7 @@ class TakeoffCommandBridge(QtCore.QObject):
             arguments = {}
         if (
             not isinstance(arguments, dict)
-            or not set(arguments) <= M1A_COMMAND_ARGUMENTS[command]
+            or not set(arguments) <= AI_TAKEOFF_COMMAND_ARGUMENTS[command]
         ):
             self._respond(
                 socket,
@@ -256,27 +266,65 @@ class TakeoffCommandBridge(QtCore.QObject):
         try:
             worker_job = handler(arguments)
         except AiTakeoffRequestError as exc:
-            self._respond(socket, error_result(exc.code, exc.message))
+            self._reply(socket, command, arguments, error_result(exc.code, exc.message))
             return
         except Exception as exc:
             logger.exception("AI takeoff command failed: %s", type(exc).__name__)
-            self._respond(socket, error_result(ERROR_UNEXPECTED, "The command failed."))
+            self._reply(
+                socket,
+                command,
+                arguments,
+                error_result(ERROR_UNEXPECTED, "The command failed."),
+            )
             return
         if isinstance(worker_job, dict):
-            self._respond(socket, worker_job)
+            self._reply(socket, command, arguments, worker_job)
+            return
+        if isinstance(worker_job, DeferredReply):
+            worker_job.attach(
+                lambda result, socket=socket: self._finish_deferred(
+                    socket, command, arguments, result
+                )
+            )
             return
         if self._active_workers >= self._max_workers:
-            self._respond(socket, error_result(ERROR_BUSY, _BUSY_MESSAGE))
+            self._reply(
+                socket, command, arguments, error_result(ERROR_BUSY, _BUSY_MESSAGE)
+            )
             return
         self._active_workers += 1
         threading.Thread(
             target=self._run_worker_job,
-            args=(socket, worker_job),
+            args=(socket, (command, arguments), worker_job),
             name="AiTakeoffBridgeWorker",
             daemon=True,
         ).start()
 
-    def _run_worker_job(self, socket: QLocalSocket, job: Callable[[], dict]) -> None:
+    def _reply(
+        self, socket: QLocalSocket, command: str, arguments: dict, result: dict
+    ) -> None:
+        self._respond(socket, result)
+        try:
+            self._audit(command, arguments, str(result.get("status", "")))
+        except Exception as exc:
+            logger.warning("AI takeoff audit failed: %s", type(exc).__name__)
+        data = result.get("data")
+        if (
+            isinstance(data, dict)
+            and data.get("sidecar_status") == SIDECAR_REBIND_REQUIRED
+        ):
+            self.rebind_suggested.emit()
+
+    def _finish_deferred(
+        self, socket, command: str, arguments: dict, result: dict
+    ) -> None:
+        if self._server is None or not isValid(socket):
+            return
+        self._reply(socket, command, arguments, result)
+
+    def _run_worker_job(
+        self, socket: QLocalSocket, request: tuple, job: Callable[[], dict]
+    ) -> None:
         try:
             result = job()
         except AiTakeoffRequestError as exc:
@@ -285,15 +333,16 @@ class TakeoffCommandBridge(QtCore.QObject):
             logger.exception("AI takeoff worker job failed: %s", type(exc).__name__)
             result = error_result(ERROR_UNEXPECTED, "The command failed.")
         try:
-            self._job_finished.emit(socket, result)
+            self._job_finished.emit(socket, (request, result))
         except RuntimeError:
             logger.info("AI takeoff bridge closed before a command finished")
 
-    def _finish(self, socket, result: dict) -> None:
+    def _finish(self, socket, outcome: tuple) -> None:
         self._active_workers = max(0, self._active_workers - 1)
         if self._server is None or not isValid(socket):
             return
-        self._respond(socket, result)
+        (command, arguments), result = outcome
+        self._reply(socket, command, arguments, result)
 
     @staticmethod
     def _respond(socket: QLocalSocket, result: dict) -> None:

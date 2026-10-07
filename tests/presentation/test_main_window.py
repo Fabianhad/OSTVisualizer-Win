@@ -1079,6 +1079,15 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_takeoff_bridge = SimpleNamespace(
             cleanup=lambda: calls.append("takeoff_cleanup")
         )
+        window._ai_approval = SimpleNamespace(
+            cleanup=lambda: calls.append("ai_review_cleanup")
+        )
+        window._ai_rebind_prompt = SimpleNamespace(
+            cleanup=lambda: calls.append("ai_rebind_cleanup")
+        )
+        window._ai_pdf_source = SimpleNamespace(
+            release=lambda: calls.append("ai_pdf_release")
+        )
         window.app_controller = SimpleNamespace(
             get_service=lambda service: (
                 lifecycle
@@ -1112,6 +1121,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "access_cleanup",
                 "mcp_cleanup",
                 "takeoff_cleanup",
+                "ai_review_cleanup",
+                "ai_rebind_cleanup",
+                "ai_pdf_release",
                 "lifecycle",
                 "window_close",
                 "qt_quit",
@@ -1152,6 +1164,15 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_takeoff_bridge = SimpleNamespace(
             cleanup=lambda: calls.append("takeoff_cleanup")
         )
+        window._ai_approval = SimpleNamespace(
+            cleanup=lambda: calls.append("ai_review_cleanup")
+        )
+        window._ai_rebind_prompt = SimpleNamespace(
+            cleanup=lambda: calls.append("ai_rebind_cleanup")
+        )
+        window._ai_pdf_source = SimpleNamespace(
+            release=lambda: calls.append("ai_pdf_release")
+        )
         window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
         first = FakeCloseEvent()
         second = FakeCloseEvent()
@@ -1185,6 +1206,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "access_cleanup",
                 "mcp_cleanup",
                 "takeoff_cleanup",
+                "ai_review_cleanup",
+                "ai_rebind_cleanup",
+                "ai_pdf_release",
                 "lifecycle",
                 "window_close",
                 "qt_quit",
@@ -1224,6 +1248,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window.ui_access_manager = SimpleNamespace(cleanup=cleanup("access_cleanup"))
         window._mcp_context_bridge = SimpleNamespace(cleanup=cleanup("mcp_cleanup"))
         window._ai_takeoff_bridge = SimpleNamespace(cleanup=cleanup("takeoff_cleanup"))
+        window._ai_approval = SimpleNamespace(cleanup=cleanup("ai_review_cleanup"))
+        window._ai_rebind_prompt = SimpleNamespace(cleanup=cleanup("ai_rebind_cleanup"))
+        window._ai_pdf_source = SimpleNamespace(release=cleanup("ai_pdf_release"))
         window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
         event = FakeCloseEvent()
         with self.assertLogs(
@@ -1262,6 +1289,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "access_cleanup",
                 "mcp_cleanup",
                 "takeoff_cleanup",
+                "ai_review_cleanup",
+                "ai_rebind_cleanup",
+                "ai_pdf_release",
                 "lifecycle",
                 "window_close",
                 "qt_quit",

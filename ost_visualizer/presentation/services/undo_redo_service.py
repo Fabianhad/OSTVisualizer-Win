@@ -50,6 +50,7 @@ class MutationHistoryEntry:
     forward_sequence: Optional[int] = None
     takeoff_targets: tuple[TakeoffHistoryTarget, ...] = ()
     annotation_targets: tuple[AnnotationHistoryTarget, ...] = ()
+    label: str = ""
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,9 @@ class UndoRedoService:
             self.clear()
             self._active_bid_ref = bid_ref
 
+    def undo_label(self) -> str:
+        return self._undo_stack[-1].label if self._undo_stack else ""
+
     def can_undo(self) -> bool:
         return bool(
             not self._history_transition_pending
@@ -118,12 +122,18 @@ class UndoRedoService:
         *,
         takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
         annotation_targets: tuple[AnnotationHistoryTarget, ...] = (),
+        label: str = "",
     ) -> None:
         bid_ref = self._active_bid_ref
         if not bid_ref:
             return
         self._push_entry(
-            bid_ref, undo_submit, redo_submit, takeoff_targets, annotation_targets
+            bid_ref,
+            undo_submit,
+            redo_submit,
+            takeoff_targets,
+            annotation_targets,
+            label,
         )
 
     def push_for_bid(
@@ -134,12 +144,31 @@ class UndoRedoService:
         *,
         takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
         annotation_targets: tuple[AnnotationHistoryTarget, ...] = (),
-    ) -> None:
+        label: str = "",
+    ) -> Optional[MutationHistoryEntry]:
         if bid_ref != self._active_bid_ref:
-            return
-        self._push_entry(
-            bid_ref, undo_submit, redo_submit, takeoff_targets, annotation_targets
+            return None
+        return self._push_entry(
+            bid_ref,
+            undo_submit,
+            redo_submit,
+            takeoff_targets,
+            annotation_targets,
+            label,
         )
+
+    def discard_entry(self, entry: MutationHistoryEntry) -> bool:
+        if entry.state != MutationHistoryState.READY:
+            return False
+        removed = False
+        for stack in (self._undo_stack, self._redo_stack):
+            kept = [item for item in stack if item is not entry]
+            if len(kept) != len(stack):
+                stack[:] = kept
+                removed = True
+        if removed:
+            self._notify_change()
+        return removed
 
     def _push_entry(
         self,
@@ -148,20 +177,22 @@ class UndoRedoService:
         redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         takeoff_targets: tuple[TakeoffHistoryTarget, ...],
         annotation_targets: tuple[AnnotationHistoryTarget, ...],
-    ) -> None:
-        self._undo_stack.append(
-            MutationHistoryEntry(
-                bid_ref,
-                undo_submit,
-                redo_submit,
-                takeoff_targets=takeoff_targets,
-                annotation_targets=annotation_targets,
-            )
+        label: str = "",
+    ) -> MutationHistoryEntry:
+        entry = MutationHistoryEntry(
+            bid_ref,
+            undo_submit,
+            redo_submit,
+            takeoff_targets=takeoff_targets,
+            annotation_targets=annotation_targets,
+            label=label,
         )
+        self._undo_stack.append(entry)
         if len(self._undo_stack) > self._max_size:
             self._undo_stack.pop(0)
         self._redo_stack.clear()
         self._notify_change()
+        return entry
 
     def push_local(
         self,
@@ -170,6 +201,7 @@ class UndoRedoService:
         *,
         takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
         annotation_targets: tuple[AnnotationHistoryTarget, ...] = (),
+        label: str = "",
     ) -> None:
         def submit(
             action: Callable[[], bool],
@@ -203,6 +235,7 @@ class UndoRedoService:
             lambda complete: submit(redo_action, complete),
             takeoff_targets=takeoff_targets,
             annotation_targets=annotation_targets,
+            label=label,
         )
 
     def suspend_deleted_annotations(

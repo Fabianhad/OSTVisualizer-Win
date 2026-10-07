@@ -80,6 +80,7 @@ from ...modes.cursor import (
     PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
 )
 from ...scene.plan_view_z_order import (
+    AI_PREVIEW_Z,
     ANNOTATION_BODY_Z,
     NAMED_VIEW_LABEL_BACKGROUND_Z,
     NAMED_VIEW_LABEL_Z,
@@ -509,6 +510,7 @@ class TakeoffPlanView(
         self._pdf_text_request_id: Optional[str] = None
         self._pdf_text_request_source = None
         self._pdf_text_highlight_items: List[QGraphicsRectItem] = []
+        self._ai_preview_items: List[QGraphicsPathItem] = []
         self._selected_pdf_text_selection: Optional[PdfTextSelection] = None
         self._pdf_text_drag_anchor: Optional[Tuple[int, int]] = None
         self._pdf_text_drag_focus: Optional[Tuple[int, int]] = None
@@ -2365,6 +2367,41 @@ class TakeoffPlanView(
     @property
     def current_page_uid(self) -> Optional[str]:
         return self._current_bid_page_uid
+
+    def set_ai_preview(self, page_uid: str, rings) -> None:
+        self.clear_ai_preview()
+        if page_uid != self._current_bid_page_uid:
+            return
+        pen = QPen(QColor(255, 120, 0))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        pen.setWidthF(2.0)
+        brush = QBrush(QColor(255, 120, 0, 60))
+        for ring in rings:
+            path = QPainterPath()
+            points = [
+                self._ost_to_scene_pos(float(x), float(y))
+                for x, y in zip(ring[0::2], ring[1::2])
+            ]
+            if len(points) < 3:
+                continue
+            path.moveTo(points[0])
+            for point in points[1:]:
+                path.lineTo(point)
+            path.closeSubpath()
+            item = QGraphicsPathItem(path)
+            item.setPen(pen)
+            item.setBrush(brush)
+            item.setZValue(AI_PREVIEW_Z)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self._scene.addItem(item)
+            self._ai_preview_items.append(item)
+
+    def clear_ai_preview(self) -> None:
+        for item in self._ai_preview_items:
+            if isValid(item) and item.scene() is self._scene:
+                self._scene.removeItem(item)
+        self._ai_preview_items = []
 
     @property
     def cursor_mode(self) -> str:

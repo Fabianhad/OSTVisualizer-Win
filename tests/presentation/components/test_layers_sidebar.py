@@ -172,6 +172,22 @@ class LayersSidebarInteractionTests(unittest.TestCase):
             sidebar.close()
             sidebar.deleteLater()
 
+    def test_selected_layer_uid_reports_only_a_loaded_selection(self):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers(
+            [self._layer("layer-1", "Layer 1", 1), self._layer("layer-2", "Layer 2", 2)]
+        )
+        try:
+            sidebar._selected_uid = None
+            self.assertIsNone(sidebar.selected_layer_uid())
+            sidebar._selected_uid = "layer-2"
+            self.assertEqual(sidebar.selected_layer_uid(), "layer-2")
+            sidebar._selected_uid = "gone"
+            self.assertIsNone(sidebar.selected_layer_uid())
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
     def test_layers_sidebar_toggle_is_gated_by_interactive_state_and_callback(self):
         sidebar = BidLayersSidebar(None)
         calls = []
