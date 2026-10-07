@@ -538,6 +538,7 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
             {
                 "text_runs": [{"text": "run", "path": "doc.pdf"}],
                 "page_info": {"width": 612.0, "path": "doc.pdf", "index": 0},
+                "visible_origin": (0.0, 0.0),
             },
         )
 

@@ -2884,11 +2884,16 @@ class TakeoffPlanView(
             payload["text_runs"],
             payload["page_info"],
             source,
+            payload.get("visible_origin", (0.0, 0.0)),
         )
         self._update_viewport_mouse_tracking()
 
     def _map_pdf_text_runs(
-        self, raw_runs: list, page_info: dict, source=None
+        self,
+        raw_runs: list,
+        page_info: dict,
+        source=None,
+        visible_origin: tuple = (0.0, 0.0),
     ) -> List[PdfTextRun]:
         page = self._current_page
         if page is None:
@@ -2916,13 +2921,14 @@ class TakeoffPlanView(
             raw_width_pts = float(page_info["media_width_pts"])
             raw_height_pts = float(page_info["media_height_pts"])
         view_scale = self._scene_scale
+        origin_x, origin_y = visible_origin
         mapped_runs: List[PdfTextRun] = []
         for run in raw_runs:
             rect = self._pdf_text_raw_box_to_page_rect(
-                float(run.left),
-                float(run.right),
-                float(run.bottom),
-                float(run.top),
+                float(run.left) - origin_x,
+                float(run.right) - origin_x,
+                float(run.bottom) - origin_y,
+                float(run.top) - origin_y,
                 raw_width_pts,
                 raw_height_pts,
                 intrinsic_rotation,
@@ -2937,10 +2943,10 @@ class TakeoffPlanView(
             chars: List[PdfTextChar] = []
             for raw_char in run.chars:
                 char_rect = self._pdf_text_raw_box_to_page_rect(
-                    float(raw_char.left),
-                    float(raw_char.right),
-                    float(raw_char.bottom),
-                    float(raw_char.top),
+                    float(raw_char.left) - origin_x,
+                    float(raw_char.right) - origin_x,
+                    float(raw_char.bottom) - origin_y,
+                    float(raw_char.top) - origin_y,
                     raw_width_pts,
                     raw_height_pts,
                     intrinsic_rotation,

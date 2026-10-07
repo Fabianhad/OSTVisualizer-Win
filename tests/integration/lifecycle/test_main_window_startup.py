@@ -7,9 +7,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.ai_takeoff_dtos import M1A_COMMANDS
+from ost_visualizer.application.services.ai_takeoff_read_service import (
+    AiTakeoffReadService,
+)
 from ost_visualizer.config.di_config import configure_application
 from ost_visualizer.infrastructure.logging.logger_factory import LoggerFactory
 from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.services.ai_takeoff_bridge import (
+    TakeoffCommandBridge,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from PySide6 import QtCore, QtWidgets
 
@@ -65,6 +72,20 @@ class MainWindowStartupTests(unittest.TestCase):
                 self.assertEqual(left_splitter.minimumWidth(), 320)
                 self.assertIs(left_splitter.widget(0), window._conditions_sidebar)
                 self.assertIs(left_splitter.widget(1), window._bid_layers_sidebar)
+                bridge = window._ai_takeoff_bridge
+                self.assertIsInstance(bridge, TakeoffCommandBridge)
+                self.assertEqual(bridge.commands, M1A_COMMANDS)
+                self.assertIsInstance(
+                    controller.get_service("ai_takeoff_read_service"),
+                    AiTakeoffReadService,
+                )
+                token_path = (
+                    app_data_dir / ".ost_visualizer" / "ai_takeoff" / "session.token"
+                )
+                self.assertTrue(token_path.is_file())
+                self.assertFalse(window._ai_takeoff_access_allowed())
+                window._ai_takeoff_bridge.cleanup()
+                self.assertFalse(token_path.exists())
             finally:
                 if window is not None:
                     window._workspace_state_coordinator.cleanup()
@@ -73,6 +94,7 @@ class MainWindowStartupTests(unittest.TestCase):
                     window.license_coordinator.cleanup()
                     window.ui_access_manager.cleanup()
                     window._mcp_context_bridge.cleanup()
+                    window._ai_takeoff_bridge.cleanup()
                     window.hide()
                     window.deleteLater()
                 if controller is not None:

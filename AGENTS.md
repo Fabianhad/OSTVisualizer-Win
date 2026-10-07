@@ -1145,7 +1145,7 @@ C++ extensions:
 
 ## MCP Guardrails
 
-MCP is a read-only local adapter outside the core layers.
+The `ost-visualizer` MCP server (`ost_visualizer/mcp_server/`) is a read-only local adapter outside the core layers. These guardrails apply to it; the separate AI takeoff path has its own rules in "AI Takeoff Bridge" below.
 
 Runtime shape:
 
@@ -1154,6 +1154,7 @@ Runtime shape:
 - Packaged clients launch `ostv-mcp.exe`; user-facing setup details belong in `README.md` and the Options dialog MCP setup tab.
 - Production helper route: `McpServer.py` -> `ost_visualizer.mcp_server.main`.
 - GUI app owns only the live-context bridge in `presentation/services/mcp_context_bridge.py`; it does not start the stdio MCP server.
+- The live-context pipe `OSTVisualizerMcpBridge.v1` is created with `QLocalServer` `UserAccessOption`, so its access list grants only the current user's SID (no Everyone, Anonymous, SYSTEM or Administrators entries; pywin32 read-back test). `ostv-mcp.exe` launched by an MCP client running as the same Windows user connects normally; a helper running under another account, or under a restricted or sandboxed token that cannot use the user SID, gets `bridge_unavailable` and the registry-backed tools keep working.
 - MCP helper path must not import PySide6, presentation startup, or `config/di_config.py`.
 
 Do not add:
@@ -1168,6 +1169,7 @@ Database scope:
 - MCP databases come only from checked entries in `~/.ost_visualizer/file_state.json`.
 - Registry validation should keep missing, unchecked, non-MDB, and duplicate paths out.
 - Broad MCP tools should keep bounded outputs and explicit status/metadata.
+- PDF text and vector coordinates are PDF points measured from the lower-left corner of the page's visible box (CropBox, else MediaBox), unrotated. Native `ost_pdf` extraction returns absolute user-space coordinates, so `NativePdfMetadataProvider` subtracts the visible-box origin from `ost_pdf_writer` page geometry. Any code that maps extracted PDF text or segments onto the rendered page must do the same: the presentation layer uses `presentation/visualization/pdf/pdf_visible_origin.py` (`read_visible_box_origin`), already used by placement-mode PDF snapping, plan-view PDF text selection (origin computed on the render worker and passed in the text payload) and the AI takeoff PDF source.
 
 MCP ownership map:
 
@@ -1178,6 +1180,71 @@ MCP ownership map:
 - `tests/mcp_server/`, `tests/application/services/test_mcp_read_service.py`, and `tests/presentation/services/test_mcp_context_bridge.py` cover public surface counts, status/source compatibility, registry filtering, and bounded outputs.
 
 Expected public MCP counts should remain 38 tools, 1 resource, 4 resource templates, and 7 prompts unless a change intentionally updates the public surface.
+
+## AI Takeoff Bridge
+
+A second, separate MCP path for AI-assisted concrete takeoff. The read-only `ost-visualizer` server above stays unchanged. M1a, the current slice, is read-only. Writes arrive in M1b and are applied only after the user approves them in the app.
+
+Runtime shape:
+
+- `ostv-takeoff-mcp.exe` (`McpTakeoffServer.py` -> `ost_visualizer.mcp_takeoff.main`) is a stdlib JSON-RPC stdio proxy. Source command: `.\venv\Scripts\python.exe -m ost_visualizer.mcp_takeoff.main`.
+- The proxy sends each `tools/call` over the named pipe `OSTVisualizerTakeoffBridge.v1` to `TakeoffCommandBridge` (`presentation/services/ai_takeoff_bridge.py`). `MainWindow` creates, starts and cleans it up next to `McpContextBridge`. The app must be running with the bid open; otherwise the proxy returns `app_not_running` or `bid_not_open`.
+- The proxy imports only the stdlib and `application/dtos/ai_takeoff_dtos.py`. It never imports PySide6, presentation, `config/di_config.py` or `mcp_server/`; `tests/architecture/test_ai_takeoff_rules.py` checks the module list of a fresh interpreter.
+- Packaging: `scripts/build-takeoff-mcp.ps1` builds the proxy alone; `scripts/build.ps1` builds it and copies it next to the desktop exe.
+- Windows only, stdio only. The proxy reads stdin as UTF-8 (a leading BOM is ignored and undecodable bytes are replaced) and writes ASCII-only JSON, so the console code page never matters; over-deep JSON gets a parse error instead of ending the process.
+
+Authentication and access:
+
+- `QLocalServer` uses `UserAccessOption`. A pywin32 read-back test checks that the pipe's access list grants only the current user's SID. Refusal of a connection from another user's session is **unverified** (it needs a second Windows account).
+- The proxy waits at most `PIPE_READ_TIMEOUT_SECONDS` (120 s, in `ai_takeoff_dtos.py`) for an answer and then returns `app_timeout` instead of blocking. The bridge runs at most `MAX_CONCURRENT_WORKERS` (2) worker jobs and keeps at most `MAX_OPEN_CONNECTIONS` (8) connections; extra requests or connections get `busy`, GUI-thread commands still run while workers are busy, and a connection without a complete request after `IDLE_REQUEST_TIMEOUT_MS` (10 s) is answered with `invalid_argument` and closed.
+- Every request carries the session token from `~/.ost_visualizer/ai_takeoff/session.token`. The token is rotated on every bridge start, compared with `hmac.compare_digest`, and read by the proxy on each call. It never appears in logs, responses, output files or (later) the audit. Cleanup deletes the file only while it still holds this session's token.
+- Commands also need `Config.ai_takeoff_enabled` (Options > MCP Setup, off by default) and `Feature.AI_TAKEOFF` (license plus an open bid; not lock- or write-gated while the slice is read-only). Otherwise the result is `feature_denied`.
+- The bridge command table is closed: exactly the declared tools, each with a declared argument set. Anything else, including `update_assumption` and `apply_changeset`, returns `unknown_command` before any service is called. Requests over 64 KB and over-deep JSON are refused with `invalid_argument`. Responses are ASCII JSON, so any string (including a lone surrogate) is delivered. A worker that finishes after the bridge is destroyed drops its result instead of raising.
+- No pipe command can approve a changeset or accept an assumption, in any milestone. Approval exists only in the app UI.
+
+Tools (at most 20 exposed, `MAX_EXPOSED_TOOLS`):
+
+- M1a: `list_sheets`, `render_sheet`, `list_text`, `list_segments`, `get_quantities`, `list_levels`, `list_assumptions`. Envelope `{success, status, data, meta}`; units are inches. Geometry is in page points (top-left origin of the visible CropBox, intrinsic rotation applied; `PageCachePdfSource` subtracts the visible-box origin through `read_visible_box_origin`, so offset CropBoxes and non-zero MediaBox origins line up with the rendered crop) plus OST inches; images carry `px_to_page_pts` and `page_pts_to_ost` affines `[a, b, c, d, e, f]` (`x' = a*x + c*y + e`, `y' = b*x + d*y + f`).
+- `render_sheet` is capped at 200 DPI and 1600 px on the long side. It accepts `overlay_ids` and returns `overlay_status: "not_supported_until_m1b"` without drawing them.
+- JSON over 256 KB, and PNGs whose base64 exceeds half of that, are written to `~/.ost_visualizer/mcp_takeoff_outputs/` and returned as a file reference with a preview.
+- M1a code imports no `ProjectWriteService`, undo service or writer (architecture test).
+
+Untrusted text:
+
+- Drawing text and sheet, condition, level and assumption text are returned as `{value, untrusted: true, truncated}`, capped at 500 characters after lone surrogates are replaced by U+FFFD, tab/newline/CR/VT/FF become spaces, and other control characters (Unicode Cc) and bidirectional formatting characters (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) are removed, and never placed in tool descriptions or prompts. Tool descriptions tell the client to treat them as data, never instructions. No tool executes free text; in-app approval is the final barrier.
+
+Threading:
+
+- Dispatch and model reads (later also writes, undo and preview) run on the GUI thread.
+- PDF text and segment extraction and crop rendering run on a worker thread under `pdfium_lock`; results return through a queued signal.
+- Crops use `PageCache.get_frame` plus banded `image_bands.convert_to_format`, and PNG encoding uses stdlib zlib (which releases the GIL). No single QImage operation exceeds `BAND_PIXELS`.
+
+Sidecar (levels, sheet registrations and assumptions; no Access or SQL schema change):
+
+- Location: `~/.ost_visualizer/ai_takeoff/bids/<bid_key>.json`, schema version 1, strict parsing. M1a only reads it (`JsonAiTakeoffSidecarRepository.load`). Level, page, registration and assumption identifiers must be 1-128 characters of `A-Z a-z 0-9 _ . : { } -`; anything else (free text, newlines, long strings) makes the file `corrupt`, so no identifier can carry instructions.
+- `bid_key` (the Step 0 decision; it replaces the plan's earlier "file GUID/size and name" wording): Access = `sha256("access|" + bid_uid)[:32]`; SQL Server = `sha256("sql_server|" + database_guid + "|" + bid_uid)[:32]` with the GUID lowercased. An empty SQL `database_guid` returns `unavailable_no_database_guid` and no sidecar, never the per-user fallback identity. File size and modification time are never part of the key.
+- The sidecar stores a fingerprint: `database_id`, bid name, page count and the first page's PDF file name. Same `database_id` -> `ok`. Different `database_id` but the same bid name and page count -> `rebind_required`. Anything else -> `fingerprint_mismatch` with an empty result. Unreadable files, files over 5 MB, unknown versions and files whose inner key differs -> `corrupt`. A sidecar is never written or overwritten on `rebind_required`, `fingerprint_mismatch` or `corrupt`.
+- `list_levels` and `list_assumptions` return `sidecar_status`: `ok`, `empty`, `rebind_required`, `fingerprint_mismatch`, `corrupt` or `unavailable_no_database_guid`. M1a only reports it; the rebind UI and the duplicate, delete and rebind lifecycle are M1b.
+- SQL bids: sidecars live on each computer. The M1b preview says that other users of the SQL database will not see them.
+
+Later milestones (planned, not implemented):
+
+- M1b: tools 8-15 (`propose_scale`, `find_regions`, `propose_element`, `apply_changeset`, `discard_changeset`, `undo_last_ai_changeset`, `render_3d`, `update_assumption`, which can never accept), the approval UI, a per-session condition folder on the current layer, sidecar writes (temp file plus replace) and the audit log.
+- Changesets: at most 200 takeoffs, 25 new conditions, 2,000 vertices per polygon, 20,000 per changeset and 5 open per bid; they expire 30 minutes after proposal. Only changes to the takeoffs, conditions and page scales a changeset touches invalidate it (`stale_changeset`). Applying one is one mutation request and one undo entry ("AI: ..."). Apply is blocked while a high-impact assumption (scale, thickness, elevation, a closing segment longer than 12 in) is unresolved. A missing thickness or elevation becomes an assumption, never a silent default. Elements follow the `@T` elevation suffix and the existing folder and layer conventions.
+- Sidecar lifecycle (M1b): duplicating a bid copies its sidecar and marks takeoff-linked assumptions `needs_review`; deleting a bid moves the sidecar to `~/.ost_visualizer/ai_takeoff/trash/` for 30 days; a moved or renamed database is rebound by the user after `rebind_required`.
+- Audit (M1b): `~/.ost_visualizer/ai_takeoff/audit/<bid_key>.jsonl`, append-only (time, tool, input hash, changeset summary, approver, outcome, assumption ids), never the token, images, paths or credentials; rotated at 10 MB, keeping 5 files or 365 days, with a user-only ACL. Export is opt-in and later.
+- With the Options > Export drop-elevation options on, OST/OSP/CSV exports lose AI elevations; `propose_export` (M5) warns.
+- M2 linework and text attributes; M3 tools 16-17 and the 2D boolean library decision (no third-party geometry dependency before M3); M4 levels and registration (tool 18); M5 `validate` and `propose_export` (tools 19-20); M6 SQL hardening, audit viewer and performance.
+
+Ownership map:
+
+- `ost_visualizer/mcp_takeoff/` owns the proxy: protocol, tool catalog, pipe client, output spill and entry point.
+- `application/dtos/ai_takeoff_dtos.py` owns the shared constants, command and argument table, envelopes, `UntrustedText`, `PageSnapshot` and `CropPlan` (stdlib only).
+- `domain/entities/ai_takeoff.py` owns the sidecar model, `ai_takeoff_bid_key` and fingerprint comparison.
+- `application/interfaces/i_ai_takeoff_sidecar_repository.py` and `infrastructure/persistence/repositories/json_ai_takeoff_sidecar_repository.py` own sidecar loading.
+- `application/services/ai_takeoff_read_service.py` owns the read queries, coordinate conversion, crop planning and sidecar status.
+- `presentation/services/ai_takeoff_pdf_source.py`, `ai_takeoff_crop_renderer.py` and `ai_takeoff_bridge.py` own PDF access, crops and the pipe bridge.
+- Tests: `tests/mcp_takeoff/`, the mirrored unit tests, `tests/integration/ai_takeoff/test_m1a_end_to_end.py` and `tests/architecture/test_ai_takeoff_rules.py`.
 
 ## Permission Model
 
@@ -1210,6 +1277,7 @@ License-required:
 - Takeoff selection, placement, movement, rotation, and deletion.
 - Imports/exports.
 - Bid, condition, page, cover-sheet, and master-data edits.
+- AI takeoff tools (`Feature.AI_TAKEOFF`, also off until enabled in Options > MCP Setup).
 
 Bid lock state also blocks bid-internal editing through `ActiveBidWriteGuard`; do not rely only on disabled UI controls. This covers the composite Access plan commands (`execute_plan_*_local`) as well as the legacy single-purpose commands; `DatabaseMutationResult` carries a value only for a `COMMITTED` outcome (the DTO rejects any other), and write commands must still check `outcome_status` before using it. Condition commands (create, update of any field, move, delete, duplicate and paste, renumber, and folder create, rename and delete) obey the same rule on both backends: Access returns a failed result and every SQL `queue_condition*` entry point raises `ActiveBidLockedError` at submission, except the database-wide Condition-type save, which neither backend guards (the handler only logs it; a Condition or folder rename also refreshes the sidebar); the Bid-owned Layer commands (insert, delete, reorder, rename, show, show all, page Area selection) and the Bid Areas save follow the same rule (`queue_layer_*`, `queue_all_layers_show`, `queue_bid_areas_save`, the `layer_show` and `area` page settings; the dialogs treat the refusal as a silent not-started save and keep their draft and lease), as do every page setting kind (`queue_page_settings`) and the plan commands (`queue_plan_geometry`, `queue_plan_properties`, `queue_plan_items_delete`, `queue_plan_items_paste`; their callers, including history replay, log one warning and restore the preview, selection and pending state without a dialog, and `queue_takeoff_placement` is rejected when the queued work runs), and the Cover Sheet save (`queue_cover_sheet_save`, keyed on the saved Bid) and Page deletion (`queue_pages_delete`, keyed on each owning Bid of the pages and refused as a whole when any is the locked active Bid; their callers log one warning with no dialog, keep the dialog draft and lease and clear the staged selection), while the default (template) Layer commands are never Bid-lock-blocked on either backend; the SQL writer transaction is the server-side check: after the operation-marker check and the sorted application locks, and before the operation, it refuses a write whose resources include a non-`bid` resource carrying the UID of a locked Bid (`REJECTED` with `rejection_reason` `bid_locked`, never `CONFLICT`; nothing is written, the transaction consumes no edit lease, and a committed retry is still recovered, not refused), while status change, delete, duplicate, move, master-data and import writes stay allowed by resource shape, and only `ProjectWriteService.queue_cancelled_placement_cleanup_delete` (the cleanup of a cancelled placement's provisional takeoffs; `DatabaseMutationRequest.bid_lock_exempt`, outside the request hash) is exempt; a NULL `JobStatuses.Locked` means locked and a dangling or NULL `JobStatusUID` means unlocked, matching the client, and the check reads without locking `JobStatuses`, so a Job Status `Locked` flag edited concurrently is an accepted race; older builds, raw DML and administrators stay out of scope, and the T-SQL of this check is not verified against a live server in this repository. Any other exception a plan queue entry point raises at submission (RuntimeError, ValueError, KeyError, ...) is never swallowed: the main-plan handler and the detached window first free the pending marks, the deferred selection, an unconsumed edit lease and the forward-mutation token and restore the preview like a rejected write, then re-raise the same exception object. A writer-side `bid_locked` refusal that reaches a queued callback (a write queued on a stale lock flag) is handled like a queue-time refusal: the callback reverts its optimistic state, a history entry stays `READY` (never `CONFLICTED`), no dialog opens, and the coordinator's `BID_LOCKED_REJECTION` notice logs one warning per refusal and re-resolves the active Bid's lock once per burst; the cancelled-placement cleanup calls the exempt entry, so a locked Bid never refuses it. The UI mirrors this for the Condition folder write controls (New Folder, rename and delete folder, Cut, paste of a cut, drag-move): `Feature.EDIT_CONDITION_STRUCTURE` is lock-blocked, while Copy and navigation (expand, collapse, select) stay enabled. Project-tree structure stays allowed on a locked Bid except moving, trashing or restoring the ACTIVE locked Bid itself and deleting its project (the move/trash/Restore/cut-paste commands of other Bids stay allowed): Access `move_bids` and `delete_projects` fail and SQL `queue_bids_move` and `queue_projects_delete` raise `ActiveBidLockedError` (permanent `delete_bids` is unguarded on both), their callers log one warning with no dialog, and the UI disables the matching controls for that Bid (`can_edit_bid_structure`, `can_delete_bids`, `can_delete_projects`, cut-paste).
 

@@ -8418,6 +8418,74 @@ class PdfTextSelectionTests(unittest.TestCase):
         view._use_full_window_crosshairs = False
         return view
 
+    def test_extracted_text_is_mapped_from_the_visible_box_origin(self):
+        import tempfile
+        from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+        from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
+            PDFRenderingService,
+            PdfTextRequest,
+        )
+        from tests.presentation.services.ai_takeoff_pdf_support import write_takeoff_pdf
+
+        cases = {
+            "crop box offset": (
+                "/MediaBox [0 0 612 792] /CropBox [100 100 512 692]",
+                412.0,
+                592.0,
+                (50.0, 192.0),
+            ),
+            "media box origin": (
+                "/MediaBox [50 50 662 842]",
+                612.0,
+                792.0,
+                (100.0, 342.0),
+            ),
+            "rotated crop box": (
+                "/MediaBox [0 0 612 792] /CropBox [100 100 512 692] /Rotate 90",
+                592.0,
+                412.0,
+                (400.0, 50.0),
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            for label, (boxes, width, height, (x_pts, y_pts)) in cases.items():
+                with self.subTest(label=label):
+                    pdf = write_takeoff_pdf(
+                        Path(directory) / f"{label}.pdf",
+                        texts=[(150, 500, 12, "GRID")],
+                        page_boxes=boxes,
+                    )
+                    service = PDFRenderingService.__new__(PDFRenderingService)
+                    service._page_cache = PageCache()
+                    try:
+                        result = service._execute_pdf_text(
+                            PdfTextRequest(
+                                "text-1", str(pdf), 0, 2, lambda _result: None
+                            )
+                        )
+                    finally:
+                        service._page_cache.clear()
+                    view = self._make_view()
+                    view._current_page.image_path = str(pdf)
+                    view._current_page.width_pts = width
+                    view._current_page.height_pts = height
+                    view._pdf_width_pts = width
+                    view._pdf_height_pts = height
+                    view._pdf_text_request_id = "text-1"
+                    view._pdf_text_request_source = ("main", str(pdf), 0)
+                    view._on_pdf_text_extracted(result)
+                    run = view._pdf_text_runs[0]
+                    self.assertEqual(run.text, "GRID")
+                    corner_x = run.left
+                    corner_y = run.bottom if label != "rotated crop box" else run.top
+                    self.assertAlmostEqual(corner_x / 2.0, x_pts, delta=4.0)
+                    self.assertAlmostEqual(corner_y / 2.0, y_pts, delta=4.0)
+                    first = run.chars[0]
+                    self.assertAlmostEqual(first.left, run.left, delta=1.0)
+                    self.assertAlmostEqual(first.top, run.top, delta=8.0)
+                    self.assertTrue(0.0 < run.bottom - run.top < 60.0)
+                    self.assertTrue(0.0 < run.right - run.left < 140.0)
+
     def test_maps_pdfium_text_box_to_plan_view_page_coordinates(self):
         view = self._make_view()
         raw_runs = [

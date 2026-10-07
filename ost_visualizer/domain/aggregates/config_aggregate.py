@@ -360,6 +360,7 @@ class ConfigAggregate:
             csv_export_drop_condition_elevation=bool(
                 config.csv_export_drop_condition_elevation
             ),
+            ai_takeoff_enabled=bool(config.ai_takeoff_enabled),
             default_text_font=fonts["default_text_font"],
             default_area_label_font=fonts["default_area_label_font"],
             default_dimension_annotation_font=(

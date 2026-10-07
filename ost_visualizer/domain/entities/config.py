@@ -92,6 +92,7 @@ class Config:
     pdf_elevation_callout_color: str = DEFAULT_ELEVATION_CALLOUT_COLOR
     ost_osp_export_drop_condition_elevation: bool = False
     csv_export_drop_condition_elevation: bool = False
+    ai_takeoff_enabled: bool = False
     default_text_font: FontDefinition = DEFAULT_TEXT_FONT
     default_area_label_font: FontDefinition = DEFAULT_AREA_LABEL_FONT
     default_dimension_annotation_font: FontDefinition = (
@@ -168,6 +169,7 @@ class Config:
             "csv_export_drop_condition_elevation": (
                 self.csv_export_drop_condition_elevation
             ),
+            "ai_takeoff_enabled": self.ai_takeoff_enabled,
             "default_text_font": self.default_text_font.to_dict(),
             "default_area_label_font": self.default_area_label_font.to_dict(),
             "default_dimension_annotation_font": (
@@ -333,6 +335,8 @@ class Config:
             config.csv_export_drop_condition_elevation = _config_bool(
                 data, "csv_export_drop_condition_elevation"
             )
+        if "ai_takeoff_enabled" in data:
+            config.ai_takeoff_enabled = _config_bool(data, "ai_takeoff_enabled")
         if "default_text_font" in data:
             config.default_text_font = FontDefinition.from_dict(
                 data["default_text_font"]

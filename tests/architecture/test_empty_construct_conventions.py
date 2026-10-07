@@ -16,6 +16,7 @@ def _python_paths():
         yield from root.rglob("*.py")
     yield REPOSITORY_ROOT / "Visualizer.py"
     yield REPOSITORY_ROOT / "McpServer.py"
+    yield REPOSITORY_ROOT / "McpTakeoffServer.py"
 
 
 def _body_without_docstring(node):

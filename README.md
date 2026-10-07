@@ -364,6 +364,50 @@ database is checked in OST Visualizer. The checked database list is stored in
 `~/.ost_visualizer/file_state.json`; unchecked or missing databases are not
 visible to MCP clients.
 
+### AI Takeoff Tools (preview)
+
+A second, opt-in MCP helper, `ostv-takeoff-mcp.exe`, lets an AI client read the
+bid that is open in the running desktop app so it can help with a concrete
+takeoff from structural PDFs. This first version is read-only. It offers seven
+tools: `list_sheets`, `render_sheet` (a PNG crop, at most 200 DPI and 1600 px),
+`list_text`, `list_segments`, `get_quantities`, `list_levels` and
+`list_assumptions`. Coordinates come back in page points and OST inches, and
+images include the pixel-to-page and page-to-OST transforms. Text from drawings
+and names is marked `untrusted` and capped at 500 characters, so the client
+treats it as data, never as instructions. Large results are saved under
+`~/.ost_visualizer/mcp_takeoff_outputs/` and returned as a file reference.
+
+To use it:
+
+1. Open `Tools > Options... > MCP Setup`, turn on **Allow AI takeoff tools while
+   OST Visualizer is open**, and click OK. The option is off by default and needs
+   a license and an open bid.
+2. Copy the **AI takeoff** JSON from the same tab into your MCP client
+   configuration and restart the client:
+
+```json
+{
+  "mcpServers": {
+    "ost-visualizer-takeoff": {
+      "command": "C:\\Program Files\\OST Visualizer\\ostv-takeoff-mcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+The helper talks only to the running app, through a local pipe that only your
+Windows account can open and a session key the app rotates each time it starts.
+You do not copy the key anywhere. If the app is closed or the option is off, the
+tools report that OST Visualizer is not running with AI takeoff enabled, or that
+the feature is turned off.
+
+Developers can run the source checkout proxy directly:
+
+```powershell
+.\venv\Scripts\python.exe -m ost_visualizer.mcp_takeoff.main
+```
+
 ## Repository Layout
 
 This repository is the desktop client checkout:
@@ -372,6 +416,7 @@ This repository is the desktop client checkout:
 - App package: `ost_visualizer`
 - Entry point: `Visualizer.py`
 - MCP entry point: `McpServer.py`
+- AI takeoff MCP entry point: `McpTakeoffServer.py`
 - License server implementation: outside this client checkout
 
 Run client setup, development, architecture, and build commands from the repository root.
@@ -396,13 +441,14 @@ For release builds:
 ```powershell
 New-Item -ItemType Directory -Force .secrets
 # Copy your license_public_key.pem into .secrets\license_public_key.pem first.
-.\scripts\build.ps1           # Nuitka standalone builds -> dist_visualizer/ and dist_mcp/
+.\scripts\build.ps1           # Nuitka standalone builds -> dist_visualizer/, dist_mcp/ and dist_takeoff_mcp/
 .\scripts\build-visualizer.ps1 # Desktop app only -> dist_visualizer/
 .\scripts\build-mcp.ps1        # MCP helper only -> dist_mcp/
+.\scripts\build-takeoff-mcp.ps1 # AI takeoff MCP helper only -> dist_takeoff_mcp/
 .\build-msi.ps1               # Package into MSI installer
 ```
 
-The combined build copies the MCP helper into the desktop distribution for MSI
+The combined build copies both MCP helpers into the desktop distribution for MSI
 packaging. The component build scripts leave their outputs independent.
 
 For development or manual repair, per-user associations can be managed without

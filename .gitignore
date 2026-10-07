@@ -19,6 +19,7 @@ cpp_extensions/qpdf*/
 # Nuitka build output
 dist_visualizer/
 dist_mcp/
+dist_takeoff_mcp/
 
 # Installer creator script
 build-msi.ps1

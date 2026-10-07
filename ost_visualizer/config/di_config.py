@@ -1,7 +1,12 @@
 from pathlib import Path
 from typing import Optional
 from ..application.app_controller import AppControllerBuilder
+from ..application.dtos.ai_takeoff_dtos import (
+    AI_TAKEOFF_DIR_NAME,
+    AI_TAKEOFF_SIDECAR_DIR_NAME,
+)
 from ..application.service_container import ServiceContainer
+from ..application.services.ai_takeoff_read_service import AiTakeoffReadService
 from ..application.services.conflict_resolution_service import ConflictResolutionService
 from ..application.services.database_capability_service import DatabaseCapabilityService
 from ..application.services.database_concurrency_token_service import (
@@ -22,6 +27,9 @@ from ..infrastructure.database.descriptor_registry import DatabaseDescriptorRegi
 from ..infrastructure.database.entity_version_reader import DatabaseEntityVersionReader
 from ..infrastructure.events.event_bus import EventBus
 from ..infrastructure.logging.logger_factory import LoggerFactory
+from ..infrastructure.persistence.repositories.json_ai_takeoff_sidecar_repository import (
+    JsonAiTakeoffSidecarRepository,
+)
 from ..infrastructure.persistence.repositories.json_pending_sql_operation_repository import (
     JsonPendingSqlOperationRepository,
 )
@@ -42,7 +50,9 @@ from ..infrastructure.sql.workspace_state_repository import SqlWorkspaceStateRep
 from ..presentation.managers.annotation_view_manager import QtAnnotationViewManager
 from ..presentation.managers.main_hotlink_view_manager import QtMainHotlinkViewManager
 from ..presentation.managers.view_window_manager import QtViewWindowManager
+from ..presentation.services.ai_takeoff_pdf_source import PageCachePdfSource
 from ..presentation.services.qt_scene_notifier import QtSceneNotifier
+from ..presentation.visualization.pdf.page_cache import PageCache
 from ..presentation.utils.qt_callback_bridge import OstSignaler, QtCallbackBridge
 from ..presentation.utils.qt_message_notifier import QtMessageNotifier
 from ..presentation.utils.qt_window_icon_provider import QtWindowIconProvider
@@ -202,4 +212,18 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         operation_journal=JsonPendingSqlOperationRepository(logger=logger),
     )
     container.register_instance("sql_collaboration_coordinator", collaboration)
+    container.register_singleton(
+        "ai_takeoff_pdf_source", lambda: PageCachePdfSource(PageCache())
+    )
+    container.register_singleton(
+        "ai_takeoff_read_service",
+        lambda: AiTakeoffReadService(
+            container.get("project_data_service"),
+            container.get("ai_takeoff_pdf_source"),
+            JsonAiTakeoffSidecarRepository(
+                get_app_data_dir() / AI_TAKEOFF_DIR_NAME / AI_TAKEOFF_SIDECAR_DIR_NAME
+            ),
+            descriptor_registry.resolve,
+        ),
+    )
     return container

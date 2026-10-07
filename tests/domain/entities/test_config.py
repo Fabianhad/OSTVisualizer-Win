@@ -203,3 +203,21 @@ class ConditionElevationExportOptionTests(unittest.TestCase):
                 with self.subTest(field=field, value=value):
                     with self.assertRaisesRegex(TypeError, field):
                         Config.from_dict({field: value})
+
+
+class AiTakeoffOptionTests(unittest.TestCase):
+    def test_ai_takeoff_defaults_off_and_legacy_payloads_keep_it_off(self):
+        self.assertIs(Config().ai_takeoff_enabled, False)
+        self.assertIs(
+            Config.from_dict({"show_toolbar_text": False}).ai_takeoff_enabled, False
+        )
+        self.assertIs(Config().to_dict()["ai_takeoff_enabled"], False)
+
+    def test_ai_takeoff_round_trips_and_rejects_non_boolean_values(self):
+        enabled = Config(ai_takeoff_enabled=True)
+        self.assertIs(enabled.to_dict()["ai_takeoff_enabled"], True)
+        self.assertEqual(Config.from_dict(enabled.to_dict()), enabled)
+        for value in ("true", 1, None):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(TypeError, "ai_takeoff_enabled"):
+                    Config.from_dict({"ai_takeoff_enabled": value})

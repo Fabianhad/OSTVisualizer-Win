@@ -36,6 +36,7 @@ class Feature(Enum):
     CREATE_DATABASE = auto()
     EDIT_MASTER_DATA = auto()
     EDIT_ANNOTATION_TEXT = auto()
+    AI_TAKEOFF = auto()
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,7 @@ _LICENSE_REQUIRED: FrozenSet[Feature] = frozenset(
         Feature.CREATE_DATABASE,
         Feature.EDIT_MASTER_DATA,
         Feature.EDIT_ANNOTATION_TEXT,
+        Feature.AI_TAKEOFF,
     }
 )
 _REQUIRES_BID: FrozenSet[Feature] = frozenset(
@@ -146,6 +148,7 @@ _REQUIRES_BID: FrozenSet[Feature] = frozenset(
         Feature.EDIT_CONDITION,
         Feature.EDIT_BID_JOB_STATUS,
         Feature.EDIT_ANNOTATION_TEXT,
+        Feature.AI_TAKEOFF,
     }
 )
 _REQUIRES_ANY_SELECTION: FrozenSet[Feature] = frozenset(

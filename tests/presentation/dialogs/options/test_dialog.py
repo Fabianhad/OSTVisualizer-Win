@@ -11,6 +11,7 @@ from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config,
     build_codex_config_toml,
     build_codex_mcp_add_command,
+    TAKEOFF_MCP_SERVER_NAME,
 )
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.dialogs.options.font_dialog import FontDialog
@@ -757,6 +758,45 @@ class DialogPreferenceTests(unittest.TestCase):
         )
         self.assertIn("Copied to clipboard.", dialog._mcp_setup_tab.status_label.text())
         self.assertFalse(apply_button.isEnabled())
+        dialog.close()
+
+    def test_mcp_setup_tab_offers_an_opt_in_ai_takeoff_entry(self):
+        helper_path = Path("C:/Tools/ostv-mcp.exe")
+        takeoff_path = Path("C:/Tools/ostv-takeoff-mcp.exe")
+        dialog = OptionsDialog(
+            Config(),
+            mcp_helper_path=helper_path,
+            mcp_takeoff_helper_path=takeoff_path,
+        )
+        tab = dialog._mcp_setup_tab
+        texts = _preferences_support__visible_texts(dialog)
+        self.assertIn("AI takeoff (read-only preview)", texts)
+        self.assertIs(dialog._ai_takeoff_check, tab.ai_takeoff_check)
+        self.assertFalse(tab.ai_takeoff_check.isChecked())
+        self.assertEqual(
+            tab.takeoff_config_edit.toPlainText(),
+            build_claude_desktop_config(takeoff_path, TAKEOFF_MCP_SERVER_NAME),
+        )
+        self.assertNotIn("token", tab.takeoff_config_edit.toPlainText().lower())
+        apply_button = _preferences_support__apply_button(dialog)
+        tab.copy_takeoff_button.click()
+        self.assertEqual(
+            QtWidgets.QApplication.clipboard().text(),
+            build_claude_desktop_config(takeoff_path, TAKEOFF_MCP_SERVER_NAME),
+        )
+        self.assertFalse(apply_button.isEnabled())
+        dialog.close()
+
+    def test_ai_takeoff_check_loads_saves_and_marks_apply_dirty(self):
+        dialog = OptionsDialog(Config(ai_takeoff_enabled=True))
+        self.assertTrue(dialog._ai_takeoff_check.isChecked())
+        apply_button = _preferences_support__apply_button(dialog)
+        self.assertFalse(apply_button.isEnabled())
+        dialog._ai_takeoff_check.setChecked(False)
+        self.assertTrue(apply_button.isEnabled())
+        self.assertFalse(dialog._collect_widget_config().ai_takeoff_enabled)
+        dialog._ai_takeoff_check.setChecked(True)
+        self.assertTrue(dialog._collect_widget_config().ai_takeoff_enabled)
         dialog.close()
 
     def test_options_dialog_result_path_runs_lifecycle_cleanup(self):

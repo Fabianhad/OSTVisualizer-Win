@@ -1293,6 +1293,128 @@
       ],
       "release_evidence": "none",
       "affected_result": "Same pixels; GUI thread blocked about 25 ms instead of about 65 ms per large frame"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/mcp_context_bridge.py",
+      "defect": "The live-context pipe was readable by every local account and anonymous (default QLocalServer DACL with Everyone and Anonymous entries)",
+      "proof": "pywin32 DACL read-back listed S-1-5-18, S-1-5-32-544, the user SID, S-1-1-0 and S-1-5-7 before the fix",
+      "fix": "QLocalServer.SocketOption.UserAccessOption before listen; DACL lists only the current user SID",
+      "tests": [
+        "McpContextBridgePipeTests.test_pipe_access_list_grants_only_the_current_user",
+        "McpContextBridgePipeTests.test_read_server_client_of_the_same_user_still_gets_live_context"
+      ],
+      "release_evidence": "The bridge shipped in releases since 2026-05 (d772f7e, before v1.2.6.1); CHANGELOG Fixed entry",
+      "affected_result": "Only the Windows user running the app can read its live context; same-user MCP clients unchanged"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_takeoff_pdf_source.py",
+      "defect": "Text and segment coordinates ignored the visible-box (CropBox/MediaBox) origin",
+      "proof": "Probe and tests: offset CropBox and MediaBox origins put reported geometry on white pixels or outside the crop",
+      "fix": "Subtract the native visible_box origin",
+      "tests": [
+        "PageCachePdfSourceTests.test_raw_coordinates_start_at_the_visible_box_origin",
+        "ReportedGeometryMatchesTheRenderTests.test_reported_segments_land_on_drawn_pixels_for_offset_and_rotated_boxes"
+      ],
+      "release_evidence": "unreleased (M1a)",
+      "affected_result": "list_text and list_segments line up with render_sheet on cropped and offset pages"
+    },
+    {
+      "file": "ost_visualizer/mcp_takeoff/main.py; ost_visualizer/mcp_takeoff/protocol.py",
+      "defect": "cp1252 stdio crashed or garbled the proxy; deep JSON ended the loop",
+      "proof": "Subprocess test: UnicodeEncodeError exit; protocol test: RecursionError",
+      "fix": "UTF-8-sig stdin with replacement; ASCII transport output; RecursionError -> -32700",
+      "tests": [
+        "MainTests.test_real_stdio_is_utf8_whatever_the_windows_code_page",
+        "MainTests.test_main_switches_code_page_stdio_to_utf8",
+        "JsonRpcStdioServerTests.test_deeply_nested_lines_get_a_parse_error_and_the_loop_continues",
+        "JsonRpcStdioServerTests.test_strict_utf8_stdout_survives_lone_surrogates_from_a_client"
+      ],
+      "release_evidence": "unreleased (M1a)",
+      "affected_result": "Proxy keeps serving whatever the code page or input"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_takeoff_bridge.py",
+      "defect": "Deep JSON and lone surrogates raised inside the slot; late worker emit raised on its thread (crash reports)",
+      "proof": "Bridge tests timed out or captured RuntimeError",
+      "fix": "Catch RecursionError; ASCII response JSON; guard the emit",
+      "tests": [
+        "BridgeProtocolTests.test_deeply_nested_requests_get_an_error_instead_of_escaping_the_slot",
+        "BridgeProtocolTests.test_results_with_lone_surrogates_are_still_delivered",
+        "BridgeProtocolTests.test_a_worker_finishing_after_the_bridge_is_destroyed_raises_nothing"
+      ],
+      "release_evidence": "unreleased (M1a)",
+      "affected_result": "Every request gets an answer; no crash report on shutdown races"
+    },
+    {
+      "file": "ost_visualizer/domain/entities/ai_takeoff.py; ost_visualizer/application/dtos/ai_takeoff_dtos.py",
+      "defect": "Sidecar identifiers unbounded and unmarked; untrusted text could hold lone surrogates",
+      "proof": "Domain and DTO tests",
+      "fix": "Identifier pattern (1-128 safe characters); surrogates replaced with U+FFFD",
+      "tests": [
+        "SidecarSerializationTests.test_identifiers_are_short_tokens_never_free_text",
+        "UntrustedTextTests.test_lone_surrogates_are_replaced_so_the_value_is_always_utf8"
+      ],
+      "release_evidence": "unreleased (M1a)",
+      "affected_result": "Only marked, capped text can carry free text to the AI"
+    },
+    {
+      "file": "ost_visualizer/mcp_takeoff/proxy.py",
+      "defect": "Large PNG save failure raised out of call_tool",
+      "proof": "Proxy test with Path.open failing",
+      "fix": "Catch OSError, report file_saved False",
+      "tests": [
+        "TakeoffProxyTests.test_png_save_failures_still_return_the_result_without_the_image"
+      ],
+      "release_evidence": "unreleased (M1a)",
+      "affected_result": "Affines and metadata still returned when the outputs folder is unwritable"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/plan_view/components/placement_mode.py; ost_visualizer/presentation/components/plan_view/view.py; ost_visualizer/presentation/visualization/pdf/services/pdf_rendering_service.py; ost_visualizer/presentation/visualization/pdf/pdf_visible_origin.py",
+      "defect": "Snap to PDF Lines and PDF text selection were offset on pages whose visible box does not start at (0, 0)",
+      "proof": "Failing real-PDF tests on offset CropBox, MediaBox origin and rotated offset CropBox",
+      "fix": "Subtract read_visible_box_origin before the existing raw-to-page conversion",
+      "tests": [
+        "PdfSnapVisibleBoxOriginTests.test_snap_segments_start_at_the_visible_box_origin",
+        "PdfTextSelectionTests.test_extracted_text_is_mapped_from_the_visible_box_origin",
+        "ReadVisibleBoxOriginTests"
+      ],
+      "release_evidence": "Released behavior (snapping and text selection predate this work); CHANGELOG Fixed entry",
+      "affected_result": "Snapping and text selection line up with cropped and offset PDF pages"
+    },
+    {
+      "file": "ost_visualizer/infrastructure/pdf_metadata_provider.py",
+      "defect": "Read server PDF text and vector coordinates were absolute user space, outside the reported crop size on offset pages",
+      "proof": "Failing provider test on four fixtures",
+      "fix": "Subtract the visible-box origin from an importlib-loaded ost_pdf_writer reader",
+      "tests": [
+        "PdfMetadataVisibleBoxOriginTests.test_text_and_segments_are_relative_to_the_visible_box_origin"
+      ],
+      "release_evidence": "Released read server; CHANGELOG Fixed entry",
+      "affected_result": "Read server PDF summaries measure from the visible page corner"
+    },
+    {
+      "file": "ost_visualizer/mcp_takeoff/pipe_client.py; ost_visualizer/application/dtos/ai_takeoff_dtos.py",
+      "defect": "Proxy blocked forever on an app that never answered",
+      "proof": "Probe still blocked after 3 s; fake pywin32 server tests",
+      "fix": "PeekNamedPipe polling with PIPE_READ_TIMEOUT_SECONDS and app_timeout",
+      "tests": [
+        "HungAppTests"
+      ],
+      "release_evidence": "unreleased (M1a)",
+      "affected_result": "A hung app gives a clear timeout"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_takeoff_bridge.py; ost_visualizer/application/dtos/ai_takeoff_dtos.py",
+      "defect": "Unbounded worker threads and connections; untrusted text kept control and bidi characters",
+      "proof": "Capacity and stripping tests",
+      "fix": "Worker, connection and idle caps with busy errors; Cc and bidi stripping",
+      "tests": [
+        "BridgeCapacityTests",
+        "UntrustedTextTests.test_control_and_bidi_formatting_characters_are_stripped",
+        "UntrustedTextTests.test_stripping_happens_before_the_length_cap"
+      ],
+      "release_evidence": "unreleased (M1a)",
+      "affected_result": "Bounded load per session; cleaner untrusted text"
     }
   ],
   "removed_tests": [
@@ -14424,6 +14546,91 @@
         "6 tests in ExportTabSideBySideLayoutTests"
       ],
       "validation": "Full suite: 12990 tests run, 42 skipped, OK. tools/check_architecture.py: no violations. compileall exit 0. git diff --check (cr-at-eol) clean. In-memory mutants (unequal stretch, names in top row, row spacing 0, vertical stack, callouts bottom-aligned) all killed; nothing mutated on disk."
+    },
+    {
+      "batch": "ai-takeoff-m1a",
+      "findings": [
+        "M1a of the AI takeoff MCP plan implemented as a read-only slice: stdlib proxy ostv-takeoff-mcp.exe (McpTakeoffServer.py -> ost_visualizer.mcp_takeoff.main) -> named pipe OSTVisualizerTakeoffBridge.v1 -> TakeoffCommandBridge in MainWindow. Tools 1-7 only: list_sheets, render_sheet, list_text, list_segments, get_quantities, list_levels, list_assumptions. The read-only ost-visualizer server and its tests are unchanged (38 tools, 7 prompts, 1 resource, 4 templates).",
+        "Step 0 decisions applied: Access bid_key = sha256('access|' + bid_uid)[:32]; SQL = sha256('sql_server|' + lowercased database_guid + '|' + bid_uid)[:32]; empty SQL database_guid -> unavailable_no_database_guid with no repository read (never the per-user fallback identity). Fingerprint stored in the sidecar (database_id, bid name, page count, first page PDF file name): same database_id -> ok, different database_id with same bid name and page count -> rebind_required, otherwise fingerprint_mismatch with empty data. M1a never writes a sidecar; the repository exposes only load, and tests compare bytes and mtime_ns for corrupt, mismatch and found files.",
+        "Security: QLocalServer UserAccessOption; a pywin32 read-back shows the pipe DACL grants only the current user SID (the existing context bridge with default options grants Everyone and Anonymous read; observed only, not changed). Per-start session token in ~/.ost_visualizer/ai_takeoff/session.token compared with hmac.compare_digest; stale tokens rejected; the token never appears in logs, responses or output files; cleanup removes only this session's token. Closed command table and argument allow-lists: update_assumption, apply and approve return unknown_command before any service call. Access also requires Config.ai_takeoff_enabled (Options > MCP Setup, default off) and Feature.AI_TAKEOFF (license plus open bid).",
+        "Threading: model reads on the GUI thread; PDF text, segments and crop rendering on a worker thread with results via a queued signal; crops use banded image_bands conversion and a stdlib zlib PNG encoder so no single GIL-holding QImage call exceeds BAND_PIXELS. Payload cap 256 KB inline; larger JSON and PNGs are spilled to ~/.ost_visualizer/mcp_takeoff_outputs/ with a preview. overlay_ids accepted and answered with overlay_status not_supported_until_m1b.",
+        "Layering: shared types (AiTakeoffRequestError, PageSnapshot, CropPlan) live in the stdlib-only application/dtos/ai_takeoff_dtos.py because presentation may not import application/services and the proxy may import only that module. tools/check_architecture.py needed no change (mcp_server is not declared there either); proxy isolation is enforced by tests/architecture/test_ai_takeoff_rules.py with a fresh-interpreter module list.",
+        "In-memory mutation checks (mutrun import hook, nothing written to disk): 42 mutants over the bridge, read service, domain, repository, proxy, pipe client, DTOs, access manager and MainWindow predicate; 41 killed. First-pass survivors service-intersects, repo-size-unchecked, dtos-untrusted-cap and mainwin-access-ignored were killed by added tests (box filter on all four sides, valid JSON over the 5 MB cap, the 500-character cap, feature_denied with the option on but no bid or no license). Equivalent: service-first-pdf (basename versus full path of the current first PDF source), because the Step 0 load rules compare only database_id, bid name and page count; the PDF source is stored for the M1b rebind UI.",
+        "Plan section 6 corrected in AGENTS.md: bid_key is no longer described as file GUID/size and name; the Step 0 rules replace it.",
+        "Test-scope note: tests/architecture/test_empty_construct_conventions.py now also scans McpTakeoffServer.py beside McpServer.py; tests/integration/lifecycle/test_main_window_startup.py cleans up the new bridge."
+      ],
+      "tests_added": [
+        "140 tests: 131 in 13 new modules, 9 added to existing modules"
+      ],
+      "validation": "2026-10-07 AI takeoff M1a: focused 131 OK; affected suites OK; full suite 13130 OK (35 skipped, 246 s); check_architecture PASS; compileall 0; git diff --check clean (cr-at-eol) and new untracked files whitespace-clean; 42 in-memory mutants, 41 killed, 1 equivalent",
+      "limitations": [
+        "Cross-user pipe refusal is unverified: only the DACL read-back (current user SID only) was tested; a connection attempt from a second Windows account was not run.",
+        "Claude Desktop was not run against the packaged ostv-takeoff-mcp.exe; the Nuitka build of the proxy was not executed. The end-to-end test drives the real proxy, pipe and MainWindow in-process.",
+        "The end-to-end F1 bid is seeded by patching the real ProjectDataService read methods, not by opening an Access database.",
+        "SQL Server sidecar keys are covered with descriptors only; no live SQL database."
+      ]
+    },
+    {
+      "batch": "mcp-context-bridge-user-acl",
+      "findings": [
+        "The live-context pipe OSTVisualizerMcpBridge.v1 was created with default QLocalServer options; a pywin32 read-back showed its DACL granted SYSTEM, Administrators, the user, Everyone and Anonymous, so any local account (and anonymous) could read the live UI snapshot. Fix: setSocketOptions(UserAccessOption) in McpContextBridge.__init__; the DACL now lists only the current user's SID. get_context request handling and the snapshot are unchanged; the read server (38/7/1/4) and its tests are unchanged.",
+        "Client compatibility: ostv-mcp.exe (mcp_server/bridge_client.py) opens \\\\.\\pipe\\OSTVisualizerMcpBridge.v1 with CreateFileW GENERIC_READ|GENERIC_WRITE using the token of the process that launched it. MCP clients (Claude Desktop, Cursor, Codex CLI) start it as a child process of the same Windows user, so it is granted; this path is exercised by the new round-trip test. Same user in another logon session or elevated versus not elevated keeps the same user SID and is still granted (not exercised). Refused now: a helper running under a different account (runas, services, scheduled tasks under another user, another user's session) and processes whose restricted or sandboxed token cannot use the user SID; these previously could connect through the Everyone ACE. AppContainer clients were refused before and after. A refused helper reports bridge_unavailable from get_context and its registry-backed tools keep working.",
+        "In-memory mutation (mutrun import hook): removing the setSocketOptions call and switching to WorldAccessOption are both killed by the ACL test."
+      ],
+      "tests_added": [
+        "2 tests added to tests/presentation/services/test_mcp_context_bridge.py"
+      ],
+      "validation": "2026-10-07 context bridge ACL: focused 33 OK; tests/mcp_server 137 OK; tests/integration/mcp 13 OK; tests/architecture 97 OK (3 skipped); full suite 13132 OK (35 skipped, 248 s); check_architecture PASS; compileall 0; git diff --check clean (cr-at-eol)",
+      "limitations": [
+        "Refusal of a different Windows account and behavior under restricted or sandboxed tokens (for example an MCP client that sandboxes its helpers) were not run; only the DACL read-back and the same-user round trip were tested."
+      ]
+    },
+    {
+      "batch": "ai-takeoff-m1a-bug-hunt",
+      "findings": [
+        "Scope: all uncommitted files (M1a AI takeoff slice and the context-bridge pipe restriction); nothing unrelated found. Baseline before the hunt: full suite 13132 OK (35 skipped), check_architecture PASS, compileall 0, git diff --check clean.",
+        "D1 (fixed) PDF coordinates on pages whose visible box does not start at (0, 0): ost_pdf text runs and path segments are in absolute PDF user space, but the read service converted them as if the CropBox started at the origin. Probe: CropBox [100 100 512 692], line at raw (150..350, 600) reported at page y -8 instead of 92 (outside the crop); MediaBox [50 50 662 842] reported 50 pt off on both axes onto white pixels. Fix: PageCachePdfSource subtracts the visible-box origin from the native page geometry (ost_pdf_writer get_page_geometries visible_box) for text runs and segments. Rotations 90 and 270 were already correct. The same raw-to-page math exists in committed placement_mode snapping and the read server's PDF summaries; not touched (outside the uncommitted scope), reported as suspected.",
+        "D2 (fixed) proxy stdio used the Windows console code page (cp1252): any response containing a character outside cp1252 (drawing text such as the >= sign) raised UnicodeEncodeError and ended the proxy; UTF-8 input bytes undefined in cp1252 also ended it, other non-ASCII input was garbled, and a leading BOM gave a parse error. Fix: stdin reconfigured to utf-8-sig with errors=replace, and the JSON-RPC transport writes ASCII-only JSON (protocol _encode default ensure_ascii), so the stdout code page no longer matters. A stdout reconfigure was tried and removed as redundant (equivalent mutant).",
+        "D3 (fixed) deeply nested JSON: RecursionError was not caught by the proxy's line parser (process exit) or the bridge's request parser (exception escaping the Qt slot, which the app's sys.excepthook turns into a crash report; the client timed out). Both now return a parse error / invalid_argument.",
+        "D4 (fixed) a worker finishing after the bridge object was destroyed raised RuntimeError when emitting its result; the app's threading.excepthook writes a crash report for it. The emit is now guarded and the result dropped.",
+        "D5 (fixed) lone surrogates: the bridge encoded responses with ensure_ascii=False plus strict UTF-8, so any string with a lone surrogate (reachable through a sidecar JSON file) raised in the slot and the client never got an answer. The bridge now sends ASCII JSON, and UntrustedText replaces lone surrogates with U+FFFD.",
+        "D6 (fixed, prompt injection) sidecar identifiers (level uid, registration page and level uid, assumption uid) were accepted as any string and returned to the AI unmarked and unbounded, so a tampered sidecar could carry instruction text outside the untrusted wrapper. Identifiers must now be 1-128 characters of A-Z a-z 0-9 _ . : { } -; otherwise the sidecar is corrupt.",
+        "D7 (fixed) a large PNG whose artifact save failed raised OSError out of call_tool (internal error, whole result lost) while the JSON spill already degraded to a preview. It now returns the result with file_saved False and the error text.",
+        "Checked without finding a defect: both pipes grant only the current user SID; token compare uses hmac.compare_digest; token is per start, never in argv, logs, responses or exception messages (logs use exception type names only); single-instance guard in main.py stops a second app instance before MainWindow, so there is no token-file race; undeclared commands, unknown arguments, unhashable argument types, path-like page_uid values, tampered cursors (negative, exponent, huge, non-ASCII digits) and non-finite numbers are rejected or bounded; page lookups are scoped to the open bid's model; quantity and coordinate paths are shared by Access and SQL; OST 2D coordinates are a pure scale of page points (user rotation and flip apply only to 3D and export), so page_pts_to_ost is correct; crop caps and invalid crops are enforced; the takeoff proxy has the same stdlib closure (dataclasses, inspect, token) as the shipped read helper, so the shared Nuitka nofollow list is not a new risk; MSI harvests Visualizer.dist, so the copied proxy is packaged.",
+        "In-memory mutation (mutrun import hook; nothing written to disk): 19 mutants over the fixes; after strengthening the visible-box test (top and right of text runs) and adding the in-process cp1252 main test, 18 killed and 1 removed as redundant code (stdout reconfigure).",
+        "Pre-existing unused imports were found only in committed parts of tests/presentation/dialogs/options/test_dialog.py, tests/presentation/managers/test_ui_access_manager.py and tests/presentation/test_main_window.py; not touched."
+      ],
+      "tests_added": [
+        "12 tests added to 7 modules of the uncommitted M1a slice"
+      ],
+      "validation": "2026-10-07 bug hunt: focused 157 OK; mcp_server 137, mcp_takeoff 39, integration/mcp 13, integration/lifecycle 38, presentation/services 224, presentation/visualization 406, domain 226, architecture 97 (3 skipped) OK; full suite 13144 OK (35 skipped, 248 s); check_architecture PASS; compileall 0; git diff --check clean and untracked files whitespace-clean",
+      "limitations": [
+        "Suspected, not reproduced or not fixed: no read timeout in the proxy pipe client if the app stops answering; no cap on concurrent worker threads or idle sockets for a token holder (same user only); a worker in pdfium during interpreter exit (daemon thread) could crash at shutdown; the read-only commands run get_quantities and the sidecar parse (up to 5 MB) on the GUI thread, which can exceed the 10 ms budget on large bids or sidecars; the worker holds pdfium_lock during extraction, which can delay GUI-thread placement snapping that also takes the lock; full-page vector extraction is unbounded in memory before pagination; output artifacts are never pruned (same as the read server); pagination is by index, so pages shift if the bid changes between calls.",
+        "Suspected outside scope (committed code): placement_mode snapping and the read server's PDF summaries use the same raw-to-page conversion without the visible-box origin; the read server reads stdin with the console code page.",
+        "Not exercised: a second Windows user (pipe name collision on Remote Desktop servers means only the first user's app can listen; others get app_not_running), restricted or sandboxed client tokens, the Nuitka-built proxy and Claude Desktop.",
+        "UntrustedText keeps control and bidirectional formatting characters (JSON-escaped in transport); flagged as a hardening option, not changed."
+      ]
+    },
+    {
+      "batch": "ai-takeoff-follow-ups-origin-timeout-caps",
+      "findings": [
+        "Follow-up 1 reproduced with failing tests first on the offset-CropBox, non-zero-MediaBox and rotated offset-CropBox fixtures: native ost_pdf text and path extraction returns absolute PDF user space, and every caller that maps it onto the page ignored the visible-box origin. Affected callers: (1) placement_mode._build_pdf_snap_segments (Snap to PDF Lines in Main and detached plan views), off by the box origin; (2) PDFRenderingService._execute_pdf_text -> TakeoffPlanView._on_pdf_text_extracted/_map_pdf_text_runs (PDF text hover, selection and copy, including overlay PDFs, since the origin is read for the requested file and page), off by 100 pt (CropBox) and 50 pt (MediaBox); (3) NativePdfMetadataProvider, the read server's source for McpReadService PDF text summaries, page text search, vector summaries and page context, which reported coordinates outside the reported crop size; snap point counts and orientation buckets are translation-invariant and unchanged; (4) the AI takeoff PageCachePdfSource, already fixed in the bug hunt, now uses the shared helper. Rotation handling was already right in all callers. Not affected: the PDF exporter (already uses visible_box), page rendering and the read server's page info.",
+        "Fix: presentation/visualization/pdf/pdf_visible_origin.py read_visible_box_origin (Qt-free, ost_pdf_writer get_page_geometries visible_box, (0, 0) when the geometry cannot be read, warning with the exception type only) used by placement mode, the rendering service (on the render worker; the origin travels in the text payload, so the GUI thread does no extra parsing for text) and the AI takeoff PDF source; NativePdfMetadataProvider gets its own importlib-loaded geometry reader because infrastructure must not import presentation, matching how it already loads ost_pdf. Placement mode reads the geometry on the GUI thread once per cached snap build, next to its existing pdfium extraction there.",
+        "Follow-up 2: the proxy pipe client blocked forever when the app accepted a request but never answered (probe: still blocked after 3 s). Reads now poll PeekNamedPipe against a deadline (PIPE_READ_TIMEOUT_SECONDS = 120.0 in ai_takeoff_dtos, client parameter read_timeout_s) and return app_timeout with a clear message. Writes are not timed: requests are at most 64 KB and the bridge reads them from its event loop.",
+        "Follow-up 3: the bridge now caps worker jobs (MAX_CONCURRENT_WORKERS = 2, counted on the GUI thread, released when the result is handled) and open connections (MAX_OPEN_CONNECTIONS = 8, released on disconnect); extras get busy. A connection without a complete request after IDLE_REQUEST_TIMEOUT_MS (10 s) is answered with invalid_argument and closed. GUI-thread commands are not limited by the worker cap. UntrustedText now maps tab/newline/CR/VT/FF to spaces and removes Unicode Cc controls and bidi formatting characters before the 500-character cap.",
+        "In-memory mutation (mutrun import hook; nothing written to disk): 31 mutants over the helper, placement mode, plan view, rendering service, read-server provider, pipe client, bridge caps and text stripping; all killed after adding the asymmetric CropBox cases (helper and provider) and the character-box and text-size checks.",
+        "Existing test updated: test_pdf_rendering_service pins the text payload exactly and now includes visible_origin. test_empty_construct_conventions required a docstring body on the new PipeReadTimeout exception."
+      ],
+      "tests_added": [
+        "15 tests: 3 in 1 new module, 12 added to 6 existing modules"
+      ],
+      "validation": "2026-10-07 follow-ups: focused 1223 OK; mcp_server 137, mcp_takeoff 42, integration/mcp 13, infrastructure 1631 (1 skipped), presentation/components 2779, presentation/visualization 409, presentation/services 228, application 1447, integration/placement 45, integration/selection 53, integration/rendering 36, architecture 97 (3 skipped) OK; full suite 13159 OK (35 skipped, 249 s); check_architecture PASS; compileall 0; git diff --check clean; untracked files whitespace-clean",
+      "limitations": [
+        "Placement mode reads the PDF page geometry (qpdf parse of the file) on the GUI thread once per cached snap build; on very large drawing sets this adds to the existing GUI-thread pdfium extraction. Not measured on a large real set.",
+        "Proxy writes have no timeout (requests are at most 64 KB); the timeout covers waiting for the answer.",
+        "PDF UserUnit is not applied to the origin (same as the existing size handling).",
+        "Not exercised: the Nuitka-built helpers loading ost_pdf_writer at runtime from the desktop distribution (same mechanism as ost_pdf), real Claude Desktop, multi-user hosts."
+      ]
     }
   ],
   "modules": {
@@ -15107,7 +15314,8 @@
         "ConfigAggregateUpdateTests.test_no_change_does_not_save_and_returned_snapshot_is_detached": "Added: real no-op update, no save, and defensive snapshot mutation.",
         "ConfigAggregateUpdateTests.test_success_saves_exact_changes_and_failure_preserves_previous_config": "Added: exact changed keys, saved config, authoritative state, and rollback on failed subsequent save. No broad mock interception.",
         "ConditionElevationExportOptionAggregateTests.test_both_options_survive_validation_and_report_their_own_changes": "Added: both options survive validation and report their own changes. ConfigAggregate copies both new fields (a missing copy would silently reset a saved option) and reports their own changed keys.",
-        "ConditionElevationExportOptionAggregateTests.test_saved_options_are_not_reset_by_loading_other_fields": "Added: saved options are not reset by loading other fields. ConfigAggregate copies both new fields (a missing copy would silently reset a saved option) and reports their own changed keys."
+        "ConditionElevationExportOptionAggregateTests.test_saved_options_are_not_reset_by_loading_other_fields": "Added: saved options are not reset by loading other fields. ConfigAggregate copies both new fields (a missing copy would silently reset a saved option) and reports their own changed keys.",
+        "AiTakeoffOptionAggregateTests.test_ai_takeoff_option_survives_validation_and_reload": "Added: ai takeoff option survives validation and reload. ai_takeoff_enabled survives aggregate validation, save and reload."
       }
     },
     "tests/domain/aggregates/test_file_state_aggregate.py": {
@@ -15266,7 +15474,9 @@
         "TakeoffToolbarPreferencesTests.test_invalid_preference_uses_existing_config_validation_contract": "Retained: None, scalar string and wrong element type exercise malformed toolbar preferences independently.",
         "ConditionElevationExportOptionTests.test_both_options_default_off_and_legacy_payloads_keep_them_off": "Added: both options default off and legacy payloads keep them off. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
         "ConditionElevationExportOptionTests.test_each_option_round_trips_independently": "Added: each option round trips independently. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
-        "ConditionElevationExportOptionTests.test_non_boolean_values_are_rejected_with_the_key_name": "Added: non boolean values are rejected with the key name. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing."
+        "ConditionElevationExportOptionTests.test_non_boolean_values_are_rejected_with_the_key_name": "Added: non boolean values are rejected with the key name. Config fields ost_osp_export_drop_condition_elevation and csv_export_drop_condition_elevation: defaults, independent round trip, strict boolean parsing.",
+        "AiTakeoffOptionTests.test_ai_takeoff_defaults_off_and_legacy_payloads_keep_it_off": "Added: ai takeoff defaults off and legacy payloads keep it off. Config.ai_takeoff_enabled defaults off, round-trips and rejects non-boolean values.",
+        "AiTakeoffOptionTests.test_ai_takeoff_round_trips_and_rejects_non_boolean_values": "Added: ai takeoff round trips and rejects non boolean values. Config.ai_takeoff_enabled defaults off, round-trips and rejects non-boolean values."
       }
     },
     "tests/domain/entities/test_database_descriptor.py": {
@@ -19626,7 +19836,8 @@
         "PdfMetadataProviderTests.test_pdf_metadata_cache_key_includes_file_signature": "Sound: size change invalidates, negative index clamps to the same cache entry, renderer call list [0, 0] proves one re-read. Kept; same-size mtime-only change is covered by an added test.",
         "PdfMetadataProviderTests.test_pdf_metadata_cache_key_includes_modification_time": "ADDED. Same size, different mtime_ns must re-read (the first test changes size too, so it could not distinguish mtime from size in the signature).",
         "PdfMetadataProviderTests.test_pdf_metadata_caches_are_bounded_lru": "Verifies LRU order for the three caches via keys; uses nonexistent paths (status results cached), fine for ordering. Kept. Hit-ness is covered by the added renderer-call-count test.",
-        "PdfMetadataProviderTests.test_pdf_metadata_lru_evicts_least_recently_used_file_and_rereads_it": "ADDED. Real files + renderer call count prove recently-used entry survives, evicted entry is re-read, final key order is exact. Fails if hits do not refresh recency."
+        "PdfMetadataProviderTests.test_pdf_metadata_lru_evicts_least_recently_used_file_and_rereads_it": "ADDED. Real files + renderer call count prove recently-used entry survives, evicted entry is re-read, final key order is exact. Fails if hits do not refresh recency.",
+        "PdfMetadataVisibleBoxOriginTests.test_text_and_segments_are_relative_to_the_visible_box_origin": "Added: NativePdfMetadataProvider (the read server's source) on the three fixtures plus an asymmetric CropBox; segments and text runs are relative to the visible-box origin, unrotated, inside the reported crop size and with a plausible text height. Failed before the fix with absolute user-space coordinates."
       }
     },
     "tests/infrastructure/test_providers.py": {
@@ -20133,7 +20344,8 @@
         "AttachmentMovementTests.test_backout_placement_accepts_hole_clear_of_attachment_footprint": "ADDED. Accept variant (hole clear of the footprint) and partial-outside-parent rejection, so the True result of the sibling test cannot come from an unrelated rejection.",
         "AttachmentMovementTests.test_backout_placement_rejects_stale_parent": "Sound.",
         "AttachmentMovementTests.test_overlapping_area_parent_search_skips_area_blocked_by_backout": "Sound.",
-        "PlanViewInteractionTests.test_starting_annotation_placement_clears_selected_text_toolbar": "Sound: real view; selection/text toolbar state cleared when a placement press begins."
+        "PlanViewInteractionTests.test_starting_annotation_placement_clears_selected_text_toolbar": "Sound: real view; selection/text toolbar state cleared when a placement press begins.",
+        "PdfSnapVisibleBoxOriginTests.test_snap_segments_start_at_the_visible_box_origin": "Added: the real ost_pdf renderer and placement-mode _build_pdf_snap_segments on real PDFs with an offset CropBox, a MediaBox origin of (50, 50) and an offset CropBox with /Rotate 90; snap segments equal the visible-box-relative page points times ratio/72. Failed before the fix by the box offset (for example 400 instead of 200 OST)."
       }
     },
     "tests/presentation/components/plan_view/components/test_selection_manager.py": {
@@ -21253,7 +21465,8 @@
         "TakeoffPlanViewOverlayMoveCommitSweepTests.test_restoring_normal_visuals_only_touches_live_items_the_scene_still_owns": "Added: Visibility is restored only for live items in the scene (None key, detached and deleted items skipped, no AttributeError), then the map and hidden flag reset; kills the None/valid/scene guards.",
         "TakeoffPlanViewOverlayMoveCommitSweepTests.test_the_outlined_icon_pixmap_completes_its_painting_without_qt_warnings": "Added: _outlined_icon_pixmap returns a 26x26 pixmap and produces no Qt warnings (documents that the two painter.end() removals are unobservable: the painter ends itself on destruction).",
         "TakeoffPlanViewChangedOverlayRefreshSweepTests.test_a_refresh_request_is_not_skipped_when_equal_annotations_share_one_identity": "Added: Equal incoming and current annotation dicts whose two entries share one (uid,type) identity cannot be told apart, so _can_skip_unchanged_overlay_refresh refuses to skip; kills dropping the ambiguity guard and the swapped-argument variant.",
-        "TakeoffPlanViewElementCenterAndRotateHandleTests.test_text_annotation_centre_is_its_anchor_whether_or_not_it_is_rotated": "Replaces the old test that pinned the buggy behaviour (a rotated text box rotated about its top-left corner on screen): the centre of a text annotation is its stored anchor in ost and screen mode for no rotation, 90, 180 and 1 radian rotations and a zero-height box. Unit-level; the real renderer and drag are in test_annotation_rotation_handle.py."
+        "TakeoffPlanViewElementCenterAndRotateHandleTests.test_text_annotation_centre_is_its_anchor_whether_or_not_it_is_rotated": "Replaces the old test that pinned the buggy behaviour (a rotated text box rotated about its top-left corner on screen): the centre of a text annotation is its stored anchor in ost and screen mode for no rotation, 90, 180 and 1 radian rotations and a zero-height box. Unit-level; the real renderer and drag are in test_annotation_rotation_handle.py.",
+        "PdfTextSelectionTests.test_extracted_text_is_mapped_from_the_visible_box_origin": "Added: the real PDFRenderingService._execute_pdf_text on the same three fixtures feeds TakeoffPlanView._on_pdf_text_extracted; the mapped GRID run, its first character box and its size match the drawn position. Failed before the fix by 100 pt (CropBox) and 50 pt (MediaBox)."
       }
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -27240,7 +27453,9 @@
         "ExportTabSideBySideLayoutTests.test_nothing_is_clipped_at_the_dialog_size_and_at_larger_sizes": "NEW. At the fixed dialog size and after resizing to 1300x900, groups meet their minimumSizeHint and every checkbox/label meets its size hints and stays inside its group. ColorButton is a fixed 24 px swatch and is only containment-checked.",
         "ExportTabSideBySideLayoutTests.test_export_tab_fits_at_its_own_minimum_size_and_when_widened": "NEW. Standalone ExportTab at its minimumSizeHint (530 wide, under the dialog tab width) and at 1400x900 has nothing clipped.",
         "ExportTabSideBySideLayoutTests.test_tab_order_still_walks_the_controls_in_creation_order": "NEW. Focus chain through the Export tab equals master check, captions in ANNOTATION_CAPTION_ORDER, HTML/PDF callout checks, four content checks, both colour buttons, then the two Condition Names checks. Pins that the layout change did not alter tab order.",
-        "ExportTabSideBySideLayoutTests.test_group_boxes_keep_their_internal_spacing_and_the_tab_spacing": "NEW. Tab layout spacing stays RELAXED_SPACING and all three group layouts keep COMPACT_SPACING."
+        "ExportTabSideBySideLayoutTests.test_group_boxes_keep_their_internal_spacing_and_the_tab_spacing": "NEW. Tab layout spacing stays RELAXED_SPACING and all three group layouts keep COMPACT_SPACING.",
+        "DialogPreferenceTests.test_mcp_setup_tab_offers_an_opt_in_ai_takeoff_entry": "Added: mcp setup tab offers an opt in ai takeoff entry. MCP Setup tab offers the opt-in AI takeoff check and setup JSON; the check loads, saves and marks Apply dirty; copying does not.",
+        "DialogPreferenceTests.test_ai_takeoff_check_loads_saves_and_marks_apply_dirty": "Added: ai takeoff check loads saves and marks apply dirty. MCP Setup tab offers the opt-in AI takeoff check and setup JSON; the check loads, saves and marks Apply dirty; copying does not."
       }
     },
     "tests/presentation/dialogs/options/test_font_dialog.py": {
@@ -30670,7 +30885,8 @@
         "ActiveLockedBidTreeActionPermissionTests.test_viewer_is_denied_move_trash_and_project_delete_whatever_the_lock": "Added (decision Q1): positive/negative control, a read-only database role is denied move, trash and project delete locked or not, so the enabled editor answers are not vacuous.",
         "PlanSurfaceContextPathIdentityTests.test_a_context_whose_database_path_is_another_spelling_of_the_bids_is_valid": "Added (S2): a PlanSurfaceAccessContext whose database_id differs from its Bid's file_path only by case, separators, doubled separator, '.'/'..' segment or trailing separator (either side) is a consistent context: page settings and annotation placement are granted and the capability service is asked about the page resource once with the context's database_id (12 subtests failed before the fix: fail-closed state). Killed: exact comparison, one side only, lower-case only, inverted.",
         "PlanSurfaceContextPathIdentityTests.test_a_context_for_another_database_still_fails_closed": "Added (S2 control): a different file name, folder, longer file name, other drive or empty database_id yields the all-denied state and no capability request. Passes before and after; kills the inverted comparison and over-loose normalisation.",
-        "PlanSurfaceContextPathIdentityTests.test_an_aliased_database_path_still_needs_the_current_bid": "Added (S2 control): a consistent aliased context for a Bid that is not the project's current Bid still fails closed (exact BidRef check against the current Bid remains)."
+        "PlanSurfaceContextPathIdentityTests.test_an_aliased_database_path_still_needs_the_current_bid": "Added (S2 control): a consistent aliased context for a Bid that is not the project's current Bid still fails closed (exact BidRef check against the current Bid remains).",
+        "BidLockPermissionTests.test_ai_takeoff_needs_a_license_and_an_open_bid_but_no_write_access": "Added: ai takeoff needs a license and an open bid but no write access. Feature.AI_TAKEOFF needs a license and an open bid but is not write- or lock-gated while the slice is read-only."
       }
     },
     "tests/presentation/managers/test_detached_page_view_manager.py": {
@@ -31152,7 +31368,9 @@
         "McpContextBridgeRequestTests.test_get_context_request_replies_with_live_snapshot_then_disconnects": "ADDED: _handle_request/_build_snapshot had no coverage; checks full snapshot payload (bid refs, tab, view, page uids, sorted highlighted conditions, selection) and write/flush/disconnect ordering.",
         "McpContextBridgeRequestTests.test_unsupported_command_is_rejected_without_building_snapshot": "ADDED: read-only guardrail - unknown command returns unsupported_command and never touches UI state (ui_state None would raise).",
         "McpContextBridgeRequestTests.test_malformed_request_returns_error_response": "ADDED: invalid JSON yields success False with an error and still disconnects.",
-        "McpContextBridgeRequestTests.test_empty_request_is_treated_as_unsupported_command": "ADDED: empty payload handled like an unsupported command."
+        "McpContextBridgeRequestTests.test_empty_request_is_treated_as_unsupported_command": "ADDED: empty payload handled like an unsupported command.",
+        "McpContextBridgePipeTests.test_pipe_access_list_grants_only_the_current_user": "Added: a real McpContextBridge on a unique pipe name; pywin32 opens the pipe with READ_CONTROL and reads the DACL back; it lists only the current user's SID (no Everyone S-1-1-0 or Anonymous S-1-5-7). Failed before the fix with SYSTEM, Administrators, user, Everyone and Anonymous entries.",
+        "McpContextBridgePipeTests.test_read_server_client_of_the_same_user_still_gets_live_context": "Added: the read server's real McpBridgeClient (the ostv-mcp.exe code path) connects over the restricted pipe as the same user on a thread while the Qt loop runs, gets status live_context and the unchanged get_context snapshot (source live_app, selected takeoff uids)."
       }
     },
     "tests/presentation/services/test_modal_edit_lease_session.py": {
@@ -31331,9 +31549,9 @@
         "MainWindowDeferredShutdownTests.test_first_close_hides_immediately_and_defers_all_shutdown_work": "Sound: close hides, ignores, schedules one timer; flush then shutdown request only on the timer callback.",
         "MainWindowDeferredShutdownTests.test_app_close_waits_asynchronously_for_critical_sql_mutations": "Sound: shutdown requested only after the async drain callback; window stays hidden.",
         "MainWindowDeferredShutdownTests.test_repeated_close_does_not_schedule_duplicate_shutdown": "Sound: second close ignored, one hide, one timer.",
-        "MainWindowDeferredShutdownTests.test_completed_shutdown_exits_the_qt_event_loop_after_resource_cleanup": "Sound: exact cleanup order ending with window close then QCoreApplication.quit; unexpected services raise.",
-        "MainWindowDeferredShutdownTests.test_completed_shutdown_finalization_is_idempotent": "Sound: second close accepted with no repeated cleanup.",
-        "MainWindowDeferredShutdownTests.test_completed_shutdown_continues_after_independent_cleanup_failures": "Strengthened: besides 3 logged errors and full call order, asserts the three failing step descriptions are the ones logged.",
+        "MainWindowDeferredShutdownTests.test_completed_shutdown_exits_the_qt_event_loop_after_resource_cleanup": "Stub window close runs every resource cleanup in order (deferred persistence, workspace, event, UI event, license, access, MCP context bridge, AI takeoff bridge, lifecycle) before the Qt close and quit.",
+        "MainWindowDeferredShutdownTests.test_completed_shutdown_finalization_is_idempotent": "A second close after finalization repeats no cleanup; the sequence includes the AI takeoff bridge cleanup after the MCP context bridge.",
+        "MainWindowDeferredShutdownTests.test_completed_shutdown_continues_after_independent_cleanup_failures": "Independent cleanup failures are logged and the remaining steps, including the AI takeoff bridge cleanup, still run.",
         "MainWindowDeferredShutdownTests.test_access_only_close_flushes_page_state_before_collaboration_shutdown": "Sound: hide, flush, shutdown order.",
         "MainWindowDeferredShutdownTests.test_collaboration_cleanup_failure_cannot_be_bypassed_by_a_second_close": "Sound: failure re-shows once, shows critical once, second close ignored without calling close.",
         "MainWindowTitleRefreshTests.test_refresh_uses_default_when_nothing_selected": "Sound: default title.",
@@ -31611,7 +31829,10 @@
         "McpSetupConfigTests.test_default_helper_path_without_argument_uses_current_executable": "Re-read: default helper sits beside the resolved current executable. Killed by resolving the helper name against the working directory instead.",
         "McpSetupConfigTests.test_codex_config_escapes_control_characters": "Re-read: tab and newline in the path are escaped inside the TOML basic string and the config stays three lines. Killed by dropping the tab and the newline escapes.",
         "McpSetupConfigTests.test_codex_command_doubles_single_quotes_in_helper_path": "Re-read: PowerShell quoting doubles single quotes and honours codex_command. Killed by dropping the quote doubling.",
-        "McpSetupConfigTests.test_codex_config_escapes_backspace_formfeed_and_carriage_return": "Added: the escape table's backspace, form feed and carriage return entries were untested. Exact TOML output pinned. Killed by dropping the backspace entry, dropping the carriage return entry, and mapping form feed to a unicode escape."
+        "McpSetupConfigTests.test_codex_config_escapes_backspace_formfeed_and_carriage_return": "Added: the escape table's backspace, form feed and carriage return entries were untested. Exact TOML output pinned. Killed by dropping the backspace entry, dropping the carriage return entry, and mapping form feed to a unicode escape.",
+        "TakeoffMcpSetupConfigTests.test_takeoff_helper_is_a_second_packaged_exe_next_to_the_app": "Added: takeoff helper is a second packaged exe next to the app. Second client entry ost-visualizer-takeoff with ostv-takeoff-mcp.exe and no private fields; read-server entries unchanged.",
+        "TakeoffMcpSetupConfigTests.test_takeoff_entries_name_the_takeoff_server_without_private_fields": "Added: takeoff entries name the takeoff server without private fields. Second client entry ost-visualizer-takeoff with ostv-takeoff-mcp.exe and no private fields; read-server entries unchanged.",
+        "TakeoffMcpSetupConfigTests.test_read_server_entries_are_unchanged_by_default": "Added: read server entries are unchanged by default. Second client entry ost-visualizer-takeoff with ostv-takeoff-mcp.exe and no private fields; read-server entries unchanged."
       }
     },
     "tests/presentation/utils/test_messagebox.py": {
@@ -32170,7 +32391,7 @@
         "PdfRenderingRequestExecutionTests.test_render_exception_becomes_failed_result_and_clears_request": "Added: a renderer exception becomes a failed result with its message (error log asserted) and the request is cleaned up.",
         "PdfRenderingRequestExecutionTests.test_frame_request_renders_requested_frame_and_tints_on_demand": "Added: frame requests render the requested frame once (shared cache), plain stays red, tinted keeps dimensions and changes colour. Kills the tint removal.",
         "PdfRenderingRequestExecutionTests.test_tinted_page_request_uses_tinted_cache_entry": "Added: tinted page request returns a tinted image from a single base render.",
-        "PdfRenderingRequestExecutionTests.test_pdf_text_request_returns_text_runs_and_page_info": "Added: PDF text request returns text runs plus page info in the result payload. Kills dropping page_info.",
+        "PdfRenderingRequestExecutionTests.test_pdf_text_request_returns_text_runs_and_page_info": "PDF text requests return the text runs, the cached page info and the visible-box origin (0, 0 for the fake renderer's file, which has no readable geometry) as one payload.",
         "PdfRenderingRequestExecutionTests.test_cancelled_request_is_dropped_before_render_and_others_still_run": "Added: a request cancelled before a worker starts is never rendered and cleaned; the live request still renders. Kills the pre-render cancel check.",
         "PdfRenderingRequestExecutionTests.test_callback_exception_is_logged_and_request_is_still_cleared": "Added: an exception in the GUI callback is logged ('Callback error') and the request leaves the active map. Kills narrowing the except clause.",
         "PdfRenderingRequestExecutionTests.test_unknown_request_type_fails_explicitly": "Added: unknown request type returns the exact failure RenderResult.",
@@ -35817,7 +36038,7 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Read MainWindow construction, configure_application, component_builder (left splitter) and presentation.config.SIDEBAR_MIN_WIDTH. Real DI container, application controller and MainWindow with temp home, patched logger factory, suppressed QTimer.singleShot and a font-resolution seam (offscreen Qt has no fonts). The pinned 320 is an explicit setMinimumWidth value, not font metrics.",
       "reviewed_tests": {
-        "MainWindowStartupTests.test_main_window_constructs_from_configured_application": "Retained: genuine smoke across DI -> controller -> MainWindow asserting identity wiring (controller, workspace model, UIAccessManager shared with the annotation and view managers) and the left splitter layout. Mutants killed: sidebar widget order swapped, setMinimumWidth removed, access manager re-registered as a different instance."
+        "MainWindowStartupTests.test_main_window_constructs_from_configured_application": "Real MainWindow from configure_application: access manager, workspace model, detached managers and left splitter wiring; also the AI takeoff bridge is created with exactly the seven M1a commands, the read service comes from DI, the session token file is written under the patched home, access is denied while the option is off, and cleanup removes the token."
       }
     },
     "tests/integration/lifecycle/test_scripted_presentation.py": {
@@ -37480,6 +37701,245 @@
         "BandedImageTests.test_indexed_images_keep_their_color_table": "Added: indexed images keep their color table. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap).",
         "BandedImageTests.test_a_null_image_gives_a_null_image": "Added: a null image gives a null image. The banded image helpers give byte-identical results to the whole-image Qt operations, keep metadata, and never run one native call over more than BAND_PIXELS pixels (the GIL-hold cap)."
       }
+    },
+    "tests/mcp_takeoff/test_protocol.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real JsonRpcStdioServer over io.StringIO; an AST walk of every mcp_takeoff module checks imports against the stdlib list plus the one allowed DTO module. No mocks.",
+      "reviewed_tests": {
+        "JsonRpcStdioServerTests.test_initialize_echoes_the_protocol_version_and_offers_only_tools": "Added: initialize echoes the protocol version and offers only tools. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_ping_and_tools_list": "Added: ping and tools list. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_tools_call_passes_name_and_arguments": "Added: tools call passes name and arguments. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_protocol_errors_use_json_rpc_codes": "Added: protocol errors use json rpc codes. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_tool_failures_become_internal_errors_without_tracebacks": "Added: tool failures become internal errors without tracebacks. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_notifications_and_blank_lines_get_no_response": "Added: notifications and blank lines get no response. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_run_reads_lines_and_writes_compact_json_lines": "Added: run reads lines and writes compact json lines. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "StdlibOnlyTests.test_every_module_imports_only_stdlib_and_the_takeoff_dtos": "Added: every module imports only stdlib and the takeoff dtos. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_deeply_nested_lines_get_a_parse_error_and_the_loop_continues": "Added (bug hunt): 100000-deep arrays and 50000-deep objects return -32700 and the next ping is still answered; before the fix RecursionError ended the stdio loop and the proxy process.",
+        "JsonRpcStdioServerTests.test_strict_utf8_stdout_survives_lone_surrogates_from_a_client": "Added (bug hunt): a strict UTF-8 stdout receives the error for a method name that is a lone surrogate and the loop continues; before the fix the UnicodeEncodeError ended the proxy."
+      }
+    },
+    "tests/mcp_takeoff/test_tool_catalog.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Static catalog compared to the DTO command and argument table; schemas inspected directly.",
+      "reviewed_tests": {
+        "ToolCatalogTests.test_exactly_the_seven_m1a_tools_in_order": "Added: exactly the seven m1a tools in order. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_schema_properties_match_the_bridge_argument_table": "Added: schema properties match the bridge argument table. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_no_tool_can_write_approve_or_accept": "Added: no tool can write approve or accept. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_schemas_are_closed_objects_without_forbidden_parameters": "Added: schemas are closed objects without forbidden parameters. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_page_tools_require_a_page_and_others_default_to_the_open_bid": "Added: page tools require a page and others default to the open bid. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_render_sheet_limits_dpi_and_documents_overlay_ids_as_a_no_op": "Added: render sheet limits dpi and documents overlay ids as a no op. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_text_bearing_tools_warn_that_drawing_text_is_untrusted_data": "Added: text bearing tools warn that drawing text is untrusted data. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning.",
+        "ToolCatalogTests.test_tool_items_are_mcp_tool_descriptors": "Added: tool items are mcp tool descriptors. Exactly the seven M1a read tools, closed schemas, no path/sql/dir/token/approve parameters, overlay_ids documented as a no-op, untrusted-text warning."
+      }
+    },
+    "tests/mcp_takeoff/test_pipe_client.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "ScriptedPipeClient overrides only _exchange to record payloads and return scripted bytes or errors; one test opens a real nonexistent named pipe; token files in a temporary directory. The real-pipe exchange is covered by the bridge and end-to-end tests.",
+      "reviewed_tests": {
+        "PipeClientTests.test_sends_one_json_line_with_token_command_and_arguments": "Added: sends one json line with token command and arguments. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "PipeClientTests.test_missing_or_empty_token_means_the_app_is_not_running": "Added: missing or empty token means the app is not running. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "PipeClientTests.test_pipe_errors_mean_the_app_is_not_running": "Added: pipe errors mean the app is not running. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "PipeClientTests.test_malformed_responses_are_reported_without_echoing_the_token": "Added: malformed responses are reported without echoing the token. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "PipeClientTests.test_bridge_errors_pass_through": "Added: bridge errors pass through. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "PipeClientTests.test_non_windows_platform_never_opens_the_pipe": "Added: non windows platform never opens the pipe. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "PipeClientTests.test_real_pipe_that_does_not_exist_is_app_not_running": "Added: real pipe that does not exist is app not running. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "ReadSessionTokenTests.test_reads_and_strips_the_token": "Added: reads and strips the token. Pipe client sends one JSON line with the token per call, maps a missing token or pipe error to app_not_running, reports malformed responses without echoing the token, passes bridge errors through and never opens a pipe off Windows.",
+        "HungAppTests.test_an_app_that_never_answers_times_out_with_a_clear_error": "Added: a pywin32 named-pipe server accepts, reads the request and never answers; the client returns app_timeout with a clear message after about the configured 0.3 s and never echoes the token. A probe showed the previous client still blocked after 3 s.",
+        "HungAppTests.test_a_slow_answer_within_the_timeout_is_returned": "Added: an answer 0.2 s late within a 2 s timeout is returned normally.",
+        "HungAppTests.test_the_default_timeout_is_the_configurable_constant": "Added: PIPE_READ_TIMEOUT_SECONDS is 120 and is the client's default."
+      }
+    },
+    "tests/mcp_takeoff/test_proxy.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "A recording fake client returns bridge envelopes; outputs go to a temporary directory with a fixed clock and nonce.",
+      "reviewed_tests": {
+        "TakeoffProxyTests.test_lists_the_catalog_tools": "Added: lists the catalog tools. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_unknown_tools_never_reach_the_app": "Added: unknown tools never reach the app. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_successful_results_become_text_and_structured_content": "Added: successful results become text and structured content. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_errors_are_flagged": "Added: errors are flagged. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_small_png_is_returned_as_image_content_and_stripped_from_json": "Added: small png is returned as image content and stripped from json. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_large_png_is_saved_to_a_file_and_returned_by_path": "Added: large png is saved to a file and returned by path. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_large_json_is_saved_to_a_file_with_a_preview": "Added: large json is saved to a file with a preview. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_save_failures_still_return_a_bounded_preview": "Added: save failures still return a bounded preview. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "MainTests.test_only_the_log_level_argument_exists": "Added: only the log level argument exists. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "MainTests.test_main_serves_stdio_with_the_catalog": "Added: main serves stdio with the catalog. Proxy maps envelopes to MCP results, inlines small PNGs, spills large PNGs and JSON to artifact files with a preview, refuses unknown tools before the pipe; main accepts only --log-level.",
+        "TakeoffProxyTests.test_png_save_failures_still_return_the_result_without_the_image": "Added (bug hunt): a large PNG whose artifact save fails returns the rest of the result with file_saved False and the error text, like the JSON spill; before the fix the OSError escaped call_tool and the whole result was lost.",
+        "MainTests.test_real_stdio_is_utf8_whatever_the_windows_code_page": "Added (bug hunt): runs the real proxy module in a fresh interpreter without PYTHONIOENCODING/PYTHONUTF8 (console code page cp1252) and HOME/USERPROFILE in a temporary directory; a BOM-prefixed first line, a non-cp1252 method name and raw UTF-8 bytes undefined in cp1252 are all answered in order. Before the fix the process died with UnicodeEncodeError.",
+        "MainTests.test_main_switches_code_page_stdio_to_utf8": "Added (bug hunt): in-process variant with cp1252 TextIOWrapper stdin/stdout patched into sys, so in-memory mutation of main.py is observable; BOM, non-cp1252 and UTF-8-only input decode correctly."
+      }
+    },
+    "tests/application/dtos/test_ai_takeoff_dtos.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Pure value tests of the stdlib DTO module.",
+      "reviewed_tests": {
+        "UntrustedTextTests.test_short_text_is_kept_and_marked_untrusted": "Added: short text is kept and marked untrusted. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "UntrustedTextTests.test_long_text_is_capped_and_flagged": "Added: long text is capped and flagged. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "UntrustedTextTests.test_the_cap_is_five_hundred_characters": "Added: the cap is five hundred characters. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "UntrustedTextTests.test_none_and_non_text_values_become_strings": "Added: none and non text values become strings. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "EnvelopeTests.test_ok_result_carries_status_data_and_meta": "Added: ok result carries status data and meta. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "EnvelopeTests.test_meta_without_a_next_cursor_is_complete": "Added: meta without a next cursor is complete. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "EnvelopeTests.test_error_result_shape": "Added: error result shape. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "CursorAndLimitTests.test_cursor_round_trip_and_start": "Added: cursor round trip and start. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "CursorAndLimitTests.test_invalid_cursors_are_rejected": "Added: invalid cursors are rejected. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "CursorAndLimitTests.test_limits_are_clamped": "Added: limits are clamped. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "ContractTests.test_m1a_commands_are_the_seven_read_only_tools": "Added: m1a commands are the seven read only tools. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "ContractTests.test_sidecar_statuses": "Added: sidecar statuses. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "ContractTests.test_limits_and_caps": "Added: limits and caps. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "ContractTests.test_module_imports_only_stdlib": "Added: module imports only stdlib. Envelope shape, UntrustedText cap (500) and flag, cursor encoding, limit clamping and error codes.",
+        "UntrustedTextTests.test_lone_surrogates_are_replaced_so_the_value_is_always_utf8": "Added (bug hunt): lone surrogates become U+FFFD so the value always encodes to UTF-8; valid pairs, the >= sign and O-slash are kept.",
+        "UntrustedTextTests.test_control_and_bidi_formatting_characters_are_stripped": "Added: NUL, BEL, ESC, DEL and C1 controls and the bidi formatting characters U+061C, U+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed; tab, newline and CR become spaces; O-slash, inch marks, the >= sign, one half, CJK, emoji and ZWJ are kept.",
+        "UntrustedTextTests.test_stripping_happens_before_the_length_cap": "Added: 600 bidi overrides followed by visible text yield only the visible text and no truncation flag."
+      }
+    },
+    "tests/domain/entities/test_ai_takeoff.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Pure domain tests; hashes recomputed independently with hashlib.",
+      "reviewed_tests": {
+        "BidKeyTests.test_access_key_uses_only_backend_and_bid_uid": "Added: access key uses only backend and bid uid. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "BidKeyTests.test_sql_key_uses_the_database_guid": "Added: sql key uses the database guid. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "BidKeyTests.test_sql_without_a_database_guid_has_no_key": "Added: sql without a database guid has no key. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "BidKeyTests.test_blank_bid_uid_has_no_key": "Added: blank bid uid has no key. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "FingerprintTests.test_same_database_id_is_ok_even_when_other_fields_changed": "Added: same database id is ok even when other fields changed. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "FingerprintTests.test_other_database_with_same_name_and_page_count_needs_rebind": "Added: other database with same name and page count needs rebind. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "FingerprintTests.test_anything_else_is_a_mismatch": "Added: anything else is a mismatch. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "SidecarSerializationTests.test_round_trip": "Added: round trip. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "SidecarSerializationTests.test_invalid_content_is_rejected": "Added: invalid content is rejected. bid_key per Step 0 (Access hash of backend and bid uid, SQL with lowercased database GUID, None for a blank GUID), fingerprint comparison (ok, rebind_required, fingerprint_mismatch) and strict sidecar parsing.",
+        "SidecarSerializationTests.test_identifiers_are_short_tokens_never_free_text": "Added (bug hunt): level, registration page and level, and assumption identifiers with free text, newlines, 129 characters or empty make the sidecar invalid; GUID, dotted and numeric identifiers are accepted. Before the fix any string was accepted and returned to the AI unmarked and unbounded."
+      }
+    },
+    "tests/infrastructure/persistence/repositories/test_json_ai_takeoff_sidecar_repository.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real files in a temporary directory; bytes and mtime_ns compared before and after every load.",
+      "reviewed_tests": {
+        "JsonAiTakeoffSidecarRepositoryTests.test_missing_file_and_missing_directory": "Added: missing file and missing directory. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
+        "JsonAiTakeoffSidecarRepositoryTests.test_valid_file_is_found": "Added: valid file is found. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
+        "JsonAiTakeoffSidecarRepositoryTests.test_corrupt_files_are_reported_and_never_rewritten": "Added: corrupt files are reported and never rewritten. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
+        "JsonAiTakeoffSidecarRepositoryTests.test_found_files_are_never_rewritten": "Added: found files are never rewritten. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
+        "JsonAiTakeoffSidecarRepositoryTests.test_keys_that_could_escape_the_directory_are_rejected": "Added: keys that could escape the directory are rejected. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method.",
+        "JsonAiTakeoffSidecarRepositoryTests.test_repository_offers_no_write_methods": "Added: repository offers no write methods. Read-only sidecar repository: missing, found, corrupt (bad JSON, bad UTF-8, unknown version, other inner key, bad shape, over 5 MB) and never rewritten; path-escaping keys rejected; no write method."
+      }
+    },
+    "tests/application/services/test_ai_takeoff_read_service.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "FakeProjectData and FakePdfSource with real Page, Condition, Takeoff and Bid entities; the real JsonAiTakeoffSidecarRepository over a temporary directory; a SpyRepository that fails if read.",
+      "reviewed_tests": {
+        "ListSheetsTests.test_sheets_are_ordered_with_scale_and_untrusted_names": "Added: sheets are ordered with scale and untrusted names. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "ListSheetsTests.test_pagination_with_cursor": "Added: pagination with cursor. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "ListSheetsTests.test_only_the_open_bid_is_readable": "Added: only the open bid is readable. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "ListSheetsTests.test_invalid_cursor_and_limit": "Added: invalid cursor and limit. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "TextAndSegmentTests.test_text_runs_convert_to_page_points_and_ost_inches": "Added: text runs convert to page points and ost inches. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "TextAndSegmentTests.test_text_rotation_follows_the_pdf_intrinsic_rotation": "Added: text rotation follows the pdf intrinsic rotation. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "TextAndSegmentTests.test_text_filters_by_box_and_query": "Added: text filters by box and query. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "TextAndSegmentTests.test_segments_have_stable_ids_and_both_coordinate_spaces": "Added: segments have stable ids and both coordinate spaces. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "TextAndSegmentTests.test_segment_box_filter_excludes_each_side_and_keeps_touching_edges": "Added: segment box filter excludes each side and keeps touching edges. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "TextAndSegmentTests.test_raster_pages_and_missing_pdfs_report_status": "Added: raster pages and missing pdfs report status. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "TextAndSegmentTests.test_unknown_page_and_bad_boxes": "Added: unknown page and bad boxes. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "QuantityTests.test_quantities_by_condition_match_the_app_computation": "Added: quantities by condition match the app computation. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "QuantityTests.test_quantities_by_page": "Added: quantities by page. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "QuantityTests.test_invalid_group_by": "Added: invalid group by. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_ok_returns_levels_and_assumptions": "Added: ok returns levels and assumptions. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_missing_sidecar_is_empty": "Added: missing sidecar is empty. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_other_database_with_same_bid_name_and_page_count_needs_rebind": "Added: other database with same bid name and page count needs rebind. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_any_other_difference_is_a_fingerprint_mismatch": "Added: any other difference is a fingerprint mismatch. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_corrupt_sidecar": "Added: corrupt sidecar. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_sql_without_database_guid_never_reads_a_sidecar": "Added: sql without database guid never reads a sidecar. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_sql_with_database_guid_uses_the_guid_key": "Added: sql with database guid uses the guid key. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "SidecarStatusTests.test_invalid_assumption_status_filter": "Added: invalid assumption status filter. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "CropPlanTests.test_default_crop_is_the_whole_page_at_default_dpi": "Added: default crop is the whole page at default dpi. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "CropPlanTests.test_long_side_is_capped": "Added: long side is capped. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "CropPlanTests.test_crop_is_clipped_to_the_page_and_affines_round_trip": "Added: crop is clipped to the page and affines round trip. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "CropPlanTests.test_invalid_crop_and_dpi": "Added: invalid crop and dpi. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op.",
+        "CropPlanTests.test_overlay_ids_are_validated_and_reported_as_not_supported": "Added: overlay ids are validated and reported as not supported. Read service: sheets and scale, untrusted names, raw PDF to page point conversion for each rotation, box and query filters, quantities equal compute_page_quantities, cursors, every sidecar_status including the SQL empty-GUID case, crop planning caps and affines, overlay no-op."
+      }
+    },
+    "tests/presentation/services/test_ai_takeoff_pdf_source.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real minimal PDFs written by ai_takeoff_pdf_support with the real ost_pdf renderer and PageCache.",
+      "reviewed_tests": {
+        "PageCachePdfSourceTests.test_page_info_for_a_real_pdf": "Added: page info for a real pdf. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
+        "PageCachePdfSourceTests.test_page_info_status_for_missing_and_non_pdf_files": "Added: page info status for missing and non pdf files. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
+        "PageCachePdfSourceTests.test_text_runs_are_extracted_in_raw_pdf_space": "Added: text runs are extracted in raw pdf space. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
+        "PageCachePdfSourceTests.test_vector_segments_are_extracted": "Added: vector segments are extracted. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
+        "PageCachePdfSourceTests.test_missing_pdfs_give_no_runs_or_segments": "Added: missing pdfs give no runs or segments. PageCachePdfSource page info and its missing and non-PDF statuses, text runs in raw PDF space and vector segments, and empty results for missing PDFs.",
+        "PageCachePdfSourceTests.test_raw_coordinates_start_at_the_visible_box_origin": "Added (bug hunt): real PDFs with CropBox [100 100 512 692] and MediaBox origin (100, 100); segments and text runs come back relative to the visible-box origin (left, bottom, top and right checked). Failed before the fix with absolute user-space coordinates (150, 600)."
+      }
+    },
+    "tests/presentation/services/test_ai_takeoff_crop_renderer.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real PDF rendering through PageCache; the image_op_spy records native QImage calls; a worker thread runs the encode.",
+      "reviewed_tests": {
+        "CropRendererTests.test_png_has_the_planned_size_and_the_page_content": "Added: png has the planned size and the page content. Crop rendering and PNG encode: planned size and page content, affine locates drawn features within 0.5 px, banded conversion (no native call over BAND_PIXELS), works on a worker thread, missing PDF reports unavailable, lossless PNG round trip, null image rejected.",
+        "CropRendererTests.test_affine_locates_page_features_within_half_a_pixel": "Added: affine locates page features within half a pixel. Crop rendering and PNG encode: planned size and page content, affine locates drawn features within 0.5 px, banded conversion (no native call over BAND_PIXELS), works on a worker thread, missing PDF reports unavailable, lossless PNG round trip, null image rejected.",
+        "CropRendererTests.test_large_crops_never_run_one_image_operation_over_a_band": "Added: large crops never run one image operation over a band. Crop rendering and PNG encode: planned size and page content, affine locates drawn features within 0.5 px, banded conversion (no native call over BAND_PIXELS), works on a worker thread, missing PDF reports unavailable, lossless PNG round trip, null image rejected.",
+        "CropRendererTests.test_rendering_works_on_a_worker_thread": "Added: rendering works on a worker thread. Crop rendering and PNG encode: planned size and page content, affine locates drawn features within 0.5 px, banded conversion (no native call over BAND_PIXELS), works on a worker thread, missing PDF reports unavailable, lossless PNG round trip, null image rejected.",
+        "CropRendererTests.test_missing_pdf_reports_unavailable": "Added: missing pdf reports unavailable. Crop rendering and PNG encode: planned size and page content, affine locates drawn features within 0.5 px, banded conversion (no native call over BAND_PIXELS), works on a worker thread, missing PDF reports unavailable, lossless PNG round trip, null image rejected.",
+        "EncodePngTests.test_round_trip_keeps_pixels_and_alpha": "Added: round trip keeps pixels and alpha. Crop rendering and PNG encode: planned size and page content, affine locates drawn features within 0.5 px, banded conversion (no native call over BAND_PIXELS), works on a worker thread, missing PDF reports unavailable, lossless PNG round trip, null image rejected.",
+        "EncodePngTests.test_null_image_is_rejected": "Added: null image is rejected. Crop rendering and PNG encode: planned size and page content, affine locates drawn features within 0.5 px, banded conversion (no native call over BAND_PIXELS), works on a worker thread, missing PDF reports unavailable, lossless PNG round trip, null image rejected.",
+        "ReportedGeometryMatchesTheRenderTests.test_reported_segments_land_on_drawn_pixels_for_offset_and_rotated_boxes": "Added (bug hunt): the real read service, PageCachePdfSource and crop renderer; the midpoint of the segment list_segments reports maps through px_to_page_pts onto dark pixels of the rendered crop for an offset CropBox, a non-zero MediaBox origin and an offset CropBox with /Rotate 90. All three landed on white pixels (lightness 255) before the fix."
+      }
+    },
+    "tests/presentation/services/test_ai_takeoff_bridge.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real TakeoffCommandBridge on a uniquely named QLocalServer with the real TakeoffPipeClient on a thread; FakeReadService records calls; pywin32 reads the pipe DACL back.",
+      "reviewed_tests": {
+        "BridgeProtocolTests.test_round_trip_passes_declared_arguments": "Added: round trip passes declared arguments. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_token_file_holds_the_current_token_only": "Added: token file holds the current token only. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_command_table_is_exactly_the_seven_read_only_tools": "Added: command table is exactly the seven read only tools. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_undeclared_commands_never_reach_the_service": "Added: undeclared commands never reach the service. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_unknown_or_malformed_arguments_are_rejected": "Added: unknown or malformed arguments are rejected. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_assumption_status_is_only_a_read_filter": "Added: assumption status is only a read filter. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_oversized_requests_are_refused": "Added: oversized requests are refused. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_service_errors_become_error_results": "Added: service errors become error results. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeSecurityTests.test_wrong_or_missing_token_is_unauthorized": "Added: wrong or missing token is unauthorized. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeSecurityTests.test_a_token_from_a_previous_session_is_stale": "Added: a token from a previous session is stale. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeSecurityTests.test_feature_denied_when_ai_takeoff_is_not_allowed": "Added: feature denied when ai takeoff is not allowed. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeSecurityTests.test_the_token_never_appears_in_logs_responses_or_files": "Added: the token never appears in logs responses or files. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeSecurityTests.test_pipe_access_list_grants_only_the_current_user": "Added: pipe access list grants only the current user. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeSecurityTests.test_cleanup_removes_the_token_and_stops_listening": "Added: cleanup removes the token and stops listening. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeSecurityTests.test_cleanup_keeps_a_token_file_written_by_another_session": "Added: cleanup keeps a token file written by another session. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeThreadingTests.test_pdf_work_runs_off_the_gui_thread": "Added: pdf work runs off the gui thread. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeThreadingTests.test_raster_pages_answer_not_pdf_without_planning_a_crop": "Added: raster pages answer not pdf without planning a crop. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeThreadingTests.test_model_reads_stay_on_the_gui_thread": "Added: model reads stay on the gui thread. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeProtocolTests.test_results_with_lone_surrogates_are_still_delivered": "Added (bug hunt): a service result containing a lone surrogate reaches the real pipe client; before the fix the bridge's UTF-8 encode raised in the slot and the client never got an answer.",
+        "BridgeProtocolTests.test_deeply_nested_requests_get_an_error_instead_of_escaping_the_slot": "Added (bug hunt): 5000-deep JSON arrays (with and without a token key) over the real pipe get invalid_argument and never reach the service; before the fix RecursionError escaped the slot (crash report in the app) and the client timed out.",
+        "BridgeProtocolTests.test_a_worker_finishing_after_the_bridge_is_destroyed_raises_nothing": "Added (bug hunt): a worker job finishing after the bridge's C++ object is deleted raises nothing on its thread; before the fix it raised RuntimeError('Signal source has been deleted'), which the app's threading excepthook turns into a crash report.",
+        "BridgeCapacityTests.test_requests_beyond_the_worker_cap_get_busy_and_capacity_returns": "Added: with two blocked worker jobs a third list_segments gets busy and never starts, list_sheets on the GUI thread still answers, and after release both finish and a new worker job runs.",
+        "BridgeCapacityTests.test_connections_beyond_the_cap_get_busy_until_one_closes": "Added: with two idle raw pipe connections at a cap of two, a request gets busy; closing one frees a slot and the next request succeeds.",
+        "BridgeCapacityTests.test_a_connection_that_never_finishes_its_request_is_closed": "Added: a partial request is answered with invalid_argument (not received in time) after the idle timeout, the socket is released and the service is never called.",
+        "BridgeCapacityTests.test_default_caps": "Added: defaults are 2 workers, 8 connections and 10 s idle timeout."
+      }
+    },
+    "tests/integration/ai_takeoff/test_m1a_end_to_end.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Offscreen MainWindow from configure_application with Path.home patched to a temporary directory; the bridge server name is made unique; the real ProjectDataService has its read methods patched to an F1 bid (one 40 x 30 ft slab on a real PDF); license and bid selection patched on the real access and UI state managers; the real proxy and pipe client run on a thread.",
+      "reviewed_tests": {
+        "M1aEndToEndTests.test_tools_are_denied_until_the_user_enables_ai_takeoff": "Added: tools are denied until the user enables ai takeoff. End to end over the real pipe: feature_denied until the Options toggle is on and while no bid or no license; list_sheets, render_sheet (inline PNG, affine places the slab edge within 0.5 px, overlay no-op), list_segments (OST lengths 480 and 360), list_text (injected text returned as untrusted data), get_quantities (1200 SF) and list_levels (empty sidecar, nothing written).",
+        "M1aEndToEndTests.test_f1_sheet_render_segments_and_quantities_over_the_real_pipe": "Added: f1 sheet render segments and quantities over the real pipe. End to end over the real pipe: feature_denied until the Options toggle is on and while no bid or no license; list_sheets, render_sheet (inline PNG, affine places the slab edge within 0.5 px, overlay no-op), list_segments (OST lengths 480 and 360), list_text (injected text returned as untrusted data), get_quantities (1200 SF) and list_levels (empty sidecar, nothing written)."
+      }
+    },
+    "tests/architecture/test_ai_takeoff_rules.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Source scans plus a fresh interpreter subprocess that imports the proxy and lists sys.modules; tokenize for comments and reflection.",
+      "reviewed_tests": {
+        "AiTakeoffProxyIsolationTests.test_entrypoint_routes_to_the_takeoff_main": "Added: entrypoint routes to the takeoff main. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffProxyIsolationTests.test_proxy_sources_never_name_qt_presentation_or_the_app_graph": "Added: proxy sources never name qt presentation or the app graph. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffProxyIsolationTests.test_a_fresh_interpreter_imports_only_stdlib_and_the_takeoff_dtos": "Added: a fresh interpreter imports only stdlib and the takeoff dtos. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffReadOnlySliceTests.test_m1a_modules_import_no_write_path": "Added: m1a modules import no write path. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffReadOnlySliceTests.test_m1a_production_code_has_no_comments_or_reflection": "Added: m1a production code has no comments or reflection. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffReadOnlySliceTests.test_the_takeoff_surface_is_the_seven_read_tools_under_the_cap": "Added: the takeoff surface is the seven read tools under the cap. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffReadOnlySliceTests.test_the_read_server_is_untouched_by_the_takeoff_slice": "Added: the read server is untouched by the takeoff slice. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffPackagingTests.test_component_script_builds_the_takeoff_helper_on_its_own": "Added: component script builds the takeoff helper on its own. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe.",
+        "AiTakeoffPackagingTests.test_release_build_copies_the_takeoff_helper_next_to_the_desktop_exe": "Added: release build copies the takeoff helper next to the desktop exe. Proxy isolation (stdlib plus the DTO module only, no PySide6, presentation, di_config or mcp_server), no write path in M1a, no # comments or getattr/setattr/hasattr in M1a production code, seven tools under the cap, read server unchanged at 38/7/1/4, build scripts build and copy ostv-takeoff-mcp.exe."
+      }
+    },
+    "tests/presentation/visualization/pdf/test_pdf_visible_origin.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "A real PDF written by ai_takeoff_pdf_support with an asymmetric CropBox and the real ost_pdf_writer reader, plus two small reader stand-ins (two-page geometry list and a reader that raises) passed through the reader_factory parameter; log capture checks the warning names the exception type only.",
+      "reviewed_tests": {
+        "ReadVisibleBoxOriginTests.test_real_pdf_with_an_asymmetric_crop_box": "Added: CropBox [120 40 520 640] gives (120, 40), so x and y are not swapped (the swapped-axes mutant survived every symmetric fixture).",
+        "ReadVisibleBoxOriginTests.test_each_page_uses_its_own_box": "Added: page 0 and page 1 return their own visible-box lower-left corners.",
+        "ReadVisibleBoxOriginTests.test_unreadable_geometry_falls_back_to_the_page_origin": "Added: out-of-range and negative page indexes, a missing file and a reader that raises all give (0, 0); the warning names RuntimeError and never the path in the exception text."
+      }
     }
   },
   "subsystems": {
@@ -37619,7 +38079,12 @@
       "seconds": 220.1
     },
     "unverified": {
-      "sql_writer_bid_lock_tsql": "The bid_locked T-SQL branch in SqlProjectWriter._validate_mutation_locks has never run against a live SQL Server; sqlite-evaluated branch text + text pins only; live two-client tests skipped (OSTV_SQL_INTEGRATION) and only py_compiled."
+      "sql_writer_bid_lock_tsql": "The bid_locked T-SQL branch in SqlProjectWriter._validate_mutation_locks has never run against a live SQL Server; sqlite-evaluated branch text + text pins only; live two-client tests skipped (OSTV_SQL_INTEGRATION) and only py_compiled.",
+      "ai_takeoff_cross_user_pipe_refusal": "The AI takeoff pipe OSTVisualizerTakeoffBridge.v1 is created with QLocalServer UserAccessOption and a pywin32 read-back shows its DACL grants only the current user SID, but a connection attempt from a second Windows user session was never run; cross-user refusal is unverified.",
+      "ai_takeoff_packaged_proxy": "ostv-takeoff-mcp.exe was not built with Nuitka and Claude Desktop was not run against it; the proxy, pipe and MainWindow were exercised in-process by tests/integration/ai_takeoff/test_m1a_end_to_end.py.",
+      "context_bridge_other_clients": "OSTVisualizerMcpBridge.v1 now grants only the current user SID; same-user ostv-mcp.exe is tested by a round trip. Different-account, elevated, second-session and restricted/sandboxed-token clients were not exercised; different-account and restricted-token clients are expected to get bridge_unavailable.",
+      "ai_takeoff_multi_user_pipe_name": "OSTVisualizerTakeoffBridge.v1 and OSTVisualizerMcpBridge.v1 are machine-wide pipe names with user-only access lists; on a multi-user Remote Desktop host only the first user's app is expected to listen. Not run (needs a second Windows account).",
+      "packaged_helpers_load_ost_pdf_writer": "The read-server and AI takeoff helpers now load ost_pdf_writer through importlib to read the visible box; verified in source runs only, not in the Nuitka-built helpers inside the desktop distribution (same loading path as ost_pdf)."
     },
     "decision_work_7_full_suite": {
       "tests_run": 10028,
@@ -37692,6 +38157,43 @@
       "skips": 42,
       "result": "OK",
       "seconds": 208.7,
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol)"
+    },
+    "ai_takeoff_m1a_full_suite": {
+      "tests_run": 13130,
+      "skips": 35,
+      "result": "OK",
+      "seconds": 246.3,
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol); untracked new files whitespace-clean"
+    },
+    "context_bridge_acl_full_suite": {
+      "tests_run": 13132,
+      "skips": 35,
+      "result": "OK",
+      "seconds": 247.7,
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol)"
+    },
+    "ai_takeoff_bug_hunt_full_suite": {
+      "tests_run": 13144,
+      "skips": 35,
+      "result": "OK",
+      "seconds": 248.1,
+      "baseline_tests_run": 13132,
+      "architecture": "no violations",
+      "compileall": 0,
+      "diff_check": "clean (cr-at-eol)"
+    },
+    "ai_takeoff_follow_ups_full_suite": {
+      "tests_run": 13159,
+      "skips": 35,
+      "result": "OK",
+      "seconds": 249.5,
       "architecture": "no violations",
       "compileall": 0,
       "diff_check": "clean (cr-at-eol)"
@@ -38723,6 +39225,30 @@
         "decision": "Left column splitter resizing and scroll freezes on composite Plans",
         "status": "implemented",
         "outcome": "Layers stretch set to 0 so only the Conditions pane absorbs Pan-handle and window height changes (real-window tests for shrink, grow, Conditions or Layers hidden, Pan toggle, window resize and restart). Scroll freeze traced to PySide QImage calls holding the GIL on render workers; large conversions, effects, tints and overlay crops now run in BAND_PIXELS bands with byte-identical output (GUI stall per composite frame about 65 ms to about 25 ms). Scrolling itself, the Pan sidebar and the debounce were measured and are not causes; remaining GIL holders and the placement-mode pdfium_lock use are reported, not changed."
+      },
+      {
+        "id": "Z4",
+        "decision": "AI takeoff MCP plan, milestone M1a (read-only slice) with the Step 0 bid_key and sidecar_status decisions",
+        "status": "implemented",
+        "outcome": "Proxy, pipe bridge, session token, Feature.AI_TAKEOFF, Options opt-in and tools 1-7 implemented with tests written first; read-only sidecar loading reports ok, empty, rebind_required, fingerprint_mismatch, corrupt and unavailable_no_database_guid and never writes; no write tool and no ProjectWriteService import. M1b (tools 8-15, approval UI, sidecar writes and lifecycle, audit) not started. Cross-user pipe refusal unverified."
+      },
+      {
+        "id": "Z5",
+        "decision": "Restrict the MCP live-context pipe OSTVisualizerMcpBridge.v1 to the current user's SID",
+        "status": "implemented",
+        "outcome": "UserAccessOption on the context bridge; ACL read-back and same-user round trip through the read server's McpBridgeClient tested first; get_context unchanged; read server counts and tests unchanged. Not exercised: elevated or second-session same-user clients, different-account and restricted-token clients (expected to be refused and fall back to bridge_unavailable)."
+      },
+      {
+        "id": "Z6",
+        "decision": "Bug hunt on the uncommitted M1a AI takeoff slice and the context-bridge pipe restriction",
+        "status": "implemented",
+        "outcome": "Seven defects reproduced with failing tests and fixed (visible-box origin, proxy stdio code page, deep JSON in proxy and bridge, late worker emit, lone surrogates, unbounded sidecar identifiers, PNG save failure); 12 tests added; suspected issues reported without fixes. Read server, annotation preflight scope and schema validator scope untouched; M1b not started."
+      },
+      {
+        "id": "Z7",
+        "decision": "Follow-ups: visible-box origin in all PDF text/segment callers, proxy read timeout, bridge worker/connection/idle caps and untrusted-text control stripping",
+        "status": "implemented",
+        "outcome": "Placement-mode snapping, plan-view PDF text selection and the read server's PDF summaries now subtract the visible-box origin (shared presentation helper; importlib-loaded reader in infrastructure), each reproduced first on offset, MediaBox-origin and rotated fixtures. Proxy reads time out after PIPE_READ_TIMEOUT_SECONDS with app_timeout. Bridge caps workers (2), connections (8) and idle requests (10 s) with busy/invalid_argument answers. UntrustedText strips Cc and bidi formatting characters. M1b not started."
       },
       {
         "id": "OPEN-1",

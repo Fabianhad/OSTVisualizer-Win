@@ -22,9 +22,13 @@ class NativePdfMetadataProvider:
         self,
         logger: logging.Logger | None = None,
         renderer_factory: Callable | None = None,
+        geometry_reader_factory: Callable | None = None,
     ) -> None:
         self._logger = logger or logging.getLogger(__name__)
         self._renderer_factory = renderer_factory or self._load_renderer_factory()
+        self._geometry_reader_factory = (
+            geometry_reader_factory or self._load_geometry_reader_factory()
+        )
         self._lock = threading.Lock()
         self._page_info_cache: OrderedDict[_MetadataCacheKey, PdfPageInfoDto] = (
             OrderedDict()
@@ -42,6 +46,26 @@ class NativePdfMetadataProvider:
             "ost_visualizer.presentation.visualization.pdf.ost_pdf"
         )
         return module.PDFRenderer
+
+    @staticmethod
+    def _load_geometry_reader_factory() -> Callable:
+        module = importlib.import_module(
+            "ost_visualizer.presentation.visualization.exporters.ost_pdf_writer"
+        )
+        return module.PDFWriter
+
+    def _visible_origin(self, file_path: str, page_index: int) -> tuple[float, float]:
+        try:
+            geometries = self._geometry_reader_factory().get_page_geometries(file_path)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._logger.warning(
+                "Failed to read PDF page geometry: %s", type(exc).__name__
+            )
+            return 0.0, 0.0
+        if not 0 <= page_index < len(geometries):
+            return 0.0, 0.0
+        min_x, min_y = geometries[page_index].visible_box[:2]
+        return float(min_x), float(min_y)
 
     @staticmethod
     def _file_signature(file_path: str) -> _FileSignature:
@@ -157,16 +181,17 @@ class NativePdfMetadataProvider:
             if not opened:
                 return []
             clean_index = self._clean_page_index(page_index, int(renderer.page_count()))
+            origin_x, origin_y = self._visible_origin(file_path, clean_index)
             runs: List[PdfTextRunDto] = []
             for native_run in renderer.extract_text_runs(clean_index):
                 try:
                     runs.append(
                         PdfTextRunDto(
                             text=str(native_run.text or ""),
-                            left=float(native_run.left),
-                            top=float(native_run.top),
-                            right=float(native_run.right),
-                            bottom=float(native_run.bottom),
+                            left=float(native_run.left) - origin_x,
+                            top=float(native_run.top) - origin_y,
+                            right=float(native_run.right) - origin_x,
+                            bottom=float(native_run.bottom) - origin_y,
                         )
                     )
                 except (AttributeError, TypeError, ValueError):
@@ -194,14 +219,15 @@ class NativePdfMetadataProvider:
             if not opened:
                 return []
             clean_index = self._clean_page_index(page_index, int(renderer.page_count()))
+            origin_x, origin_y = self._visible_origin(file_path, clean_index)
             segments: List[PdfVectorSegmentDto] = []
             for x1, y1, x2, y2 in renderer.extract_path_segments(clean_index):
                 segments.append(
                     PdfVectorSegmentDto(
-                        x1=float(x1),
-                        y1=float(y1),
-                        x2=float(x2),
-                        y2=float(y2),
+                        x1=float(x1) - origin_x,
+                        y1=float(y1) - origin_y,
+                        x2=float(x2) - origin_x,
+                        y2=float(y2) - origin_y,
                     )
                 )
             return segments

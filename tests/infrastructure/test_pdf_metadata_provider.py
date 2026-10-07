@@ -175,5 +175,68 @@ class PdfMetadataProviderTests(unittest.TestCase):
             )
 
 
+class PdfMetadataVisibleBoxOriginTests(unittest.TestCase):
+    CASES = {
+        "crop box offset": (
+            "/MediaBox [0 0 612 792] /CropBox [100 100 512 692]",
+            (100, 200, 300, 200),
+            (412.0, 592.0),
+        ),
+        "media box origin": (
+            "/MediaBox [50 50 662 842]",
+            (150, 250, 350, 250),
+            (612.0, 792.0),
+        ),
+        "asymmetric crop box": (
+            "/MediaBox [0 0 612 792] /CropBox [120 40 520 640]",
+            (80, 260, 280, 260),
+            (400.0, 600.0),
+        ),
+        "rotated crop box": (
+            "/MediaBox [0 0 612 792] /CropBox [100 100 512 692] /Rotate 90",
+            (100, 200, 300, 200),
+            (412.0, 592.0),
+        ),
+    }
+
+    def test_text_and_segments_are_relative_to_the_visible_box_origin(self):
+        from pathlib import Path
+        from tests.presentation.services.ai_takeoff_pdf_support import write_takeoff_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            for label, (boxes, expected_segment, crop_size) in self.CASES.items():
+                with self.subTest(label=label):
+                    pdf = write_takeoff_pdf(
+                        Path(directory) / f"{label}.pdf",
+                        lines=[(200, 300, 400, 300)],
+                        texts=[(150, 500, 12, "GRID")],
+                        page_boxes=boxes,
+                    )
+                    provider = NativePdfMetadataProvider()
+                    info = provider.get_page_info(str(pdf), 0)
+                    self.assertEqual(
+                        (info.crop_width_pts, info.crop_height_pts), crop_size
+                    )
+                    segments = provider.get_vector_segments(str(pdf), 0)
+                    self.assertEqual(
+                        [
+                            tuple(round(v) for v in (s.x1, s.y1, s.x2, s.y2))
+                            for s in segments
+                        ],
+                        [expected_segment],
+                    )
+                    run = provider.get_text_runs(str(pdf), 0)[0]
+                    self.assertAlmostEqual(
+                        run.left, expected_segment[0] - 50.0, delta=2.0
+                    )
+                    self.assertAlmostEqual(
+                        run.bottom, expected_segment[1] + 200.0, delta=4.0
+                    )
+                    self.assertTrue(0.0 <= run.left < run.right <= crop_size[0])
+                    self.assertTrue(0.0 <= run.bottom < run.top <= crop_size[1])
+                    self.assertTrue(run.top - run.bottom < 20.0)
+                    self.assertTrue(run.right - run.left < 60.0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,12 @@
 import json
+import threading
+import time
 import unittest
 import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.mcp_server.bridge_client import McpBridgeClient
 from ost_visualizer.presentation.services import mcp_context_bridge
 from ost_visualizer.presentation.services.mcp_context_bridge import McpContextBridge
 from PySide6 import QtWidgets
@@ -223,6 +226,84 @@ class McpContextBridgeRequestTests(unittest.TestCase):
             json.loads(socket.written[0].decode("utf-8")),
             {"success": False, "error": "unsupported_command"},
         )
+
+
+class McpContextBridgePipeTests(unittest.TestCase):
+    def setUp(self):
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.server_name = f"OSTVisualizerMcpBridgeTest.{uuid.uuid4().hex}"
+        fixture = McpContextBridgeRequestTests._bridge(self)
+        with patch.object(
+            mcp_context_bridge, "MCP_BRIDGE_SERVER_NAME", self.server_name
+        ):
+            self.bridge = McpContextBridge(
+                main_window=fixture._main_window,
+                ui_state_manager=fixture._ui_state,
+                project_data_service=fixture._project_data,
+                plan_view=fixture._plan_view,
+            )
+            self.bridge.start()
+            self.addCleanup(self._cleanup)
+        self.assertTrue(self.bridge._server.isListening())
+
+    def _cleanup(self):
+        with patch.object(
+            mcp_context_bridge, "MCP_BRIDGE_SERVER_NAME", self.server_name
+        ):
+            self.bridge.cleanup()
+
+    def test_pipe_access_list_grants_only_the_current_user(self):
+        import win32api
+        import win32con
+        import win32file
+        import win32security
+
+        process_token = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(), win32con.TOKEN_QUERY
+        )
+        current_user = win32security.GetTokenInformation(
+            process_token, win32security.TokenUser
+        )[0]
+        handle = win32file.CreateFile(
+            "\\\\.\\pipe\\" + self.server_name,
+            win32con.READ_CONTROL,
+            0,
+            None,
+            win32con.OPEN_EXISTING,
+            0,
+            None,
+        )
+        try:
+            descriptor = win32security.GetSecurityInfo(
+                handle,
+                win32security.SE_KERNEL_OBJECT,
+                win32security.DACL_SECURITY_INFORMATION,
+            )
+        finally:
+            handle.Close()
+        dacl = descriptor.GetSecurityDescriptorDacl()
+        sids = [
+            win32security.ConvertSidToStringSid(dacl.GetAce(index)[2])
+            for index in range(dacl.GetAceCount())
+        ]
+        self.assertEqual(sids, [win32security.ConvertSidToStringSid(current_user)])
+        self.assertNotIn("S-1-1-0", sids)
+        self.assertNotIn("S-1-5-7", sids)
+
+    def test_read_server_client_of_the_same_user_still_gets_live_context(self):
+        client = McpBridgeClient(timeout_ms=1000, server_name=self.server_name)
+        results = []
+        thread = threading.Thread(target=lambda: results.append(client.get_context()))
+        thread.start()
+        deadline = time.monotonic() + 15
+        while thread.is_alive() and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.002)
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(client.last_status, "live_context")
+        self.assertEqual(results[0]["source"], "live_app")
+        self.assertEqual(results[0]["selected_takeoff_uids"], ["plan-1"])
 
 
 if __name__ == "__main__":

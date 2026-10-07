@@ -5,8 +5,10 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $ActivateScript = Join-Path $ProjectRoot 'venv\Scripts\Activate.ps1'
 $MainScript = Join-Path $ProjectRoot 'Visualizer.py'
 $McpScript = Join-Path $ProjectRoot 'McpServer.py'
+$TakeoffScript = Join-Path $ProjectRoot 'McpTakeoffServer.py'
 $OutDir = Join-Path $ProjectRoot 'dist_visualizer'
 $McpOutDir = Join-Path $ProjectRoot 'dist_mcp'
+$TakeoffOutDir = Join-Path $ProjectRoot 'dist_takeoff_mcp'
 $IconPath = Join-Path $ProjectRoot 'ost_visualizer\resources\icon.ico'
 $TemplatePath = Join-Path $ProjectRoot 'ost_visualizer\presentation\visualization\renderers\threejs\templates\viewer.html'
 $IconsDir = Join-Path $ProjectRoot 'ost_visualizer\resources\icons'
@@ -89,16 +91,40 @@ $mcpNuitkaArgs = @(
 
 Invoke-NuitkaBuild -Label "Building lightweight MCP helper..." -Arguments $mcpNuitkaArgs
 
+$takeoffNuitkaArgs = @(
+    '--standalone'
+    '--windows-console-mode=force'
+    "--output-dir=$TakeoffOutDir"
+    '--output-filename=ostv-takeoff-mcp.exe'
+    '--include-windows-runtime-dlls=no'
+    "--nofollow-import-to=PySide6,shiboken6,ost_visualizer.presentation,ost_visualizer.config.di_config,ost_visualizer.mcp_server"
+) + $CommonNofollowArgs + @(
+    '--assume-yes-for-downloads'
+    '--lto=yes'
+    "--jobs=$CpuCores"
+    '--low-memory'
+    $TakeoffScript
+)
+
+Invoke-NuitkaBuild -Label "Building AI takeoff MCP proxy..." -Arguments $takeoffNuitkaArgs
+
 $McpBuildDir = Join-Path $McpOutDir 'McpServer.dist'
 $McpHelperExe = Join-Path $McpBuildDir 'ostv-mcp.exe'
+$TakeoffBuildDir = Join-Path $TakeoffOutDir 'McpTakeoffServer.dist'
+$TakeoffHelperExe = Join-Path $TakeoffBuildDir 'ostv-takeoff-mcp.exe'
 $DesktopBuildDir = Join-Path $OutDir 'Visualizer.dist'
 if (-not (Test-Path $McpHelperExe)) {
     Write-Host "ERROR: MCP helper build did not produce $McpHelperExe" -ForegroundColor Red
     exit 1
 }
+if (-not (Test-Path $TakeoffHelperExe)) {
+    Write-Host "ERROR: AI takeoff MCP build did not produce $TakeoffHelperExe" -ForegroundColor Red
+    exit 1
+}
 if (Test-Path $DesktopBuildDir) {
     Copy-Item (Join-Path $McpBuildDir '*') -Destination $DesktopBuildDir -Recurse -Force
-    Write-Host "Copied MCP helper and runtime files into desktop distribution." -ForegroundColor Green
+    Copy-Item (Join-Path $TakeoffBuildDir '*') -Destination $DesktopBuildDir -Recurse -Force
+    Write-Host "Copied MCP helpers and runtime files into desktop distribution." -ForegroundColor Green
 }
 else {
     Write-Host "ERROR: Desktop distribution directory not found: $DesktopBuildDir" -ForegroundColor Red

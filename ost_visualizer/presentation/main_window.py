@@ -98,6 +98,10 @@ from .managers.shortcut_manager import ShortcutManager
 from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
 from .services.bid_clipboard_service import BidClipboardService
+from .services.ai_takeoff_bridge import (
+    TakeoffCommandBridge,
+    ai_takeoff_session_token_path,
+)
 from .services.mcp_context_bridge import McpContextBridge
 from .utils.annotation_defaults import (
     get_annotation_style_for_tool as get_active_annotation_style_for_tool,
@@ -570,6 +574,14 @@ class MainWindow(QtWidgets.QMainWindow):
             parent=self,
         )
         self._mcp_context_bridge.start()
+        self._ai_takeoff_bridge = TakeoffCommandBridge(
+            read_service=app_controller.get_service("ai_takeoff_read_service"),
+            pdf_source=app_controller.get_service("ai_takeoff_pdf_source"),
+            access_allowed=self._ai_takeoff_access_allowed,
+            token_path=ai_takeoff_session_token_path(),
+            parent=self,
+        )
+        self._ai_takeoff_bridge.start()
         self.update_dialog_requested.connect(self._show_update_dialog)
         self._update_service = self._resolve_update_service()
         if (
@@ -1178,6 +1190,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 exc_info=True,
             )
         return None
+
+    def _ai_takeoff_access_allowed(self) -> bool:
+        return bool(
+            self._config_model.snapshot().ai_takeoff_enabled
+            and self.ui_access_manager.is_allowed(Feature.AI_TAKEOFF)
+        )
 
     def _resolve_update_service(self):
         try:
@@ -2496,6 +2514,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ("clean up license coordinator", self.license_coordinator.cleanup),
             ("clean up UI access manager", self.ui_access_manager.cleanup),
             ("clean up MCP context bridge", self._mcp_context_bridge.cleanup),
+            ("clean up AI takeoff bridge", self._ai_takeoff_bridge.cleanup),
             (
                 "shut down application lifecycle services",
                 lambda: self.app_controller.get_service(

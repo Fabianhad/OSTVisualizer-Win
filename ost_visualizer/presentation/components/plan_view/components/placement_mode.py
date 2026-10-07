@@ -55,6 +55,7 @@ from ....visualization.core.geometry.takeoff_geometry import (
     resolve_point_takeoff_shape,
 )
 from ....visualization.pdf import ost_pdf
+from ....visualization.pdf.pdf_visible_origin import read_visible_box_origin
 from ....visualization.pdf.pdfium_lock import pdfium_lock
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
@@ -460,6 +461,7 @@ class PlacementModeMixin:
                     return []
                 raw_segments = renderer.extract_path_segments(page_index)
                 page_info = renderer.page_info(page_index)
+            origin_x, origin_y = read_visible_box_origin(file_path, page_index)
             page_width_pts = 0.0
             page_height_pts = 0.0
             if page_info is not None:
@@ -492,15 +494,15 @@ class PlacementModeMixin:
             segments = []
             for x1, y1, x2, y2 in raw_segments:
                 px1, py1 = self._pdf_raw_point_to_page_point(
-                    float(x1),
-                    float(y1),
+                    float(x1) - origin_x,
+                    float(y1) - origin_y,
                     raw_width_pts,
                     raw_height_pts,
                     intrinsic_rotation,
                 )
                 px2, py2 = self._pdf_raw_point_to_page_point(
-                    float(x2),
-                    float(y2),
+                    float(x2) - origin_x,
+                    float(y2) - origin_y,
                     raw_width_pts,
                     raw_height_pts,
                     intrinsic_rotation,

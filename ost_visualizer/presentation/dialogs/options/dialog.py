@@ -41,6 +41,7 @@ class OptionsDialog(QtWidgets.QDialog):
         apply_callback: Optional[Callable[[Config], object]] = None,
         reset_callback: Optional[Callable[[], Config]] = None,
         mcp_helper_path: Optional[Path] = None,
+        mcp_takeoff_helper_path: Optional[Path] = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(OPTIONS_DIALOG_TITLE)
@@ -58,6 +59,9 @@ class OptionsDialog(QtWidgets.QDialog):
         self._export_tab: Optional[ExportTab] = None
         self._mcp_setup_tab: Optional[McpSetupTab] = None
         self._mcp_helper_path = Path(mcp_helper_path) if mcp_helper_path else None
+        self._mcp_takeoff_helper_path = (
+            Path(mcp_takeoff_helper_path) if mcp_takeoff_helper_path else None
+        )
         self._cleaned_up = False
         self._build_ui()
         self._load_config()
@@ -116,7 +120,9 @@ class OptionsDialog(QtWidgets.QDialog):
         self._mcp_setup_tab = McpSetupTab(
             self._tabs,
             helper_path=self._mcp_helper_path,
+            takeoff_helper_path=self._mcp_takeoff_helper_path,
         )
+        self._ai_takeoff_check = self._mcp_setup_tab.ai_takeoff_check
         self._tabs.addTab(self._mcp_setup_tab, OPTIONS_TAB_MCP_SETUP)
         self._tabs.currentChanged.connect(self._on_tab_changed)
         main_layout.addWidget(self._tabs)
@@ -315,6 +321,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._csv_drop_elevation_check.setChecked(
             self._applied_config.csv_export_drop_condition_elevation
         )
+        self._ai_takeoff_check.setChecked(self._applied_config.ai_takeoff_enabled)
         self._fonts_colors_tab.load_config(self._applied_config)
         self._export_tab.update_callout_controls_enabled()
 
@@ -353,6 +360,7 @@ class OptionsDialog(QtWidgets.QDialog):
             *self._export_tab.callout_content_checks,
             self._ost_osp_drop_elevation_check,
             self._csv_drop_elevation_check,
+            self._ai_takeoff_check,
         )
         for button in buttons:
             button.toggled.connect(self._update_apply_enabled)
@@ -502,6 +510,7 @@ class OptionsDialog(QtWidgets.QDialog):
             csv_export_drop_condition_elevation=(
                 self._csv_drop_elevation_check.isChecked()
             ),
+            ai_takeoff_enabled=self._ai_takeoff_check.isChecked(),
         )
         return self._fonts_colors_tab.apply_to_config(config)
 

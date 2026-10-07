@@ -24,6 +24,7 @@ class McpContextBridge(QtCore.QObject):
         self._project_data = project_data_service
         self._plan_view = plan_view
         self._server = QLocalServer(self)
+        self._server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self._server.newConnection.connect(self._on_new_connection)
 
     def start(self) -> None:

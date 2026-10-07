@@ -123,3 +123,15 @@ class ConditionElevationExportOptionAggregateTests(unittest.TestCase):
         self.assertTrue(snapshot.ost_osp_export_drop_condition_elevation)
         self.assertTrue(snapshot.csv_export_drop_condition_elevation)
         self.assertFalse(snapshot.show_toolbar_text)
+
+
+class AiTakeoffOptionAggregateTests(unittest.TestCase):
+    def test_ai_takeoff_option_survives_validation_and_reload(self):
+        repository = _ConfigRepository(Config())
+        aggregate = ConfigAggregate(repository)
+        self.assertFalse(aggregate.snapshot().ai_takeoff_enabled)
+        draft = replace(aggregate.snapshot(), ai_takeoff_enabled=True)
+        self.assertEqual(aggregate.update_options(draft), ["ai_takeoff_enabled"])
+        self.assertIs(aggregate.snapshot().ai_takeoff_enabled, True)
+        self.assertIs(repository.saved[-1].ai_takeoff_enabled, True)
+        self.assertIs(ConfigAggregate(repository).snapshot().ai_takeoff_enabled, True)

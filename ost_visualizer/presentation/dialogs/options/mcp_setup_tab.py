@@ -3,11 +3,13 @@ from typing import Optional
 from PySide6 import QtCore, QtWidgets
 from ...config import NO_MARGINS, RELAXED_MARGINS, RELAXED_SPACING
 from ...utils.mcp_setup_config import (
+    TAKEOFF_MCP_SERVER_NAME,
     build_claude_desktop_config,
     build_codex_config_toml,
     build_codex_mcp_add_command,
     default_file_state_path,
     default_mcp_helper_path,
+    default_takeoff_helper_path,
 )
 from ...utils.theme import get_dialog_header_font
 
@@ -17,11 +19,20 @@ class McpSetupTab(QtWidgets.QWidget):
         self,
         parent=None,
         helper_path: Optional[Path] = None,
+        takeoff_helper_path: Optional[Path] = None,
     ):
         super().__init__(parent)
         self.helper_path = (
             Path(helper_path) if helper_path else default_mcp_helper_path()
         )
+        self.takeoff_helper_path = (
+            Path(takeoff_helper_path)
+            if takeoff_helper_path
+            else default_takeoff_helper_path()
+        )
+        self.ai_takeoff_check = None
+        self.takeoff_config_edit = None
+        self.copy_takeoff_button = None
         self.file_state_path = default_file_state_path()
         self.status_label = None
         self.claude_config_edit = None
@@ -89,6 +100,29 @@ class McpSetupTab(QtWidgets.QWidget):
             "Copy Setup Command",
             self._copy_codex_command,
         )
+        layout.addWidget(self._section_label("AI takeoff (read-only preview)"))
+        takeoff_summary = QtWidgets.QLabel(
+            "Lets an AI tool read sheets, drawing text, linework and quantities "
+            "of the bid open in this window. It cannot change the bid. Drawing "
+            "text is passed to the AI as data only.",
+            self,
+        )
+        takeoff_summary.setWordWrap(True)
+        layout.addWidget(takeoff_summary)
+        self.ai_takeoff_check = QtWidgets.QCheckBox(
+            "Allow AI takeoff tools while OST Visualizer is open", self
+        )
+        layout.addWidget(self.ai_takeoff_check)
+        self.takeoff_config_edit, self.copy_takeoff_button = self._add_copy_block(
+            layout,
+            "AI takeoff for Claude Desktop or Cursor",
+            build_claude_desktop_config(
+                self.takeoff_helper_path, TAKEOFF_MCP_SERVER_NAME
+            ),
+            135,
+            "Copy AI Takeoff JSON",
+            self._copy_takeoff_config,
+        )
         layout.addStretch(1)
         scroll_area.setWidget(content)
         outer_layout.addWidget(scroll_area)
@@ -153,6 +187,9 @@ class McpSetupTab(QtWidgets.QWidget):
     def _copy_codex_command(self) -> None:
         self._copy_to_clipboard(self.codex_command_edit.toPlainText())
 
+    def _copy_takeoff_config(self) -> None:
+        self._copy_to_clipboard(self.takeoff_config_edit.toPlainText())
+
     def _copy_to_clipboard(self, text: str) -> None:
         QtWidgets.QApplication.clipboard().setText(text)
         self.status_label.setText(self._status_text("Copied to clipboard."))
@@ -162,6 +199,7 @@ class McpSetupTab(QtWidgets.QWidget):
             self.copy_claude_button,
             self.copy_codex_config_button,
             self.copy_codex_button,
+            self.copy_takeoff_button,
         ):
             if button:
                 try:
@@ -175,5 +213,9 @@ class McpSetupTab(QtWidgets.QWidget):
         self.copy_claude_button = None
         self.copy_codex_config_button = None
         self.copy_codex_button = None
+        self.ai_takeoff_check = None
+        self.takeoff_config_edit = None
+        self.copy_takeoff_button = None
         self.helper_path = None
+        self.takeoff_helper_path = None
         self.file_state_path = None

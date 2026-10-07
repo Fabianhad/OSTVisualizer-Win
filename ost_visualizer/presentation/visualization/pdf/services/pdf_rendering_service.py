@@ -10,6 +10,7 @@ from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
 from ...utils.image_effects import apply_page_image_effects, tint_image
 from .. import ost_pdf
+from ..pdf_visible_origin import read_visible_box_origin
 from ..page_cache import PageCache, scoped_pdf_render_cancellation_token
 from .composite_renderer import CompositeRenderer
 
@@ -434,12 +435,17 @@ class PDFRenderingService:
         page_info = self._page_cache.get_page_info(
             request.file_path, request.page_index
         )
+        visible_origin = read_visible_box_origin(request.file_path, request.page_index)
         if request.cancelled.is_set():
             return RenderResult(request.request_id, False, None, "Cancelled")
         return RenderResult(
             request.request_id,
             True,
-            {"text_runs": text_runs, "page_info": page_info},
+            {
+                "text_runs": text_runs,
+                "page_info": page_info,
+                "visible_origin": visible_origin,
+            },
             None,
         )
 

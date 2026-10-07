@@ -196,6 +196,31 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(manager.is_allowed(Feature.CREATE_DATABASE))
         self.assertTrue(manager.is_allowed(Feature.UNLOAD_FILE))
 
+    def test_ai_takeoff_needs_a_license_and_an_open_bid_but_no_write_access(self):
+        project_data = _permissions__ProjectData()
+        ui_state = _permissions__UiState(project_data.bid_ref)
+        manager = self._access_manager(
+            project_data,
+            ui_state=ui_state,
+            capability=_permissions__DatabaseCapability(editable=False),
+        )
+        project_data.locked = True
+        self.assertTrue(manager.is_allowed(Feature.AI_TAKEOFF))
+        self.assertNotIn(Feature.AI_TAKEOFF, _DATABASE_EDIT_FEATURES)
+        self.assertNotIn(Feature.AI_TAKEOFF, _LOCK_BLOCKED)
+        ui_state._bid_ref = None
+        self.assertFalse(manager.is_allowed(Feature.AI_TAKEOFF))
+        unlicensed = UIAccessManager(
+            _permissions__EventBus(),
+            SimpleNamespace(has_valid_license=lambda: False),
+            _permissions__TransactionMonitor(),
+            project_data,
+            _permissions__UiState(project_data.bid_ref),
+            _permissions__DatabaseCapability(),
+        )
+        self.assertFalse(unlicensed.is_allowed(Feature.AI_TAKEOFF))
+        self.assertTrue(unlicensed.is_allowed(Feature.VIEW_2D))
+
     def test_bid_job_status_permission_uses_selected_bid_resource(self):
         project_data = _permissions__ProjectData()
         checked_resources = []

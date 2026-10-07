@@ -2446,3 +2446,59 @@ class PlanViewInteractionTests(unittest.TestCase):
         # that contract explicitly.
         view.set_editing_enabled(True)
         return view
+
+
+class PdfSnapVisibleBoxOriginTests(unittest.TestCase):
+    CASES = {
+        "crop box offset": (
+            "/MediaBox [0 0 612 792] /CropBox [100 100 512 692]",
+            412.0,
+            592.0,
+            (100.0, 392.0, 300.0, 392.0),
+        ),
+        "media box origin": (
+            "/MediaBox [50 50 662 842]",
+            612.0,
+            792.0,
+            (150.0, 542.0, 350.0, 542.0),
+        ),
+        "rotated crop box": (
+            "/MediaBox [0 0 612 792] /CropBox [100 100 512 692] /Rotate 90",
+            592.0,
+            412.0,
+            (200.0, 100.0, 200.0, 300.0),
+        ),
+    }
+
+    def setUp(self):
+        import tempfile
+        from tests.presentation.services.ai_takeoff_pdf_support import write_takeoff_pdf
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        self.write_pdf = write_takeoff_pdf
+        snap_patch = patch.object(
+            placement_mode, "SnapIndex", _snap_support_FakeSnapIndex
+        )
+        snap_patch.start()
+        self.addCleanup(snap_patch.stop)
+        _snap_support_FakeSnapIndex.instances.clear()
+
+    def test_snap_segments_start_at_the_visible_box_origin(self):
+        for label, (boxes, width, height, expected_pts) in self.CASES.items():
+            with self.subTest(label=label):
+                pdf = self.write_pdf(
+                    self.directory / f"{label}.pdf",
+                    lines=[(200, 300, 400, 300)],
+                    page_boxes=boxes,
+                )
+                harness = _snap_support_PlacementHarness()
+                harness._current_page.image_path = str(pdf)
+                harness._current_page.height_pts = height
+                harness._pdf_width_pts = width
+                harness._pdf_height_pts = height
+                segments = harness._build_pdf_snap_segments()
+                self.assertEqual(len(segments), 1)
+                for actual, expected in zip(segments[0], expected_pts):
+                    self.assertAlmostEqual(actual, expected * 2.0, places=3)

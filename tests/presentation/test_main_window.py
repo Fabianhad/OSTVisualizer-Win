@@ -1076,6 +1076,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._mcp_context_bridge = SimpleNamespace(
             cleanup=lambda: calls.append("mcp_cleanup")
         )
+        window._ai_takeoff_bridge = SimpleNamespace(
+            cleanup=lambda: calls.append("takeoff_cleanup")
+        )
         window.app_controller = SimpleNamespace(
             get_service=lambda service: (
                 lifecycle
@@ -1108,6 +1111,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "license_cleanup",
                 "access_cleanup",
                 "mcp_cleanup",
+                "takeoff_cleanup",
                 "lifecycle",
                 "window_close",
                 "qt_quit",
@@ -1145,6 +1149,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._mcp_context_bridge = SimpleNamespace(
             cleanup=lambda: calls.append("mcp_cleanup")
         )
+        window._ai_takeoff_bridge = SimpleNamespace(
+            cleanup=lambda: calls.append("takeoff_cleanup")
+        )
         window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
         first = FakeCloseEvent()
         second = FakeCloseEvent()
@@ -1177,6 +1184,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "license_cleanup",
                 "access_cleanup",
                 "mcp_cleanup",
+                "takeoff_cleanup",
                 "lifecycle",
                 "window_close",
                 "qt_quit",
@@ -1215,6 +1223,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window.license_coordinator = SimpleNamespace(cleanup=cleanup("license_cleanup"))
         window.ui_access_manager = SimpleNamespace(cleanup=cleanup("access_cleanup"))
         window._mcp_context_bridge = SimpleNamespace(cleanup=cleanup("mcp_cleanup"))
+        window._ai_takeoff_bridge = SimpleNamespace(cleanup=cleanup("takeoff_cleanup"))
         window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
         event = FakeCloseEvent()
         with self.assertLogs(
@@ -1252,6 +1261,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "license_cleanup",
                 "access_cleanup",
                 "mcp_cleanup",
+                "takeoff_cleanup",
                 "lifecycle",
                 "window_close",
                 "qt_quit",

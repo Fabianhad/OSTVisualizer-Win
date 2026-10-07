@@ -4,6 +4,19 @@
 
 ### Added
 
+- **AI takeoff tools (preview, read-only).** A second MCP helper,
+  `ostv-takeoff-mcp.exe`, lets an AI client such as Claude Desktop read the bid
+  open in the running app: sheets with scale, PNG crops of PDF pages with
+  pixel-to-page and page-to-OST transforms, drawing text, PDF line segments,
+  quantities by condition or page, and AI levels and assumptions (empty until a
+  later version can create them). It cannot change the bid. Turn it on in
+  **Tools > Options > MCP Setup** (off by default; needs a license and an open
+  bid) and copy the AI takeoff setup JSON from the same tab. The helper connects
+  only to the running app over a pipe limited to your Windows account, with a key
+  that changes on every app start. Drawing text is returned as untrusted data,
+  without control or text-direction characters. If the app does not answer within
+  two minutes the tool reports a timeout instead of waiting, and too many parallel
+  requests get a "busy" answer.
 - **View > Pan Sidebar** (also the first sidebar toggle in the view toolbar) docks a
   mini-map of the current Page above the Conditions and Layers sidebars. It shows the
   visible area as an inverted rectangle that follows scrolling, zooming, resizing, and
@@ -60,6 +73,16 @@
 
 ### Fixed
 
+- On PDF pages whose visible area does not start at the corner of the sheet (a
+  cropped page, or a page box with an offset origin), Snap to PDF Lines snapped to
+  points shifted away from the drawn lines and PDF text hover, selection and copy
+  picked text away from where it is shown. Both now line up with the drawing. The
+  MCP server's PDF text and line summaries now measure coordinates from the corner
+  of the visible page instead of the corner of the original sheet.
+- The local pipe that gives MCP clients the app's live context (active tab, selected
+  bid, pages, conditions and takeoffs) could be opened by any account on the computer.
+  It is now limited to the Windows user running OST Visualizer. MCP clients started
+  by that user keep working unchanged.
 - Scrolling and zooming a Plan with composite, inverted, or bitonal images no longer
   stalls the interface while frames render: large image conversions, effects, tints,
   and overlay crops on the render threads now run in small bands, so the main thread
