@@ -1,16 +1,23 @@
 import os
 import shutil
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.presentation.services import ai_takeoff_pdf_source
 from ost_visualizer.presentation.services.ai_takeoff_pdf_source import (
+    MAX_PAGE_PATH_ITEMS,
     PageCachePdfSource,
 )
 from ost_visualizer.presentation.visualization.pdf import ost_pdf
 from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
-from tests.presentation.services.ai_takeoff_pdf_support import write_takeoff_pdf
+from tests.presentation.services.ai_takeoff_pdf_support import (
+    write_content_pdf,
+    write_takeoff_pdf,
+)
 
 OFFSET_BOXES = {
     "crop box offset": "/MediaBox [0 0 612 792] /CropBox [100 100 512 692]",
@@ -36,9 +43,9 @@ class _RecordingRenderer:
             return self._open_result
         return self._real.open(file_path)
 
-    def extract_path_segments(self, page_index):
+    def extract_path_items(self, page_index, max_items):
         self._calls.append("extract")
-        return self._real.extract_path_segments(page_index)
+        return self._real.extract_path_items(page_index, max_items)
 
     def close(self):
         self._calls.append("close")
@@ -140,6 +147,104 @@ class PageCachePdfSourceTests(unittest.TestCase):
                 self.assertAlmostEqual(run.bottom, 400.0, delta=4.0)
                 self.assertTrue(0.0 < run.top - run.bottom < 20.0)
                 self.assertTrue(0.0 < run.right - run.left < 60.0)
+
+    def test_path_segments_carry_widths_dashes_colors_ids_and_groups(self):
+        pdf = write_content_pdf(
+            self.directory / "styled.pdf",
+            "2 0 0 2 0 0 cm 0.75 w [3 1] 0 d 1 0 0 RG 10 10 m 50 10 l S "
+            "[] 0 d 0 0 1 rg 60 60 10 10 re f",
+            page_boxes="/MediaBox [0 0 612 792] /CropBox [5 5 607 787]",
+        )
+        result = self.source.get_path_segments(str(pdf), 0)
+        self.assertFalse(result.truncated)
+        dashed = result.segments[0]
+        self.assertEqual(
+            (dashed.x1, dashed.y1, dashed.x2, dashed.y2), (15.0, 15.0, 95.0, 15.0)
+        )
+        self.assertEqual(dashed.segment_id, "o0s0")
+        self.assertEqual(dashed.group, "0:0")
+        self.assertAlmostEqual(dashed.style.width_pts, 1.5, places=5)
+        self.assertEqual(tuple(round(v, 5) for v in dashed.style.dash_pts), (6.0, 2.0))
+        self.assertEqual(dashed.style.stroke_rgba, 0xFF0000FF)
+        self.assertTrue(dashed.style.stroked)
+        self.assertFalse(dashed.style.filled)
+        self.assertFalse(dashed.closed)
+        fills = result.segments[1:]
+        self.assertEqual(
+            [s.segment_id for s in fills], ["o1s0", "o1s1", "o1s2", "o1s3"]
+        )
+        self.assertTrue(all(s.closed and s.group == "1:0" for s in fills))
+        self.assertTrue(all(s.style.filled and not s.style.stroked for s in fills))
+        self.assertEqual(fills[0].style.fill_rgba, 0x0000FFFF)
+        self.assertIs(fills[0].style, fills[1].style)
+
+    def test_path_segments_include_curves_and_form_xobjects(self):
+        pdf = write_content_pdf(
+            self.directory / "forms.pdf",
+            "q 1 0 0 1 100 100 cm /X1 Do Q 10 10 m 10 50 50 50 50 10 c S",
+            forms=(("X1", "1 0 0 1 0 0", "0 0 m 20 0 l S"),),
+        )
+        segments = self.source.get_path_segments(str(pdf), 0).segments
+        self.assertEqual(segments[0].segment_id, "o0.0s0")
+        self.assertEqual((segments[0].x1, segments[0].x2), (100.0, 120.0))
+        curve = segments[1:]
+        self.assertGreater(len(curve), 2)
+        self.assertTrue(all(s.curve for s in curve))
+        self.assertEqual((curve[0].x1, curve[-1].x2), (10.0, 50.0))
+        self.assertEqual(
+            [s.segment_id for s in self.source.get_vector_segments(str(pdf), 0)],
+            [s.segment_id for s in segments],
+        )
+
+    def test_path_extraction_is_capped_and_reports_truncation(self):
+        self.assertEqual(MAX_PAGE_PATH_ITEMS, 250000)
+        with patch.object(ai_takeoff_pdf_source, "MAX_PAGE_PATH_ITEMS", 1):
+            result = PageCachePdfSource(self.cache).get_path_segments(str(self.pdf), 0)
+        self.assertTrue(result.truncated)
+        self.assertEqual(len(result.segments), 1)
+        self.assertFalse(self.source.get_path_segments(str(self.pdf), 0).truncated)
+
+    def test_path_segments_are_cached_until_the_file_changes_or_is_released(self):
+        calls = []
+        source = PageCachePdfSource(
+            self.cache, renderer_factory=lambda: _RecordingRenderer(calls)
+        )
+        first = source.get_path_segments(str(self.pdf), 0)
+        self.assertIs(source.get_path_segments(str(self.pdf), 0), first)
+        self.assertEqual(calls, ["open", "extract", "close"])
+        source.get_path_segments(str(self.pdf), 1)
+        self.assertEqual(calls.count("open"), 2)
+        self.assertIs(source.get_path_segments(str(self.pdf), 0), first)
+        self.assertEqual(calls.count("open"), 2)
+        stamp = self.pdf.stat().st_mtime_ns + 5_000_000_000
+        os.utime(self.pdf, ns=(stamp, stamp))
+        source.get_path_segments(str(self.pdf), 0)
+        self.assertEqual(calls.count("open"), 3)
+        source.release()
+        source.get_path_segments(str(self.pdf), 0)
+        self.assertEqual(calls.count("open"), 4)
+
+    def test_failed_extractions_are_not_cached(self):
+        calls = []
+        source = PageCachePdfSource(
+            self.cache,
+            renderer_factory=lambda: _RecordingRenderer(calls, open_result=False),
+        )
+        self.assertEqual(source.get_path_segments(str(self.pdf), 0).segments, ())
+        self.assertEqual(source.get_path_segments(str(self.pdf), 0).segments, ())
+        self.assertEqual(calls, ["open", "open"])
+
+    def test_a_large_page_extracts_quickly(self):
+        lines = "\n".join(
+            f"{x} {y} m {x + 3} {y} l S"
+            for x in range(0, 600, 4)
+            for y in range(0, 780, 4)
+        )
+        pdf = write_content_pdf(self.directory / "dense.pdf", lines)
+        started = time.perf_counter()
+        result = self.source.get_path_segments(str(pdf), 0)
+        self.assertEqual(len(result.segments), 150 * 195)
+        self.assertLess(time.perf_counter() - started, 10.0)
 
     def test_release_closes_cached_pdfs_so_the_file_can_be_removed(self):
         self.source.get_text_runs(str(self.pdf), 0)

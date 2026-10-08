@@ -43,3 +43,9 @@ scripts/nuitka-crash-report.xml
 
 # Local release secrets
 .secrets/
+
+# AI takeoff corpus harness output (confidential client drawings; keep outside the repo)
+ostv_corpus/
+**/ostv_corpus/
+corpus_run_*.csv
+corpus_summary_*.md

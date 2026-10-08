@@ -17,22 +17,57 @@ def write_takeoff_pdf(
         commands.append(f"0 0 0 RG 1 w {x1} {y1} m {x2} {y2} l S")
     for x, y, size, text in texts:
         commands.append(f"BT /F1 {size} Tf {x} {y} Td ({text}) Tj ET")
-    stream = ("\n".join(commands) + "\n").encode("latin-1")
+    return write_content_pdf(
+        path,
+        "\n".join(commands) + "\n",
+        width=width,
+        height=height,
+        page_boxes=page_boxes,
+    )
+
+
+def _stream(dictionary: str, content: str) -> bytes:
+    data = content.encode("latin-1")
+    return (
+        f"<< {dictionary} /Length {len(data)} >>\nstream\n".encode("latin-1")
+        + data
+        + b"endstream"
+    )
+
+
+def write_content_pdf(
+    path: Path,
+    content: str,
+    width: float = 612.0,
+    height: float = 792.0,
+    page_boxes: str = "",
+    forms=(),
+) -> Path:
     boxes = page_boxes or f"/MediaBox [0 0 {width} {height}]"
+    first_form = 6
+    form_names = " ".join(
+        f"/{name} {first_form + index} 0 R"
+        for index, (name, _m, _c) in enumerate(forms)
+    )
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         (
             f"<< /Type /Page /Parent 2 0 R {boxes} "
-            "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+            f"/Resources << /Font << /F1 5 0 R >> /XObject << {form_names} >> >> "
+            "/Contents 4 0 R >>"
         ).encode("latin-1"),
-        b"<< /Length "
-        + str(len(stream)).encode()
-        + b" >>\nstream\n"
-        + stream
-        + b"endstream",
+        _stream("", content),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
+    for name, matrix, form_content in forms:
+        objects.append(
+            _stream(
+                "/Type /XObject /Subtype /Form /BBox [-10000 -10000 10000 10000] "
+                f"/Matrix [{matrix}] /Resources << /XObject << {form_names} >> >>",
+                form_content,
+            )
+        )
     output = bytearray(b"%PDF-1.4\n")
     offsets = []
     for number, body in enumerate(objects, start=1):

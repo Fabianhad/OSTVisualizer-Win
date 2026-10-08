@@ -37,7 +37,7 @@ python -m unittest tests.presentation.components.plan_view.components.test_place
 vulture ost_visualizer
 ```
 
-C++ extensions require Visual Studio 2022, CMake, and Qt 6.10.2 at `C:\Qt\6.10.2\msvc2022_64`. If native snap code changes, rebuild `ost_snap` from the configured CMake build directory, usually `cpp_extensions/build`.
+C++ extensions require Visual Studio 2022, CMake, and Qt 6.10.2 at `C:\Qt\6.10.2\msvc2022_64`. If native snap or PDF code changes, rebuild `ost_snap` or `ost_pdf` from the configured CMake build directory, usually `cpp_extensions/build` (`cmake --build cpp_extensions/build --config Release --target ost_pdf ost_snap`); the post-build step copies each `.pyd` to its destination. `.pyd` files are not tracked, so a source change without a rebuild leaves the old binary in place (`tests/integration/native/test_pdf_renderer.py` skips itself when `pdf_renderer.cpp` is newer than the binary).
 PySide6 6.10.2 and the downloaded PDFium/QPDF archives are exact-version inputs;
 the other Python requirements intentionally remain unpinned. Native archive URLs
 and SHA-256 digests must be updated together from the authoritative upstream
@@ -1137,7 +1137,7 @@ C++ extensions:
 
 - All 13 native modules are required and imported directly.
 - Do not add Python fallback paths that hide missing native extensions.
-- Add new native module destinations to `tools/check_architecture.py` and the C++ table in this file.
+- Add new native module destinations to `tools/check_architecture.py` and the C++ table in this file. `check_architecture.py` also reads `cpp_extensions/CMakeLists.txt` and reports any `nanobind_add_module` target without a `PYD_ALLOWED_DIRS` entry, any entry CMake no longer builds, and any `install(... DESTINATION)` or post-build copy that differs from the entry (`tests/architecture/test_native_destinations.py`).
 - Native CAB reads canonicalize source files to extended absolute Unicode paths
   for `CreateFileW`. The legacy FDI API receives only a short logical cabinet
   path and name; do not pass local, UNC, or extended-length user paths through
@@ -1187,7 +1187,7 @@ Expected public MCP counts should remain 38 tools, 1 resource, 4 resource templa
 
 ## AI Takeoff Bridge
 
-A second, separate MCP path for AI-assisted concrete takeoff. The read-only `ost-visualizer` server above stays unchanged. M1a (tools 1-7) is read-only. M1b (tools 8-15) lets the AI propose changesets; nothing is written until the user accepts the changeset in the app.
+A second, separate MCP path for AI-assisted concrete takeoff. The read-only `ost-visualizer` server above stays unchanged. M1a (tools 1-7) is read-only. M1b (tools 8-15) lets the AI propose changesets; nothing is written until the user accepts the changeset in the app. M2 adds native linework attributes and smarter region finding without new tools.
 
 Runtime shape:
 
@@ -1216,7 +1216,13 @@ Tools (at most 20 exposed, `MAX_EXPOSED_TOOLS`):
 - JSON over 256 KB (measured on the ASCII JSON actually written), and PNGs whose base64 exceeds half of that, are written to `~/.ost_visualizer/mcp_takeoff_outputs/` and returned as a file reference with a preview; when the JSON is written to a file, the saved PNG reference stays in `structuredContent.image`.
 - M1a code imports no `ProjectWriteService`, undo service or writer (architecture test).
 - M1b: `propose_scale`, `find_regions`, `propose_element` (kind `slab` only), `apply_changeset`, `discard_changeset`, `undo_last_ai_changeset`, `render_3d` (view `top` only) and `update_assumption` (`op` add or revise; it can never accept, and never adds or revises the scale assumption: a different scale needs a new `propose_scale`). `propose_scale` refuses (`invalid_argument`) points that are not a finite distance apart and scales that come out zero, negative or not finite; numbers too large for a float are `invalid_argument` everywhere. The catalog exposes 15 tools.
-- `find_regions` runs on a worker: the in-house planar-face pass (`domain/services/ai_planar_regions.py`: snapping at 0.5 pt, splitting at crossings and T-junctions, closing dangling ends up to `gap_close_in` (at most 48 in), at most 4,000 segments) first, then a QImage raster flood fill (`presentation/services/ai_region_raster.py`, at most 1200 px a side) only when a seed point lies in no vector face. Results carry `leak_risk` and `gaps[]`; at most 50 are returned and the last 200 are cached by id for `propose_element`.
+- `find_regions` runs on a worker: the in-house planar-face pass (`domain/services/ai_planar_regions.py`: snapping at 0.5 pt, splitting at crossings and T-junctions, closing dangling ends up to `max_gap_in`, at most 48 in; `gap_close_in` is the older name and both may be given only with the same value) and a QImage raster flood fill (`presentation/services/ai_region_raster.py`, at most 1200 px a side). Results carry `leak_risk` and `gaps[]`, and the last 200 are cached by id for `propose_element`.
+- M2 segments: `ost_pdf.PDFRenderer.extract_path_items(page_index, max_items)` returns every straight piece with stroke width and dash array (scaled by the object transform), stroke and fill colors, stroked/filled flags, `curve` (Bezier curves flattened into pieces of about 2 pt, 2 to 32 per curve), `closed` (piece of a closed subpath) and stable ids (`object_id` with `.index` per Form XObject level, `subpath_index`, `segment_index`); Form XObjects are followed up to 16 levels. `extract_path_segments` is unchanged (straight lines only), so the read server and placement snapping see the same lines as before. `PageCachePdfSource.get_path_segments` caps a page at `MAX_PAGE_PATH_ITEMS` (250,000, reported as `extraction_truncated`), subtracts the visible-box origin and caches the last two pages by path, page, modification time and size.
+- `list_segments` keeps every M1a field and adds `width_pts`, `dash_pts`, `color` (`#rrggbb`), `paint` (`stroke`, `fill`, `stroke_fill`), `curve` and `kind`, listed in `new_fields`; segment ids are `o<object>s<piece>` (or `s<index>` when the source has no ids). Kinds come from `domain/services/ai_linework.py` over the whole page: `symbol` (a closed subpath under `SYMBOL_MAX_PTS`, 48 pt, on its long side and compact, or under 12 pt), `dashed` (a dash array, or three or more collinear pieces of at most 18 pt with gaps of 0.2-18 pt; pieces that touch or sit in a crowd of more than 128 short pieces are never dashes), `wall` (stroke width at least the larger of 0.95 pt and 1.5 times the page median, or a fill-only shape) and `thin`. The `kinds` argument filters by kind. Coordinates, `coordinate_space` and untrusted-text rules are unchanged.
+- `find_regions` filters (all optional): `min_width` (drop stroked lines thinner than this; fills stay), `exclude_dashed` (default true), `exclude_thin_curves` (default true: thin curves such as door swings never close an opening), `colors` (`#rrggbb` list), `min_area_sf`, `symbol_max_pts` (default 48; 0 turns symbol handling off). Symbol shapes are left out and small closed shapes are never holes; both are counted in `suppressed_symbol_count` with up to 20 boxes in `suppressed_symbols_pts`. The response echoes `filters`, `segment_count`, `excluded` (per reason) and `extraction_truncated`.
+- Without a seed, regions are sorted by area, largest first, with `total_count`, `limit` (at most 50) and `cursor`/`next_cursor`; status `truncated` while more remain. With a seed: (1) the smallest face around it without gap closing; else (2) a raster fill with a pen of `max_gap_in`, whose outline is compared with the drawn lines (`uncovered_runs`) to find each opening it sealed; an opening becomes a closing segment between drawn end points (the end nearest the seed, so doors close on the room face) only when it continues a drawn line within 15 degrees at both ends, and the vector pass is rerun with those segments, kept if its area is within 25% of the raster area; else (3) the M1b gap closing; else (4) the raster outline with the openings found, or, when none was found but the pen could seal gaps, `unlocated_gaps_up_to_in`. Every closing segment is a `closing_segment` assumption whose reason gives its end points; over 12 in it is high impact. A passage between a wall and an island is never an opening.
+- `MAX_REGION_SEGMENTS` is 20,000, counted after the box and the filters; above it the call is refused with `invalid_argument`. Gap closing, hole assignment and pair finding use grids (`SegmentGrid`), and dangling pruning is a queue, so a 20,000-segment floor takes about 2 s; results are the same as the earlier scans (checked on 4,500 random drawings). `ost_snap.SnapIndex` keeps a uniform grid (at most 512 cells a side; segments covering more than 4,096 cells are checked on every query) and visits candidates in index order, so snaps match the earlier linear scan exactly (20,000 random queries).
+- Corpus harness (measurement only): `python -m tools.ai_takeoff_corpus inventory|sample|run|report` measures real structural PDFs page by page in subprocesses (`tools/ai_takeoff_corpus_worker.py`) against a scratch Access bid with the read tools and `propose_element` only, never `apply_changeset`. The corpus is confidential client drawings: never write to the source share, keep copies, CSVs and reports outside the repository (default `%LOCALAPPDATA%\ostv_corpus`; an `--out` inside the repo is refused and `ostv_corpus/` is in `.gitignore`), keep only metrics, relative paths, page and sheet numbers and sheet titles in reports, and use synthetic PDFs only in tests.
 - `render_3d` projects the app's meshes from above on a worker (`presentation/services/ai_render_3d.py`, at most 1200 px) and returns the PNG, the model bounding box, the elevation range and the pixel-to-model affine.
 
 Untrusted text:
@@ -1226,7 +1232,7 @@ Untrusted text:
 Threading:
 
 - Dispatch, model reads, the apply write, the undo push and the preview run on the GUI thread. `find_regions`, `render_3d` and PDF work return worker jobs; `undo_last_ai_changeset` returns a `DeferredReply` that resolves when the (possibly queued) undo finishes.
-- PDF text and segment extraction and crop rendering run on a worker thread under `pdfium_lock`; results return through a queued signal.
+- PDF text and segment extraction and crop rendering run on a worker thread under `pdfium_lock`; results return through a queued signal. `list_segments` and `find_regions` classify, filter and trace on the same worker.
 - Crops use `PageCache.get_frame` plus banded `image_bands.convert_to_format`, and PNG encoding uses stdlib zlib (which releases the GIL). No single QImage operation exceeds `BAND_PIXELS`.
 
 Sidecar (levels, sheet registrations and assumptions; no Access or SQL schema change):
@@ -1259,7 +1265,7 @@ Later milestones (planned, not implemented):
 
 - Sidecar lifecycle: duplicating a bid copies its sidecar and marks takeoff-linked assumptions `needs_review`; deleting a bid moves the sidecar to `~/.ost_visualizer/ai_takeoff/trash/` for 30 days. Not implemented in M1b.
 - With the Options > Export drop-elevation options on, OST/OSP/CSV exports lose AI elevations; `propose_export` (M5) warns.
-- M2 linework and text attributes; M3 tools 16-17 and the 2D boolean library decision (no third-party geometry dependency before M3); M4 levels and registration (tool 18); M5 `validate` and `propose_export` (tools 19-20); M6 SQL hardening, audit viewer and performance.
+- Text attributes (font size and angle in `list_text`) were left out of the M2 scope; M3 tools 16-17 and the 2D boolean library decision (no third-party geometry dependency before M3); M4 levels and registration (tool 18); M5 `validate` and `propose_export` (tools 19-20); M6 SQL hardening, audit viewer and performance.
 
 Ownership map:
 
@@ -1367,7 +1373,7 @@ Document a recurring false positive only when it is still useful to future clean
 | --- | --- | --- |
 | `ost_geometry` | `presentation/visualization/core/` | Manifold boolean mesh ops |
 | `ost_renderer` | `presentation/components/` | OpenGL 3D with OIT |
-| `ost_pdf` | `presentation/visualization/pdf/` | PDFium rendering |
+| `ost_pdf` | `presentation/visualization/pdf/` | PDFium rendering and path extraction |
 | `ost_pdf_writer` | `presentation/visualization/exporters/` | QPDF annotation export |
 | `ost_earcut` | `presentation/visualization/core/geometry/` | Polygon triangulation |
 | `ost_dxf` | `presentation/visualization/exporters/` | DXF export |
@@ -1375,7 +1381,7 @@ Document a recurring false positive only when it is still useful to future clean
 | `ost_cab` | `presentation/visualization/exporters/` | CAB compression |
 | `ost_winevent` | `infrastructure/monitoring/` | Windows event monitoring |
 | `ost_geom_utils` | `presentation/components/plan_view/components/` | Hit testing |
-| `ost_snap` | `presentation/components/plan_view/components/` | Placement snap-to-line index |
+| `ost_snap` | `presentation/components/plan_view/components/` | Placement snap-to-line grid index |
 | `ost_coord_transform` | `domain/services/` | Coordinate math |
 | `ost_linear_geom` | `presentation/visualization/core/geometry/` | Linear geometry and curves |
 

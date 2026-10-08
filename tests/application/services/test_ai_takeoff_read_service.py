@@ -6,8 +6,10 @@ from pathlib import Path
 from ost_visualizer.application.dtos.ai_takeoff_dtos import PageSnapshot
 from ost_visualizer.application.dtos.pdf_metadata_dtos import (
     PdfPageInfoDto,
+    PdfPathStyleDto,
     PdfTextRunDto,
     PdfVectorSegmentDto,
+    PdfVectorSegmentsDto,
 )
 from ost_visualizer.application.services.ai_takeoff_read_service import (
     AiTakeoffReadService,
@@ -86,6 +88,7 @@ class FakePdfSource:
         )
         self.runs = list(runs)
         self.segments = list(segments)
+        self.truncated = False
         self.calls = []
 
     def get_page_info(self, file_path, page_index):
@@ -99,6 +102,10 @@ class FakePdfSource:
     def get_vector_segments(self, file_path, page_index):
         self.calls.append(("segments", file_path, page_index))
         return list(self.segments)
+
+    def get_path_segments(self, file_path, page_index):
+        self.calls.append(("segments", file_path, page_index))
+        return PdfVectorSegmentsDto(tuple(self.segments), self.truncated)
 
 
 class SpyRepository:
@@ -382,6 +389,188 @@ class TextAndSegmentTests(ServiceTestCase):
                         self.snapshot(), bbox_pts=box
                     ),
                 )
+
+
+WALL = PdfPathStyleDto(2.0, (), 0x000000FF, 0, True, False)
+THIN = PdfPathStyleDto(0.25, (), 0x808080FF, 0, True, False)
+DASHED = PdfPathStyleDto(0.5, (6.0, 3.0), 0xFF0000FF, 0, True, False)
+POCHE = PdfPathStyleDto(0.0, (), 0, 0x404040FF, False, True)
+BOTH = PdfPathStyleDto(0.5, (), 0x00FF00FF, 0x0000FFFF, True, True)
+
+
+def _styled(x1, y1, x2, y2, style, segment_id, group="", closed=False, curve=False):
+    return PdfVectorSegmentDto(
+        x1,
+        792 - y1,
+        x2,
+        792 - y2,
+        segment_id=segment_id,
+        group=group,
+        curve=curve,
+        closed=closed,
+        style=style,
+    )
+
+
+def _styled_square(x, y, side, style, object_id):
+    corners = [(x, y), (x + side, y), (x + side, y + side), (x, y + side)]
+    return [
+        _styled(*a, *b, style, f"o{object_id}s{i}", f"{object_id}:0", closed=True)
+        for i, (a, b) in enumerate(zip(corners, corners[1:] + corners[:1]))
+    ]
+
+
+class SegmentAttributeTests(ServiceTestCase):
+    def setUp(self):
+        super().setUp()
+        self.pdf.segments = (
+            [
+                _styled(0, 100 + i * 10, 300, 100 + i * 10, THIN, f"o{i}s0")
+                for i in range(4)
+            ]
+            + [
+                _styled(0, 0, 300, 0, WALL, "o10s0"),
+                _styled(0, 50, 300, 50, DASHED, "o11s0"),
+                _styled(10, 60, 20, 60, POCHE, "o12s0", "12:0", closed=False),
+                _styled(30, 60, 40, 70, BOTH, "o13s0", curve=True),
+            ]
+            + _styled_square(200, 200, 20, THIN, 14)
+        )
+
+    def snapshot(self, page_uid="p1"):
+        return self.service.page_snapshot(page_uid)
+
+    def segments(self, **kwargs):
+        return self.service.list_segments(self.snapshot(), **kwargs)["data"]
+
+    def by_id(self, data):
+        return {segment["id"]: segment for segment in data["segments"]}
+
+    def test_segments_report_width_dash_color_paint_curve_and_kind(self):
+        data = self.segments()
+        self.assertEqual(
+            data["new_fields"],
+            ["width_pts", "dash_pts", "color", "paint", "curve", "kind"],
+        )
+        found = self.by_id(data)
+        wall = found["o10s0"]
+        self.assertEqual(wall["p1_pts"], [0.0, 0.0])
+        self.assertEqual(wall["width_pts"], 2.0)
+        self.assertEqual(wall["dash_pts"], [])
+        self.assertEqual(wall["color"], "#000000")
+        self.assertEqual(wall["paint"], "stroke")
+        self.assertFalse(wall["curve"])
+        self.assertEqual(wall["kind"], "wall")
+        dashed = found["o11s0"]
+        self.assertEqual((dashed["dash_pts"], dashed["kind"]), ([6.0, 3.0], "dashed"))
+        self.assertEqual(dashed["color"], "#ff0000")
+        poche = found["o12s0"]
+        self.assertEqual(
+            (poche["paint"], poche["color"], poche["kind"]), ("fill", "#404040", "wall")
+        )
+        self.assertEqual((poche["width_pts"], poche["dash_pts"]), (None, []))
+        both = found["o13s0"]
+        self.assertEqual(
+            (both["paint"], both["color"], both["curve"]),
+            ("stroke_fill", "#00ff00", True),
+        )
+        self.assertEqual(found["o0s0"]["kind"], "thin")
+        self.assertEqual({found[f"o14s{i}"]["kind"] for i in range(4)}, {"symbol"})
+        self.assertEqual(
+            sorted(wall),
+            sorted(
+                [
+                    "id",
+                    "p1_pts",
+                    "p2_pts",
+                    "p1_ost",
+                    "p2_ost",
+                    "length_pts",
+                    "width_pts",
+                    "dash_pts",
+                    "color",
+                    "paint",
+                    "curve",
+                    "kind",
+                ]
+            ),
+        )
+        self.assertFalse(data["extraction_truncated"])
+
+    def test_segments_without_attributes_keep_m1a_ids_and_null_fields(self):
+        self.pdf.segments = [PdfVectorSegmentDto(0, 792, 100, 792)]
+        (segment,) = self.segments()["segments"]
+        self.assertEqual(segment["id"], "s0")
+        self.assertEqual(
+            (
+                segment["width_pts"],
+                segment["dash_pts"],
+                segment["color"],
+                segment["paint"],
+            ),
+            (None, [], None, None),
+        )
+        self.assertEqual((segment["curve"], segment["kind"]), (False, "thin"))
+
+    def test_fills_have_no_dash_and_curves_keep_their_flag_without_attributes(self):
+        dashed_fill = PdfPathStyleDto(0.0, (4.0, 2.0), 0, 0x404040FF, False, True)
+        self.pdf.segments = [
+            _styled(0, 0, 300, 0, dashed_fill, "o1s0"),
+            PdfVectorSegmentDto(0, 700, 10, 690, curve=True),
+        ]
+        fill, curve = self.segments()["segments"]
+        self.assertEqual((fill["dash_pts"], fill["kind"]), ([], "wall"))
+        self.assertTrue(curve["curve"])
+
+    def test_kinds_filter_keeps_only_the_given_kinds(self):
+        data = self.segments(kinds=["wall"])
+        self.assertEqual(sorted(self.by_id(data)), ["o10s0", "o12s0"])
+        data = self.segments(kinds=["dashed", "symbol"])
+        self.assertEqual(
+            sorted(self.by_id(data)), ["o11s0", "o14s0", "o14s1", "o14s2", "o14s3"]
+        )
+        self.assertEqual(self.segments(kinds=[])["segments"], [])
+
+    def test_kinds_must_be_known(self):
+        for kinds in (["walls"], "wall", [1], ["wall", None]):
+            with self.subTest(kinds=kinds):
+                self.assert_error(
+                    "invalid_argument",
+                    lambda: self.service.list_segments(self.snapshot(), kinds=kinds),
+                )
+
+    def test_kinds_use_the_whole_page_even_inside_a_box(self):
+        data = self.segments(bbox_pts=[195, 195, 225, 225])
+        self.assertEqual({s["kind"] for s in data["segments"]}, {"symbol"})
+        boxed = self.segments(bbox_pts=[250, 90, 320, 135])
+        self.assertEqual({s["kind"] for s in boxed["segments"]}, {"thin"})
+
+    def test_a_truncated_extraction_is_reported(self):
+        self.pdf.truncated = True
+        self.assertTrue(self.segments()["extraction_truncated"])
+
+    def test_page_linework_converts_attributes_to_page_space(self):
+        status, linework, truncated = self.service.page_linework(self.snapshot())
+        self.assertEqual((status, truncated), ("ok", False))
+        records = {segment_id: line for segment_id, line in linework}
+        wall = records["o10s0"]
+        self.assertEqual(wall.points, (0.0, 0.0, 300.0, 0.0))
+        self.assertEqual((wall.width, wall.dash, wall.color), (2.0, (), "#000000"))
+        self.assertEqual((wall.stroked, wall.filled, wall.closed), (True, False, False))
+        self.assertEqual(records["o12s0"].color, "#404040")
+        self.assertEqual(records["o12s0"].group, "12:0")
+        self.assertTrue(records["o13s0"].curve)
+        self.assertTrue(records["o14s0"].closed)
+        self.pdf.segments = [PdfVectorSegmentDto(0, 792, 100, 792)]
+        (plain,) = self.service.page_linework(self.snapshot())[1]
+        self.assertEqual(plain[0], "s0")
+        self.assertEqual(
+            (plain[1].width, plain[1].color, plain[1].stroked), (None, "", True)
+        )
+        self.assertEqual(
+            self.service.page_linework(self.service.page_snapshot("p3")),
+            ("not_pdf", [], False),
+        )
 
 
 class QuantityTests(ServiceTestCase):

@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Line weights, dashes and smarter areas for AI takeoff.** The AI takeoff
+  helper's `list_segments` now reports each line's width, dash pattern, color,
+  stroke or fill, whether it comes from a curve, and a kind guess (wall,
+  dashed, thin or symbol); curves and lines inside Form XObjects are included
+  and segment ids stay the same between calls. `find_regions` leaves out
+  dashed lines and thin curves such as door swings by default, never cuts
+  small symbols such as section bubbles or tags out as holes (and says how
+  many it skipped), and can keep only lines of a minimum width or given
+  colors. Regions come back largest first with a total and a cursor. From a
+  seed point inside a room, door openings are closed on the room side and each
+  one is listed with its end points and length and recorded as an assumption
+  (high impact over 12 in). Searches accept up to 20,000 lines after filters
+  instead of 4,000, and snapping to PDF lines in the plan uses a grid index.
 - **The two MCP helpers now agree.** The AI takeoff helper is named
   `ost-takeoff` in the setup JSON and in the client (the executable is still
   `ostv-takeoff-mcp.exe`; clients that already use the old key keep working
@@ -113,6 +126,10 @@
 
 ### Fixed
 
+- **The takeoff tool stays active when you switch pages.** With a condition
+  selected in the Conditions sidebar, switching pages turned the takeoff
+  cursor back into the Select cursor and ended the takeoff. The takeoff, pan
+  and zoom cursors now all stay as they were after a page switch.
 - On PDF pages whose visible area does not start at the corner of the sheet (a
   cropped page, or a page box with an offset origin), Snap to PDF Lines snapped to
   points shifted away from the drawn lines and PDF text hover, selection and copy

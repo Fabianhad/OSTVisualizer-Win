@@ -55,6 +55,29 @@ namespace ost_pdf
         int page_index;
         std::vector<PDFTextChar> chars;
     };
+    struct PDFPathItem
+    {
+        float x1;
+        float y1;
+        float x2;
+        float y2;
+        float stroke_width;
+        std::vector<float> dash;
+        uint32_t stroke_rgba;
+        uint32_t fill_rgba;
+        bool stroked;
+        bool filled;
+        bool curve;
+        bool closed;
+        std::string object_id;
+        int subpath_index;
+        int segment_index;
+    };
+    struct PDFPathExtraction
+    {
+        std::vector<PDFPathItem> items;
+        bool truncated;
+    };
     class PDFRenderer
     {
     public:
@@ -75,6 +98,9 @@ namespace ost_pdf
         std::vector<PageInfo> all_page_info() const;
         std::vector<std::tuple<float, float, float, float>> extract_path_segments(
             int page_index) const;
+        PDFPathExtraction extract_path_items(
+            int page_index,
+            std::size_t max_items) const;
         std::vector<PDFTextRun> extract_text_runs(int page_index) const;
         std::optional<RenderedPage> render_page(
             int page_index,

@@ -392,6 +392,7 @@ class TakeoffCommandBridge(QtCore.QObject):
             bbox_pts=arguments.get("bbox_pts"),
             cursor=arguments.get("cursor"),
             limit=arguments.get("limit"),
+            kinds=arguments.get("kinds"),
         )
 
     def _render_sheet(self, arguments: dict) -> Union[dict, Callable[[], dict]]:

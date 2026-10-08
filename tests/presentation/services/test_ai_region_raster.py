@@ -139,6 +139,7 @@ class RasterFillTests(unittest.TestCase):
         region = raster_fill_region([], (0, 0, 100, 50), (30, 20), 1.0)
         self.assertTrue(region.leak)
         self.assertEqual((region.width_px, region.height_px), (400, 200))
+        self.assertEqual(region.px_per_pt, 4.0)
         self.assertEqual(
             region.ring, ((-0.5, -0.5), (100.5, -0.5), (100.5, 50.5), (-0.5, 50.5))
         )
@@ -148,6 +149,7 @@ class RasterFillTests(unittest.TestCase):
             _rect(10, 10, 5190, 4090), (0, 0, 5200, 4100), (100, 100), 1.0
         )
         self.assertEqual((region.width_px, region.height_px), (1200, 947))
+        self.assertAlmostEqual(region.px_per_pt, 1200 / 5200)
 
     def test_a_sub_pixel_box_keeps_one_pixel(self):
         thin = raster_fill_region([], (0, 0, 0.1, 100), (0.05, 20), 1.0)

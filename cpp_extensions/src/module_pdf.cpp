@@ -64,6 +64,39 @@ NB_MODULE(ost_pdf, m)
                     "Zero-based page index")
             .def_ro("chars", &PDFTextRun::chars,
                     "Character boxes in reading order");
+        nb::class_<PDFPathItem>(m, "PDFPathItem",
+                                "One straight piece of a PDF path with its paint attributes. "
+                                "Coordinates are PDF user-space points; widths and dashes are "
+                                "scaled by the object's transform.")
+            .def_ro("x1", &PDFPathItem::x1, "Start x in PDF user-space points")
+            .def_ro("y1", &PDFPathItem::y1, "Start y in PDF user-space points")
+            .def_ro("x2", &PDFPathItem::x2, "End x in PDF user-space points")
+            .def_ro("y2", &PDFPathItem::y2, "End y in PDF user-space points")
+            .def_ro("stroke_width", &PDFPathItem::stroke_width,
+                    "Stroke width in points after the object transform; 0 is a hairline")
+            .def_ro("dash", &PDFPathItem::dash,
+                    "Dash array in points after the object transform; empty when solid")
+            .def_ro("stroke_rgba", &PDFPathItem::stroke_rgba,
+                    "Stroke color packed as 0xRRGGBBAA")
+            .def_ro("fill_rgba", &PDFPathItem::fill_rgba,
+                    "Fill color packed as 0xRRGGBBAA")
+            .def_ro("stroked", &PDFPathItem::stroked, "True when the path is stroked")
+            .def_ro("filled", &PDFPathItem::filled, "True when the path is filled")
+            .def_ro("curve", &PDFPathItem::curve,
+                    "True when the piece comes from a flattened Bezier curve")
+            .def_ro("closed", &PDFPathItem::closed,
+                    "True when the piece belongs to a closed subpath")
+            .def_ro("object_id", &PDFPathItem::object_id,
+                    "Page object index path; Form XObject children add .index")
+            .def_ro("subpath_index", &PDFPathItem::subpath_index,
+                    "Zero-based subpath index inside the object")
+            .def_ro("segment_index", &PDFPathItem::segment_index,
+                    "Zero-based piece index inside the object");
+        nb::class_<PDFPathExtraction>(m, "PDFPathExtraction",
+                                      "Path pieces of one page and whether the cap was reached")
+            .def_ro("items", &PDFPathExtraction::items, "Path pieces in content order")
+            .def_ro("truncated", &PDFPathExtraction::truncated,
+                    "True when more pieces exist than max_items");
         nb::class_<RenderedPage>(m, "RenderedPage",
                                  "A rendered PDF page as BGRA pixel data")
             .def_ro("width", &RenderedPage::width,
@@ -141,6 +174,17 @@ page_info() in a Python loop.
 Extract straight PDF path segments from a page.
 Coordinates are PDF user-space points with the origin at the bottom-left
 of the loaded page. Curves, text outlines, and image content are ignored.
+)doc")
+            .def("extract_path_items", &PDFRenderer::extract_path_items,
+                 nb::arg("page_index"),
+                 nb::arg("max_items"),
+                 nb::call_guard<nb::gil_scoped_release>(),
+                 R"doc(
+Extract PDF path pieces with stroke width, dash array, colors, paint mode
+and stable object ids. Bezier curves are flattened into short straight
+pieces marked curve, and Form XObjects are followed with their transforms.
+Coordinates are PDF user-space points with the origin at the bottom-left
+of the loaded page. Stops after max_items pieces and sets truncated.
 )doc")
             .def("extract_text_runs", &PDFRenderer::extract_text_runs,
                  nb::arg("page_index"),

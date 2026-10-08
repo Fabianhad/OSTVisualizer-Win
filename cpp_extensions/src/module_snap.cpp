@@ -21,5 +21,13 @@ NB_MODULE(ost_snap, m)
             nb::arg("x"),
             nb::arg("y"),
             nb::arg("radius"))
-        .def("size", &ost_snap::SnapIndex::size);
+        .def(
+            "candidates",
+            &ost_snap::SnapIndex::candidates,
+            nb::arg("x"),
+            nb::arg("y"),
+            nb::arg("radius"))
+        .def("size", &ost_snap::SnapIndex::size)
+        .def("grid_columns", &ost_snap::SnapIndex::grid_columns)
+        .def("grid_rows", &ost_snap::SnapIndex::grid_rows);
 }

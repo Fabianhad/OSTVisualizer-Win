@@ -90,8 +90,10 @@ class FakeReadService:
         self._record("list_text", page_uid=snapshot.uid, query=query)
         return ok_result({"runs": []})
 
-    def list_segments(self, snapshot, bbox_pts=None, cursor=None, limit=None):
-        self._record("list_segments", page_uid=snapshot.uid)
+    def list_segments(
+        self, snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None
+    ):
+        self._record("list_segments", page_uid=snapshot.uid, kinds=kinds)
         return ok_result({"segments": []})
 
 
@@ -398,7 +400,7 @@ class BridgeCapacityTests(BridgeTestCase):
         release = threading.Event()
         started = []
 
-        def blocking(snapshot, bbox_pts=None, cursor=None, limit=None):
+        def blocking(snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None):
             started.append(snapshot.uid)
             release.wait(10)
             return ok_result({"segments": []})
@@ -584,7 +586,12 @@ class BridgeThreadingTests(BridgeTestCase):
         self.assertTrue(
             self.call("list_text", {"page_uid": "p1", "query": "slab"})["success"]
         )
-        self.assertTrue(self.call("list_segments", {"page_uid": "p1"})["success"])
+        self.assertTrue(
+            self.call("list_segments", {"page_uid": "p1", "kinds": ["wall"]})["success"]
+        )
+        self.assertIn(
+            ("list_segments", {"page_uid": "p1", "kinds": ["wall"]}), self.service.calls
+        )
         rendered = self.call(
             "render_sheet", {"page_uid": "p1", "dpi": 72, "overlay_ids": ["r1"]}
         )
@@ -642,7 +649,7 @@ class BlockingSegments:
         with self.lock:
             self.releases.setdefault(page_uid, threading.Event()).set()
 
-    def __call__(self, snapshot, bbox_pts=None, cursor=None, limit=None):
+    def __call__(self, snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None):
         with self.lock:
             event = self.releases.setdefault(snapshot.uid, threading.Event())
         self.daemon.append(threading.current_thread().daemon)
@@ -904,7 +911,7 @@ class BridgeRequestEdgeTests(BridgeTestCase):
         self.assertIn("AI takeoff command failed: ValueError", captured.output[0])
 
     def test_worker_failures_are_logged_and_answered(self):
-        def broken(snapshot, bbox_pts=None, cursor=None, limit=None):
+        def broken(snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None):
             raise ValueError("secret detail")
 
         self.service.list_segments = broken
@@ -916,7 +923,7 @@ class BridgeRequestEdgeTests(BridgeTestCase):
         self.assertIn("AI takeoff worker job failed: ValueError", captured.output[0])
 
     def test_worker_request_errors_keep_their_code(self):
-        def missing(snapshot, bbox_pts=None, cursor=None, limit=None):
+        def missing(snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None):
             raise AiTakeoffRequestError("not_found", "No such segment page")
 
         self.service.list_segments = missing

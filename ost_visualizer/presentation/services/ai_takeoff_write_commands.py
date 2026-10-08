@@ -96,6 +96,15 @@ class AiTakeoffWriteCommands:
             arguments.get("bbox_pts"),
             gap_close_in=arguments.get("gap_close_in"),
             seed_pts=arguments.get("seed_pts"),
+            max_gap_in=arguments.get("max_gap_in"),
+            min_width=arguments.get("min_width"),
+            exclude_dashed=arguments.get("exclude_dashed"),
+            exclude_thin_curves=arguments.get("exclude_thin_curves"),
+            colors=arguments.get("colors"),
+            min_area_sf=arguments.get("min_area_sf"),
+            symbol_max_pts=arguments.get("symbol_max_pts"),
+            cursor=arguments.get("cursor"),
+            limit=arguments.get("limit"),
         )
 
     def _propose_element(self, arguments: dict) -> dict:

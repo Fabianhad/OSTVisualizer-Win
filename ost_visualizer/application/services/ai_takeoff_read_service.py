@@ -1,10 +1,16 @@
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 from ...domain.entities.ai_takeoff import ASSUMPTION_STATUSES, FINGERPRINT_OK
 from ...domain.entities.condition import Condition
 from ...domain.entities.database_descriptor import DatabaseDescriptor
 from ...domain.entities.file_extensions import is_pdf_suffix
+from ...domain.services.ai_linework import (
+    LINE_KINDS,
+    LineSegment,
+    classify_linework,
+    rgba_hex,
+)
 from ...domain.services.condition_quantity_service import compute_page_quantities
 from ...domain.services.uom_service import get_uom_label
 from ..dtos.ai_takeoff_dtos import (
@@ -32,8 +38,8 @@ from ..dtos.ai_takeoff_dtos import (
     list_text_coordinate_space,
     ok_result,
 )
+from ..interfaces.i_ai_takeoff_pdf_source import IAiTakeoffPdfSource
 from ..interfaces.i_ai_takeoff_sidecar_repository import IAiTakeoffSidecarRepository
-from ..interfaces.i_pdf_metadata_provider import IPdfMetadataProvider
 from .ai_takeoff_sidecar_service import load_sidecar_context
 
 QUANTITY_DECIMALS = 4
@@ -45,6 +51,7 @@ _CONDITION_TYPE_NAMES = {
     Condition.TYPE_ATTACHMENT: "attachment",
 }
 _GROUPINGS = ("condition", "page")
+SEGMENT_NEW_FIELDS = ("width_pts", "dash_pts", "color", "paint", "curve", "kind")
 
 
 @dataclass(frozen=True)
@@ -58,7 +65,7 @@ class AiTakeoffReadService:
     def __init__(
         self,
         project_data,
-        pdf_source: IPdfMetadataProvider,
+        pdf_source: IAiTakeoffPdfSource,
         sidecar_repository: IAiTakeoffSidecarRepository,
         descriptor_resolver: Callable[[str], Optional[DatabaseDescriptor]],
     ):
@@ -237,35 +244,43 @@ class AiTakeoffReadService:
         bbox_pts: Any = None,
         cursor: Optional[str] = None,
         limit: Any = None,
+        kinds: Any = None,
     ) -> dict:
         box = _optional_box(bbox_pts)
-        frame = self._raw_frame(snapshot)
-        if isinstance(frame, str):
+        wanted = _kinds(kinds)
+        status, linework, truncated = self.page_linework(snapshot)
+        if status != STATUS_OK:
             return ok_result(
                 {
                     "page_uid": snapshot.uid,
                     "segments": [],
                     COORDINATE_SPACE_KEY: list_segments_coordinate_space(),
                 },
-                frame,
+                status,
             )
+        line_kinds = classify_linework([line for _segment_id, line in linework])
         segments = []
-        raw_segments = self._pdf_source.get_vector_segments(
-            snapshot.image_path, snapshot.page_index
-        )
-        for index, segment in enumerate(raw_segments):
-            p1 = _raw_to_page(segment.x1, segment.y1, frame)
-            p2 = _raw_to_page(segment.x2, segment.y2, frame)
+        for (segment_id, line), kind in zip(linework, line_kinds):
+            p1 = (line.x1, line.y1)
+            p2 = (line.x2, line.y2)
             if box is not None and not _intersects(_bounds((p1, p2)), box):
+                continue
+            if wanted is not None and kind not in wanted:
                 continue
             segments.append(
                 {
-                    "id": f"s{index}",
+                    "id": segment_id,
                     "p1_pts": list(p1),
                     "p2_pts": list(p2),
                     "p1_ost": _scale_values(list(p1), snapshot.ost_per_page_point),
                     "p2_ost": _scale_values(list(p2), snapshot.ost_per_page_point),
                     "length_pts": math.hypot(p2[0] - p1[0], p2[1] - p1[1]),
+                    "width_pts": line.width,
+                    "dash_pts": list(line.dash),
+                    "color": line.color or None,
+                    "paint": _paint(line),
+                    "curve": line.curve,
+                    "kind": kind,
                 }
             )
         page, meta = _paginate(segments, cursor, limit)
@@ -273,11 +288,31 @@ class AiTakeoffReadService:
             {
                 "page_uid": snapshot.uid,
                 "segments": page,
+                "new_fields": list(SEGMENT_NEW_FIELDS),
+                "extraction_truncated": truncated,
                 COORDINATE_SPACE_KEY: list_segments_coordinate_space(),
             },
             _page_status(page, meta),
             meta,
         )
+
+    def page_linework(
+        self, snapshot: PageSnapshot
+    ) -> Tuple[str, List[Tuple[str, LineSegment]], bool]:
+        frame = self._raw_frame(snapshot)
+        if isinstance(frame, str):
+            return frame, [], False
+        extraction = self._pdf_source.get_path_segments(
+            snapshot.image_path, snapshot.page_index
+        )
+        linework = []
+        for index, segment in enumerate(extraction.segments):
+            p1 = _raw_to_page(segment.x1, segment.y1, frame)
+            p2 = _raw_to_page(segment.x2, segment.y2, frame)
+            linework.append(
+                (segment.segment_id or f"s{index}", _line_segment(segment, p1, p2))
+            )
+        return STATUS_OK, linework, bool(extraction.truncated)
 
     def open_bid_ref(self):
         return self._open_bid(None).bid_ref
@@ -292,18 +327,16 @@ class AiTakeoffReadService:
         return page
 
     def page_segments_pts(self, snapshot: PageSnapshot, box: Optional[tuple]) -> tuple:
-        frame = self._raw_frame(snapshot)
-        if isinstance(frame, str):
-            return frame, []
+        status, linework, _truncated = self.page_linework(snapshot)
+        if status != STATUS_OK:
+            return status, []
         segments = []
-        for segment in self._pdf_source.get_vector_segments(
-            snapshot.image_path, snapshot.page_index
-        ):
-            p1 = _raw_to_page(segment.x1, segment.y1, frame)
-            p2 = _raw_to_page(segment.x2, segment.y2, frame)
-            if box is not None and not _intersects(_bounds((p1, p2)), box):
+        for _segment_id, line in linework:
+            if box is not None and not _intersects(
+                _bounds(((line.x1, line.y1), (line.x2, line.y2))), box
+            ):
                 continue
-            segments.append((p1[0], p1[1], p2[0], p2[1]))
+            segments.append(line.points)
         return STATUS_OK, segments
 
     def plan_crop(
@@ -481,6 +514,52 @@ def _raw_to_page(x: float, y: float, frame: tuple) -> tuple:
     if rotation == 270:
         return raw_h - y, raw_w - x
     return x, raw_h - y
+
+
+def _line_segment(segment, p1: tuple, p2: tuple) -> LineSegment:
+    style = segment.style
+    if style is None:
+        return LineSegment(
+            p1[0],
+            p1[1],
+            p2[0],
+            p2[1],
+            curve=segment.curve,
+            closed=segment.closed,
+            group=segment.group,
+        )
+    return LineSegment(
+        p1[0],
+        p1[1],
+        p2[0],
+        p2[1],
+        width=float(style.width_pts) if style.stroked else None,
+        dash=tuple(float(value) for value in style.dash_pts) if style.stroked else (),
+        color=rgba_hex(style.stroke_rgba if style.stroked else style.fill_rgba),
+        stroked=bool(style.stroked),
+        filled=bool(style.filled),
+        closed=segment.closed,
+        curve=segment.curve,
+        group=segment.group,
+    )
+
+
+def _paint(line: LineSegment) -> Optional[str]:
+    if not line.color:
+        return None
+    if line.stroked and line.filled:
+        return "stroke_fill"
+    return "stroke" if line.stroked else "fill"
+
+
+def _kinds(kinds: Any) -> Optional[frozenset]:
+    if kinds is None:
+        return None
+    if not isinstance(kinds, list) or any(kind not in LINE_KINDS for kind in kinds):
+        raise AiTakeoffRequestError(
+            ERROR_INVALID_ARGUMENT, f"kinds must be a list of {', '.join(LINE_KINDS)}"
+        )
+    return frozenset(kinds)
 
 
 def _bounds(points) -> list:

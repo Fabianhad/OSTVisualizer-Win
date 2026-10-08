@@ -1,8 +1,9 @@
 import math
+import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from ...domain.entities.ai_changeset import (
     ERROR_SQL_APPLY_UNAVAILABLE,
     MAX_ABS_TOP_ELEVATION_IN,
@@ -33,9 +34,23 @@ from ...domain.entities.ai_changeset import (
     quantity_delta,
     resolved_condition_name,
 )
+from ...domain.services.ai_linework import (
+    KIND_DASHED,
+    KIND_SYMBOL,
+    KIND_THIN,
+    SYMBOL_MAX_PTS,
+    SegmentGrid,
+    classify_linework,
+    point_segment_distance,
+    symbol_groups,
+    uncovered_runs,
+)
 from ...domain.services.ai_planar_regions import (
+    PlanarRegion,
+    PlanarRegionReport,
+    RegionGap,
     RegionTooComplex,
-    find_planar_regions,
+    find_planar_regions_report,
     point_in_ring,
     ring_area,
 )
@@ -43,10 +58,16 @@ from ..dtos.ai_takeoff_dtos import (
     COORDINATE_SPACE_KEY,
     ERROR_INVALID_ARGUMENT,
     ERROR_NOT_FOUND,
+    MAX_REGIONS_PER_PAGE,
+    STATUS_EMPTY,
     STATUS_OK,
+    STATUS_TRUNCATED,
     AiTakeoffRequestError,
     PageSnapshot,
+    ResultMeta,
     UntrustedText,
+    decode_cursor,
+    encode_cursor,
     find_regions_coordinate_space,
     ok_result,
 )
@@ -59,8 +80,15 @@ PRESET_MATCH_PCT = 1.0
 MIN_SCALE_DISTANCE_PTS = 1.0
 SNAP_TOLERANCE_PTS = 0.5
 MAX_GAP_CLOSE_IN = 48.0
-MAX_REGIONS_RETURNED = 50
+MAX_REGIONS_RETURNED = MAX_REGIONS_PER_PAGE
 MAX_CACHED_REGIONS = 200
+MAX_SUPPRESSED_BOXES = 20
+OPENING_TOLERANCE_MIN_PTS = 1.0
+OPENING_TOLERANCE_PX = 3.0
+OPENING_SNAP_TOLERANCES = 3.0
+OPENING_AREA_MATCH = 0.25
+OPENING_LINE_ANGLE_DEG = 15.0
+_COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_THICKNESS_IN = MAX_SLAB_THICKNESS_IN
 _SCALE_ASSUMPTION_MESSAGE = (
     "The scale assumption cannot be added or revised; call propose_scale again"
@@ -83,6 +111,14 @@ APPROVAL_MESSAGE = (
 class RasterResult:
     ring: Tuple[Tuple[float, float], ...]
     leak: bool
+    px_per_pt: float = 0.0
+
+
+@dataclass(frozen=True)
+class _GapRecord:
+    length_in: float
+    p1_pts: Optional[Tuple[float, float]]
+    p2_pts: Optional[Tuple[float, float]]
 
 
 @dataclass(frozen=True)
@@ -90,9 +126,31 @@ class _RegionRecord:
     page_uid: str
     polygon_ost: Tuple[float, ...]
     holes_ost: Tuple[Tuple[float, ...], ...]
-    gap_lengths_in: Tuple[float, ...]
-    leak: bool
+    gaps: Tuple[_GapRecord, ...]
+    escaped: bool
     ost_per_page_point: float
+
+
+@dataclass(frozen=True)
+class _RegionFilters:
+    max_gap_in: float
+    min_width: Optional[float]
+    exclude_dashed: bool
+    exclude_thin_curves: bool
+    colors: Optional[Tuple[str, ...]]
+    min_area_sf: float
+    symbol_max_pts: float
+
+    def to_dict(self) -> dict:
+        return {
+            "max_gap_in": self.max_gap_in,
+            "min_width": self.min_width,
+            "exclude_dashed": self.exclude_dashed,
+            "exclude_thin_curves": self.exclude_thin_curves,
+            "colors": None if self.colors is None else list(self.colors),
+            "min_area_sf": self.min_area_sf,
+            "symbol_max_pts": self.symbol_max_pts,
+        }
 
 
 def _number(value: Any, label: str) -> float:
@@ -231,8 +289,17 @@ class AiTakeoffProposalService:
         self,
         snapshot: PageSnapshot,
         bbox_pts: Any,
-        gap_close_in: Any = 0.0,
+        gap_close_in: Any = None,
         seed_pts: Any = None,
+        max_gap_in: Any = None,
+        min_width: Any = None,
+        exclude_dashed: Any = None,
+        colors: Any = None,
+        min_area_sf: Any = None,
+        symbol_max_pts: Any = None,
+        cursor: Any = None,
+        limit: Any = None,
+        exclude_thin_curves: Any = None,
     ) -> dict:
         k = snapshot.ost_per_page_point
         if k is None or k <= 0.0:
@@ -242,17 +309,21 @@ class AiTakeoffProposalService:
             raise AiTakeoffRequestError(
                 ERROR_INVALID_ARGUMENT, "bbox_pts must be [left, top, right, bottom]"
             )
-        gap_in = _number(
-            gap_close_in if gap_close_in is not None else 0.0, "gap_close_in"
+        box = (left, top, right, bottom)
+        filters = _region_filters(
+            gap_close_in,
+            max_gap_in,
+            min_width,
+            exclude_dashed,
+            exclude_thin_curves,
+            colors,
+            min_area_sf,
+            symbol_max_pts,
         )
-        if not 0.0 <= gap_in <= MAX_GAP_CLOSE_IN:
-            raise AiTakeoffRequestError(
-                ERROR_INVALID_ARGUMENT,
-                f"gap_close_in must be between 0 and {MAX_GAP_CLOSE_IN:g}",
-            )
         seed = None if seed_pts is None else _numbers(seed_pts, "seed_pts", 2)
-        status, segments = self._read_service.page_segments_pts(
-            snapshot, (left, top, right, bottom)
+        offset, size = _region_page(cursor, limit)
+        status, linework, extraction_truncated = self._read_service.page_linework(
+            snapshot
         )
         if status != STATUS_OK:
             return ok_result(
@@ -263,38 +334,100 @@ class AiTakeoffProposalService:
                 },
                 status,
             )
-        try:
-            regions = find_planar_regions(segments, SNAP_TOLERANCE_PTS, gap_in / k)
-        except RegionTooComplex as exc:
-            raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, str(exc)) from exc
-        items = []
+        lines = [line for _segment_id, line in linework]
+        segments, excluded, symbol_boxes = _filter_linework(lines, box, filters)
+        next_cursor = None
         if seed is not None:
-            containing = [
-                region for region in regions if point_in_ring(seed, region.outer)
-            ]
-            if containing:
-                best = min(containing, key=lambda region: abs(ring_area(region.outer)))
-                items.append(self._vector_item(snapshot, best, k))
-            else:
-                raster = self._raster_fill(
-                    segments, (left, top, right, bottom), seed, max(gap_in / k, 1.0)
-                )
-                if raster is not None:
-                    items.append(self._raster_item(snapshot, raster, k))
+            item, report = self._seed_item(snapshot, segments, box, seed, filters)
+            items = [] if item is None else [item]
+            total = len(items)
+            meta = ResultMeta(limit=1, returned_count=total, total_count=total)
+            result_status = STATUS_OK if items else STATUS_EMPTY
         else:
-            items = [
-                self._vector_item(snapshot, region, k)
-                for region in regions[:MAX_REGIONS_RETURNED]
+            report = _planar(segments, filters.max_gap_in / k, filters.symbol_max_pts)
+            min_area_pts = filters.min_area_sf * 144.0 / (k * k)
+            regions = [
+                region for region in report.regions if region.area >= min_area_pts
             ]
+            page = regions[offset : offset + size]
+            items = [self._vector_item(snapshot, region, k) for region in page]
+            total = len(regions)
+            end = offset + len(page)
+            next_cursor = encode_cursor(end) if end < total else None
+            meta = ResultMeta(
+                limit=size,
+                returned_count=len(items),
+                total_count=total,
+                next_cursor=next_cursor,
+            )
+            if next_cursor is not None:
+                result_status = STATUS_TRUNCATED
+            else:
+                result_status = STATUS_OK if items else STATUS_EMPTY
+        suppressed = list(symbol_boxes) + list(report.suppressed)
         return ok_result(
             {
                 "page_uid": snapshot.uid,
                 "regions": items,
-                "truncated": seed is None and len(regions) > MAX_REGIONS_RETURNED,
+                "truncated": next_cursor is not None,
+                "total_count": total,
+                "filters": filters.to_dict(),
+                "segment_count": len(segments),
+                "excluded": excluded,
+                "suppressed_symbol_count": len(suppressed),
+                "suppressed_symbols_pts": [
+                    list(bounds) for bounds in suppressed[:MAX_SUPPRESSED_BOXES]
+                ],
+                "extraction_truncated": extraction_truncated,
                 COORDINATE_SPACE_KEY: find_regions_coordinate_space(),
             },
-            STATUS_OK if items else "empty",
+            result_status,
+            meta,
         )
+
+    def _seed_item(
+        self,
+        snapshot: PageSnapshot,
+        segments: List[Tuple[float, float, float, float]],
+        box: Tuple[float, float, float, float],
+        seed: Tuple[float, ...],
+        filters: _RegionFilters,
+    ) -> Tuple[Optional[dict], PlanarRegionReport]:
+        k = snapshot.ost_per_page_point
+        symbol_max = filters.symbol_max_pts
+        plain = _planar(segments, 0.0, symbol_max)
+        best = _smallest_containing(plain.regions, seed)
+        if best is not None:
+            return self._vector_item(snapshot, best, k), plain
+        gap_pts = filters.max_gap_in / k
+        pen = max(gap_pts, 1.0)
+        raster = self._raster_fill(segments, box, seed, pen)
+        closures = (
+            [] if raster is None else _sealed_openings(raster, segments, pen, seed)
+        )
+        if closures:
+            closed = _planar(segments, 0.0, symbol_max, closures)
+            best = _smallest_containing(closed.regions, seed)
+            raster_area = abs(ring_area(raster.ring))
+            if (
+                best is not None
+                and abs(abs(ring_area(best.outer)) - raster_area)
+                <= OPENING_AREA_MATCH * raster_area
+            ):
+                return self._vector_item(snapshot, best, k), closed
+        if gap_pts > 0.0:
+            bridged = _planar(segments, gap_pts, symbol_max)
+            best = _smallest_containing(bridged.regions, seed)
+            if best is not None:
+                return self._vector_item(snapshot, best, k), bridged
+        if raster is None:
+            return None, plain
+        gaps = tuple(
+            RegionGap((x1, y1), (x2, y2), math.dist((x1, y1), (x2, y2)))
+            for x1, y1, x2, y2 in closures
+        )
+        sealed_in = filters.max_gap_in if not gaps and pen > 1.0 else None
+        return self._raster_item(snapshot, raster, k, gaps, sealed_in), plain
 
     def propose_element(
         self,
@@ -319,7 +452,7 @@ class AiTakeoffProposalService:
             raise AiTakeoffRequestError(
                 ERROR_INVALID_ARGUMENT, "Give exactly one of polygon_ost or region_id"
             )
-        gaps: Tuple[float, ...] = ()
+        gaps: Tuple[_GapRecord, ...] = ()
         if region_id is not None:
             record = self._region(region_id, snapshot.uid)
             if not math.isclose(
@@ -329,13 +462,13 @@ class AiTakeoffProposalService:
                     ERROR_NOT_FOUND,
                     "That region was found at a different page scale; call find_regions again",
                 )
-            if record.leak and not record.gap_lengths_in:
+            if record.escaped:
                 raise AiTakeoffRequestError(
                     ERROR_INVALID_GEOMETRY, "That region leaks outside its outline"
                 )
             polygon = record.polygon_ost
             holes = record.holes_ost
-            gaps = record.gap_lengths_in
+            gaps = record.gaps
         else:
             polygon = _numbers(polygon_ost, "polygon_ost")
             if holes_ost is not None and not isinstance(holes_ost, list):
@@ -390,14 +523,13 @@ class AiTakeoffProposalService:
                         "The top elevation was not given.",
                     )
                 )
-        for length in gaps:
+        for gap in gaps:
             assumptions.append(
                 self._assumption(
                     len(assumptions),
                     SUBJECT_CLOSING_SEGMENT,
-                    f"{length:.2f} in",
-                    "The outline was closed across a gap in the drawing.",
-                    length,
+                    *_gap_assumption_text(gap),
+                    gap.length_in,
                 )
             )
         changeset = AiChangeset(
@@ -654,8 +786,9 @@ class AiTakeoffProposalService:
             tuple(value * k for point in hole for value in point)
             for hole in region.holes
         )
-        gaps = tuple(gap.length * k for gap in region.gaps)
-        record = _RegionRecord(snapshot.uid, polygon, holes, gaps, bool(region.gaps), k)
+        record = _RegionRecord(
+            snapshot.uid, polygon, holes, _gap_records(region.gaps, k), False, k
+        )
         return {
             "id": self._store_region(record),
             "method": "vector",
@@ -663,25 +796,268 @@ class AiTakeoffProposalService:
             "holes_ost": [list(hole) for hole in holes],
             "area_sf": round(region.area * k * k / 144.0, 4),
             "leak_risk": bool(region.gaps),
-            "gaps": [
-                {
-                    "p1_pts": list(gap.p1),
-                    "p2_pts": list(gap.p2),
-                    "length_in": gap.length * k,
-                }
-                for gap in region.gaps
-            ],
+            "gaps": _gap_items(region.gaps, k),
         }
 
-    def _raster_item(self, snapshot: PageSnapshot, raster, k: float) -> dict:
+    def _raster_item(
+        self,
+        snapshot: PageSnapshot,
+        raster,
+        k: float,
+        gaps: Tuple[RegionGap, ...] = (),
+        sealed_in: Optional[float] = None,
+    ) -> dict:
         polygon = tuple(value * k for point in raster.ring for value in point)
-        record = _RegionRecord(snapshot.uid, polygon, (), (), bool(raster.leak), k)
+        records = _gap_records(gaps, k)
+        if sealed_in is not None:
+            records += (_GapRecord(sealed_in, None, None),)
+        record = _RegionRecord(snapshot.uid, polygon, (), records, bool(raster.leak), k)
         return {
             "id": self._store_region(record),
             "method": "raster",
             "polygon_ost": list(polygon),
             "holes_ost": [],
             "area_sf": round(abs(polygon_area(polygon)) / 144.0, 4),
-            "leak_risk": bool(raster.leak),
-            "gaps": [],
+            "leak_risk": bool(raster.leak) or bool(records),
+            "gaps": _gap_items(gaps, k),
+            "unlocated_gaps_up_to_in": sealed_in,
         }
+
+
+def _gap_assumption_text(gap: _GapRecord) -> Tuple[str, str]:
+    if gap.p1_pts is None or gap.p2_pts is None:
+        return (
+            f"up to {gap.length_in:.2f} in",
+            "The fill may have closed openings up to "
+            f"{gap.length_in:.2f} in that could not be located; check the outline.",
+        )
+    return (
+        f"{gap.length_in:.2f} in",
+        f"The outline was closed across a {gap.length_in:.2f} in gap in the drawing "
+        f"from ({gap.p1_pts[0]:.1f}, {gap.p1_pts[1]:.1f}) to "
+        f"({gap.p2_pts[0]:.1f}, {gap.p2_pts[1]:.1f}) page points.",
+    )
+
+
+def _planar(
+    segments, gap_pts: float, symbol_max: float, closures=()
+) -> PlanarRegionReport:
+    try:
+        return find_planar_regions_report(
+            segments,
+            SNAP_TOLERANCE_PTS,
+            gap_pts,
+            symbol_max=symbol_max,
+            closures=closures,
+        )
+    except RegionTooComplex as exc:
+        raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, str(exc)) from exc
+
+
+def _gap_records(gaps: Sequence[RegionGap], k: float) -> Tuple[_GapRecord, ...]:
+    return tuple(_GapRecord(gap.length * k, gap.p1, gap.p2) for gap in gaps)
+
+
+def _gap_items(gaps: Sequence[RegionGap], k: float) -> list:
+    return [
+        {"p1_pts": list(gap.p1), "p2_pts": list(gap.p2), "length_in": gap.length * k}
+        for gap in gaps
+    ]
+
+
+def _smallest_containing(
+    regions: Sequence[PlanarRegion], seed: Tuple[float, ...]
+) -> Optional[PlanarRegion]:
+    containing = [region for region in regions if point_in_ring(seed, region.outer)]
+    if not containing:
+        return None
+    return min(containing, key=lambda region: abs(ring_area(region.outer)))
+
+
+def _optional_number(
+    value: Any, label: str, default: Optional[float]
+) -> Optional[float]:
+    if value is None:
+        return default
+    number = _number(value, label)
+    if number < 0.0:
+        raise AiTakeoffRequestError(
+            ERROR_INVALID_ARGUMENT, f"{label} must be 0 or more"
+        )
+    return number
+
+
+def _flag(value: Any, label: str) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise AiTakeoffRequestError(
+            ERROR_INVALID_ARGUMENT, f"{label} must be true or false"
+        )
+    return value
+
+
+def _region_filters(
+    gap_close_in: Any,
+    max_gap_in: Any,
+    min_width: Any,
+    exclude_dashed: Any,
+    exclude_thin_curves: Any,
+    colors: Any,
+    min_area_sf: Any,
+    symbol_max_pts: Any,
+) -> _RegionFilters:
+    old_gap = _optional_number(gap_close_in, "gap_close_in", None)
+    new_gap = _optional_number(max_gap_in, "max_gap_in", None)
+    if old_gap is not None and new_gap is not None and old_gap != new_gap:
+        raise AiTakeoffRequestError(
+            ERROR_INVALID_ARGUMENT, "Give max_gap_in or gap_close_in, not two values"
+        )
+    gap = new_gap if new_gap is not None else (old_gap or 0.0)
+    if gap > MAX_GAP_CLOSE_IN:
+        raise AiTakeoffRequestError(
+            ERROR_INVALID_ARGUMENT,
+            f"max_gap_in must be between 0 and {MAX_GAP_CLOSE_IN:g}",
+        )
+    return _RegionFilters(
+        max_gap_in=gap,
+        min_width=_optional_number(min_width, "min_width", None),
+        exclude_dashed=_flag(exclude_dashed, "exclude_dashed"),
+        exclude_thin_curves=_flag(exclude_thin_curves, "exclude_thin_curves"),
+        colors=_colors(colors),
+        min_area_sf=_optional_number(min_area_sf, "min_area_sf", 0.0),
+        symbol_max_pts=_optional_number(
+            symbol_max_pts, "symbol_max_pts", SYMBOL_MAX_PTS
+        ),
+    )
+
+
+def _colors(colors: Any) -> Optional[Tuple[str, ...]]:
+    if colors is None:
+        return None
+    if not isinstance(colors, list) or not all(
+        isinstance(color, str) and _COLOR_PATTERN.fullmatch(color) for color in colors
+    ):
+        raise AiTakeoffRequestError(
+            ERROR_INVALID_ARGUMENT, "colors must be a list of #rrggbb values"
+        )
+    return tuple(color.lower() for color in colors)
+
+
+def _region_page(cursor: Any, limit: Any) -> Tuple[int, int]:
+    if cursor is not None and not isinstance(cursor, str):
+        raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, "cursor must be text")
+    try:
+        offset = decode_cursor(cursor)
+    except ValueError as exc:
+        raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, str(exc)) from exc
+    if limit is None:
+        return offset, MAX_REGIONS_RETURNED
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= MAX_REGIONS_RETURNED
+    ):
+        raise AiTakeoffRequestError(
+            ERROR_INVALID_ARGUMENT,
+            f"limit must be a whole number from 1 to {MAX_REGIONS_RETURNED}",
+        )
+    return offset, limit
+
+
+def _filter_linework(lines, box, filters: _RegionFilters):
+    left, top, right, bottom = box
+    kinds = classify_linework(lines, filters.symbol_max_pts)
+    symbols = symbol_groups(lines, filters.symbol_max_pts)
+    excluded = {"dashed": 0, "thin_curve": 0, "thin": 0, "color": 0, "symbol": 0}
+    symbol_boxes: Dict[str, Tuple[float, float, float, float]] = {}
+    kept = []
+    for line, kind in zip(lines, kinds):
+        if (
+            max(line.x1, line.x2) < left
+            or min(line.x1, line.x2) > right
+            or max(line.y1, line.y2) < top
+            or min(line.y1, line.y2) > bottom
+        ):
+            continue
+        if kind == KIND_SYMBOL:
+            excluded["symbol"] += 1
+            symbol_boxes[line.group] = symbols[line.group]
+        elif filters.exclude_dashed and kind == KIND_DASHED:
+            excluded["dashed"] += 1
+        elif filters.exclude_thin_curves and line.curve and kind == KIND_THIN:
+            excluded["thin_curve"] += 1
+        elif (
+            filters.min_width is not None
+            and line.stroked
+            and (line.width or 0.0) < filters.min_width
+        ):
+            excluded["thin"] += 1
+        elif filters.colors is not None and line.color not in filters.colors:
+            excluded["color"] += 1
+        else:
+            kept.append(line.points)
+    return kept, excluded, [symbol_boxes[group] for group in sorted(symbol_boxes)]
+
+
+def _sealed_openings(
+    raster, segments, pen: float, seed: Tuple[float, ...]
+) -> List[Tuple[float, float, float, float]]:
+    if raster.px_per_pt > 0.0:
+        tolerance = max(
+            OPENING_TOLERANCE_MIN_PTS, OPENING_TOLERANCE_PX / raster.px_per_pt
+        )
+    else:
+        tolerance = OPENING_TOLERANCE_MIN_PTS
+    grid = SegmentGrid(segments)
+    closures = []
+    near = OPENING_SNAP_TOLERANCES * tolerance
+    for start, end, chord in uncovered_runs(
+        raster.ring, grid, tolerance, pen + 2.0 * tolerance
+    ):
+        reach = max(near, min(pen, chord) / 2.0)
+        first = _snap_to_linework(start, grid, reach, seed)
+        second = _snap_to_linework(end, grid, reach, seed)
+        if (
+            first is not None
+            and second is not None
+            and first != second
+            and _continues_a_line(first, second, grid)
+            and _continues_a_line(second, first, grid)
+        ):
+            closures.append((first[0], first[1], second[0], second[1]))
+    return closures
+
+
+def _continues_a_line(point, other, grid: SegmentGrid) -> bool:
+    x, y = point
+    dx, dy = other[0] - x, other[1] - y
+    length = math.hypot(dx, dy)
+    limit = math.sin(math.radians(OPENING_LINE_ANGLE_DEG))
+    reach = SNAP_TOLERANCE_PTS
+    for index in grid.query(x - reach, y - reach, x + reach, y + reach):
+        x1, y1, x2, y2 = grid.segment(index)
+        if point_segment_distance(x, y, x1, y1, x2, y2) > reach:
+            continue
+        sx, sy = x2 - x1, y2 - y1
+        size = math.hypot(sx, sy) * length
+        if size > 0.0 and abs(sx * dy - sy * dx) <= limit * size:
+            return True
+    return False
+
+
+def _snap_to_linework(point, grid: SegmentGrid, reach: float, seed):
+    x, y = point
+    nearby = grid.query(x - reach, y - reach, x + reach, y + reach)
+    best = None
+    best_key = None
+    for index in nearby:
+        x1, y1, x2, y2 = grid.segment(index)
+        for end in ((x1, y1), (x2, y2)):
+            distance = math.dist(point, end)
+            if distance > reach:
+                continue
+            key = (math.dist(seed, end), distance)
+            if best_key is None or key < best_key:
+                best, best_key = end, key
+    return best

@@ -473,6 +473,40 @@ CPP_CROSS_LAYER_EXCEPTIONS = {
     "providers",  # imports ost_pdf for PDF page size detection
     "osp_importer",  # imports ost_cab for CAB archive extraction
 }
+CMAKE_LISTS = OST_ROOT.parent / "cpp_extensions" / "CMakeLists.txt"
+_NB_MODULE_RE = re.compile(r"nanobind_add_module\(\s*(\w+)")
+_INSTALL_RE = re.compile(r"install\(TARGETS\s+(\w+)(.*?)\)", re.S)
+_DESTINATION_RE = re.compile(r"DESTINATION\s+ost_visualizer/(\S+)")
+_COPY_RE = re.compile(r"\$\{OST_ROOT\}/ost_visualizer/(\S+)/\$<TARGET_FILE_NAME:(\w+)>")
+
+
+def cmake_destination_problems(text: str) -> list:
+    # Every native module built by CMake must install and copy to its canonical
+    # PYD_ALLOWED_DIRS folder, and every canonical entry must still be built.
+    problems = []
+    modules = set(_NB_MODULE_RE.findall(text))
+    for module in sorted(modules - set(PYD_ALLOWED_DIRS)):
+        problems.append(f"native module {module} has no PYD_ALLOWED_DIRS destination")
+    for module in sorted(set(PYD_ALLOWED_DIRS) - modules):
+        problems.append(f"PYD_ALLOWED_DIRS lists {module} but CMake does not build it")
+    for target, body in _INSTALL_RE.findall(text):
+        if target not in modules:
+            continue
+        for destination in _DESTINATION_RE.findall(body):
+            if destination != PYD_ALLOWED_DIRS.get(target):
+                problems.append(
+                    f"{target} installs to {destination}, expected "
+                    f"{PYD_ALLOWED_DIRS.get(target)}"
+                )
+    for destination, target in _COPY_RE.findall(text):
+        if target in modules and destination != PYD_ALLOWED_DIRS.get(target):
+            problems.append(
+                f"{target} is copied to {destination}, expected "
+                f"{PYD_ALLOWED_DIRS.get(target)}"
+            )
+    return problems
+
+
 CPP_IMPORT_RE = re.compile(
     r"(?:from\s+\S+\s+import\s+|import\s+)(ost_(?:geometry|renderer|pdf_writer|pdf|"
     r"earcut|dxf|image|cab|winevent|geom_utils|snap|coord_transform|linear_geom))\b"
@@ -480,6 +514,10 @@ CPP_IMPORT_RE = re.compile(
 
 
 def check_cpp_extensions():
+    if CMAKE_LISTS.is_file():
+        text = CMAKE_LISTS.read_text(encoding="utf-8", errors="replace")
+        for problem in cmake_destination_problems(text):
+            add("cpp", CMAKE_LISTS, 0, problem)
     # Check for duplicate .pyd files
     pyd_locations = defaultdict(list)
     for root, _, files in os.walk(OST_ROOT):

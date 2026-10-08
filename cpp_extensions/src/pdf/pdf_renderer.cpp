@@ -480,6 +480,344 @@ namespace ost_pdf
         FPDF_ClosePage(page);
         return result;
     }
+    namespace
+    {
+        constexpr int kMaxFormDepth = 16;
+        constexpr int kMinCurvePieces = 2;
+        constexpr int kMaxCurvePieces = 32;
+        constexpr float kCurvePieceLengthPts = 2.0f;
+        struct Affine
+        {
+            double a;
+            double b;
+            double c;
+            double d;
+            double e;
+            double f;
+        };
+        Affine compose(const Affine &inner, const Affine &outer)
+        {
+            return Affine{
+                inner.a * outer.a + inner.b * outer.c,
+                inner.a * outer.b + inner.b * outer.d,
+                inner.c * outer.a + inner.d * outer.c,
+                inner.c * outer.b + inner.d * outer.d,
+                inner.e * outer.a + inner.f * outer.c + outer.e,
+                inner.e * outer.b + inner.f * outer.d + outer.f,
+            };
+        }
+        Affine object_matrix(FPDF_PAGEOBJECT object)
+        {
+            FS_MATRIX matrix{1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+            if (!FPDFPageObj_GetMatrix(object, &matrix))
+            {
+                return Affine{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+            }
+            return Affine{matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f};
+        }
+        uint32_t pack_rgba(unsigned int r, unsigned int g, unsigned int b, unsigned int a)
+        {
+            return ((r & 0xFFu) << 24) | ((g & 0xFFu) << 16) | ((b & 0xFFu) << 8) | (a & 0xFFu);
+        }
+        struct PathStyle
+        {
+            float stroke_width;
+            std::vector<float> dash;
+            uint32_t stroke_rgba;
+            uint32_t fill_rgba;
+            bool stroked;
+            bool filled;
+        };
+        PathStyle path_style(FPDF_PAGEOBJECT object, const Affine &world)
+        {
+            PathStyle style{0.0f, {}, 0u, 0u, false, false};
+            const double scale = std::sqrt(std::fabs(world.a * world.d - world.b * world.c));
+            float width = 0.0f;
+            if (FPDFPageObj_GetStrokeWidth(object, &width) && std::isfinite(width))
+            {
+                style.stroke_width = static_cast<float>(std::fabs(width) * scale);
+            }
+            const int dash_count = FPDFPageObj_GetDashCount(object);
+            if (dash_count > 0)
+            {
+                std::vector<float> dash(static_cast<size_t>(dash_count), 0.0f);
+                if (FPDFPageObj_GetDashArray(object, dash.data(), dash.size()))
+                {
+                    for (float value : dash)
+                    {
+                        style.dash.push_back(
+                            std::isfinite(value) ? static_cast<float>(std::fabs(value) * scale) : 0.0f);
+                    }
+                }
+            }
+            unsigned int r = 0;
+            unsigned int g = 0;
+            unsigned int b = 0;
+            unsigned int a = 0;
+            if (FPDFPageObj_GetStrokeColor(object, &r, &g, &b, &a))
+            {
+                style.stroke_rgba = pack_rgba(r, g, b, a);
+            }
+            if (FPDFPageObj_GetFillColor(object, &r, &g, &b, &a))
+            {
+                style.fill_rgba = pack_rgba(r, g, b, a);
+            }
+            int fill_mode = 0;
+            FPDF_BOOL stroke = 0;
+            if (FPDFPath_GetDrawMode(object, &fill_mode, &stroke))
+            {
+                style.filled = fill_mode != 0;
+                style.stroked = stroke != 0;
+            }
+            return style;
+        }
+        class PathCollector
+        {
+        public:
+            PathCollector(PDFPathExtraction &out, std::size_t max_items)
+                : out_(out), max_items_(max_items) {}
+            bool full() const
+            {
+                return out_.items.size() >= max_items_;
+            }
+            void collect(FPDF_PAGEOBJECT object, const Affine &parent, const std::string &object_id, int depth)
+            {
+                if (full())
+                {
+                    out_.truncated = true;
+                    return;
+                }
+                const int type = FPDFPageObj_GetType(object);
+                if (type == FPDF_PAGEOBJ_FORM)
+                {
+                    if (depth >= kMaxFormDepth)
+                    {
+                        return;
+                    }
+                    const Affine world = compose(object_matrix(object), parent);
+                    const int count = FPDFFormObj_CountObjects(object);
+                    for (int index = 0; index < count; ++index)
+                    {
+                        FPDF_PAGEOBJECT child = FPDFFormObj_GetObject(object, static_cast<unsigned long>(index));
+                        if (child)
+                        {
+                            collect(child, world, object_id + "." + std::to_string(index), depth + 1);
+                        }
+                    }
+                    return;
+                }
+                if (type == FPDF_PAGEOBJ_PATH)
+                {
+                    collect_path(object, compose(object_matrix(object), parent), object_id);
+                }
+            }
+
+        private:
+            void collect_path(FPDF_PAGEOBJECT object, const Affine &world, const std::string &object_id)
+            {
+                const PathStyle style = path_style(object, world);
+                auto map_point = [&world](float x, float y)
+                {
+                    return std::pair<float, float>{
+                        static_cast<float>(world.a * x + world.c * y + world.e),
+                        static_cast<float>(world.b * x + world.d * y + world.f),
+                    };
+                };
+                const int segment_count = FPDFPath_CountSegments(object);
+                bool has_current = false;
+                float current_x = 0.0f;
+                float current_y = 0.0f;
+                float start_x = 0.0f;
+                float start_y = 0.0f;
+                int subpath = -1;
+                int emitted = 0;
+                std::size_t subpath_first = out_.items.size();
+                bool subpath_closed = false;
+                std::vector<std::pair<float, float>> controls;
+                auto finish_subpath = [&]()
+                {
+                    if (subpath_first < out_.items.size())
+                    {
+                        const PDFPathItem &last = out_.items.back();
+                        const bool ends_at_start = last.x2 == start_x && last.y2 == start_y;
+                        if (subpath_closed || ends_at_start)
+                        {
+                            for (std::size_t index = subpath_first; index < out_.items.size(); ++index)
+                            {
+                                out_.items[index].closed = true;
+                            }
+                        }
+                    }
+                    subpath_first = out_.items.size();
+                    subpath_closed = false;
+                };
+                auto emit = [&](float x1, float y1, float x2, float y2, bool curve)
+                {
+                    if (x1 == x2 && y1 == y2)
+                    {
+                        return;
+                    }
+                    if (full())
+                    {
+                        out_.truncated = true;
+                        return;
+                    }
+                    PDFPathItem item;
+                    item.x1 = x1;
+                    item.y1 = y1;
+                    item.x2 = x2;
+                    item.y2 = y2;
+                    item.stroke_width = style.stroke_width;
+                    item.dash = style.dash;
+                    item.stroke_rgba = style.stroke_rgba;
+                    item.fill_rgba = style.fill_rgba;
+                    item.stroked = style.stroked;
+                    item.filled = style.filled;
+                    item.curve = curve;
+                    item.closed = false;
+                    item.object_id = object_id;
+                    item.subpath_index = subpath < 0 ? 0 : subpath;
+                    item.segment_index = emitted++;
+                    out_.items.push_back(std::move(item));
+                };
+                for (int segment_index = 0; segment_index < segment_count; ++segment_index)
+                {
+                    FPDF_PATHSEGMENT segment = FPDFPath_GetPathSegment(object, segment_index);
+                    if (!segment)
+                    {
+                        continue;
+                    }
+                    float x = 0.0f;
+                    float y = 0.0f;
+                    if (!FPDFPathSegment_GetPoint(segment, &x, &y))
+                    {
+                        continue;
+                    }
+                    auto [mapped_x, mapped_y] = map_point(x, y);
+                    if (!std::isfinite(mapped_x) || !std::isfinite(mapped_y))
+                    {
+                        continue;
+                    }
+                    const int type = FPDFPathSegment_GetType(segment);
+                    if (type == FPDF_SEGMENT_MOVETO)
+                    {
+                        finish_subpath();
+                        controls.clear();
+                        ++subpath;
+                        current_x = start_x = mapped_x;
+                        current_y = start_y = mapped_y;
+                        has_current = true;
+                    }
+                    else if (type == FPDF_SEGMENT_LINETO)
+                    {
+                        controls.clear();
+                        if (has_current)
+                        {
+                            emit(current_x, current_y, mapped_x, mapped_y, false);
+                        }
+                        current_x = mapped_x;
+                        current_y = mapped_y;
+                        has_current = true;
+                    }
+                    else if (type == FPDF_SEGMENT_BEZIERTO)
+                    {
+                        controls.emplace_back(mapped_x, mapped_y);
+                        if (controls.size() < 3)
+                        {
+                            continue;
+                        }
+                        if (has_current)
+                        {
+                            flatten(current_x, current_y, controls, emit);
+                        }
+                        controls.clear();
+                        current_x = mapped_x;
+                        current_y = mapped_y;
+                        has_current = true;
+                    }
+                    else
+                    {
+                        controls.clear();
+                        current_x = mapped_x;
+                        current_y = mapped_y;
+                        has_current = true;
+                    }
+                    if (FPDFPathSegment_GetClose(segment) && has_current)
+                    {
+                        if (current_x != start_x || current_y != start_y)
+                        {
+                            emit(current_x, current_y, start_x, start_y, false);
+                        }
+                        current_x = start_x;
+                        current_y = start_y;
+                        subpath_closed = true;
+                    }
+                }
+                finish_subpath();
+            }
+            template <typename Emit>
+            static void flatten(
+                float x0,
+                float y0,
+                const std::vector<std::pair<float, float>> &controls,
+                Emit &emit)
+            {
+                const auto [x1, y1] = controls[0];
+                const auto [x2, y2] = controls[1];
+                const auto [x3, y3] = controls[2];
+                const double polygon = std::hypot(x1 - x0, y1 - y0) + std::hypot(x2 - x1, y2 - y1) + std::hypot(x3 - x2, y3 - y2);
+                const int pieces = std::clamp(
+                    static_cast<int>(std::ceil(polygon / kCurvePieceLengthPts)),
+                    kMinCurvePieces,
+                    kMaxCurvePieces);
+                float previous_x = x0;
+                float previous_y = y0;
+                for (int piece = 1; piece <= pieces; ++piece)
+                {
+                    const double t = static_cast<double>(piece) / pieces;
+                    const double u = 1.0 - t;
+                    float x = x3;
+                    float y = y3;
+                    if (piece < pieces)
+                    {
+                        x = static_cast<float>(u * u * u * x0 + 3.0 * u * u * t * x1 + 3.0 * u * t * t * x2 + t * t * t * x3);
+                        y = static_cast<float>(u * u * u * y0 + 3.0 * u * u * t * y1 + 3.0 * u * t * t * y2 + t * t * t * y3);
+                    }
+                    emit(previous_x, previous_y, x, y, true);
+                    previous_x = x;
+                    previous_y = y;
+                }
+            }
+            PDFPathExtraction &out_;
+            std::size_t max_items_;
+        };
+    }
+    PDFPathExtraction PDFRenderer::extract_path_items(int page_index, std::size_t max_items) const
+    {
+        PDFPathExtraction result{{}, false};
+        if (!doc_ || page_index < 0 || page_index >= page_count())
+        {
+            return result;
+        }
+        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        if (!page)
+        {
+            return result;
+        }
+        PathCollector collector(result, max_items);
+        const Affine identity{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+        const int object_count = FPDFPage_CountObjects(page);
+        for (int object_index = 0; object_index < object_count && !result.truncated; ++object_index)
+        {
+            FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, object_index);
+            if (object)
+            {
+                collector.collect(object, identity, std::to_string(object_index), 0);
+            }
+        }
+        FPDF_ClosePage(page);
+        return result;
+    }
     std::vector<PDFTextRun> PDFRenderer::extract_text_runs(int page_index) const
     {
         std::vector<PDFTextRun> result;

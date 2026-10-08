@@ -413,6 +413,33 @@ class WriteCommandBridgeTests(BridgeTestCase):
             ]
         )
         self.assertNotEqual(self.proposal.threads["find_regions"], gui)
+        filters = {
+            "max_gap_in": 36.0,
+            "min_width": 1.0,
+            "exclude_dashed": False,
+            "exclude_thin_curves": False,
+            "colors": ["#000000"],
+            "min_area_sf": 5.0,
+            "symbol_max_pts": 30.0,
+            "cursor": "c:2",
+            "limit": 5,
+        }
+        self.assertTrue(
+            self.call(
+                "find_regions",
+                {
+                    "page_uid": "p1",
+                    "bbox_pts": [0, 0, 1, 1],
+                    "seed_pts": [0.5, 0.5],
+                    **filters,
+                },
+            )["success"]
+        )
+        _name, args, kwargs = self.proposal.calls[-1]
+        self.assertEqual(args[1], [0, 0, 1, 1])
+        self.assertEqual(
+            kwargs, {"gap_close_in": None, "seed_pts": [0.5, 0.5], **filters}
+        )
         rendered = self.call("render_3d", {})
         self.assertEqual(rendered["status"], "ok")
         self.assertNotEqual(self.top_view.render_threads[0], gui)

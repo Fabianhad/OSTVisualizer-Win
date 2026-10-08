@@ -16,7 +16,10 @@ from ..application.dtos.ai_takeoff_dtos import (
     COMMAND_RENDER_SHEET,
     COMMAND_UNDO_LAST_AI_CHANGESET,
     COMMAND_UPDATE_ASSUMPTION,
+    LINE_KIND_NAMES,
     MAX_LIMIT,
+    MAX_REGIONS_PER_PAGE,
+    SYMBOL_MAX_PTS_DEFAULT,
     OVERLAY_NOT_SUPPORTED_UNTIL_M1B,
     RENDER_DEFAULT_DPI,
     RENDER_MAX_DPI,
@@ -153,12 +156,21 @@ TOOLS = (
         "Use when you need every "
         "line to trace or measure. For a short read-only sample without the app use "
         "get_page_pdf_vectors_summary in the ost-visualizer server, which returns "
-        "raw PDF points, y up. Curves, line weights and dashes are not available "
-        "yet.",
+        "raw PDF points, y up. Curves are split into short straight pieces and "
+        "Form XObjects are included. Each segment also has width_pts, dash_pts, "
+        "color, paint (stroke, fill or stroke_fill), curve and a kind guess (wall: "
+        "heavy or filled, dashed, thin, symbol: small closed shape such as a "
+        "section bubble or tag); new_fields lists these added fields. Use kinds "
+        "and widths to choose find_regions filters.",
         _schema(
             {
                 "page_uid": _PAGE_UID,
                 "bbox_pts": _BBOX_PTS,
+                "kinds": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(LINE_KIND_NAMES)},
+                    "description": "Keep only these kind guesses.",
+                },
                 "cursor": _CURSOR,
                 "limit": _LIMIT,
             },
@@ -236,16 +248,54 @@ TOOLS = (
     ToolSpec(
         COMMAND_FIND_REGIONS,
         "Find closed regions formed by PDF lines inside a box (planar faces, "
-        "with a raster fill fallback from a seed point). Gaps up to gap_close_in "
-        "are closed and reported; leak_risk is true when a gap was closed or a "
-        "fill escaped. Polygons and holes are in OST inches (ost_inches); gap "
+        "with a raster fill fallback from a seed point). Workflow: call "
+        "list_segments on a box first to see kinds and widths, then call this on "
+        "the smallest box around the area with min_width at the wall width; "
+        "dashed lines are left out unless exclude_dashed is false, thin curves "
+        "such as door swings unless exclude_thin_curves is false, and small "
+        "closed symbols are never holes (suppressed_symbol_count). Without "
+        "seed_pts, regions are listed largest first with total_count and "
+        "next_cursor. With seed_pts inside a room you get the one region around "
+        "it; door openings up to max_gap_in are closed. Every closed gap is "
+        "reported with its end points and length and becomes a "
+        "closing-segment assumption in propose_element, high impact above "
+        "12 in. leak_risk is true when a gap was closed or a fill escaped. "
+        "Polygons and holes are in OST inches (ost_inches); gap and symbol "
         "points are in page points (page_pts_y_down).",
         _schema(
             {
                 "page_uid": _PAGE_UID,
                 "bbox_pts": _BBOX_PTS,
                 "gap_close_in": {"type": "number", "minimum": 0, "maximum": 48},
+                "max_gap_in": {"type": "number", "minimum": 0, "maximum": 48},
                 "seed_pts": _POINT_PTS,
+                "min_width": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Leave out stroked lines thinner than this, in "
+                    "page points; filled shapes are kept.",
+                },
+                "exclude_dashed": {"type": "boolean", "default": True},
+                "exclude_thin_curves": {"type": "boolean", "default": True},
+                "colors": {
+                    "type": "array",
+                    "items": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+                    "description": "Keep only lines of these colors.",
+                },
+                "min_area_sf": {"type": "number", "minimum": 0},
+                "symbol_max_pts": {
+                    "type": "number",
+                    "minimum": 0,
+                    "default": SYMBOL_MAX_PTS_DEFAULT,
+                    "description": "Closed shapes smaller than this on paper are "
+                    "symbols, not holes; 0 turns this off.",
+                },
+                "cursor": _CURSOR,
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_REGIONS_PER_PAGE,
+                },
             },
             ("page_uid", "bbox_pts"),
         ),

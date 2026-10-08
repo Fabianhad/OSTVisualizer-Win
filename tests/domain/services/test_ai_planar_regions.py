@@ -1,15 +1,18 @@
 import math
 import random
+import time
 import unittest
 from dataclasses import FrozenInstanceError
 from ost_visualizer.domain.services.ai_planar_regions import (
     MAX_REGION_SEGMENTS,
     PlanarRegion,
+    PlanarRegionReport,
     RegionGap,
     RegionTooComplex,
     _candidate_pairs,
     _ring_inside,
     find_planar_regions,
+    find_planar_regions_report,
     point_in_ring,
     ring_area,
 )
@@ -215,7 +218,7 @@ class PlanarRegionPlacementTests(unittest.TestCase):
 
 class PlanarRegionBoundaryTests(unittest.TestCase):
     def test_exactly_the_segment_cap_is_accepted(self):
-        self.assertEqual(MAX_REGION_SEGMENTS, 4000)
+        self.assertEqual(MAX_REGION_SEGMENTS, 20000)
         segments = [(float(i), 0.0, float(i), 1.0) for i in range(MAX_REGION_SEGMENTS)]
         self.assertEqual(find_planar_regions(segments, snap_tol=0.1, gap_close=0.0), [])
         non_finite = segments + [(float("nan"), 0.0, 1.0, 1.0)]
@@ -486,6 +489,184 @@ class PlanarRegionHelperTests(unittest.TestCase):
                         if overlaps:
                             self.assertIn((first, second), found)
         self.assertEqual(_candidate_pairs([], 0.5), [])
+
+
+class PlanarSymbolSuppressionTests(unittest.TestCase):
+    ROOM = _rect(0, 0, 300, 200)
+
+    def test_small_compact_shapes_inside_a_region_are_not_holes(self):
+        bubble = _rect(100, 100, 130, 130)
+        tag = _polyline([(200, 50), (220, 50), (210, 66), (200, 50)])
+        report = find_planar_regions_report(
+            self.ROOM + bubble + tag, snap_tol=0.5, gap_close=0.0, symbol_max=48.0
+        )
+        room = _smallest_containing(report.regions, (50, 50))
+        self.assertEqual(room.holes, ())
+        self.assertAlmostEqual(room.area, 300 * 200)
+        self.assertEqual(
+            sorted(report.suppressed),
+            [(100.0, 100.0, 130.0, 130.0), (200.0, 50.0, 220.0, 66.0)],
+        )
+        bubble_region = _smallest_containing(report.regions, (115, 115))
+        self.assertAlmostEqual(bubble_region.area, 900)
+
+    def test_shapes_at_or_above_the_threshold_stay_holes(self):
+        opening = _rect(100, 100, 148, 130)
+        report = find_planar_regions_report(
+            self.ROOM + opening, snap_tol=0.5, gap_close=0.0, symbol_max=48.0
+        )
+        room = _smallest_containing(report.regions, (50, 50))
+        self.assertEqual(len(room.holes), 1)
+        self.assertAlmostEqual(room.area, 300 * 200 - 48 * 30)
+        self.assertEqual(report.suppressed, ())
+
+    def test_suppression_is_off_by_default(self):
+        bubble = _rect(100, 100, 130, 130)
+        report = find_planar_regions_report(
+            self.ROOM + bubble, snap_tol=0.5, gap_close=0.0
+        )
+        room = _smallest_containing(report.regions, (50, 50))
+        self.assertEqual(len(room.holes), 1)
+        self.assertEqual(report.suppressed, ())
+        self.assertEqual(
+            find_planar_regions(self.ROOM + bubble, 0.5, 0.0), list(report.regions)
+        )
+
+    def test_a_symbol_suppressed_inside_two_regions_is_counted_once(self):
+        left = _rect(0, 0, 100, 100)
+        right = _rect(200, 0, 300, 100)
+        report = find_planar_regions_report(
+            left + right + _rect(40, 40, 50, 50) + _rect(240, 40, 250, 50),
+            snap_tol=0.5,
+            gap_close=0.0,
+            symbol_max=48.0,
+        )
+        self.assertEqual(len(report.suppressed), 2)
+        self.assertIsInstance(report, PlanarRegionReport)
+
+
+class PlanarClosureTests(unittest.TestCase):
+    def test_given_closures_close_an_opening_and_are_reported_as_gaps(self):
+        walls = _polyline([(40, 0), (200, 0), (200, 100), (0, 100), (0, 0), (4, 0)])
+        report = find_planar_regions_report(
+            walls, snap_tol=0.5, gap_close=0.0, closures=[(4.0, 0.0, 40.0, 0.0)]
+        )
+        (region,) = report.regions
+        self.assertAlmostEqual(region.area, 200 * 100)
+        (gap,) = region.gaps
+        self.assertEqual(sorted((gap.p1, gap.p2)), [(4.0, 0.0), (40.0, 0.0)])
+        self.assertAlmostEqual(gap.length, 36.0)
+
+    def test_a_closure_crossing_a_drawn_line_is_split_there(self):
+        walls = _polyline([(40, 0), (200, 0), (200, 100), (0, 100), (0, 0), (4, 0)])
+        leaf = [(20.0, -30.0, 20.0, 30.0)]
+        report = find_planar_regions_report(
+            walls + leaf, snap_tol=0.5, gap_close=0.0, closures=[(4.0, 0.0, 40.0, 0.0)]
+        )
+        room = _smallest_containing(report.regions, (100, 50))
+        self.assertAlmostEqual(abs(ring_area(room.outer)), 200 * 100 - 0.0, delta=1e-6)
+        self.assertEqual(
+            sorted(round(gap.length, 6) for gap in room.gaps), [16.0, 20.0]
+        )
+
+    def test_non_finite_closures_are_ignored(self):
+        report = find_planar_regions_report(
+            _rect(0, 0, 10, 10), 0.5, 0.0, closures=[(float("nan"), 0.0, 1.0, 1.0)]
+        )
+        self.assertEqual(len(report.regions), 1)
+        self.assertEqual(report.regions[0].gaps, ())
+
+    def test_closures_count_towards_the_segment_cap(self):
+        segments = [(float(i), 0.0, float(i), 1.0) for i in range(MAX_REGION_SEGMENTS)]
+        with self.assertRaises(RegionTooComplex):
+            find_planar_regions_report(
+                segments, 0.5, 0.0, closures=[(0.0, 5.0, 1.0, 5.0)]
+            )
+
+
+class PlanarTieOrderTests(unittest.TestCase):
+    def summary(self, segments, gap):
+        return [
+            (round(region.area, 3), sorted((gap.p1, gap.p2) for gap in region.gaps))
+            for region in find_planar_regions(segments, snap_tol=0.5, gap_close=gap)
+        ]
+
+    def test_equal_distance_corners_keep_the_m1b_choice(self):
+        segments = [
+            (15.0, 15.0, 10.0, 20.0),
+            (20.0, 15.0, 30.0, 15.0),
+            (25.0, 10.0, 25.0, 15.0),
+            (35.0, 20.0, 30.0, 25.0),
+        ]
+        self.assertEqual(
+            self.summary(segments, 10.0),
+            [
+                (
+                    37.5,
+                    [
+                        ((20.0, 15.0), (25.0, 10.0)),
+                        ((30.0, 15.0), (30.0, 25.0)),
+                        ((30.0, 15.0), (35.0, 20.0)),
+                    ],
+                ),
+                (25.0, [((30.0, 15.0), (30.0, 25.0)), ((30.0, 15.0), (35.0, 20.0))]),
+                (12.5, [((20.0, 15.0), (25.0, 10.0))]),
+            ],
+        )
+
+    def test_equal_distance_loose_ends_keep_the_m1b_choice(self):
+        segments = [
+            (25.0, 5.0, 20.0, 10.0),
+            (25.0, 5.0, 30.0, 10.0),
+            (25.0, 10.0, 20.0, 15.0),
+        ]
+        self.assertEqual(
+            self.summary(segments, 5.0),
+            [(37.5, [((20.0, 10.0), (20.0, 15.0)), ((30.0, 10.0), (25.0, 10.0))])],
+        )
+
+    def test_a_dangling_chain_is_pruned_back_to_the_wall(self):
+        segments = _rect(0, 0, 300, 200) + _polyline(
+            [(150, 0), (150, 50), (180, 60), (190, 90)]
+        )
+        (region,) = find_planar_regions(segments, snap_tol=0.5, gap_close=0.0)
+        self.assertEqual(len(region.outer), 5)
+        self.assertAlmostEqual(region.area, 60000)
+
+
+class PlanarScaleTests(unittest.TestCase):
+    def test_a_large_floor_with_loose_ends_finishes_quickly(self):
+        size = 10.0
+        count = 60
+        segments = []
+        for row in range(count + 1):
+            for col in range(count):
+                segments.append((col * size, row * size, (col + 1) * size, row * size))
+        for col in range(count + 1):
+            for row in range(count):
+                segments.append((col * size, row * size, col * size, (row + 1) * size))
+        rng = random.Random(5)
+        for _ in range(800):
+            x, y = rng.uniform(0, count * size), rng.uniform(0, count * size)
+            segments.append((x, y, x + 2.0, y + 1.0))
+        started = time.perf_counter()
+        regions = find_planar_regions(segments, snap_tol=0.5, gap_close=3.0)
+        elapsed = time.perf_counter() - started
+        self.assertGreaterEqual(len(regions), count * count)
+        self.assertLess(elapsed, 15.0)
+
+    def test_many_separate_shapes_assign_holes_quickly(self):
+        segments = _rect(0, 0, 4000, 4000)
+        for row in range(40):
+            for col in range(40):
+                x, y = 50 + col * 98, 50 + row * 98
+                segments += _rect(x, y, x + 60, y + 60)
+        started = time.perf_counter()
+        regions = find_planar_regions(segments, snap_tol=0.5, gap_close=0.0)
+        elapsed = time.perf_counter() - started
+        floor = _smallest_containing(regions, (10, 10))
+        self.assertEqual(len(floor.holes), 1600)
+        self.assertLess(elapsed, 15.0)
 
 
 if __name__ == "__main__":

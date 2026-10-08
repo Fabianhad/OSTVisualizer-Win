@@ -18,6 +18,7 @@ class RasterRegion:
     leak: bool
     width_px: int
     height_px: int
+    px_per_pt: float
 
 
 def raster_fill_region(
@@ -48,7 +49,7 @@ def raster_fill_region(
     simplified = _simplify_ring(boundary, SIMPLIFY_TOLERANCE_PX)
     grown = _offset_ring(simplified, pen_px / 2.0)
     ring = tuple((x / scale + left, y / scale + top) for x, y in grown)
-    return RasterRegion(ring, leak, width, height)
+    return RasterRegion(ring, leak, width, height, scale)
 
 
 def _draw_walls(segments, left, top, scale, width, height, stride, pen_px) -> bytes:

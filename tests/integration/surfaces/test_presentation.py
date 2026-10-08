@@ -1588,8 +1588,9 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         during_clear = []
 
         def observe_clear(_selection):
-            if self.main_plan.current_page_uid is None:
-                during_clear.append(annotation.isEnabled())
+            during_clear.append(
+                (self.main_plan.current_page_uid, annotation.isEnabled())
+            )
 
         self.main_plan.takeoff_selection_changed.connect(observe_clear)
         self.addCleanup(
@@ -1601,8 +1602,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             callback, "_invoke", QtCore.Qt.ConnectionType.QueuedConnection
         )
         self.app.processEvents()
-        self.assertTrue(during_clear)
-        self.assertFalse(any(during_clear))
+        self.assertEqual(during_clear, [(page.uid, True)])
         self.assertIs(self.main_plan._current_page, page)
         self.assertEqual(self.main_plan.current_page_uid, page.uid)
         self.assertTrue(annotation.isEnabled())

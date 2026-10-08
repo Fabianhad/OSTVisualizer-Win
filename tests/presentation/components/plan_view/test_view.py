@@ -2648,6 +2648,23 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertIsNone(view._pending_page_data)
         view.cleanup()
 
+    def test_page_switch_reports_the_cleared_selection_once_the_new_page_is_current(
+        self,
+    ):
+        view = self._make_plan_view()
+        first = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        second = Page(uid="p2", name="P2", width_pts=612.0, height_pts=792.0)
+        self.assertTrue(view.load_page(first, [], {}, {}))
+        seen = []
+        view.takeoff_selection_changed.connect(
+            lambda uids: seen.append((list(uids), view.current_page_uid))
+        )
+        self.assertTrue(view.load_page(second, [], {}, {}))
+        self.assertEqual(seen, [([], "p2")])
+        view.clear()
+        self.assertEqual(seen[-1], ([], None))
+        view.cleanup()
+
     def test_page_switch_updates_canvas_and_schedules_render_before_completion(self):
         view = self._make_plan_view()
         page = Page(
@@ -26072,6 +26089,7 @@ class TakeoffPlanViewLoadPageContractSweepTests(_TakeoffPlanViewOverlayRefreshFi
                         "preserve_place_session": preserve_place,
                         "preserve_deferred_selection": preserve_selection,
                         "notify_page_cleared": False,
+                        "report_selection_cleared": False,
                     },
                 )
 

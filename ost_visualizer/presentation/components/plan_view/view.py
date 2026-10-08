@@ -5052,6 +5052,7 @@ class TakeoffPlanView(
             preserve_place_session=preserve_place,
             preserve_deferred_selection=not project_changed and not page_changed,
             notify_page_cleared=False,
+            report_selection_cleared=False,
         )
         if hidden_layer_uids is not None:
             self._hidden_layer_uids = {str(uid) for uid in hidden_layer_uids}
@@ -5124,6 +5125,7 @@ class TakeoffPlanView(
             saved_pending_takeoffs,
             saved_pending_annotations,
         )
+        self.takeoff_selection_changed.emit([])
         if self._selected_uids or saved_selection:
             self.update_selection_visuals()
         if strategy.needs_async_loading:
@@ -6046,6 +6048,7 @@ class TakeoffPlanView(
         *,
         preserve_deferred_selection: bool = False,
         notify_page_cleared: bool = True,
+        report_selection_cleared: bool = True,
     ):
         had_page = self._current_bid_page_uid is not None
         if not preserve_deferred_selection:
@@ -6180,7 +6183,8 @@ class TakeoffPlanView(
         self._saved_scroll_state = None
         self._pending_page_data = None
         self._deferred_page_visual_result = None
-        self.takeoff_selection_changed.emit([])
+        if report_selection_cleared:
+            self.takeoff_selection_changed.emit([])
         if not preserve_place_session:
             self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         if notify_page_cleared and had_page:

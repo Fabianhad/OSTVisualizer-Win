@@ -37,7 +37,9 @@ M1A_COMMAND_ARGUMENTS = {
     COMMAND_LIST_SHEETS: frozenset({"bid_uid", "cursor", "limit"}),
     COMMAND_RENDER_SHEET: frozenset({"page_uid", "crop_pts", "dpi", "overlay_ids"}),
     COMMAND_LIST_TEXT: frozenset({"page_uid", "bbox_pts", "query", "cursor", "limit"}),
-    COMMAND_LIST_SEGMENTS: frozenset({"page_uid", "bbox_pts", "cursor", "limit"}),
+    COMMAND_LIST_SEGMENTS: frozenset(
+        {"page_uid", "bbox_pts", "kinds", "cursor", "limit"}
+    ),
     COMMAND_GET_QUANTITIES: frozenset({"bid_uid", "group_by"}),
     COMMAND_LIST_LEVELS: frozenset({"bid_uid"}),
     COMMAND_LIST_ASSUMPTIONS: frozenset({"bid_uid", "status"}),
@@ -65,7 +67,21 @@ M1B_COMMAND_ARGUMENTS = {
         {"page_uid", "p1_pts", "p2_pts", "real_in", "preset", "reason", "sheet_ref"}
     ),
     COMMAND_FIND_REGIONS: frozenset(
-        {"page_uid", "bbox_pts", "gap_close_in", "seed_pts"}
+        {
+            "page_uid",
+            "bbox_pts",
+            "gap_close_in",
+            "max_gap_in",
+            "seed_pts",
+            "min_width",
+            "exclude_dashed",
+            "exclude_thin_curves",
+            "colors",
+            "min_area_sf",
+            "symbol_max_pts",
+            "cursor",
+            "limit",
+        }
     ),
     COMMAND_PROPOSE_ELEMENT: frozenset(
         {
@@ -102,6 +118,9 @@ M1B_COMMAND_ARGUMENTS = {
 }
 AI_TAKEOFF_COMMANDS = M1A_COMMANDS + M1B_COMMANDS
 AI_TAKEOFF_COMMAND_ARGUMENTS = {**M1A_COMMAND_ARGUMENTS, **M1B_COMMAND_ARGUMENTS}
+LINE_KIND_NAMES = ("wall", "dashed", "thin", "symbol")
+MAX_REGIONS_PER_PAGE = 50
+SYMBOL_MAX_PTS_DEFAULT = 48
 STATUS_OK = "ok"
 STATUS_EMPTY = "empty"
 STATUS_TRUNCATED = "truncated"
@@ -133,6 +152,7 @@ def find_regions_coordinate_space() -> dict:
         "regions[].holes_ost": COORD_OST_INCHES,
         "regions[].gaps[].p1_pts": COORD_PAGE_PTS_Y_DOWN,
         "regions[].gaps[].p2_pts": COORD_PAGE_PTS_Y_DOWN,
+        "suppressed_symbols_pts": COORD_PAGE_PTS_Y_DOWN,
     }
 
 

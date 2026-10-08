@@ -1,4 +1,5 @@
 import dataclasses
+import math
 import unittest
 from dataclasses import replace
 from ost_visualizer.application.dtos.ai_changeset_write_dtos import AppliedChangeset
@@ -8,6 +9,7 @@ from ost_visualizer.application.dtos.ai_takeoff_dtos import (
 )
 from ost_visualizer.application.dtos.pdf_metadata_dtos import (
     PdfPageInfoDto,
+    PdfPathStyleDto,
     PdfVectorSegmentDto,
 )
 from ost_visualizer.application.services.ai_changeset_store import (
@@ -20,6 +22,7 @@ from ost_visualizer.application.services.ai_takeoff_proposal_service import (
     MAX_REGIONS_RETURNED,
     AiTakeoffProposalService,
     RasterResult,
+    _sealed_openings,
 )
 from ost_visualizer.domain.entities.ai_changeset import (
     ASSUMPTION_ACCEPTED,
@@ -200,6 +203,7 @@ class FindRegionTests(ProposalTestCase):
                 "regions[].holes_ost": "ost_inches",
                 "regions[].gaps[].p1_pts": "page_pts_y_down",
                 "regions[].gaps[].p2_pts": "page_pts_y_down",
+                "suppressed_symbols_pts": "page_pts_y_down",
             },
         )
         self.assertAlmostEqual(gap["length_in"], 4.5 * K)
@@ -886,12 +890,13 @@ class RegionLimitTests(ProposalTestCase):
                 "regions[].gaps[].p2_pts",
                 "regions[].holes_ost",
                 "regions[].polygon_ost",
+                "suppressed_symbols_pts",
             ],
         )
 
     def test_too_many_segments_are_refused(self):
         self.pdf.segments = [
-            _raw(10, 10 + i * 0.1, 20, 10 + i * 0.1) for i in range(4001)
+            _raw(10, 10 + i * 0.01, 20, 10 + i * 0.01) for i in range(20001)
         ]
         self.assert_error("invalid_argument", self.find)
 
@@ -910,6 +915,559 @@ class RegionLimitTests(ProposalTestCase):
         )
         self.pdf.segments = _rect(100, 100, 461, 370)
         self.assertEqual(self.find()["data"]["regions"][0]["area_sf"], 300.8333)
+
+
+WALL_STYLE = PdfPathStyleDto(2.0, (), 0x000000FF, 0, True, False)
+THIN_STYLE = PdfPathStyleDto(0.25, (), 0x000000FF, 0, True, False)
+RED_STYLE = PdfPathStyleDto(2.0, (), 0xFF0000FF, 0, True, False)
+DASH_STYLE = PdfPathStyleDto(0.5, (6.0, 3.0), 0x000000FF, 0, True, False)
+POCHE_STYLE = PdfPathStyleDto(0.0, (), 0, 0x404040FF, False, True)
+
+
+def _styled(x1, y1, x2, y2, style=WALL_STYLE, group="", closed=False, curve=False):
+    return PdfVectorSegmentDto(
+        x1,
+        PAGE_HEIGHT - y1,
+        x2,
+        PAGE_HEIGHT - y2,
+        group=group,
+        closed=closed,
+        curve=curve,
+        style=style,
+    )
+
+
+def _swing(hinge_x, hinge_y, radius, style=THIN_STYLE, pieces=12):
+    points = [
+        (
+            hinge_x + radius * math.sin(math.radians(90.0 * i / pieces)),
+            hinge_y - radius * math.cos(math.radians(90.0 * i / pieces)),
+        )
+        for i in range(pieces + 1)
+    ]
+    leaf = [_styled(hinge_x, hinge_y, hinge_x, hinge_y - radius, style=style)]
+    return leaf + [
+        _styled(*a, *b, style=style, group="77:0", curve=True)
+        for a, b in zip(points, points[1:])
+    ]
+
+
+def _styled_rect(x1, y1, x2, y2, style=WALL_STYLE, group=""):
+    corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+    return [
+        _styled(*a, *b, style=style, group=group, closed=bool(group))
+        for a, b in zip(corners, corners[1:] + corners[:1])
+    ]
+
+
+def _door_room(door_left=200.0, door_right=254.0):
+    return [
+        _styled(100, 100, 400, 100),
+        _styled(400, 100, 400, 300),
+        _styled(100, 300, 100, 100),
+        _styled(100, 300, door_left, 300),
+        _styled(door_right, 300, 400, 300),
+        _styled(92, 92, 408, 92),
+        _styled(408, 92, 408, 308),
+        _styled(92, 308, 92, 92),
+        _styled(92, 308, door_left, 308),
+        _styled(door_right, 308, 408, 308),
+        _styled(door_left, 300, door_left, 308),
+        _styled(door_right, 300, door_right, 308),
+    ]
+
+
+class FindRegionFilterTests(ProposalTestCase):
+    def find(self, **kwargs):
+        return self.service_m1b.find_regions(
+            self.snapshot(), kwargs.pop("bbox", [0, 0, 600, 700]), **kwargs
+        )
+
+    def three_rooms(self):
+        return (
+            _rect(100, 100, 200, 200)
+            + _rect(300, 100, 500, 300)
+            + _rect(100, 400, 150, 450)
+        )
+
+    def test_regions_are_sorted_by_area_with_a_total_and_a_cursor(self):
+        self.pdf.segments = self.three_rooms()
+        result = self.find()
+        areas = [region["area_sf"] for region in result["data"]["regions"]]
+        self.assertEqual(areas, sorted(areas, reverse=True))
+        self.assertEqual(len(areas), 3)
+        self.assertEqual(result["data"]["total_count"], 3)
+        self.assertEqual(result["meta"]["total_count"], 3)
+        self.assertIsNone(result["meta"]["next_cursor"])
+        first = self.find(limit=2)
+        self.assertEqual(first["status"], "truncated")
+        self.assertTrue(first["data"]["truncated"])
+        self.assertEqual(first["meta"]["next_cursor"], "c:2")
+        self.assertEqual([r["area_sf"] for r in first["data"]["regions"]], areas[:2])
+        rest = self.find(limit=2, cursor="c:2")
+        self.assertEqual(rest["status"], "ok")
+        self.assertFalse(rest["data"]["truncated"])
+        self.assertEqual([r["area_sf"] for r in rest["data"]["regions"]], areas[2:])
+        self.assertEqual(rest["data"]["total_count"], 3)
+
+    def test_dashed_lines_are_left_out_unless_asked_for(self):
+        self.pdf.segments = _styled_rect(100, 100, 300, 300) + [
+            _styled(90, 200, 310, 200, style=DASH_STYLE)
+        ]
+        result = self.find()
+        (region,) = result["data"]["regions"]
+        self.assertAlmostEqual(region["area_sf"], 200 * 200 * K * K / 144.0, places=3)
+        self.assertEqual(result["data"]["excluded"]["dashed"], 1)
+        kept = self.find(exclude_dashed=False)["data"]
+        self.assertEqual(len(kept["regions"]), 3)
+        self.assertEqual(kept["excluded"]["dashed"], 0)
+
+    def test_exploded_dashes_are_never_bridged_into_a_wall(self):
+        dashes = [
+            _styled(100 + i * 10, 200, 106 + i * 10, 200, style=THIN_STYLE)
+            for i in range(9)
+        ]
+        dashes.append(_styled(190, 200, 200, 200, style=THIN_STYLE))
+        self.pdf.segments = _styled_rect(100, 100, 200, 300) + dashes
+        bridged = self.find(gap_close_in=3.0, exclude_dashed=False)["data"]
+        self.assertEqual(len(bridged["regions"]), 3)
+        self.assertGreaterEqual(
+            sum(len(region["gaps"]) for region in bridged["regions"]), 9
+        )
+        result = self.find(gap_close_in=3.0)["data"]
+        (region,) = result["regions"]
+        self.assertEqual(region["gaps"], [])
+        self.assertEqual(result["excluded"]["dashed"], 10)
+
+    def test_min_width_leaves_out_thin_lines_but_keeps_fills(self):
+        self.pdf.segments = (
+            _styled_rect(100, 100, 300, 300)
+            + [_styled(100, 200, 300, 200, style=THIN_STYLE)]
+            + _styled_rect(400, 100, 450, 150, style=POCHE_STYLE)
+        )
+        self.assertEqual(len(self.find()["data"]["regions"]), 4)
+        result = self.find(min_width=1.0)["data"]
+        self.assertEqual(len(result["regions"]), 2)
+        self.assertEqual(result["excluded"]["thin"], 1)
+        self.assertEqual(len(self.find(min_width=0.25)["data"]["regions"]), 4)
+        self.assertEqual(self.find(min_width=0.2501)["data"]["excluded"]["thin"], 1)
+
+    def test_colors_keep_only_the_listed_colors(self):
+        self.pdf.segments = _styled_rect(100, 100, 300, 300) + [
+            _styled(100, 200, 300, 200, style=RED_STYLE)
+        ]
+        result = self.find(colors=["#000000"])["data"]
+        self.assertEqual(len(result["regions"]), 1)
+        self.assertEqual(result["excluded"]["color"], 1)
+        self.assertEqual(
+            len(self.find(colors=["#000000", "#FF0000"])["data"]["regions"]), 3
+        )
+        self.pdf.segments = _rect(100, 100, 300, 300)
+        self.assertEqual(self.find(colors=["#000000"])["data"]["excluded"]["color"], 4)
+
+    def test_min_area_drops_small_regions_from_the_total(self):
+        self.pdf.segments = self.three_rooms()
+        small_sf = 50 * 50 * K * K / 144.0
+        result = self.find(min_area_sf=small_sf + 0.01)["data"]
+        self.assertEqual(result["total_count"], 2)
+        self.assertEqual(
+            self.find(min_area_sf=small_sf - 0.01)["data"]["total_count"], 3
+        )
+        self.assertEqual(self.find(min_area_sf=0)["data"]["total_count"], 3)
+
+    def test_small_symbols_are_not_holes_and_are_counted(self):
+        self.pdf.segments = (
+            _styled_rect(100, 100, 400, 400)
+            + _styled_rect(150, 150, 170, 170, style=THIN_STYLE, group="9:0")
+            + _rect(200, 150, 210, 160)
+            + _styled_rect(250, 250, 310, 310, group="")
+        )
+        result = self.find(seed_pts=[120, 380])["data"]
+        (room,) = result["regions"]
+        self.assertEqual(len(room["holes_ost"]), 1)
+        self.assertAlmostEqual(
+            room["area_sf"], (300 * 300 - 60 * 60) * K * K / 144.0, places=3
+        )
+        self.assertEqual(result["suppressed_symbol_count"], 2)
+        self.assertEqual(
+            sorted(result["suppressed_symbols_pts"]),
+            [[150.0, 150.0, 170.0, 170.0], [200.0, 150.0, 210.0, 160.0]],
+        )
+        everything = self.find(seed_pts=[120, 380], symbol_max_pts=0)["data"]
+        self.assertEqual(len(everything["regions"][0]["holes_ost"]), 3)
+        self.assertEqual(everything["suppressed_symbol_count"], 0)
+        self.assertEqual(
+            result["coordinate_space"]["suppressed_symbols_pts"], "page_pts_y_down"
+        )
+
+    def test_max_gap_in_is_the_same_setting_as_gap_close_in(self):
+        self.pdf.segments = [
+            _raw(100, 100, 460, 100),
+            _raw(460, 100, 460, 370),
+            _raw(460, 370, 100, 370),
+            _raw(100, 370, 100, 104.5),
+        ]
+        self.assertEqual(self.find()["data"]["regions"], [])
+        for kwargs in (
+            {"max_gap_in": 6.0},
+            {"gap_close_in": 6.0},
+            {"gap_close_in": 6.0, "max_gap_in": 6},
+        ):
+            with self.subTest(kwargs=kwargs):
+                (region,) = self.find(**kwargs)["data"]["regions"]
+                self.assertEqual(len(region["gaps"]), 1)
+        self.assert_error(
+            "invalid_argument", lambda: self.find(gap_close_in=6.0, max_gap_in=8.0)
+        )
+        for gap in (-1, 48.5, "6", True):
+            with self.subTest(gap=gap):
+                self.assert_error("invalid_argument", lambda: self.find(max_gap_in=gap))
+
+    def test_filters_are_echoed_with_their_defaults(self):
+        self.pdf.segments = _rect(100, 100, 300, 300)
+        self.assertEqual(
+            self.find()["data"]["filters"],
+            {
+                "max_gap_in": 0.0,
+                "min_width": None,
+                "exclude_dashed": True,
+                "exclude_thin_curves": True,
+                "colors": None,
+                "min_area_sf": 0.0,
+                "symbol_max_pts": 48.0,
+            },
+        )
+        self.assertEqual(
+            self.find(
+                max_gap_in=2,
+                min_width=1,
+                exclude_dashed=False,
+                colors=["#ABCDEF"],
+                min_area_sf=3,
+                symbol_max_pts=10,
+            )["data"]["filters"],
+            {
+                "max_gap_in": 2.0,
+                "min_width": 1.0,
+                "exclude_dashed": False,
+                "exclude_thin_curves": True,
+                "colors": ["#abcdef"],
+                "min_area_sf": 3.0,
+                "symbol_max_pts": 10.0,
+            },
+        )
+
+    def test_invalid_filters_are_refused(self):
+        self.pdf.segments = _rect(100, 100, 300, 300)
+        cases = {
+            "min_width": (-1, "1", True, float("inf")),
+            "exclude_dashed": ("yes", 1, 0),
+            "colors": ("#000000", ["black"], ["#12345"], [1], ["#1234567"]),
+            "min_area_sf": (-0.1, "3"),
+            "symbol_max_pts": (-1, "48"),
+            "limit": (0, 51, 1.5, True),
+            "cursor": ("bad", 5),
+        }
+        for name, values in cases.items():
+            for value in values:
+                with self.subTest(name=name, value=value):
+                    self.assert_error(
+                        "invalid_argument", lambda: self.find(**{name: value})
+                    )
+
+    def test_a_door_opening_found_from_a_seed_is_closed_and_recorded(self):
+        self.pdf.segments = _door_room()
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        result = self.find(seed_pts=[250, 200], max_gap_in=40.0)
+        (region,) = result["data"]["regions"]
+        self.assertEqual(region["method"], "vector")
+        self.assertAlmostEqual(region["area_sf"], 300 * 200 * K * K / 144.0, places=3)
+        (gap,) = region["gaps"]
+        self.assertEqual(
+            sorted([gap["p1_pts"], gap["p2_pts"]]), [[200.0, 300.0], [254.0, 300.0]]
+        )
+        self.assertAlmostEqual(gap["length_in"], 54 * K)
+        self.assertTrue(region["leak_risk"])
+        self.assertEqual(self.raster_calls[0][2], 40.0 / K)
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=8.0, top_elev_in=0.0
+        )["data"]
+        (closing,) = data["assumptions"]
+        self.assertEqual(
+            (closing["subject"], closing["impact"]), ("closing_segment", IMPACT_HIGH)
+        )
+        self.assertEqual(closing["value"]["value"], "36.00 in")
+        self.assertIn("(200.0, 300.0)", closing["reason"]["value"])
+        self.assertIn("(254.0, 300.0)", closing["reason"]["value"])
+        self.assertEqual(data["blocking_assumption_ids"], [closing["id"]])
+
+    def test_a_passage_to_an_island_is_not_an_opening(self):
+        self.pdf.segments = _door_room() + _styled_rect(180, 120, 200, 140)
+        self.raster_result = RasterResult(
+            (
+                (100.0, 100.0),
+                (185.0, 100.0),
+                (180.0, 120.0),
+                (180.0, 140.0),
+                (200.0, 140.0),
+                (200.0, 120.0),
+                (195.0, 100.0),
+                (400.0, 100.0),
+                (400.0, 300.0),
+                (100.0, 300.0),
+            ),
+            False,
+            4.0,
+        )
+        (region,) = self.find(seed_pts=[250, 200], max_gap_in=40.0, symbol_max_pts=0)[
+            "data"
+        ]["regions"]
+        self.assertEqual(region["method"], "vector")
+        self.assertEqual(
+            [sorted([gap["p1_pts"], gap["p2_pts"]]) for gap in region["gaps"]],
+            [[[200.0, 300.0], [254.0, 300.0]]],
+        )
+        self.assertEqual(len(region["holes_ost"]), 1)
+        self.assertAlmostEqual(
+            region["area_sf"], (300 * 200 - 20 * 20) * K * K / 144.0, places=3
+        )
+
+    def test_an_opening_as_wide_as_the_pen_is_still_found(self):
+        self.pdf.segments = _door_room()
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        (region,) = self.find(seed_pts=[250, 200], max_gap_in=51.0 * K)["data"][
+            "regions"
+        ]
+        self.assertEqual(region["method"], "vector")
+        self.assertEqual(len(region["gaps"]), 1)
+
+    def test_a_vector_outline_that_disagrees_with_the_fill_is_not_used(self):
+        self.pdf.segments = _door_room()
+        ring = (
+            (100.0, 100.0),
+            (250.0, 100.0),
+            (250.0, -200.0),
+            (400.0, -200.0),
+            (400.0, 300.0),
+            (100.0, 300.0),
+        )
+        self.raster_result = RasterResult(ring, False, 4.0)
+        (region,) = self.find(seed_pts=[300, 200], max_gap_in=40.0)["data"]["regions"]
+        self.assertEqual(region["method"], "raster")
+        self.assertAlmostEqual(region["area_sf"], 105000 * K * K / 144.0, places=3)
+        (gap,) = region["gaps"]
+        self.assertEqual(
+            sorted([gap["p1_pts"], gap["p2_pts"]]), [[200.0, 300.0], [254.0, 300.0]]
+        )
+
+    def test_an_opening_must_continue_a_drawn_line_at_both_ends(self):
+        ring = ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0))
+        raster = RasterResult(ring, False, 4.0)
+        frame = [
+            (100.0, 100.0, 400.0, 100.0),
+            (400.0, 100.0, 400.0, 300.0),
+            (100.0, 300.0, 100.0, 100.0),
+        ]
+        both = frame + [(100.0, 300.0, 200.0, 300.0), (254.0, 300.0, 400.0, 300.0)]
+        self.assertEqual(
+            _sealed_openings(raster, both, 60.0, (250.0, 200.0)),
+            [(254.0, 300.0, 200.0, 300.0)],
+        )
+        left_stub = frame + [
+            (100.0, 300.9, 199.0, 300.9),
+            (200.0, 300.0, 200.0, 330.0),
+            (254.0, 300.0, 400.0, 300.0),
+        ]
+        self.assertEqual(_sealed_openings(raster, left_stub, 60.0, (250.0, 200.0)), [])
+        right_stub = frame + [
+            (100.0, 300.0, 200.0, 300.0),
+            (254.0, 300.0, 254.0, 330.0),
+            (255.0, 300.9, 400.0, 300.9),
+        ]
+        self.assertEqual(_sealed_openings(raster, right_stub, 60.0, (250.0, 200.0)), [])
+
+    def test_lines_left_of_the_box_are_ignored(self):
+        self.pdf.segments = _rect(10, 100, 60, 150)
+        self.assertEqual(self.find(bbox=[100, 0, 600, 700])["data"]["regions"], [])
+        self.assertEqual(len(self.find(bbox=[0, 0, 600, 700])["data"]["regions"]), 1)
+
+    def test_the_minimum_area_is_inclusive(self):
+        self.pdf.segments = _rect(100, 100, 160, 160)
+        exact = 3600 * K * K / 144.0
+        self.assertEqual(exact * 144.0 / (K * K), 3600.0)
+        self.assertEqual(self.find(min_area_sf=exact)["data"]["total_count"], 1)
+
+    def test_a_short_opening_closure_is_a_normal_assumption(self):
+        self.pdf.segments = _door_room(200.0, 215.0)
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        (region,) = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"]["regions"]
+        (gap,) = region["gaps"]
+        self.assertAlmostEqual(gap["length_in"], 10.0)
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=8.0, top_elev_in=0.0
+        )["data"]
+        (closing,) = data["assumptions"]
+        self.assertEqual(closing["impact"], IMPACT_NORMAL)
+        self.assertEqual(data["blocking_assumption_ids"], [])
+
+    def test_a_sealed_opening_is_recorded_even_when_the_vector_outline_stays_open(self):
+        self.pdf.segments = [
+            _styled(100, 300, 200, 300),
+            _styled(254, 300, 400, 300),
+            _styled(100, 300, 100, 500),
+            _styled(400, 300, 400, 500),
+            _styled(100, 500, 400, 500),
+        ]
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        (region,) = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"]["regions"]
+        self.assertEqual(region["method"], "raster")
+        (gap,) = region["gaps"]
+        self.assertEqual(
+            sorted([gap["p1_pts"], gap["p2_pts"]]), [[200.0, 300.0], [254.0, 300.0]]
+        )
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=8.0, top_elev_in=0.0
+        )["data"]
+        self.assertEqual(
+            [a["subject"] for a in data["assumptions"]], ["closing_segment"]
+        )
+
+    def test_a_raster_region_without_openings_keeps_no_gaps(self):
+        self.pdf.segments = _styled_rect(100, 100, 400, 300)[:3] + [
+            _styled(100, 300, 400, 300, style=THIN_STYLE)
+        ]
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        (region,) = self.find(seed_pts=[250, 200], min_width=1.0)["data"]["regions"]
+        self.assertEqual((region["method"], region["gaps"]), ("raster", []))
+
+    def test_thin_door_swings_never_close_an_opening_silently(self):
+        self.pdf.segments = _door_room() + _swing(200.0, 300.0, 54.0)
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        result = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"]
+        (region,) = result["regions"]
+        self.assertAlmostEqual(region["area_sf"], 300 * 200 * K * K / 144.0, places=3)
+        self.assertEqual(len(region["gaps"]), 1)
+        self.assertEqual(result["excluded"]["thin_curve"], 12)
+        swung = self.find(
+            seed_pts=[250, 200], max_gap_in=40.0, exclude_thin_curves=False
+        )
+        (closed,) = swung["data"]["regions"]
+        self.assertEqual(closed["gaps"], [])
+        self.assertLess(closed["area_sf"], region["area_sf"] - 5.0)
+        self.assertEqual(swung["data"]["excluded"]["thin_curve"], 0)
+
+    def test_heavy_curves_stay_region_edges(self):
+        arc = [
+            _styled(*a, *b, curve=True)
+            for a, b in zip(
+                [
+                    (
+                        300 + 100 * math.cos(math.radians(a)),
+                        200 - 100 * math.sin(math.radians(a)),
+                    )
+                    for a in range(-90, 91, 10)
+                ],
+                [
+                    (
+                        300 + 100 * math.cos(math.radians(a)),
+                        200 - 100 * math.sin(math.radians(a)),
+                    )
+                    for a in range(-80, 101, 10)
+                ],
+            )
+        ][:-1]
+        self.pdf.segments = (
+            [
+                _styled(300, 100, 100, 100),
+                _styled(100, 100, 100, 300),
+                _styled(100, 300, 300, 300),
+            ]
+            + arc
+            + [_styled(0, 600, 300, 600, style=THIN_STYLE) for _ in range(30)]
+        )
+        (region,) = self.find()["data"]["regions"]
+        expected = (200 * 200 + math.pi * 100 * 100 / 2) * K * K / 144.0
+        self.assertAlmostEqual(region["area_sf"], expected, delta=expected * 0.005)
+
+    def dimension_line(self):
+        return [
+            _styled(92, 332, 408, 332, style=THIN_STYLE),
+            _styled(92, 326, 92, 338, style=THIN_STYLE),
+            _styled(408, 326, 408, 338, style=THIN_STYLE),
+        ]
+
+    def test_a_seed_closes_its_own_openings_before_bridging_nearby_lines(self):
+        self.pdf.segments = _door_room() + self.dimension_line()
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        (region,) = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"]["regions"]
+        self.assertAlmostEqual(region["area_sf"], 300 * 200 * K * K / 144.0, places=3)
+        self.assertEqual(len(region["gaps"]), 1)
+        listed = self.find(max_gap_in=40.0)["data"]["regions"]
+        self.assertTrue(any(len(item["gaps"]) == 2 for item in listed))
+
+    def test_global_gap_closing_is_the_fallback_when_no_opening_is_found(self):
+        self.pdf.segments = _door_room() + self.dimension_line()
+        (region,) = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"]["regions"]
+        self.assertEqual(region["method"], "vector")
+        self.assertEqual(len(region["gaps"]), 2)
+        self.assertEqual(len(self.raster_calls), 1)
+
+    def test_a_raster_fill_that_may_have_closed_unseen_openings_says_so(self):
+        self.raster_result = RasterResult(
+            ((10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)), False, 4.0
+        )
+        (region,) = self.find(
+            seed_pts=[15, 15], max_gap_in=18.0, bbox=[0, 0, 600, 700]
+        )["data"]["regions"]
+        self.assertEqual(region["method"], "raster")
+        self.assertEqual(
+            (region["gaps"], region["unlocated_gaps_up_to_in"]), ([], 18.0)
+        )
+        self.assertTrue(region["leak_risk"])
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=8.0, top_elev_in=0.0
+        )["data"]
+        (closing,) = data["assumptions"]
+        self.assertEqual(closing["value"]["value"], "up to 18.00 in")
+        self.assertIn("could not be located", closing["reason"]["value"])
+        self.assertEqual(closing["impact"], IMPACT_HIGH)
+        (small,) = self.find(seed_pts=[15, 15], max_gap_in=K)["data"]["regions"]
+        self.assertIsNone(small["unlocated_gaps_up_to_in"])
+        (wider,) = self.find(seed_pts=[15, 15], max_gap_in=K * 1.01)["data"]["regions"]
+        self.assertAlmostEqual(wider["unlocated_gaps_up_to_in"], K * 1.01)
+
+    def test_exclude_thin_curves_must_be_true_or_false(self):
+        self.pdf.segments = _rect(100, 100, 300, 300)
+        for value in ("no", 0, 1):
+            with self.subTest(value=value):
+                self.assert_error(
+                    "invalid_argument", lambda: self.find(exclude_thin_curves=value)
+                )
+
+    def test_too_many_segments_after_filtering_are_refused_but_filtered_ones_are_not(
+        self,
+    ):
+        crowd = [
+            _styled(10, 10 + i * 0.01, 600, 10 + i * 0.01, style=THIN_STYLE)
+            for i in range(20001)
+        ]
+        self.pdf.segments = crowd
+        self.assert_error("invalid_argument", self.find)
+        self.assertEqual(self.find(min_width=1.0)["data"]["regions"], [])
 
 
 class RasterRegionTests(ProposalTestCase):
@@ -931,6 +1489,7 @@ class RasterRegionTests(ProposalTestCase):
         )
         self.assertEqual(region["area_sf"], 0.3086)
         self.assertEqual((region["holes_ost"], region["gaps"]), ([], []))
+        self.assertIsNone(region["unlocated_gaps_up_to_in"])
         self.assertFalse(region["leak_risk"])
 
     def test_the_raster_pen_covers_the_closing_gap(self):

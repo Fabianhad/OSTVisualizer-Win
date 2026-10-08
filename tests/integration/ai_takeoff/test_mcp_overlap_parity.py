@@ -351,6 +351,7 @@ class McpOverlapParityTests(unittest.TestCase):
                     "regions[].holes_ost": "ost_inches",
                     "regions[].gaps[].p1_pts": "page_pts_y_down",
                     "regions[].gaps[].p2_pts": "page_pts_y_down",
+                    "suppressed_symbols_pts": "page_pts_y_down",
                 },
             )
             model = scenario.takeoff("render_3d")["data"]

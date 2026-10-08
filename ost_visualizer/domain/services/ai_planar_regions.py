@@ -1,12 +1,13 @@
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from .ai_linework import SegmentGrid, is_symbol_box
 
-MAX_REGION_SEGMENTS = 4000
-_GRID_CELLS = 64
+MAX_REGION_SEGMENTS = 20000
 Point = Tuple[float, float]
 Ring = Tuple[Point, ...]
+Box = Tuple[float, float, float, float]
 
 
 class RegionTooComplex(Exception):
@@ -26,6 +27,12 @@ class PlanarRegion:
     holes: Tuple[Ring, ...]
     area: float
     gaps: Tuple[RegionGap, ...]
+
+
+@dataclass(frozen=True)
+class PlanarRegionReport:
+    regions: Tuple[PlanarRegion, ...]
+    suppressed: Tuple[Box, ...]
 
 
 def ring_area(ring: Sequence[Point]) -> float:
@@ -114,31 +121,36 @@ def _intersection(
 def _candidate_pairs(segments: List[Tuple[Point, Point]], padding: float):
     if not segments:
         return []
-    xs = [value for a, b in segments for value in (a[0], b[0])]
-    ys = [value for a, b in segments for value in (a[1], b[1])]
-    width = max(max(xs) - min(xs), max(ys) - min(ys), 1e-9)
-    cell = width / _GRID_CELLS + padding
-    origin = (min(xs), min(ys))
-    buckets: Dict[Tuple[int, int], List[int]] = defaultdict(list)
-    for index, (a, b) in enumerate(segments):
-        x0 = int((min(a[0], b[0]) - padding - origin[0]) // cell)
-        x1 = int((max(a[0], b[0]) + padding - origin[0]) // cell)
-        y0 = int((min(a[1], b[1]) - padding - origin[1]) // cell)
-        y1 = int((max(a[1], b[1]) + padding - origin[1]) // cell)
-        for gx in range(x0, x1 + 1):
-            for gy in range(y0, y1 + 1):
-                buckets[(gx, gy)].append(index)
-    pairs = set()
-    for members in buckets.values():
-        for i, first in enumerate(members):
-            for second in members[i + 1 :]:
-                pairs.add((first, second) if first < second else (second, first))
-    return sorted(pairs)
+    boxes = [
+        (min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+        for a, b in segments
+    ]
+    grid = SegmentGrid(boxes)
+    reach = 2.0 * padding
+    pairs = []
+    for first, (left, top, right, bottom) in enumerate(boxes):
+        for second in grid.query(
+            left - reach, top - reach, right + reach, bottom + reach
+        ):
+            if second <= first:
+                continue
+            other = boxes[second]
+            if (
+                other[0] - padding <= right + padding
+                and left - padding <= other[2] + padding
+                and other[1] - padding <= bottom + padding
+                and top - padding <= other[3] + padding
+            ):
+                pairs.append((first, second))
+    return pairs
 
 
 def _split_segments(
-    segments: List[Tuple[Point, Point]], index: _VertexIndex, tolerance: float
-) -> Set[Tuple[int, int]]:
+    segments: List[Tuple[Point, Point]],
+    index: _VertexIndex,
+    tolerance: float,
+    marked_from: Optional[int] = None,
+) -> Tuple[Set[Tuple[int, int]], Set[Tuple[int, int]]]:
     splits: Dict[int, List[Tuple[float, Point]]] = defaultdict(list)
     for first, second in _candidate_pairs(segments, tolerance):
         a, b = segments[first]
@@ -161,6 +173,7 @@ def _split_segments(
         for _t, point in owner_splits:
             index.add(point)
     edges: Set[Tuple[int, int]] = set()
+    drawn: Set[Tuple[int, int]] = set()
     for position, (a, b) in enumerate(segments):
         points = [(0.0, a), (1.0, b)] + splits.get(position, [])
         points.sort(key=lambda item: item[0])
@@ -171,8 +184,11 @@ def _split_segments(
                 vertices.append(vertex)
         for u, v in zip(vertices, vertices[1:]):
             if u != v:
-                edges.add((min(u, v), max(u, v)))
-    return edges
+                edge = (min(u, v), max(u, v))
+                edges.add(edge)
+                if marked_from is None or position < marked_from:
+                    drawn.add(edge)
+    return edges, edges - drawn
 
 
 def _adjacency(edges: Iterable[Tuple[int, int]]) -> Dict[int, Set[int]]:
@@ -183,6 +199,28 @@ def _adjacency(edges: Iterable[Tuple[int, int]]) -> Dict[int, Set[int]]:
     return neighbours
 
 
+class _NearVertices:
+    def __init__(self, points: List[Point], vertices: Iterable[int], reach: float):
+        self._cell = reach * (1.0 + 1e-9) + 1e-12
+        self._cells: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+        for vertex in vertices:
+            self._cells[self._key(points[vertex])].append(vertex)
+
+    def _key(self, point: Point) -> Tuple[int, int]:
+        return (
+            int(math.floor(point[0] / self._cell)),
+            int(math.floor(point[1] / self._cell)),
+        )
+
+    def near(self, point: Point) -> List[int]:
+        cx, cy = self._key(point)
+        found = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                found.extend(self._cells.get((cx + dx, cy + dy), ()))
+        return found
+
+
 def _close_gaps(
     edges: Set[Tuple[int, int]], index: _VertexIndex, gap_close: float
 ) -> List[Tuple[int, int]]:
@@ -191,6 +229,9 @@ def _close_gaps(
     closures = []
     neighbours = _adjacency(edges)
     dangling = sorted(vertex for vertex, near in neighbours.items() if len(near) == 1)
+    order = {vertex: position for position, vertex in enumerate(neighbours)}
+    near_dangling = _NearVertices(index.points, dangling, gap_close)
+    near_any = _NearVertices(index.points, list(neighbours), gap_close)
     used: Set[int] = set()
     for vertex in dangling:
         if vertex in used:
@@ -198,7 +239,7 @@ def _close_gaps(
         point = index.points[vertex]
         best = None
         best_distance = gap_close
-        for other in dangling:
+        for other in sorted(near_dangling.near(point)):
             if (
                 other == vertex
                 or other in used
@@ -211,11 +252,11 @@ def _close_gaps(
                 best = other
                 best_distance = distance
         if best is None:
-            for other, near in neighbours.items():
+            for other in sorted(near_any.near(point), key=order.__getitem__):
                 if (
                     other == vertex
                     or other in neighbours[vertex]
-                    or len(near) < 2
+                    or len(neighbours[other]) < 2
                     or _runs_along_an_edge(index.points, neighbours, vertex, other)
                 ):
                     continue
@@ -252,17 +293,19 @@ def _runs_along_an_edge(
 
 
 def _prune_dangling(edges: Set[Tuple[int, int]]) -> None:
-    while True:
-        neighbours = _adjacency(edges)
-        removable = {
-            (min(vertex, near_vertex), max(vertex, near_vertex))
-            for vertex, near in neighbours.items()
-            if len(near) == 1
-            for near_vertex in near
-        }
-        if not removable:
-            return
-        edges.difference_update(removable)
+    neighbours = _adjacency(edges)
+    queue = deque(vertex for vertex, near in neighbours.items() if len(near) == 1)
+    while queue:
+        vertex = queue.popleft()
+        near = neighbours[vertex]
+        if len(near) != 1:
+            continue
+        (other,) = near
+        edges.discard((min(vertex, other), max(vertex, other)))
+        near.clear()
+        neighbours[other].discard(vertex)
+        if len(neighbours[other]) == 1:
+            queue.append(other)
 
 
 def _trace_cycles(edges: Set[Tuple[int, int]], points: List[Point]) -> List[List[int]]:
@@ -311,25 +354,45 @@ def _components(edges: Set[Tuple[int, int]]) -> Dict[int, int]:
     return {vertex: find(vertex) for vertex in list(parent)}
 
 
+def _finite_pairs(segments) -> List[Tuple[Point, Point]]:
+    return [
+        ((float(x1), float(y1)), (float(x2), float(y2)))
+        for x1, y1, x2, y2 in segments
+        if all(math.isfinite(float(value)) for value in (x1, y1, x2, y2))
+    ]
+
+
 def find_planar_regions(
     segments: Sequence[Tuple[float, float, float, float]],
     snap_tol: float,
     gap_close: float,
     min_area: float = 1e-6,
 ) -> List[PlanarRegion]:
-    clean = [
-        ((float(x1), float(y1)), (float(x2), float(y2)))
-        for x1, y1, x2, y2 in segments
-        if all(math.isfinite(float(value)) for value in (x1, y1, x2, y2))
-    ]
-    if len(clean) > MAX_REGION_SEGMENTS:
+    return list(
+        find_planar_regions_report(segments, snap_tol, gap_close, min_area).regions
+    )
+
+
+def find_planar_regions_report(
+    segments: Sequence[Tuple[float, float, float, float]],
+    snap_tol: float,
+    gap_close: float,
+    min_area: float = 1e-6,
+    symbol_max: float = 0.0,
+    closures: Sequence[Tuple[float, float, float, float]] = (),
+) -> PlanarRegionReport:
+    clean = _finite_pairs(segments)
+    given = _finite_pairs(closures)
+    if len(clean) + len(given) > MAX_REGION_SEGMENTS:
         raise RegionTooComplex(
             f"More than {MAX_REGION_SEGMENTS} line segments; use a smaller bounding box."
         )
     tolerance = max(float(snap_tol), 1e-6)
     index = _VertexIndex(tolerance)
-    edges = _split_segments(clean, index, tolerance)
-    closures = _close_gaps(edges, index, float(gap_close))
+    edges, given_edges = _split_segments(
+        clean + given, index, tolerance, len(clean) if given else None
+    )
+    closures_found = _close_gaps(edges, index, float(gap_close))
     _prune_dangling(edges)
     points = index.points
     component_of = _components(edges)
@@ -345,7 +408,7 @@ def find_planar_regions(
             [points[v] for v in outers[component]]
         ):
             outers[component] = cycle
-    closure_set = set(closures)
+    closure_set = set(closures_found) | given_edges
     candidates = []
     for component, component_faces in faces.items():
         for cycle in component_faces:
@@ -356,21 +419,37 @@ def find_planar_regions(
         component: tuple(points[vertex] for vertex in reversed(cycle))
         for component, cycle in outers.items()
     }
+    ring_keys = list(outer_rings)
+    ring_boxes = [_ring_box(outer_rings[key]) for key in ring_keys]
+    box_grid = SegmentGrid(ring_boxes)
+    suppressed: Dict[int, Box] = {}
     regions = []
     for component, cycle in candidates:
         ring = tuple(points[vertex] for vertex in cycle)
         holes = []
-        for other, other_ring in outer_rings.items():
-            if other == component or not _ring_inside(other_ring, ring):
-                continue
+        inside = [
+            ring_keys[position]
+            for position in box_grid.query(*_ring_box(ring))
+            if ring_keys[position] != component
+            and _ring_inside(outer_rings[ring_keys[position]], ring)
+        ]
+        inside_set = set(inside)
+        for other in inside:
+            other_ring = outer_rings[other]
+            other_box = _ring_box(other_ring)
             nested = any(
-                third not in (component, other)
-                and _ring_inside(third_ring, ring)
-                and _ring_inside(other_ring, third_ring)
-                for third, third_ring in outer_rings.items()
+                ring_keys[position] not in (component, other)
+                and ring_keys[position] in inside_set
+                and _ring_inside(other_ring, outer_rings[ring_keys[position]])
+                for position in box_grid.query(*other_box)
+                if _box_contains(ring_boxes[position], other_box)
             )
-            if not nested:
-                holes.append(other_ring)
+            if nested:
+                continue
+            if is_symbol_box(other_box, symbol_max):
+                suppressed[other] = other_box
+                continue
+            holes.append(other_ring)
         area = abs(ring_area(ring)) - sum(abs(ring_area(hole)) for hole in holes)
         if area <= min_area:
             continue
@@ -383,7 +462,24 @@ def find_planar_regions(
         )
         regions.append(PlanarRegion(ring, tuple(holes), area, gaps))
     regions.sort(key=lambda region: -region.area)
-    return regions
+    return PlanarRegionReport(
+        tuple(regions), tuple(suppressed[key] for key in sorted(suppressed))
+    )
+
+
+def _ring_box(ring: Sequence[Point]) -> Box:
+    xs = [point[0] for point in ring]
+    ys = [point[1] for point in ring]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _box_contains(outer: Box, inner: Box) -> bool:
+    return (
+        outer[0] <= inner[0]
+        and outer[1] <= inner[1]
+        and outer[2] >= inner[2]
+        and outer[3] >= inner[3]
+    )
 
 
 def _ring_inside(inner: Ring, outer: Ring) -> bool:

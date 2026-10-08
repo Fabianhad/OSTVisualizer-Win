@@ -404,6 +404,19 @@ close), `propose_element` (a slab from a region or polygon), `apply_changeset`,
 bid) and `update_assumption` (the AI can add or revise an assumption, never
 accept one or change the proposed scale).
 
+`list_segments` also reports each line's width, dash pattern, color, whether
+it is stroked or filled, whether it comes from a curve, and a guess of its kind
+(wall, dashed, thin or symbol such as a section bubble or tag). Curves and lines
+inside Form XObjects are included. `find_regions` uses this: dashed lines and
+thin curves such as door swings are left out by default, small symbols are
+never cut out as holes, and `min_width` or `colors` can keep only the walls.
+Without a seed point, regions come back largest first with a total and a
+cursor for the next page. With a seed point inside a room, door openings up to
+`max_gap_in` are closed on the room side, and every closed opening is listed
+with its end points and length and becomes an assumption you must accept when
+it is over 12 in. A whole sheet with up to 20,000 lines (after filters) can be
+searched in one call; for best results call it on a small box around the area.
+
 When the AI asks to apply a changeset, a review window opens in the app. It
 shows the outlines on the plan, the added area and volume, and every
 assumption the AI made, such as a missing slab thickness or a gap it closed.

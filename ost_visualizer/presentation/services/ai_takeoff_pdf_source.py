@@ -1,11 +1,15 @@
 import logging
+import threading
+from collections import OrderedDict
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 from PySide6.QtGui import QImage
 from ...application.dtos.pdf_metadata_dtos import (
     PdfPageInfoDto,
+    PdfPathStyleDto,
     PdfTextRunDto,
     PdfVectorSegmentDto,
+    PdfVectorSegmentsDto,
 )
 from ...domain.entities.file_extensions import is_pdf_suffix
 from ..visualization.exporters import ost_pdf_writer
@@ -15,6 +19,8 @@ from ..visualization.pdf.pdf_visible_origin import read_visible_box_origin
 from ..visualization.pdf.pdfium_lock import pdfium_lock
 
 logger = logging.getLogger(__name__)
+MAX_PAGE_PATH_ITEMS = 250000
+PATH_CACHE_PAGES = 2
 
 
 class PageCachePdfSource:
@@ -27,8 +33,12 @@ class PageCachePdfSource:
         self._page_cache = page_cache
         self._renderer_factory = renderer_factory
         self._geometry_reader_factory = geometry_reader_factory
+        self._paths: "OrderedDict[tuple, PdfVectorSegmentsDto]" = OrderedDict()
+        self._paths_lock = threading.Lock()
 
     def release(self) -> None:
+        with self._paths_lock:
+            self._paths.clear()
         self._page_cache.clear()
 
     def get_page_info(self, file_path: str, page_index: int) -> PdfPageInfoDto:
@@ -69,33 +79,61 @@ class PageCachePdfSource:
     def get_vector_segments(
         self, file_path: str, page_index: int
     ) -> List[PdfVectorSegmentDto]:
+        return list(self.get_path_segments(file_path, page_index).segments)
+
+    def get_path_segments(
+        self, file_path: str, page_index: int
+    ) -> PdfVectorSegmentsDto:
         if _file_status(file_path) is not None:
-            return []
+            return PdfVectorSegmentsDto()
+        key = _cache_key(file_path, page_index)
+        with self._paths_lock:
+            cached = self._paths.get(key)
+            if cached is not None:
+                self._paths.move_to_end(key)
+                return cached
+        extraction = self._extract(file_path, page_index)
+        if extraction is None:
+            return PdfVectorSegmentsDto()
+        origin_x, origin_y = self._visible_origin(file_path, page_index)
+        styles: Dict[tuple, PdfPathStyleDto] = {}
+        segments = tuple(
+            PdfVectorSegmentDto(
+                float(item.x1) - origin_x,
+                float(item.y1) - origin_y,
+                float(item.x2) - origin_x,
+                float(item.y2) - origin_y,
+                segment_id=f"o{item.object_id}s{item.segment_index}",
+                group=f"{item.object_id}:{item.subpath_index}",
+                curve=bool(item.curve),
+                closed=bool(item.closed),
+                style=_style(item, styles),
+            )
+            for item in extraction.items
+        )
+        result = PdfVectorSegmentsDto(segments, bool(extraction.truncated))
+        with self._paths_lock:
+            self._paths[key] = result
+            while len(self._paths) > PATH_CACHE_PAGES:
+                self._paths.popitem(last=False)
+        return result
+
+    def _extract(self, file_path: str, page_index: int):
         renderer = self._renderer_factory()
         opened = False
         try:
             with pdfium_lock:
                 opened = bool(renderer.open(file_path))
                 if not opened:
-                    return []
-                raw_segments = renderer.extract_path_segments(page_index)
+                    return None
+                return renderer.extract_path_items(page_index, MAX_PAGE_PATH_ITEMS)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("PDF vector extraction failed: %s", type(exc).__name__)
-            return []
+            return None
         finally:
             if opened:
                 with pdfium_lock:
                     renderer.close()
-        origin_x, origin_y = self._visible_origin(file_path, page_index)
-        return [
-            PdfVectorSegmentDto(
-                float(x1) - origin_x,
-                float(y1) - origin_y,
-                float(x2) - origin_x,
-                float(y2) - origin_y,
-            )
-            for x1, y1, x2, y2 in raw_segments
-        ]
 
     def _visible_origin(self, file_path: str, page_index: int) -> tuple:
         return read_visible_box_origin(
@@ -115,6 +153,27 @@ class PageCachePdfSource:
         return self._page_cache.get_frame(
             file_path, page_index, scale, left, top, width, height, 0
         )
+
+
+def _cache_key(file_path: str, page_index: int) -> Tuple:
+    stat = Path(file_path).stat()
+    return (str(file_path), int(page_index), stat.st_mtime_ns, stat.st_size)
+
+
+def _style(item, styles: Dict[tuple, PdfPathStyleDto]) -> PdfPathStyleDto:
+    key = (
+        float(item.stroke_width),
+        tuple(float(value) for value in item.dash),
+        int(item.stroke_rgba),
+        int(item.fill_rgba),
+        bool(item.stroked),
+        bool(item.filled),
+    )
+    style = styles.get(key)
+    if style is None:
+        style = PdfPathStyleDto(*key)
+        styles[key] = style
+    return style
 
 
 def _file_status(file_path: str) -> Optional[str]:

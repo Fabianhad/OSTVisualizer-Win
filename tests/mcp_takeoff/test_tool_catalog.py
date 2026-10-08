@@ -142,6 +142,70 @@ class ToolCatalogTests(unittest.TestCase):
             schemas["update_assumption"]["length_in"], {"type": "number", "minimum": 0}
         )
 
+    def test_list_segments_offers_line_attributes_and_a_kind_filter(self):
+        tool = next(tool for tool in TOOLS if tool.name == "list_segments")
+        self.assertEqual(
+            tool.input_schema["properties"]["kinds"],
+            {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["wall", "dashed", "thin", "symbol"],
+                },
+                "description": "Keep only these kind guesses.",
+            },
+        )
+        for word in (
+            "width_pts",
+            "dash_pts",
+            "color",
+            "paint",
+            "curve",
+            "kind",
+            "new_fields",
+        ):
+            with self.subTest(word=word):
+                self.assertIn(word, tool.description)
+        self.assertNotIn("not available yet", tool.description)
+
+    def test_find_regions_filters_paging_and_workflow(self):
+        tool = next(tool for tool in TOOLS if tool.name == "find_regions")
+        properties = tool.input_schema["properties"]
+        self.assertEqual(
+            properties["max_gap_in"], {"type": "number", "minimum": 0, "maximum": 48}
+        )
+        self.assertEqual(properties["min_width"]["type"], "number")
+        self.assertEqual(properties["min_width"]["minimum"], 0)
+        self.assertEqual(properties["exclude_dashed"]["type"], "boolean")
+        self.assertIs(properties["exclude_dashed"]["default"], True)
+        self.assertEqual(
+            properties["exclude_thin_curves"], {"type": "boolean", "default": True}
+        )
+        self.assertEqual(
+            properties["colors"]["items"],
+            {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+        )
+        self.assertEqual(properties["min_area_sf"]["minimum"], 0)
+        self.assertEqual(properties["symbol_max_pts"]["minimum"], 0)
+        self.assertEqual(properties["symbol_max_pts"]["default"], 48)
+        self.assertEqual(
+            properties["limit"], {"type": "integer", "minimum": 1, "maximum": 50}
+        )
+        self.assertIn("cursor", properties)
+        for phrase in (
+            "largest first",
+            "total_count",
+            "next_cursor",
+            "list_segments",
+            "seed_pts",
+            "closing-segment assumption",
+            "12 in",
+            "suppressed_symbol_count",
+            "door swings",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, tool.description)
+
     def test_tool_specs_are_immutable(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             TOOLS[0].name = "approve_changeset"
