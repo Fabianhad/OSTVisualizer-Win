@@ -2,6 +2,10 @@ import base64
 from typing import List, Sequence
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPolygonF
+from ...application.dtos.ai_takeoff_dtos import (
+    COORDINATE_SPACE_KEY,
+    render_3d_coordinate_space,
+)
 from .ai_takeoff_crop_renderer import encode_png
 
 TOP_VIEW_MAX_SIDE_PX = 1200
@@ -28,7 +32,13 @@ def render_top_view(meshes: Sequence) -> dict:
             points = (vertices[a], vertices[b], vertices[c])
             triangles.append((max(point[2] for point in points), points))
     if not triangles:
-        return {"image": None, "mesh_count": 0, "bbox_model": None, "z_range": None}
+        return {
+            "image": None,
+            "mesh_count": 0,
+            "bbox_model": None,
+            "z_range": None,
+            COORDINATE_SPACE_KEY: render_3d_coordinate_space(),
+        }
     xs = [point[0] for _z, points in triangles for point in points]
     ys = [point[1] for _z, points in triangles for point in points]
     zs = [z for z, _points in triangles]
@@ -66,6 +76,7 @@ def render_top_view(meshes: Sequence) -> dict:
         "bbox_model": [x_min, y_min, x_max, y_max],
         "z_range": [z_min, z_max],
         "px_to_model": [1.0 / scale, 0.0, 0.0, -1.0 / scale, x_min, y_max],
+        COORDINATE_SPACE_KEY: render_3d_coordinate_space(),
     }
 
 

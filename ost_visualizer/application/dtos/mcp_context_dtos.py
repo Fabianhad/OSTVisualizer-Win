@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from ...domain.entities.area import UNASSIGNED_AREA_UID
+from .ai_takeoff_dtos import pdf_pts_coordinate_space
 
 MCP_BRIDGE_SERVER_NAME = "OSTVisualizerMcpBridge.v1"
 MCP_STATUS_OK = "ok"
@@ -161,6 +162,7 @@ class McpQuantityDto:
     uom2_label: str = ""
     uom3_label: str = ""
     takeoff_count: int = 0
+    hole_count: int = 0
 
 
 @dataclass
@@ -225,6 +227,7 @@ class McpConditionQuantitySummaryDto:
     quantities: List[McpQuantityDto] = field(default_factory=list)
     pages: List[McpPageTakeoffSummaryDto] = field(default_factory=list)
     takeoff_count: int = 0
+    hole_count: int = 0
     visible_takeoff_count: int = 0
     page_count: int = 0
     zero_quantity: bool = False
@@ -299,6 +302,7 @@ class McpConditionSummaryDto:
     quantities: List[McpQuantityDto] = field(default_factory=list)
     pages: List[McpPageTakeoffSummaryDto] = field(default_factory=list)
     takeoff_count: int = 0
+    hole_count: int = 0
     visible_takeoff_count: int = 0
 
 
@@ -481,6 +485,11 @@ class McpPdfTextSummaryDto:
     character_count: int = 0
     returned_character_count: int = 0
     runs: List[McpPdfTextRunDto] = field(default_factory=list)
+    coordinate_space: Dict[str, str] = field(
+        default_factory=lambda: pdf_pts_coordinate_space(
+            "runs", ("left", "top", "right", "bottom")
+        )
+    )
 
 
 @dataclass
@@ -505,6 +514,11 @@ class McpPdfVectorsSummaryDto:
     snap_line_count: int = 0
     snap_point_count: int = 0
     segments: List[McpPdfVectorSegmentDto] = field(default_factory=list)
+    coordinate_space: Dict[str, str] = field(
+        default_factory=lambda: pdf_pts_coordinate_space(
+            "segments", ("x1", "y1", "x2", "y2")
+        )
+    )
 
 
 @dataclass
@@ -594,6 +608,11 @@ class McpPdfTextSearchSummaryDto:
     meta: McpResultMetaDto
     match_count: int = 0
     matches: List[McpPdfTextSearchMatchDto] = field(default_factory=list)
+    coordinate_space: Dict[str, str] = field(
+        default_factory=lambda: pdf_pts_coordinate_space(
+            "matches", ("left", "top", "right", "bottom")
+        )
+    )
 
 
 @dataclass

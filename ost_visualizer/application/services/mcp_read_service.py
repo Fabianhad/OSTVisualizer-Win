@@ -704,17 +704,23 @@ class McpReadService:
         ]
         quantities = compute_page_quantities(
             bid_data.bid_conditions,
-            visible_takeoffs,
+            takeoffs,
             only_condition_uids={condition_uid},
+        )
+        primary_count, hole_count = self._count_takeoffs(
+            takeoffs, bid_data.bid_conditions
         )
         return McpConditionSummaryDto(
             condition=self._condition_dto(condition),
             quantities=self._quantity_dtos(
-                quantities, bid_data.bid_conditions, visible_takeoffs
+                quantities, bid_data.bid_conditions, takeoffs
             ),
             pages=self._page_takeoff_summaries(takeoffs, bid_data),
-            takeoff_count=len(takeoffs),
-            visible_takeoff_count=len(visible_takeoffs),
+            takeoff_count=primary_count,
+            hole_count=hole_count,
+            visible_takeoff_count=self._count_takeoffs(
+                visible_takeoffs, bid_data.bid_conditions
+            )[0],
         )
 
     def list_takeoffs(
@@ -723,7 +729,7 @@ class McpReadService:
         bid_uid: str,
         page_uid: Optional[str] = None,
         condition_uid: Optional[str] = None,
-        visible_only: bool = True,
+        visible_only: bool = False,
         include_geometry: bool = False,
         limit: int = 500,
     ) -> List[McpTakeoffDto]:
@@ -878,7 +884,7 @@ class McpReadService:
             bid_data,
             page_uid=page_uid,
             condition_uid=condition_uid,
-            visible_only=True,
+            visible_only=False,
         )
         quantities = compute_page_quantities(
             bid_data.bid_conditions,
@@ -900,9 +906,13 @@ class McpReadService:
         limit: int = 250,
     ) -> McpBidQuantitySummaryDto:
         bid_data = self._load_bid(database_id, bid_uid)
+        conditions_with_takeoffs = {
+            takeoff.condition_uid for takeoff in bid_data.bid_takeoffs
+        }
         summaries = [
             self._condition_quantity_summary(condition, bid_data)
             for condition in self._ordered_conditions(bid_data)
+            if condition.uid in conditions_with_takeoffs
         ]
         limited, meta = self._limited(summaries, limit, default=250)
         return McpBidQuantitySummaryDto(
@@ -1091,7 +1101,8 @@ class McpReadService:
         zero_summaries = [
             summary
             for summary in summaries
-            if summary.takeoff_count > 0 and summary.zero_quantity
+            if (summary.takeoff_count + summary.hole_count) > 0
+            and summary.zero_quantity
         ]
         limited, meta = self._limited(zero_summaries, limit, default=100)
         return McpZeroQuantitySummaryDto(
@@ -1268,7 +1279,7 @@ class McpReadService:
             bid_data,
             page_uid=page_uid,
             condition_uid=condition_uid,
-            visible_only=True,
+            visible_only=False,
         ):
             condition = bid_data.bid_conditions.get(takeoff.condition_uid)
             page = bid_data.pages.get(takeoff.page_uid)
@@ -2034,13 +2045,16 @@ class McpReadService:
         ]
         quantities = compute_page_quantities(
             bid_data.bid_conditions,
-            visible_takeoffs,
+            takeoffs,
             only_condition_uids={condition.uid},
         )
         quantity_dtos = self._quantity_dtos(
             quantities,
             bid_data.bid_conditions,
-            visible_takeoffs,
+            takeoffs,
+        )
+        primary_count, hole_count = self._count_takeoffs(
+            takeoffs, bid_data.bid_conditions
         )
         page_summaries = self._page_takeoff_summaries(takeoffs, bid_data)
         has_quantity = any(
@@ -2050,8 +2064,11 @@ class McpReadService:
             condition=self._condition_dto(condition),
             quantities=quantity_dtos,
             pages=page_summaries,
-            takeoff_count=len(takeoffs),
-            visible_takeoff_count=len(visible_takeoffs),
+            takeoff_count=primary_count,
+            hole_count=hole_count,
+            visible_takeoff_count=self._count_takeoffs(
+                visible_takeoffs, bid_data.bid_conditions
+            )[0],
             page_count=len(page_summaries),
             zero_quantity=bool(takeoffs and not has_quantity),
         )
@@ -2085,9 +2102,13 @@ class McpReadService:
         takeoffs: List[Takeoff],
     ) -> List[McpQuantityDto]:
         counts: Dict[str, int] = {}
+        hole_counts: Dict[str, int] = {}
         for takeoff in takeoffs:
             condition = conditions.get(takeoff.condition_uid)
             if takeoff.is_hole and condition is not None and condition.is_area:
+                hole_counts[takeoff.condition_uid] = (
+                    hole_counts.get(takeoff.condition_uid, 0) + 1
+                )
                 continue
             counts[takeoff.condition_uid] = counts.get(takeoff.condition_uid, 0) + 1
         result = []
@@ -2110,6 +2131,7 @@ class McpReadService:
                     uom2_label=get_uom_label(condition.uom2),
                     uom3_label=get_uom_label(condition.uom3),
                     takeoff_count=counts.get(condition_uid, 0),
+                    hole_count=hole_counts.get(condition_uid, 0),
                 )
             )
         return sorted(
@@ -2120,6 +2142,20 @@ class McpReadService:
                 item.condition_uid,
             ),
         )
+
+    @staticmethod
+    def _count_takeoffs(
+        takeoffs: Iterable[Takeoff], conditions: Dict[str, Condition]
+    ) -> Tuple[int, int]:
+        primary = 0
+        holes = 0
+        for takeoff in takeoffs:
+            condition = conditions.get(takeoff.condition_uid)
+            if takeoff.is_hole and condition is not None and condition.is_area:
+                holes += 1
+            else:
+                primary += 1
+        return primary, holes
 
     def _page_takeoff_summaries(
         self,

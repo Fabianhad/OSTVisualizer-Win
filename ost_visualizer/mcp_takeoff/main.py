@@ -13,7 +13,7 @@ from .pipe_client import TakeoffPipeClient
 from .protocol import JsonRpcStdioServer
 from .proxy import TakeoffProxy
 
-SERVER_NAME = "ost-visualizer-takeoff"
+SERVER_NAME = "ost-takeoff"
 LOG_FILE_NAME = "mcp_takeoff.log"
 LOGGER = logging.getLogger("ost_visualizer.mcp_takeoff")
 _LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")

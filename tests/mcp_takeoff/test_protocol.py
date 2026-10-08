@@ -20,7 +20,7 @@ def _server(calls=None, tools=None, failure=None):
         return {"content": [], "structuredContent": {"ok": True}, "isError": False}
 
     return JsonRpcStdioServer(
-        name="ost-visualizer-takeoff",
+        name="ost-takeoff",
         list_tools=lambda: tools or [{"name": "list_sheets"}],
         call_tool=call_tool,
     )
@@ -41,7 +41,7 @@ class JsonRpcStdioServerTests(unittest.TestCase):
         result = response["result"]
         self.assertEqual(result["protocolVersion"], "X")
         self.assertEqual(result["capabilities"], {"tools": {"listChanged": False}})
-        self.assertEqual(result["serverInfo"]["name"], "ost-visualizer-takeoff")
+        self.assertEqual(result["serverInfo"]["name"], "ost-takeoff")
         default = json.loads(_server().handle_line(_request("initialize", {})))
         self.assertEqual(
             default["result"]["protocolVersion"], protocol.DEFAULT_PROTOCOL_VERSION

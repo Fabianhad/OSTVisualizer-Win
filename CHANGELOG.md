@@ -4,6 +4,22 @@
 
 ### Added
 
+- **The two MCP helpers now agree.** The AI takeoff helper is named
+  `ost-takeoff` in the setup JSON and in the client (the executable is still
+  `ostv-takeoff-mcp.exe`; clients that already use the old key keep working
+  until you copy the new JSON, and should then drop the old entry so the
+  program is not registered twice). The read helper `ost-visualizer` now counts
+  hidden layers in its quantity tools, lists only conditions that have takeoffs
+  and reports area holes separately as `hole_count`, like the takeoff helper
+  and the Summary; `list_takeoffs` and `search_takeoffs` include hidden layers
+  by default. The read helper marks drawing text, page, condition, layer and
+  other names as `untrusted`, as the takeoff helper already did; those fields
+  are now objects with a `value` instead of plain strings. Its bid comparison
+  still compares visible quantities only. Outputs with
+  coordinates carry a `coordinate_space` field (raw PDF points y up, page
+  points y down, OST inches or model units). Overlapping tools on both helpers
+  say when to use them and point at each other, and mention that the read
+  helper can lag a few seconds behind a change the AI just applied.
 - **AI takeoff tools (preview).** A second MCP helper,
   `ostv-takeoff-mcp.exe`, lets an AI client such as Claude Desktop read the bid
   open in the running app: sheets with scale, PNG crops of PDF pages with

@@ -193,6 +193,15 @@ class FindRegionTests(ProposalTestCase):
         self.assertEqual(region["method"], "vector")
         self.assertAlmostEqual(region["area_sf"], 360 * 270 * K * K / 144.0, places=2)
         (gap,) = region["gaps"]
+        self.assertEqual(
+            result["data"]["coordinate_space"],
+            {
+                "regions[].polygon_ost": "ost_inches",
+                "regions[].holes_ost": "ost_inches",
+                "regions[].gaps[].p1_pts": "page_pts_y_down",
+                "regions[].gaps[].p2_pts": "page_pts_y_down",
+            },
+        )
         self.assertAlmostEqual(gap["length_in"], 4.5 * K)
         self.assertTrue(region["leak_risk"])
         xs = region["polygon_ost"][0::2]
@@ -869,7 +878,16 @@ class RegionLimitTests(ProposalTestCase):
         self.pdf.info = PdfPageInfoDto(status="missing")
         result = self.find()
         self.assertEqual(result["status"], "missing")
-        self.assertEqual(result["data"], {"page_uid": "p1", "regions": []})
+        self.assertEqual(result["data"]["regions"], [])
+        self.assertEqual(
+            sorted(result["data"]["coordinate_space"]),
+            [
+                "regions[].gaps[].p1_pts",
+                "regions[].gaps[].p2_pts",
+                "regions[].holes_ost",
+                "regions[].polygon_ost",
+            ],
+        )
 
     def test_too_many_segments_are_refused(self):
         self.pdf.segments = [

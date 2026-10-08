@@ -40,7 +40,9 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.uom_service import (
     CALC_AREA,
     CALC_COUNT,
+    CALC_LINEAR_LENGTH,
     UOM_EACH,
+    UOM_LINEAR_FEET,
     UOM_SQUARE_INCHES,
 )
 
@@ -656,12 +658,14 @@ class McpReadServiceTests(unittest.TestCase):
     def test_list_takeoffs_filters_visible_and_limit(self):
         takeoffs = self.service.list_takeoffs("db-1", "bid-1", limit=1)
         self.assertEqual([t.uid for t in takeoffs], ["takeoff-1"])
-        self.assertEqual(takeoffs.meta.total_count, 2)
+        self.assertEqual(takeoffs.meta.total_count, 3)
         self.assertTrue(takeoffs.meta.has_more)
         self.assertEqual(takeoffs[0].area_name, "Level One Deck")
-        all_takeoffs = self.service.list_takeoffs("db-1", "bid-1", visible_only=False)
+        all_takeoffs = self.service.list_takeoffs("db-1", "bid-1")
         self.assertEqual(len(all_takeoffs), 3)
         self.assertIsNone(all_takeoffs[2].area_name)
+        visible = self.service.list_takeoffs("db-1", "bid-1", visible_only=True)
+        self.assertEqual(visible.meta.total_count, 2)
         geometry_takeoffs = self.service.list_takeoffs(
             "db-1", "bid-1", include_geometry=True, limit=99999
         )
@@ -809,11 +813,11 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual([condition.uid for condition in conditions], ["cond-3"])
 
     def test_bid_quantity_summary_has_stable_shape_and_limit_metadata(self):
-        summary = self.service.get_bid_quantity_summary("db-1", "bid-1", limit=2)
+        summary = self.service.get_bid_quantity_summary("db-1", "bid-1", limit=1)
         self.assertEqual(summary.status, "truncated")
-        self.assertEqual(summary.meta.limit, 2)
-        self.assertEqual(summary.meta.returned_count, 2)
-        self.assertEqual(summary.meta.total_count, 3)
+        self.assertEqual(summary.meta.limit, 1)
+        self.assertEqual(summary.meta.returned_count, 1)
+        self.assertEqual(summary.meta.total_count, 2)
         first = summary.conditions[0]
         self.assertEqual(first.condition.uid, "cond-1")
         self.assertEqual(first.page_count, 1)
@@ -967,7 +971,7 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(summary.status, "truncated")
         self.assertEqual(summary.meta.limit, 1)
         self.assertEqual(summary.meta.returned_count, 1)
-        self.assertEqual(summary.meta.total_count, 3)
+        self.assertEqual(summary.meta.total_count, 2)
         self.assertTrue(summary.meta.truncated)
         empty = self.service.find_duplicate_conditions("db-1", "bid-1", limit=99999)
         self.assertEqual(empty.status, "empty")
@@ -981,6 +985,23 @@ class McpReadServiceTests(unittest.TestCase):
         self.repo.bid_data.bid_conditions[duplicate.uid] = duplicate
         unplaced = Takeoff(uid="unplaced-1", condition_uid="cond-1", page_uid="")
         self.repo.bid_data.bid_takeoffs.append(unplaced)
+        zero_line = Condition(
+            uid="cond-5",
+            name="Zero line",
+            ref_no=5,
+            condition_type=Condition.TYPE_LINEAR,
+            calc_type1=CALC_LINEAR_LENGTH,
+            uom1=UOM_LINEAR_FEET,
+        )
+        self.repo.bid_data.bid_conditions[zero_line.uid] = zero_line
+        self.repo.bid_data.bid_takeoffs.append(
+            Takeoff(
+                uid="zero-1",
+                condition_uid="cond-5",
+                page_uid="page-1",
+                position=[4, 4, 4, 4],
+            )
+        )
         gaps = self.service.review_scope_gaps("db-1", "bid-1")
         self.assertEqual(gaps.status, "ok")
         self.assertEqual(gaps.meta.total_count, 4)
@@ -995,7 +1016,7 @@ class McpReadServiceTests(unittest.TestCase):
             ["cond-1", "cond-4"],
         )
         zero = self.service.find_zero_quantity_conditions("db-1", "bid-1")
-        self.assertEqual([item.condition.uid for item in zero.conditions], ["cond-2"])
+        self.assertEqual([item.condition.uid for item in zero.conditions], ["cond-5"])
         unplaced_summary = self.service.find_unplaced_takeoffs("db-1", "bid-1")
         self.assertEqual(
             [takeoff.uid for takeoff in unplaced_summary.takeoffs],
@@ -1350,3 +1371,164 @@ class TakeoffLifecycleQuantityTests(unittest.TestCase):
                 position=[5, 5],
             ),
         ]
+
+
+class QuantityRuleTests(unittest.TestCase):
+    def setUp(self):
+        repo = FakeProjectRepository()
+        area_kwargs = dict(
+            condition_type=Condition.TYPE_AREA,
+            calc_type1=CALC_AREA,
+            uom1=UOM_SQUARE_INCHES,
+        )
+        repo.bid_data.bid_conditions = {
+            "slab": Condition(uid="slab", name="Slab", ref_no=1, **area_kwargs),
+            "hidden": Condition(
+                uid="hidden",
+                name="Hidden",
+                ref_no=2,
+                layer_visible=False,
+                **area_kwargs,
+            ),
+            "zero": Condition(
+                uid="zero",
+                name="Zero line",
+                ref_no=3,
+                condition_type=Condition.TYPE_LINEAR,
+                calc_type1=CALC_LINEAR_LENGTH,
+                uom1=UOM_LINEAR_FEET,
+            ),
+            "unused": Condition(uid="unused", name="Unused", ref_no=4, **area_kwargs),
+        }
+        square = [0, 0, 10, 0, 10, 10, 0, 10]
+        repo.bid_data.bid_takeoffs = [
+            Takeoff(uid="t1", condition_uid="slab", page_uid="page", position=square),
+            Takeoff(
+                uid="t2",
+                condition_uid="slab",
+                page_uid="page",
+                parent_uid="t1",
+                position=[1, 1, 3, 1, 3, 3, 1, 3],
+            ),
+            Takeoff(uid="t3", condition_uid="hidden", page_uid="page", position=square),
+            Takeoff(
+                uid="t4", condition_uid="zero", page_uid="page", position=[5, 5, 5, 5]
+            ),
+            Takeoff(
+                uid="t5",
+                condition_uid="slab",
+                page_uid="page",
+                position=[20, 20, 30, 20, 30, 30, 20, 30],
+            ),
+        ]
+        repo.bid_data.pages = {
+            "page": Page(uid="page", name="Page", takeoffs=repo.bid_data.bid_takeoffs)
+        }
+        repo.bid_data_by_uid["bid-1"] = repo.bid_data
+        self.service = McpReadService(
+            repo, [McpDatabaseRef("db-1", repo.file_path, "Demo")]
+        )
+
+    @staticmethod
+    def rows(quantities):
+        return {
+            row.condition_uid: (row.quantity1, row.takeoff_count, row.hole_count)
+            for row in quantities
+        }
+
+    EXPECTED = {"slab": (196.0, 2, 1), "hidden": (100.0, 1, 0), "zero": (0.0, 1, 0)}
+
+    def test_summarize_quantities_counts_hidden_layers_and_reports_holes_separately(
+        self,
+    ):
+        rows = self.rows(self.service.summarize_quantities("db-1", "bid-1"))
+        self.assertEqual(rows, self.EXPECTED)
+
+    def test_page_quantity_summary_follows_the_same_rule(self):
+        rows = self.rows(
+            self.service.get_page_quantity_summary("db-1", "bid-1", "page")
+        )
+        self.assertEqual(rows, self.EXPECTED)
+
+    def test_bid_quantity_summary_lists_only_conditions_with_takeoffs(self):
+        summary = self.service.get_bid_quantity_summary("db-1", "bid-1")
+        self.assertEqual(summary.meta.total_count, 3)
+        by_uid = {entry.condition.uid: entry for entry in summary.conditions}
+        self.assertEqual(set(by_uid), set(self.EXPECTED))
+        self.assertEqual(by_uid["hidden"].quantities[0].quantity1, 100.0)
+        self.assertEqual(by_uid["hidden"].visible_takeoff_count, 0)
+        self.assertEqual(by_uid["slab"].visible_takeoff_count, 2)
+        self.assertFalse(by_uid["hidden"].zero_quantity)
+        self.assertTrue(by_uid["zero"].zero_quantity)
+        self.assertEqual(
+            {uid: (e.takeoff_count, e.hole_count) for uid, e in by_uid.items()},
+            {"slab": (2, 1), "hidden": (1, 0), "zero": (1, 0)},
+        )
+
+    def test_condition_summary_counts_holes_separately(self):
+        summary = self.service.get_condition_summary("db-1", "bid-1", "slab")
+        self.assertEqual((summary.takeoff_count, summary.hole_count), (2, 1))
+        self.assertEqual(summary.visible_takeoff_count, 2)
+        self.assertEqual(summary.quantities[0].quantity1, 196.0)
+        hidden = self.service.get_condition_summary("db-1", "bid-1", "hidden")
+        self.assertEqual(hidden.quantities[0].quantity1, 100.0)
+
+    def test_structured_summary_agrees_with_the_quantity_tools(self):
+        summary = self.service.get_summary("db-1", "bid-1")
+        leaves = {}
+        pending = list(summary.nodes)
+        while pending:
+            node = pending.pop()
+            pending.extend(node.children)
+            if node.kind == "condition":
+                leaves[node.condition_uid] = node.values.quantity1
+        expected = {uid: values[0] for uid, values in self.EXPECTED.items()}
+        self.assertEqual(leaves, expected)
+
+    def test_takeoff_listings_include_hidden_layers_and_reconcile_with_counts(self):
+        listing = self.service.list_takeoffs("db-1", "bid-1")
+        self.assertEqual(
+            sum(count + holes for _q, count, holes in self.EXPECTED.values()),
+            listing.meta.total_count,
+        )
+        by_uid = {item.uid: item for item in listing}
+        self.assertFalse(by_uid["t3"].visible)
+        self.assertEqual(
+            {
+                item.uid
+                for item in self.service.list_takeoffs(
+                    "db-1", "bid-1", visible_only=True
+                )
+            },
+            {"t1", "t2", "t4", "t5"},
+        )
+        found = self.service.search_takeoffs("db-1", "bid-1", "hidden")
+        self.assertEqual([item.uid for item in found], ["t3"])
+
+    def test_zero_quantity_finder_counts_hole_only_conditions_as_having_takeoffs(self):
+        backout = Condition(
+            uid="backout",
+            name="Backout",
+            ref_no=5,
+            condition_type=Condition.TYPE_AREA,
+            calc_type1=CALC_AREA,
+            uom1=UOM_SQUARE_INCHES,
+        )
+        repo = self.service._repository
+        repo.bid_data.bid_conditions["backout"] = backout
+        repo.bid_data.bid_takeoffs.append(
+            Takeoff(
+                uid="t5",
+                condition_uid="backout",
+                page_uid="page",
+                parent_uid="t1",
+                position=[4, 4, 6, 4, 6, 6, 4, 6],
+            )
+        )
+        summary = self.service.get_bid_quantity_summary("db-1", "bid-1")
+        by_uid = {entry.condition.uid: entry for entry in summary.conditions}
+        self.assertEqual(
+            (by_uid["backout"].takeoff_count, by_uid["backout"].hole_count), (0, 1)
+        )
+        zero = self.service.find_zero_quantity_conditions("db-1", "bid-1")
+        self.assertIn("backout", [item.condition.uid for item in zero.conditions])

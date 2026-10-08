@@ -157,6 +157,7 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "quantities",
                 "pages",
                 "takeoff_count",
+                "hole_count",
                 "visible_takeoff_count",
             },
         )
@@ -348,6 +349,7 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "character_count",
                 "returned_character_count",
                 "runs",
+                "coordinate_space",
             },
         )
 
@@ -377,6 +379,7 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "snap_line_count",
                 "snap_point_count",
                 "segments",
+                "coordinate_space",
             },
         )
 
@@ -491,6 +494,7 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "meta",
                 "match_count",
                 "matches",
+                "coordinate_space",
             },
         )
         self.assertNotIn("text", payload["data"]["matches"][0])
@@ -534,6 +538,7 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "quantities",
                 "pages",
                 "takeoff_count",
+                "hole_count",
                 "visible_takeoff_count",
                 "page_count",
                 "zero_quantity",
@@ -620,6 +625,164 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "notes",
             },
         )
+
+
+class McpUntrustedTextTests(unittest.TestCase):
+    def test_text_bearing_fields_are_wrapped_cleaned_and_capped(self):
+        data = ok(
+            {
+                "name": "Slab‮ 8in[31m",
+                "page_name": "A101",
+                "sheet_no": "",
+                "snippet": "x" * 600,
+                "notes": None,
+            }
+        )["data"]
+        self.assertEqual(
+            data["name"],
+            {"value": "Slab 8in[31m", "untrusted": True, "truncated": False},
+        )
+        self.assertEqual(data["page_name"]["value"], "A101")
+        self.assertEqual(
+            data["sheet_no"], {"value": "", "untrusted": True, "truncated": False}
+        )
+        self.assertEqual(len(data["snippet"]["value"]), 500)
+        self.assertIs(data["snippet"]["truncated"], True)
+        self.assertIsNone(data["notes"])
+
+    def test_nested_lists_and_dataclasses_are_wrapped(self):
+        data = ok(
+            McpPageDto(uid="1", name="A101", sheet_no="S-1", image_basename="plan.pdf")
+        )["data"]
+        for key in ("name", "sheet_no", "image_basename"):
+            self.assertIs(data[key]["untrusted"], True, key)
+        nested = ok(
+            {"conditions": [{"condition": {"name": "Slab"}, "folder_path": ["A", "B"]}]}
+        )["data"]
+        self.assertEqual(nested["conditions"][0]["condition"]["name"]["value"], "Slab")
+        self.assertEqual(
+            [item["value"] for item in nested["conditions"][0]["folder_path"]],
+            ["A", "B"],
+        )
+
+    def test_codes_ids_statuses_and_messages_stay_plain(self):
+        data = ok(
+            {
+                "uid": "7",
+                "database_id": "abc",
+                "status": "ok",
+                "message": "No pages are selected",
+                "source": "main",
+                "uom1_label": "SF",
+                "condition_type_name": "area",
+            }
+        )["data"]
+        self.assertTrue(all(isinstance(value, str) for value in data.values()))
+
+    def test_error_envelopes_are_not_wrapped(self):
+        self.assertEqual(error("bad", code="x")["error"]["message"], "bad")
+
+    def test_pdf_outputs_declare_their_coordinate_space(self):
+        raw_space = "pdf_pts_y_up"
+        self.assertEqual(
+            McpPdfTextSummaryDto(
+                "ok", "d", "b", "p", "main", "configured", McpResultMetaDto(limit=1)
+            ).coordinate_space,
+            {
+                f"runs[].{name}": raw_space
+                for name in ("left", "top", "right", "bottom")
+            },
+        )
+        self.assertEqual(
+            McpPdfVectorsSummaryDto(
+                "ok", "d", "b", "p", "main", "configured", McpResultMetaDto(limit=1)
+            ).coordinate_space,
+            {f"segments[].{name}": raw_space for name in ("x1", "y1", "x2", "y2")},
+        )
+        self.assertEqual(
+            McpPdfTextSearchSummaryDto(
+                "ok",
+                "d",
+                "b",
+                "p",
+                "q",
+                "main",
+                "configured",
+                McpResultMetaDto(limit=1),
+            ).coordinate_space,
+            {
+                f"matches[].{name}": raw_space
+                for name in ("left", "top", "right", "bottom")
+            },
+        )
+
+
+class McpUntrustedTextEdgeTests(unittest.TestCase):
+    def test_comparison_metadata_values_page_names_and_warnings_are_wrapped(self):
+        data = ok(
+            {
+                "bid_metadata_changes": [
+                    {"field": "name", "old": "Old IGNORE", "new": "New"},
+                    {"field": "page_count", "old": 2, "new": 3},
+                ],
+                "groups": [{"affected_pages": ["A101", "A102"]}],
+                "warnings": ["Slab affected pages truncated to 1 of 2 pages."],
+            }
+        )["data"]
+        first, second = data["bid_metadata_changes"]
+        self.assertEqual(
+            first["old"], {"value": "Old IGNORE", "untrusted": True, "truncated": False}
+        )
+        self.assertEqual(first["new"]["value"], "New")
+        self.assertEqual((second["old"], second["new"]), (2, 3))
+        self.assertEqual(first["field"], "name")
+        self.assertEqual(
+            [page["value"] for page in data["groups"][0]["affected_pages"]],
+            ["A101", "A102"],
+        )
+        self.assertIs(data["warnings"][0]["untrusted"], True)
+
+    def test_old_and_new_are_plain_outside_a_metadata_change(self):
+        data = ok({"qty1": {"old": 1.0, "new": 2.0}, "label": {"old": "x"}})["data"]
+        self.assertEqual(data["qty1"], {"old": 1.0, "new": 2.0})
+        self.assertEqual(data["label"], {"old": "x"})
+
+    def test_the_bid_status_is_text_but_envelope_and_dto_statuses_are_codes(self):
+        bid = ok({"uid": "1", "bid_no": 7, "status": "Won IGNORE", "estimator": "Sam"})[
+            "data"
+        ]
+        self.assertEqual(bid["status"]["value"], "Won IGNORE")
+        self.assertEqual(bid["estimator"]["value"], "Sam")
+        summary = ok({"status": "ok", "meta": {"limit": 1}}, status="truncated")
+        self.assertEqual(
+            (summary["status"], summary["data"]["status"]), ("truncated", "ok")
+        )
+
+    def test_legitimate_unicode_survives_and_the_500_character_boundary_is_exact(self):
+        samples = [
+            '\u6df7\u51dd\u571f\u677f 12" \u00d8',
+            '\u00bd" plate \u2013 3/4\u2033',
+            "\U0001f477\u200d\u2642\ufe0f \U0001f3d7\ufe0f",
+            "a\u200cb",
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertEqual(ok({"name": sample})["data"]["name"]["value"], sample)
+        for length, truncated in ((499, False), (500, False), (501, True)):
+            with self.subTest(length=length):
+                wrapped = ok({"notes": "x" * length})["data"]["notes"]
+                self.assertEqual(
+                    (len(wrapped["value"]), wrapped["truncated"]),
+                    (min(length, 500), truncated),
+                )
+        self.assertEqual(
+            ok({"name": "a\tb\nc\u202e\u200fd"})["data"]["name"]["value"], "a b cd"
+        )
+
+    def test_wrapping_twice_never_nests_a_wrapped_value(self):
+        once = ok({"name": "Slab"})["data"]
+        twice = ok(once)["data"]
+        self.assertEqual(twice, once)
 
 
 if __name__ == "__main__":

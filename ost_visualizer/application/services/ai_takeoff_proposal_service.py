@@ -40,12 +40,14 @@ from ...domain.services.ai_planar_regions import (
     ring_area,
 )
 from ..dtos.ai_takeoff_dtos import (
+    COORDINATE_SPACE_KEY,
     ERROR_INVALID_ARGUMENT,
     ERROR_NOT_FOUND,
     STATUS_OK,
     AiTakeoffRequestError,
     PageSnapshot,
     UntrustedText,
+    find_regions_coordinate_space,
     ok_result,
 )
 from .ai_changeset_store import AiChangesetProposals
@@ -253,7 +255,14 @@ class AiTakeoffProposalService:
             snapshot, (left, top, right, bottom)
         )
         if status != STATUS_OK:
-            return ok_result({"page_uid": snapshot.uid, "regions": []}, status)
+            return ok_result(
+                {
+                    "page_uid": snapshot.uid,
+                    "regions": [],
+                    COORDINATE_SPACE_KEY: find_regions_coordinate_space(),
+                },
+                status,
+            )
         try:
             regions = find_planar_regions(segments, SNAP_TOLERANCE_PTS, gap_in / k)
         except RegionTooComplex as exc:
@@ -282,6 +291,7 @@ class AiTakeoffProposalService:
                 "page_uid": snapshot.uid,
                 "regions": items,
                 "truncated": seed is None and len(regions) > MAX_REGIONS_RETURNED,
+                COORDINATE_SPACE_KEY: find_regions_coordinate_space(),
             },
             STATUS_OK if items else "empty",
         )

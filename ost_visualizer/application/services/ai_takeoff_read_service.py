@@ -8,6 +8,7 @@ from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.services.condition_quantity_service import compute_page_quantities
 from ...domain.services.uom_service import get_uom_label
 from ..dtos.ai_takeoff_dtos import (
+    COORDINATE_SPACE_KEY,
     ERROR_BID_NOT_OPEN,
     ERROR_INVALID_ARGUMENT,
     ERROR_NOT_FOUND,
@@ -27,6 +28,8 @@ from ..dtos.ai_takeoff_dtos import (
     clamp_limit,
     decode_cursor,
     encode_cursor,
+    list_segments_coordinate_space,
+    list_text_coordinate_space,
     ok_result,
 )
 from ..interfaces.i_ai_takeoff_sidecar_repository import IAiTakeoffSidecarRepository
@@ -189,7 +192,14 @@ class AiTakeoffReadService:
         needle = (query or "").strip().casefold()
         frame = self._raw_frame(snapshot)
         if isinstance(frame, str):
-            return ok_result({"page_uid": snapshot.uid, "runs": []}, frame)
+            return ok_result(
+                {
+                    "page_uid": snapshot.uid,
+                    "runs": [],
+                    COORDINATE_SPACE_KEY: list_text_coordinate_space(),
+                },
+                frame,
+            )
         runs = []
         for run in self._pdf_source.get_text_runs(
             snapshot.image_path, snapshot.page_index
@@ -212,7 +222,13 @@ class AiTakeoffReadService:
             )
         page, meta = _paginate(runs, cursor, limit)
         return ok_result(
-            {"page_uid": snapshot.uid, "runs": page}, _page_status(page, meta), meta
+            {
+                "page_uid": snapshot.uid,
+                "runs": page,
+                COORDINATE_SPACE_KEY: list_text_coordinate_space(),
+            },
+            _page_status(page, meta),
+            meta,
         )
 
     def list_segments(
@@ -225,7 +241,14 @@ class AiTakeoffReadService:
         box = _optional_box(bbox_pts)
         frame = self._raw_frame(snapshot)
         if isinstance(frame, str):
-            return ok_result({"page_uid": snapshot.uid, "segments": []}, frame)
+            return ok_result(
+                {
+                    "page_uid": snapshot.uid,
+                    "segments": [],
+                    COORDINATE_SPACE_KEY: list_segments_coordinate_space(),
+                },
+                frame,
+            )
         segments = []
         raw_segments = self._pdf_source.get_vector_segments(
             snapshot.image_path, snapshot.page_index
@@ -247,7 +270,13 @@ class AiTakeoffReadService:
             )
         page, meta = _paginate(segments, cursor, limit)
         return ok_result(
-            {"page_uid": snapshot.uid, "segments": page}, _page_status(page, meta), meta
+            {
+                "page_uid": snapshot.uid,
+                "segments": page,
+                COORDINATE_SPACE_KEY: list_segments_coordinate_space(),
+            },
+            _page_status(page, meta),
+            meta,
         )
 
     def open_bid_ref(self):
@@ -373,7 +402,14 @@ class AiTakeoffReadService:
     def _quantity_rows(conditions: dict, takeoffs: Iterable) -> list:
         takeoff_list = list(takeoffs)
         counts = {}
+        hole_counts = {}
         for takeoff in takeoff_list:
+            condition = conditions.get(takeoff.condition_uid)
+            if takeoff.is_hole and condition is not None and condition.is_area:
+                hole_counts[takeoff.condition_uid] = (
+                    hole_counts.get(takeoff.condition_uid, 0) + 1
+                )
+                continue
             counts[takeoff.condition_uid] = counts.get(takeoff.condition_uid, 0) + 1
         totals = compute_page_quantities(conditions, takeoff_list)
         rows = []
@@ -395,6 +431,7 @@ class AiTakeoffReadService:
                         condition.condition_type, "other"
                     ),
                     "takeoff_count": counts.get(condition_uid, 0),
+                    "hole_count": hole_counts.get(condition_uid, 0),
                     "quantities": quantities,
                 }
             )

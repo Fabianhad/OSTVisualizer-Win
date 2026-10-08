@@ -316,7 +316,9 @@ def _resource_template_item(handler: _ResourceHandler) -> dict:
 
 
 def _handler_description(fn: Callable) -> str:
-    return inspect.getdoc(fn) or fn.__name__.replace("_", " ").capitalize()
+    return " ".join(
+        (inspect.getdoc(fn) or fn.__name__.replace("_", " ").capitalize()).split()
+    )
 
 
 def _schema_for_annotation(annotation: Any) -> dict:

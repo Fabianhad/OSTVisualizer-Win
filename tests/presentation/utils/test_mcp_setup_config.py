@@ -129,7 +129,7 @@ class TakeoffMcpSetupConfigTests(unittest.TestCase):
     HELPER = Path(r"C:\Program Files\OST Visualizer\ostv-takeoff-mcp.exe")
 
     def test_takeoff_helper_is_a_second_packaged_exe_next_to_the_app(self):
-        self.assertEqual(TAKEOFF_MCP_SERVER_NAME, "ost-visualizer-takeoff")
+        self.assertEqual(TAKEOFF_MCP_SERVER_NAME, "ost-takeoff")
         self.assertEqual(TAKEOFF_MCP_HELPER_EXE_NAME, "ostv-takeoff-mcp.exe")
         helper_path = default_takeoff_helper_path(
             r"C:\Program Files\OST Visualizer\OSTVisualizer.exe"
@@ -145,18 +145,14 @@ class TakeoffMcpSetupConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             claude,
-            {
-                "mcpServers": {
-                    "ost-visualizer-takeoff": {"command": str(self.HELPER), "args": []}
-                }
-            },
+            {"mcpServers": {"ost-takeoff": {"command": str(self.HELPER), "args": []}}},
         )
         toml = build_codex_config_toml(self.HELPER, TAKEOFF_MCP_SERVER_NAME)
-        self.assertEqual(toml.splitlines()[0], '[mcp_servers."ost-visualizer-takeoff"]')
+        self.assertEqual(toml.splitlines()[0], '[mcp_servers."ost-takeoff"]')
         command = build_codex_mcp_add_command(
             self.HELPER, server_name=TAKEOFF_MCP_SERVER_NAME
         )
-        self.assertTrue(command.startswith("codex mcp add ost-visualizer-takeoff -- "))
+        self.assertTrue(command.startswith("codex mcp add ost-takeoff -- "))
         for text in (json.dumps(claude), toml, command):
             lower_text = text.lower()
             for marker in PRIVATE_MCP_SETUP_MARKERS + ("token",):

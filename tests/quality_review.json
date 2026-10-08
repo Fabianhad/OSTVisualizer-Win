@@ -1812,6 +1812,97 @@
       ],
       "release_evidence": "Unreleased M1b",
       "affected_result": "At most one undo per changeset_id"
+    },
+    {
+      "file": "ost_visualizer/application/services/mcp_read_service.py; ost_visualizer/mcp_server/server.py; ost_visualizer/application/services/ai_takeoff_read_service.py",
+      "defect": "The read quantity tools excluded hidden-layer takeoffs and counted area holes inconsistently with get_summary and the takeoff server's get_quantities, and get_bid_quantity_summary listed conditions without takeoffs",
+      "proof": "Real Access audit: Hidden slab 416.67 SF in get_summary and get_quantities, 0 in summarize_quantities; slab takeoff_count 1 vs 2",
+      "fix": "Quantities from all takeoffs; hole_count beside takeoff_count; conditions without takeoffs omitted; list_takeoffs and search_takeoffs include hidden layers by default",
+      "tests": [
+        "QuantityRuleTests",
+        "McpOverlapParityTests.test_quantities_and_counts_agree_across_every_tool"
+      ],
+      "release_evidence": "Released read-server behaviour changed on purpose",
+      "affected_result": "Both servers report the same quantities and counts"
+    },
+    {
+      "file": "ost_visualizer/mcp_server/serializers.py",
+      "defect": "The read server returned drawing text and project names unmarked, while the takeoff server marks them untrusted",
+      "proof": "Audit: 'IGNORE PREVIOUS INSTRUCTIONS' came back as a plain snippet",
+      "fix": "ok() wraps the listed text keys with UntrustedText",
+      "tests": [
+        "McpUntrustedTextTests",
+        "McpOverlapParityTests.test_read_tools_mark_drawing_text_and_names_untrusted"
+      ],
+      "release_evidence": "Released read-server output shape changed on purpose",
+      "affected_result": "Drawing text is data on both servers"
+    },
+    {
+      "file": "ost_visualizer/mcp_server/server.py",
+      "defect": "The review_quantity_variance prompt still told the model that quantity summaries use visible takeoffs and conditions, and the quantities resource was still described as a visible quantity summary, both false after the hidden-layer rule change",
+      "proof": "test_the_quantity_prompt_and_resource_no_longer_claim_visible_only_quantities failed before the fix",
+      "fix": "Prompt text and resource description say hidden layers are counted and holes reported separately; wording avoids new identifiers so the prompt identifier guard still passes",
+      "tests": [
+        "McpServerOutputRegressionTests.test_the_quantity_prompt_and_resource_no_longer_claim_visible_only_quantities",
+        "McpRegisteredProtocolTests.test_prompt_text_references_existing_tools_only"
+      ],
+      "release_evidence": "Unreleased overlap work",
+      "affected_result": "Prompts and resource descriptions match behaviour"
+    },
+    {
+      "file": "ost_visualizer/mcp_server/serializers.py",
+      "defect": "compare_bids_by_ref_no returned bid metadata old/new values, affected page names and warnings (which embed condition-type names) unwrapped, and bid status text was unwrapped",
+      "proof": "Probe over all read tools on the fake repository showed 'Bid One', 'New Bid' and page name 'A101' as plain strings; test_bid_comparison_wraps_... failed before the fix",
+      "fix": "affected_pages and warnings are list keys; old/new are wrapped when the sibling key field exists; status is wrapped when bid_no is present",
+      "tests": [
+        "McpServerOutputRegressionTests",
+        "McpUntrustedTextEdgeTests"
+      ],
+      "release_evidence": "Unreleased overlap work",
+      "affected_result": "All user-controlled comparison text is marked untrusted"
+    },
+    {
+      "file": "ost_visualizer/mcp_server/server.py; ost_visualizer/mcp_takeoff/tool_catalog.py",
+      "defect": "Tool descriptions did not say that read-server PDF coordinates are unrotated while takeoff page points have the page rotation applied, so y_page = height - y_pdf looked universal; on a /Rotate 90 PDF it is (x_page, y_page) = (y_pdf, x_pdf)",
+      "proof": "Real Access bid with /Rotate 90 and an offset CropBox: SLAB bbox_pts [379.87, 60.54, 388.74, 90.05] against raw left/top/right/bottom [60.54, 388.74, 90.05, 379.87]",
+      "fix": "Descriptions state unrotated / rotation applied; AGENTS.md and README state the rule",
+      "tests": [
+        "McpOverlapDescriptionTests.test_coordinate_tools_state_how_page_rotation_is_treated",
+        "McpOverlapParityTests.test_page_rotation_changes_the_relation_between_the_two_coordinate_spaces"
+      ],
+      "release_evidence": "Unreleased overlap work",
+      "affected_result": "Clients do not mis-convert coordinates on rotated sheets"
+    },
+    {
+      "file": "ost_visualizer/mcp_server/server.py; AGENTS.md",
+      "defect": "compare_bids_by_ref_no compares visible quantities by design, but the documentation said the quantity rule was the same everywhere, and the tool description did not say so",
+      "proof": "Mutating the comparison to use all takeoffs fails test_visibility_change_reports_the_condition_page",
+      "fix": "Tool description and AGENTS.md name the exception",
+      "tests": [
+        "McpOverlapDescriptionTests.test_the_bid_comparison_says_it_compares_visible_quantities"
+      ],
+      "release_evidence": "Unreleased overlap work",
+      "affected_result": "A model is told why comparison totals can differ from get_summary"
+    },
+    {
+      "file": "ost_visualizer/application/dtos/ai_takeoff_dtos.py",
+      "defect": "COORDINATE_SPACE_GLOSSARY had no production use (dead constant)",
+      "proof": "Reference search: only a test used it",
+      "fix": "Removed; the descriptions carry the definitions and the architecture test pins the literal ids",
+      "tests": [
+        "McpOverlapDescriptionTests.test_coordinate_space_ids_are_the_documented_strings"
+      ],
+      "release_evidence": "Unreleased overlap work",
+      "affected_result": "No dead public constant"
+    },
+    {
+      "file": "README.md; CHANGELOG.md; AGENTS.md",
+      "defect": "Documentation did not say that wrapped fields are now objects instead of strings, that a client registered under the old key ost-visualizer-takeoff would run the helper twice if the new entry is added beside it, or that rotated pages change the coordinate relation",
+      "proof": "Review of the diff against the documentation",
+      "fix": "Notes added to README, CHANGELOG and AGENTS.md",
+      "tests": [],
+      "release_evidence": "Unreleased overlap work",
+      "affected_result": "Users and agents are told about the shape change and the migration"
     }
   ],
   "removed_tests": [
@@ -15138,6 +15229,48 @@
         "see production_fixes of this batch"
       ],
       "validation": "see latest_validation.ai_takeoff_follow_up_four_fixes"
+    },
+    {
+      "batch": "mcp-overlap-alignment",
+      "findings": [
+        "Read and takeoff MCP servers now share one quantity rule (hidden layers counted, only conditions with takeoffs, takeoff_count without area holes plus hole_count), one text rule (UntrustedText wrapping of every listed text key, applied in mcp_server/serializers.ok), explicit coordinate_space maps, 'Use when' descriptions with cross-pointers and a lag note, and the takeoff server name ost-takeoff. Tool counts unchanged (38 read, 15 takeoff).",
+        "The real-Access parity test caught two fixture mistakes of its own (a layer lookup that returned another bid's layer, and a heredoc that turned an escape into a real newline) before it exercised production code; no production defect was found by it.",
+        "In-memory mutation: 34 mutants over the five items; three survived the first run (zero-quantity finder ignoring hole_count, a changed page-space id because tests compared constants with themselves, and a reverted SERVER_NAME in main()); each closed with a new or literal-pinned test and all 34 are killed. No mutant touched the disk.",
+        "Behaviour changes to note: list_takeoffs and search_takeoffs include hidden layers by default; find_zero_quantity_conditions no longer reports a condition only because its layer is hidden; get_bid_quantity_summary omits conditions without takeoffs (use find_conditions_without_takeoffs)."
+      ],
+      "tests_added": [
+        "27 tests: 11 in 2 new modules (plus 1 support module), 16 added to 5 existing modules; 19 existing tests re-read"
+      ],
+      "validation": "2026-10-08 MCP overlap alignment: architecture 112 (3 skipped), mcp_server 142, mcp_takeoff 87, integration/mcp 13, integration/ai_takeoff 19 (real Access), integration/lifecycle 39, application 1597, domain 321, presentation/services 483, presentation/utils 237, presentation/dialogs 417 OK; full suite 13789 OK (35 skipped, 316 s); check_architecture PASS; compileall 0; git diff --check clean; untracked files whitespace-clean; 34 in-memory mutants killed",
+      "limitations": [
+        "The read server still does not round quantities and the takeoff server rounds to 4 decimals; the parity test compares within 5e-5.",
+        "Read-server values can lag a few seconds after a write by another process (Access read cache); documented in the descriptions, not fixed.",
+        "Clients that already registered the takeoff helper under the old key ost-visualizer-takeoff keep working until the new JSON is copied; the tool prefix a client shows changes only then.",
+        "The combined tool count a client sees is still 53 (38 read, 15 takeoff); no tool was added or removed.",
+        "Real Claude Desktop and the Nuitka-built helpers were not exercised with the new descriptions and server name."
+      ]
+    },
+    {
+      "batch": "mcp-overlap-bug-hunt",
+      "findings": [
+        "Bug hunt on the MCP overlap work (quantity rule, untrusted wrapping, coordinate_space, descriptions, rename): 7 defects found, 6 reproduced with a failing test first, 1 found by an existing guard test; see production_fixes.",
+        "Edited existing assertions reviewed against HEAD: wrapped basenames and names (intended shape change), list_takeoffs default total 3 with visible_only=True giving 2, bid quantity summary total 2 conditions, the zero-quantity finder expecting a genuine zero-length linear condition instead of a hidden-layer one, and the rename; none hides a regression. The hidden-layer zero-quantity expectation was the old inconsistency itself.",
+        "Checked and found sound: no double wrapping and no wrapped identifier across all 34 non-live read tools; unicode, ZWJ/ZWNJ and the 500-character boundary; hidden-only pages, filtered hidden conditions, empty bids, pagination totals; tools/list schemas of both servers (descriptions at most 542 characters, one line); spill still saves a file with the wrapped shape; wrapping costs 17-46 percent more characters and under 60 ms for 5,000 takeoffs; installer and build scripts never name the server; M1a/M1b tests unchanged and green.",
+        "compare_bids_by_ref_no deliberately compares visible quantities (test_visibility_change_reports_the_condition_page pins it); the quantity-rule documentation said otherwise and now names the exception.",
+        "In-memory mutation: 50 mutants over the five items and this round's fixes plus 37 key-removal mutants of the serializer lists; the first hunt run exposed three survivors (hole-count case with equal counts, an unused untrusted key and an unexercised list key) and two runner crashes (unicode printing), all closed or confirmed killed; no mutant touched the disk."
+      ],
+      "tests_added": [
+        "17 tests: 12 in 3 existing modules plus 1 in the parity module, 4 re-read groups; see added_tests"
+      ],
+      "validation": "2026-10-08 MCP overlap bug hunt: baseline full suite 13789 OK (35 skipped, 323 s); after fixes focused mcp_server 143, architecture, integration/ai_takeoff (real Access, rotated and unrotated PDFs), application/services OK; full suite 13803 OK (35 skipped, 318 s); check_architecture PASS; compileall 0; git diff --check clean; untracked files whitespace-clean; 50 in-memory mutants plus 37 serializer key-removal mutants killed",
+      "limitations": [
+        "Clients that keep the old key ost-visualizer-takeoff next to ost-takeoff register the helper twice; only documented (config files are not edited by the app).",
+        "The Options > MCP Setup tab does not tell users to drop the old key; a one-line hint would be a UI change and was not made.",
+        "OST page-level rotation and flip settings (Page.rotation, flip_x, flip_y) were not exercised for list_text and list_segments on real bids; only PDF /Rotate was.",
+        "Some mid-sized read outputs now cross the 12,000-character inline limit and are saved to a file instead of returned inline because wrapped fields add 17-46 percent.",
+        "The non-standard 'nullable' keyword in nine read-server input schemas predates this work and was left alone.",
+        "Real Claude Desktop and the Nuitka-built helpers were not run with the new names and descriptions."
+      ]
     }
   ],
   "modules": {
@@ -17359,7 +17492,7 @@
         "McpReadServiceTests.test_page_lists_include_sheet_sequence_and_limit_metadata": "Retained ordered Page IDs, sheet numbers, sequence and exact total/returned metadata with actual2-of3 output.",
         "McpReadServiceTests.test_hierarchy_lookup_does_not_fall_back_to_unmatched_file": "Retained registry/hierarchy exact-database mismatch rejection rather than borrowing another loaded file.",
         "McpReadServiceTests.test_current_page_uses_saved_bid_selected_page": "Retained selected page-2 over first page-1, including PDF source identification without native metadata dependency.",
-        "McpReadServiceTests.test_list_takeoffs_filters_visible_and_limit": "Retained hidden Condition filtering, unassigned Area absence and default geometry redaction. Companion260-item test now proves250 cap beyond superficial meta.limit assertion.",
+        "McpReadServiceTests.test_list_takeoffs_filters_visible_and_limit": "Re-read: the default now includes the hidden-layer takeoff (total 3); visible_only=True gives 2.",
         "McpReadServiceTests.test_area_tools_report_metadata_and_usage": "Retained Area ordering, GUID, children, Takeoff/visible/Page counts and public Area summary page/child results.",
         "McpReadServiceTests.test_unassigned_area_summary_uses_clear_synthetic_metadata": "Retained synthetic Unassigned Area0 name/count/Page metadata distinct from real Area records.",
         "McpReadServiceTests.test_quantity_summary_reuses_domain_quantity_logic": "Retained public Page quantity path computing exact2 Count/EA from real Takeoffs; no calculation mock.",
@@ -17373,14 +17506,14 @@
         "McpReadServiceTests.test_selected_pages_summary_preserves_multi_page_selection_order": "Retained3D selection order differing from navigation order, active Page/view identity and missing Page reporting.",
         "McpReadServiceTests.test_selected_pages_summary_deduplicates_and_bounds_all_ids": "Retained duplicate Page IDs deduplicated before shared found/missing cap and exact total/returned metadata.",
         "McpReadServiceTests.test_consistency_checks_find_unused_pages_and_conditions": "Retained independent orphan-free unused Page/Condition results, including hidden used Condition not treated as absent.",
-        "McpReadServiceTests.test_bid_quantity_summary_has_stable_shape_and_limit_metadata": "Retained Condition summary truncation, first Condition/Page count and nonzero flag; entire Bid real calculation path.",
+        "McpReadServiceTests.test_bid_quantity_summary_has_stable_shape_and_limit_metadata": "Re-read: the unused condition is no longer listed, so limit 1 now truncates two conditions.",
         "McpReadServiceTests.test_structured_summary_uses_default_type_area_grouping": "Retained complete folder/type/Area tree chain and Condition values: quantities, EA, formatted/exact height, notes and operation flags.",
         "McpReadServiceTests.test_structured_summary_supports_all_grouping_combinations": "Retained all8 grouping permutations with exact requested flags and present group levels; separate default/multi-Area tests assert semantic children.",
         "McpReadServiceTests.test_structured_summary_excludes_unused_conditions": "Retained actual Condition node inclusion/exclusion, not just metadata node totals.",
         "McpReadServiceTests.test_structured_summary_preserves_multi_area_total_and_details": "Retained real added Takeoff crossing Areas: total quantity3, two Area-detail children and exact Area order/names.",
         "McpReadServiceTests.test_structured_summary_reports_empty_and_truncated_results": "Strengthened recursive actual emitted-node count2 alongside metadata; empty output validated then fresh fixture restores isolation.",
-        "McpReadServiceTests.test_summary_limits_are_clamped_and_report_exact_counts": "Retained lower bound1 on populated summary and upper5000 on empty duplicate search with exact counts/truncation status.",
-        "McpReadServiceTests.test_scope_duplicate_zero_unplaced_and_page_context_checks": "Retained malformed unplaced input, duplicate Condition-name grouping, hidden zero quantities and deferred PDF Page-context fields with exact IDs/counts.",
+        "McpReadServiceTests.test_summary_limits_are_clamped_and_report_exact_counts": "Re-read: the bid quantity summary total is 2 conditions with takeoffs.",
+        "McpReadServiceTests.test_scope_duplicate_zero_unplaced_and_page_context_checks": "Re-read: a hidden-layer condition is no longer reported as zero quantity; a genuine zero-length linear takeoff is.",
         "McpReadServiceTests.test_rejects_unknown_database_and_filter_ids": "Retained explicit McpReadError on missing registry/Page/Condition filter targets; no permissive fallback.",
         "McpReadServiceTests.test_failed_database_read_stops_before_bid_read_and_preserves_error": "Added typed FileLoadResult failure, exact propagated error and load_file path; no Bid/provider read after failure.",
         "McpReadServiceTests.test_unknown_database_never_reaches_repository_and_registry_replacement_takes_effect": "Added registry removal prevents all reads; new same-ID registry display name is effective and one exact-path hierarchy/Bid read follows.",
@@ -17398,7 +17531,14 @@
         "McpReadServiceTests.test_blank_search_and_empty_selection_do_not_read_database_or_pdf": "Added whitespace queries and empty selected Pages/Takeoffs: exact empty/no_selection and no database/provider calls. Blank PDF query yields empty without extraction.",
         "McpReadServiceTests.test_missing_selected_ids_report_stale_selection_not_successful_empty_selection": "Added duplicate wholly missing Page/Takeoff selection: stale_selection, one deduplicated missing ID, empty found collections and exact total1.",
         "McpReadServiceTests.test_scope_gap_limit_is_shared_across_categories": "Added orphan Takeoff missing both Page/Condition; all4 categories counted but shared3-result budget caps actual collections, final category empty.",
-        "TakeoffLifecycleQuantityTests.test_mcp_quantity_count_includes_attachment_and_excludes_area_backout": "Rewrote private-helper/fabricated-quantity test to public summarize_quantities with real geometry/domain calculation:100sqin parent minus4sqin Backout=96, AttachmentCount1, separate Backout0; exact counts and quantities."
+        "TakeoffLifecycleQuantityTests.test_mcp_quantity_count_includes_attachment_and_excludes_area_backout": "Rewrote private-helper/fabricated-quantity test to public summarize_quantities with real geometry/domain calculation:100sqin parent minus4sqin Backout=96, AttachmentCount1, separate Backout0; exact counts and quantities.",
+        "QuantityRuleTests.test_summarize_quantities_counts_hidden_layers_and_reports_holes_separately": "Re-read: the slab now has a second primary takeoff, so the expected slab row is 196 SF with 2 takeoffs and 1 hole and the two counts are distinguishable.",
+        "QuantityRuleTests.test_page_quantity_summary_follows_the_same_rule": "Re-read: same expected rows (196 SF, 2/1).",
+        "QuantityRuleTests.test_bid_quantity_summary_lists_only_conditions_with_takeoffs": "Re-read: slab counts 2/1 and visible_takeoff_count 2 (killed a mutant that returned the hole count).",
+        "QuantityRuleTests.test_condition_summary_counts_holes_separately": "Re-read: slab 2/1, visible_takeoff_count 2, quantity 196.",
+        "QuantityRuleTests.test_structured_summary_agrees_with_the_quantity_tools": "Added: the get_summary condition leaves equal the quantity tools' values (the reference behaviour).",
+        "QuantityRuleTests.test_takeoff_listings_include_hidden_layers_and_reconcile_with_counts": "Re-read: the visible-only listing is t1, t2, t4 and t5 and the listing total equals the sum of takeoff_count and hole_count.",
+        "QuantityRuleTests.test_zero_quantity_finder_counts_hole_only_conditions_as_having_takeoffs": "Added: a condition whose only takeoff is a hole still counts as having takeoffs for find_zero_quantity_conditions (killed the mutant that ignored hole_count)."
       }
     },
     "tests/application/test_app_controller.py": {
@@ -32364,8 +32504,8 @@
         "McpSetupConfigTests.test_codex_config_escapes_control_characters": "Re-read: tab and newline in the path are escaped inside the TOML basic string and the config stays three lines. Killed by dropping the tab and the newline escapes.",
         "McpSetupConfigTests.test_codex_command_doubles_single_quotes_in_helper_path": "Re-read: PowerShell quoting doubles single quotes and honours codex_command. Killed by dropping the quote doubling.",
         "McpSetupConfigTests.test_codex_config_escapes_backspace_formfeed_and_carriage_return": "Added: the escape table's backspace, form feed and carriage return entries were untested. Exact TOML output pinned. Killed by dropping the backspace entry, dropping the carriage return entry, and mapping form feed to a unicode escape.",
-        "TakeoffMcpSetupConfigTests.test_takeoff_helper_is_a_second_packaged_exe_next_to_the_app": "Added: takeoff helper is a second packaged exe next to the app. Second client entry ost-visualizer-takeoff with ostv-takeoff-mcp.exe and no private fields; read-server entries unchanged.",
-        "TakeoffMcpSetupConfigTests.test_takeoff_entries_name_the_takeoff_server_without_private_fields": "Added: takeoff entries name the takeoff server without private fields. Second client entry ost-visualizer-takeoff with ostv-takeoff-mcp.exe and no private fields; read-server entries unchanged.",
+        "TakeoffMcpSetupConfigTests.test_takeoff_helper_is_a_second_packaged_exe_next_to_the_app": "Re-read: TAKEOFF_MCP_SERVER_NAME is ost-takeoff while the executable keeps its name.",
+        "TakeoffMcpSetupConfigTests.test_takeoff_entries_name_the_takeoff_server_without_private_fields": "Re-read: JSON, TOML and codex command use the key ost-takeoff.",
         "TakeoffMcpSetupConfigTests.test_read_server_entries_are_unchanged_by_default": "Added: read server entries are unchanged by default. Second client entry ost-visualizer-takeoff with ostv-takeoff-mcp.exe and no private fields; read-server entries unchanged."
       }
     },
@@ -34575,20 +34715,30 @@
         "McpSerializerBehaviourTests.test_ok_serializes_meta_dataclass_values": "Added: McpResultMetaDto meta is converted to plain values.",
         "McpSerializerBehaviourTests.test_error_envelope_uses_default_code_and_stringifies_message": "Added: exact error envelope with the default 'mcp_error' code, exception messages stringified, explicit code propagated.",
         "McpSchemaSnapshotTests.test_success_and_error_envelopes_have_stable_keys": "Retained: literal key sets for the success/error envelopes and the McpResultMetaDto meta keys.",
-        "McpSchemaSnapshotTests.test_condition_summary_shape_is_stable": "Retained: literal key set of McpConditionSummaryDto output.",
+        "McpSchemaSnapshotTests.test_condition_summary_shape_is_stable": "Re-read: hole_count joins the snapshot.",
         "McpSchemaSnapshotTests.test_bid_comparison_default_shape_has_no_condition_details": "Retained: literal key sets for the comparison payload and its meta, details == [] and matched_by/grouped_by literals (the default-limit constant is pinned in test_server).",
         "McpSchemaSnapshotTests.test_selected_takeoffs_summary_shape_is_stable": "Retained: literal key set of the selected-takeoffs summary.",
         "McpSchemaSnapshotTests.test_selected_pages_summary_shape_is_stable": "Retained: literal key set of the selected-pages summary.",
         "McpSchemaSnapshotTests.test_takeoff_shape_includes_area_name": "Strengthened: besides the two present-key assertions it now pins the complete 15-key takeoff payload (a leaked extra field such as a path would fail; mutant adding a field killed).",
         "McpSchemaSnapshotTests.test_page_shape_redacts_source_paths": "Strengthened: the old test checked 4 present keys and 2 absent keys (removing snap_point_count survived); it now also pins the complete 36-key page payload, so path leaks (image_path mutant killed) and silent removals are both detected.",
-        "McpSchemaSnapshotTests.test_pdf_text_summary_shape_is_stable": "Retained: literal key set of the PDF text summary.",
-        "McpSchemaSnapshotTests.test_pdf_vectors_summary_shape_is_stable": "Retained: literal key set of the vectors summary.",
+        "McpSchemaSnapshotTests.test_pdf_text_summary_shape_is_stable": "Re-read: coordinate_space joins the snapshot.",
+        "McpSchemaSnapshotTests.test_pdf_vectors_summary_shape_is_stable": "Re-read: coordinate_space joins the snapshot.",
         "McpSchemaSnapshotTests.test_page_markups_summary_shape_is_stable": "Retained: key set of the markups summary plus negative checks that sample text/position/properties and image_path are absent (positive control: the full key set is asserted; mutant adding a text field to the sample killed).",
         "McpSchemaSnapshotTests.test_page_overlay_summary_shape_is_stable": "Retained: key set plus absence of overlay_image_path/image_path (redaction contract).",
-        "McpSchemaSnapshotTests.test_pdf_text_search_summary_shape_is_stable": "Retained: key set and no raw text in matches.",
+        "McpSchemaSnapshotTests.test_pdf_text_search_summary_shape_is_stable": "Re-read: coordinate_space joins the snapshot.",
         "McpSchemaSnapshotTests.test_area_summary_shape_is_stable": "Retained: literal key set of the area summary.",
-        "McpSchemaSnapshotTests.test_richer_quantity_summary_shape_is_stable": "Retained: literal key set of the richer quantity summary.",
-        "McpSchemaSnapshotTests.test_summary_shape_is_stable": "Retained: key sets of the Summary payload, grouping, node and node.values."
+        "McpSchemaSnapshotTests.test_richer_quantity_summary_shape_is_stable": "Re-read: hole_count joins the snapshot.",
+        "McpSchemaSnapshotTests.test_summary_shape_is_stable": "Retained: key sets of the Summary payload, grouping, node and node.values.",
+        "McpUntrustedTextTests.test_text_bearing_fields_are_wrapped_cleaned_and_capped": "Added: ok() wraps name, page_name, sheet_no and snippet keys, removes control and bidirectional characters, caps at 500 characters with truncated true, and keeps None.",
+        "McpUntrustedTextTests.test_nested_lists_and_dataclasses_are_wrapped": "Added: a real McpPageDto and nested condition and folder_path lists are wrapped.",
+        "McpUntrustedTextTests.test_codes_ids_statuses_and_messages_stay_plain": "Added: uid, database_id, status, message, source, unit labels and type names are not wrapped.",
+        "McpUntrustedTextTests.test_error_envelopes_are_not_wrapped": "Added: error() messages stay plain.",
+        "McpUntrustedTextTests.test_pdf_outputs_declare_their_coordinate_space": "Added: the three read PDF DTOs default coordinate_space to pdf_pts_y_up for exactly their coordinate fields.",
+        "McpUntrustedTextEdgeTests.test_comparison_metadata_values_page_names_and_warnings_are_wrapped": "Added: literal dicts; metadata old/new wrapped when 'field' is present, numbers stay numbers, affected_pages and warnings wrapped.",
+        "McpUntrustedTextEdgeTests.test_old_and_new_are_plain_outside_a_metadata_change": "Added: quantity old/new floats and unrelated objects stay plain.",
+        "McpUntrustedTextEdgeTests.test_the_bid_status_is_text_but_envelope_and_dto_statuses_are_codes": "Added: status is wrapped only beside bid_no; the envelope and DTO status codes stay plain.",
+        "McpUntrustedTextEdgeTests.test_legitimate_unicode_survives_and_the_500_character_boundary_is_exact": "Added: CJK, diaeresis, half sign, ZWJ emoji and ZWNJ survive unchanged; 499, 500 and 501 characters give truncated false, false, true; tabs, newlines, RLO and RLM are removed.",
+        "McpUntrustedTextEdgeTests.test_wrapping_twice_never_nests_a_wrapped_value": "Added: applying ok() to already wrapped data is idempotent."
       }
     },
     "tests/mcp_server/test_server.py": {
@@ -34609,10 +34759,10 @@
         "McpServerToolWiringTests.test_read_errors_become_error_envelopes_with_stable_codes": "Added: McpReadError messages map to invalid_database_id / not_found / read_error envelopes with isError True.",
         "McpServerToolWiringTests.test_unexpected_read_failures_are_logged_and_reported_not_raised": "Added: unexpected exceptions become 'unexpected_error' envelopes and are logged ('MCP read failed').",
         "McpServerToolWiringTests.test_list_databases_reloads_checked_files_on_every_call": "Added: list_databases reloads the registry per call (state written after server build is seen), pushes the refreshed refs to the read service and returns 'no_checked_database' for an empty list.",
-        "McpServerToolWiringTests.test_live_context_is_redacted_and_resolved_to_database_ids": "Added: live bridge context never leaks file paths (selected_file_path/file_path stripped everywhere), gets database_id/basename, selected page and resolved area name; three path-removal mutants killed.",
+        "McpServerToolWiringTests.test_live_context_is_redacted_and_resolved_to_database_ids": "Re-read: area name and basenames are untrusted-wrapped.",
         "McpServerToolWiringTests.test_live_context_area_name_is_none_when_resolution_fails": "Added: McpReadError and unexpected errors in area-name resolution give selected_area_name None (the latter logged).",
         "McpServerToolWiringTests.test_live_context_without_a_real_area_does_not_resolve_a_name": "Added: unassigned/None area uid or missing database never calls resolve_area_name and still reports selected_area_name None.",
-        "McpServerToolWiringTests.test_saved_context_reports_bridge_status_and_resolves_current_page": "Added: saved-workspace fallback reports the bridge status, file_basename only, resolved current page uid and None when the read fails.",
+        "McpServerToolWiringTests.test_saved_context_reports_bridge_status_and_resolves_current_page": "Re-read: the file basename is untrusted-wrapped.",
         "McpServerToolWiringTests.test_saved_context_without_checked_databases_says_so": "Added: saved context with no checked database returns status 'no_checked_database' without reading pages.",
         "McpServerToolWiringTests.test_selected_takeoffs_summary_reports_each_unavailable_state": "Added: bridge failure status is relayed, missing bid -> no_active_bid, empty/None selection -> no_selection with ids; read service never called.",
         "McpServerToolWiringTests.test_selected_takeoffs_and_pages_forward_live_selection": "Added: live selections are forwarded with database id, bid uid, selected uids, active view/page and limit keywords.",
@@ -34620,7 +34770,13 @@
         "McpServerHelperTests.test_read_error_codes_follow_message_prefix": "Added: _read_error_code literal mapping.",
         "McpServerHelperTests.test_basename_handles_both_separators_and_trailing_slash": "Added: _basename for Windows/POSIX separators and trailing slash (separator mutant killed).",
         "McpServerHelperTests.test_tool_limit_is_clamped_and_falls_back_to_default": "Added: _clean_tool_limit clamp to 1..5000, numeric strings, non-numeric -> 500.",
-        "McpServerHelperTests.test_with_database_id_strips_path_and_adds_id_and_basename": "Added: _with_database_id removes file_path, adds registry database_id and basename, leaves the input untouched and handles non-dict/unknown files."
+        "McpServerHelperTests.test_with_database_id_strips_path_and_adds_id_and_basename": "Added: _with_database_id removes file_path, adds registry database_id and basename, leaves the input untouched and handles non-dict/unknown files.",
+        "McpServerOutputRegressionTests.test_bid_comparison_wraps_metadata_values_page_names_and_warnings": "Added: compare_bids_by_ref_no through the real server dispatch over the fake repository; bid metadata old/new, affected_pages and warnings are untrusted-wrapped while numeric changes stay numbers. Failed before the fix (old 'Bid One' came back plain).",
+        "McpServerOutputRegressionTests.test_bid_summaries_wrap_the_bid_status_text": "Added: list_bids wraps the bid status text ('Pending IGNORE'). Failed before the fix.",
+        "McpServerOutputRegressionTests.test_the_quantity_prompt_and_resource_no_longer_claim_visible_only_quantities": "Added: the review_quantity_variance prompt no longer says quantity summaries use visible takeoffs and the quantities resource description no longer says visible. Failed before the fix.",
+        "McpServerOutputRegressionTests.test_a_large_wrapped_result_is_saved_to_a_file_that_keeps_the_wrapped_shape": "Added (guard): 63 pages exceed the 12,000-character inline limit, the result is saved to a file whose JSON keeps the wrapped names and the preview shows the wrapped shape. Passed on first run; kept as a regression guard for spill with wrapped fields.",
+        "McpServerOutputRegressionTests.test_every_fixture_text_value_in_every_read_tool_output_is_wrapped": "Added: collects every human-text value from the fixture objects and calls all 34 non-live read tools; any unwrapped occurrence (outside identifier paths) fails. Mutating each of the 33 key entries and 4 list-key entries of the serializer was killed by this test, the serializer tests or the real-Access parity test.",
+        "McpServerOutputRegressionTests.test_duplicate_ref_number_condition_names_are_wrapped": "Added: duplicate ref_no condition_names in compare_bids_by_ref_no are wrapped (killed a mutant that dropped the list key)."
       }
     },
     "tests/sql_server/python/ostv_sql_admin/test_admin.py": {
@@ -36684,9 +36840,9 @@
         "McpRegisteredProtocolTests.test_tools_list_and_call_shape": "Strengthened: besides the literal 38-name set, asserts no tool accepts a database/file path, app-data override, SQL or command argument (with a positive control that database_id is present).",
         "McpRegisteredProtocolTests.test_resources_and_templates": "Retained: literal resource uri and four template URIs; resource read returns JSON.",
         "McpRegisteredProtocolTests.test_unknown_requests_are_rejected_instead_of_executed": "Added: unknown tool, resource (file:// uri), prompt and method each return JSON-RPC -32601 with the exact message. Mutant killed: tool error message changed.",
-        "McpRegisteredProtocolTests.test_database_ids_come_only_from_checked_registry_entries": "Added: file_state.json with a duplicate, unchecked, missing and non-MDB entry exposes exactly one checked database as (basename, status, exists) with no path in the response; a raw path passed as database_id is rejected as invalid_database_id. Mutants killed: is_checked filter, non-MDB filter, missing filter; duplicate filter is masked at this layer by the read service's dict-by-id and is killed by tests.mcp_server.test_registry.",
-        "McpRegisteredProtocolTests.test_saved_context_redacts_file_paths": "Retained: saved workspace context exposes file_basename and never the path or a file_path key. Mutant killed: file_path not popped.",
-        "McpRegisteredProtocolTests.test_live_context_redacts_file_paths_and_resolves_database_id": "Added: the live-bridge context path (previously untested at protocol level) resolves database_id/bid_uid/selected_page_uid, exposes basenames and strips selected_file_path/file_path from the nested refs. Mutants killed: selected_file_path left in, nested file_path left in.",
+        "McpRegisteredProtocolTests.test_database_ids_come_only_from_checked_registry_entries": "Re-read: the listed basename is untrusted-wrapped.",
+        "McpRegisteredProtocolTests.test_saved_context_redacts_file_paths": "Re-read: the basename is untrusted-wrapped.",
+        "McpRegisteredProtocolTests.test_live_context_redacts_file_paths_and_resolves_database_id": "Re-read: basenames are untrusted-wrapped.",
         "McpRegisteredProtocolTests.test_prompts_list_and_get": "Strengthened: each prompt text must interpolate the supplied arguments (database_id=db, ...), plus the optional page_uid scope variant of review_markup_and_links. Mutant killed: page_uid interpolation broken.",
         "McpRegisteredProtocolTests.test_prompt_text_references_existing_tools_only": "Strengthened: non-vacuity control - every prompt names at least one real tool. Mutant killed: a prompt naming a nonexistent tool.",
         "McpRegisteredProtocolTests.test_prompt_text_stays_within_read_only_safety_limits": "Strengthened: positive control that each prompt states 'read-only' before the forbidden-term scan. Mutant killed: a prompt instructing to write notes."
@@ -38241,7 +38397,7 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Real JsonRpcStdioServer over io.StringIO; an AST walk of every mcp_takeoff module checks imports against the stdlib list plus the one allowed DTO module. No mocks.",
       "reviewed_tests": {
-        "JsonRpcStdioServerTests.test_initialize_echoes_the_protocol_version_and_offers_only_tools": "Added: initialize echoes the protocol version and offers only tools. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
+        "JsonRpcStdioServerTests.test_initialize_echoes_the_protocol_version_and_offers_only_tools": "Re-read: server name ost-takeoff.",
         "JsonRpcStdioServerTests.test_ping_and_tools_list": "Added: ping and tools list. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
         "JsonRpcStdioServerTests.test_tools_call_passes_name_and_arguments": "Added: tools call passes name and arguments. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
         "JsonRpcStdioServerTests.test_protocol_errors_use_json_rpc_codes": "Added: protocol errors use json rpc codes. JSON-RPC 2.0 stdio framing, notifications, error codes -32700..-32603 and the stdlib-only proxy rule.",
@@ -38344,7 +38500,8 @@
         "TakeoffProxyTests.test_json_spill_keeps_the_saved_png_reference": "Added (2026-10-07 HEAD~2..HEAD audit, regression): json spill keeps the saved png reference. Fails against the HEAD module injected in memory; defect: A lone surrogate in an app result raised UnicodeEncodeError in the proxy, so the tool call became JSON-RPC -32603 instead of the delivered result; the 256 KB inline check measured unescaped UTF-8 instead of the ASCII JSON actually written; when JSON spilled to a file the saved PNG reference was dropped from structuredContent",
         "MainTests.test_main_replaces_and_closes_handlers_left_on_its_logger": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): main replaces and closes handlers left on its logger. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "EntryScriptTests.test_running_the_entry_script_serves_stdio_and_exits_cleanly": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): running the entry script serves stdio and exits cleanly. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "EntryScriptTests.test_importing_the_entry_script_does_not_start_the_proxy": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): importing the entry script does not start the proxy. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
+        "EntryScriptTests.test_importing_the_entry_script_does_not_start_the_proxy": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): importing the entry script does not start the proxy. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+        "MainTests.test_main_announces_the_ost_takeoff_server_name": "Added: main() answers initialize with serverInfo.name ost-takeoff (a reverted SERVER_NAME survived until this test)."
       }
     },
     "tests/application/dtos/test_ai_takeoff_dtos.py": {
@@ -38467,7 +38624,9 @@
         "CropBoundaryTests.test_affines_use_the_render_scale_and_the_ost_factor": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): affines use the render scale and the ost factor. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "CropBoundaryTests.test_the_long_side_cap_lowers_the_scale": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): the long side cap lowers the scale. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "QuantityRoundingTests.test_quantities_are_rounded_to_four_decimals": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): quantities are rounded to four decimals. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "QuantityRoundingTests.test_each_is_a_reported_unit": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): each is a reported unit. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
+        "QuantityRoundingTests.test_each_is_a_reported_unit": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): each is a reported unit. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+        "QuantityTests.test_area_holes_are_reported_separately_from_takeoffs": "Added: get_quantities takeoff_count excludes a hole child, hole_count reports it and the area is reduced by the hole.",
+        "TextAndSegmentTests.test_outputs_declare_their_coordinate_spaces_even_when_empty": "Re-read: coordinate_space ids are literal strings."
       }
     },
     "tests/presentation/services/test_ai_takeoff_pdf_source.py": {
@@ -38727,7 +38886,7 @@
         "ScaleProposalTests.test_a_distance_far_from_any_preset_proposes_a_custom_scale": "Reviewed (new M1b module, written before the code): a distance far from any preset proposes a custom scale.",
         "ScaleProposalTests.test_a_named_preset_with_a_check_distance": "Reviewed (new M1b module, written before the code): a named preset with a check distance.",
         "ScaleProposalTests.test_invalid_scale_requests": "Reviewed (new M1b module, written before the code): invalid scale requests.",
-        "FindRegionTests.test_regions_come_back_in_ost_inches_with_ids_and_gaps": "Reviewed (new M1b module, written before the code): regions come back in ost inches with ids and gaps.",
+        "FindRegionTests.test_regions_come_back_in_ost_inches_with_ids_and_gaps": "Re-read: also asserts the find_regions coordinate_space map with literal ids.",
         "FindRegionTests.test_a_seed_selects_the_containing_region_and_raster_runs_only_as_fallback": "Reviewed (new M1b module, written before the code): a seed selects the containing region and raster runs only as fallback.",
         "FindRegionTests.test_scale_must_be_set_and_boxes_are_required": "Reviewed (new M1b module, written before the code): scale must be set and boxes are required.",
         "ElementProposalTests.test_a_complete_slab_needs_no_assumptions": "Reviewed (new M1b module, written before the code): a complete slab needs no assumptions.",
@@ -38765,7 +38924,7 @@
         "RegionLimitTests.test_small_gaps_stay_open_unless_asked_to_close": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): small gaps stay open unless asked to close. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "RegionLimitTests.test_boxes_need_positive_width_and_height": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): boxes need positive width and height. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "RegionLimitTests.test_a_zero_or_negative_scale_is_unset": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): a zero or negative scale is unset. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "RegionLimitTests.test_unreadable_pages_report_their_status": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): unreadable pages report their status. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+        "RegionLimitTests.test_unreadable_pages_report_their_status": "Re-read: the empty result keeps regions [] and still declares the four coordinate_space fields.",
         "RegionLimitTests.test_too_many_segments_are_refused": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): too many segments are refused. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "RegionLimitTests.test_region_areas_and_holes_are_in_ost_units": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): region areas and holes are in ost units. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "RasterRegionTests.test_raster_regions_scale_to_ost_inches": "Added (2026-10-07 HEAD~2..HEAD audit, appsvc group, mutation/coverage): raster regions scale to ost inches. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
@@ -39090,7 +39249,8 @@
         "TopViewTests.test_a_zero_width_model_keeps_one_pixel_of_width": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): a zero width model keeps one pixel of width. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "AiTopViewSourceTests.test_snapshot_copies_takeoffs_conditions_and_page_transforms": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): snapshot copies takeoffs conditions and page transforms. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "AiTopViewSourceTests.test_render_meshes_the_snapshot_with_the_real_generator": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): render meshes the snapshot with the real generator. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "AiTopViewSourceTests.test_render_without_takeoffs_returns_no_image": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): render without takeoffs returns no image. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
+        "AiTopViewSourceTests.test_render_without_takeoffs_returns_no_image": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): render without takeoffs returns no image. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+        "TopViewTests.test_the_extent_and_affine_are_declared_as_model_units": "Added: render_top_view declares bbox_model and px_to_model as model_units."
       }
     },
     "tests/presentation/services/test_ai_sidecar_rebind_prompt.py": {
@@ -39146,6 +39306,32 @@
         "AiUndoRefusalNoticeTests.test_closing_keeps_the_entry": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): closing keeps the entry.",
         "AiUndoRefusalNoticeTests.test_a_new_refusal_replaces_the_open_box_and_cleanup_closes_it": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a new refusal replaces the open box and cleanup closes it.",
         "AiUndoRefusalNoticeTests.test_the_notice_is_owned_by_its_parent_and_boxes_by_the_parent_widget": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): the notice is owned by its parent and boxes by the parent widget."
+      }
+    },
+    "tests/architecture/test_mcp_overlap_descriptions.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real catalogs of both servers: the read server built from a temporary DatabaseRegistry and the takeoff TOOLS tuple; descriptions are read exactly as a client receives them. Expected tool pairs, server names, lag note and coordinate-space ids are literals in the test, not derived from production.",
+      "reviewed_tests": {
+        "McpOverlapDescriptionTests.test_server_names_are_the_documented_prefixes": "ost-visualizer and ost-takeoff are the server names used by the setup config.",
+        "McpOverlapDescriptionTests.test_coordinate_space_ids_are_the_documented_strings": "The four COORD_* ids equal the literal strings and appear in the glossary (a changed id survived the first mutation run because other tests compared constants with themselves).",
+        "McpOverlapDescriptionTests.test_overlapping_takeoff_tools_name_their_role_and_point_at_the_read_server": "list_sheets, list_text, list_segments and get_quantities each contain 'Use when', '(ost-takeoff server)', the ost-visualizer server and the matching read tools, which must exist in the read catalog.",
+        "McpOverlapDescriptionTests.test_overlapping_read_tools_name_their_role_and_point_at_the_takeoff_server": "The eleven overlapping read tools each contain 'Use when', '(ost-visualizer server, read-only)', the ost-takeoff server and the matching takeoff tool, which must exist in the takeoff catalog.",
+        "McpOverlapDescriptionTests.test_the_live_context_tool_links_the_two_servers_bid_identifiers": "get_current_context names ost-takeoff and bid_uid.",
+        "McpOverlapDescriptionTests.test_tools_that_change_or_read_quantities_warn_about_the_read_lag": "apply_changeset, undo_last_ai_changeset and the four read quantity tools say 'few seconds'; the read tools point at get_quantities.",
+        "McpOverlapDescriptionTests.test_coordinate_tools_name_their_coordinate_space": "The three read PDF tools name pdf_pts_y_up; list_text and list_segments page_pts_y_down; find_regions ost_inches; render_3d model_units.",
+        "McpOverlapDescriptionTests.test_descriptions_are_single_line_text": "No tool description of either server contains line breaks or doubled spaces.",
+        "McpOverlapDescriptionTests.test_coordinate_tools_state_how_page_rotation_is_treated": "Added: read PDF tools say 'unrotated', takeoff list_text and list_segments say 'rotation applied'. Failed before the fix.",
+        "McpOverlapDescriptionTests.test_the_bid_comparison_says_it_compares_visible_quantities": "Added: compare_bids_by_ref_no states that it compares visible takeoffs and that other tools count hidden layers. Failed before the fix."
+      }
+    },
+    "tests/integration/ai_takeoff/test_mcp_overlap_parity.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real Access .mdb (child process) with a page whose PDF has an offset CropBox and an injected-instruction text line, a hidden layer, a slab with a hole, a linear condition named with a bidirectional control character, a zero-length linear takeoff and an unused condition; the read server is called through its real JSON-RPC dispatch and the takeoff server through the real window, pipe and proxy.",
+      "reviewed_tests": {
+        "McpOverlapParityTests.test_quantities_and_counts_agree_across_every_tool": "Re-read: now also asserts hand-written values (Slab 8in 1100 SF and 27.1605 CY, Edge line 100 LF, Hidden slab 416.6667 SF, Zero line 0) with counts 1/1, 1/0, 1/0, 1/0 instead of only comparing the tools with each other.",
+        "McpOverlapParityTests.test_read_tools_mark_drawing_text_and_names_untrusted": "A walker over sixteen read-tool outputs finds no unwrapped string under any text-bearing key; the injected PDF text, the page name, condition names, layer name and database names are wrapped and have lost the U+202E control character.",
+        "McpOverlapParityTests.test_coordinate_space_is_declared_and_the_two_servers_agree_on_it": "Re-read: expected coordinate_space ids are literal strings, not the production constants.",
+        "McpOverlapParityTests.test_page_rotation_changes_the_relation_between_the_two_coordinate_spaces": "Added: real Access bids with a /Rotate 0 and a /Rotate 90 PDF and an offset CropBox; unrotated y_page = height - y_pdf, rotated (x_page, y_page) = (y_pdf, x_pdf) between list_text and get_page_pdf_text_summary."
       }
     }
   },
@@ -39242,9 +39428,9 @@
   },
   "latest_validation": {
     "full_suite": {
-      "tests_run": 13329,
+      "tests_run": 13803,
       "skips": 35,
-      "seconds": 282.8,
+      "seconds": 317.7,
       "result": "OK",
       "command": ".\u000benv\\Scripts\\python.exe -m unittest discover -s tests -t ."
     },
@@ -39444,7 +39630,9 @@
       "diff_check": "clean for *.py; clean with core.whitespace=cr-at-eol for the mixed-EOL docs",
       "mutation": "141 in-memory mutants on changed lines: 135 killed, 6 equivalent, 0 open",
       "focused_and_affected": "undo notice 6, applier 65, write commands 21, pipe client 27, ai_changeset 50, proposal service 63, startup 2, main window 135, Access round trip 11, M1b golden end to end 3, tool catalog 14, AI takeoff architecture rules 16: all OK"
-    }
+    },
+    "mcp_overlap_alignment": "Read and takeoff servers aligned on quantities, untrusted text, coordinate_space, descriptions and server name ost-takeoff; real-Access parity test; 34 in-memory mutants killed; tool counts unchanged (38 read, 15 takeoff)",
+    "mcp_overlap_bug_hunt": "7 defects fixed (6 reproduced first, 1 found by the prompt identifier guard); 50 in-memory mutants and 37 serializer key mutants killed; tool counts unchanged (38 read, 15 takeoff)"
   },
   "skip_observations": [
     {
@@ -40526,6 +40714,26 @@
         "tests": [
           "tests/application/services/test_ai_takeoff_proposal_service.py",
           "tests/presentation/services/test_ai_sidecar_rebind_prompt.py"
+        ]
+      },
+      {
+        "id": "Z11",
+        "decision": "Align the read and takeoff MCP servers (quantities, untrusted text, coordinate spaces, descriptions, server name)",
+        "status": "implemented",
+        "outcome": "One quantity and counting rule, untrusted wrapping on the read server, coordinate_space on seven outputs, use-when descriptions with cross-pointers and the read-lag note, and the takeoff server renamed ost-takeoff. Tool counts unchanged.",
+        "tests": [
+          "tests/integration/ai_takeoff/test_mcp_overlap_parity.py",
+          "tests/architecture/test_mcp_overlap_descriptions.py"
+        ]
+      },
+      {
+        "id": "Z12",
+        "decision": "Bug hunt on the MCP overlap alignment",
+        "status": "fixed",
+        "outcome": "Fixed: stale visible-only prompt and resource text, unwrapped comparison metadata/pages/warnings/bid status, undocumented rotation rule, compare-quantity exception, dead glossary constant, migration and shape notes. Suspected, not reproduced: clients that keep both keys (config level), tool prefix changes in clients, Options tab has no hint to drop the old key, page-level OST rotation and flip settings are not exercised for list_text.",
+        "tests": [
+          "tests/mcp_server/test_server.py",
+          "tests/integration/ai_takeoff/test_mcp_overlap_parity.py"
         ]
       },
       {

@@ -28,7 +28,14 @@ from tests.presentation.visualization.utils.image_op_spy import (
 
 LOW = (70, 110, 200)
 HIGH = (240, 120, 40)
-NO_IMAGE = {"image": None, "mesh_count": 0, "bbox_model": None, "z_range": None}
+MODEL_SPACE = {"bbox_model": "model_units", "px_to_model": "model_units"}
+NO_IMAGE = {
+    "image": None,
+    "mesh_count": 0,
+    "bbox_model": None,
+    "z_range": None,
+    "coordinate_space": MODEL_SPACE,
+}
 
 
 def _slab(x1, y1, x2, y2, z):
@@ -72,6 +79,10 @@ class TopViewTests(unittest.TestCase):
         high = image.pixelColor(int(image.width() * 0.375), int(image.height() * 0.5))
         self.assertNotEqual(low.name(), high.name())
         self.assertEqual(result["px_to_model"][0], 40.0 / TOP_VIEW_MAX_SIDE_PX)
+
+    def test_the_extent_and_affine_are_declared_as_model_units(self):
+        result = render_top_view([_slab(0, 0, 10, 5, 2)])
+        self.assertEqual(result["coordinate_space"], MODEL_SPACE)
 
     def test_the_longest_side_is_1200_pixels_and_the_affine_maps_back_to_model(self):
         result = render_top_view([_slab(100, 50, 160, 80, 2.0)])

@@ -377,6 +377,25 @@ and names is marked `untrusted` and capped at 500 characters, so the client
 treats it as data, never as instructions. Large results are saved under
 `~/.ost_visualizer/mcp_takeoff_outputs/` and returned as a file reference.
 
+If you register both MCP helpers, use them for different jobs. The
+`ost-takeoff` helper works on the bid open in the running app, in page
+points (y down from the top-left) and OST inches, with paging and proposals.
+The `ost-visualizer` read helper reviews any checked database without the
+app and reports PDF text and lines in raw PDF points (y up from the
+lower-left). Results that carry coordinates say which space they use in a
+`coordinate_space` field; on a rotated page the page points of `ost-takeoff`
+follow the rotation while the raw PDF points do not. Both helpers mark
+drawing text and names as `untrusted` (an object with a `value` field, not a
+plain string), and both count hidden layers in quantities, with area holes
+reported separately as `hole_count`. The read helper can lag a few seconds
+behind a change the AI just applied; check the result with `get_quantities`
+from the `ost-takeoff` helper. `compare_bids_by_ref_no` compares visible
+quantities only.
+
+If your client already lists this helper under the old key
+`ost-visualizer-takeoff`, remove that entry when you add the new `ost-takeoff`
+one; keeping both starts the same program twice and shows every tool twice.
+
 Eight more tools let the AI propose changes, but nothing is written until you
 accept it in OST Visualizer: `propose_scale` (a page scale from two points),
 `find_regions` (closed areas from the drawing's lines, with any gaps it had to
@@ -426,7 +445,7 @@ To use it:
 ```json
 {
   "mcpServers": {
-    "ost-visualizer-takeoff": {
+    "ost-takeoff": {
       "command": "C:\\Program Files\\OST Visualizer\\ostv-takeoff-mcp.exe",
       "args": []
     }

@@ -86,7 +86,10 @@ TOOLS = (
     ToolSpec(
         COMMAND_LIST_SHEETS,
         "List the pages of the open bid with size in page points, scale "
-        "factors and the page-points-to-OST-inches factor. " + UNTRUSTED_NOTE,
+        "factors and the page-points-to-OST-inches factor (ost-takeoff server). "
+        "Use when you work on the bid open in the running OST Visualizer app. For "
+        "other bids or databases, or when the app is closed, use list_pages in the "
+        "ost-visualizer server. " + UNTRUSTED_NOTE,
         _schema({"bid_uid": _BID_UID, "cursor": _CURSOR, "limit": _LIMIT}),
     ),
     ToolSpec(
@@ -124,8 +127,13 @@ TOOLS = (
     ),
     ToolSpec(
         COMMAND_LIST_TEXT,
-        "List positioned PDF text runs of a page in page points and OST inches, "
-        "optionally inside a box or matching a query. " + UNTRUSTED_NOTE,
+        "List positioned PDF text runs of a page in page points (page_pts_y_down: "
+        "y down from the top-left, page rotation applied) and OST inches, "
+        "optionally inside a box or "
+        "matching a query, with paging (ost-takeoff server). Use when you need exact "
+        "text positions to measure or trace. For a short read-only overview without "
+        "the app use get_page_pdf_text_summary or search_page_pdf_text in the "
+        "ost-visualizer server, which return raw PDF points, y up. " + UNTRUSTED_NOTE,
         _schema(
             {
                 "page_uid": _PAGE_UID,
@@ -139,9 +147,14 @@ TOOLS = (
     ),
     ToolSpec(
         COMMAND_LIST_SEGMENTS,
-        "List straight PDF vector segments of a page in page points and OST "
-        "inches, optionally inside a box. Curves, line weights and dashes are "
-        "not available yet.",
+        "List straight PDF vector segments of a page in page points "
+        "(page_pts_y_down: y down from the top-left, page rotation applied) and "
+        "OST inches, optionally inside a box, with paging (ost-takeoff server). "
+        "Use when you need every "
+        "line to trace or measure. For a short read-only sample without the app use "
+        "get_page_pdf_vectors_summary in the ost-visualizer server, which returns "
+        "raw PDF points, y up. Curves, line weights and dashes are not available "
+        "yet.",
         _schema(
             {
                 "page_uid": _PAGE_UID,
@@ -155,7 +168,12 @@ TOOLS = (
     ToolSpec(
         COMMAND_GET_QUANTITIES,
         "Quantities of the open bid by condition or by page and condition, "
-        "computed by OST Visualizer. " + UNTRUSTED_NOTE,
+        "computed by OST Visualizer (ost-takeoff server). Use when you check the "
+        "result of an AI change or work in the running app; hidden layers are "
+        "counted, area holes are reported as hole_count and only conditions with "
+        "takeoffs are listed, as in the Summary. For other bids or databases use "
+        "summarize_quantities, get_bid_quantity_summary or get_summary in the "
+        "ost-visualizer server. " + UNTRUSTED_NOTE,
         _schema(
             {
                 "bid_uid": _BID_UID,
@@ -220,7 +238,8 @@ TOOLS = (
         "Find closed regions formed by PDF lines inside a box (planar faces, "
         "with a raster fill fallback from a seed point). Gaps up to gap_close_in "
         "are closed and reported; leak_risk is true when a gap was closed or a "
-        "fill escaped.",
+        "fill escaped. Polygons and holes are in OST inches (ost_inches); gap "
+        "points are in page points (page_pts_y_down).",
         _schema(
             {
                 "page_uid": _PAGE_UID,
@@ -263,7 +282,9 @@ TOOLS = (
         COMMAND_APPLY_CHANGESET,
         "Ask the user to apply a changeset. Returns pending_approval until the "
         "user accepts or rejects it in OST Visualizer; call again to see the "
-        "result. The AI cannot approve. " + UNTRUSTED_NOTE,
+        "result. The AI cannot approve. Once applied, check the result with "
+        "get_quantities here: quantities read through the ost-visualizer server can "
+        "lag a few seconds behind. " + UNTRUSTED_NOTE,
         _schema({"changeset_id": _CHANGESET_ID}, ("changeset_id",)),
     ),
     ToolSpec(
@@ -276,7 +297,9 @@ TOOLS = (
         "Undo the most recent applied AI changeset of the open bid, named by its "
         "changeset_id, if nothing it created was edited since. Retrying with the "
         "same changeset_id is safe: it never undoes a second changeset and reports "
-        "already_undone once the first call has finished.",
+        "already_undone once the first call has finished. Quantities read through "
+        "the ost-visualizer server can lag a few seconds behind; check with "
+        "get_quantities here.",
         _schema(
             {"bid_uid": _BID_UID, "changeset_id": _CHANGESET_ID}, ("changeset_id",)
         ),
@@ -284,7 +307,7 @@ TOOLS = (
     ToolSpec(
         COMMAND_RENDER_3D,
         "Render the open bid's 3D model from above to PNG with its extent in "
-        "model units and its elevation range.",
+        "model units (model_units, not OST inches) and its elevation range.",
         _schema(
             {
                 "bid_uid": _BID_UID,

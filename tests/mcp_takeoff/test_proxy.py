@@ -443,6 +443,22 @@ class MainTests(unittest.TestCase):
             )
             self.assertTrue((Path(directory) / "mcp_takeoff.log").exists())
 
+    def test_main_announces_the_ost_takeoff_server_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stdin = io.StringIO(
+                json.dumps(
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+                )
+                + "\n"
+            )
+            stdout = io.StringIO()
+            with patch.object(
+                main_module, "app_data_dir", return_value=Path(directory)
+            ):
+                self.assertEqual(main_module.main([], stdin=stdin, stdout=stdout), 0)
+            result = json.loads(stdout.getvalue())["result"]
+            self.assertEqual(result["serverInfo"]["name"], "ost-takeoff")
+
     def test_main_replaces_and_closes_handlers_left_on_its_logger(self):
         with tempfile.TemporaryDirectory() as directory:
             stale = logging.FileHandler(Path(directory) / "stale.log", encoding="utf-8")

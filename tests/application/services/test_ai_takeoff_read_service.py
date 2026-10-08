@@ -297,6 +297,32 @@ class TextAndSegmentTests(ServiceTestCase):
         empty = self.service.list_text(self.snapshot(), query="nothing")
         self.assertEqual(empty["status"], "empty")
 
+    def test_outputs_declare_their_coordinate_spaces_even_when_empty(self):
+        self.pdf.runs = []
+        self.pdf.segments = []
+        text = self.service.list_text(self.snapshot())["data"]
+        self.assertEqual(
+            text["coordinate_space"],
+            {"bbox_pts": "page_pts_y_down", "bbox_ost": "ost_inches"},
+        )
+        segments = self.service.list_segments(self.snapshot())["data"]
+        self.assertEqual(
+            segments["coordinate_space"],
+            {
+                "p1_pts": "page_pts_y_down",
+                "p2_pts": "page_pts_y_down",
+                "p1_ost": "ost_inches",
+                "p2_ost": "ost_inches",
+            },
+        )
+        self.pdf.runs = [
+            PdfTextRunDto("SLAB", left=10.0, top=712.0, right=50.0, bottom=700.0)
+        ]
+        self.assertEqual(
+            self.service.list_text(self.snapshot())["data"]["coordinate_space"],
+            text["coordinate_space"],
+        )
+
     def test_segments_have_stable_ids_and_both_coordinate_spaces(self):
         self.pdf.segments = [
             PdfVectorSegmentDto(0, 792, 100, 792),
@@ -359,6 +385,30 @@ class TextAndSegmentTests(ServiceTestCase):
 
 
 class QuantityTests(ServiceTestCase):
+    def test_area_holes_are_reported_separately_from_takeoffs(self):
+        self.project.takeoffs.append(
+            Takeoff(
+                "t4",
+                "c-slab",
+                "p1",
+                parent_uid="t1",
+                position=[10, 10, 20, 10, 20, 20, 10, 20],
+            )
+        )
+        rows = {
+            row["condition_uid"]: row
+            for row in self.service.get_quantities()["data"]["rows"]
+        }
+        self.assertEqual(
+            (rows["c-slab"]["takeoff_count"], rows["c-slab"]["hole_count"]), (2, 1)
+        )
+        self.assertEqual(
+            (rows["c-wall"]["takeoff_count"], rows["c-wall"]["hole_count"]), (1, 0)
+        )
+        self.assertAlmostEqual(
+            rows["c-slab"]["quantities"][0]["value"], 300.0 - 100.0 / 144.0, places=3
+        )
+
     def test_quantities_by_condition_match_the_app_computation(self):
         result = self.service.get_quantities()
         rows = {row["condition_uid"]: row for row in result["data"]["rows"]}

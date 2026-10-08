@@ -107,6 +107,43 @@ STATUS_EMPTY = "empty"
 STATUS_TRUNCATED = "truncated"
 STATUS_NOT_PDF = "not_pdf"
 OVERLAY_NOT_SUPPORTED_UNTIL_M1B = "not_supported_until_m1b"
+COORDINATE_SPACE_KEY = "coordinate_space"
+COORD_PDF_PTS_Y_UP = "pdf_pts_y_up"
+COORD_PAGE_PTS_Y_DOWN = "page_pts_y_down"
+COORD_OST_INCHES = "ost_inches"
+COORD_MODEL_UNITS = "model_units"
+
+
+def list_text_coordinate_space() -> dict:
+    return {"bbox_pts": COORD_PAGE_PTS_Y_DOWN, "bbox_ost": COORD_OST_INCHES}
+
+
+def list_segments_coordinate_space() -> dict:
+    return {
+        "p1_pts": COORD_PAGE_PTS_Y_DOWN,
+        "p2_pts": COORD_PAGE_PTS_Y_DOWN,
+        "p1_ost": COORD_OST_INCHES,
+        "p2_ost": COORD_OST_INCHES,
+    }
+
+
+def find_regions_coordinate_space() -> dict:
+    return {
+        "regions[].polygon_ost": COORD_OST_INCHES,
+        "regions[].holes_ost": COORD_OST_INCHES,
+        "regions[].gaps[].p1_pts": COORD_PAGE_PTS_Y_DOWN,
+        "regions[].gaps[].p2_pts": COORD_PAGE_PTS_Y_DOWN,
+    }
+
+
+def render_3d_coordinate_space() -> dict:
+    return {"bbox_model": COORD_MODEL_UNITS, "px_to_model": COORD_MODEL_UNITS}
+
+
+def pdf_pts_coordinate_space(prefix: str, fields) -> dict:
+    return {f"{prefix}[].{field}": COORD_PDF_PTS_Y_UP for field in fields}
+
+
 ERROR_APP_NOT_RUNNING = "app_not_running"
 ERROR_UNAUTHORIZED = "unauthorized"
 ERROR_FEATURE_DENIED = "feature_denied"

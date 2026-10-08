@@ -5,7 +5,7 @@ from typing import Optional
 
 MCP_SERVER_NAME = "ost-visualizer"
 MCP_HELPER_EXE_NAME = "ostv-mcp.exe"
-TAKEOFF_MCP_SERVER_NAME = "ost-visualizer-takeoff"
+TAKEOFF_MCP_SERVER_NAME = "ost-takeoff"
 TAKEOFF_MCP_HELPER_EXE_NAME = "ostv-takeoff-mcp.exe"
 
 

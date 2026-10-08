@@ -103,6 +103,10 @@ ALLOWED_PROMPT_IDENTIFIERS = (
 )
 
 
+def untrusted(value):
+    return {"value": value, "untrusted": True, "truncated": False}
+
+
 class McpRegisteredProtocolTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -228,7 +232,7 @@ class McpRegisteredProtocolTests(unittest.TestCase):
         # safe id and basename, never as a path.
         self.assertEqual(
             [(item["basename"], item["path_status"], item["exists"]) for item in data],
-            [("demo.mdb", "checked", True)],
+            [(untrusted("demo.mdb"), "checked", True)],
         )
         self.assertNotIn(str(root), json.dumps(response))
         # A raw filesystem path is not a database id and is rejected by the
@@ -285,7 +289,7 @@ class McpRegisteredProtocolTests(unittest.TestCase):
         encoded = json.dumps(response)
         self.assertNotIn(str(db_path), encoded)
         self.assertNotIn("file_path", encoded)
-        self.assertEqual(response["data"]["file_basename"], "demo.mdb")
+        self.assertEqual(response["data"]["file_basename"], untrusted("demo.mdb"))
 
     def test_live_context_redacts_file_paths_and_resolves_database_id(self):
         root = Path(self.tmp.name)
@@ -334,8 +338,10 @@ class McpRegisteredProtocolTests(unittest.TestCase):
         self.assertEqual(data["database_id"], listed_id)
         self.assertEqual(data["bid_uid"], "bid-7")
         self.assertEqual(data["selected_page_uid"], "page-3")
-        self.assertEqual(data["selected_file_basename"], "live.mdb")
-        self.assertEqual(data["selected_bid_ref"]["file_basename"], "live.mdb")
+        self.assertEqual(data["selected_file_basename"], untrusted("live.mdb"))
+        self.assertEqual(
+            data["selected_bid_ref"]["file_basename"], untrusted("live.mdb")
+        )
         self.assertIsNone(data["selected_area_name"])
 
     def test_prompts_list_and_get(self):

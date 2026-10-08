@@ -120,7 +120,10 @@ def build_mcp_server(
 
     @mcp.tool()
     def get_current_context() -> dict:
-        """Return live app context when available, otherwise saved workspace context."""
+        """Return live app context when available, otherwise saved workspace context
+        (ost-visualizer server, read-only). Use when you need the database_id and
+        bid_uid of the bid the user has open; the ost-takeoff server works on that
+        open bid implicitly and its bid_uid is the same value."""
         registry.reload()
         read_service.set_databases(registry.databases)
         bridge_client = McpBridgeClient(log)
@@ -185,7 +188,10 @@ def build_mcp_server(
         include_details: bool = False,
         limit: int = MCP_BID_COMPARISON_DEFAULT_LIMIT,
     ) -> dict:
-        """Compare two bids by condition ref_no and return bounded type aggregates."""
+        """Compare two bids by condition ref_no and return bounded type aggregates
+        (ost-visualizer server, read-only). Quantities compare visible takeoffs
+        only, so a condition that moved to a hidden layer shows as a change; the
+        other quantity tools count hidden layers."""
         return run_bid_comparison(
             database_id,
             old_bid_uid,
@@ -196,7 +202,11 @@ def build_mcp_server(
 
     @mcp.tool()
     def list_pages(database_id: str, bid_uid: str, limit: int = 500) -> dict:
-        """List redacted page metadata for a bid with bounded results."""
+        """List redacted page metadata for a bid with bounded results
+        (ost-visualizer server, read-only). Use when you need the pages of any
+        checked database or bid, with or without the running app. For the open
+        bid's page size in page points and OST inches use list_sheets in the
+        ost-takeoff server."""
         return run_limited_read(read_service.list_pages, limit, database_id, bid_uid)
 
     @mcp.tool()
@@ -206,7 +216,10 @@ def build_mcp_server(
 
     @mcp.tool()
     def get_page_metadata(database_id: str, bid_uid: str, page_uid: str) -> dict:
-        """Return general redacted metadata for one page."""
+        """Return general redacted metadata for one page (ost-visualizer server,
+        read-only). Use when you need the PDF source, overlay and page-box details
+        of one page. For its size and scale in page points and OST inches use
+        list_sheets in the ost-takeoff server."""
         return run_read(read_service.get_page_metadata, database_id, bid_uid, page_uid)
 
     @mcp.tool()
@@ -218,7 +231,13 @@ def build_mcp_server(
         include_text: bool = False,
         limit: int = 10,
     ) -> dict:
-        """Return bounded embedded PDF text metadata and snippets for one page."""
+        """Return bounded embedded PDF text metadata and snippets for one page
+        (ost-visualizer server, read-only). Use when you only need a short
+        overview. Positions are raw PDF points, y up from the lower-left of the
+        visible box and unrotated (coordinate_space pdf_pts_y_up), not page
+        points. For
+        positioned text in page points and OST inches, with paging, use list_text
+        in the ost-takeoff server."""
         return run_read(
             read_service.get_page_pdf_text_summary,
             database_id,
@@ -237,7 +256,12 @@ def build_mcp_server(
         source: str = MCP_PDF_SOURCE_AUTO,
         limit: int = 20,
     ) -> dict:
-        """Return bounded PDF vector line metadata used for snapping."""
+        """Return bounded PDF vector line metadata used for snapping
+        (ost-visualizer server, read-only). Use when you only need line counts and
+        a small sample. Coordinates are raw PDF points, y up and unrotated
+        (coordinate_space pdf_pts_y_up). For every straight segment in page
+        points and OST inches,
+        with paging, use list_segments in the ost-takeoff server."""
         return run_read(
             read_service.get_page_pdf_vectors_summary,
             database_id,
@@ -286,7 +310,12 @@ def build_mcp_server(
         source: str = MCP_PDF_SOURCE_AUTO,
         limit: int = 10,
     ) -> dict:
-        """Search embedded PDF text on one page with bounded snippets."""
+        """Search embedded PDF text on one page with bounded snippets
+        (ost-visualizer server, read-only). Use when you only need to know whether
+        text exists and roughly where, in raw PDF points, y up and unrotated
+        (coordinate_space pdf_pts_y_up). For matching text runs in page points
+        and OST inches use
+        list_text with a query in the ost-takeoff server."""
         return run_read(
             read_service.search_page_pdf_text,
             database_id,
@@ -369,11 +398,15 @@ def build_mcp_server(
         bid_uid: str,
         page_uid: Optional[str] = None,
         condition_uid: Optional[str] = None,
-        visible_only: bool = True,
+        visible_only: bool = False,
         include_geometry: bool = False,
         limit: int = 500,
     ) -> dict:
-        """List takeoffs with optional geometry; geometry requests are tightly capped."""
+        """List takeoffs, including those on hidden layers, with optional geometry in
+        OST inches; geometry requests are tightly capped (ost-visualizer server,
+        read-only). Every row is listed, area holes included (is_hole); the
+        quantity tools report holes separately as hole_count. Set visible_only to
+        leave out hidden layers."""
         return run_limited_read(
             read_service.list_takeoffs,
             limit,
@@ -491,7 +524,13 @@ def build_mcp_server(
         condition_uid: Optional[str] = None,
         limit: int = 500,
     ) -> dict:
-        """Summarize visible quantities with bounded condition rows."""
+        """Summarize quantities with bounded condition rows (ost-visualizer server,
+        read-only). Use when you review any checked database. Hidden layers are
+        counted, area holes are reported separately as hole_count and only
+        conditions with takeoffs are listed, as in get_quantities in the
+        ost-takeoff server. Right after an AI change was applied, values here
+        can lag a few seconds; use get_quantities in the ost-takeoff server for the result.
+        """
         return run_limited_read(
             read_service.summarize_quantities,
             limit,
@@ -508,7 +547,10 @@ def build_mcp_server(
         query: str,
         limit: int = 50,
     ) -> dict:
-        """Search pages by name, sheet number, sequence, or UID."""
+        """Search pages by name, sheet number, sequence, or UID (ost-visualizer
+        server, read-only). Use when you need to find a page by text in a bid;
+        list_sheets in the ost-takeoff server lists the open bid's pages with
+        their scale."""
         return run_limited_read(
             read_service.search_pages,
             limit,
@@ -558,7 +600,10 @@ def build_mcp_server(
     def get_page_quantity_summary(
         database_id: str, bid_uid: str, page_uid: str
     ) -> dict:
-        """Summarize visible quantities for one page."""
+        """Summarize quantities for one page (ost-visualizer server, read-only). Use
+        when you review one page of any checked database, with the same rules as
+        summarize_quantities. Right after an AI change was applied, values can lag a few seconds;
+        use get_quantities with group_by page in the ost-takeoff server."""
         return run_read(
             read_service.get_page_quantity_summary,
             database_id,
@@ -575,7 +620,8 @@ def build_mcp_server(
         condition_uid: Optional[str] = None,
         limit: int = 50,
     ) -> dict:
-        """Search visible takeoffs by safe page, condition, area, and ID fields."""
+        """Search takeoffs, hidden layers included, by safe page, condition, area,
+        and ID fields."""
         return run_limited_read(
             read_service.search_takeoffs,
             limit,
@@ -592,7 +638,12 @@ def build_mcp_server(
         bid_uid: str,
         limit: int = 250,
     ) -> dict:
-        """Return bounded per-condition quantity summaries for a bid."""
+        """Return bounded per-condition quantity summaries for a bid (ost-visualizer
+        server, read-only). Use when you need counts, page usage and zero-quantity
+        flags per condition; only conditions with takeoffs are listed, hidden
+        layers are counted and area holes appear as hole_count. Right after an AI
+        change was applied, values can lag a few seconds; use get_quantities in the ost-takeoff
+        server for the result."""
         return run_read(
             read_service.get_bid_quantity_summary, database_id, bid_uid, limit
         )
@@ -606,7 +657,10 @@ def build_mcp_server(
         group_by_area: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_AREA,
         limit: int = MCP_SUMMARY_DEFAULT_LIMIT,
     ) -> dict:
-        """Return the structured Summary tree for a bid with explicit grouping."""
+        """Return the structured Summary tree for a bid with explicit grouping
+        (ost-visualizer server, read-only). Use when you need the app's Summary
+        grouping by type, area or page. Right after an AI change was applied it can lag a few seconds;
+        use get_quantities in the ost-takeoff server for the result."""
         return run_read(
             read_service.get_summary,
             database_id,
@@ -664,7 +718,10 @@ def build_mcp_server(
 
     @mcp.tool()
     def get_page_context(database_id: str, bid_uid: str, page_uid: str) -> dict:
-        """Return task-oriented page context with redacted source path metadata."""
+        """Return task-oriented page context with redacted source path metadata
+        (ost-visualizer server, read-only). Use when you need a page's label, sheet
+        name and source file name; for its size and scale in page points and OST
+        inches use list_sheets in the ost-takeoff server."""
         return run_read(read_service.get_page_context, database_id, bid_uid, page_uid)
 
     @mcp.tool()
@@ -818,9 +875,10 @@ def build_mcp_server(
             "find_zero_quantity_conditions, find_duplicate_conditions, and "
             "review_scope_gaps. For outliers, call get_condition_summary, "
             "get_page_quantity_summary, list_takeoffs, list_pages, and "
-            "list_conditions. Remember that quantity summaries use visible "
-            "takeoffs and visible conditions; check hidden-layer context with "
-            "list_layers and condition layer fields. Treat truncated or has_more "
+            "list_conditions. Remember that quantity summaries count takeoffs "
+            "on hidden layers and report area holes separately; "
+            "check which layers are hidden with list_layers and the condition "
+            "layer fields. Treat truncated or has_more "
             "results as partial and refine with condition_uid, page_uid, query, "
             "or lower limits. Stay read-only and separate confirmed findings from "
             "questions for estimator review."
@@ -848,7 +906,7 @@ def build_mcp_server(
 
     @mcp.resource("ost://database/{database_id}/bid/{bid_uid}/quantities")
     def quantities_resource(database_id: str, bid_uid: str) -> dict:
-        """Bounded visible quantity summary for one bid."""
+        """Bounded quantity summary for one bid, hidden layers included."""
         return summarize_quantities(database_id, bid_uid)
 
     return mcp
