@@ -47,6 +47,90 @@ class JsonRpcStdioServerTests(unittest.TestCase):
             default["result"]["protocolVersion"], protocol.DEFAULT_PROTOCOL_VERSION
         )
 
+    def test_initialize_never_echoes_a_non_string_protocol_version(self):
+        for value in ({"a": 1}, 5, ["2025-06-18"], ""):
+            with self.subTest(value=value):
+                response = json.loads(
+                    _server().handle_line(
+                        _request("initialize", {"protocolVersion": value})
+                    )
+                )
+                self.assertEqual(
+                    response["result"]["protocolVersion"],
+                    protocol.DEFAULT_PROTOCOL_VERSION,
+                )
+
+    def test_non_finite_ids_are_refused_and_the_reply_is_strict_json(self):
+        def refuse(constant):
+            raise ValueError(constant)
+
+        for literal in ("NaN", "Infinity", "-Infinity", "1e400"):
+            with self.subTest(literal=literal):
+                line = _server().handle_line(
+                    '{"jsonrpc":"2.0","id":' + literal + ',"method":"ping"}'
+                )
+                response = json.loads(line, parse_constant=refuse)
+                self.assertIsNone(response["id"])
+                self.assertEqual(response["error"]["code"], -32600)
+
+    def test_null_string_integer_and_finite_float_ids_are_echoed(self):
+        for request_id in (None, "req-1", "", 0, 7, 1.5, -2.0):
+            with self.subTest(request_id=request_id):
+                response = json.loads(
+                    _server().handle_line(_request("ping", request_id=request_id))
+                )
+                self.assertEqual(
+                    response, {"jsonrpc": "2.0", "id": request_id, "result": {}}
+                )
+
+    def test_structured_ids_are_refused(self):
+        for request_id in ([1], {"a": 1}, False):
+            with self.subTest(request_id=request_id):
+                response = json.loads(
+                    _server().handle_line(_request("ping", request_id=request_id))
+                )
+                self.assertIsNone(response["id"])
+                self.assertEqual(response["error"]["code"], -32600)
+
+    def test_tool_names_must_be_non_empty_strings(self):
+        for name in (5, "", ["list_sheets"], None):
+            calls = []
+            with self.subTest(name=name):
+                response = json.loads(
+                    _server(calls).handle_line(_request("tools/call", {"name": name}))
+                )
+                self.assertEqual(
+                    response["error"], {"code": -32602, "message": "Missing tool name"}
+                )
+                self.assertEqual(calls, [])
+
+    def test_json_rpc_errors_carry_their_message(self):
+        error = protocol.JsonRpcError(protocol.INVALID_PARAMS, "Unknown tool: x")
+        self.assertEqual(str(error), "Unknown tool: x")
+        self.assertEqual((error.code, error.message), (-32602, "Unknown tool: x"))
+
+    def test_each_response_is_flushed_before_the_next_line_is_read(self):
+        buffer = io.BytesIO()
+        stdout = io.TextIOWrapper(buffer, encoding="utf-8", newline="\n")
+        seen_before_each_read = []
+
+        def lines():
+            for request_id in (1, 2):
+                seen_before_each_read.append(buffer.getvalue())
+                yield _request("ping", request_id=request_id) + "\n"
+            seen_before_each_read.append(buffer.getvalue())
+
+        _server().run(lines(), stdout)
+        self.assertEqual(
+            seen_before_each_read,
+            [
+                b"",
+                b'{"jsonrpc":"2.0","id":1,"result":{}}\n',
+                b'{"jsonrpc":"2.0","id":1,"result":{}}\n'
+                b'{"jsonrpc":"2.0","id":2,"result":{}}\n',
+            ],
+        )
+
     def test_ping_and_tools_list(self):
         server = _server(tools=[{"name": "a"}, {"name": "b"}])
         self.assertEqual(json.loads(server.handle_line(_request("ping")))["result"], {})

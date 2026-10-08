@@ -100,10 +100,11 @@ class McpSetupTab(QtWidgets.QWidget):
             "Copy Setup Command",
             self._copy_codex_command,
         )
-        layout.addWidget(self._section_label("AI takeoff (read-only preview)"))
+        layout.addWidget(self._section_label("AI takeoff (preview)"))
         takeoff_summary = QtWidgets.QLabel(
             "Lets an AI tool read sheets, drawing text, linework and quantities "
-            "of the bid open in this window. It cannot change the bid. Drawing "
+            "of the bid open in this window and propose slabs or a page scale. "
+            "Nothing changes until you accept a proposal in this window. Drawing "
             "text is passed to the AI as data only.",
             self,
         )

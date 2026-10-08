@@ -156,7 +156,7 @@ class TakeoffCommandBridge(QtCore.QObject):
         try:
             if self._token_path.read_text(encoding="utf-8").strip() == self._token:
                 self._token_path.unlink()
-        except OSError:
+        except (OSError, UnicodeError):
             pass
 
     def _on_new_connection(self) -> None:
@@ -227,7 +227,8 @@ class TakeoffCommandBridge(QtCore.QObject):
             self._token is None
             or not isinstance(token, str)
             or not hmac.compare_digest(
-                token.encode("utf-8"), self._token.encode("utf-8")
+                token.encode("utf-8", "surrogatepass"),
+                self._token.encode("utf-8", "surrogatepass"),
             )
         ):
             self._respond(

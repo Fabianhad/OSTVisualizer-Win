@@ -67,6 +67,9 @@ class AiChangesetApplier:
             [Tuple[Assumption, ...]], None
         ] = lambda _items: None,
         apply_blocked: Callable[[str], str] = lambda _database_id: "",
+        undo_refused: Callable[
+            [str, str, Callable[[], bool]], None
+        ] = lambda _label, _message, _discard: None,
     ):
         self._write = write_service
         self._project = project_data
@@ -80,6 +83,7 @@ class AiChangesetApplier:
         self._audit = audit
         self._record_assumptions = record_assumptions
         self._apply_blocked = apply_blocked
+        self._undo_refused = undo_refused
         self._session_folders: Dict[Tuple[str, str], str] = {}
         self._undo_entries: Dict[str, object] = {}
 
@@ -321,6 +325,12 @@ class AiChangesetApplier:
                 if condition.folder_uid == record.folder_uid
                 and condition.uid not in record.condition_uids
             ]
+            others.extend(
+                folder
+                for folder in self._project.get_bid_condition_folders().values()
+                if folder.parent_uid is not None
+                and str(folder.parent_uid) == str(record.folder_uid)
+            )
             if not others:
                 folder_uid = record.folder_uid
         plan = AiChangesetUndoPlan(
@@ -396,14 +406,18 @@ class AiChangesetApplier:
         uid = changeset.uid
 
         def undo_submit(complete: Callable[[QueuedMutationResult], None]) -> None:
-            self.undo(
-                uid,
-                lambda outcome: complete(
+            def finished(outcome: ApplyOutcome) -> None:
+                complete(
                     _queued_result(
                         changeset.database_id, outcome.success, outcome.message
                     )
-                ),
-            )
+                )
+                if not outcome.success:
+                    self._undo_refused(
+                        label, outcome.message, lambda: self.discard_undo_entry(uid)
+                    )
+
+            self.undo(uid, finished)
 
         def redo_submit(complete: Callable[[QueuedMutationResult], None]) -> None:
             complete(
@@ -422,6 +436,13 @@ class AiChangesetApplier:
         )
         if entry is not None:
             self._undo_entries[uid] = entry
+
+    def discard_undo_entry(self, uid: str) -> bool:
+        entry = self._undo_entries.get(uid)
+        if entry is None or not self._undo_service.discard_entry(entry):
+            return False
+        self._undo_entries.pop(uid, None)
+        return True
 
     def _read_tokens(
         self, changeset: AiChangeset, resources

@@ -25,6 +25,7 @@ from ost_visualizer.application.use_cases.project.condition_summary_service impo
     ConditionSummaryService,
 )
 from types import SimpleNamespace
+import json
 import os
 import unittest
 from pathlib import Path
@@ -78,6 +79,9 @@ from ost_visualizer.domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_UID,
 )
 from ost_visualizer.presentation import main_window as main_window_module
+from ost_visualizer.infrastructure.persistence.ai_takeoff_audit_log import (
+    AiTakeoffAuditLog,
+)
 from PySide6 import QtWidgets
 from tests.helpers.startup_import import (
     FakeProjectView as _startup_import_FakeProjectView,
@@ -1085,6 +1089,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_rebind_prompt = SimpleNamespace(
             cleanup=lambda: calls.append("ai_rebind_cleanup")
         )
+        window._ai_undo_notice = SimpleNamespace(
+            cleanup=lambda: calls.append("ai_undo_notice_cleanup")
+        )
         window._ai_pdf_source = SimpleNamespace(
             release=lambda: calls.append("ai_pdf_release")
         )
@@ -1123,6 +1130,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "takeoff_cleanup",
                 "ai_review_cleanup",
                 "ai_rebind_cleanup",
+                "ai_undo_notice_cleanup",
                 "ai_pdf_release",
                 "lifecycle",
                 "window_close",
@@ -1170,6 +1178,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_rebind_prompt = SimpleNamespace(
             cleanup=lambda: calls.append("ai_rebind_cleanup")
         )
+        window._ai_undo_notice = SimpleNamespace(
+            cleanup=lambda: calls.append("ai_undo_notice_cleanup")
+        )
         window._ai_pdf_source = SimpleNamespace(
             release=lambda: calls.append("ai_pdf_release")
         )
@@ -1208,6 +1219,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "takeoff_cleanup",
                 "ai_review_cleanup",
                 "ai_rebind_cleanup",
+                "ai_undo_notice_cleanup",
                 "ai_pdf_release",
                 "lifecycle",
                 "window_close",
@@ -1250,6 +1262,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_takeoff_bridge = SimpleNamespace(cleanup=cleanup("takeoff_cleanup"))
         window._ai_approval = SimpleNamespace(cleanup=cleanup("ai_review_cleanup"))
         window._ai_rebind_prompt = SimpleNamespace(cleanup=cleanup("ai_rebind_cleanup"))
+        window._ai_undo_notice = SimpleNamespace(
+            cleanup=cleanup("ai_undo_notice_cleanup")
+        )
         window._ai_pdf_source = SimpleNamespace(release=cleanup("ai_pdf_release"))
         window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
         event = FakeCloseEvent()
@@ -1291,6 +1306,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 "takeoff_cleanup",
                 "ai_review_cleanup",
                 "ai_rebind_cleanup",
+                "ai_undo_notice_cleanup",
                 "ai_pdf_release",
                 "lifecycle",
                 "window_close",
@@ -3656,3 +3672,212 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         MainWindow.set_annotation_window_visible(window, False)
         self.assertEqual(calls, ["close-annotation"])
+
+
+class MainWindowAiTakeoffTests(unittest.TestCase):
+    def ai_window(self, enabled=True, allowed=()):
+        window = MainWindow.__new__(MainWindow)
+        window._config_model = SimpleNamespace(
+            snapshot=lambda: SimpleNamespace(ai_takeoff_enabled=enabled)
+        )
+        granted = set(allowed)
+        window.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature in granted
+        )
+        return window
+
+    def audited_window(self, bid_key=None):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.audit_dir = Path(directory.name) / "audit"
+        window = MainWindow.__new__(MainWindow)
+        window._ai_audit_log = AiTakeoffAuditLog(
+            self.audit_dir, secure_directory=lambda _path: None
+        )
+        window._ai_sidecars = SimpleNamespace(bid_key=lambda: bid_key)
+        return window
+
+    def audit_entries(self, name="unkeyed"):
+        path = self.audit_dir / f"{name}.jsonl"
+        return [
+            json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+
+    def test_ai_takeoff_access_needs_the_toggle_and_the_feature(self):
+        cases = (
+            (True, (Feature.AI_TAKEOFF,), True),
+            (False, (Feature.AI_TAKEOFF,), False),
+            (True, (), False),
+            (False, (), False),
+        )
+        for enabled, allowed, expected in cases:
+            with self.subTest(enabled=enabled, allowed=allowed):
+                window = self.ai_window(enabled, allowed)
+                self.assertIs(window._ai_takeoff_access_allowed(), expected)
+
+    def test_ai_write_denial_follows_the_permission_matrix(self):
+        everything = (
+            Feature.AI_TAKEOFF,
+            Feature.EDIT_PAGE_SETTINGS,
+            Feature.PLACE_PLAN_ITEMS,
+            Feature.EDIT_CONDITION_STRUCTURE,
+        )
+        refused = "You cannot make this change in the open bid."
+        cases = (
+            ("scale", everything, ""),
+            ("scale", (Feature.AI_TAKEOFF, Feature.EDIT_PAGE_SETTINGS), ""),
+            (
+                "scale",
+                (
+                    Feature.AI_TAKEOFF,
+                    Feature.PLACE_PLAN_ITEMS,
+                    Feature.EDIT_CONDITION_STRUCTURE,
+                ),
+                refused,
+            ),
+            ("elements", everything, ""),
+            (
+                "elements",
+                (
+                    Feature.AI_TAKEOFF,
+                    Feature.PLACE_PLAN_ITEMS,
+                    Feature.EDIT_CONDITION_STRUCTURE,
+                ),
+                "",
+            ),
+            ("elements", (Feature.AI_TAKEOFF, Feature.PLACE_PLAN_ITEMS), refused),
+            (
+                "elements",
+                (Feature.AI_TAKEOFF, Feature.EDIT_CONDITION_STRUCTURE),
+                refused,
+            ),
+            ("elements", (Feature.AI_TAKEOFF, Feature.EDIT_PAGE_SETTINGS), refused),
+        )
+        for kind, allowed, expected in cases:
+            with self.subTest(kind=kind, allowed=allowed):
+                window = self.ai_window(True, allowed)
+                self.assertEqual(
+                    window._ai_takeoff_write_denial(SimpleNamespace(kind=kind)),
+                    expected,
+                )
+
+    def test_ai_write_denial_puts_the_toggle_first(self):
+        for enabled, allowed in ((False, (Feature.EDIT_PAGE_SETTINGS,)), (True, ())):
+            with self.subTest(enabled=enabled):
+                window = self.ai_window(enabled, allowed)
+                self.assertIn(
+                    "Tools > Options > MCP Setup",
+                    window._ai_takeoff_write_denial(SimpleNamespace(kind="scale")),
+                )
+
+    def test_ai_takeoffs_go_to_the_selected_layer_then_default_then_none(self):
+        layers = [
+            SimpleNamespace(uid="L1", name="Walls"),
+            SimpleNamespace(uid="L2", name="Default"),
+            SimpleNamespace(uid="L3", name="Default"),
+        ]
+        cases = (("L9", layers, "L9"), (None, layers, "L2"), ("", layers, "L2"))
+        cases += ((None, layers[:1], None), (None, [], None))
+        for selected, snapshot, expected in cases:
+            with self.subTest(selected=selected, layers=len(snapshot)):
+                window = MainWindow.__new__(MainWindow)
+                window._bid_layers_sidebar = SimpleNamespace(
+                    selected_layer_uid=lambda selected=selected: selected
+                )
+                window._project_data_service = SimpleNamespace(
+                    get_bid_layer_snapshot=lambda snapshot=snapshot: snapshot
+                )
+                self.assertIs(window._ai_takeoff_layer_uid(), expected)
+
+    def test_ai_takeoffs_use_the_page_area_or_unassigned(self):
+        from ost_visualizer.domain.entities.area import UNASSIGNED_AREA_UID
+
+        window = MainWindow.__new__(MainWindow)
+        window._project_data_service = SimpleNamespace(
+            get_page_area_selections=lambda: {"p1": "A1", "p2": ""}
+        )
+        self.assertEqual(window._ai_takeoff_area_uid("p1"), "A1")
+        self.assertEqual(window._ai_takeoff_area_uid("p2"), UNASSIGNED_AREA_UID)
+        self.assertEqual(window._ai_takeoff_area_uid("p3"), UNASSIGNED_AREA_UID)
+
+    def test_ai_tool_calls_are_audited_with_hashed_arguments(self):
+        from ost_visualizer.application.dtos.ai_takeoff_audit_dtos import (
+            hash_arguments,
+        )
+
+        window = self.audited_window()
+        window._record_ai_tool("apply_changeset", {"changeset_id": "c1"}, "ok")
+        window._record_ai_tool("list_sheets", {"limit": 5}, "invalid_argument")
+        first, second = self.audit_entries()
+        self.assertEqual(
+            (first["event"], first["tool"], first["changeset_id"], first["outcome"]),
+            ("tool", "apply_changeset", "c1", "ok"),
+        )
+        self.assertEqual(first["input_hash"], hash_arguments({"changeset_id": "c1"}))
+        self.assertEqual(first["approver"], "")
+        self.assertEqual(
+            (second["tool"], second["changeset_id"], second["outcome"]),
+            ("list_sheets", "", "invalid_argument"),
+        )
+        self.assertEqual(second["input_hash"], hash_arguments({"limit": 5}))
+
+    def test_ai_events_name_the_approver_only_for_applied_and_undone(self):
+        import getpass
+
+        window = self.audited_window()
+        for event in ("applied", "undone", "proposed", "discarded"):
+            window._record_ai_event(event, {"changeset_id": f"c-{event}"})
+        window._record_ai_event("expired", {})
+        entries = self.audit_entries()
+        self.assertEqual(
+            [
+                (entry["event"], entry["changeset_id"], entry["approver"])
+                for entry in entries
+            ],
+            [
+                ("applied", "c-applied", getpass.getuser()),
+                ("undone", "c-undone", getpass.getuser()),
+                ("proposed", "c-proposed", ""),
+                ("discarded", "c-discarded", ""),
+                ("expired", "", ""),
+            ],
+        )
+        self.assertEqual(
+            [entry["outcome"] for entry in entries],
+            ["applied", "undone", "proposed", "discarded", "expired"],
+        )
+
+    def test_ai_review_decisions_are_audited_with_the_approver(self):
+        import getpass
+
+        key = "0123456789abcdef0123456789abcdef"
+        window = self.audited_window(bid_key=key)
+        window._on_ai_changeset_finished("c7", "rejected")
+        self.assertEqual(
+            [
+                (
+                    entry["event"],
+                    entry["changeset_id"],
+                    entry["approver"],
+                    entry["outcome"],
+                )
+                for entry in self.audit_entries(key)
+            ],
+            [("decision", "c7", getpass.getuser(), "rejected")],
+        )
+
+    def test_an_unwritable_ai_audit_is_logged_and_swallowed(self):
+        window = self.audited_window(bid_key="not-a-key")
+        with self.assertLogs(main_window_module.logger, logging.WARNING) as captured:
+            window._on_ai_changeset_finished("c7", "rejected")
+            window._record_ai_tool("list_sheets", {}, "ok")
+            window._record_ai_event("applied", {"changeset_id": "c7"})
+        self.assertEqual(
+            captured.output,
+            [
+                "WARNING:ost_visualizer.presentation.main_window:"
+                "AI takeoff audit entry not written: ValueError"
+            ]
+            * 3,
+        )
+        self.assertFalse(self.audit_dir.exists())

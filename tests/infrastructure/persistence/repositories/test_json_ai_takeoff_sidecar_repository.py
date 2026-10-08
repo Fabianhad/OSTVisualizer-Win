@@ -89,6 +89,23 @@ class JsonAiTakeoffSidecarRepositoryTests(unittest.TestCase):
                 self.assertIsNone(result.sidecar)
                 self.assert_untouched(path, before, mtime)
 
+    def test_size_limit_is_five_mebibytes_and_inclusive(self):
+        self.assertEqual(MAX_SIDECAR_BYTES, 5 * 1024 * 1024)
+        body = json.dumps(_valid()).encode()
+        self.write(body + b" " * (MAX_SIDECAR_BYTES - len(body)))
+        result = self.repository.load(KEY)
+        self.assertEqual(result.state, SIDECAR_LOAD_FOUND)
+        self.assertEqual(result.sidecar.bid_key, KEY)
+        self.write(body + b" " * (MAX_SIDECAR_BYTES + 1 - len(body)))
+        self.assertEqual(self.repository.load(KEY).state, SIDECAR_LOAD_CORRUPT)
+
+    def test_an_unreadable_path_is_reported_as_corrupt(self):
+        (self.directory / f"{KEY}.json").mkdir(parents=True)
+        result = self.repository.load(KEY)
+        self.assertEqual(result.state, SIDECAR_LOAD_CORRUPT)
+        self.assertIsNone(result.sidecar)
+        self.assertTrue((self.directory / f"{KEY}.json").is_dir())
+
     def test_found_files_are_never_rewritten(self):
         path = self.write(_valid())
         before = path.read_bytes()
@@ -125,8 +142,52 @@ class JsonAiTakeoffSidecarSaveTests(unittest.TestCase):
         self.assertEqual(
             (loaded.state, loaded.sidecar), (SIDECAR_LOAD_FOUND, self.sidecar)
         )
-        data = json.loads((self.directory / f"{KEY}.json").read_text(encoding="utf-8"))
+        text = (self.directory / f"{KEY}.json").read_text(encoding="ascii")
+        data = json.loads(text)
         self.assertEqual(data["schema_version"], 1)
+        self.assertTrue(text.startswith('{\n  "schema_version": 1,\n'))
+        self.assertTrue(text.endswith("\n}\n"))
+
+    def test_save_creates_missing_parent_directories(self):
+        nested = self.directory / "a" / "b"
+        repository = JsonAiTakeoffSidecarRepository(nested)
+        repository.save(self.sidecar)
+        self.assertEqual(repository.load(KEY).sidecar, self.sidecar)
+
+    def level_sidecar(self, name_length):
+        return AiTakeoffSidecar.from_dict(
+            dict(
+                _valid(),
+                levels=[{"uid": "L1", "name": "x" * name_length, "top_elev_in": 1.0}],
+            )
+        )
+
+    def test_a_sidecar_of_exactly_the_size_limit_is_saved(self):
+        self.repository.save(self.level_sidecar(1))
+        base = (self.directory / f"{KEY}.json").stat().st_size
+        exact = self.level_sidecar(1 + MAX_SIDECAR_BYTES - base)
+        self.repository.save(exact)
+        path = self.directory / f"{KEY}.json"
+        self.assertEqual(path.stat().st_size, MAX_SIDECAR_BYTES)
+        self.assertEqual(self.repository.load(KEY).sidecar, exact)
+        before = path.read_bytes()
+        with self.assertRaises(ValueError):
+            self.repository.save(self.level_sidecar(2 + MAX_SIDECAR_BYTES - base))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_ai_text_with_lone_surrogates_is_saved_and_read_back(self):
+        assumption = {
+            "uid": "cs1-a1",
+            "value": "8 \udc00in",
+            "reason": "note \ud800 \u2265",
+            "sheet_ref": "S-101",
+            "impact": "high",
+            "status": "accepted",
+        }
+        sidecar = AiTakeoffSidecar.from_dict(dict(_valid(), assumptions=[assumption]))
+        self.repository.save(sidecar)
+        loaded = self.repository.load(KEY)
+        self.assertEqual((loaded.state, loaded.sidecar), (SIDECAR_LOAD_FOUND, sidecar))
 
     def test_a_failed_replace_keeps_the_previous_file_and_removes_the_temp(self):
         self.repository.save(self.sidecar)
@@ -136,9 +197,17 @@ class JsonAiTakeoffSidecarSaveTests(unittest.TestCase):
                 _valid(), levels=[{"uid": "L1", "name": "Changed", "top_elev_in": 1.0}]
             )
         )
-        with patch("os.replace", side_effect=OSError("disk")):
+        temporaries = []
+
+        def failing_replace(source, _target):
+            temporaries.append(Path(source).name)
+            raise OSError("disk")
+
+        with patch("os.replace", side_effect=failing_replace):
             with self.assertRaises(OSError):
                 self.repository.save(changed)
+        self.assertEqual(len(temporaries), 1)
+        self.assertRegex(temporaries[0], rf"\A{KEY}\.json\.[0-9a-f]{{8}}\.tmp\Z")
         self.assertEqual((self.directory / f"{KEY}.json").read_bytes(), before)
         self.assertEqual(
             sorted(p.name for p in self.directory.iterdir()), [f"{KEY}.json"]

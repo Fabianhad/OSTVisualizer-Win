@@ -1,4 +1,5 @@
 import json
+import math
 import sys
 from typing import Any, Callable, Optional, TextIO
 
@@ -87,9 +88,13 @@ class JsonRpcStdioServer:
 
     def _dispatch(self, method: str, params: dict) -> dict:
         if method == "initialize":
+            version = params.get("protocolVersion")
             return {
-                "protocolVersion": params.get("protocolVersion")
-                or DEFAULT_PROTOCOL_VERSION,
+                "protocolVersion": (
+                    version
+                    if isinstance(version, str) and version
+                    else DEFAULT_PROTOCOL_VERSION
+                ),
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": self._name, "version": self._version},
             }
@@ -119,7 +124,9 @@ def _is_valid_id(value: Any) -> bool:
         return True
     if isinstance(value, bool):
         return False
-    return isinstance(value, (str, int, float))
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return isinstance(value, (str, int))
 
 
 def _error(request_id: Any, code: int, message: str) -> dict:

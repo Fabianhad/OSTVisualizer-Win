@@ -1,9 +1,11 @@
+import dataclasses
 import unittest
 from ost_visualizer.application.dtos.ai_takeoff_dtos import (
     AI_TAKEOFF_COMMAND_ARGUMENTS,
     AI_TAKEOFF_COMMANDS,
     M1A_COMMANDS,
     MAX_EXPOSED_TOOLS,
+    MAX_LIMIT,
     RENDER_MAX_DPI,
 )
 from ost_visualizer.mcp_takeoff.tool_catalog import TOOLS, tool_items
@@ -80,16 +82,69 @@ class ToolCatalogTests(unittest.TestCase):
             "get_quantities",
             "list_levels",
             "list_assumptions",
-            "undo_last_ai_changeset",
             "render_3d",
         ):
             self.assertEqual(required[name], set())
         self.assertEqual(required["propose_scale"], {"page_uid", "p1_pts", "p2_pts"})
         self.assertEqual(required["find_regions"], {"page_uid", "bbox_pts"})
         self.assertEqual(required["propose_element"], {"kind", "page_uid"})
-        for name in ("apply_changeset", "discard_changeset"):
+        for name in ("apply_changeset", "discard_changeset", "undo_last_ai_changeset"):
             self.assertEqual(required[name], {"changeset_id"})
         self.assertEqual(required["update_assumption"], {"changeset_id", "op"})
+
+    def test_tools_without_required_arguments_omit_the_required_list(self):
+        for tool in TOOLS:
+            with self.subTest(tool=tool.name):
+                required = tool.input_schema.get("required")
+                self.assertTrue(required is None or len(required) > 0)
+        list_sheets = next(tool for tool in TOOLS if tool.name == "list_sheets")
+        self.assertNotIn("required", list_sheets.input_schema)
+
+    def test_shared_argument_schemas_bound_counts_and_lengths(self):
+        schemas = {tool.name: tool.input_schema["properties"] for tool in TOOLS}
+        self.assertEqual(
+            schemas["list_sheets"]["limit"],
+            {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT},
+        )
+        bbox = schemas["list_text"]["bbox_pts"]
+        self.assertEqual((bbox["minItems"], bbox["maxItems"]), (4, 4))
+        point = schemas["propose_scale"]["p1_pts"]
+        self.assertEqual((point["minItems"], point["maxItems"]), (2, 2))
+        polygon = schemas["propose_element"]["polygon_ost"]
+        self.assertEqual(polygon["minItems"], 6)
+        self.assertNotIn("maxItems", polygon)
+        for name, argument in (
+            ("propose_scale", "reason"),
+            ("propose_element", "summary"),
+            ("update_assumption", "value"),
+        ):
+            with self.subTest(tool=name, argument=argument):
+                self.assertEqual(
+                    schemas[name][argument], {"type": "string", "maxLength": 500}
+                )
+
+    def test_numeric_write_arguments_have_their_documented_ranges(self):
+        schemas = {tool.name: tool.input_schema["properties"] for tool in TOOLS}
+        self.assertEqual(schemas["render_sheet"]["dpi"]["minimum"], 1)
+        self.assertEqual(schemas["propose_scale"]["real_in"]["exclusiveMinimum"], 0)
+        self.assertEqual(
+            schemas["find_regions"]["gap_close_in"],
+            {"type": "number", "minimum": 0, "maximum": 48},
+        )
+        self.assertEqual(
+            schemas["propose_element"]["thickness_in"],
+            {"type": "number", "exclusiveMinimum": 0},
+        )
+        self.assertEqual(
+            schemas["propose_element"]["name"], {"type": "string", "maxLength": 200}
+        )
+        self.assertEqual(
+            schemas["update_assumption"]["length_in"], {"type": "number", "minimum": 0}
+        )
+
+    def test_tool_specs_are_immutable(self):
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            TOOLS[0].name = "approve_changeset"
 
     def test_render_sheet_limits_dpi_and_documents_overlay_ids_as_a_no_op(self):
         render = next(tool for tool in TOOLS if tool.name == "render_sheet")

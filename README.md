@@ -383,7 +383,7 @@ accept it in OST Visualizer: `propose_scale` (a page scale from two points),
 close), `propose_element` (a slab from a region or polygon), `apply_changeset`,
 `discard_changeset`, `undo_last_ai_changeset`, `render_3d` (a top view of the
 bid) and `update_assumption` (the AI can add or revise an assumption, never
-accept one).
+accept one or change the proposed scale).
 
 When the AI asks to apply a changeset, a review window opens in the app. It
 shows the outlines on the plan, the added area and volume, and every
@@ -393,7 +393,13 @@ Accept stays off until you accept or override each high-impact assumption
 writes the change as one step: new slab conditions go in a folder named
 `AI <date> <time>` on the layer selected in Layers (or Default), with the top
 elevation in the `@T` name suffix. **Edit > Undo** or the AI's
-`undo_last_ai_changeset` removes it again. A changeset can hold at most
+`undo_last_ai_changeset` removes it again; the folder stays if you added your
+own conditions or folders to it. If **Edit > Undo** cannot undo an AI change
+(you edited what it created, or AI takeoff is off), a message explains why and
+offers **Discard Entry**, which removes that step from the undo history so your
+earlier steps can be undone; the AI change itself stays in the bid. The AI's
+undo names the change it undoes, so asking again after a slow answer never
+undoes a second change. A changeset can hold at most
 200 takeoffs and 25 new conditions, and at most five can wait per bid. Each
 expires after 30 minutes, and it is refused if a page or condition it touches
 has changed since the AI proposed it. If the AI changes an assumption while the
@@ -432,7 +438,8 @@ The helper talks only to the running app, through a local pipe that only your
 Windows account can open and a session key the app rotates each time it starts.
 You do not copy the key anywhere. If the app is closed or the option is off, the
 tools report that OST Visualizer is not running with AI takeoff enabled, or that
-the feature is turned off.
+the feature is turned off. If the app is busy with other AI requests, the tools
+say so instead.
 
 Developers can run the source checkout proxy directly:
 

@@ -1,10 +1,17 @@
+import dataclasses
 import json
 import os
 import unittest
 from ost_visualizer.application.services.ai_takeoff_sidecar_service import (
     AiTakeoffSidecarService,
+    SidecarContext,
 )
-from ost_visualizer.domain.entities.ai_takeoff import SidecarWriteRefused
+from ost_visualizer.domain.entities.ai_takeoff import (
+    SIDECAR_LOAD_CORRUPT,
+    SIDECAR_LOAD_FOUND,
+    SidecarLoad,
+    SidecarWriteRefused,
+)
 from ost_visualizer.domain.entities.ai_takeoff import Assumption, ai_takeoff_bid_key
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.database_descriptor import (
@@ -13,7 +20,9 @@ from ost_visualizer.domain.entities.database_descriptor import (
     SqlServerDatabaseLocation,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
 from tests.application.services.test_ai_takeoff_read_service import (
+    ACCESS_PATH,
     ServiceTestCase,
     SpyRepository,
 )
@@ -148,6 +157,106 @@ class BidKeyTests(SidecarServiceTestCase):
         self.assertEqual(spy.keys, [])
         self.project.bid = None
         self.assertIsNone(sidecars.bid_key())
+
+
+class StaticRepository:
+    def __init__(self, load):
+        self.result = load
+        self.saved = []
+
+    def load(self, bid_key):
+        return self.result
+
+    def save(self, sidecar):
+        self.saved.append(sidecar)
+
+
+class ContextTests(SidecarServiceTestCase):
+    def sql(self, guid):
+        location = SqlServerDatabaseLocation(
+            server="srv", database="ost", database_guid=guid
+        )
+        self.descriptors["sql:srv/ost"] = DatabaseDescriptor.for_sql_server(
+            location, schema_version=1
+        )
+        self.project.bid_ref = BidRef("sql:srv/ost", "7")
+        self.project.bid = Bid(uid="7", name="Tower")
+
+    def test_contexts_are_immutable(self):
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            self.sidecars.context().status = "ok"
+
+    def test_no_open_bid_or_no_bid_reference_is_an_empty_context(self):
+        for bid_ref, bid in (
+            (None, Bid(uid="{BID-1}", name="Tower")),
+            (BidRef(ACCESS_PATH, "{BID-1}"), None),
+            (None, None),
+        ):
+            with self.subTest(bid_ref=bid_ref, bid=bid):
+                self.project.bid_ref, self.project.bid = bid_ref, bid
+                self.assertEqual(self.sidecars.context(), SidecarContext("empty"))
+                self.assertIsNone(self.sidecars.bid_key())
+
+    def test_an_unregistered_access_path_falls_back_to_its_access_descriptor(self):
+        path = "C:/jobs/other.mdb"
+        self.project.bid_ref = BidRef(path, "{BID-1}")
+        context = self.sidecars.context()
+        self.assertEqual((context.status, context.bid_key), ("empty", self.key()))
+        self.assertEqual(
+            context.fingerprint.database_id,
+            DatabaseDescriptor.for_access(path).database_id,
+        )
+        self.assertEqual(self.sidecars.bid_key(), self.key())
+
+    def test_sql_with_a_database_guid_keys_by_the_guid(self):
+        self.sql("ABC-1")
+        expected = ai_takeoff_bid_key(DatabaseBackend.SQL_SERVER, "7", "ABC-1")
+        self.assertIsNotNone(expected)
+        self.assertNotEqual(expected, ai_takeoff_bid_key(DatabaseBackend.ACCESS, "7"))
+        self.assertEqual(self.sidecars.bid_key(), expected)
+        context = self.sidecars.context()
+        self.assertEqual((context.status, context.bid_key), ("empty", expected))
+
+    def test_an_access_bid_without_a_uid_is_empty_and_never_written(self):
+        self.project.bid = Bid(uid="", name="Tower")
+        self.project.bid_ref = BidRef(ACCESS_PATH, "")
+        self.assertEqual(self.sidecars.context(), SidecarContext("empty"))
+        self.assert_refused_and_untouched(
+            "empty", lambda: self.sidecars.record_assumptions((_assumption("x"),))
+        )
+        self.assertFalse(self.sidecar_dir.exists())
+
+    def test_the_fingerprint_names_the_first_page_with_a_source_file(self):
+        self.project.pages = [
+            Page(uid="p0", name="Blank", sequence=0),
+            Page(uid="p1", name="S-101", sequence=1, image_path="C:/plans/x/S-101.pdf"),
+            Page(uid="p2", name="S-102", sequence=2, image_path="C:/plans/S-102.pdf"),
+        ]
+        fingerprint = self.sidecars.context().fingerprint
+        self.assertEqual(fingerprint.first_page_pdf_source, "S-101.pdf")
+        self.assertEqual(fingerprint.page_count, 3)
+
+    def test_pages_without_a_source_file_give_an_empty_pdf_source(self):
+        self.project.pages = [Page(uid="p0", name="Blank", sequence=0, image_path="")]
+        self.sidecars.record_assumptions((_assumption("cs1-a1"),))
+        data = json.loads(self.path().read_text(encoding="utf-8"))
+        self.assertEqual(data["fingerprint"]["first_page_pdf_source"], "")
+
+    def test_a_load_without_a_sidecar_is_treated_as_corrupt(self):
+        for state in (SIDECAR_LOAD_FOUND, SIDECAR_LOAD_CORRUPT):
+            with self.subTest(state=state):
+                repository = StaticRepository(SidecarLoad(state))
+                sidecars = AiTakeoffSidecarService(
+                    self.project, repository, self.descriptors.get
+                )
+                context = sidecars.context()
+                self.assertEqual(
+                    (context.status, context.bid_key, context.sidecar),
+                    ("corrupt", self.key(), None),
+                )
+                with self.assertRaises(SidecarWriteRefused):
+                    sidecars.record_assumptions((_assumption("x"),))
+                self.assertEqual(repository.saved, [])
 
 
 class RebindTests(SidecarServiceTestCase):

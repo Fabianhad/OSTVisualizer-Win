@@ -10,7 +10,7 @@ from ..application.services.ai_changeset_store import (
     AiChangesetProposals,
     AiChangesetStore,
 )
-from ..domain.entities.ai_changeset import apply_blocked_reason
+from ..domain.entities.ai_changeset import apply_block_for
 from ..application.services.ai_takeoff_proposal_service import (
     AiTakeoffProposalService,
 )
@@ -265,8 +265,8 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     )
     container.register_singleton(
         "ai_takeoff_apply_gate",
-        lambda: lambda database_id: apply_blocked_reason(
-            descriptor_registry.resolve(database_id)
+        lambda: lambda database_id: apply_block_for(
+            descriptor_registry.resolve, database_id
         ),
     )
     container.register_singleton(

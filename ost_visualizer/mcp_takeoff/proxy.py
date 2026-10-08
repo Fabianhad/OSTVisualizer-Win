@@ -57,7 +57,7 @@ class TakeoffProxy:
                 except OSError as exc:
                     image["file_saved"] = False
                     image["file_save_error"] = str(exc)
-        text = json.dumps(structured, ensure_ascii=False)
+        text = json.dumps(structured)
         if len(text.encode("utf-8")) > self._inline_max_bytes:
             structured, text = self._spill_json(name, structured, text)
         content.append({"type": "text", "text": text})
@@ -76,7 +76,7 @@ class TakeoffProxy:
         }
 
     def _spill_json(self, label: str, structured: dict, text: str):
-        full_text = json.dumps(structured, ensure_ascii=False, indent=2)
+        full_text = json.dumps(structured, indent=2)
         preview = text[:PREVIEW_MAX_CHARS]
         summary = {
             "inline_truncated": True,
@@ -86,6 +86,9 @@ class TakeoffProxy:
         for key in ("success", "status", "meta", "error"):
             if key in structured:
                 summary[key] = structured[key]
+        image = _image_section(structured)
+        if image:
+            summary["image"] = image
         try:
             path = self._write_unique(label, ".json", full_text.encode("utf-8"))
         except OSError as exc:

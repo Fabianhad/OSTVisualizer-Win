@@ -1,7 +1,7 @@
 import math
 import unicodedata
 from dataclasses import dataclass, replace
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 from .database_descriptor import DatabaseBackend
 from ..services.elevation import (
     format_structural_elevation,
@@ -64,15 +64,29 @@ SQL_APPLY_UNAVAILABLE_MESSAGE = (
     "AI takeoff changes cannot be applied to SQL Server bids yet. Read tools "
     "and proposals still work; enter the change by hand or use an Access bid."
 )
+DATABASE_UNRESOLVED_MESSAGE = (
+    "The database of this AI takeoff change is not open in OST Visualizer, so it "
+    "cannot be applied or undone. Open the database and propose the change again."
+)
 _BIDI_FORMATTING = frozenset(
     "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 )
 
 
 def apply_blocked_reason(descriptor) -> str:
-    if descriptor is not None and descriptor.backend == DatabaseBackend.SQL_SERVER:
+    if descriptor is None:
+        return DATABASE_UNRESOLVED_MESSAGE
+    if descriptor.backend == DatabaseBackend.SQL_SERVER:
         return SQL_APPLY_UNAVAILABLE_MESSAGE
     return ""
+
+
+def apply_block_for(resolve: Callable[[str], object], database_id: str) -> str:
+    try:
+        descriptor = resolve(database_id)
+    except Exception:
+        return DATABASE_UNRESOLVED_MESSAGE
+    return apply_blocked_reason(descriptor)
 
 
 class ChangesetError(Exception):
@@ -199,6 +213,9 @@ def _ring_within(inner: Tuple[float, ...], outer: Tuple[float, ...]) -> bool:
         return False
     for index, start in enumerate(inner_points):
         end = inner_points[(index + 1) % len(inner_points)]
+        midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+        if not _inside_or_on(midpoint, outer_points):
+            return False
         for other_index, other_start in enumerate(outer_points):
             other_end = outer_points[(other_index + 1) % len(outer_points)]
             if _properly_cross(start, end, other_start, other_end):
@@ -217,7 +234,10 @@ def _validate_ring(ring: Tuple[float, ...]) -> None:
         raise ChangesetError(
             ERROR_INVALID_GEOMETRY, "Polygon coordinates must be finite"
         )
-    if abs(polygon_area(ring)) <= 1e-9:
+    area = abs(polygon_area(ring))
+    if not math.isfinite(area):
+        raise ChangesetError(ERROR_INVALID_GEOMETRY, "The polygon area is too large")
+    if area <= 1e-9:
         raise ChangesetError(ERROR_INVALID_GEOMETRY, "A polygon must enclose an area")
     if len(ring) // 2 > MAX_POLYGON_VERTICES:
         raise ChangesetError(

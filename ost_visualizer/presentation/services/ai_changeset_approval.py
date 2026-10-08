@@ -183,7 +183,13 @@ class AiChangesetApprovalController(QtCore.QObject):
         dialog = self._dialogs.pop(uid, None)
         if dialog is not None and isValid(dialog):
             dialog.deleteLater()
-        if not self._dialogs:
+        remaining = next(reversed(self._dialogs), None)
+        if remaining is None:
+            self._preview.clear()
+            return
+        try:
+            self._preview.show(self._store.get(remaining))
+        except ChangesetError:
             self._preview.clear()
 
 

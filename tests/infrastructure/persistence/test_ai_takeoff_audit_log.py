@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import tempfile
@@ -40,6 +41,20 @@ class AuditLogTestCase(unittest.TestCase):
 
 
 class AuditEntryTests(AuditLogTestCase):
+    def test_lone_surrogates_never_drop_the_entry(self):
+        self.log.record(
+            KEY,
+            AuditEntry(
+                event="tool",
+                tool="discard_changeset",
+                changeset_id="\ud800cs-1",
+                outcome="not_found\udc00",
+            ),
+        )
+        (line,) = self.lines()
+        self.assertEqual(line["changeset_id"], "\ufffdcs-1")
+        self.assertEqual(line["outcome"], "not_found\ufffd")
+
     def test_entries_are_appended_with_only_the_planned_fields(self):
         self.log.record(
             KEY,
@@ -85,7 +100,42 @@ class AuditEntryTests(AuditLogTestCase):
     def test_argument_hashes_are_stable_and_never_contain_the_arguments(self):
         first = hash_arguments({"b": 1, "a": "secret-token-123"})
         self.assertEqual(first, hash_arguments({"a": "secret-token-123", "b": 1}))
-        self.assertNotIn("secret", first)
+        self.assertNotEqual(first, hash_arguments({"b": 1, "a": "secret-token-124"}))
+        self.log.record(
+            KEY, AuditEntry(event="tool", tool="propose_element", input_hash=first)
+        )
+        raw = (self.directory / f"{KEY}.jsonl").read_bytes()
+        self.assertIn(first.encode("ascii"), raw)
+        self.assertNotIn(b"secret-token-123", raw)
+
+    def test_entries_are_immutable(self):
+        entry = AuditEntry(event="tool")
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            entry.event = "applied"
+
+    def test_non_ascii_text_is_written_as_utf8_not_escaped(self):
+        self.log.record(KEY, AuditEntry(event="tool", summary="caf\u00e9 \u2265 8"))
+        raw = (self.directory / f"{KEY}.jsonl").read_bytes()
+        self.assertIn("caf\u00e9 \u2265 8".encode("utf-8"), raw)
+        self.assertNotIn(b"\\u00e9", raw)
+        self.assertEqual(self.lines()[0]["summary"], "caf\u00e9 \u2265 8")
+
+    def test_a_missing_nested_directory_is_created_and_secured_once(self):
+        nested = self.directory / "a" / "b"
+        log = AiTakeoffAuditLog(
+            nested, clock=lambda: self.now, secure_directory=self.secured.append
+        )
+        log.record(KEY, AuditEntry(event="tool"))
+        log.record(KEY, AuditEntry(event="tool"))
+        lines = (nested / f"{KEY}.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(self.secured, [nested])
+
+    def test_an_existing_directory_is_never_re_secured(self):
+        self.directory.mkdir(parents=True)
+        self.log.record(KEY, AuditEntry(event="tool"))
+        self.assertEqual(self.secured, [])
+        self.assertEqual(len(self.lines()), 1)
 
     def test_text_fields_are_bounded_and_control_free(self):
         self.log.record(
@@ -133,6 +183,82 @@ class AuditRotationTests(AuditLogTestCase):
         for path in self.directory.iterdir():
             self.assertLessEqual(path.stat().st_size, 300)
         self.assertEqual(self.lines()[-1]["tool"], "t39")
+
+    def small_log(self, max_bytes, keep_files=AUDIT_KEEP_FILES, retention_days=365):
+        return AiTakeoffAuditLog(
+            self.directory,
+            clock=lambda: self.now,
+            max_bytes=max_bytes,
+            keep_files=keep_files,
+            retention_days=retention_days,
+            secure_directory=lambda _p: None,
+        )
+
+    def names(self):
+        return sorted(path.name for path in self.directory.iterdir())
+
+    def test_a_file_exactly_at_the_size_limit_is_not_rotated(self):
+        self.small_log(10_000).record(KEY, AuditEntry(event="tool", tool="t"))
+        size = (self.directory / f"{KEY}.jsonl").stat().st_size
+        (self.directory / f"{KEY}.jsonl").unlink()
+        log = self.small_log(2 * size)
+        log.record(KEY, AuditEntry(event="tool", tool="t"))
+        log.record(KEY, AuditEntry(event="tool", tool="t"))
+        self.assertEqual(self.names(), [f"{KEY}.jsonl"])
+        self.assertEqual((self.directory / f"{KEY}.jsonl").stat().st_size, 2 * size)
+        log.record(KEY, AuditEntry(event="tool", tool="t"))
+        self.assertEqual(self.names(), [f"{KEY}.1.jsonl", f"{KEY}.jsonl"])
+        self.assertEqual(len(self.lines(f"{KEY}.1.jsonl")), 2)
+        self.assertEqual(len(self.lines()), 1)
+
+    def test_keeping_two_files_leaves_one_rotated_file(self):
+        log = self.small_log(300, keep_files=2)
+        for index in range(20):
+            log.record(KEY, AuditEntry(event="tool", tool=f"t{index}"))
+        self.assertEqual(self.names(), [f"{KEY}.1.jsonl", f"{KEY}.jsonl"])
+        self.assertEqual(self.lines()[-1]["tool"], "t19")
+
+    def test_a_stale_oldest_file_behind_a_gap_is_removed_on_rotation(self):
+        self.directory.mkdir(parents=True)
+        (self.directory / f"{KEY}.jsonl").write_text("x" * 400, encoding="utf-8")
+        (self.directory / f"{KEY}.4.jsonl").write_text("stale\n", encoding="utf-8")
+        self.small_log(300).record(KEY, AuditEntry(event="tool", tool="new"))
+        self.assertEqual(self.names(), [f"{KEY}.1.jsonl", f"{KEY}.jsonl"])
+        self.assertEqual(
+            (self.directory / f"{KEY}.1.jsonl").read_text(encoding="utf-8"), "x" * 400
+        )
+        self.assertEqual(self.lines()[0]["tool"], "new")
+
+    def test_rotation_leaves_files_beyond_a_reduced_keep_count_alone(self):
+        self.directory.mkdir(parents=True)
+        (self.directory / f"{KEY}.jsonl").write_text("x" * 400, encoding="utf-8")
+        (self.directory / f"{KEY}.3.jsonl").write_text("three\n", encoding="utf-8")
+        (self.directory / f"{KEY}.4.jsonl").write_text("four\n", encoding="utf-8")
+        self.small_log(300, keep_files=3).record(KEY, AuditEntry(event="tool"))
+        self.assertEqual(
+            self.names(),
+            [f"{KEY}.{n}.jsonl" for n in (1, 3, 4)] + [f"{KEY}.jsonl"],
+        )
+        self.assertEqual(
+            (self.directory / f"{KEY}.3.jsonl").read_text(encoding="utf-8"), "three\n"
+        )
+        self.assertEqual(
+            (self.directory / f"{KEY}.4.jsonl").read_text(encoding="utf-8"), "four\n"
+        )
+
+    def test_retention_boundary_is_exclusive_and_covers_the_first_rotated_file(self):
+        for age, kept in ((86400.0, True), (86400.5, False), (86401.0, False)):
+            with self.subTest(age=age):
+                self.directory.mkdir(parents=True, exist_ok=True)
+                rotated = self.directory / f"{KEY}.1.jsonl"
+                rotated.write_text("{}\n", encoding="utf-8")
+                os.utime(rotated, (1_700_000_000, 1_700_000_000))
+                self.now = 1_700_000_000 + age
+                self.small_log(10_000, retention_days=1).record(
+                    KEY, AuditEntry(event="tool")
+                )
+                self.assertEqual(rotated.exists(), kept)
+                self.assertTrue((self.directory / f"{KEY}.jsonl").exists())
 
     def test_rotated_files_older_than_the_retention_are_removed(self):
         self.directory.mkdir(parents=True)

@@ -15,7 +15,7 @@
   that changes on every app start. Drawing text is returned as untrusted data,
   without control or text-direction characters. If the app does not answer within
   two minutes the tool reports a timeout instead of waiting, and too many parallel
-  requests get a "busy" answer.
+  requests get a "busy" answer instead of "not running".
 - **AI takeoff proposals with approval in the app.** The AI takeoff helper can
   now propose a page scale from two points, find closed areas in a PDF's lines
   (reporting any gaps it closed), propose slabs from them, show a top view of the
@@ -29,9 +29,14 @@
   (200 takeoffs, 25 new conditions, five waiting per bid), expire after 30
   minutes, and are refused if a page or condition they touch changed; if the AI
   edits an assumption while you review, the window refreshes and asks you to
-  check again. Undo never removes takeoffs you drew on an AI condition. Locked
+  check again. Undo never removes takeoffs you drew on an AI condition, or the AI
+  folder when you added your own conditions or folders to it. If Edit > Undo
+  cannot undo an AI change, a message explains why and offers Discard Entry so
+  your earlier undo steps stay reachable; the AI's undo names the change it
+  undoes, so a retry never undoes a second one. Locked
   bids are respected. On SQL Server bids changes cannot be applied yet (the AI
-  gets a clear "sql_apply_unavailable" answer); reading and proposing still
+  gets a clear "sql_apply_unavailable" answer, as it does for any database the
+  app cannot identify); reading and proposing still
   work. Settled assumptions are kept on this computer, a moved database is
   relinked only after you confirm for the same bid that is still open, and each AI
   call and decision is logged to a user-only audit file without arguments,

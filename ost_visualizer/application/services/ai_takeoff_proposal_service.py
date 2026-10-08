@@ -60,6 +60,9 @@ MAX_GAP_CLOSE_IN = 48.0
 MAX_REGIONS_RETURNED = 50
 MAX_CACHED_REGIONS = 200
 MAX_THICKNESS_IN = MAX_SLAB_THICKNESS_IN
+_SCALE_ASSUMPTION_MESSAGE = (
+    "The scale assumption cannot be added or revised; call propose_scale again"
+)
 MAX_ABS_ELEVATION_IN = MAX_ABS_TOP_ELEVATION_IN
 _REPORTED_STATUSES = (
     STATUS_APPLYING,
@@ -93,7 +96,10 @@ class _RegionRecord:
 def _number(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, f"{label} must be a number")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        number = math.inf
     if not math.isfinite(number):
         raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, f"{label} must be finite")
     return number
@@ -154,7 +160,7 @@ class AiTakeoffProposalService:
         first = _numbers(p1_pts, "p1_pts", 2)
         second = _numbers(p2_pts, "p2_pts", 2)
         distance = math.dist(first, second)
-        if distance < MIN_SCALE_DISTANCE_PTS:
+        if not distance >= MIN_SCALE_DISTANCE_PTS or not math.isfinite(distance):
             raise AiTakeoffRequestError(
                 ERROR_INVALID_ARGUMENT,
                 "p1_pts and p2_pts must be at least 1 point apart",
@@ -171,11 +177,19 @@ class AiTakeoffProposalService:
                     ERROR_INVALID_ARGUMENT, "real_in must be positive"
                 )
             measured = real / distance
+            if not measured > 0.0:
+                raise AiTakeoffRequestError(
+                    ERROR_INVALID_ARGUMENT, "real_in gives a scale out of range"
+                )
         if preset is not None:
             sf1, sf2 = self._preset(preset)
         else:
             sf1, sf2 = self._closest_scale(measured)
         chosen = sf2 / (72.0 * sf1)
+        if not sf2 > 0.0 or not chosen > 0.0 or not math.isfinite(chosen):
+            raise AiTakeoffRequestError(
+                ERROR_INVALID_ARGUMENT, "The proposed scale is out of range"
+            )
         error_pct = (
             None if measured is None else abs(chosen - measured) / measured * 100.0
         )
@@ -314,11 +328,11 @@ class AiTakeoffProposalService:
             gaps = record.gap_lengths_in
         else:
             polygon = _numbers(polygon_ost, "polygon_ost")
-            holes = tuple(_numbers(hole, "holes_ost") for hole in (holes_ost or []))
             if holes_ost is not None and not isinstance(holes_ost, list):
                 raise AiTakeoffRequestError(
                     ERROR_INVALID_ARGUMENT, "holes_ost must be a list"
                 )
+            holes = tuple(_numbers(hole, "holes_ost") for hole in (holes_ost or []))
         thickness = (
             None if thickness_in is None else _number(thickness_in, "thickness_in")
         )
@@ -332,7 +346,10 @@ class AiTakeoffProposalService:
             raise AiTakeoffRequestError(
                 ERROR_INVALID_ARGUMENT, "top_elev_in is out of range"
             )
-        if level_id is not None and level_id not in self._level_uids():
+        if (
+            level_id is not None
+            and _text(level_id, "level_id") not in self._level_uids()
+        ):
             raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, "Unknown level_id")
         base = clean_condition_base_name(
             _text(name, "name")
@@ -408,6 +425,10 @@ class AiTakeoffProposalService:
                     raise AiTakeoffRequestError(
                         ERROR_INVALID_ARGUMENT, "Unknown subject"
                     )
+                if subject == SUBJECT_SCALE:
+                    raise AiTakeoffRequestError(
+                        ERROR_INVALID_ARGUMENT, _SCALE_ASSUMPTION_MESSAGE
+                    )
                 length = None if length_in is None else _number(length_in, "length_in")
                 changeset = self._proposals.add_assumption(
                     uid,
@@ -419,9 +440,17 @@ class AiTakeoffProposalService:
                     length,
                 )
             elif op == "revise":
+                assumption_uid = _text(assumption_id, "assumption_id", required=True)
+                if any(
+                    item.uid == assumption_uid and item.subject == SUBJECT_SCALE
+                    for item in self._proposals.get(uid).assumptions
+                ):
+                    raise AiTakeoffRequestError(
+                        ERROR_INVALID_ARGUMENT, _SCALE_ASSUMPTION_MESSAGE
+                    )
                 changeset = self._proposals.revise_assumption(
                     uid,
-                    _text(assumption_id, "assumption_id", required=True),
+                    assumption_uid,
                     _text(value, "value"),
                     _text(reason, "reason"),
                 )

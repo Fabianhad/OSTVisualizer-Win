@@ -9,6 +9,7 @@ from ..application.dtos.ai_takeoff_dtos import (
     AI_TAKEOFF_BRIDGE_SERVER_NAME,
     ERROR_APP_NOT_RUNNING,
     ERROR_APP_TIMEOUT,
+    ERROR_BUSY,
     ERROR_MALFORMED_RESPONSE,
     PIPE_READ_TIMEOUT_SECONDS,
     error_result,
@@ -19,11 +20,17 @@ _GENERIC_WRITE = 0x40000000
 _OPEN_EXISTING = 3
 _FILE_ATTRIBUTE_NORMAL = 0x80
 _ERROR_BROKEN_PIPE = 109
+_ERROR_SEM_TIMEOUT = 121
+_ERROR_PIPE_BUSY = 231
 _ERROR_MORE_DATA = 234
 _INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 _MAX_TOKEN_CHARS = 200
 _READ_CHUNK_BYTES = 65536
 _POLL_INTERVAL_SECONDS = 0.01
+BUSY_RETRY_SECONDS = 2.0
+_BUSY_MESSAGE = (
+    "OST Visualizer is busy with other AI takeoff requests. Try again in a moment."
+)
 _APP_NOT_RUNNING_MESSAGE = (
     "OST Visualizer is not running with AI takeoff enabled. Open the app, open a "
     "bid and enable AI takeoff in Tools > Options > MCP Setup."
@@ -32,6 +39,10 @@ _APP_NOT_RUNNING_MESSAGE = (
 
 class PipeReadTimeout(Exception):
     """Raised when OST Visualizer does not answer within the read timeout."""
+
+
+class PipeBusy(Exception):
+    """Raised when every pipe instance stays in use for the whole retry window."""
 
 
 def read_session_token(token_path: Path) -> Optional[str]:
@@ -51,11 +62,13 @@ class TakeoffPipeClient:
         server_name: str = AI_TAKEOFF_BRIDGE_SERVER_NAME,
         wait_timeout_ms: int = 500,
         read_timeout_s: float = PIPE_READ_TIMEOUT_SECONDS,
+        busy_retry_s: float = BUSY_RETRY_SECONDS,
     ):
         self._token_path = Path(token_path)
         self._server_name = server_name
         self._wait_timeout_ms = wait_timeout_ms
         self.read_timeout_s = float(read_timeout_s)
+        self.busy_retry_s = float(busy_retry_s)
 
     def call(self, command: str, arguments: dict) -> dict:
         if sys.platform != "win32":
@@ -65,9 +78,8 @@ class TakeoffPipeClient:
             return error_result(ERROR_APP_NOT_RUNNING, _APP_NOT_RUNNING_MESSAGE)
         payload = (
             json.dumps(
-                {"token": token, "command": command, "arguments": arguments},
-                ensure_ascii=False,
-            ).encode("utf-8")
+                {"token": token, "command": command, "arguments": arguments}
+            ).encode("ascii")
             + b"\n"
         )
         try:
@@ -79,6 +91,8 @@ class TakeoffPipeClient:
                 "It may be busy with a large page or a dialog; try again, or use a "
                 "smaller crop or bounding box.",
             )
+        except PipeBusy:
+            return error_result(ERROR_BUSY, _BUSY_MESSAGE)
         except OSError:
             return error_result(ERROR_APP_NOT_RUNNING, _APP_NOT_RUNNING_MESSAGE)
         try:
@@ -97,24 +111,37 @@ class TakeoffPipeClient:
     def _exchange(self, payload: bytes) -> bytes:
         kernel32 = _kernel32()
         pipe_path = "\\\\.\\pipe\\" + self._server_name
-        if not kernel32.WaitNamedPipeW(pipe_path, self._wait_timeout_ms):
-            raise OSError(ctypes.get_last_error(), "Named pipe is unavailable")
-        handle = kernel32.CreateFileW(
-            pipe_path,
-            _GENERIC_READ | _GENERIC_WRITE,
-            0,
-            None,
-            _OPEN_EXISTING,
-            _FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-        if handle == _INVALID_HANDLE_VALUE:
-            raise OSError(ctypes.get_last_error(), "Failed to open named pipe")
+        handle = self._open(kernel32, pipe_path)
         try:
             _write_all(kernel32, handle, payload)
             return _read_line(kernel32, handle, time.monotonic() + self.read_timeout_s)
         finally:
             kernel32.CloseHandle(handle)
+
+    def _open(self, kernel32, pipe_path: str):
+        deadline = time.monotonic() + self.busy_retry_s
+        while True:
+            if kernel32.WaitNamedPipeW(pipe_path, self._wait_timeout_ms):
+                handle = kernel32.CreateFileW(
+                    pipe_path,
+                    _GENERIC_READ | _GENERIC_WRITE,
+                    0,
+                    None,
+                    _OPEN_EXISTING,
+                    _FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+                if handle != _INVALID_HANDLE_VALUE:
+                    return handle
+                error_code = ctypes.get_last_error()
+                if error_code != _ERROR_PIPE_BUSY:
+                    raise OSError(error_code, "Failed to open named pipe")
+            else:
+                error_code = ctypes.get_last_error()
+                if error_code != _ERROR_SEM_TIMEOUT:
+                    raise OSError(error_code, "Named pipe is unavailable")
+            if time.monotonic() >= deadline:
+                raise PipeBusy()
 
 
 def _write_all(kernel32, handle, payload: bytes) -> None:

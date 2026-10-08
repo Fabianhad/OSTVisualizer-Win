@@ -40,9 +40,7 @@ class JsonAiTakeoffSidecarRepository:
 
     def save(self, sidecar: AiTakeoffSidecar) -> None:
         path = self._path(sidecar.bid_key)
-        payload = (
-            json.dumps(sidecar.to_dict(), indent=2, ensure_ascii=False) + "\n"
-        ).encode("utf-8")
+        payload = (json.dumps(sidecar.to_dict(), indent=2) + "\n").encode("ascii")
         if len(payload) > MAX_SIDECAR_BYTES:
             raise ValueError("The sidecar is larger than the 5 MB limit")
         self._directory.mkdir(parents=True, exist_ok=True)

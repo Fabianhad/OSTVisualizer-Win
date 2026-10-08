@@ -1,3 +1,5 @@
+import hashlib
+import json
 import unittest
 from dataclasses import replace
 from ost_visualizer.application.services.ai_takeoff_tokens import ProjectDataTokenReader
@@ -63,6 +65,25 @@ class ProjectDataTokenReaderTests(unittest.TestCase):
         self.assertEqual(set(first), set(self.RESOURCES))
         self.assertTrue(all(len(token) == 16 for token in first.values()))
         self.assertEqual(self.read(), first)
+
+    def test_page_tokens_digest_the_scale_fields_as_canonical_key_sorted_json(self):
+        page = self.project.pages["p1"]
+        canonical = json.dumps(
+            {
+                "height_pts": page.height_pts,
+                "image_path": page.image_path,
+                "overlay_image_path": page.overlay_image_path,
+                "page_index": page.page_index,
+                "scale_factor1": page.scale_factor1,
+                "scale_factor2": page.scale_factor2,
+                "width_pts": page.width_pts,
+            },
+            separators=(",", ":"),
+        )
+        self.assertEqual(
+            self.read()["page:p1"],
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16],
+        )
 
     def test_each_touched_object_change_changes_only_its_token(self):
         cases = {

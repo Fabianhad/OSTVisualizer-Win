@@ -770,7 +770,10 @@ class DialogPreferenceTests(unittest.TestCase):
         )
         tab = dialog._mcp_setup_tab
         texts = _preferences_support__visible_texts(dialog)
-        self.assertIn("AI takeoff (read-only preview)", texts)
+        self.assertIn("AI takeoff (preview)", texts)
+        summary = next(text for text in texts if text.startswith("Lets an AI tool"))
+        self.assertIn("Nothing changes until you accept a proposal", summary)
+        self.assertNotIn("cannot change the bid", summary)
         self.assertIs(dialog._ai_takeoff_check, tab.ai_takeoff_check)
         self.assertFalse(tab.ai_takeoff_check.isChecked())
         self.assertEqual(
@@ -785,6 +788,40 @@ class DialogPreferenceTests(unittest.TestCase):
             build_claude_desktop_config(takeoff_path, TAKEOFF_MCP_SERVER_NAME),
         )
         self.assertFalse(apply_button.isEnabled())
+        dialog.close()
+
+    def test_mcp_setup_tab_lays_out_the_ai_takeoff_section_in_order(self):
+        dialog = OptionsDialog(Config())
+        tab = dialog._mcp_setup_tab
+        content = tab.status_label.parentWidget()
+        layout = content.layout()
+        summary = next(
+            label
+            for label in tab.findChildren(QtWidgets.QLabel)
+            if label.text().startswith("Lets an AI tool")
+        )
+        heading = next(
+            label
+            for label in tab.findChildren(QtWidgets.QLabel)
+            if label.text() == "AI takeoff for Claude Desktop or Cursor"
+        )
+        self.assertTrue(summary.wordWrap())
+        self.assertIs(summary.parentWidget(), content)
+        self.assertIs(tab.ai_takeoff_check.parentWidget(), content)
+        self.assertEqual(
+            [
+                layout.indexOf(summary) + 1,
+                layout.indexOf(tab.ai_takeoff_check) + 1,
+                layout.indexOf(tab.takeoff_config_edit) - 1,
+            ],
+            [
+                layout.indexOf(tab.ai_takeoff_check),
+                layout.indexOf(heading),
+                layout.indexOf(heading),
+            ],
+        )
+        self.assertEqual(tab.takeoff_config_edit.minimumHeight(), 135)
+        self.assertEqual(tab.claude_config_edit.minimumHeight(), 135)
         dialog.close()
 
     def test_ai_takeoff_check_loads_saves_and_marks_apply_dirty(self):

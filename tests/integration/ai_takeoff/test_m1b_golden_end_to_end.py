@@ -430,8 +430,14 @@ class M1bGoldenEndToEndTests(unittest.TestCase):
                     {item["status"] for item in assumptions["data"]["assumptions"]}
                     >= {"overridden"}
                 )
-            undone = self.call("undo_last_ai_changeset")
-            self.assertTrue(undone["success"], undone)
+            undone = self.call("undo_last_ai_changeset", {"changeset_id": changeset_id})
+            self.assertEqual(
+                undone["data"], {"changeset_id": changeset_id, "status": "undone"}
+            )
+            retried = self.call(
+                "undo_last_ai_changeset", {"changeset_id": changeset_id}
+            )
+            self.assertEqual(retried["status"], "already_undone")
         self.assertEqual(dump_tables(self.db_path), before)
         audit_dir = self.home / ".ost_visualizer" / "ai_takeoff" / "audit"
         audit = "".join(

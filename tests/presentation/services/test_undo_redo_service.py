@@ -493,6 +493,78 @@ class UndoRedoServiceLabelTests(unittest.TestCase):
         self.assertFalse(self.service.discard_entry(newer))
         self.assertEqual(self.service._undo_stack, [older, newer])
 
+    def test_discarding_notifies_only_when_an_entry_was_removed(self):
+        changes = []
+        bid_ref = BidRef("database", "7")
+        entry = self.service.push_for_bid(
+            bid_ref, lambda complete: None, lambda complete: None
+        )
+        self.service.set_change_callback(lambda: changes.append("changed"))
+        self.assertIs(self.service.discard_entry(entry), True)
+        self.assertEqual(changes, ["changed"])
+        self.assertIs(self.service.discard_entry(entry), False)
+        self.assertEqual(changes, ["changed"])
+
+    def test_an_entry_on_the_redo_stack_can_be_discarded(self):
+        bid_ref = BidRef("database", "7")
+        entry = self.service.push_for_bid(
+            bid_ref,
+            lambda complete: complete(
+                QueuedMutationResult(
+                    database_id="database",
+                    runtime_generation=0,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                )
+            ),
+            lambda complete: None,
+        )
+        self.service.undo()
+        self.assertTrue(self.service.can_redo())
+        self.assertIs(self.service.discard_entry(entry), True)
+        self.assertEqual(self.service._redo_stack, [])
+        self.assertFalse(self.service.can_redo())
+        self.assertFalse(self.service.can_undo())
+
+    def test_pending_and_uncertain_entries_are_never_discarded(self):
+        bid_ref = BidRef("database", "7")
+        for state in (
+            MutationHistoryState.UNDO_PENDING,
+            MutationHistoryState.REDO_PENDING,
+            MutationHistoryState.UNCERTAIN,
+            MutationHistoryState.CONFLICTED,
+        ):
+            with self.subTest(state=state):
+                changes = []
+                entry = self.service.push_for_bid(
+                    bid_ref, lambda complete: None, lambda complete: None
+                )
+                self.service.set_change_callback(lambda: changes.append("changed"))
+                entry.state = state
+                self.assertIs(self.service.discard_entry(entry), False)
+                self.assertIs(self.service._undo_stack[-1], entry)
+                self.assertEqual(changes, [])
+                self.service.set_change_callback(None)
+
+    def test_an_uncertain_undo_keeps_its_entry_until_recovery(self):
+        bid_ref = BidRef("database", "7")
+        completions = []
+        entry = self.service.push_for_bid(
+            bid_ref, completions.append, lambda complete: None
+        )
+        self.service.undo()
+        completions[0](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=0,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            )
+        )
+        self.assertEqual(entry.state, MutationHistoryState.UNCERTAIN)
+        self.assertIs(self.service.discard_entry(entry), False)
+        self.assertEqual(self.service._undo_stack, [entry])
+
 
 class MdbSqlBehaviorParityTests(unittest.TestCase):
     @classmethod

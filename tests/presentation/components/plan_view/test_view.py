@@ -26694,49 +26694,175 @@ class TakeoffPlanViewOverlayMoveCommitSweepTests(_TakeoffPlanViewOverlayRefreshF
         self.assertEqual((pixmap.width(), pixmap.height()), (26, 26))
 
 
-class AiChangesetPreviewTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    AI_PREVIEW_Z,
+    TAKEOFF_LABEL_Z,
+)
 
-    def _view(self):
-        view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view._scene = QGraphicsScene()
-        view._current_bid_page_uid = "page-1"
-        view._ai_preview_items = []
-        view._current_page_transform = lambda: None
-        view._scene_builder = SimpleNamespace(
-            get_coordinate_system=lambda: SimpleNamespace(
-                view_scale=2.0, scale_ratio=144.0
-            )
+
+class AiChangesetPreviewTests(_TakeoffPlanViewOverlayRefreshFixture):
+    RING = (24.0, 36.0, 120.0, 36.0, 120.0, 96.0, 24.0, 96.0)
+
+    def _view(self, rotation=0):
+        view = self._make_plan_view()
+        page = Page(
+            uid="page-1",
+            name="Plan",
+            width_pts=1200.0,
+            height_pts=1600.0,
+            scale_factor1=0.25,
+            scale_factor2=12.0,
+            rotation=rotation,
         )
+        self.assertTrue(view.load_page(page, [], {}, {}))
         return view
 
-    def test_ghost_rings_are_drawn_on_the_current_page_in_scene_coordinates(self):
-        from ost_visualizer.presentation.scene.plan_view_z_order import AI_PREVIEW_Z
-
-        view = self._view()
-        square = (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0)
-        view.set_ai_preview("page-1", [square, square])
-        items = [
-            item for item in view._scene.items() if isinstance(item, QGraphicsPathItem)
+    @staticmethod
+    def _preview_items(view):
+        return [
+            item
+            for item in view._scene.items()
+            if isinstance(item, QGraphicsPathItem) and item.zValue() == AI_PREVIEW_Z
         ]
-        self.assertEqual(len(items), 2)
-        rect = items[0].path().boundingRect()
-        self.assertEqual((rect.width(), rect.height()), (480.0, 360.0))
-        self.assertEqual(items[0].zValue(), AI_PREVIEW_Z)
-        self.assertEqual(items[0].pen().style(), Qt.PenStyle.DashLine)
-        self.assertFalse(
-            items[0].flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-        )
-        view.clear_ai_preview()
-        self.assertEqual(view._scene.items(), [])
+
+    def test_ghost_rings_are_drawn_on_the_current_page_in_scene_coordinates(self):
+        for rotation in (0, 90):
+            with self.subTest(rotation=rotation):
+                view = self._view(rotation)
+                view.set_ai_preview("page-1", [self.RING])
+                (item,) = self._preview_items(view)
+                path = item.path()
+                self.assertEqual(path.elementCount(), 5)
+                self.assertTrue(path.elementAt(0).isMoveTo())
+                self.assertTrue(all(path.elementAt(i).isLineTo() for i in (1, 2, 3, 4)))
+                ring_points = list(zip(self.RING[0::2], self.RING[1::2]))
+                for index, (x, y) in enumerate(ring_points):
+                    element = path.elementAt(index)
+                    ost = view._scene_pos_to_ost(QtCore.QPointF(element.x, element.y))
+                    self.assertAlmostEqual(ost.x(), x, places=6)
+                    self.assertAlmostEqual(ost.y(), y, places=6)
+                first, last = path.elementAt(0), path.elementAt(4)
+                self.assertEqual((last.x, last.y), (first.x, first.y))
+                self.assertTrue(
+                    view._page_scene_rect().contains(item.sceneBoundingRect())
+                )
+
+    def test_ghost_rings_sit_above_takeoff_labels_and_ignore_the_mouse(self):
+        view = self._view()
+        view.set_ai_preview("page-1", [self.RING])
+        (item,) = self._preview_items(view)
+        self.assertEqual(item.zValue(), 30.0)
+        self.assertGreater(item.zValue(), TAKEOFF_LABEL_Z)
+        self.assertEqual(item.acceptedMouseButtons(), Qt.MouseButton.NoButton)
+        self.assertFalse(item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        pen = item.pen()
+        self.assertEqual(pen.style(), Qt.PenStyle.DashLine)
+        self.assertTrue(pen.isCosmetic())
+        self.assertEqual(pen.widthF(), 2.0)
+        self.assertEqual(pen.color().getRgb(), (255, 120, 0, 255))
+        self.assertEqual(item.brush().color().getRgb(), (255, 120, 0, 60))
+        self.assertEqual(item.brush().style(), Qt.BrushStyle.SolidPattern)
+
+    def test_rings_with_fewer_than_three_points_are_skipped(self):
+        view = self._view()
+        view.set_ai_preview("page-1", [(0.0, 0.0, 10.0, 10.0), self.RING])
+        self.assertEqual(len(self._preview_items(view)), 1)
+        self.assertEqual(len(view._ai_preview_items), 1)
+        view.set_ai_preview("page-1", [(0.0, 0.0, 10.0, 0.0, 10.0, 10.0)])
+        self.assertEqual(len(self._preview_items(view)), 1)
 
     def test_other_pages_and_replacements(self):
         view = self._view()
-        square = (0.0, 0.0, 10.0, 0.0, 10.0, 10.0)
-        view.set_ai_preview("page-2", [square])
-        self.assertEqual(view._scene.items(), [])
-        view.set_ai_preview("page-1", [square])
-        view.set_ai_preview("page-1", [square])
-        self.assertEqual(len(view._scene.items()), 1)
+        before = len(view._scene.items())
+        view.set_ai_preview("page-2", [self.RING])
+        self.assertEqual(len(view._scene.items()), before)
+        view.set_ai_preview("page-1", [self.RING, self.RING])
+        view.set_ai_preview("page-1", [self.RING])
+        self.assertEqual(len(self._preview_items(view)), 1)
+        self.assertEqual(len(view._scene.items()), before + 1)
+        view.clear_ai_preview()
+        self.assertEqual(self._preview_items(view), [])
+        self.assertEqual(len(view._scene.items()), before)
+        self.assertEqual(view._ai_preview_items, [])
+
+    def test_clearing_after_the_page_was_cleared_skips_deleted_items(self):
+        view = self._view()
+        view.set_ai_preview("page-1", [self.RING])
+        (item,) = self._preview_items(view)
+        view.clear()
+        self.assertFalse(isValid(item))
+        view.clear_ai_preview()
+        self.assertEqual(view._ai_preview_items, [])
+
+    def test_clearing_skips_items_another_scene_has_taken(self):
+        view = self._view()
+        view.set_ai_preview("page-1", [self.RING])
+        (item,) = self._preview_items(view)
+        other = QGraphicsScene()
+        other.addItem(item)
+        view.clear_ai_preview()
+        self.assertIs(item.scene(), other)
+        self.assertEqual(view._ai_preview_items, [])
+
+
+class PdfTextVisibleOriginMappingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def _raw_runs(self, dx, dy):
+        return [
+            _pdf_text_support__raw_run(
+                "Hello",
+                10.0 + dx,
+                20.0 + dx,
+                70.0 + dy,
+                80.0 + dy,
+                [
+                    _pdf_text_support__raw_char(
+                        "H", 10.0 + dx, 12.0 + dx, 70.0 + dy, 80.0 + dy
+                    )
+                ],
+            )
+        ]
+
+    @staticmethod
+    def _boxes(mapped):
+        run = mapped[0]
+        char = run.chars[0]
+        return (
+            (run.left, run.top, run.right, run.bottom),
+            (char.left, char.top, char.right, char.bottom),
+        )
+
+    def test_raw_boxes_are_shifted_by_the_visible_box_origin(self):
+        view = PdfTextSelectionTests._make_view(self)
+        mapped = view._map_pdf_text_runs(
+            self._raw_runs(100.0, 50.0),
+            _pdf_text_support__page_info(),
+            None,
+            (100.0, 50.0),
+        )
+        self.assertEqual(
+            self._boxes(mapped),
+            ((20.0, 40.0, 40.0, 60.0), (20.0, 40.0, 24.0, 60.0)),
+        )
+
+    def test_extracted_payloads_without_an_origin_are_mapped_unshifted(self):
+        view = PdfTextSelectionTests._make_view(self)
+        view._pdf_text_request_id = "request-1"
+        view._pdf_text_request_source = None
+        view._on_pdf_text_extracted(
+            SimpleNamespace(
+                request_id="request-1",
+                success=True,
+                image={
+                    "text_runs": self._raw_runs(0.0, 0.0),
+                    "page_info": _pdf_text_support__page_info(),
+                },
+            )
+        )
+        self.assertEqual(
+            self._boxes(view._pdf_text_runs),
+            ((20.0, 40.0, 40.0, 60.0), (20.0, 40.0, 24.0, 60.0)),
+        )

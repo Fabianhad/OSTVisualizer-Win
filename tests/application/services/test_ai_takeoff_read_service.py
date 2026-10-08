@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from ost_visualizer.application.dtos.ai_takeoff_dtos import PageSnapshot
 from ost_visualizer.application.dtos.pdf_metadata_dtos import (
     PdfPageInfoDto,
     PdfTextRunDto,
@@ -28,7 +29,9 @@ from ost_visualizer.domain.services.condition_quantity_service import (
 )
 from ost_visualizer.domain.services.uom_service import (
     CALC_AREA,
+    CALC_COUNT,
     CALC_LINEAR_LENGTH,
+    UOM_EACH,
     UOM_LINEAR_FEET,
     UOM_SQUARE_FEET,
 )
@@ -577,6 +580,330 @@ class CropPlanTests(ServiceTestCase):
         self.assertIsNone(self.service.overlay_status(None))
         self.assert_error("invalid_argument", lambda: self.service.overlay_status("x"))
         self.assert_error("invalid_argument", lambda: self.service.overlay_status([1]))
+
+
+class SnapshotAndPageAccessTests(ServiceTestCase):
+    def test_snapshots_need_an_open_bid_and_a_page_uid(self):
+        for page_uid in ("", None, 7):
+            with self.subTest(page_uid=page_uid):
+                self.assert_error(
+                    "invalid_argument", lambda: self.service.page_snapshot(page_uid)
+                )
+        self.project.bid = None
+        self.assert_error("bid_not_open", lambda: self.service.page_snapshot("p1"))
+
+    def test_snapshot_fields_default_missing_sizes_and_keep_the_page_index(self):
+        self.project.pages.append(
+            Page(
+                uid="p9",
+                name="Odd",
+                sequence=9,
+                image_path="C:/plans/odd.pdf",
+                page_index=2,
+                width_pts=None,
+                height_pts=None,
+                scale_factor1=None,
+                scale_factor2=12.0,
+            )
+        )
+        snapshot = self.service.page_snapshot("p9")
+        self.assertEqual(
+            (snapshot.page_index, snapshot.width_pts, snapshot.height_pts),
+            (2, 0.0, 0.0),
+        )
+        self.assertIsNone(snapshot.ost_per_page_point)
+        self.assertTrue(snapshot.is_pdf)
+        self.assert_error("invalid_argument", lambda: self.service.plan_crop(snapshot))
+
+    def test_scale_needs_both_factors_above_zero(self):
+        cases = (
+            ((None, 12.0), None),
+            ((0.25, None), None),
+            ((0.0, 12.0), None),
+            ((0.25, 0.0), None),
+            ((-0.25, 12.0), None),
+            ((0.25, -12.0), None),
+            ((0.25, 1.0), 1.0 / 18.0),
+            ((0.5, 0.5), 0.5 / 36.0),
+            ((2.0, 12.0), 12.0 / 144.0),
+        )
+        for (sf1, sf2), expected in cases:
+            with self.subTest(sf1=sf1, sf2=sf2):
+                self.project.pages = [
+                    Page(
+                        uid="p1",
+                        name="S",
+                        image_path="C:/plans/S-101.pdf",
+                        width_pts=612.0,
+                        height_pts=792.0,
+                        scale_factor1=sf1,
+                        scale_factor2=sf2,
+                    )
+                ]
+                if sf1 is None or sf2 is None:
+                    factor = self.service.page_snapshot("p1").ost_per_page_point
+                else:
+                    sheet = self.service.list_sheets()["data"]["sheets"][0]
+                    factor = sheet["ost_inches_per_page_point"]
+                if expected is None:
+                    self.assertIsNone(factor)
+                else:
+                    self.assertAlmostEqual(factor, expected)
+
+    def test_unscaled_pages_report_no_ost_coordinates(self):
+        self.project.pages[1] = Page(
+            uid="p1",
+            name="S-101",
+            image_path="C:/plans/S-101.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            scale_factor1=0.0,
+            scale_factor2=0.0,
+        )
+        self.pdf.runs = [
+            PdfTextRunDto("A", left=10.0, top=40.0, right=30.0, bottom=20.0)
+        ]
+        self.pdf.segments = [PdfVectorSegmentDto(0, 792, 100, 792)]
+        snapshot = self.service.page_snapshot("p1")
+        run = self.service.list_text(snapshot)["data"]["runs"][0]
+        self.assertIsNone(run["bbox_ost"])
+        segment = self.service.list_segments(snapshot)["data"]["segments"][0]
+        self.assertEqual((segment["p1_ost"], segment["p2_ost"]), (None, None))
+        plan = self.service.plan_crop(snapshot)
+        self.assertIsNone(plan.page_pts_to_ost)
+
+    def test_pages_without_a_source_are_blank_sheets(self):
+        self.project.pages.append(Page(uid="p4", name="Blank", sequence=4))
+        sheets = self.service.list_sheets()["data"]["sheets"]
+        self.assertEqual(sheets[-1]["page_uid"], "p4")
+        self.assertEqual(sheets[-1]["source"], "blank")
+        self.assertEqual(sheets[-1]["takeoff_count"], 0)
+
+    def test_text_queries_must_be_text(self):
+        snapshot = self.service.page_snapshot("p1")
+        self.assert_error(
+            "invalid_argument", lambda: self.service.list_text(snapshot, query=5)
+        )
+        self.assertEqual(self.pdf.calls, [])
+
+    def test_open_bid_ref_and_page_entity(self):
+        self.assertEqual(self.service.open_bid_ref(), BidRef(ACCESS_PATH, "{BID-1}"))
+        self.assertIs(self.service.page_entity("p1"), self.project.pages[1])
+        for page_uid in ("nope", None, 1):
+            with self.subTest(page_uid=page_uid):
+                self.assert_error(
+                    "not_found", lambda: self.service.page_entity(page_uid)
+                )
+        self.project.bid = None
+        self.assert_error("bid_not_open", self.service.open_bid_ref)
+        self.assert_error("bid_not_open", lambda: self.service.page_entity("p1"))
+
+
+class PageGeometryTests(ServiceTestCase):
+    def info(
+        self,
+        rotation=0,
+        crop=(612.0, 792.0),
+        media=(700.0, 900.0),
+        effective=(800.0, 1000.0),
+    ):
+        return PdfPageInfoDto(
+            status="ok",
+            crop_width_pts=crop[0],
+            crop_height_pts=crop[1],
+            media_width_pts=media[0],
+            media_height_pts=media[1],
+            effective_width_pts=effective[0],
+            effective_height_pts=effective[1],
+            intrinsic_rotation=rotation,
+        )
+
+    def first_segment(self):
+        result = self.service.list_segments(self.service.page_snapshot("p1"))
+        return result["data"]["segments"][0]
+
+    def test_every_intrinsic_rotation_maps_to_page_points(self):
+        self.pdf.segments = [PdfVectorSegmentDto(10, 20, 40, 60)]
+        cases = {
+            0: ([10.0, 772.0], [40.0, 732.0]),
+            90: ([20.0, 10.0], [60.0, 40.0]),
+            180: ([602.0, 20.0], [572.0, 60.0]),
+            270: ([772.0, 602.0], [732.0, 572.0]),
+            -90: ([772.0, 602.0], [732.0, 572.0]),
+            450: ([20.0, 10.0], [60.0, 40.0]),
+            None: ([10.0, 772.0], [40.0, 732.0]),
+        }
+        for rotation, (p1, p2) in cases.items():
+            with self.subTest(rotation=rotation):
+                self.pdf.info = self.info(rotation=rotation)
+                segment = self.first_segment()
+                self.assertEqual((segment["p1_pts"], segment["p2_pts"]), (p1, p2))
+                self.assertAlmostEqual(segment["length_pts"], 50.0)
+
+    def test_the_raw_frame_prefers_crop_then_media_then_effective_sizes(self):
+        self.pdf.segments = [PdfVectorSegmentDto(10, 20, 40, 60)]
+        cases = (
+            (self.info(270), [772.0, 602.0]),
+            (self.info(270, crop=(0.0, 0.0)), [880.0, 690.0]),
+            (self.info(270, crop=(0.0, 0.0), media=(0.0, 0.0)), [980.0, 790.0]),
+        )
+        for info, p1 in cases:
+            with self.subTest(info=info):
+                self.pdf.info = info
+                self.assertEqual(self.first_segment()["p1_pts"], p1)
+
+    def test_page_segments_in_points_follow_the_box(self):
+        self.pdf.segments = [
+            PdfVectorSegmentDto(10, 772, 40, 732),
+            PdfVectorSegmentDto(500, 100, 520, 100),
+        ]
+        snapshot = self.service.page_snapshot("p1")
+        self.assertEqual(
+            self.service.page_segments_pts(snapshot, None),
+            ("ok", [(10.0, 20.0, 40.0, 60.0), (500.0, 692.0, 520.0, 692.0)]),
+        )
+        self.assertEqual(
+            self.service.page_segments_pts(snapshot, (0.0, 0.0, 100.0, 100.0)),
+            ("ok", [(10.0, 20.0, 40.0, 60.0)]),
+        )
+        self.assertEqual(
+            self.service.page_segments_pts(snapshot, (200.0, 200.0, 300.0, 300.0)),
+            ("ok", []),
+        )
+        self.assertEqual(
+            self.service.page_segments_pts(self.service.page_snapshot("p3"), None),
+            ("not_pdf", []),
+        )
+
+    def test_segment_box_filter_keeps_segments_touching_every_edge(self):
+        page_segments = {
+            "touching_left": (50, 150, 100, 150),
+            "touching_top": (150, 50, 150, 100),
+            "touching_bottom": (150, 200, 150, 250),
+            "touching_right": (200, 150, 260, 150),
+        }
+        self.pdf.segments = [
+            PdfVectorSegmentDto(x1, 792 - y1, x2, 792 - y2)
+            for x1, y1, x2, y2 in page_segments.values()
+        ]
+        result = self.service.list_segments(
+            self.service.page_snapshot("p1"), bbox_pts=[100, 100, 200, 200]
+        )
+        self.assertEqual(len(result["data"]["segments"]), 4)
+
+    def test_boxes_need_positive_width_and_height(self):
+        snapshot = self.service.page_snapshot("p1")
+        for box in ([5, 5, 5, 10], [5, 5, 10, 5], [5, 0, 1, 10], [0, 5, 10, 1]):
+            with self.subTest(box=box):
+                self.assert_error(
+                    "invalid_argument",
+                    lambda box=box: self.service.list_segments(snapshot, bbox_pts=box),
+                )
+
+
+class CropBoundaryTests(ServiceTestCase):
+    def crop_error(self, snapshot, **kwargs):
+        with self.assertRaises(AiTakeoffRequestError) as raised:
+            self.service.plan_crop(snapshot, **kwargs)
+        self.assertEqual(raised.exception.code, "invalid_argument")
+        return raised.exception.message
+
+    def snapshot(self, width, height):
+        return PageSnapshot("p1", "C:/plans/S-101.pdf", 0, width, height, 0.5, True)
+
+    def test_pages_need_a_positive_size(self):
+        for width, height in ((0.0, 792.0), (612.0, 0.0), (-1.0, 792.0)):
+            with self.subTest(width=width, height=height):
+                self.assertEqual(
+                    self.crop_error(self.snapshot(width, height)), "Page has no size"
+                )
+        plan = self.service.plan_crop(self.snapshot(1.0, 1.0), dpi=72)
+        self.assertEqual((plan.width_px, plan.height_px), (1, 1))
+
+    def test_crop_sizes_must_be_positive_before_overlap_is_checked(self):
+        snapshot = self.snapshot(612.0, 792.0)
+        for crop in (
+            [0, 0, 0, 10],
+            [0, 0, 10, 0],
+            [100, 100, -10, 10],
+            [100, 100, 10, -10],
+        ):
+            with self.subTest(crop=crop):
+                self.assertEqual(
+                    self.crop_error(snapshot, crop_pts=crop),
+                    "crop_pts width and height must be positive",
+                )
+        for crop in ([612, 0, 10, 10], [0, 792, 10, 10], [-10, 0, 10, 10]):
+            with self.subTest(crop=crop):
+                self.assertEqual(
+                    self.crop_error(snapshot, crop_pts=crop),
+                    "crop_pts does not overlap the page",
+                )
+
+    def test_tiny_crops_render_at_least_one_pixel(self):
+        plan = self.service.plan_crop(
+            self.snapshot(612.0, 792.0), crop_pts=[10, 10, 0.5, 0.25], dpi=72
+        )
+        self.assertEqual(plan.frame_pts, (10.0, 10.0, 0.5, 0.25))
+        self.assertEqual((plan.width_px, plan.height_px), (1, 1))
+
+    def test_dpi_boundaries(self):
+        snapshot = self.snapshot(100.0, 100.0)
+        for dpi in (1, 1.5, 200):
+            with self.subTest(dpi=dpi):
+                self.assertAlmostEqual(
+                    self.service.plan_crop(snapshot, dpi=dpi).scale, dpi / 72.0
+                )
+        for dpi in (0.999, 200.001, float("nan")):
+            with self.subTest(dpi=dpi):
+                self.crop_error(snapshot, dpi=dpi)
+
+    def test_affines_use_the_render_scale_and_the_ost_factor(self):
+        plan = self.service.plan_crop(
+            self.snapshot(612.0, 792.0), crop_pts=[100, 50, 200, 100], dpi=144
+        )
+        self.assertEqual(plan.scale, 2.0)
+        self.assertEqual((plan.width_px, plan.height_px), (400, 200))
+        self.assertEqual(plan.px_to_page_pts, (0.5, 0.0, 0.0, 0.5, 100.0, 50.0))
+        self.assertEqual(plan.page_pts_to_ost, (0.5, 0.0, 0.0, 0.5, 0.0, 0.0))
+
+    def test_the_long_side_cap_lowers_the_scale(self):
+        plan = self.service.plan_crop(self.snapshot(1224.0, 792.0), dpi=200)
+        self.assertAlmostEqual(plan.scale, 1600 / 1224.0)
+        self.assertEqual((plan.width_px, plan.height_px), (1600, 1035))
+
+
+class QuantityRoundingTests(ServiceTestCase):
+    def test_quantities_are_rounded_to_four_decimals(self):
+        self.project.takeoffs = [
+            Takeoff("t2", "c-wall", "p1", position=[0, 0, 100, 0]),
+        ]
+        row = self.service.get_quantities()["data"]["rows"][0]
+        self.assertEqual(row["quantities"], [{"value": 8.3333, "uom": "LF"}])
+
+    def test_each_is_a_reported_unit(self):
+        self.project.conditions["c-count"] = Condition(
+            uid="c-count",
+            name="Piers",
+            condition_type=Condition.TYPE_COUNT,
+            calc_type1=CALC_COUNT,
+            uom1=UOM_EACH,
+            uom2=-1,
+            uom3=-1,
+        )
+        self.project.takeoffs = [
+            Takeoff("t9", "c-count", "p1", position=[10, 10]),
+            Takeoff("t10", "c-count", "p1", position=[20, 20]),
+        ]
+        expected = compute_page_quantities(
+            self.project.conditions, self.project.takeoffs
+        )["c-count"][0]
+        row = self.service.get_quantities()["data"]["rows"][0]
+        self.assertEqual(row["type"], "count")
+        self.assertEqual(row["takeoff_count"], 2)
+        self.assertEqual(
+            row["quantities"], [{"value": round(expected, 4), "uom": "EA"}]
+        )
 
 
 if __name__ == "__main__":

@@ -84,7 +84,7 @@ M1B_COMMAND_ARGUMENTS = {
     ),
     COMMAND_APPLY_CHANGESET: frozenset({"changeset_id"}),
     COMMAND_DISCARD_CHANGESET: frozenset({"changeset_id"}),
-    COMMAND_UNDO_LAST_AI_CHANGESET: frozenset({"bid_uid"}),
+    COMMAND_UNDO_LAST_AI_CHANGESET: frozenset({"bid_uid", "changeset_id"}),
     COMMAND_RENDER_3D: frozenset({"bid_uid", "view"}),
     COMMAND_UPDATE_ASSUMPTION: frozenset(
         {

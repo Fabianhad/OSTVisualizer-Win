@@ -144,6 +144,13 @@ class EncodePngTests(unittest.TestCase):
         self.assertEqual(decoded.pixelColor(0, 0).getRgb(), (10, 20, 30, 255))
         self.assertEqual(decoded.pixelColor(36, 4).getRgb(), (200, 100, 50, 128))
 
+    def test_pixel_data_uses_the_default_zlib_compression_level(self):
+        image = QtGui.QImage(16, 4, QtGui.QImage.Format.Format_ARGB32)
+        image.fill(QtGui.QColor(10, 20, 30, 255))
+        png = encode_png(image)
+        idat = png.index(b"IDAT") + 4
+        self.assertEqual(png[idat : idat + 2], b"\x78\x9c")
+
     def test_null_image_is_rejected(self):
         with self.assertRaises(ValueError):
             encode_png(QtGui.QImage())

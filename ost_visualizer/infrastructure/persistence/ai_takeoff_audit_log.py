@@ -24,6 +24,8 @@ def _clean(value) -> str:
     for character in str(value or ""):
         if character in "\t\n\r\x0b\x0c":
             kept.append(" ")
+        elif unicodedata.category(character) == "Cs":
+            kept.append("\ufffd")
         elif (
             character not in _BIDI_FORMATTING
             and unicodedata.category(character) != "Cc"

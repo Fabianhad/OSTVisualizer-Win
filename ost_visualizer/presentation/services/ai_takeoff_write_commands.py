@@ -1,4 +1,4 @@
-from typing import Callable, Dict
+from typing import Callable, Dict, List
 from ...application.dtos.ai_takeoff_dtos import (
     COMMAND_APPLY_CHANGESET,
     COMMAND_DISCARD_CHANGESET,
@@ -15,7 +15,15 @@ from ...application.dtos.ai_takeoff_dtos import (
     error_result,
     ok_result,
 )
-from ...domain.entities.ai_changeset import STATUS_PENDING_APPROVAL
+from ...domain.entities.ai_changeset import (
+    ERROR_INVALID_STATE,
+    STATUS_PENDING_APPROVAL,
+    STATUS_UNDONE,
+    ChangesetError,
+)
+
+UNDO_STATUS_UNDONE = "undone"
+UNDO_STATUS_ALREADY_UNDONE = "already_undone"
 
 
 class DeferredReply:
@@ -55,6 +63,7 @@ class AiTakeoffWriteCommands:
         self._undo = undo
         self._top_view = top_view
         self._apply_requested = apply_requested
+        self._undoing: Dict[str, List[DeferredReply]] = {}
 
     def handlers(self) -> Dict[str, Callable[[dict], object]]:
         return {
@@ -126,26 +135,56 @@ class AiTakeoffWriteCommands:
             length_in=arguments.get("length_in"),
         )
 
-    def _undo_last(self, arguments: dict) -> DeferredReply:
+    def _undo_last(self, arguments: dict):
         bid_ref = self._open_bid(arguments.get("bid_uid"))
+        uid = arguments.get("changeset_id")
+        if not isinstance(uid, str) or not uid.strip():
+            raise AiTakeoffRequestError(
+                ERROR_INVALID_ARGUMENT, "changeset_id must name the changeset to undo"
+            )
+        waiting = self._undoing.get(uid)
+        if waiting is not None:
+            reply = DeferredReply()
+            waiting.append(reply)
+            return reply
+        try:
+            changeset = self._proposals.get(uid)
+        except ChangesetError as exc:
+            raise AiTakeoffRequestError(exc.code, exc.message) from exc
+        if str(changeset.database_id) != str(bid_ref.file_path) or str(
+            changeset.bid_uid
+        ) != str(bid_ref.bid_uid):
+            raise AiTakeoffRequestError(
+                ERROR_NOT_FOUND, "That changeset does not belong to the open bid"
+            )
+        if changeset.status == STATUS_UNDONE:
+            return _already_undone(uid)
         last = self._proposals.last_applied(
             str(bid_ref.file_path), str(bid_ref.bid_uid)
         )
-        if last is None:
+        if last is None or last.uid != uid:
             raise AiTakeoffRequestError(
-                ERROR_NOT_FOUND, "No applied AI changeset to undo"
+                ERROR_INVALID_STATE,
+                "Only the most recent applied AI changeset of the open bid can be undone",
             )
         reply = DeferredReply()
+        waiting = [reply]
+        self._undoing[uid] = waiting
 
         def done(outcome) -> None:
+            self._undoing.pop(uid, None)
             if outcome.success:
-                reply.resolve(ok_result({"changeset_id": last.uid, "status": "undone"}))
-            else:
-                reply.resolve(
-                    error_result(outcome.code or "undo_failed", outcome.message)
+                waiting[0].resolve(
+                    ok_result({"changeset_id": uid, "status": UNDO_STATUS_UNDONE})
                 )
+                for other in waiting[1:]:
+                    other.resolve(_already_undone(uid))
+                return
+            failure = error_result(outcome.code or "undo_failed", outcome.message)
+            for each in waiting:
+                each.resolve(failure)
 
-        self._undo(last.uid, done)
+        self._undo(uid, done)
         return reply
 
     def _render_3d(self, arguments: dict) -> Callable[[], dict]:
@@ -170,3 +209,10 @@ class AiTakeoffWriteCommands:
                 ERROR_BID_NOT_OPEN, "Only the bid open in OST Visualizer can be used."
             )
         return bid_ref
+
+
+def _already_undone(uid: str) -> dict:
+    return ok_result(
+        {"changeset_id": uid, "status": UNDO_STATUS_ALREADY_UNDONE},
+        UNDO_STATUS_ALREADY_UNDONE,
+    )

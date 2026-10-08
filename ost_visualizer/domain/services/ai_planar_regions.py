@@ -199,7 +199,12 @@ def _close_gaps(
         best = None
         best_distance = gap_close
         for other in dangling:
-            if other == vertex or other in used or other in neighbours[vertex]:
+            if (
+                other == vertex
+                or other in used
+                or other in neighbours[vertex]
+                or _runs_along_an_edge(index.points, neighbours, vertex, other)
+            ):
                 continue
             distance = math.dist(point, index.points[other])
             if distance <= best_distance:
@@ -207,7 +212,12 @@ def _close_gaps(
                 best_distance = distance
         if best is None:
             for other, near in neighbours.items():
-                if other == vertex or other in neighbours[vertex] or len(near) < 2:
+                if (
+                    other == vertex
+                    or other in neighbours[vertex]
+                    or len(near) < 2
+                    or _runs_along_an_edge(index.points, neighbours, vertex, other)
+                ):
                     continue
                 distance = math.dist(point, index.points[other])
                 if distance <= best_distance:
@@ -225,6 +235,20 @@ def _close_gaps(
         used.add(vertex)
         used.add(best)
     return closures
+
+
+def _runs_along_an_edge(
+    points: List[Point], neighbours: Dict[int, Set[int]], first: int, second: int
+) -> bool:
+    for start, end in ((first, second), (second, first)):
+        sx, sy = points[start]
+        ex, ey = points[end][0] - sx, points[end][1] - sy
+        for near in neighbours[start]:
+            nx, ny = points[near][0] - sx, points[near][1] - sy
+            length = math.hypot(ex, ey) * math.hypot(nx, ny)
+            if abs(ex * ny - ey * nx) <= 1e-9 * length and ex * nx + ey * ny > 0.0:
+                return True
+    return False
 
 
 def _prune_dangling(edges: Set[Tuple[int, int]]) -> None:

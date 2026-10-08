@@ -110,6 +110,7 @@ from .services.ai_changeset_approval import (
 )
 from .services.ai_render_3d import AiTopViewSource
 from .services.ai_sidecar_rebind_prompt import AiSidecarRebindPrompt
+from .services.ai_undo_refusal_notice import AiUndoRefusalNotice
 from .services.ai_takeoff_write_commands import AiTakeoffWriteCommands
 from .services.ai_takeoff_bridge import (
     TakeoffCommandBridge,
@@ -591,6 +592,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ai_store = app_controller.get_service("ai_changeset_store")
         self._ai_sidecars = app_controller.get_service("ai_takeoff_sidecar_service")
         self._ai_audit_log = app_controller.get_service("ai_takeoff_audit_log")
+        self._ai_undo_notice = AiUndoRefusalNotice(lambda: self, parent=self)
         self._ai_applier = AiChangesetApplier(
             write_service=self._project_write_service,
             project_data=self._project_data_service,
@@ -604,6 +606,7 @@ class MainWindow(QtWidgets.QMainWindow):
             audit=self._record_ai_event,
             record_assumptions=self._ai_sidecars.record_assumptions,
             apply_blocked=app_controller.get_service("ai_takeoff_apply_gate"),
+            undo_refused=self._ai_undo_notice.show,
         )
         self._ai_approval = AiChangesetApprovalController(
             self._ai_store,
@@ -2645,6 +2648,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ("clean up AI takeoff bridge", self._ai_takeoff_bridge.cleanup),
             ("clean up AI changeset review", self._ai_approval.cleanup),
             ("clean up AI sidecar prompt", self._ai_rebind_prompt.cleanup),
+            ("clean up AI undo notice", self._ai_undo_notice.cleanup),
             ("release AI takeoff PDF files", self._ai_pdf_source.release),
             (
                 "shut down application lifecycle services",

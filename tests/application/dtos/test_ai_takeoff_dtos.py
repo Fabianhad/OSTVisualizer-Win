@@ -1,4 +1,5 @@
 import ast
+import dataclasses
 import sys
 import unittest
 from pathlib import Path
@@ -30,20 +31,55 @@ class UntrustedTextTests(unittest.TestCase):
 
     def test_lone_surrogates_are_replaced_so_the_value_is_always_utf8(self):
         text = UntrustedText.of('SLAB \ud800 8" \udfff')
-        self.assertEqual(text.value, 'SLAB � 8" �')
+        self.assertEqual(text.value, 'SLAB \ufffd 8" \ufffd')
         text.value.encode("utf-8")
-        paired = UntrustedText.of("😀 ≥ Ø")
-        self.assertEqual(paired.value, "\U0001f600 ≥ Ø")
+        paired = UntrustedText.of("\U0001f600 \u2265 \xd8")
+        self.assertEqual(paired.value, "\U0001f600 \u2265 \xd8")
 
     def test_control_and_bidi_formatting_characters_are_stripped(self):
-        raw = 'SLAB\x00 8\x07"\x1b[31m T.O.S.\x7f\x85\x9b ' "‮GNIDLIUB‬ ⁦x⁩‎‏؜"
+        raw = (
+            'SLAB\x00 8\x07"\x1b[31m T.O.S.\x7f\x85\x9b '
+            "\u202eGNIDLIUB\u202c \u2066x\u2069\u200e\u200f\u061c"
+        )
         self.assertEqual(UntrustedText.of(raw).value, 'SLAB 8"[31m T.O.S. GNIDLIUB x')
         self.assertEqual(UntrustedText.of("A\tB\nC\r\nD").value, "A B C  D")
-        kept = 'Ø 12" ≥ ½ 平面 \U0001f600 ‍'
+        kept = '\xd8 12" \u2265 \xbd \u5e73\u9762 \U0001f600 \u200d'
         self.assertEqual(UntrustedText.of(kept).value, kept)
 
+    def test_every_bidi_formatting_character_is_stripped(self):
+        bidi = (
+            "\u061c",
+            "\u200e",
+            "\u200f",
+            "\u202a",
+            "\u202b",
+            "\u202c",
+            "\u202d",
+            "\u202e",
+            "\u2066",
+            "\u2067",
+            "\u2068",
+            "\u2069",
+        )
+        for character in bidi:
+            with self.subTest(code_point=f"U+{ord(character):04X}"):
+                value = UntrustedText.of("A" + character + "B").value
+                self.assertEqual(value.encode("unicode_escape"), b"AB")
+
+    def test_whitespace_controls_become_spaces(self):
+        for character in ("\t", "\n", "\r", "\x0b", "\x0c"):
+            with self.subTest(code_point=f"U+{ord(character):04X}"):
+                value = UntrustedText.of("A" + character + "B").value
+                self.assertEqual(value.encode("unicode_escape"), b"A B")
+
+    def test_c1_controls_are_stripped(self):
+        for character in ("\x80", "\x85", "\x9b", "\x9f"):
+            with self.subTest(code_point=f"U+{ord(character):04X}"):
+                value = UntrustedText.of("A" + character + "B").value
+                self.assertEqual(value.encode("unicode_escape"), b"AB")
+
     def test_stripping_happens_before_the_length_cap(self):
-        text = UntrustedText.of("‮" * 600 + "visible")
+        text = UntrustedText.of("\u202e" * 600 + "visible")
         self.assertEqual((text.value, text.truncated), ("visible", False))
 
     def test_the_cap_is_five_hundred_characters(self):
@@ -114,6 +150,10 @@ class CursorAndLimitTests(unittest.TestCase):
         self.assertEqual(clamp_limit(0), 1)
         self.assertEqual(clamp_limit(10**6), dtos.MAX_LIMIT)
         self.assertEqual(clamp_limit(25), 25)
+        self.assertEqual(clamp_limit(None), 100)
+        self.assertEqual(clamp_limit(500), 500)
+        self.assertEqual(clamp_limit(501), 500)
+        self.assertEqual(clamp_limit(1), 1)
         with self.assertRaises(ValueError):
             clamp_limit("many")
         with self.assertRaises(ValueError):
@@ -154,6 +194,26 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(dtos.INLINE_RESPONSE_MAX_BYTES, 256 * 1024)
         self.assertEqual(dtos.RENDER_MAX_DPI, 200.0)
         self.assertEqual(dtos.RENDER_MAX_LONG_SIDE_PX, 1600)
+
+    def test_request_errors_carry_code_and_message(self):
+        error = dtos.AiTakeoffRequestError(dtos.ERROR_NOT_FOUND, "Page not found.")
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(str(error), "Page not found.")
+        self.assertEqual((error.code, error.message), ("not_found", "Page not found."))
+
+    def test_value_objects_are_immutable(self):
+        page = dtos.PageSnapshot("p1", "a.pdf", 0, 612.0, 792.0, None, True)
+        plan = dtos.CropPlan("p1", "a.pdf", 0, (0, 0, 1, 1), 1.0, 1, 1, (), None)
+        text = UntrustedText.of("x")
+        meta = ResultMeta(limit=1, returned_count=1, total_count=1)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            page.is_pdf = False
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            plan.scale = 2.0
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            text.value = "y"
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            meta.next_cursor = "c:1"
 
     def test_module_imports_only_stdlib(self):
         tree = ast.parse(Path(dtos.__file__).read_text(encoding="utf-8"))

@@ -1,5 +1,6 @@
 import hashlib
 import unittest
+from dataclasses import FrozenInstanceError
 from ost_visualizer.domain.entities.ai_takeoff import (
     FINGERPRINT_MISMATCH,
     FINGERPRINT_OK,
@@ -10,6 +11,8 @@ from ost_visualizer.domain.entities.ai_takeoff import (
     Level,
     SheetRegistration,
     SidecarFingerprint,
+    SidecarLoad,
+    SidecarWriteRefused,
     ai_takeoff_bid_key,
     compare_fingerprints,
 )
@@ -220,6 +223,99 @@ class SidecarSerializationTests(unittest.TestCase):
             )
         )
         self.assertEqual(accepted.registrations[0].page_uid, guid)
+
+
+class SidecarFieldTypeTests(unittest.TestCase):
+    def test_list_fields_must_be_lists(self):
+        for key in ("levels", "registrations", "assumptions"):
+            for value in ({}, "", ()):
+                with self.subTest(key=key, value=value):
+                    with self.assertRaisesRegex(ValueError, f"^{key} must be a list$"):
+                        AiTakeoffSidecar.from_dict(_sidecar_dict(**{key: value}))
+
+    def test_text_fields_must_be_strings(self):
+        level = _sidecar_dict()["levels"][0]
+        for label, data in {
+            "bid key": _sidecar_dict(bid_key=7),
+            "level name": _sidecar_dict(levels=[dict(level, name=None)]),
+            "level uid": _sidecar_dict(levels=[dict(level, uid=1)]),
+        }.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, "must be text$"):
+                    AiTakeoffSidecar.from_dict(data)
+
+    def test_numbers_must_be_real_finite_numbers(self):
+        level = _sidecar_dict()["levels"][0]
+        registration = _sidecar_dict()["registrations"][0]
+        for label, data in {
+            "numeric text elevation": _sidecar_dict(
+                levels=[dict(level, top_elev_in="100")]
+            ),
+            "bool elevation": _sidecar_dict(levels=[dict(level, top_elev_in=True)]),
+            "bool residual": _sidecar_dict(
+                registrations=[dict(registration, residual_in=False)]
+            ),
+            "text in transform": _sidecar_dict(
+                registrations=[dict(registration, transform=[1, 0, 0, 1, 0, "0"])]
+            ),
+        }.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, "must be a number$"):
+                    AiTakeoffSidecar.from_dict(data)
+        for label, data in {
+            "infinite elevation": _sidecar_dict(
+                levels=[dict(level, top_elev_in=float("inf"))]
+            ),
+            "nan in transform": _sidecar_dict(
+                registrations=[
+                    dict(registration, transform=[1, 0, 0, 1, 0, float("nan")])
+                ]
+            ),
+        }.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, "must be finite$"):
+                    AiTakeoffSidecar.from_dict(data)
+
+    def test_identifier_length_and_characters(self):
+        level = _sidecar_dict()["levels"][0]
+        for uid in ("L", "L" * 128, "a_b", "a.b", "a:b", "{a}", "a-b", "Z9"):
+            with self.subTest(uid=uid):
+                sidecar = AiTakeoffSidecar.from_dict(
+                    _sidecar_dict(levels=[dict(level, uid=uid)])
+                )
+                self.assertEqual(sidecar.levels[0].uid, uid)
+        for uid in ("", "L" * 129, "a b", "a/b", "a@b", "a,b", "\u00e9", "L1\n"):
+            with self.subTest(uid=uid):
+                with self.assertRaisesRegex(ValueError, "must be a short identifier$"):
+                    AiTakeoffSidecar.from_dict(
+                        _sidecar_dict(levels=[dict(level, uid=uid)])
+                    )
+
+
+class SidecarValueTests(unittest.TestCase):
+    def test_refused_writes_name_the_sidecar_state(self):
+        error = SidecarWriteRefused("corrupt")
+        self.assertEqual(error.status, "corrupt")
+        self.assertEqual(str(error), "The AI sidecar is corrupt; nothing was written.")
+
+    def test_sidecar_values_are_frozen(self):
+        sidecar = AiTakeoffSidecar.from_dict(_sidecar_dict())
+        level = sidecar.levels[0]
+        registration = sidecar.registrations[0]
+        assumption = sidecar.assumptions[0]
+        load = SidecarLoad("found", sidecar)
+        with self.assertRaises(FrozenInstanceError):
+            sidecar.bid_key = "b" * 32
+        with self.assertRaises(FrozenInstanceError):
+            sidecar.fingerprint.bid_name = "Other"
+        with self.assertRaises(FrozenInstanceError):
+            level.name = "Other"
+        with self.assertRaises(FrozenInstanceError):
+            registration.residual_in = 1.0
+        with self.assertRaises(FrozenInstanceError):
+            assumption.status = "accepted"
+        with self.assertRaises(FrozenInstanceError):
+            load.state = "missing"
 
 
 if __name__ == "__main__":

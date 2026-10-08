@@ -42,7 +42,12 @@ from ost_visualizer.domain.entities.ai_changeset import (
 from ost_visualizer.presentation.services.ai_changeset_applier import (
     AiChangesetApplier,
 )
+from ost_visualizer.presentation.services.ai_undo_refusal_notice import (
+    UNDO_REFUSED_TITLE,
+    AiUndoRefusalNotice,
+)
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
+from PySide6 import QtWidgets
 from tests.integration.ai_takeoff.access_app_support import (
     configured_app,
     dump_tables,
@@ -150,6 +155,7 @@ class AiChangesetAccessRoundTripTests(unittest.TestCase):
                 self.plan(takeoffs=(AiTakeoffWrite("c1", "999999", OUTER, (), "0"),)),
             )
             self.assertFalse(commit.committed)
+            self.assertEqual(commit.message, "The AI takeoff insertion was incomplete.")
         self.assertEqual(dump_tables(self.db_path), before)
 
     def test_a_locked_bid_writes_nothing(self):
@@ -245,11 +251,11 @@ class AiChangesetApplierAccessTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.home = Path(self.directory.name)
         self.db_path = self.home / "ai.mdb"
-        self.bid_uid, self.page_uids, _existing = seed_access_bid(
+        self.bid_uid, self.page_uids, self.existing_condition = seed_access_bid(
             self.db_path, [("S-101", 8.5, 11.0, 0.125, 12.0)]
         )
 
-    def harness(self, container, bid_ref):
+    def harness(self, container, bid_ref, undo_refused=None):
         project = container.get("project_data_service")
         tokens = container.get("ai_takeoff_token_reader")
         store = AiChangesetStore(token_reader=tokens)
@@ -265,6 +271,7 @@ class AiChangesetApplierAccessTests(unittest.TestCase):
             layer_uid=lambda: None,
             area_uid=lambda _page_uid: "0",
             session_folder_name="AI 2026-10-07 14:05",
+            **({} if undo_refused is None else {"undo_refused": undo_refused}),
         )
         return store, AiChangesetProposals(store), undo, applier
 
@@ -324,6 +331,85 @@ class AiChangesetApplierAccessTests(unittest.TestCase):
             self.assertEqual(user_undos, ["user edit undone"])
             self.assertFalse(undo.can_undo())
 
+    def test_a_refused_ai_undo_is_discarded_from_the_notice_and_older_entries_undo(
+        self,
+    ):
+        if self.skip_body:
+            return
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        with configured_app(self.home, self.db_path, self.bid_uid) as (
+            container,
+            bid_ref,
+        ):
+            notice = AiUndoRefusalNotice()
+            self.addCleanup(notice.cleanup)
+            store, proposals, undo, _applier = self.harness(
+                container, bid_ref, undo_refused=notice.show
+            )
+            user_undos = []
+
+            def user_step(name):
+                def run(complete):
+                    user_undos.append(name)
+                    complete(
+                        QueuedMutationResult(
+                            database_id=str(self.db_path),
+                            runtime_generation=0,
+                            operation_id=str(uuid.uuid4()),
+                            outcome_status=MutationOutcomeStatus.COMMITTED,
+                            commit_attempted=True,
+                        )
+                    )
+
+                return run
+
+            undo.push_for_bid(
+                bid_ref, user_step("undo"), user_step("redo"), label="User edit"
+            )
+            uid, record = self.apply(store, proposals, _applier, self.changeset())
+            inserted = container.get("project_write_service").insert_takeoffs_result(
+                str(self.db_path),
+                self.bid_uid,
+                [
+                    InsertTakeoffSpec(
+                        condition_uid=record.condition_uids[0],
+                        page_uid=self.page_uids[0],
+                        area_uid="0",
+                        position=list(HOLE),
+                    )
+                ],
+            )
+            self.assertTrue(inserted.write_success)
+            before = dump_tables(self.db_path)
+            undo.undo()
+            self.assertEqual(user_undos, [])
+            (box,) = [
+                widget
+                for widget in app.topLevelWidgets()
+                if isinstance(widget, QtWidgets.QMessageBox) and widget.isVisible()
+            ]
+            self.assertEqual(box.windowTitle(), UNDO_REFUSED_TITLE)
+            self.assertFalse(box.isModal())
+            self.assertIn("AI: AI slab could not be undone.", box.text())
+            self.assertIn("edited since", box.text())
+            (discard,) = [
+                button
+                for button in box.buttons()
+                if box.buttonRole(button) == QtWidgets.QMessageBox.ButtonRole.ActionRole
+            ]
+            discard.click()
+            self.assertFalse(box.isVisible())
+            self.assertEqual(undo.undo_label(), "User edit")
+            undo.undo()
+            self.assertEqual(user_undos, ["undo"])
+            self.assertTrue(undo.can_redo())
+            undo.redo()
+            self.assertEqual(user_undos, ["undo", "redo"])
+            self.assertEqual(undo.undo_label(), "User edit")
+            self.assertFalse(undo.can_redo())
+            self.assertEqual(dump_tables(self.db_path), before)
+            self.assertEqual(store.get(uid).status, "applied")
+
     def test_undo_never_removes_a_takeoff_the_user_drew_on_the_ai_condition(self):
         if self.skip_body:
             return
@@ -354,6 +440,82 @@ class AiChangesetApplierAccessTests(unittest.TestCase):
             self.assertEqual(outcomes[0].code, "stale_changeset")
             self.assertEqual(dump_tables(self.db_path), before_undo)
             self.assertEqual(store.get(uid).status, "applied")
+
+    def test_undo_keeps_the_session_folder_while_a_user_folder_is_inside_it(self):
+        if self.skip_body:
+            return
+        before_apply = dump_tables(self.db_path)
+        with configured_app(self.home, self.db_path, self.bid_uid) as (
+            container,
+            bid_ref,
+        ):
+            store, proposals, _undo, applier = self.harness(container, bid_ref)
+            uid, record = self.apply(store, proposals, applier, self.changeset())
+            self.assertTrue(record.created_folder)
+            child = container.get(
+                "project_write_service"
+            ).create_condition_folder_result(
+                str(self.db_path), self.bid_uid, "My slabs", record.folder_uid
+            )
+            self.assertTrue(child.write_success)
+            folders_before_undo = dump_tables(self.db_path)["BidConditionFolders"]
+            outcomes = []
+            applier.undo(uid, outcomes.append)
+            self.assertTrue(outcomes[0].success, outcomes[0].message)
+            after = dump_tables(self.db_path)
+            self.assertEqual(after["BidConditionFolders"], folders_before_undo)
+            self.assertEqual(after["BidConditions"], before_apply["BidConditions"])
+            self.assertEqual(after["BidTakeoffs"], before_apply["BidTakeoffs"])
+
+    def test_takeoffs_on_an_existing_condition_apply_and_undo_exactly(self):
+        if self.skip_body:
+            return
+        before = dump_tables(self.db_path)
+        with configured_app(self.home, self.db_path, self.bid_uid) as (
+            container,
+            bid_ref,
+        ):
+            store, proposals, undo, applier = self.harness(container, bid_ref)
+            changeset = AiChangeset(
+                uid="",
+                database_id=str(self.db_path),
+                bid_uid=self.bid_uid,
+                bid_key="a" * 32,
+                kind=KIND_ELEMENTS,
+                created_at=0.0,
+                takeoffs=(
+                    ProposedTakeoff(
+                        "t1",
+                        self.page_uids[0],
+                        f"existing:{self.existing_condition}",
+                        OUTER,
+                        (HOLE,),
+                    ),
+                ),
+                summary="AI takeoff",
+            )
+            uid, record = self.apply(store, proposals, applier, changeset)
+            self.assertEqual((record.folder_uid, record.created_folder), (None, False))
+            self.assertEqual(record.condition_uids, ())
+            applied = dump_tables(self.db_path)
+            self.assertEqual(
+                applied["BidConditionFolders"], before["BidConditionFolders"]
+            )
+            self.assertEqual(applied["BidConditions"], before["BidConditions"])
+            self.assertEqual(
+                sorted(
+                    str(row["UID"])
+                    for row in applied["BidTakeoffs"]
+                    if row not in before["BidTakeoffs"]
+                ),
+                sorted(record.takeoff_uids),
+            )
+            self.assertEqual(len(record.takeoff_uids), 2)
+            outcomes = []
+            applier.undo(uid, outcomes.append)
+            self.assertTrue(outcomes[0].success, outcomes[0].message)
+            self.assertEqual(undo.undo_label(), "")
+        self.assertEqual(dump_tables(self.db_path), before)
 
     def test_an_out_of_range_elevation_override_is_never_written(self):
         if self.skip_body:

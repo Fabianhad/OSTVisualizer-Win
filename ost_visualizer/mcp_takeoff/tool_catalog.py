@@ -273,9 +273,13 @@ TOOLS = (
     ),
     ToolSpec(
         COMMAND_UNDO_LAST_AI_CHANGESET,
-        "Undo the most recent applied AI changeset of the open bid, if nothing it "
-        "created was edited since.",
-        _schema({"bid_uid": _BID_UID}),
+        "Undo the most recent applied AI changeset of the open bid, named by its "
+        "changeset_id, if nothing it created was edited since. Retrying with the "
+        "same changeset_id is safe: it never undoes a second changeset and reports "
+        "already_undone once the first call has finished.",
+        _schema(
+            {"bid_uid": _BID_UID, "changeset_id": _CHANGESET_ID}, ("changeset_id",)
+        ),
     ),
     ToolSpec(
         COMMAND_RENDER_3D,

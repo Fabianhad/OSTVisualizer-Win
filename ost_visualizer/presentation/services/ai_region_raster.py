@@ -32,8 +32,8 @@ def raster_fill_region(
     scale = min(
         RASTER_MAX_PX_PER_PT, RASTER_MAX_SIDE_PX / max(right - left, bottom - top)
     )
-    width = max(1, int(math.ceil((right - left) * scale)))
-    height = max(1, int(math.ceil((bottom - top) * scale)))
+    width = min(RASTER_MAX_SIDE_PX, max(1, int(math.ceil((right - left) * scale))))
+    height = min(RASTER_MAX_SIDE_PX, max(1, int(math.ceil((bottom - top) * scale))))
     stride = (width + 3) // 4 * 4
     pen_px = max(1.0, float(pen_width_pts) * scale)
     mask = _draw_walls(segments, left, top, scale, width, height, stride, pen_px)

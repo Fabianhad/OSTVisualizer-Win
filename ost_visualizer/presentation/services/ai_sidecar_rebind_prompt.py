@@ -29,7 +29,6 @@ class AiSidecarRebindPrompt(QtCore.QObject):
         self._parent_widget = parent_widget
         self._offered: Set[str] = set()
         self._box: Optional[QtWidgets.QMessageBox] = None
-        self._bid_key: Optional[str] = None
         self.notice: Optional[QtWidgets.QMessageBox] = None
         self.last_message = ""
 
@@ -40,7 +39,6 @@ class AiSidecarRebindPrompt(QtCore.QObject):
         if context.bid_key in self._offered:
             return None
         self._offered.add(context.bid_key)
-        self._bid_key = context.bid_key
         box = QtWidgets.QMessageBox(self._parent_widget())
         box.setWindowTitle(REBIND_PROMPT_TITLE)
         box.setTextFormat(QtCore.Qt.TextFormat.PlainText)
@@ -51,7 +49,7 @@ class AiSidecarRebindPrompt(QtCore.QObject):
         )
         box.setModal(False)
         box.button(QtWidgets.QMessageBox.StandardButton.Yes).clicked.connect(
-            self._rebind
+            lambda _checked=False, bid_key=context.bid_key: self._rebind(bid_key)
         )
         box.show()
         self._box = box
@@ -65,13 +63,13 @@ class AiSidecarRebindPrompt(QtCore.QObject):
         self._box = None
         self.notice = None
 
-    def _rebind(self) -> None:
+    def _rebind(self, bid_key: str) -> None:
         try:
-            self._sidecars.rebind(expected_bid_key=self._bid_key)
+            self._sidecars.rebind(expected_bid_key=bid_key)
         except SidecarWriteRefused as exc:
             if exc.status == SIDECAR_BID_CHANGED:
                 self.last_message = BID_CHANGED_TEXT
-                self._offered.discard(self._bid_key)
+                self._offered.discard(bid_key)
             else:
                 self.last_message = str(exc)
             logger.info("AI sidecar rebind refused: %s", exc.status)

@@ -238,5 +238,64 @@ class PdfMetadataVisibleBoxOriginTests(unittest.TestCase):
                     self.assertTrue(run.right - run.left < 60.0)
 
 
+class UnreadableGeometryReader:
+    def get_page_geometries(self, file_path):
+        raise OSError(f"{file_path} could not be parsed")
+
+
+class EmptyGeometryReader:
+    def get_page_geometries(self, _file_path):
+        return []
+
+
+class PdfMetadataUnknownOriginTests(unittest.TestCase):
+    def write_cropped_pdf(self, directory):
+        from pathlib import Path
+        from tests.presentation.services.ai_takeoff_pdf_support import write_takeoff_pdf
+
+        return str(
+            write_takeoff_pdf(
+                Path(directory) / "cropped.pdf",
+                lines=[(200, 300, 400, 300)],
+                texts=[(150, 500, 12, "GRID")],
+                page_boxes="/MediaBox [0 0 612 792] /CropBox [100 100 512 692]",
+            )
+        )
+
+    def assert_page_coordinates_are_unshifted(self, provider, pdf):
+        segments = provider.get_vector_segments(pdf, 0)
+        self.assertEqual(
+            [tuple(round(v) for v in (s.x1, s.y1, s.x2, s.y2)) for s in segments],
+            [(200, 300, 400, 300)],
+        )
+        (run,) = provider.get_text_runs(pdf, 0)
+        self.assertAlmostEqual(run.left, 150.0, delta=2.0)
+        self.assertAlmostEqual(run.bottom, 500.0, delta=4.0)
+
+    def test_an_unreadable_page_geometry_is_logged_without_the_path(self):
+        logger = logging.getLogger("tests.pdf_metadata_provider.geometry")
+        provider = NativePdfMetadataProvider(
+            logger=logger, geometry_reader_factory=UnreadableGeometryReader
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = self.write_cropped_pdf(directory)
+            with self.assertLogs(logger, level="WARNING") as captured:
+                self.assert_page_coordinates_are_unshifted(provider, pdf)
+        self.assertEqual(
+            [record.getMessage() for record in captured.records],
+            ["Failed to read PDF page geometry: OSError"] * 2,
+        )
+
+    def test_a_page_missing_from_the_geometry_keeps_page_coordinates(self):
+        logger = logging.getLogger("tests.pdf_metadata_provider.geometry")
+        provider = NativePdfMetadataProvider(
+            logger=logger, geometry_reader_factory=EmptyGeometryReader
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = self.write_cropped_pdf(directory)
+            with self.assertNoLogs(logger, level="WARNING"):
+                self.assert_page_coordinates_are_unshifted(provider, pdf)
+
+
 if __name__ == "__main__":
     unittest.main()

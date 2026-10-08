@@ -1,3 +1,4 @@
+import ast
 import io
 import json
 import logging
@@ -286,6 +287,54 @@ class AiTakeoffApprovalSliceTests(unittest.TestCase):
             names = _name_tokens(path)
             for name in APPROVAL_NAMES:
                 self.assertNotIn(name, names, f"{name} should not appear in {path}")
+
+    def test_only_the_approval_controller_reaches_store_approval_methods(self):
+        users = set()
+        for path in PACKAGE.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr in (
+                    "approve",
+                    "accept_assumption",
+                    "override_assumption",
+                ):
+                    users.add(path.relative_to(PACKAGE).as_posix())
+        self.assertEqual(users, {"presentation/services/ai_changeset_approval.py"})
+
+    def test_main_window_gives_the_pipe_proposals_and_the_apply_request_only(self):
+        tree = ast.parse(
+            (PACKAGE / "presentation" / "main_window.py").read_text(encoding="utf-8")
+        )
+        bridges = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "TakeoffCommandBridge"
+        ]
+        self.assertEqual(len(bridges), 1)
+        approval_uses = []
+        attributes = []
+        services = set()
+        for node in ast.walk(bridges[0]):
+            if isinstance(node, ast.Attribute):
+                attributes.append(node.attr)
+                if (
+                    isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "_ai_approval"
+                ):
+                    approval_uses.append(node.attr)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get_service"
+            ):
+                services.add(node.args[0].value)
+        self.assertEqual(approval_uses, ["on_apply_requested"])
+        self.assertEqual(attributes.count("_ai_approval"), 1)
+        self.assertNotIn("_ai_store", attributes)
+        self.assertIn("ai_changeset_proposals", services)
+        self.assertNotIn("ai_changeset_store", services)
 
     def test_the_proposal_facade_offers_no_approval_method(self):
         public = {
