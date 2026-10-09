@@ -287,7 +287,19 @@ TOOLS = (
         "page's suggested_min_width is applied and filters.min_width_source "
         "says so; pass min_width 0 to keep every width. extraction_scope is box "
         "when only the box could be read, and truncated stays true if even the "
-        "box had too many pieces.",
+        "box had too many pieces. Dashed lines often mark mat, footing or "
+        "below-grade edges that extend past the walls: compare with the callouts "
+        'and pass boundary_kinds ["dashed"] so only dashed lines (dash '
+        "patterns, exploded dashes and their corner arcs) form edges; gaps up "
+        "to the pattern's own gap (at most 18 pt) are bridged without closing "
+        "segments (dash_bridge_count). A seeded region reports dashed_outline "
+        "when the seed sits inside a closed dashed outline that the region does "
+        "not follow, and open_gaps (end points and length, leak_risk true) when "
+        "it runs through an opening up to 72 in that it did not close, such as a "
+        "gap wider than max_gap_in that merges two areas; in propose_element each "
+        "becomes an assumption that blocks Accept until the user confirms. For a "
+        "pit inside a slab, "
+        "propose the slab with the pit as holes_ost.",
         _schema(
             {
                 "page_uid": _PAGE_UID,
@@ -323,6 +335,15 @@ TOOLS = (
                     "minimum": 1,
                     "maximum": MAX_REGIONS_PER_PAGE,
                 },
+                "boundary_kinds": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["wall", "dashed", "thin"]},
+                    "minItems": 1,
+                    "description": "Only these line kinds form region edges; "
+                    "exclude_dashed and the suggested width are not applied. "
+                    '["dashed"] follows the closed dashed outline around the '
+                    "seed.",
+                },
             },
             ("page_uid", "bbox_pts"),
         ),
@@ -334,10 +355,12 @@ TOOLS = (
         "closed gaps become closing-segment assumptions. Region outlines and "
         "holes are simplified (0.25 in tolerance, area kept within 0.1%); "
         "geometry reports vertex counts, area_change_pct and holes_dropped "
-        "(holes crossing the outline, recorded as an assumption). "
-        + CHANGESET_NOTE
-        + " "
-        + UNTRUSTED_NOTE,
+        "(holes crossing the outline, recorded as an assumption). A region with "
+        "open_gaps or an ignored dashed_outline gets a high-impact assumption "
+        "for each, so the user confirms it before Accept. Dashed lines often "
+        "mark mat, footing or below-grade edges: compare them with the "
+        "callouts before choosing the outline, and give pits inside a slab as "
+        "holes_ost. " + CHANGESET_NOTE + " " + UNTRUSTED_NOTE,
         _schema(
             {
                 "kind": {"type": "string", "enum": ["slab"]},

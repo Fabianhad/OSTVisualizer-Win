@@ -112,6 +112,7 @@ F2_OUTER = [
 ]
 F2_HOLE = [(150.0, 250.0), (225.0, 250.0), (225.0, 310.0), (150.0, 310.0)]
 F3_GAP_PTS = 6.0 / OST_PER_POINT
+F4_GAP_PTS = 39.0 / OST_PER_POINT
 
 
 class GoldenFixture:
@@ -128,8 +129,10 @@ class GoldenFixture:
         overrides,
         polygon_tol_in,
         quantity_tol_pct,
+        find_arguments=None,
     ):
         self.name = name
+        self.find_arguments = find_arguments or {}
         self.lines = lines
         self.outer = outer
         self.holes = holes
@@ -191,6 +194,21 @@ F3 = GoldenFixture(
     {"thickness": "6"},
     1.0,
     0.5,
+)
+F4 = GoldenFixture(
+    "F4",
+    _ring_lines(F1_OUTER)
+    + [(280.0, 200.0, 280.0, 300.0), (280.0, 300.0 + F4_GAP_PTS, 280.0, 470.0)],
+    F1_OUTER,
+    [],
+    (200.0, 792.0 - 335.0),
+    36.0,
+    8.0,
+    1200.0,
+    {"other": None},
+    0.5,
+    0.1,
+    {"boundary_kinds": ["wall", "thin"]},
 )
 
 
@@ -322,6 +340,7 @@ class M1bGoldenEndToEndTests(unittest.TestCase):
                     "bbox_pts": [80.0, 792.0 - 490.0, 480.0, 792.0 - 180.0],
                     "gap_close_in": fixture.gap_close_in,
                     "seed_pts": list(fixture.seed),
+                    **fixture.find_arguments,
                 },
             )
             self.assertTrue(regions["success"], regions)
@@ -370,11 +389,13 @@ class M1bGoldenEndToEndTests(unittest.TestCase):
             self.assertIsNotNone(dialog)
             self.assertEqual(dialog.accept_button.isEnabled(), not fixture.overrides)
             for row, item in enumerate(proposed["data"]["assumptions"]):
-                if item["subject"] in fixture.overrides:
+                if fixture.overrides.get(item["subject"]):
                     dialog.override_edit(row).setText(
                         fixture.overrides[item["subject"]]
                     )
                     dialog.override_button(row).click()
+                elif item["subject"] in fixture.overrides:
+                    dialog.accept_assumption_button(row).click()
             self.assertTrue(dialog.accept_button.isEnabled())
             dialog.accept_button.click()
             self.app.processEvents()
@@ -428,7 +449,10 @@ class M1bGoldenEndToEndTests(unittest.TestCase):
                 self.assertEqual(assumptions["data"]["sidecar_status"], "ok")
                 self.assertTrue(
                     {item["status"] for item in assumptions["data"]["assumptions"]}
-                    >= {"overridden"}
+                    >= {
+                        "overridden" if value else "accepted"
+                        for value in fixture.overrides.values()
+                    }
                 )
             undone = self.call("undo_last_ai_changeset", {"changeset_id": changeset_id})
             self.assertEqual(
@@ -465,6 +489,11 @@ class M1bGoldenEndToEndTests(unittest.TestCase):
         if self.skip_body:
             return
         self.run_fixture(F3)
+
+    def test_f4_two_rooms_joined_by_an_open_gap_need_confirmation(self):
+        if self.skip_body:
+            return
+        self.run_fixture(F4)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from .ai_linework import SegmentGrid, is_symbol_box
 
 MAX_REGION_SEGMENTS = 20000
+OPENING_ANGLE_DEG = 15.0
+OPENING_NECK_RATIO = 3.0
 Point = Tuple[float, float]
 Ring = Tuple[Point, ...]
 Box = Tuple[float, float, float, float]
@@ -88,6 +90,15 @@ class _VertexIndex:
         vertex = len(self.points) - 1
         self._cells[(cx, cy)].append(vertex)
         return vertex
+
+    def find(self, point: Point) -> Optional[int]:
+        cx, cy = self._cell(point)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for vertex in self._cells.get((cx + dx, cy + dy), ()):
+                    if math.dist(self.points[vertex], point) <= self._tolerance:
+                        return vertex
+        return None
 
 
 def _segment_point_parameter(a: Point, b: Point, p: Point) -> Tuple[float, float]:
@@ -465,6 +476,200 @@ def find_planar_regions_report(
     return PlanarRegionReport(
         tuple(regions), tuple(suppressed[key] for key in sorted(suppressed))
     )
+
+
+def opening_candidates(
+    segments: Sequence[Tuple[float, float, float, float]],
+    snap_tol: float,
+    min_length: float,
+    max_length: float,
+    ring: Sequence[Point] = (),
+) -> List[Tuple[float, float, float, float]]:
+    clean = _finite_pairs(segments)
+    tolerance = max(float(snap_tol), 1e-6)
+    index = _VertexIndex(tolerance)
+    edges, _given = _split_segments(clean, index, tolerance)
+    points = index.points
+    neighbours = _adjacency(edges)
+    edge_list = sorted(edges)
+    grid = SegmentGrid([points[u] + points[v] for u, v in edge_list])
+    cosine = math.cos(math.radians(OPENING_ANGLE_DEG))
+    found: Dict[Tuple[int, int], Tuple[Point, Point]] = {}
+    unbounded = (-math.inf, -math.inf, math.inf, math.inf)
+    left, top, right, bottom = _ring_box(ring) if ring else unbounded
+    chain_ends = {
+        vertex: _chain_end(neighbours, vertex)
+        for vertex, near in neighbours.items()
+        if len(near) == 1
+    }
+    outward = {
+        vertex: _unit(points[next(iter(neighbours[vertex]))], points[vertex])
+        for vertex in chain_ends
+    }
+    attached = _NearVertices(
+        points,
+        [vertex for vertex, end in chain_ends.items() if end is None],
+        max_length,
+    )
+
+    def facing(vertex: int, other: int) -> bool:
+        distance = math.dist(points[vertex], points[other])
+        chord = (
+            points[other][0] - points[vertex][0],
+            points[other][1] - points[vertex][1],
+        )
+        return (
+            min_length < distance <= max_length
+            and _dot(outward[vertex], chord) >= cosine * distance
+            and -_dot(outward[other], chord) >= cosine * distance
+        )
+
+    for vertex in sorted(chain_ends):
+        point = points[vertex]
+        if not (
+            left - tolerance <= point[0] <= right + tolerance
+            and top - tolerance <= point[1] <= bottom + tolerance
+        ):
+            continue
+        end = chain_ends[vertex]
+        best = min(
+            (
+                (math.dist(point, points[other]), points[other])
+                for other in ([end] if end is not None else attached.near(point))
+                if facing(vertex, other)
+            ),
+            default=None,
+        )
+        if best is None and end is None:
+            best = _facing_foot(
+                point, outward[vertex], grid, min_length, max_length, cosine
+            )
+        if best is not None:
+            _keep_opening(found, point, best[1], grid, tolerance)
+    jambs = [index.find(point) for point in ring]
+    along = [0.0]
+    for position, point in enumerate(ring):
+        along.append(along[-1] + math.dist(point, ring[(position + 1) % len(ring)]))
+
+    def jamb_pair(position: int, other_position: int) -> bool:
+        vertex = jambs[position]
+        other = jambs[other_position]
+        distance = math.dist(points[vertex], points[other])
+        path = abs(along[other_position] - along[position])
+        if (
+            not min_length < distance <= max_length
+            or min(path, along[-1] - path) < OPENING_NECK_RATIO * distance
+        ):
+            return False
+        chord = _unit(points[vertex], points[other])
+        middle = (
+            (points[vertex][0] + points[other][0]) / 2.0,
+            (points[vertex][1] + points[other][1]) / 2.0,
+        )
+        return (
+            _continues(points, neighbours, vertex, chord, cosine)
+            and _continues(points, neighbours, other, (-chord[0], -chord[1]), cosine)
+            and grid.distance(middle, tolerance) > tolerance
+            and point_in_ring(middle, ring)
+        )
+
+    corners = [position for position, vertex in enumerate(jambs) if vertex is not None]
+    near_corners = _NearVertices(list(ring), corners, max_length)
+    for position in corners:
+        start = points[jambs[position]]
+        best = min(
+            (
+                (math.dist(start, points[jambs[other]]), points[jambs[other]])
+                for other in near_corners.near(ring[position])
+                if jamb_pair(position, other)
+            ),
+            default=None,
+        )
+        if best is not None:
+            _keep_opening(found, start, best[1], grid, tolerance)
+    return [first + second for first, second in found.values()]
+
+
+def _unit(start: Point, end: Point) -> Point:
+    length = math.dist(start, end)
+    return ((end[0] - start[0]) / length, (end[1] - start[1]) / length)
+
+
+def _dot(first: Point, second: Point) -> float:
+    return first[0] * second[0] + first[1] * second[1]
+
+
+def _chain_end(neighbours: Dict[int, Set[int]], vertex: int) -> Optional[int]:
+    previous, current = vertex, next(iter(neighbours[vertex]))
+    while len(neighbours[current]) == 2:
+        previous, current = current, next(
+            other for other in neighbours[current] if other != previous
+        )
+    return current if len(neighbours[current]) == 1 else None
+
+
+def _continues(
+    points: List[Point],
+    neighbours: Dict[int, Set[int]],
+    vertex: int,
+    chord: Point,
+    cosine: float,
+) -> bool:
+    return any(
+        _dot(_unit(points[near], points[vertex]), chord) >= cosine
+        for near in neighbours[vertex]
+    )
+
+
+def _facing_foot(
+    point: Point,
+    outward: Point,
+    grid: SegmentGrid,
+    min_length: float,
+    max_length: float,
+    cosine: float,
+) -> Optional[Tuple[float, Point]]:
+    x, y = point
+    feet = []
+    for position in grid.query(
+        x - max_length, y - max_length, x + max_length, y + max_length
+    ):
+        x1, y1, x2, y2 = grid.segment(position)
+        t, distance = _segment_point_parameter((x1, y1), (x2, y2), point)
+        foot = (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+        if (
+            min_length < distance <= max_length
+            and _dot(outward, (foot[0] - x, foot[1] - y)) >= cosine * distance
+        ):
+            feet.append((distance, foot))
+    return min(feet, default=None)
+
+
+def _keep_opening(
+    found: Dict[Tuple[int, int], Tuple[Point, Point]],
+    first: Point,
+    second: Point,
+    grid: SegmentGrid,
+    tolerance: float,
+) -> None:
+    length = math.dist(first, second)
+    margin = tolerance / length
+    for position in grid.query(
+        min(first[0], second[0]),
+        min(first[1], second[1]),
+        max(first[0], second[0]),
+        max(first[1], second[1]),
+    ):
+        x1, y1, x2, y2 = grid.segment(position)
+        hit = _intersection(first, second, (x1, y1), (x2, y2))
+        if hit is not None and margin < hit[0] < 1.0 - margin:
+            return
+    key = tuple(sorted((_grid_key(first, tolerance), _grid_key(second, tolerance))))
+    found.setdefault(key, (first, second))
+
+
+def _grid_key(point: Point, tolerance: float) -> Tuple[int, int]:
+    return (int(round(point[0] / tolerance)), int(round(point[1] / tolerance)))
 
 
 def _ring_box(ring: Sequence[Point]) -> Box:

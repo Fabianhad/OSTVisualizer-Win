@@ -9,10 +9,12 @@ from ost_visualizer.domain.services.ai_planar_regions import (
     PlanarRegionReport,
     RegionGap,
     RegionTooComplex,
+    _VertexIndex,
     _candidate_pairs,
     _ring_inside,
     find_planar_regions,
     find_planar_regions_report,
+    opening_candidates,
     point_in_ring,
     ring_area,
 )
@@ -667,6 +669,186 @@ class PlanarScaleTests(unittest.TestCase):
         floor = _smallest_containing(regions, (10, 10))
         self.assertEqual(len(floor.holes), 1600)
         self.assertLess(elapsed, 15.0)
+
+
+def _openings(segments, min_length=1.0, max_length=50.0, ring=()):
+    return sorted(
+        tuple(sorted(((x1, y1), (x2, y2))))
+        for x1, y1, x2, y2 in opening_candidates(
+            segments, 0.5, min_length, max_length, ring
+        )
+    )
+
+
+def _two_rooms(gap_top=30.0, gap_bottom=60.0):
+    return _rect(0, 0, 200, 100) + [(100, 0, 100, gap_top), (100, gap_bottom, 100, 100)]
+
+
+def _capped_rooms():
+    return (
+        _rect(0, 0, 200, 100)
+        + _polyline([(92, 0), (92, 30), (108, 30), (108, 0)])
+        + _polyline([(92, 100), (92, 60), (108, 60), (108, 100)])
+    )
+
+
+class OpeningCandidateTests(unittest.TestCase):
+    def test_facing_wall_ends_across_a_gap_are_an_opening(self):
+        self.assertEqual(_openings(_two_rooms()), [((100.0, 30.0), (100.0, 60.0))])
+
+    def test_openings_stay_within_the_length_limits(self):
+        self.assertEqual(_openings(_two_rooms(), max_length=29.0), [])
+        self.assertEqual(_openings(_two_rooms(), min_length=30.0), [])
+        self.assertEqual(
+            _openings(_two_rooms(), min_length=29.0, max_length=30.0),
+            [((100.0, 30.0), (100.0, 60.0))],
+        )
+
+    def test_a_wall_end_facing_another_wall_gets_its_foot(self):
+        segments = _rect(0, 0, 200, 100) + [(100, 0, 100, 60)]
+        self.assertEqual(_openings(segments), [((100.0, 60.0), (100.0, 100.0))])
+        self.assertEqual(_openings(segments, max_length=39.0), [])
+
+    def test_a_wall_end_must_point_at_the_opening(self):
+        segments = _rect(0, 0, 200, 100) + _polyline([(100, 0), (100, 60), (130, 60)])
+        self.assertEqual(_openings(segments, max_length=30.0), [])
+        segments = _rect(0, 0, 200, 100) + _polyline([(100, 0), (100, 60), (110, 70)])
+        self.assertEqual(_openings(segments), [])
+
+    def test_loose_dashes_never_pair_but_an_open_outline_closes_on_itself(self):
+        dashes = [(x, 50.0, x + 6.0, 50.0) for x in (10.0, 19.0, 28.0)]
+        self.assertEqual(_openings(dashes), [])
+        outline = _polyline([(40, 0), (0, 0), (0, 80), (80, 80), (80, 0), (60, 0)])
+        self.assertEqual(_openings(outline), [((40.0, 0.0), (60.0, 0.0))])
+        self.assertEqual(
+            _openings(outline + [(140.0, 0.0, 150.0, 0.0)], max_length=100.0),
+            [((40.0, 0.0), (60.0, 0.0))],
+        )
+
+    def test_an_opening_across_a_drawn_line_is_left_out(self):
+        crossing = _two_rooms() + [(90.0, 45.0, 110.0, 45.0)]
+        self.assertEqual(_openings(crossing), [])
+
+    def test_capped_jambs_on_the_region_ring_are_an_opening(self):
+        segments = _capped_rooms()
+        merged = _smallest_containing(find_planar_regions(segments, 0.5, 0.0), (50, 50))
+        self.assertAlmostEqual(abs(ring_area(merged.outer)), 200 * 100 - 16 * 70)
+        self.assertEqual(_openings(segments), [])
+        self.assertEqual(
+            _openings(segments, ring=merged.outer),
+            [((92.0, 30.0), (92.0, 60.0)), ((108.0, 30.0), (108.0, 60.0))],
+        )
+        self.assertEqual(_openings(segments, max_length=29.0, ring=merged.outer), [])
+
+    def test_wall_ends_outside_the_region_box_are_ignored(self):
+        segments = _two_rooms()
+        self.assertEqual(
+            _openings(segments, ring=((120, 10), (190, 10), (190, 90), (120, 90))), []
+        )
+        self.assertEqual(
+            _openings(segments, ring=((10, 10), (100.4, 10), (100.4, 90), (10, 90))),
+            [((100.0, 30.0), (100.0, 60.0))],
+        )
+
+    def test_an_l_shaped_room_and_its_straight_walls_have_no_opening(self):
+        ring = ((100, 100), (300, 100), (300, 150), (150, 150), (150, 300), (100, 300))
+        segments = _polyline(list(ring) + [ring[0]]) + [(300, 125, 260, 125)]
+        self.assertEqual(_openings(segments, max_length=60.0, ring=ring), [])
+
+    def test_both_wall_ends_must_face_each_other(self):
+        segments = _rect(0, 0, 200, 100) + [(100, 0, 100, 60), (200, 55, 130, 55)]
+        self.assertEqual(
+            _openings(segments, max_length=35.0), [((100.0, 55.0), (130.0, 55.0))]
+        )
+
+    def test_the_nearest_facing_wall_end_is_chosen(self):
+        segments = _rect(0, 0, 200, 100) + [
+            (100, 0, 100, 30),
+            (100, 100, 100, 60),
+            (102, 100, 102, 90),
+            (102, 0, 102, 75),
+        ]
+        self.assertEqual(
+            _openings(segments, max_length=70.0),
+            [((100.0, 30.0), (100.0, 60.0)), ((102.0, 75.0), (102.0, 90.0))],
+        )
+
+    def test_the_nearest_foot_is_chosen(self):
+        segments = _rect(0, 0, 200, 100) + [(100, 0, 100, 40), (90, 70, 110, 70)]
+        self.assertEqual(
+            _openings(segments, max_length=70.0), [((100.0, 40.0), (100.0, 70.0))]
+        )
+
+    def test_a_loose_piece_is_never_an_opening_end(self):
+        segments = _two_rooms() + [(100.0, 45.0, 100.0, 50.0)]
+        self.assertEqual(_openings(segments), [((100.0, 30.0), (100.0, 60.0))])
+
+    def test_a_jamb_pair_must_continue_a_wall_at_both_ends(self):
+        segments = (
+            _rect(0, 0, 200, 100)
+            + _polyline([(92, 0), (92, 30), (108, 30), (108, 0)])
+            + _polyline([(70, 100), (92, 60), (108, 60), (108, 100)])
+        )
+        merged = _smallest_containing(find_planar_regions(segments, 0.5, 0.0), (50, 50))
+        self.assertEqual(
+            _openings(segments, ring=merged.outer), [((108.0, 30.0), (108.0, 60.0))]
+        )
+
+    def test_a_line_drawn_across_the_opening_keeps_it_closed(self):
+        segments = _capped_rooms() + [(92.0, 32.0, 92.0, 58.0)]
+        merged = _smallest_containing(find_planar_regions(segments, 0.5, 0.0), (50, 50))
+        self.assertEqual(
+            _openings(segments, ring=merged.outer), [((108.0, 30.0), (108.0, 60.0))]
+        )
+
+    def test_a_chord_outside_the_region_is_not_an_opening(self):
+        ring = (
+            (0, 0),
+            (50, 0),
+            (50, 15),
+            (60, 15),
+            (60, 0),
+            (200, 0),
+            (200, 100),
+            (0, 100),
+        )
+        segments = _polyline(list(ring) + [ring[0]])
+        self.assertEqual(_openings(segments, ring=ring), [])
+        alcove = (
+            (0, 0),
+            (50, 0),
+            (50, -15),
+            (60, -15),
+            (60, 0),
+            (200, 0),
+            (200, 100),
+            (0, 100),
+        )
+        segments = _polyline(list(alcove) + [alcove[0]])
+        self.assertEqual(_openings(segments, ring=alcove), [((50.0, 0.0), (60.0, 0.0))])
+
+    def test_points_along_a_curve_are_not_an_opening(self):
+        ring = tuple(
+            (
+                200 + 100 * math.cos(2 * math.pi * i / 400),
+                200 + 100 * math.sin(2 * math.pi * i / 400),
+            )
+            for i in range(400)
+        )
+        segments = _polyline(list(ring) + [ring[0]])
+        self.assertEqual(_openings(segments, max_length=60.0, ring=ring), [])
+
+    def test_ring_points_that_are_not_drawn_vertices_are_skipped(self):
+        self.assertEqual(
+            _openings(_rect(0, 0, 50, 50), ring=((10, 10), (40, 10), (40, 40))), []
+        )
+
+    def test_the_vertex_index_finds_only_points_within_its_tolerance(self):
+        index = _VertexIndex(0.5)
+        vertex = index.add((10.0, 10.0))
+        self.assertEqual(index.find((10.3, 10.3)), vertex)
+        self.assertIsNone(index.find((10.4, 10.4)))
+        self.assertIsNone(index.find((50.0, 50.0)))
 
 
 if __name__ == "__main__":

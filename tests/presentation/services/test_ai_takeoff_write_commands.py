@@ -431,6 +431,7 @@ class WriteCommandBridgeTests(BridgeTestCase):
             "symbol_max_pts": 30.0,
             "cursor": "c:2",
             "limit": 5,
+            "boundary_kinds": ["dashed"],
         }
         self.assertTrue(
             self.call(

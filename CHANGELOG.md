@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Mat and footing outlines, and no silent merges, in AI takeoff.**
+  `find_regions` can follow dashed outlines (`boundary_kinds` `["dashed"]`), such
+  as mats and footings that reach past the pit walls: dashes drawn as separate
+  pieces are found even inside a hatch, rounded corners are kept, and the
+  pattern's own gaps are bridged without closing-segment assumptions, while a
+  longer gap is listed with its end points. A seeded region now reports a
+  closed dashed outline around the seed that it does not follow, and any
+  opening of up to 72 in that it runs through without closing it (for example
+  a gap wider than `max_gap_in` joining two slab areas); each becomes a
+  high-impact assumption, so the slab cannot be accepted until you confirm it.
 - **Sheet numbers, scales and cleaner slabs for AI takeoff.** `list_sheets`
   can now report each sheet's number from the title block or a SHEET NO
   label (no more S0 false hits, consistent across a set), every scale label

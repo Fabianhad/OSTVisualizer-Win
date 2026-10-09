@@ -421,6 +421,18 @@ Without `min_width`, `find_regions` usually keeps only the page's wall-weight li
 `min_width` 0 to keep every line. Very busy sheets are read again inside the
 box you give, and the result says when even the box had too many lines.
 
+Dashed lines often mark mat, footing or below-grade edges that reach past the
+walls. With `boundary_kinds` `["dashed"]`, a seed inside such an outline returns
+the outline itself, rounded corners included: dashes drawn as separate pieces
+are recognised even inside a hatch, and the gaps of the dash pattern are
+bridged without being counted as closed openings. A gap longer than the
+pattern's own gap is not bridged and is listed with its end points. A normal
+seeded call that ignores a closed dashed outline around the seed says so
+(`dashed_outline`), and a region that runs through an opening it did not close
+(up to 72 in, for example a 39 in gap between two slab areas) lists it under
+`open_gaps`. Either one becomes a high-impact assumption, so Accept stays off
+until you confirm it. Pits inside a slab are best proposed as holes in the slab.
+
 `list_sheets` with `text_hints` true also reports each sheet's number, every
 scale label with the view it belongs to, and a plan scale only when the plan
 views agree. Scanned pages and pages whose text is drawn as outlines say so
@@ -433,7 +445,8 @@ When the AI asks to apply a changeset, a review window opens in the app. It
 shows the outlines on the plan, the added area and volume, and every
 assumption the AI made, such as a missing slab thickness or a gap it closed.
 Accept stays off until you accept or override each high-impact assumption
-(scale, thickness, top elevation, or a closing segment over 12 in). Accepting
+(scale, thickness, top elevation, a closing segment over 12 in, an opening the
+region runs through, or an ignored dashed outline). Accepting
 writes the change as one step: new slab conditions go in a folder named
 `AI <date> <time>` on the layer selected in Layers (or Default), with the top
 elevation in the `@T` name suffix. **Edit > Undo** or the AI's

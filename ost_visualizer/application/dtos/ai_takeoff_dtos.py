@@ -81,6 +81,7 @@ M1B_COMMAND_ARGUMENTS = {
             "symbol_max_pts",
             "cursor",
             "limit",
+            "boundary_kinds",
         }
     ),
     COMMAND_PROPOSE_ELEMENT: frozenset(

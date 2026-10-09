@@ -159,7 +159,7 @@ def _direction(segment: LineSegment) -> Tuple[float, float]:
     return (segment.x2 - segment.x1) / length, (segment.y2 - segment.y1) / length
 
 
-def _collinear_gap(first: LineSegment, second: LineSegment) -> Optional[float]:
+def collinear_gap(first: LineSegment, second: LineSegment) -> Optional[float]:
     ux, uy = _direction(first)
     vx, vy = _direction(second)
     if abs(ux * vy - uy * vx) > math.sin(math.radians(DASH_ANGLE_TOLERANCE_DEG)):
@@ -223,7 +223,7 @@ def _exploded_dashes(segments: Sequence[LineSegment]) -> set:
         for other in grid.query(left, top, right, bottom):
             if other <= position:
                 continue
-            gap = _collinear_gap(segment, segments[candidates[other]])
+            gap = collinear_gap(segment, segments[candidates[other]])
             if gap is None or gap > DASH_GAP_MAX_PTS + 1e-9:
                 continue
             if gap < DASH_GAP_MIN_PTS:

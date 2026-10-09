@@ -105,6 +105,7 @@ class AiTakeoffWriteCommands:
             symbol_max_pts=arguments.get("symbol_max_pts"),
             cursor=arguments.get("cursor"),
             limit=arguments.get("limit"),
+            boundary_kinds=arguments.get("boundary_kinds"),
         )
 
     def _propose_element(self, arguments: dict) -> Callable[[], dict]:

@@ -2,6 +2,7 @@ import dataclasses
 import math
 import unittest
 from dataclasses import replace
+from unittest import mock
 from ost_visualizer.application.dtos.ai_changeset_write_dtos import AppliedChangeset
 from ost_visualizer.application.dtos.ai_takeoff_dtos import (
     AiTakeoffRequestError,
@@ -17,7 +18,10 @@ from ost_visualizer.application.services.ai_changeset_store import (
     AiChangesetProposals,
     AiChangesetStore,
 )
+from ost_visualizer.application.services import ai_takeoff_proposal_service as module
 from ost_visualizer.application.services.ai_takeoff_proposal_service import (
+    DASHED_MATCH_SHARE,
+    LEAK_GAP_MAX_IN,
     MAX_CACHED_REGIONS,
     MAX_GAP_CLOSE_IN,
     MAX_REGIONS_RETURNED,
@@ -27,6 +31,9 @@ from ost_visualizer.application.services.ai_takeoff_proposal_service import (
     _sealed_openings,
 )
 from ost_visualizer.domain.entities.ai_changeset import (
+    ERROR_ASSUMPTION_UNRESOLVED,
+    STATUS_APPLYING,
+    ChangesetError,
     ASSUMPTION_ACCEPTED,
     IMPACT_HIGH,
     IMPACT_NORMAL,
@@ -43,10 +50,12 @@ from ost_visualizer.domain.entities.ai_changeset import (
     apply_block_for,
     apply_blocked_reason,
 )
+from ost_visualizer.domain.services.ai_planar_regions import RegionTooComplex
 from tests.application.services.test_ai_takeoff_read_service import (
     ACCESS_PATH,
     ServiceTestCase,
 )
+from tests.helpers import ai_mat_outline as mat
 
 PRESETS = [
     (0.125, 12.0, '1/8" = 1\' 0"'),
@@ -1241,6 +1250,7 @@ class FindRegionFilterTests(ProposalTestCase):
                 "min_area_sf": 0.0,
                 "symbol_max_pts": 48.0,
                 "min_width_source": "none",
+                "boundary_kinds": None,
             },
         )
         self.assertEqual(
@@ -1261,6 +1271,7 @@ class FindRegionFilterTests(ProposalTestCase):
                 "min_area_sf": 3.0,
                 "symbol_max_pts": 10.0,
                 "min_width_source": "given",
+                "boundary_kinds": None,
             },
         )
 
@@ -1982,6 +1993,469 @@ class ChangesetToolArgumentTests(ProposalTestCase):
         self.assertEqual(
             self.service_m1b.apply_changeset(rejected)["status"], "rejected"
         )
+
+
+OUTLINE_STYLE = PdfPathStyleDto(mat.OUTLINE_WIDTH, (), 0x000000FF, 0, True, False)
+RED_OUTLINE_STYLE = PdfPathStyleDto(mat.OUTLINE_WIDTH, (), 0xFF0000FF, 0, True, False)
+MAT_BOX = [80, 80, 210, 290]
+ROOM_BOX = [50, 50, 550, 350]
+GAP_PTS = 39.0 / K
+
+
+def _sf(area_pts):
+    return area_pts * K * K / 144.0
+
+
+def _mat_page(skip_on_top=(), style=OUTLINE_STYLE):
+    dashes, arcs = mat.outline_segments(skip_on_top=skip_on_top)
+    return [_styled(*segment, style=style) for segment in dashes + arcs] + [
+        _styled(*segment) for segment in mat.wall_segments()
+    ]
+
+
+def _two_rooms(gap=GAP_PTS):
+    return [
+        _styled(*segment) for segment in mat.rect_segments((100, 100, 500, 300))
+    ] + [
+        _styled(300, 100, 300, 150),
+        _styled(300, 150 + gap, 300, 300),
+    ]
+
+
+def _diagonal_edges(polygon):
+    points = list(zip(polygon[0::2], polygon[1::2]))
+    return [
+        (a, b)
+        for a, b in zip(points, points[1:] + points[:1])
+        if abs(a[0] - b[0]) > 1e-6 and abs(a[1] - b[1]) > 1e-6
+    ]
+
+
+class DashedBoundaryTests(ProposalTestCase):
+    def find(self, bbox=MAT_BOX, seed=mat.SEED, **kwargs):
+        return self.service_m1b.find_regions(
+            self.snapshot(), bbox, seed_pts=list(seed), **kwargs
+        )
+
+    def propose(self, region_id):
+        return self.service_m1b.propose_element(
+            "slab", "p1", region_id=region_id, thickness_in=30.0, top_elev_in=0.0
+        )["data"]
+
+    def test_boundary_kinds_must_be_a_list_of_known_kinds(self):
+        self.pdf.segments = _mat_page()
+        for bad in (["symbol"], [], "dashed", ("dashed",), [3], ["dashed", "hidden"]):
+            self.assert_error(
+                "invalid_argument", lambda bad=bad: self.find(boundary_kinds=bad)
+            )
+        filters = self.find(boundary_kinds=["dashed", "wall", "dashed"])["data"][
+            "filters"
+        ]
+        self.assertEqual(filters["boundary_kinds"], ["wall", "dashed"])
+        self.assertEqual(filters["min_width_source"], "none")
+        self.assertIsNone(filters["min_width"])
+
+    def test_the_suggested_width_is_not_applied_to_boundary_kinds(self):
+        walls = [_styled(400, 300 + i * 5, 450, 300 + i * 5) for i in range(25)]
+        thin = [
+            _styled(400, 450 + i * 5, 450, 450 + i * 5, style=THIN_STYLE)
+            for i in range(25)
+        ]
+        self.pdf.segments = _mat_page() + walls + thin
+        default = self.find()["data"]["filters"]
+        self.assertEqual(
+            (default["min_width"], default["min_width_source"]), (2.0, "suggested")
+        )
+        filters = self.find(boundary_kinds=["dashed"])["data"]["filters"]
+        self.assertEqual(
+            (filters["min_width"], filters["min_width_source"]), (None, "none")
+        )
+
+    def test_the_default_call_is_unchanged_and_reports_the_ignored_outline(self):
+        self.pdf.segments = _mat_page()
+        data = self.find()["data"]
+        self.assertIsNone(data["filters"]["boundary_kinds"])
+        self.assertNotIn("kind", data["excluded"])
+        self.assertEqual(data["dash_bridge_count"], 0)
+        (region,) = data["regions"]
+        self.assertEqual(region["method"], "vector")
+        self.assertAlmostEqual(region["area_sf"], _sf(mat.wall_face_area()), delta=1e-3)
+        self.assertFalse(region["leak_risk"])
+        self.assertEqual(region["open_gaps"], [])
+        self.assertAlmostEqual(
+            region["dashed_outline"]["area_sf"],
+            _sf(mat.outline_area()),
+            delta=_sf(mat.outline_area()) * 0.005,
+        )
+        proposed = self.propose(region["id"])
+        (ignored,) = proposed["assumptions"]
+        self.assertEqual(
+            (ignored["subject"], ignored["impact"], ignored["value"]["value"]),
+            ("other", IMPACT_HIGH, "dashed outline ignored"),
+        )
+        self.assertIn("mat, footing or below-grade", ignored["reason"]["value"])
+        self.assertIn(
+            f"{region['dashed_outline']['area_sf']:.1f} SF", ignored["reason"]["value"]
+        )
+        self.assertEqual(proposed["blocking_assumption_ids"], [ignored["id"]])
+
+    def test_a_seed_inside_the_dashed_outline_returns_it_with_rounded_corners(self):
+        self.pdf.segments = _mat_page()
+        data = self.find(boundary_kinds=["dashed"])["data"]
+        (region,) = data["regions"]
+        expected = _sf(mat.outline_area())
+        self.assertAlmostEqual(region["area_sf"], expected, delta=expected * 0.005)
+        self.assertEqual(region["method"], "vector")
+        self.assertEqual((region["gaps"], region["open_gaps"]), ([], []))
+        self.assertFalse(region["leak_risk"])
+        self.assertIsNone(region["dashed_outline"])
+        self.assertGreaterEqual(
+            len(_diagonal_edges(region["polygon_ost"])), 4 * mat.CORNER_PIECES
+        )
+        self.assertGreater(data["dash_bridge_count"], 0)
+        self.assertEqual(data["excluded"]["kind"], len(mat.wall_segments()))
+        self.assertEqual(data["excluded"]["dashed"], 0)
+        self.assertEqual(self.propose(region["id"])["assumptions"], [])
+
+    def test_a_crossing_dashed_line_does_not_cut_the_outline(self):
+        self.pdf.segments = _mat_page() + [
+            _styled(x, 180, x + 6, 180, style=OUTLINE_STYLE) for x in range(60, 230, 9)
+        ]
+        (region,) = self.find(boundary_kinds=["dashed"], bbox=[50, 80, 240, 290])[
+            "data"
+        ]["regions"]
+        expected = _sf(mat.outline_area())
+        self.assertAlmostEqual(region["area_sf"], expected, delta=expected * 0.005)
+
+    def test_a_dashed_line_joined_to_the_outline_does_not_cut_it(self):
+        crossing = mat.dash_line((100.0, 182.0), (188.44, 182.0), (5.0, 3.0))
+        self.pdf.segments = _mat_page() + [
+            _styled(*segment, style=OUTLINE_STYLE) for segment in crossing
+        ]
+        (region,) = self.find(boundary_kinds=["dashed"])["data"]["regions"]
+        expected = _sf(mat.outline_area())
+        self.assertAlmostEqual(region["area_sf"], expected, delta=expected * 0.005)
+        (default,) = self.find()["data"]["regions"]
+        self.assertAlmostEqual(
+            default["dashed_outline"]["area_sf"], expected, delta=expected * 0.005
+        )
+
+    def test_dashed_corner_curves_stay_in_the_outline(self):
+        dashes, arcs = mat.outline_segments()
+        self.pdf.segments = [
+            _styled(*segment, style=OUTLINE_STYLE) for segment in dashes
+        ] + [_styled(*segment, style=OUTLINE_STYLE, curve=True) for segment in arcs]
+        data = self.find(boundary_kinds=["wall", "dashed"])["data"]
+        (region,) = data["regions"]
+        expected = _sf(mat.outline_area())
+        self.assertAlmostEqual(region["area_sf"], expected, delta=expected * 0.005)
+        self.assertEqual(data["excluded"]["thin_curve"], 0)
+
+    def test_walls_and_dashes_together_follow_the_walls(self):
+        self.pdf.segments = _mat_page()
+        data = self.find(boundary_kinds=["wall", "dashed"])["data"]
+        (region,) = data["regions"]
+        self.assertAlmostEqual(region["area_sf"], _sf(mat.wall_face_area()), delta=1e-3)
+        self.assertIsNotNone(region["dashed_outline"])
+        self.assertGreater(data["dash_bridge_count"], 0)
+        self.assertEqual(data["excluded"]["kind"], 0)
+
+    def test_a_given_width_never_drops_dashed_boundary_pieces(self):
+        self.pdf.segments = _mat_page()
+        (region,) = self.find(boundary_kinds=["dashed"], min_width=1.0)["data"][
+            "regions"
+        ]
+        self.assertAlmostEqual(
+            region["area_sf"],
+            _sf(mat.outline_area()),
+            delta=_sf(mat.outline_area()) * 0.005,
+        )
+        thin = self.find(boundary_kinds=["wall", "thin"], min_width=1.0)["data"]
+        self.assertEqual(thin["excluded"]["kind"], len(_mat_page()) - 8)
+        mixed = self.find(boundary_kinds=["wall", "dashed"], min_width=1.0)["data"]
+        self.assertEqual((mixed["excluded"]["thin"], mixed["excluded"]["kind"]), (0, 0))
+
+    def test_thin_curves_stay_out_of_thin_boundaries(self):
+        swing = [
+            _styled(130, 200, 135, 205, style=THIN_STYLE, curve=True),
+            _styled(135, 205, 140, 212, style=THIN_STYLE, curve=True),
+        ]
+        self.pdf.segments = _mat_page() + swing
+        data = self.find(boundary_kinds=["thin"])["data"]
+        self.assertEqual(data["excluded"]["thin_curve"], 2)
+
+    def test_a_gap_longer_than_the_pattern_gap_is_reported_with_its_end_points(self):
+        self.pdf.segments = _mat_page(skip_on_top=(1,))
+        box = ((80.0, 80.0), (210.0, 80.0), (210.0, 290.0), (80.0, 290.0))
+        self.raster_result = RasterResult(box, True, 4.0)
+        (region,) = self.find(boundary_kinds=["dashed"])["data"]["regions"]
+        self.assertEqual(region["method"], "raster")
+        self.assertTrue(region["leak_risk"])
+        self.assertEqual(region["gaps"], [])
+        (opening,) = region["open_gaps"]
+        left, top = mat.OUTLINE[0] + mat.CORNER_RADIUS, mat.OUTLINE[1]
+        self.assertEqual(
+            sorted([opening["p1_pts"], opening["p2_pts"]]),
+            [[left + 13.44, top], [left + 24.0, top]],
+        )
+        self.assertAlmostEqual(opening["length_in"], 10.56 * K, places=6)
+
+    def test_colors_choose_the_dashed_outline(self):
+        self.pdf.segments = _mat_page(style=RED_OUTLINE_STYLE)
+        self.assertEqual(
+            self.find(boundary_kinds=["dashed"], colors=["#000000"])["data"]["regions"],
+            [],
+        )
+        (region,) = self.find(boundary_kinds=["dashed"], colors=["#ff0000"])["data"][
+            "regions"
+        ]
+        self.assertAlmostEqual(
+            region["area_sf"],
+            _sf(mat.outline_area()),
+            delta=_sf(mat.outline_area()) * 0.005,
+        )
+
+    def test_an_outline_within_half_a_percent_of_the_region_is_not_reported(self):
+        outline = (100.0, 100.0, 300.0, 300.0)
+        square = 200.0 * 200.0
+        found = {}
+        for radius in (10.0, 20.0):
+            dashes, arcs = mat.outline_segments(outline=outline, radius=radius)
+            self.pdf.segments = [
+                _styled(*segment, style=OUTLINE_STYLE) for segment in dashes + arcs
+            ] + [_styled(*segment) for segment in mat.rect_segments(outline)]
+            (region,) = self.find(
+                bbox=[80, 80, 320, 320], seed=(200, 200), min_width=1.0
+            )["data"]["regions"]
+            self.assertAlmostEqual(region["area_sf"], _sf(square), delta=1e-3)
+            found[radius] = region["dashed_outline"]
+            share = (square - mat.outline_area(outline, radius)) / square
+            self.assertEqual(share > DASHED_MATCH_SHARE, radius == 20.0)
+        self.assertIsNone(found[10.0])
+        expected = _sf(mat.outline_area(outline, 20.0))
+        self.assertAlmostEqual(found[20.0]["area_sf"], expected, delta=expected * 0.005)
+
+    def test_huge_dash_gaps_neither_fail_nor_bridge_separate_outlines(self):
+        for gap in (300.0, math.inf):
+            style = PdfPathStyleDto(0.5, (5.0, gap), 0x000000FF, 0, True, False)
+            self.pdf.segments = _styled_rect(
+                100, 100, 200, 200, style=style
+            ) + _styled_rect(240, 100, 340, 200, style=style)
+            (region,) = self.find(
+                bbox=[0, 0, 600, 700], seed=(150, 150), boundary_kinds=["dashed"]
+            )["data"]["regions"]
+            self.assertAlmostEqual(region["area_sf"], _sf(100 * 100), delta=1e-3)
+            self.assertEqual(
+                self.find(bbox=[0, 0, 600, 700], seed=(150, 150))["status"], "empty"
+            )
+
+    def test_a_dashed_outline_too_complex_to_trace_is_skipped(self):
+        self.pdf.segments = _mat_page()
+        real = module.find_planar_regions_report
+
+        def traced(segments, *args, **kwargs):
+            if "symbol_max" not in kwargs:
+                raise RegionTooComplex("too many")
+            return real(segments, *args, **kwargs)
+
+        with mock.patch.object(module, "find_planar_regions_report", traced):
+            (region,) = self.find()["data"]["regions"]
+        self.assertIsNone(region["dashed_outline"])
+
+
+class LeakGuardTests(ProposalTestCase):
+    def find(self, seed=(200, 200), **kwargs):
+        return self.service_m1b.find_regions(
+            self.snapshot(), ROOM_BOX, seed_pts=list(seed), **kwargs
+        )
+
+    def test_two_rooms_joined_by_a_39_in_gap_are_never_silently_merged(self):
+        self.pdf.segments = _two_rooms()
+        for max_gap in (0.0, 36.0, 48.0):
+            (region,) = self.find(max_gap_in=max_gap)["data"]["regions"]
+            self.assertTrue(region["leak_risk"], max_gap)
+            (opening,) = region["open_gaps"]
+            self.assertEqual(
+                sorted([opening["p1_pts"], opening["p2_pts"]]),
+                [[300.0, 150.0], [300.0, 150.0 + GAP_PTS]],
+            )
+            self.assertAlmostEqual(opening["length_in"], 39.0, places=6)
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=4.0, top_elev_in=0.0
+        )["data"]
+        (open_gap,) = data["assumptions"]
+        self.assertEqual(
+            (open_gap["subject"], open_gap["impact"], open_gap["value"]["value"]),
+            ("other", IMPACT_HIGH, "39.00 in opening not closed"),
+        )
+        self.assertIn("(300.0, 150.0) to (300.0, 208.5)", open_gap["reason"]["value"])
+        self.assertEqual(data["blocking_assumption_ids"], [open_gap["id"]])
+
+    def test_an_open_gap_assumption_blocks_approval_until_accepted(self):
+        self.pdf.segments = _two_rooms()
+        (region,) = self.find(max_gap_in=36.0)["data"]["regions"]
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=4.0, top_elev_in=0.0
+        )["data"]
+        changeset_id = data["changeset_id"]
+        (open_gap,) = data["assumptions"]
+        self.assertEqual(
+            self.service_m1b.apply_changeset(changeset_id)["status"],
+            STATUS_PENDING_APPROVAL,
+        )
+        with self.assertRaises(ChangesetError) as refused:
+            self.store.approve(changeset_id)
+        self.assertEqual(refused.exception.code, ERROR_ASSUMPTION_UNRESOLVED)
+        self.store.accept_assumption(changeset_id, open_gap["id"])
+        self.assertEqual(self.store.approve(changeset_id).status, STATUS_APPLYING)
+        self.assertEqual(
+            [item.uid for item in self.store.get(changeset_id).assumptions],
+            [open_gap["id"]],
+        )
+
+    def test_a_closed_room_has_no_open_gaps(self):
+        self.pdf.segments = [
+            _styled(*segment) for segment in mat.rect_segments((100, 100, 300, 300))
+        ]
+        (region,) = self.find()["data"]["regions"]
+        self.assertEqual(region["open_gaps"], [])
+        self.assertFalse(region["leak_risk"])
+
+    def test_openings_wider_than_the_check_are_not_reported(self):
+        self.pdf.segments = _two_rooms(gap=LEAK_GAP_MAX_IN / K + 1.0)
+        (region,) = self.find()["data"]["regions"]
+        self.assertEqual(region["open_gaps"], [])
+        self.pdf.segments = _two_rooms(gap=LEAK_GAP_MAX_IN / K - 1.0)
+        (region,) = self.find()["data"]["regions"]
+        (opening,) = region["open_gaps"]
+        self.assertAlmostEqual(opening["length_in"], LEAK_GAP_MAX_IN - K, places=6)
+
+    def test_only_the_opening_to_a_second_area_is_reported(self):
+        self.pdf.segments = _two_rooms() + [
+            _styled(120, 100, 120, 115),
+            _styled(120, 115, 108, 115),
+        ]
+        (region,) = self.find()["data"]["regions"]
+        (opening,) = region["open_gaps"]
+        self.assertAlmostEqual(opening["length_in"], 39.0, places=6)
+
+    def test_an_opening_the_region_closed_is_not_reported_again(self):
+        self.pdf.segments = [
+            _styled(100, 100, 500, 100),
+            _styled(500, 100, 500, 300),
+            _styled(500, 300, 100, 300),
+            _styled(100, 300, 100, 210),
+            _styled(100, 190, 100, 100),
+            _styled(300, 100, 300, 150),
+            _styled(300, 150 + GAP_PTS, 300, 300),
+        ]
+        (region,) = self.find(max_gap_in=20.0)["data"]["regions"]
+        (door,) = region["gaps"]
+        self.assertAlmostEqual(door["length_in"], 20.0 * K, places=6)
+        (opening,) = region["open_gaps"]
+        self.assertAlmostEqual(opening["length_in"], 39.0, places=6)
+
+    def test_a_raster_region_that_matches_the_room_reports_no_opening(self):
+        ring = ((100.0, 100.0), (300.0, 100.0), (300.0, 300.0), (100.0, 300.0))
+        self.raster_result = RasterResult(ring, False, 4.0)
+        self.pdf.segments = [
+            _styled(100, 100, 170, 100),
+            _styled(170 + GAP_PTS, 100, 300, 100),
+            _styled(300, 100, 300, 300),
+            _styled(300, 300, 100, 300),
+            _styled(100, 300, 100, 100),
+        ]
+        (region,) = self.find()["data"]["regions"]
+        self.assertEqual(region["method"], "raster")
+        self.assertEqual(region["open_gaps"], [])
+
+    def test_open_gaps_keep_the_closures_the_region_was_traced_with(self):
+        segments = [
+            (100.0, 100.0, 500.0, 100.0),
+            (500.0, 100.0, 500.0, 300.0),
+            (500.0, 300.0, 100.0, 300.0),
+            (100.0, 300.0, 100.0, 220.0),
+            (100.0, 180.0, 100.0, 100.0),
+            (300.0, 100.0, 300.0, 150.0),
+            (300.0, 150.0 + GAP_PTS, 300.0, 300.0),
+        ]
+        closure = (100.0, 180.0, 100.0, 220.0)
+        report = module._planar(segments, 0.0, 48.0, [closure])
+        region = module._smallest_containing(report.regions, (200.0, 200.0))
+        choice = module._SeedChoice(report, region=region, closures=(closure,))
+        (opening,) = module._open_gaps(
+            segments, choice, (200.0, 200.0), region.outer, K, 48.0
+        )
+        self.assertEqual(
+            sorted([opening.p1, opening.p2]), [(300.0, 150.0), (300.0, 150.0 + GAP_PTS)]
+        )
+
+    def test_a_capped_double_wall_opening_is_reported(self):
+        self.pdf.segments = [
+            _styled(*segment) for segment in mat.rect_segments((100, 100, 500, 300))
+        ] + [
+            _styled(296, 100, 296, 150),
+            _styled(296, 150, 304, 150),
+            _styled(304, 150, 304, 100),
+            _styled(296, 300, 296, 150 + GAP_PTS),
+            _styled(296, 150 + GAP_PTS, 304, 150 + GAP_PTS),
+            _styled(304, 150 + GAP_PTS, 304, 300),
+        ]
+        (region,) = self.find(max_gap_in=36.0)["data"]["regions"]
+        self.assertTrue(region["leak_risk"])
+        self.assertEqual(
+            sorted(sorted([g["p1_pts"], g["p2_pts"]]) for g in region["open_gaps"]),
+            [[[296.0, 150.0], [296.0, 150.0 + GAP_PTS]]],
+        )
+
+    def test_a_small_corner_split_off_by_a_stray_line_is_not_a_leak(self):
+        self.pdf.segments = [
+            _styled(*segment) for segment in mat.rect_segments((100, 100, 300, 300))
+        ] + [_styled(100, 120, 110, 120)]
+        (region,) = self.find()["data"]["regions"]
+        self.assertEqual(region["open_gaps"], [])
+        self.assertFalse(region["leak_risk"])
+
+    def test_an_opening_that_cannot_be_traced_is_skipped(self):
+        self.pdf.segments = _two_rooms()
+        real = module.find_planar_regions_report
+
+        def traced(segments, *args, **kwargs):
+            if kwargs.get("closures"):
+                raise RegionTooComplex("too many")
+            return real(segments, *args, **kwargs)
+
+        with mock.patch.object(module, "find_planar_regions_report", traced):
+            (region,) = self.find()["data"]["regions"]
+        self.assertEqual(region["open_gaps"], [])
+
+    def test_a_raster_region_reports_an_opening_to_the_outside(self):
+        ring = ((60.0, 60.0), (540.0, 60.0), (540.0, 340.0), (60.0, 340.0))
+        self.raster_result = RasterResult(ring, False, 4.0)
+        self.pdf.segments = [
+            _styled(100, 100, 500, 100),
+            _styled(100, 300, 500, 300),
+            _styled(100, 100, 100, 300),
+            _styled(300, 100, 300, 150),
+            _styled(300, 150 + GAP_PTS, 300, 300),
+        ]
+        (region,) = self.find()["data"]["regions"]
+        self.assertEqual(region["method"], "raster")
+        (opening,) = region["open_gaps"]
+        self.assertAlmostEqual(opening["length_in"], 39.0, places=6)
+        self.assertTrue(region["leak_risk"])
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=4.0, top_elev_in=0.0
+        )["data"]
+        self.assertEqual(
+            [item["value"]["value"] for item in data["assumptions"]],
+            ["39.00 in opening not closed"],
+        )
+
+    def test_region_records_default_to_no_warnings(self):
+        record = _RegionRecord("p1", (), (), (), False, K)
+        self.assertEqual((record.open_gaps, record.dashed_outline_sf), ((), None))
+        self.assertEqual(module._region_warnings(record), ())
 
 
 if __name__ == "__main__":

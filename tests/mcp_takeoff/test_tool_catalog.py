@@ -243,6 +243,47 @@ class ToolCatalogTests(unittest.TestCase):
             ],
         )
 
+    def test_dashed_boundaries_and_leaks_are_described(self):
+        tools = {tool.name: tool for tool in TOOLS}
+        kinds = tools["find_regions"].input_schema["properties"]["boundary_kinds"]
+        self.assertEqual(
+            kinds,
+            {
+                "type": "array",
+                "items": {"type": "string", "enum": ["wall", "dashed", "thin"]},
+                "minItems": 1,
+                "description": kinds["description"],
+            },
+        )
+        self.assertIn('["dashed"]', kinds["description"])
+        expected = {
+            "find_regions": (
+                "mat, footing or below-grade",
+                "callouts",
+                'boundary_kinds ["dashed"]',
+                "dash_bridge_count",
+                "at most 18 pt",
+                "dashed_outline",
+                "open_gaps",
+                "leak_risk true",
+                "72 in",
+                "holes_ost",
+            ),
+            "propose_element": (
+                "open_gaps",
+                "dashed_outline",
+                "high-impact",
+                "mat, footing or below-grade",
+                "callouts",
+                "holes_ost",
+            ),
+        }
+        for name, phrases in expected.items():
+            for phrase in phrases:
+                with self.subTest(tool=name, phrase=phrase):
+                    self.assertIn(phrase, tools[name].description)
+        self.assertEqual(len(TOOLS), 15)
+
     def test_tool_specs_are_immutable(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             TOOLS[0].name = "approve_changeset"
