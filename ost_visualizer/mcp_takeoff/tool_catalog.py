@@ -292,7 +292,10 @@ TOOLS = (
         'and pass boundary_kinds ["dashed"] so only dashed lines (dash '
         "patterns, exploded dashes and their corner arcs) form edges; gaps up "
         "to the pattern's own gap (at most 18 pt) are bridged without closing "
-        "segments (dash_bridge_count). A seeded region reports dashed_outline "
+        "segments (dash_bridge_count). dashed_analysis is complete, not_run, "
+        "or skipped_time_budget when the dashed analysis passed 20 s on a "
+        "crowded page; dashed edges and outlines are then not used, so retry "
+        "on a smaller box. A seeded region reports dashed_outline "
         "when the seed sits inside a closed dashed outline that the region does "
         "not follow, and open_gaps (end points and length, leak_risk true) when "
         "it runs through an opening up to 72 in that it did not close, such as a "

@@ -14,7 +14,7 @@ Built for estimators and construction teams who work with OST project files dail
 ## Features
 
 - **2D Plan View** -- Interactive view with annotations overlaid on project pages, including BidDimension placement and detached Annotation/View windows
-- **PDF Plan Sheets** -- View PDF drawings at any scale
+- **PDF Plan Sheets** -- View PDF drawings at any scale, with snapping to PDF line ends, midpoints, crossings and edges while placing takeoffs and annotations
 - **Multi-database** -- Open and browse Microsoft Access and Microsoft SQL Server databases together
 - **Projects, Takeoff, and Summary Tabs** -- Navigate databases and bids, inspect 2D takeoffs, and review grouped condition quantities
 - **Summary Review** -- Group condition quantities by Area, Type, and Page, with unused conditions hidden from placed-takeoff summaries

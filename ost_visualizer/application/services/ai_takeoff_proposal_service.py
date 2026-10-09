@@ -1,6 +1,7 @@
 import math
 import re
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -36,6 +37,7 @@ from ...domain.entities.ai_changeset import (
     resolved_condition_name,
 )
 from ...domain.services.ai_dashed_outline import (
+    DashedAnalysisTimeout,
     DashedBoundary,
     dashed_boundary,
     dashed_components,
@@ -60,6 +62,7 @@ from ...domain.services.ai_planar_regions import (
     PlanarRegionReport,
     RegionGap,
     RegionTooComplex,
+    check_segment_count,
     find_planar_regions_report,
     opening_candidates,
     point_in_ring,
@@ -110,6 +113,10 @@ LEAK_GAP_MAX_IN = 72.0
 LEAK_SPLIT_SHARE = 0.05
 MAX_OPEN_GAPS = 20
 DASHED_MATCH_SHARE = 0.005
+DASHED_ANALYSIS_BUDGET_S = 20.0
+DASHED_ANALYSIS_COMPLETE = "complete"
+DASHED_ANALYSIS_NOT_RUN = "not_run"
+DASHED_ANALYSIS_SKIPPED = "skipped_time_budget"
 _COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_THICKNESS_IN = MAX_SLAB_THICKNESS_IN
 _SCALE_ASSUMPTION_MESSAGE = (
@@ -477,30 +484,53 @@ class AiTakeoffProposalService:
         page_kinds = classify_linework(lines, filters.symbol_max_pts)
         symbols = symbol_groups(lines, filters.symbol_max_pts)
         inside = [
-            position for position, line in enumerate(lines) if _touches_box(line, box)
+            position
+            for position, line in enumerate(lines)
+            if _finite_line(line) and _touches_box(line, box)
         ]
         lines = [lines[position] for position in inside]
         kinds = [page_kinds[position] for position in inside]
         dashed_edges = (
             filters.boundary_kinds is not None and KIND_DASHED in filters.boundary_kinds
         )
-        boundary = (
-            dashed_boundary(lines, kinds)
-            if seed is not None or dashed_edges
-            else DashedBoundary({}, ())
+        if filters.boundary_kinds is None:
+            segments, excluded, symbol_boxes = _filter_linework(
+                lines, kinds, symbols, filters, {}
+            )
+            _check_segment_cap(segments)
+        deadline = time.monotonic() + DASHED_ANALYSIS_BUDGET_S
+        boundary, dashed_analysis = _bounded_dashed_boundary(
+            lines, kinds, seed is not None or dashed_edges, deadline
         )
-        segments, excluded, symbol_boxes = _filter_linework(
-            lines, kinds, symbols, filters, boundary.pieces
-        )
+        outline = None
+        closed = None
+        if seed is not None and dashed_analysis == DASHED_ANALYSIS_COMPLETE:
+            try:
+                outline = _dashed_outline(lines, boundary, seed, deadline)
+                if filters.boundary_kinds == (KIND_DASHED,):
+                    closed = _dashed_outline(
+                        lines,
+                        _colored(lines, boundary, filters.colors),
+                        seed,
+                        deadline,
+                    )
+            except DashedAnalysisTimeout:
+                boundary = DashedBoundary({}, ())
+                dashed_analysis = DASHED_ANALYSIS_SKIPPED
+                outline = None
+                closed = None
+        if filters.boundary_kinds is not None:
+            segments, excluded, symbol_boxes = _filter_linework(
+                lines,
+                kinds,
+                symbols,
+                filters,
+                boundary.pieces,
+                dashed_analysis == DASHED_ANALYSIS_SKIPPED,
+            )
         bridges = list(boundary.bridges) if dashed_edges else []
         next_cursor = None
         if seed is not None:
-            outline = _dashed_outline(lines, boundary, seed)
-            closed = None
-            if filters.boundary_kinds == (KIND_DASHED,):
-                closed = _dashed_outline(
-                    lines, _colored(lines, boundary, filters.colors), seed
-                )
             item, report = self._seed_item(
                 snapshot, segments + bridges, box, seed, filters, outline, closed
             )
@@ -541,6 +571,7 @@ class AiTakeoffProposalService:
                 "filters": filters.to_dict(),
                 "segment_count": len(segments),
                 "dash_bridge_count": len(bridges),
+                "dashed_analysis": dashed_analysis,
                 "excluded": excluded,
                 "suppressed_symbol_count": len(suppressed),
                 "suppressed_symbols_pts": [
@@ -1181,6 +1212,30 @@ def _gap_assumption_text(gap: _GapRecord) -> Tuple[str, str]:
     )
 
 
+def _bounded_dashed_boundary(
+    lines, kinds, wanted: bool, deadline: float
+) -> Tuple[DashedBoundary, str]:
+    if not wanted:
+        return DashedBoundary({}, ()), DASHED_ANALYSIS_NOT_RUN
+    try:
+        return dashed_boundary(lines, kinds, deadline), DASHED_ANALYSIS_COMPLETE
+    except DashedAnalysisTimeout:
+        return DashedBoundary({}, ()), DASHED_ANALYSIS_SKIPPED
+
+
+def _check_segment_cap(segments) -> None:
+    try:
+        check_segment_count(
+            sum(
+                1
+                for segment in segments
+                if all(math.isfinite(value) for value in segment)
+            )
+        )
+    except RegionTooComplex as exc:
+        raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, str(exc)) from exc
+
+
 def _planar(
     segments, gap_pts: float, symbol_max: float, closures=()
 ) -> PlanarRegionReport:
@@ -1325,6 +1380,10 @@ def _boundary_kinds(value: Any) -> Optional[Tuple[str, ...]]:
     return tuple(kind for kind in BOUNDARY_KINDS if kind in value)
 
 
+def _finite_line(line) -> bool:
+    return all(math.isfinite(value) for value in line.points)
+
+
 def _touches_box(line, box) -> bool:
     left, top, right, bottom = box
     return not (
@@ -1335,7 +1394,14 @@ def _touches_box(line, box) -> bool:
     )
 
 
-def _filter_linework(lines, kinds, symbols, filters: _RegionFilters, dashed_pieces):
+def _filter_linework(
+    lines,
+    kinds,
+    symbols,
+    filters: _RegionFilters,
+    dashed_pieces,
+    dashed_skipped: bool = False,
+):
     boundary = filters.boundary_kinds
     excluded = {"dashed": 0, "thin_curve": 0, "thin": 0, "color": 0, "symbol": 0}
     if boundary is not None:
@@ -1347,7 +1413,9 @@ def _filter_linework(lines, kinds, symbols, filters: _RegionFilters, dashed_piec
         if kind == KIND_SYMBOL:
             excluded["symbol"] += 1
             symbol_boxes[line.group] = symbols[line.group]
-        elif boundary is not None and edge not in boundary:
+        elif boundary is not None and (
+            edge not in boundary or (dashed_skipped and edge == KIND_DASHED)
+        ):
             excluded["kind"] += 1
         elif boundary is None and filters.exclude_dashed and kind == KIND_DASHED:
             excluded["dashed"] += 1
@@ -1374,10 +1442,13 @@ def _filter_linework(lines, kinds, symbols, filters: _RegionFilters, dashed_piec
 
 
 def _dashed_outline(
-    lines, boundary: DashedBoundary, seed: Tuple[float, ...]
+    lines,
+    boundary: DashedBoundary,
+    seed: Tuple[float, ...],
+    deadline: Optional[float] = None,
 ) -> Optional[PlanarRegion]:
     loops = []
-    for segments in dashed_components(lines, boundary):
+    for segments in dashed_components(lines, boundary, deadline):
         xs = [value for segment in segments for value in (segment[0], segment[2])]
         ys = [value for segment in segments for value in (segment[1], segment[3])]
         if not (min(xs) < seed[0] < max(xs) and min(ys) < seed[1] < max(ys)):

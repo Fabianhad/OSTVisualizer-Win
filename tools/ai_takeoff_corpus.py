@@ -29,7 +29,9 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
+from ost_visualizer.application.dtos.ai_takeoff_dtos import PIPE_READ_TIMEOUT_SECONDS
 
+PROXY_TIMEOUT_S = PIPE_READ_TIMEOUT_SECONDS
 DEFAULT_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ostv_corpus"
 STRUCTURAL_PARTS = ("01. Drawings", "1. Drawings", "3. Structural")
 YEARS = tuple(str(year) for year in range(2023, 2028))
@@ -541,6 +543,53 @@ RUN_COLUMNS = (
     "seed_unlocated",
     "proposal_status",
     "proposal_assumptions",
+    "proposal_subjects",
+    "dominant_wall_width",
+    "heaviest_long_width",
+    "long_width_histogram",
+    "suggested_min_width",
+    "suggestion_removes_dominant",
+    "drawing_text_runs",
+    "callouts_as_lines",
+    "default_status",
+    "default_seconds",
+    "default_min_width",
+    "default_found",
+    "default_segments",
+    "default_method",
+    "default_area_sf",
+    "default_touches_edge",
+    "default_box_ratio",
+    "default_leak",
+    "default_open_gaps",
+    "default_dashed_outline",
+    "default_wall_failure",
+    "zero_status",
+    "zero_seconds",
+    "zero_min_width",
+    "zero_found",
+    "zero_segments",
+    "zero_method",
+    "zero_area_sf",
+    "zero_touches_edge",
+    "zero_box_ratio",
+    "zero_leak",
+    "zero_open_gaps",
+    "zero_dashed_outline",
+    "zero_wall_failure",
+    "heavy_status",
+    "heavy_seconds",
+    "heavy_min_width",
+    "heavy_found",
+    "heavy_segments",
+    "heavy_method",
+    "heavy_area_sf",
+    "heavy_touches_edge",
+    "heavy_box_ratio",
+    "heavy_leak",
+    "heavy_open_gaps",
+    "heavy_dashed_outline",
+    "heavy_wall_failure",
     "proposal_outline_vertices",
     "proposal_hole_vertices",
     "proposal_area_change_pct",
@@ -551,7 +600,17 @@ RUN_COLUMNS = (
 )
 
 
-def run(out: Path, timeout: float, python: str) -> Path:
+def spread(items: list, cap: int) -> list:
+    if len(items) <= cap:
+        return list(items)
+    if cap == 1:
+        return [items[0]]
+    return [items[round(i * (len(items) - 1) / (cap - 1))] for i in range(cap)]
+
+
+def run(
+    out: Path, timeout: float, python: str, max_plan_pages: Optional[int] = None
+) -> Path:
     sample = read_csv(out / "sample.csv")
     seeds = hand_values(out / "hand_values.csv")
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -597,10 +656,25 @@ def run(out: Path, timeout: float, python: str) -> Path:
         if sheets_status == "ok" and hints_path.exists():
             hints = json.loads(hints_path.read_text(encoding="utf-8"))
         pdf_rows = []
+        measured = None
+        if max_plan_pages is not None:
+            plans = [int(hint["index"]) for hint in hints if hint.get("kind") == KIND_PLAN]
+            measured = set(spread(plans, max_plan_pages))
+            measured |= {page - 1 for rel, page in seeds if rel == item["rel"]}
         for page in bid["pages"]:
             page_number = page["index"] + 1
             result_path = work / f"{Path(item['local']).stem}_p{page_number}.json"
             page_seeds = seeds.get((item["rel"], page_number), [])
+            if measured is not None and page["index"] not in measured:
+                pdf_rows.append(
+                    {
+                        "rel": item["rel"],
+                        "page": page_number,
+                        "pages_in_pdf": len(bid["pages"]),
+                        "status": "not_measured",
+                    }
+                )
+                continue
             command = [
                 python,
                 "-m",
@@ -641,7 +715,9 @@ def merge_sheet_hints(rows: List[dict], status: str, hints: Sequence[dict]) -> N
         row["sheets_status"] = status
         hint = by_page.get(int(row["page"]))
         if hint is not None:
-            row.update({key: value for key, value in hint.items() if key != "index"})
+            for key, value in hint.items():
+                if key != "index":
+                    row.setdefault(key, value)
 
 
 def _run_child(command: Sequence[str], timeout: float) -> dict:
@@ -695,14 +771,183 @@ def _rate(rows: Sequence[dict], predicate) -> str:
     return f"{passed}/{len(rows)} ({100.0 * passed / len(rows):.0f}%)"
 
 
-def _example(rows: Sequence[dict], limit: int = 3) -> str:
-    return "; ".join(f"{row['rel']} p{row['page']}" for row in rows[:limit])
+def _project(rel: str) -> str:
+    parts = Path(rel).parts
+    return parts[1] if len(parts) > 1 else rel
+
+
+def corpus_ids(rows: Sequence[dict]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    rels = sorted({row["rel"] for row in rows})
+    projects = sorted({_project(rel) for rel in rels})
+    width = max(2, len(str(len(rels))))
+    pdf_ids = {rel: f"P{index + 1:0{width}d}" for index, rel in enumerate(rels)}
+    project_ids = {
+        project: f"J{index + 1:0{max(2, len(str(len(projects))))}d}"
+        for index, project in enumerate(projects)
+    }
+    return pdf_ids, project_ids
+
+
+def _example(rows: Sequence[dict], ids: Dict[str, str], limit: int = 3) -> str:
+    return "; ".join(f"{ids[row['rel']]} p{row['page']}" for row in rows[:limit])
+
+
+def _true(row: dict, column: str) -> bool:
+    return row.get(column) == "True"
+
+
+def _median(values: Sequence[float]) -> str:
+    present = [value for value in values if value is not None]
+    return f"{percentile(present, 0.5):.2f}" if present else "n/a"
+
+
+VARIANTS = ("default", "zero", "heavy")
+
+
+def _seeded(rows: Sequence[dict], prefix: str) -> List[dict]:
+    return [row for row in rows if row.get(f"{prefix}_found") in ("True", "False")]
+
+
+def _leak_missed(row: dict) -> bool:
+    return any(
+        _true(row, f"{prefix}_found")
+        and not _true(row, f"{prefix}_leak")
+        and (
+            _true(row, f"{prefix}_touches_edge")
+            or (_number(row.get(f"{prefix}_box_ratio")) or 0.0) > 0.8
+        )
+        for prefix in VARIANTS
+    )
+
+
+def _slow(row: dict) -> bool:
+    return any(
+        (_number(row.get(f"{prefix}_seconds")) or 0.0) > PROXY_TIMEOUT_S / 2.0
+        for prefix in VARIANTS
+    )
+
+
+def _pentest_sections(rows: Sequence[dict], ids: Dict[str, str], project_ids: Dict[str, str]) -> List[str]:
+    ok = [row for row in rows if row.get("status") == "ok"]
+    plans = [row for row in ok if row.get("kind") == KIND_PLAN]
+    profiled = [row for row in plans if row.get("suggestion_removes_dominant") in ("True", "False")]
+    seeded = _seeded(plans, "default")
+    lines = [
+        "",
+        "## Wall width (default suggestion)",
+        "",
+        "| Metric | Rate |",
+        "| --- | --- |",
+        f"| Suggestion removes the dominant wall weight | {_rate(profiled, lambda r: _true(r, 'suggestion_removes_dominant'))} |",
+        f"| Seeded region touches the search-box edge | {_rate(seeded, lambda r: _true(r, 'default_touches_edge'))} |",
+        f"| Seeded region keeps zero edges | {_rate(seeded, lambda r: _number(r.get('default_segments')) == 0)} |",
+        f"| Seeded region above 80% of the box | {_rate(seeded, lambda r: (_number(r.get('default_box_ratio')) or 0.0) > 0.8)} |",
+        f"| Wall-filter failure (any of the three) | {_rate(seeded, lambda r: _true(r, 'default_wall_failure'))} |",
+        "",
+        "## Seeded regions by width setting",
+        "",
+        "Width settings: default (suggested), zero (min_width 0), heavy (heaviest long-line class).",
+        "",
+        "| Width | Seeded | Found | leak_risk | Open gaps | Dashed outline | Touches box edge | Above 80% of box | Wall-filter failure | Median area / box |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for prefix in VARIANTS:
+        members = _seeded(plans, prefix)
+        if not members:
+            continue
+        found = [row for row in members if _true(row, f"{prefix}_found")]
+        lines.append(
+            f"| {prefix} | {len(members)} | {len(found)} | "
+            f"{sum(1 for r in found if _true(r, f'{prefix}_leak'))} | "
+            f"{sum(1 for r in found if (_number(r.get(f'{prefix}_open_gaps')) or 0) > 0)} | "
+            f"{sum(1 for r in found if _true(r, f'{prefix}_dashed_outline'))} | "
+            f"{sum(1 for r in found if _true(r, f'{prefix}_touches_edge'))} | "
+            f"{sum(1 for r in found if (_number(r.get(f'{prefix}_box_ratio')) or 0.0) > 0.8)} | "
+            f"{sum(1 for r in members if _true(r, f'{prefix}_wall_failure'))} | "
+            f"{_median([_number(r.get(f'{prefix}_box_ratio')) for r in found])} |"
+        )
+    outlined = [
+        row for row in ok if (_number(row.get("text_runs")) or 0) == 0 and (_number(row.get("segments")) or 0) > 0
+    ]
+    outlined_ids = {id(row) for row in outlined}
+    lines += [
+        "",
+        "## Outlined text",
+        "",
+        "| Metric | Rate |",
+        "| --- | --- |",
+        f"| Vector pages without any text (outlined text) | {_rate(ok, lambda r: id(r) in outlined_ids)} |",
+        f"| Plans whose callouts are lines | {_rate(plans, lambda r: _true(r, 'callouts_as_lines'))} |",
+        "",
+        f"## Seeded call time vs the {PROXY_TIMEOUT_S:g} s proxy timeout",
+        "",
+        "| Width | p50 | p90 | max | Over half the timeout | Over the timeout |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for prefix in VARIANTS:
+        values = [_number(row.get(f"{prefix}_seconds")) for row in plans]
+        values = [value for value in values if value is not None]
+        if values:
+            lines.append(
+                f"| {prefix} | {percentile(values, .5):.2f} | {percentile(values, .9):.2f} | {max(values):.2f} | "
+                f"{sum(1 for v in values if v > PROXY_TIMEOUT_S / 2.0)} | {sum(1 for v in values if v > PROXY_TIMEOUT_S)} |"
+            )
+    proposals = Counter(row["proposal_status"] for row in plans if row.get("proposal_status"))
+    subjects: Counter = Counter()
+    for row in plans:
+        subjects.update(json.loads(row.get("proposal_subjects") or "{}"))
+    lines += ["", "## Proposal categories (auto-seeded rooms)", "", "| Status | Count |", "| --- | --- |"]
+    lines += [f"| {status} | {count} |" for status, count in proposals.most_common()]
+    lines += ["", "| Assumption subject | Count |", "| --- | --- |"]
+    lines += [f"| {subject} | {count} |" for subject, count in subjects.most_common()]
+    lines += [
+        "",
+        "## Per project (firm proxy)",
+        "",
+        "| Project | Pages | Plans | Dominant wall width | Dash arrays | Page failures | Wall-filter failures | Proposal failures |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    by_project: Dict[str, List[dict]] = defaultdict(list)
+    for row in rows:
+        by_project[project_ids[_project(row["rel"])]].append(row)
+    for project, members in sorted(by_project.items()):
+        project_plans = [r for r in members if r.get("status") == "ok" and r.get("kind") == KIND_PLAN]
+        widths = Counter(r.get("dominant_wall_width") for r in project_plans if r.get("dominant_wall_width"))
+        dominant = widths.most_common(1)[0][0] if widths else "n/a"
+        lines.append(
+            f"| {project} | {len(members)} | {len(project_plans)} | {dominant} | "
+            f"{sum(int(_number(r.get('dash_arrays')) or 0) for r in members)} | "
+            f"{_rate(members, lambda r: r.get('status') not in ('ok', 'not_measured'))} | "
+            f"{_rate(_seeded(project_plans, 'default'), lambda r: _true(r, 'default_wall_failure'))} | "
+            f"{_rate([r for r in project_plans if r.get('proposal_status')], lambda r: r.get('proposal_status') != 'ok')} |"
+        )
+    fixes = [
+        ("Wall-width suggestion", [r for r in plans if _true(r, "default_wall_failure") or _true(r, "suggestion_removes_dominant")]),
+        ("Leak guard coverage", [r for r in plans if _leak_missed(r)]),
+        ("Outlined-text fallback", outlined + [r for r in plans if _true(r, "callouts_as_lines")]),
+        ("Extraction truncation", [r for r in ok if _true(r, "extraction_truncated")]),
+        ("Proposal failures", [r for r in plans if r.get("proposal_status") not in (None, "", "ok")]),
+        ("Seeded calls over half the proxy timeout", [r for r in plans if _slow(r)]),
+        ("Page crashes, hangs or errors", [r for r in rows if r.get("status") not in ("ok", "not_measured")]),
+    ]
+    ranked = sorted(
+        ((name, members, index) for index, (name, members) in enumerate(fixes) if members),
+        key=lambda item: (-len(item[1]), item[2]),
+    )
+    lines += ["", "## Prioritized fix list", ""]
+    lines += [
+        f"{rank}. **{name}**: {len(members)} page(s). Examples: {_example(members, ids)}"
+        for rank, (name, members, _index) in enumerate(ranked, start=1)
+    ]
+    return lines
 
 
 def failure_categories(rows: Sequence[dict]) -> List[Tuple[str, List[dict]]]:
     categories: Dict[str, List[dict]] = defaultdict(list)
     for row in rows:
         status = row.get("status", "")
+        if status == "not_measured":
+            continue
         if status != "ok":
             categories[f"page failed: {status} ({row.get('error', '')})"].append(row)
             continue
@@ -771,6 +1016,7 @@ def _metrics(rows: Sequence[dict]) -> List[Tuple[str, str]]:
         and row.get("box_quadrants_truncated") not in (None, "")
     ]
     proposed = [row for row in plans if row.get("proposal_status")]
+    seeded = _seeded(plans, "default")
     return [
         ("Sheet number found", _rate(ok, lambda r: bool(r.get("sheet_number")))),
         (
@@ -805,6 +1051,18 @@ def _metrics(rows: Sequence[dict]) -> List[Tuple[str, str]]:
             "Plan: proposal failures",
             _rate(proposed, lambda r: r.get("proposal_status") != "ok"),
         ),
+        (
+            "Plan: seeded region found (default width)",
+            _rate(seeded, lambda r: _true(r, "default_found")) if seeded else "not measured",
+        ),
+        (
+            "Plan: wall-filter failure (default width)",
+            _rate(seeded, lambda r: _true(r, "default_wall_failure")) if seeded else "not measured",
+        ),
+        (
+            "Plan: leak not flagged (region touches the box or fills 80%)",
+            _rate(seeded, _leak_missed) if seeded else "not measured",
+        ),
     ]
 
 
@@ -837,7 +1095,7 @@ def _hand_within(row: dict) -> bool:
     return error is not None and abs(error) <= 0.5
 
 
-def _hand_section(rows: Sequence[dict]) -> List[str]:
+def _hand_section(rows: Sequence[dict], ids: Dict[str, str]) -> List[str]:
     lines = ["", "## Hand values", ""]
     hand = [row for row in rows if _number(row.get("hand_expected_sf")) is not None]
     if not hand:
@@ -850,7 +1108,7 @@ def _hand_section(rows: Sequence[dict]) -> List[str]:
     ]
     for row in hand:
         lines.append(
-            f"| {row['rel']} | {row['page']} | {row['hand_expected_sf']} | "
+            f"| {ids[row['rel']]} | {row['page']} | {row['hand_expected_sf']} | "
             f"{row.get('seed_area_sf') or 'none'} | {row.get('hand_error_pct') or 'n/a'} |"
         )
     return lines
@@ -863,7 +1121,7 @@ def report(run_csv: Path, out: Path) -> Path:
     lines = [
         f"# AI takeoff corpus run {run_csv.stem}",
         "",
-        "Metrics only: relative paths, page numbers, sheet numbers and sheet titles; no drawing content.",
+        "Metrics only: PDFs are P-ids and projects J-ids (the key file next to this summary maps them); no paths, titles, sheet numbers or drawing content.",
         "",
         f"PDFs: {len({row['rel'] for row in rows})}; pages: {len(rows)}; plan-like pages: {len(plans)}.",
         "",
@@ -871,7 +1129,7 @@ def report(run_csv: Path, out: Path) -> Path:
         "",
         "| Metric | Rate |",
         "| --- | --- |",
-        f"| Page measured without crash, hang or error | {_rate(rows, lambda r: r.get('status') == 'ok')} |",
+        f"| Page measured without crash, hang or error | {_rate([r for r in rows if r.get('status') != 'not_measured'], lambda r: r.get('status') == 'ok')} |",
         f"| Vector content | {_rate(ok, lambda r: r.get('content') in ('vector', 'vector_and_text'))} |",
         f"| Extractable text | {_rate(ok, lambda r: (_number(r.get('text_runs')) or 0) > 0)} |",
         f"| Sheet number found | {_rate(ok, lambda r: bool(r.get('sheet_number')))} |",
@@ -882,9 +1140,10 @@ def report(run_csv: Path, out: Path) -> Path:
         f"| Plan: seeded call returned a vector region | {_rate([r for r in plans if r.get('seed_status') not in ('', 'skipped')], lambda r: r.get('seed_method') == 'vector')} |",
         f"| Plan: changeset proposed (never applied) | {_rate([r for r in plans if r.get('proposal_status')], lambda r: r.get('proposal_status') == 'ok')} |",
     ]
+    ids, project_ids = corpus_ids(rows)
     hand = [row for row in rows if _number(row.get("hand_expected_sf")) is not None]
     lines.append(f"| Hand values within 0.5% | {_rate(hand, _hand_within)} |")
-    lines += _hand_section(rows)
+    lines += _hand_section(rows, ids)
     lines += ["", "## Page mix", ""]
     for column in (
         "kind",
@@ -925,7 +1184,7 @@ def report(run_csv: Path, out: Path) -> Path:
     lines += ["", "## Failure categories (most frequent first)", ""]
     for name, members in failure_categories(rows):
         lines.append(
-            f"- **{name}**: {len(members)} page(s). Examples: {_example(members)}"
+            f"- **{name}**: {len(members)} page(s). Examples: {_example(members, ids)}"
         )
     lines += [
         "",
@@ -936,8 +1195,7 @@ def report(run_csv: Path, out: Path) -> Path:
     ]
     by_project: Dict[str, List[dict]] = defaultdict(list)
     for row in ok:
-        parts = Path(row["rel"]).parts
-        by_project[parts[1] if len(parts) > 1 else row["rel"]].append(row)
+        by_project[project_ids[_project(row["rel"])]].append(row)
     for project, members in sorted(by_project.items()):
         totals = {
             kind: sum(int(_number(m.get(f"kinds_{kind}")) or 0) for m in members)
@@ -950,19 +1208,16 @@ def report(run_csv: Path, out: Path) -> Path:
         lines.append(
             f"| {project} | {len(members)} | {totals['wall']} | {totals['dashed']} | {totals['thin']} | {totals['symbol']} | {histogram} |"
         )
-    lines += [
-        "",
-        "## Sheets",
-        "",
-        "| PDF | Page | Sheet | Kind | Title | Scale |",
-        "| --- | --- | --- | --- | --- | --- |",
-    ]
-    for row in ok:
-        lines.append(
-            f"| {row['rel']} | {row['page']} | {row.get('sheet_number', '')} | {row.get('kind', '')} | "
-            f"{row.get('title', '')} | {row.get('scale_label', '') or row.get('scale_status', '')} |"
-        )
+    lines += _pentest_sections(rows, ids, project_ids)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_csv(
+        out.with_name(out.stem + "_keys.csv"),
+        [
+            {"id": ids[rel], "project": project_ids[_project(rel)], "rel": rel}
+            for rel in sorted(ids)
+        ],
+        ("id", "project", "rel"),
+    )
     return out
 
 
@@ -973,8 +1228,26 @@ def inside(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
     except ValueError:
-        return False
+        return _has_root_as_ancestor(path, root)
     return True
+
+
+def _has_root_as_ancestor(path: Path, root: Path) -> bool:
+    try:
+        target = os.stat(root)
+    except OSError:
+        return False
+    if not target.st_ino:
+        return False
+    absolute = Path(os.path.abspath(path))
+    for ancestor in (absolute, *absolute.parents):
+        try:
+            found = os.stat(ancestor)
+        except OSError:
+            continue
+        if (found.st_dev, found.st_ino) == (target.st_dev, target.st_ino):
+            return True
+    return False
 
 
 def inside_repository(path: Path) -> bool:
@@ -991,6 +1264,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--count", type=int, default=30)
     parser.add_argument("--max-mb", type=float, default=150.0)
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--max-plan-pages", type=int)
     parser.add_argument("--run", type=Path)
     parser.add_argument("--before", type=Path)
     args = parser.parse_args(argv)
@@ -1038,7 +1312,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for row in chosen:
             print(row["rel"])
     elif args.command == "run":
-        print(run(args.out, args.timeout, sys.executable))
+        print(run(args.out, args.timeout, sys.executable, args.max_plan_pages))
     elif args.command == "compare":
         print(
             compare(

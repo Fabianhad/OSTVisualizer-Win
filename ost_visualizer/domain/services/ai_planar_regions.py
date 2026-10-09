@@ -373,6 +373,13 @@ def _finite_pairs(segments) -> List[Tuple[Point, Point]]:
     ]
 
 
+def check_segment_count(count: int) -> None:
+    if count > MAX_REGION_SEGMENTS:
+        raise RegionTooComplex(
+            f"More than {MAX_REGION_SEGMENTS} line segments; use a smaller bounding box."
+        )
+
+
 def find_planar_regions(
     segments: Sequence[Tuple[float, float, float, float]],
     snap_tol: float,
@@ -394,10 +401,7 @@ def find_planar_regions_report(
 ) -> PlanarRegionReport:
     clean = _finite_pairs(segments)
     given = _finite_pairs(closures)
-    if len(clean) + len(given) > MAX_REGION_SEGMENTS:
-        raise RegionTooComplex(
-            f"More than {MAX_REGION_SEGMENTS} line segments; use a smaller bounding box."
-        )
+    check_segment_count(len(clean) + len(given))
     tolerance = max(float(snap_tol), 1e-6)
     index = _VertexIndex(tolerance)
     edges, given_edges = _split_segments(

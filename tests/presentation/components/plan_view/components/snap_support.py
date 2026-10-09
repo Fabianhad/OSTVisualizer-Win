@@ -2,6 +2,7 @@ import math
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.config import Config
 from PySide6.QtCore import Qt
@@ -23,12 +24,46 @@ class FakeSnapIndex:
     def build(self, segments):
         self.build_calls.append(list(segments))
 
-    def query(self, x, y, radius):
-        self.query_calls.append((x, y, radius))
+    def query(self, x, y, radius, intersections=False):
+        self.query_calls.append((x, y, radius, intersections))
         return FakeSnapIndex.query_result
 
     def size(self):
         return len(self.build_calls[-1]) if self.build_calls else 0
+
+
+class InlineJobService:
+    def __init__(self):
+        self.submitted = 0
+        self.cancelled = []
+
+    def run_job_async(self, job, callback, priority=2):
+        self.submitted += 1
+        request_id = f"job-{self.submitted}"
+        callback(RenderResult(request_id, True, job(), None))
+        return request_id
+
+    def cancel_request(self, request_id):
+        self.cancelled.append(request_id)
+
+
+class DeferredJobService(InlineJobService):
+    def __init__(self):
+        super().__init__()
+        self.pending = []
+        self.priorities = []
+
+    def run_job_async(self, job, callback, priority=2):
+        self.submitted += 1
+        request_id = f"job-{self.submitted}"
+        self.pending.append((request_id, job, callback))
+        self.priorities.append(priority)
+        return request_id
+
+    def finish(self, position=0):
+        request_id, job, callback = self.pending.pop(position)
+        callback(RenderResult(request_id, True, job(), None))
+        return request_id
 
 
 class FakePDFRenderer:
@@ -54,6 +89,9 @@ class FakePDFRenderer:
     def extract_path_segments(self, _page_index):
         FakePDFRenderer.extract_calls += 1
         return list(FakePDFRenderer.raw_segments)
+
+    def extract_path_items(self, _page_index, _max_items):
+        return SimpleNamespace(items=[], truncated=False)
 
     def page_info(self, _page_index):
         FakePDFRenderer.page_info_calls += 1
@@ -122,8 +160,11 @@ class PlacementHarness(placement_mode.PlacementModeMixin):
         self._pdf_snap_index = None
         self._takeoff_snap_index_dirty = True
         self._pdf_snap_index_dirty = True
-        self._pdf_snap_segments_cache_key = None
-        self._pdf_snap_segments_cache = []
+        self._pdf_snap_index_key = None
+        self._pdf_snap_index_complete = False
+        self._pdf_snap_request_key = None
+        self._pdf_snap_request_id = None
+        self._rendering_service = InlineJobService()
         self._snap_increments = 1.0
         self._mouse_unpressed_snap_angle = 15
         self._mouse_pressed_snap_angle = 0

@@ -268,6 +268,9 @@ class ToolCatalogTests(unittest.TestCase):
                 "leak_risk true",
                 "72 in",
                 "holes_ost",
+                "dashed_analysis",
+                "skipped_time_budget",
+                "20 s",
             ),
             "propose_element": (
                 "open_gaps",

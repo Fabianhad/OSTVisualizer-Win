@@ -10,6 +10,11 @@ namespace ost_snap
         constexpr std::size_t kMaxGridSide = 512;
         constexpr std::size_t kMaxCellsPerSegment = 4096;
         constexpr float kMinCellSize = 1.0e-3f;
+        constexpr double kTinySegmentDivisor = 20.0;
+        constexpr std::size_t kMaxIntersectionPairs = 32768;
+        constexpr double kMinCrossingSine = 1.0e-3;
+        constexpr double kEndpointRadiusFraction = 1.0e-3;
+        constexpr double kEndpointFloatSteps = 8.0;
         float dist_sq(float ax, float ay, float bx, float by)
         {
             const float dx = ax - bx;
@@ -130,8 +135,117 @@ namespace ost_snap
         found.erase(std::unique(found.begin(), found.end()), found.end());
         return found;
     }
-    std::optional<SnapHit> SnapIndex::query(float x, float y, float radius) const
+    std::optional<SnapHit> SnapIndex::nearest_intersection(
+        float x,
+        float y,
+        float radius,
+        const std::vector<int32_t> &candidates) const
     {
+        const double cx = x;
+        const double cy = y;
+        const double radius_sq = static_cast<double>(radius) * static_cast<double>(radius);
+        const double minimum_length = static_cast<double>(radius) / kTinySegmentDivisor;
+        const double minimum_length_sq = minimum_length * minimum_length;
+        std::vector<std::pair<double, int32_t>> near;
+        for (const int32_t segment_index : candidates)
+        {
+            const Segment &s = segments_[static_cast<std::size_t>(segment_index)];
+            const double dx = static_cast<double>(s.x2) - s.x1;
+            const double dy = static_cast<double>(s.y2) - s.y1;
+            const double length_sq = dx * dx + dy * dy;
+            if (length_sq <= kDegenerateEpsilonSq || length_sq < minimum_length_sq)
+            {
+                continue;
+            }
+            const double t = std::clamp(((cx - s.x1) * dx + (cy - s.y1) * dy) / length_sq, 0.0, 1.0);
+            const double px = s.x1 + t * dx - cx;
+            const double py = s.y1 + t * dy - cy;
+            const double distance_sq = px * px + py * py;
+            if (distance_sq <= radius_sq)
+            {
+                near.emplace_back(distance_sq, segment_index);
+            }
+        }
+        std::sort(near.begin(), near.end());
+        const double float_epsilon = static_cast<double>(std::numeric_limits<float>::epsilon());
+        const double min_sine_sq = kMinCrossingSine * kMinCrossingSine;
+        double best_distance_sq = std::numeric_limits<double>::infinity();
+        std::optional<SnapHit> best;
+        for (std::size_t j = 0; j < near.size(); ++j)
+        {
+            if (near[j].first > best_distance_sq)
+            {
+                break;
+            }
+            const Segment &b = segments_[static_cast<std::size_t>(near[j].second)];
+            const double sx = static_cast<double>(b.x2) - b.x1;
+            const double sy = static_cast<double>(b.y2) - b.y1;
+            for (std::size_t i = 0; i < j; ++i)
+            {
+                if (last_intersection_pairs_ >= kMaxIntersectionPairs)
+                {
+                    return best;
+                }
+                ++last_intersection_pairs_;
+                const Segment &a = segments_[static_cast<std::size_t>(near[i].second)];
+                const double rx = static_cast<double>(a.x2) - a.x1;
+                const double ry = static_cast<double>(a.y2) - a.y1;
+                const double denominator = rx * sy - ry * sx;
+                const double scale_sq = (rx * rx + ry * ry) * (sx * sx + sy * sy);
+                if (denominator * denominator < min_sine_sq * scale_sq)
+                {
+                    continue;
+                }
+                const double qx = static_cast<double>(b.x1) - a.x1;
+                const double qy = static_cast<double>(b.y1) - a.y1;
+                const double t = (qx * sy - qy * sx) / denominator;
+                const double u = (qx * ry - qy * rx) / denominator;
+                if (!(t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0))
+                {
+                    continue;
+                }
+                const double hx = a.x1 + t * rx;
+                const double hy = a.y1 + t * ry;
+                const double magnitude = std::max({1.0,
+                                                   std::fabs(static_cast<double>(a.x1)),
+                                                   std::fabs(static_cast<double>(a.y1)),
+                                                   std::fabs(static_cast<double>(a.x2)),
+                                                   std::fabs(static_cast<double>(a.y2)),
+                                                   std::fabs(static_cast<double>(b.x1)),
+                                                   std::fabs(static_cast<double>(b.y1)),
+                                                   std::fabs(static_cast<double>(b.x2)),
+                                                   std::fabs(static_cast<double>(b.y2))});
+                const double tolerance = std::max(
+                    static_cast<double>(radius) * kEndpointRadiusFraction,
+                    kEndpointFloatSteps * float_epsilon * magnitude);
+                const double tolerance_sq = tolerance * tolerance;
+                auto near_end = [&](double ex, double ey)
+                {
+                    return (hx - ex) * (hx - ex) + (hy - ey) * (hy - ey) <= tolerance_sq;
+                };
+                if (near_end(a.x1, a.y1) || near_end(a.x2, a.y2) ||
+                    near_end(b.x1, b.y1) || near_end(b.x2, b.y2))
+                {
+                    continue;
+                }
+                const double distance_sq = (hx - cx) * (hx - cx) + (hy - cy) * (hy - cy);
+                if (distance_sq <= radius_sq && distance_sq < best_distance_sq)
+                {
+                    best_distance_sq = distance_sq;
+                    best = SnapHit{
+                        static_cast<float>(hx),
+                        static_cast<float>(hy),
+                        static_cast<int32_t>(INTERSECTION),
+                        std::min(near[i].second, near[j].second)};
+                }
+            }
+        }
+        return best;
+    }
+    std::optional<SnapHit> SnapIndex::query(float x, float y, float radius, bool intersections) const
+    {
+        last_candidate_count_ = 0;
+        last_intersection_pairs_ = 0;
         if (radius < 0.0f || segments_.empty())
         {
             return std::nullopt;
@@ -157,7 +271,17 @@ namespace ost_snap
                 best_hit = SnapHit{hx, hy, static_cast<int32_t>(kind), segment_index};
             }
         };
-        for (const int32_t segment_index : candidates(x, y, radius))
+        const std::vector<int32_t> found = candidates(x, y, radius);
+        last_candidate_count_ = found.size();
+        if (intersections)
+        {
+            const std::optional<SnapHit> crossing = nearest_intersection(x, y, radius, found);
+            if (crossing)
+            {
+                return crossing;
+            }
+        }
+        for (const int32_t segment_index : found)
         {
             const Segment &s = segments_[static_cast<std::size_t>(segment_index)];
             consider(
@@ -225,5 +349,13 @@ namespace ost_snap
     std::size_t SnapIndex::grid_rows() const noexcept
     {
         return rows_;
+    }
+    std::size_t SnapIndex::last_candidate_count() const noexcept
+    {
+        return last_candidate_count_;
+    }
+    std::size_t SnapIndex::last_intersection_pairs() const noexcept
+    {
+        return last_intersection_pairs_;
     }
 }

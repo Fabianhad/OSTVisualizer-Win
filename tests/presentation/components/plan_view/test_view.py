@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.presentation.components.plan_view.components import placement_mode
 from ost_visualizer.application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     RASTER_NATIVE_RENDER_SCALE,
@@ -1225,6 +1226,32 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view = self._make_plan_view()
         self.assertIsNotNone(view._condition_text_toolbar)
         self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_clear_cancels_a_pending_pdf_snap_job(self):
+        view = self._make_plan_view()
+        service = view._rendering_service
+        view._request_pdf_snap_index(
+            placement_mode.PdfSnapSource(
+                cache_key=("page-1",),
+                layer="main",
+                file_path="drawing.pdf",
+                page_index=0,
+                fallback_width_pts=612.0,
+                fallback_height_pts=792.0,
+                overlay_rect=(0.0, 0.0, 0.0, 0.0),
+                overlay_rotation=0.0,
+                point_to_ost=2.0,
+            )
+        )
+        request_id, _job, callback, _priority = service.job_requests[-1]
+        view.clear()
+        self.assertIn(request_id, service.cancelled_requests)
+        self.assertIsNone(view._pdf_snap_request_id)
+        self.assertIsNone(view._pdf_snap_request_key)
+        index_after_clear = view._pdf_snap_index
+        callback(RenderResult(request_id, True, object(), None))
+        self.assertIs(view._pdf_snap_index, index_after_clear)
         view.cleanup()
 
     def test_plan_view_cleanup_releases_native_snap_indexes(self):
@@ -15397,7 +15424,9 @@ class TakeoffPlanViewConstructionTests(_TakeoffPlanViewOverlayRefreshFixture):
         "_named_view_name_validator",
         "_takeoff_snap_index",
         "_pdf_snap_index",
-        "_pdf_snap_segments_cache_key",
+        "_pdf_snap_index_key",
+        "_pdf_snap_request_key",
+        "_pdf_snap_request_id",
         "_pdf_text_cache_key",
         "_pdf_text_request_id",
         "_pdf_text_request_source",
@@ -15548,7 +15577,7 @@ class TakeoffPlanViewConstructionTests(_TakeoffPlanViewOverlayRefreshFixture):
         "_place_preview_items": [],
         "_takeoff_snap_index_dirty": True,
         "_pdf_snap_index_dirty": True,
-        "_pdf_snap_segments_cache": [],
+        "_pdf_snap_index_complete": False,
         "_pdf_text_runs": [],
         "_pdf_text_highlight_items": [],
         "_backout_mode_active": False,
@@ -23078,6 +23107,10 @@ class TakeoffPlanViewPlacementAndBackoutSweepTests(
             ("_pending_page_data", None),
             ("_takeoff_snap_index", None),
             ("_pdf_snap_index", None),
+            ("_pdf_snap_index_key", None),
+            ("_pdf_snap_index_complete", False),
+            ("_pdf_snap_request_key", None),
+            ("_pdf_snap_request_id", None),
         ):
             with self.subTest(name):
                 self.assertEqual(getattr(view, name), expected)

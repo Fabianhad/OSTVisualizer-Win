@@ -20,6 +20,7 @@ namespace ost_snap
         ENDPOINT = 1,
         MIDPOINT = 2,
         PERPENDICULAR = 3,
+        INTERSECTION = 4,
     };
     using RawSegment = std::tuple<float, float, float, float>;
     using SnapHit = std::tuple<float, float, int32_t, int32_t>;
@@ -27,13 +28,20 @@ namespace ost_snap
     {
     public:
         void build(const std::vector<RawSegment> &raw);
-        std::optional<SnapHit> query(float x, float y, float radius) const;
+        std::optional<SnapHit> query(float x, float y, float radius, bool intersections = false) const;
         std::vector<int32_t> candidates(float x, float y, float radius) const;
         std::size_t size() const noexcept;
         std::size_t grid_columns() const noexcept;
         std::size_t grid_rows() const noexcept;
+        std::size_t last_candidate_count() const noexcept;
+        std::size_t last_intersection_pairs() const noexcept;
 
     private:
+        std::optional<SnapHit> nearest_intersection(
+            float x,
+            float y,
+            float radius,
+            const std::vector<int32_t> &candidates) const;
         std::vector<Segment> segments_;
         std::vector<std::vector<int32_t>> cells_;
         std::size_t columns_ = 0;
@@ -41,5 +49,7 @@ namespace ost_snap
         float origin_x_ = 0.0f;
         float origin_y_ = 0.0f;
         float cell_size_ = 1.0f;
+        mutable std::size_t last_candidate_count_ = 0;
+        mutable std::size_t last_intersection_pairs_ = 0;
     };
 }

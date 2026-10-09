@@ -97,6 +97,7 @@ namespace ost_pdf
         std::string page_label(int page_index) const;
         std::optional<PageInfo> page_info(int page_index) const;
         std::vector<PageInfo> all_page_info() const;
+        int page_loads() const;
         std::vector<std::tuple<float, float, float, float>> extract_path_segments(
             int page_index) const;
         PDFPathExtraction extract_path_items(
@@ -146,7 +147,11 @@ namespace ost_pdf
             double frame_h_pts,
             int rotation,
             RenderCancelToken *cancel_token);
+        void *acquire_page(int page_index) const;
+        void close_pages() const;
         void *doc_ = nullptr;
+        mutable std::vector<std::pair<int, void *>> pages_;
+        mutable int page_loads_ = 0;
         mutable std::string last_error_;
     };
     void initialize_pdfium();

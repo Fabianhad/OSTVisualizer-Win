@@ -6,6 +6,32 @@ from ..config import (
     SPLASH_TITLE_FONT_SIZE,
 )
 
+_INDICATORS = (
+    QtWidgets.QStyle.PrimitiveElement.PE_IndicatorCheckBox,
+    QtWidgets.QStyle.PrimitiveElement.PE_IndicatorRadioButton,
+    QtWidgets.QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck,
+)
+_INACTIVE = QtGui.QPalette.ColorGroup.Inactive
+
+
+class ActiveIndicatorStyle(QtWidgets.QProxyStyle):
+    def __init__(self, base: QtWidgets.QStyle):
+        name = base.objectName()
+        super().__init__(base)
+        self.setObjectName(name)
+
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if (
+            element in _INDICATORS
+            and option is not None
+            and option.palette.currentColorGroup() == _INACTIVE
+        ):
+            option = type(option)(option)
+            palette = QtGui.QPalette(option.palette)
+            palette.setCurrentColorGroup(QtGui.QPalette.ColorGroup.Active)
+            option.palette = palette
+        super().drawPrimitive(element, option, painter, widget)
+
 
 def configure_application_style(app: QtWidgets.QApplication) -> None:
     if (
@@ -13,6 +39,10 @@ def configure_application_style(app: QtWidgets.QApplication) -> None:
         and app.style().objectName().lower() == "windowsvista"
     ):
         app.setStyle("Fusion")
+    if not isinstance(app.style(), ActiveIndicatorStyle):
+        base = QtWidgets.QStyleFactory.create(app.style().objectName())
+        if base is not None:
+            app.setStyle(ActiveIndicatorStyle(base))
 
 
 def _get_window_color_from_palette(widget: QtWidgets.QWidget) -> QtGui.QColor:

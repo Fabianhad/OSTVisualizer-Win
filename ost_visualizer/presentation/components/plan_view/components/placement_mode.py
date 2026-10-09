@@ -2,7 +2,8 @@ import logging
 import math
 import os
 import weakref
-from typing import NamedTuple
+from functools import partial
+from typing import NamedTuple, Optional
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainterPath, QPen
@@ -57,6 +58,7 @@ from ....visualization.core.geometry.takeoff_geometry import (
 from ....visualization.pdf import ost_pdf
 from ....visualization.pdf.pdf_visible_origin import read_visible_box_origin
 from ....visualization.pdf.pdfium_lock import pdfium_lock
+from ....visualization.pdf.render_priority import RenderPriority
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
     HighlightGraphicsItem,
@@ -79,7 +81,15 @@ from .geometry_utils import (
     position_polygon_path,
 )
 from .handle_style import apply_takeoff_handle_style
-from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
+from .snap_index import (
+    ENDPOINT,
+    GRID,
+    INTERSECTION,
+    MIDPOINT,
+    NONE,
+    PERPENDICULAR,
+    SnapIndex,
+)
 
 
 def _meets_placement_minimum(length: float, minimum: float) -> bool:
@@ -90,6 +100,8 @@ logger = logging.getLogger(__name__)
 PDF_INTELLIGENCE_SOURCE_MAIN = "main"
 PDF_INTELLIGENCE_SOURCE_OVERLAY = "overlay"
 _RIGHT_ANGLE_ALIGNMENT_TOLERANCE = 1e-6
+SNAP_MAX_PATH_ITEMS = 250000
+_FORM_LEVEL_SEPARATOR = "."
 _AREA_ANNOTATION_TYPES = frozenset({ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD})
 _INK_ANNOTATION_TYPES = frozenset({ANNOTATION_TYPE_INK})
 _POINT_ANNOTATION_TYPES = frozenset({ANNOTATION_TYPE_HOTLINK})
@@ -100,6 +112,171 @@ _DRAG_ANNOTATION_TYPES = (
     - _POINT_ANNOTATION_TYPES
 )
 _TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
+
+
+def _form_line_segments(renderer, page_index: int) -> list:
+    extraction = renderer.extract_path_items(page_index, SNAP_MAX_PATH_ITEMS)
+    return [
+        (item.x1, item.y1, item.x2, item.y2)
+        for item in extraction.items
+        if not item.curve and _FORM_LEVEL_SEPARATOR in item.object_id
+    ]
+
+
+class PdfSnapSource(NamedTuple):
+    cache_key: tuple
+    layer: str
+    file_path: str
+    page_index: int
+    fallback_width_pts: float
+    fallback_height_pts: float
+    overlay_rect: tuple
+    overlay_rotation: float
+    point_to_ost: float
+
+
+def pdf_raw_point_to_page_point(
+    x: float,
+    y: float,
+    raw_width_pts: float,
+    raw_height_pts: float,
+    intrinsic_rotation: int,
+) -> tuple[float, float]:
+    rotation = int(intrinsic_rotation or 0) % 360
+    if rotation == 90:
+        return y, x
+    if rotation == 180:
+        return raw_width_pts - x, y
+    if rotation == 270:
+        return raw_height_pts - y, raw_width_pts - x
+    return x, raw_height_pts - y
+
+
+def overlay_source_point_to_page_point(
+    x: float,
+    y: float,
+    source_width_pts: float,
+    source_height_pts: float,
+    overlay_rect: tuple,
+    total_rotation: float,
+) -> tuple[float, float]:
+    if source_width_pts <= 0.0 or source_height_pts <= 0.0:
+        return x, y
+    rect_x, rect_y, rect_w, rect_h = overlay_rect
+    if rect_w <= 0.0 or rect_h <= 0.0:
+        return x, y
+    scale_x = rect_w / source_width_pts
+    scale_y = rect_h / source_height_pts
+    scaled_x = x * scale_x
+    scaled_y = y * scale_y
+    if abs(total_rotation) <= 1e-12:
+        return rect_x + scaled_x, rect_y + scaled_y
+    cos_a = math.cos(total_rotation)
+    sin_a = math.sin(total_rotation)
+    return (
+        rect_x + scaled_x * cos_a - scaled_y * sin_a,
+        rect_y + scaled_x * sin_a + scaled_y * cos_a,
+    )
+
+
+def extract_pdf_snap_segments(source: PdfSnapSource) -> Optional[list]:
+    renderer = ost_pdf.PDFRenderer()
+    try:
+        with pdfium_lock:
+            if not renderer.open(source.file_path):
+                logger.warning(
+                    "Could not open PDF for snap vector extraction: %s",
+                    source.file_path,
+                )
+                return None
+            raw_segments = list(renderer.extract_path_segments(source.page_index))
+            raw_segments.extend(_form_line_segments(renderer, source.page_index))
+            page_info = renderer.page_info(source.page_index)
+        origin_x, origin_y = read_visible_box_origin(
+            source.file_path, source.page_index
+        )
+        overlay = source.layer == PDF_INTELLIGENCE_SOURCE_OVERLAY
+        page_width_pts = 0.0
+        page_height_pts = 0.0
+        if page_info is not None:
+            page_width_pts = float(page_info.effective_width_pts)
+            page_height_pts = float(page_info.effective_height_pts)
+        if not overlay:
+            if page_width_pts <= 0.0:
+                page_width_pts = source.fallback_width_pts
+            if page_height_pts <= 0.0:
+                page_height_pts = source.fallback_height_pts
+        if page_width_pts <= 0.0 or page_height_pts <= 0.0:
+            return []
+        intrinsic_rotation = 0
+        raw_width_pts = page_width_pts
+        raw_height_pts = page_height_pts
+        if page_info is not None:
+            intrinsic_rotation = int(page_info.intrinsic_rotation or 0)
+            if page_info.crop_width_pts and page_info.crop_height_pts:
+                raw_width_pts = float(page_info.crop_width_pts)
+                raw_height_pts = float(page_info.crop_height_pts)
+            elif page_info.media_width_pts and page_info.media_height_pts:
+                raw_width_pts = float(page_info.media_width_pts)
+                raw_height_pts = float(page_info.media_height_pts)
+        point_to_ost = source.point_to_ost
+        overlay_rect = source.overlay_rect
+        overlay_rotation = source.overlay_rotation
+        segments = []
+        for x1, y1, x2, y2 in raw_segments:
+            px1, py1 = pdf_raw_point_to_page_point(
+                float(x1) - origin_x,
+                float(y1) - origin_y,
+                raw_width_pts,
+                raw_height_pts,
+                intrinsic_rotation,
+            )
+            px2, py2 = pdf_raw_point_to_page_point(
+                float(x2) - origin_x,
+                float(y2) - origin_y,
+                raw_width_pts,
+                raw_height_pts,
+                intrinsic_rotation,
+            )
+            if overlay:
+                px1, py1 = overlay_source_point_to_page_point(
+                    px1,
+                    py1,
+                    page_width_pts,
+                    page_height_pts,
+                    overlay_rect,
+                    overlay_rotation,
+                )
+                px2, py2 = overlay_source_point_to_page_point(
+                    px2,
+                    py2,
+                    page_width_pts,
+                    page_height_pts,
+                    overlay_rect,
+                    overlay_rotation,
+                )
+            segments.append(
+                (
+                    px1 * point_to_ost,
+                    py1 * point_to_ost,
+                    px2 * point_to_ost,
+                    py2 * point_to_ost,
+                )
+            )
+        return segments
+    except Exception:
+        logger.exception("Failed to extract PDF snap vectors")
+        return None
+    finally:
+        with pdfium_lock:
+            renderer.close()
+
+
+def build_pdf_snap_index(source: PdfSnapSource) -> tuple:
+    segments = extract_pdf_snap_segments(source)
+    index = SnapIndex()
+    index.build(segments or [])
+    return index, segments is not None
 
 
 class AreaPlacementEndpoint(NamedTuple):
@@ -310,14 +487,9 @@ class PlacementModeMixin:
         raw_height_pts: float,
         intrinsic_rotation: int,
     ) -> tuple[float, float]:
-        rotation = int(intrinsic_rotation or 0) % 360
-        if rotation == 90:
-            return y, x
-        if rotation == 180:
-            return raw_width_pts - x, y
-        if rotation == 270:
-            return raw_height_pts - y, raw_width_pts - x
-        return x, raw_height_pts - y
+        return pdf_raw_point_to_page_point(
+            x, y, raw_width_pts, raw_height_pts, intrinsic_rotation
+        )
 
     def _pdf_intelligence_point_to_page_point(
         self,
@@ -334,21 +506,13 @@ class PlacementModeMixin:
             return x, y
         if source_width_pts <= 0.0 or source_height_pts <= 0.0:
             return x, y
-        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_page_points()
-        if rect_w <= 0.0 or rect_h <= 0.0:
-            return x, y
-        scale_x = rect_w / source_width_pts
-        scale_y = rect_h / source_height_pts
-        total_rotation = float(page.overlay_rotation + page.deskew_rotation_overlay)
-        scaled_x = x * scale_x
-        scaled_y = y * scale_y
-        if abs(total_rotation) <= 1e-12:
-            return rect_x + scaled_x, rect_y + scaled_y
-        cos_a = math.cos(total_rotation)
-        sin_a = math.sin(total_rotation)
-        return (
-            rect_x + scaled_x * cos_a - scaled_y * sin_a,
-            rect_y + scaled_x * sin_a + scaled_y * cos_a,
+        return overlay_source_point_to_page_point(
+            x,
+            y,
+            source_width_pts,
+            source_height_pts,
+            page.overlay_rect_page_points(),
+            float(page.overlay_rotation + page.deskew_rotation_overlay),
         )
 
     def _build_takeoff_snap_segments(self) -> list:
@@ -438,108 +602,31 @@ class PlacementModeMixin:
                 add_count_border_segments(takeoff, condition)
         return segments
 
-    def _build_pdf_snap_segments(self) -> list:
-        if not self._pdf_snap_available_for_current_page():
-            return []
+    def _pdf_snap_source(self) -> Optional[PdfSnapSource]:
         cache_key = self._pdf_snap_cache_key()
         if cache_key is None:
-            return []
-        if cache_key == self._pdf_snap_segments_cache_key:
-            return list(self._pdf_snap_segments_cache)
+            return None
         page = self._current_page
-        source_layer, file_path, page_index = self._pdf_intelligence_source()
-        renderer = ost_pdf.PDFRenderer()
-        try:
-            with pdfium_lock:
-                if not renderer.open(file_path):
-                    logger.warning(
-                        "Could not open PDF for snap vector extraction: %s",
-                        file_path,
-                    )
-                    self._pdf_snap_segments_cache_key = cache_key
-                    self._pdf_snap_segments_cache = []
-                    return []
-                raw_segments = renderer.extract_path_segments(page_index)
-                page_info = renderer.page_info(page_index)
-            origin_x, origin_y = read_visible_box_origin(file_path, page_index)
-            page_width_pts = 0.0
-            page_height_pts = 0.0
-            if page_info is not None:
-                page_width_pts = float(page_info.effective_width_pts)
-                page_height_pts = float(page_info.effective_height_pts)
-            if source_layer != PDF_INTELLIGENCE_SOURCE_OVERLAY:
-                if page_width_pts <= 0.0:
-                    page_width_pts = float(self._pdf_width_pts or page.width_pts or 0.0)
-                if page_height_pts <= 0.0:
-                    page_height_pts = float(
-                        self._pdf_height_pts or page.height_pts or 0.0
-                    )
-            if page_width_pts <= 0.0 or page_height_pts <= 0.0:
-                self._pdf_snap_segments_cache_key = cache_key
-                self._pdf_snap_segments_cache = []
-                return []
-            intrinsic_rotation = 0
-            raw_width_pts = page_width_pts
-            raw_height_pts = page_height_pts
-            if page_info is not None:
-                intrinsic_rotation = int(page_info.intrinsic_rotation or 0)
-                if page_info.crop_width_pts and page_info.crop_height_pts:
-                    raw_width_pts = float(page_info.crop_width_pts)
-                    raw_height_pts = float(page_info.crop_height_pts)
-                elif page_info.media_width_pts and page_info.media_height_pts:
-                    raw_width_pts = float(page_info.media_width_pts)
-                    raw_height_pts = float(page_info.media_height_pts)
-            ratio = self._scene_builder.get_coordinate_system().scale_ratio
-            point_to_ost = ratio / 72.0
-            segments = []
-            for x1, y1, x2, y2 in raw_segments:
-                px1, py1 = self._pdf_raw_point_to_page_point(
-                    float(x1) - origin_x,
-                    float(y1) - origin_y,
-                    raw_width_pts,
-                    raw_height_pts,
-                    intrinsic_rotation,
-                )
-                px2, py2 = self._pdf_raw_point_to_page_point(
-                    float(x2) - origin_x,
-                    float(y2) - origin_y,
-                    raw_width_pts,
-                    raw_height_pts,
-                    intrinsic_rotation,
-                )
-                px1, py1 = self._pdf_intelligence_point_to_page_point(
-                    source_layer,
-                    px1,
-                    py1,
-                    page_width_pts,
-                    page_height_pts,
-                )
-                px2, py2 = self._pdf_intelligence_point_to_page_point(
-                    source_layer,
-                    px2,
-                    py2,
-                    page_width_pts,
-                    page_height_pts,
-                )
-                segments.append(
-                    (
-                        px1 * point_to_ost,
-                        py1 * point_to_ost,
-                        px2 * point_to_ost,
-                        py2 * point_to_ost,
-                    )
-                )
-            self._pdf_snap_segments_cache_key = cache_key
-            self._pdf_snap_segments_cache = list(segments)
-            return segments
-        except Exception:
-            logger.exception("Failed to extract PDF snap vectors")
-            self._pdf_snap_segments_cache_key = cache_key
-            self._pdf_snap_segments_cache = []
-            return []
-        finally:
-            with pdfium_lock:
-                renderer.close()
+        layer, file_path, page_index = self._pdf_intelligence_source()
+        overlay_rect = (0.0, 0.0, 0.0, 0.0)
+        overlay_rotation = 0.0
+        if layer == PDF_INTELLIGENCE_SOURCE_OVERLAY:
+            overlay_rect = tuple(page.overlay_rect_page_points())
+            overlay_rotation = float(
+                page.overlay_rotation + page.deskew_rotation_overlay
+            )
+        ratio = self._scene_builder.get_coordinate_system().scale_ratio
+        return PdfSnapSource(
+            cache_key=cache_key,
+            layer=layer,
+            file_path=file_path,
+            page_index=page_index,
+            fallback_width_pts=float(self._pdf_width_pts or page.width_pts or 0.0),
+            fallback_height_pts=float(self._pdf_height_pts or page.height_pts or 0.0),
+            overlay_rect=overlay_rect,
+            overlay_rotation=overlay_rotation,
+            point_to_ost=ratio / 72.0,
+        )
 
     def _ensure_takeoff_snap_index(self) -> SnapIndex:
         if self._takeoff_snap_index is None:
@@ -552,10 +639,62 @@ class PlacementModeMixin:
     def _ensure_pdf_snap_index(self) -> SnapIndex:
         if self._pdf_snap_index is None:
             self._pdf_snap_index = SnapIndex()
-        if self._pdf_snap_index_dirty and self._pdf_snap_available_for_current_page():
-            self._pdf_snap_index.build(self._build_pdf_snap_segments())
-            self._pdf_snap_index_dirty = False
+        if not (
+            self._pdf_snap_index_dirty and self._pdf_snap_available_for_current_page()
+        ):
+            return self._pdf_snap_index
+        self._pdf_snap_index_dirty = False
+        source = self._pdf_snap_source()
+        cache_key = None if source is None else source.cache_key
+        if cache_key is not None and cache_key == self._pdf_snap_request_key:
+            return self._pdf_snap_index
+        self._cancel_pdf_snap_request()
+        if cache_key != self._pdf_snap_index_key:
+            self._pdf_snap_index = SnapIndex()
+            self._pdf_snap_index_key = None
+        elif cache_key is None or self._pdf_snap_index_complete:
+            return self._pdf_snap_index
+        if source is not None:
+            self._request_pdf_snap_index(source)
         return self._pdf_snap_index
+
+    def _request_pdf_snap_index(self, source: PdfSnapSource) -> None:
+        weak_self = weakref.ref(self)
+        cache_key = source.cache_key
+
+        def on_ready(result) -> None:
+            view = weak_self()
+            if view is not None:
+                view._on_pdf_snap_index_ready(cache_key, result)
+
+        self._pdf_snap_request_key = cache_key
+        self._pdf_snap_request_id = None
+        request_id = self._rendering_service.run_job_async(
+            partial(build_pdf_snap_index, source),
+            on_ready,
+            priority=RenderPriority.PDF_TEXT,
+        )
+        if self._pdf_snap_request_key == cache_key:
+            self._pdf_snap_request_id = request_id
+
+    def _on_pdf_snap_index_ready(self, cache_key, result) -> None:
+        if cache_key != self._pdf_snap_request_key:
+            return
+        self._pdf_snap_request_key = None
+        self._pdf_snap_request_id = None
+        index, complete = (None, False)
+        if result.success and result.image is not None:
+            index, complete = result.image
+        self._pdf_snap_index = index if index is not None else SnapIndex()
+        self._pdf_snap_index_key = cache_key
+        self._pdf_snap_index_complete = complete
+
+    def _cancel_pdf_snap_request(self) -> None:
+        request_id = self._pdf_snap_request_id
+        self._pdf_snap_request_id = None
+        self._pdf_snap_request_key = None
+        if request_id is not None and self._rendering_service is not None:
+            self._rendering_service.cancel_request(request_id)
 
     def _request_place_preview_repaint(self) -> None:
         viewport = self.viewport()
@@ -602,6 +741,7 @@ class PlacementModeMixin:
             float(ost_x),
             float(ost_y),
             float(self._screen_px_to_ost_radius(float(threshold_px))),
+            True,
         )
 
     def _query_pdf_line_snap(
@@ -617,6 +757,7 @@ class PlacementModeMixin:
             float(ost_x),
             float(ost_y),
             float(self._screen_px_to_ost_radius(float(threshold_px))),
+            True,
         )
 
     def _grid_snap_from_cursor(
@@ -676,7 +817,7 @@ class PlacementModeMixin:
         return ost_x, ost_y, ost_x * inv_factor, ost_y * inv_factor, NONE
 
     def _is_line_snap(self, snap_kind: int) -> bool:
-        return snap_kind in (ENDPOINT, MIDPOINT, PERPENDICULAR)
+        return snap_kind in (ENDPOINT, INTERSECTION, MIDPOINT, PERPENDICULAR)
 
     def _add_place_handle(self, x: float, y: float, half: float = 4.0) -> None:
         marker = QGraphicsRectItem(-half, -half, half * 2, half * 2)

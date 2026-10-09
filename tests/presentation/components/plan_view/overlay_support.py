@@ -379,6 +379,7 @@ class FakeRenderingService:
         self.composite_requests = []
         self.frame_requests = []
         self.composite_frame_requests = []
+        self.job_requests = []
         self.cancelled_requests = []
         self._request_counter = 0
         self.shutdown_calls = 0
@@ -530,6 +531,11 @@ class FakeRenderingService:
 
     def cancel_request(self, request_id):
         self.cancelled_requests.append(request_id)
+
+    def run_job_async(self, job, callback, priority=2):
+        request_id = self._next_request_id("job")
+        self.job_requests.append((request_id, job, callback, priority))
+        return request_id
 
     def extract_pdf_text_async(self, file_path, page_index, callback, priority=2):
         del file_path, page_index, callback, priority

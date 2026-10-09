@@ -5,4 +5,5 @@ GRID = int(_native.GRID)
 ENDPOINT = int(_native.ENDPOINT)
 MIDPOINT = int(_native.MIDPOINT)
 PERPENDICULAR = int(_native.PERPENDICULAR)
+INTERSECTION = int(_native.INTERSECTION)
 SnapIndex = _native.SnapIndex

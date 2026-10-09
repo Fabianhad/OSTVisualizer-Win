@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Snap to line crossings.** While placing takeoffs and annotations, the
+  cursor now snaps to the point where two PDF lines (or two takeoff edges)
+  cross inside the snap radius, and this crossing wins over nearby end, mid
+  and on-line points, so overshooting wall lines snap to the true corner.
+  Where lines only meet at an end point, snapping still reports that end
+  point as before.
 - **Mat and footing outlines, and no silent merges, in AI takeoff.**
   `find_regions` can follow dashed outlines (`boundary_kinds` `["dashed"]`), such
   as mats and footings that reach past the pit walls: dashes drawn as separate
@@ -146,6 +152,38 @@
 
 ### Fixed
 
+- **Faster zooming and panning on dense PDF sheets, and no freeze on the
+  first snap.** Each sharp redraw re-read the whole page before drawing it;
+  the page is now kept ready between redraws, so a sharp frame on a dense
+  sheet takes about 30 to 60 ms instead of 135 to 180 ms. The first mouse
+  move with Snap to PDF Lines on no longer freezes the plan for about half a
+  second while the page's lines are read; they are read in the background,
+  and PDF line snapping starts as soon as they are ready (a fraction of a
+  second). Editing takeoffs no longer re-reads the page's lines either.
+  Rendered pixels and snap points are otherwise unchanged.
+- **AI takeoff seeded region searches no longer time out on crowded sheets.**
+  On sheets with tens of thousands of tiny strokes, the dashed-outline check
+  behind a seeded `find_regions` could run for minutes, past the 120 s proxy
+  timeout. Calls over the 20,000-segment cap are now refused before that check,
+  touching corner pieces are joined in near-linear time, and the check stops
+  after 20 s. The response then reports `dashed_analysis` as
+  `skipped_time_budget` and the region is found without dashed edges. Results on
+  sheets that finish quickly are unchanged.
+
+- **Snapping works on PDFs that keep their drawing in Form XObjects.** Some
+  CAD exports place all linework inside Form XObjects; snapping only read
+  top-level lines, so on those PDFs it found little more than the sheet border.
+  Lines inside Form XObjects are now snap targets too; snapping on other PDFs
+  is unchanged.
+- **Checked boxes keep their color when a window loses focus.** With the
+  dark theme, a checked checkbox or radio button (in dialogs such as Options,
+  and check boxes in lists) turned dark blue as soon as you clicked another
+  window. Checkboxes and radio buttons now look the same whether the window
+  is active or not; disabled ones still look disabled.
+- **A PDF with a very long dash pattern no longer exhausts memory in AI
+  takeoff.** Each line piece kept a full copy of the dash array, so one
+  20,000-entry pattern on 3,000 lines used about 1 GB; dash arrays now keep
+  their first 32 entries.
 - **The takeoff tool stays active when you switch pages.** With a condition
   selected in the Conditions sidebar, switching pages turned the takeoff
   cursor back into the Select cursor and ended the takeoff. The takeoff, pan

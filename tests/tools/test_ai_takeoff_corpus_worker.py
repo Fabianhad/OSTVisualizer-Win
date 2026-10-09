@@ -119,6 +119,94 @@ class WorkerHelperTests(unittest.TestCase):
         timing, result = worker._timed(lambda: {"status": "ok", "data": {}})
         self.assertEqual((timing["status"], result["status"]), ("ok", "ok"))
 
+    def test_the_wall_profile_finds_the_dominant_and_heaviest_long_classes(self):
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        lines = [LineSegment(0, i, 200, i, width=2.0) for i in range(30)]
+        lines += [LineSegment(0, 300 + i, 200, 300 + i, width=0.7) for i in range(10)]
+        lines += [LineSegment(0, 400 + i, 10, 400 + i, width=0.25) for i in range(200)]
+        lines += [LineSegment(0, 700 + i, 300, 700 + i, width=4.0) for i in range(5)]
+        lines += [
+            LineSegment(0, 800 + i, 300, 800 + i, width=6.0, dash=(6.0, 3.0))
+            for i in range(9)
+        ]
+        lines += [LineSegment(0, 900, 500, 900, width=9.0)]
+        profile = worker.wall_profile(lines)
+        self.assertEqual(profile["dominant_wall_width"], 2.0)
+        self.assertEqual(profile["heaviest_long_width"], 4.0)
+        self.assertEqual(
+            json.loads(profile["long_width_histogram"]),
+            {"0.7": 2000.0, "2.0": 6000.0, "4.0": 1500.0, "9.0": 500.0},
+        )
+        self.assertEqual(
+            worker.wall_profile([]),
+            {
+                "dominant_wall_width": None,
+                "heaviest_long_width": None,
+                "long_width_histogram": "{}",
+            },
+        )
+        self.assertTrue(worker.removes_dominant(2.5, 2.0))
+        self.assertFalse(worker.removes_dominant(2.0, 2.0))
+        self.assertFalse(worker.removes_dominant(None, 2.0))
+        self.assertFalse(worker.removes_dominant(3.0, None))
+
+    def test_annotation_linework_is_never_the_dominant_wall_weight(self):
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        walls = [LineSegment(0, i, 200, i, width=2.0) for i in range(10)]
+        grid = [LineSegment(0, 300 + i, 2000, 300 + i, width=0.24) for i in range(100)]
+        profile = worker.wall_profile(walls + grid)
+        self.assertEqual(profile["dominant_wall_width"], 2.0)
+        self.assertEqual(worker.wall_profile(grid)["dominant_wall_width"], None)
+
+    def test_the_auto_seed_skips_frame_sized_regions(self):
+        k = 1.0
+        frame = {"polygon_ost": [10, 10, 600, 10, 600, 780, 10, 780]}
+        room = {"polygon_ost": [100, 100, 300, 100, 300, 300, 100, 300]}
+        closet = {"polygon_ost": [400, 400, 420, 400, 420, 420, 400, 420]}
+        self.assertIs(worker.seed_region([frame, room, closet], k, 612.0, 792.0), room)
+        self.assertIsNone(worker.seed_region([frame], k, 612.0, 792.0))
+        self.assertIsNone(worker.seed_region([], k, 612.0, 792.0))
+
+    def test_region_shapes_against_the_search_box(self):
+        k = 2.0
+        inner = [20, 20, 200, 20, 200, 200, 20, 200]
+        self.assertEqual(
+            worker.region_shape(inner, k, 612.0, 792.0),
+            (False, round(8100.0 / (612.0 * 792.0), 4)),
+        )
+        edge = [0, 0, 1224, 0, 1224, 1584, 0, 1584]
+        self.assertEqual(worker.region_shape(edge, k, 612.0, 792.0), (True, 1.0))
+        near = [0.4, 40, 100, 40, 100, 100, 0.4, 100]
+        self.assertTrue(worker.region_shape(near, k, 612.0, 792.0)[0])
+        self.assertEqual(worker.region_shape([], k, 612.0, 792.0), (False, 0.0))
+
+    def test_wall_filter_failures(self):
+        self.assertFalse(worker.wall_filter_failure(False, 0.2, 50))
+        self.assertTrue(worker.wall_filter_failure(True, 0.2, 50))
+        self.assertTrue(worker.wall_filter_failure(False, 0.81, 50))
+        self.assertFalse(worker.wall_filter_failure(False, 0.8, 50))
+        self.assertTrue(worker.wall_filter_failure(False, 0.2, 0))
+
+    def test_plan_pages_are_spread_across_the_set(self):
+        self.assertEqual(worker.spread(list(range(5)), 12), [0, 1, 2, 3, 4])
+        self.assertEqual(worker.spread(list(range(100)), 4), [0, 33, 66, 99])
+        self.assertEqual(worker.spread([7, 9, 11], 1), [7])
+        self.assertEqual(worker.spread([], 3), [])
+
+    def test_drawing_text_leaves_out_the_title_block(self):
+        from tools.ai_takeoff_corpus import TextRun
+
+        runs = [
+            TextRun('4" SLAB', 100, 100, 140, 108),
+            TextRun("S-101", 2400, 1650, 2450, 1670),
+            TextRun("FOUNDATION PLAN", 100, 1500, 300, 1514),
+            TextRun("NOTE", 2000, 100, 2040, 108),
+        ]
+        self.assertEqual(worker.drawing_text_runs(runs, 2592.0, 1728.0), 1)
+        self.assertEqual(worker.drawing_text_runs([], 2592.0, 1728.0), 0)
+
     def test_quadrants_tile_the_page(self):
         self.assertEqual(
             worker.quadrants(200.0, 100.0),
@@ -284,6 +372,7 @@ class WorkerProcessTests(unittest.TestCase):
         self.assertEqual(hints[0]["plan_scale_label"], '1/8"=1\'-0"')
         self.assertEqual(json.loads(hints[1]["scale_views"]), {"plan": 2})
         self.assertTrue(all(hint["title_block_crop"] for hint in hints))
+        self.assertEqual([hint["kind"] for hint in hints], ["plan", "plan", "unknown"])
         columns = set(RUN_COLUMNS)
         self.assertEqual(set(hints[0]) - {"index"} - columns, set())
 
@@ -303,6 +392,44 @@ class WorkerProcessTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "not created"):
                 worker.prepare(pdf, self.work / "other", self.work / "other.json")
+
+    def test_wall_width_variants_and_callouts_are_measured(self):
+        from tools.ai_takeoff_corpus import RUN_COLUMNS
+
+        pdf = write_content_pdf(self.work / "plan.pdf", fx.s101_content() + TITLE)
+        prepared_path = self.work / "plan.json"
+        self.call("prepare", str(pdf), str(self.work), str(prepared_path))
+        prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
+        row = worker.measure_page(prepared, prepared["pages"][0]["uid"], [])
+        self.assertEqual(
+            (row["dominant_wall_width"], row["suggestion_removes_dominant"]),
+            (2.0, False),
+        )
+        self.assertEqual(row["suggested_min_width"], row["list_min_width"])
+        for prefix in ("default", "zero", "heavy"):
+            with self.subTest(prefix=prefix):
+                self.assertEqual(row[f"{prefix}_status"], "ok")
+                self.assertTrue(row[f"{prefix}_found"])
+                self.assertFalse(row[f"{prefix}_touches_edge"])
+                self.assertTrue(0.0 < row[f"{prefix}_box_ratio"] < 0.8)
+                self.assertGreater(row[f"{prefix}_segments"], 0)
+                self.assertFalse(row[f"{prefix}_wall_failure"])
+                self.assertIn(row[f"{prefix}_open_gaps"], (0, 1, 2))
+                self.assertIsInstance(row[f"{prefix}_dashed_outline"], bool)
+                self.assertLess(row[f"{prefix}_seconds"], worker.PROXY_TIMEOUT_S)
+        self.assertEqual(row["zero_min_width"], 0.0)
+        self.assertEqual(row["heavy_min_width"], row["heaviest_long_width"])
+        self.assertEqual(
+            row["drawing_text_runs"],
+            len("OFFICE 101".split()) + len(fx.INJECTED.split()),
+        )
+        self.assertFalse(row["callouts_as_lines"])
+        self.assertEqual(row["proposal_status"], "ok")
+        self.assertEqual(
+            sum(json.loads(row["proposal_subjects"]).values()),
+            row["proposal_assumptions"],
+        )
+        self.assertEqual(set(row) - set(RUN_COLUMNS), set())
 
     def test_in_process_measurement_of_truncated_and_unseeded_pages(self):
         from ost_visualizer.presentation.services import ai_takeoff_pdf_source

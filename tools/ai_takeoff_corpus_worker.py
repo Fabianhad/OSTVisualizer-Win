@@ -25,7 +25,9 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from tools.ai_takeoff_corpus import (
     KIND_PLAN,
+    PROXY_TIMEOUT_S,
     TextRun,
+    spread,
     classify_page,
     page_scale,
     sheet_number,
@@ -36,6 +38,15 @@ from tools.ai_takeoff_corpus import (
 DEFAULT_SCALE = (0.125, 12.0)
 MAX_GAP_IN = 36.0
 OUTLINED_SYMBOL_SHARE = 0.3
+LONG_LINE_PTS = 72.0
+MIN_LONG_LINES = 4
+EDGE_TOLERANCE_PTS = 1.0
+BOX_SHARE_LIMIT = 0.8
+FRAME_SHARE = 0.5
+TITLE_BLOCK_X = 0.7
+TITLE_BLOCK_Y = 0.8
+CALLOUT_MIN_RUNS = 10
+CALLOUT_MIN_SEGMENTS = 500
 
 
 class _Counters(ctypes.Structure):
@@ -164,6 +175,24 @@ def _scratch_read_service(prepared: dict, sidecar_dir: str, source, pages=None):
     return service, pages
 
 
+def page_runs(read, snapshot) -> list:
+    runs = []
+    cursor = None
+    while True:
+        page = read.list_text(snapshot, cursor=cursor, limit=500)
+        for item in page["data"]["runs"]:
+            left, top, right, bottom = item["bbox_pts"]
+            runs.append(TextRun(item["text"]["value"], left, top, right, bottom))
+        cursor = page["meta"].get("next_cursor")
+        if not cursor:
+            return runs
+
+
+def page_kind(read, snapshot) -> str:
+    lines = text_lines(page_runs(read, snapshot))
+    return classify_page(lines, snapshot.width_pts, snapshot.height_pts)[0]
+
+
 def sheet_hint_row(index: int, hints: dict) -> dict:
     plan = hints["plan_scale"]
     views = Counter(
@@ -203,15 +232,12 @@ def sheets(prepared: dict, out: Path) -> int:
         cursor = None
         while True:
             listed = read.list_sheets(cursor=cursor, text_hints=True)
-            snapshots = [
-                read.page_snapshot(sheet["page_uid"])
-                for sheet in listed["data"]["sheets"]
-            ]
-            hinted = read.sheet_text_hints(listed, snapshots)
+            hinted = read.sheet_text_hints(listed, read.sheet_hint_snapshots(listed))
             for sheet in hinted["data"]["sheets"]:
-                rows.append(
-                    sheet_hint_row(order[sheet["page_uid"]], sheet["text_hints"])
-                )
+                row = sheet_hint_row(order[sheet["page_uid"]], sheet["text_hints"])
+                snapshot = read.page_snapshot(sheet["page_uid"])
+                row["kind"] = page_kind(read, snapshot) if snapshot.is_pdf else ""
+                rows.append(row)
             cursor = listed["meta"].get("next_cursor")
             if not cursor:
                 break
@@ -221,6 +247,110 @@ def sheets(prepared: dict, out: Path) -> int:
     rows.sort(key=lambda row: row["index"])
     out.write_text(json.dumps(rows), encoding="utf-8")
     return 0
+
+
+def wall_profile(lines) -> dict:
+    from ost_visualizer.domain.services.ai_linework import heavy_width_threshold
+
+    heavy = heavy_width_threshold(lines) if lines else 0.0
+    lengths: dict = {}
+    counts: Counter = Counter()
+    for line in lines:
+        if not line.stroked or line.width is None or line.has_dash or line.length < LONG_LINE_PTS:
+            continue
+        key = round(float(line.width), 2)
+        lengths[key] = lengths.get(key, 0.0) + line.length
+        counts[key] += 1
+    common = [key for key in lengths if counts[key] >= MIN_LONG_LINES]
+    walls = [key for key in common if key >= heavy - 1e-9]
+    return {
+        "dominant_wall_width": max(walls, key=lambda key: lengths[key]) if walls else None,
+        "heaviest_long_width": max(common) if common else None,
+        "long_width_histogram": json.dumps(
+            {str(key): round(value, 1) for key, value in sorted(lengths.items())},
+            sort_keys=True,
+        ),
+    }
+
+
+def seed_region(regions, k: float, width: float, height: float):
+    for region in regions:
+        if region_shape(region["polygon_ost"], k, width, height)[1] <= FRAME_SHARE:
+            return region
+    return None
+
+
+def removes_dominant(suggested, dominant) -> bool:
+    return suggested is not None and dominant is not None and suggested > dominant + 1e-9
+
+
+def region_shape(polygon_ost, k: float, width: float, height: float) -> tuple:
+    points = [(polygon_ost[i] / k, polygon_ost[i + 1] / k) for i in range(0, len(polygon_ost) - 1, 2)]
+    if len(points) < 3 or width <= 0.0 or height <= 0.0:
+        return False, 0.0
+    xs = [x for x, _y in points]
+    ys = [y for _x, y in points]
+    touches = (
+        min(xs) <= EDGE_TOLERANCE_PTS
+        or min(ys) <= EDGE_TOLERANCE_PTS
+        or max(xs) >= width - EDGE_TOLERANCE_PTS
+        or max(ys) >= height - EDGE_TOLERANCE_PTS
+    )
+    area = abs(
+        sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(points, points[1:] + points[:1]))
+    ) / 2.0
+    return touches, round(area / (width * height), 4)
+
+
+def wall_filter_failure(touches: bool, box_ratio: float, segment_count: int) -> bool:
+    return touches or box_ratio > BOX_SHARE_LIMIT or segment_count == 0
+
+
+def drawing_text_runs(runs, width: float, height: float) -> int:
+    return sum(
+        1
+        for run in runs
+        if (run.left + run.right) / 2.0 < TITLE_BLOCK_X * width
+        and (run.top + run.bottom) / 2.0 < TITLE_BLOCK_Y * height
+    )
+
+
+def _seeded_variant(prefix, proposal, snapshot, whole, seed, min_width, k) -> dict:
+    timing, result = _timed(
+        lambda: proposal.find_regions(
+            snapshot, whole, seed_pts=seed, min_width=min_width, max_gap_in=MAX_GAP_IN
+        )
+    )
+    row = {
+        f"{prefix}_status": timing["status"],
+        f"{prefix}_seconds": timing["seconds"],
+        f"{prefix}_min_width": min_width,
+        f"{prefix}_found": False,
+    }
+    if result is None:
+        return row
+    data = result["data"]
+    segments = data.get("segment_count", 0)
+    row[f"{prefix}_segments"] = segments
+    if not data["regions"]:
+        row[f"{prefix}_wall_failure"] = segments == 0
+        return row
+    region = data["regions"][0]
+    touches, ratio = region_shape(region["polygon_ost"], k, whole[2], whole[3])
+    row.update(
+        {
+            f"{prefix}_found": True,
+            f"{prefix}_method": region["method"],
+            f"{prefix}_area_sf": region["area_sf"],
+            f"{prefix}_touches_edge": touches,
+            f"{prefix}_box_ratio": ratio,
+            f"{prefix}_leak": region["leak_risk"],
+            f"{prefix}_open_gaps": len(region.get("open_gaps") or []),
+            f"{prefix}_dashed_outline": region.get("dashed_outline") is not None,
+            f"{prefix}_wall_failure": wall_filter_failure(touches, ratio, segments),
+        }
+    )
+    return row
 
 
 def quadrants(width: float, height: float) -> list:
@@ -324,6 +454,7 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
     from ost_visualizer.domain.services.ai_linework import (
         classify_linework,
         heavy_width_threshold,
+        suggested_min_width,
     )
     from ost_visualizer.domain.services.ai_sheet_text import (
         plan_scale,
@@ -366,16 +497,7 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
             page_size_class=_size_class(width, height),
         )
         raw_runs = source.get_text_runs(snapshot.image_path, snapshot.page_index)
-        runs = []
-        cursor = None
-        while True:
-            page = read.list_text(snapshot, cursor=cursor, limit=500)
-            for item in page["data"]["runs"]:
-                left, top, right, bottom = item["bbox_pts"]
-                runs.append(TextRun(item["text"]["value"], left, top, right, bottom))
-            cursor = page["meta"].get("next_cursor")
-            if not cursor:
-                break
+        runs = page_runs(read, snapshot)
         lines = text_lines(runs)
         kind, title = classify_page(lines, width, height)
         status, legacy_scale, hits = page_scale(lines)
@@ -417,6 +539,19 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
                 list_status="skipped", filtered_status="skipped", seed_status="skipped"
             )
             return row
+        profile = wall_profile(line_items)
+        suggested = suggested_min_width(line_items)
+        drawing_runs = drawing_text_runs(runs, width, height)
+        row.update(
+            profile,
+            suggested_min_width=suggested,
+            suggestion_removes_dominant=removes_dominant(
+                suggested, profile["dominant_wall_width"]
+            ),
+            drawing_text_runs=drawing_runs,
+            callouts_as_lines=drawing_runs < CALLOUT_MIN_RUNS
+            and len(line_items) >= CALLOUT_MIN_SEGMENTS,
+        )
         row["scale_used"] = "default 1/8" if scale is None else scale.label
         row["box_quadrants_truncated"] = ""
         if truncated:
@@ -464,12 +599,21 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
             seed = seeds[0]["seed_pts"]
             expected = seeds[0]["expected_sf"]
             row["seed_source"] = "hand"
-        elif filtered is not None and filtered["data"]["regions"]:
-            seed = _interior_point(filtered["data"]["regions"][0]["polygon_ost"], k)
+        elif filtered is not None and seed_region(filtered["data"]["regions"], k, width, height):
+            region = seed_region(filtered["data"]["regions"], k, width, height)
+            seed = _interior_point(region["polygon_ost"], k)
             row["seed_source"] = "largest_region"
         if seed is None:
             row["seed_status"] = "skipped"
             return row
+        row.update(_seeded_variant("default", proposal, snapshot, whole, seed, None, k))
+        row.update(_seeded_variant("zero", proposal, snapshot, whole, seed, 0.0, k))
+        if profile["heaviest_long_width"] is not None:
+            row.update(
+                _seeded_variant(
+                    "heavy", proposal, snapshot, whole, seed, profile["heaviest_long_width"], k
+                )
+            )
         timing, seeded = _timed(
             lambda: proposal.find_regions(
                 snapshot,
@@ -510,6 +654,10 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
         if proposed is not None:
             geometry = proposed["data"]["geometry"]
             row.update(
+                proposal_subjects=json.dumps(
+                    Counter(item["subject"] for item in proposed["data"]["assumptions"]),
+                    sort_keys=True,
+                ),
                 proposal_assumptions=len(proposed["data"]["assumptions"]),
                 proposal_outline_vertices=geometry["outline_vertices"][1],
                 proposal_hole_vertices=geometry["hole_vertices"][1],

@@ -66,7 +66,19 @@ class PdfTextRequest:
     )
 
 
-_QueuedRequest = RenderRequest | PdfTextRequest
+@dataclass
+class WorkerJobRequest:
+    request_id: str
+    job: Callable[[], object]
+    priority: int
+    callback: Callable[[RenderResult], None]
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    native_cancel_token: ost_pdf.RenderCancelToken = field(
+        default_factory=ost_pdf.RenderCancelToken
+    )
+
+
+_QueuedRequest = RenderRequest | PdfTextRequest | WorkerJobRequest
 
 
 class RenderBridge(QObject):
@@ -310,6 +322,20 @@ class PDFRenderingService:
         )
         return self._enqueue_request(request)
 
+    def run_job_async(
+        self,
+        job: Callable[[], object],
+        callback: Callable[[RenderResult], None],
+        priority: int = 2,
+    ) -> str:
+        request = WorkerJobRequest(
+            request_id=str(uuid.uuid4()),
+            job=job,
+            priority=priority,
+            callback=callback,
+        )
+        return self._enqueue_request(request)
+
     def cancel_request(self, request_id: str) -> None:
         with self._lock:
             request = self._active_requests.get(request_id)
@@ -351,6 +377,8 @@ class PDFRenderingService:
         try:
             if isinstance(request, PdfTextRequest):
                 return self._execute_pdf_text(request)
+            if isinstance(request, WorkerJobRequest):
+                return RenderResult(request.request_id, True, request.job(), None)
             if request.request_type == "page":
                 return self._execute_page_render(request)
             elif request.request_type == "tinted_page":

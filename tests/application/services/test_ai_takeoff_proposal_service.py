@@ -19,6 +19,7 @@ from ost_visualizer.application.services.ai_changeset_store import (
     AiChangesetStore,
 )
 from ost_visualizer.application.services import ai_takeoff_proposal_service as module
+from ost_visualizer.domain.services.ai_dashed_outline import DashedAnalysisTimeout
 from ost_visualizer.application.services.ai_takeoff_proposal_service import (
     DASHED_MATCH_SHARE,
     LEAK_GAP_MAX_IN,
@@ -1658,6 +1659,69 @@ class FindRegionFilterTests(ProposalTestCase):
         self.assert_error("invalid_argument", self.find)
         self.assertEqual(self.find(min_width=1.0)["data"]["regions"], [])
 
+    def stipple_page(self, clusters, per_cluster):
+        import random
+
+        rng = random.Random(7)
+        page = _styled_rect(100, 100, 500, 500)
+        page.append(_styled(120, 520, 480, 520, style=DASH_STYLE))
+        for _ in range(clusters):
+            cx, cy = rng.uniform(150, 450), rng.uniform(150, 450)
+            for _ in range(per_cluster):
+                x, y = cx + rng.uniform(-0.6, 0.6), cy + rng.uniform(-0.6, 0.6)
+                page.append(
+                    _styled(
+                        x,
+                        y,
+                        x + rng.uniform(-0.12, 0.12),
+                        y + rng.uniform(-0.12, 0.12),
+                        style=THIN_STYLE,
+                    )
+                )
+        return page
+
+    def test_the_dashed_analysis_state_is_reported(self):
+        self.pdf.segments = self.stipple_page(1, 20)
+        seeded = self.find(seed_pts=[300, 300])["data"]
+        self.assertEqual(seeded["dashed_analysis"], "complete")
+        self.assertEqual(self.find()["data"]["dashed_analysis"], "not_run")
+
+    def test_a_slow_dashed_analysis_stops_at_its_time_budget(self):
+        import time
+
+        self.pdf.segments = self.stipple_page(4, 2500)
+        with mock.patch.object(module, "DASHED_ANALYSIS_BUDGET_S", 0.5):
+            started = time.perf_counter()
+            data = self.find(seed_pts=[300, 300], min_width=1.0)["data"]
+            elapsed = time.perf_counter() - started
+        self.assertEqual(data["dashed_analysis"], "skipped_time_budget")
+        self.assertEqual(len(data["regions"]), 1)
+        self.assertLess(elapsed, 6.0)
+        self.assertEqual(module.DASHED_ANALYSIS_BUDGET_S, 20.0)
+
+    def test_non_finite_segments_do_not_count_toward_the_early_cap(self):
+        unbounded = float("inf")
+        self.pdf.segments = _styled_rect(100, 100, 500, 500) + [
+            _styled(150, 150, unbounded, 150) for _ in range(20001)
+        ]
+        data = self.find(seed_pts=[300, 300], min_width=1.0)["data"]
+        self.assertEqual(len(data["regions"]), 1)
+
+    def test_over_the_cap_seeded_calls_are_refused_before_the_dashed_analysis(self):
+        crowd = [
+            _styled(10, 10 + i * 0.01, 600, 10 + i * 0.01, style=THIN_STYLE)
+            for i in range(20001)
+        ]
+        self.pdf.segments = crowd
+        with mock.patch.object(
+            module, "dashed_boundary", side_effect=AssertionError("dashed analysis ran")
+        ) as dashed:
+            with self.assertRaises(module.AiTakeoffRequestError) as raised:
+                self.find(seed_pts=[300, 300], min_width=0)
+            self.assertEqual(raised.exception.code, "invalid_argument")
+            self.assertIn("20000", raised.exception.message)
+            self.assertEqual(dashed.call_count, 0)
+
 
 class RegionSimplificationTests(ProposalTestCase):
     def propose(self, region_id):
@@ -2456,6 +2520,80 @@ class LeakGuardTests(ProposalTestCase):
         record = _RegionRecord("p1", (), (), (), False, K)
         self.assertEqual((record.open_gaps, record.dashed_outline_sf), ((), None))
         self.assertEqual(module._region_warnings(record), ())
+
+
+class DashedAnalysisBudgetTests(ProposalTestCase):
+    find = FindRegionFilterTests.find
+
+    def test_skipped_analysis_does_not_use_dashed_edges(self):
+        self.pdf.segments = _styled_rect(100, 100, 500, 500, style=DASH_STYLE)
+        with mock.patch.object(module, "DASHED_ANALYSIS_BUDGET_S", -1.0):
+            data = self.find(boundary_kinds=["dashed"])["data"]
+            seeded = self.find(boundary_kinds=["dashed"], seed_pts=[300, 300])["data"]
+        self.assertEqual(data["dashed_analysis"], module.DASHED_ANALYSIS_SKIPPED)
+        self.assertEqual(data["regions"], [])
+        self.assertEqual(data["segment_count"], 0)
+        self.assertEqual(seeded["dashed_analysis"], module.DASHED_ANALYSIS_SKIPPED)
+        self.assertEqual(seeded["regions"], [])
+
+    def test_complete_analysis_still_uses_dashed_edges(self):
+        self.pdf.segments = _styled_rect(100, 100, 500, 500, style=DASH_STYLE)
+        data = self.find(boundary_kinds=["dashed"])["data"]
+        self.assertEqual(data["dashed_analysis"], module.DASHED_ANALYSIS_COMPLETE)
+        self.assertEqual(len(data["regions"]), 1)
+
+    def test_dashed_outline_time_out_is_reported_as_skipped(self):
+        self.pdf.segments = _styled_rect(100, 100, 500, 500)
+        with mock.patch.object(
+            module, "dashed_components", side_effect=DashedAnalysisTimeout("late")
+        ):
+            data = self.find(seed_pts=[300, 300])["data"]
+        self.assertEqual(data["dashed_analysis"], module.DASHED_ANALYSIS_SKIPPED)
+        self.assertEqual(len(data["regions"]), 1)
+
+    def test_dashed_outline_shares_the_analysis_deadline(self):
+        self.pdf.segments = _styled_rect(100, 100, 500, 500, style=DASH_STYLE)
+        deadlines = {"boundary": [], "components": []}
+        real_boundary = module.dashed_boundary
+        real_components = module.dashed_components
+
+        def boundary(lines, kinds, deadline=None):
+            deadlines["boundary"].append(deadline)
+            return real_boundary(lines, kinds, deadline)
+
+        def components(lines, dashed, deadline=None):
+            deadlines["components"].append(deadline)
+            return real_components(lines, dashed, deadline)
+
+        with mock.patch.object(module, "dashed_boundary", boundary), mock.patch.object(
+            module, "dashed_components", components
+        ):
+            self.find(boundary_kinds=["dashed"], seed_pts=[300, 300])
+        self.assertEqual(len(deadlines["boundary"]), 1)
+        self.assertIsNotNone(deadlines["boundary"][0])
+        self.assertEqual(len(deadlines["components"]), 2)
+        self.assertEqual(set(deadlines["components"]), {deadlines["boundary"][0]})
+
+    def test_non_finite_dashed_lines_are_ignored(self):
+        rect = _styled_rect(100, 100, 500, 500)
+        broken = [
+            _styled(150, 150, float("inf"), 150, style=DASH_STYLE),
+            _styled(float("-inf"), 160, 200, 160, style=DASH_STYLE),
+        ]
+        for options in (
+            {},
+            {"seed_pts": [300, 300]},
+            {"boundary_kinds": ["wall", "dashed"]},
+        ):
+            with self.subTest(options=options):
+                self.pdf.segments = rect
+                expected = self.find(**dict(options))["data"]
+                self.pdf.segments = rect + broken
+                data = self.find(**dict(options))["data"]
+                self.assertEqual(
+                    [(r["polygon_ost"], r["area_sf"]) for r in data["regions"]],
+                    [(r["polygon_ost"], r["area_sf"]) for r in expected["regions"]],
+                )
 
 
 if __name__ == "__main__":

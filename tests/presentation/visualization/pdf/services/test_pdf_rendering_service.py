@@ -542,6 +542,47 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
             },
         )
 
+    def test_worker_job_runs_off_the_gui_thread_and_returns_its_value(self):
+        service = self._service(SolidRenderer())
+        threads = []
+
+        def job():
+            threads.append(threading.current_thread())
+            return ("built", 3)
+
+        result = self._run(
+            lambda callback: service.run_job_async(
+                job, callback, priority=RenderPriority.PDF_TEXT
+            )
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(result.image, ("built", 3))
+        self.assertEqual(len(threads), 1)
+        self.assertIsNot(threads[0], threading.main_thread())
+
+    def test_failing_worker_job_reports_failure_without_value(self):
+        service = self._service(SolidRenderer())
+
+        def job():
+            raise ValueError("extraction failed")
+
+        with self.assertLogs(_SERVICE_LOGGER, level="ERROR"):
+            result = self._run(lambda callback: service.run_job_async(job, callback))
+        self.assertFalse(result.success)
+        self.assertIsNone(result.image)
+
+    def test_cancelled_worker_job_never_runs(self):
+        service = self._service(SolidRenderer(), num_workers=0)
+        runs = []
+        callbacks = []
+        request_id = service.run_job_async(lambda: runs.append(1), callbacks.append)
+        service.cancel_request(request_id)
+        live_id = service.run_job_async(lambda: "live", callbacks.append)
+        service._start_workers(1)
+        self.assertTrue(_pump_until(self.app, lambda: len(callbacks) == 1))
+        self.assertEqual(runs, [])
+        self.assertEqual([result.request_id for result in callbacks], [live_id])
+
     def test_cancelled_request_is_dropped_before_render_and_others_still_run(self):
         renderer = SolidRenderer()
         service = self._service(renderer, num_workers=0)

@@ -6,6 +6,7 @@ from ost_visualizer.presentation.components.plan_view.components.placement_mode 
     PlacementModeMixin,
 )
 from pathlib import Path
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
 import unittest
 import os
 from unittest.mock import patch
@@ -30,6 +31,7 @@ from tests.presentation.components.plan_view.components.snap_support import (
     FakePDFRenderer as _snap_support_FakePDFRenderer,
     FakeScene as _snap_support_FakeScene,
     FakeSceneBuilder as _snap_support_FakeSceneBuilder,
+    DeferredJobService as _snap_support_DeferredJobService,
     FakeSnapIndex as _snap_support_FakeSnapIndex,
     PatternPreviewSceneBuilder as _snap_support_PatternPreviewSceneBuilder,
     PlacementHarness as _snap_support_PlacementHarness,
@@ -479,7 +481,15 @@ class SnapSegmentCacheTests(unittest.TestCase):
         _snap_support_FakePDFRenderer.crop_height = 0.0
         _snap_support_FakePDFRenderer.intrinsic_rotation = 0
 
-    def test_pdf_segments_are_cached_across_takeoff_rebuilds(self):
+    def _pdf_index_builds(self, takeoff_index=None):
+        return [
+            calls
+            for instance in _snap_support_FakeSnapIndex.instances
+            if instance is not takeoff_index
+            for calls in instance.build_calls
+        ]
+
+    def test_takeoff_edits_do_not_rebuild_the_pdf_snap_index(self):
         harness = _snap_support_PlacementHarness()
         harness._ensure_pdf_snap_index()
         harness._current_takeoffs["t1"] = Takeoff(
@@ -492,29 +502,111 @@ class SnapSegmentCacheTests(unittest.TestCase):
         takeoff_snap_index = harness._ensure_takeoff_snap_index()
         self.assertEqual(_snap_support_FakePDFRenderer.extract_calls, 1)
         self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 1)
-        pdf_snap_index = _snap_support_FakeSnapIndex.instances[0]
-        self.assertIsNot(pdf_snap_index, takeoff_snap_index)
+        self.assertEqual(harness._rendering_service.submitted, 1)
+        self.assertIsNot(harness._pdf_snap_index, takeoff_snap_index)
         self.assertEqual(
-            pdf_snap_index.build_calls,
-            [[(2.0, 196.0, 6.0, 192.0)], [(2.0, 196.0, 6.0, 192.0)]],
+            self._pdf_index_builds(takeoff_snap_index),
+            [[(2.0, 196.0, 6.0, 192.0)]],
+        )
+        self.assertEqual(len(takeoff_snap_index.build_calls), 1)
+
+    def test_unchanged_page_invalidation_reuses_the_pdf_snap_index(self):
+        harness = _snap_support_PlacementHarness()
+        built = harness._ensure_pdf_snap_index()
+        for _round in range(3):
+            harness._invalidate_snap_index()
+            self.assertIs(harness._ensure_pdf_snap_index(), built)
+        self.assertEqual(harness._rendering_service.submitted, 1)
+        self.assertEqual(len(self._pdf_index_builds()), 1)
+
+    def test_first_pdf_snap_query_extracts_on_a_worker_not_the_gui_thread(self):
+        service = _snap_support_DeferredJobService()
+        harness = _snap_support_PlacementHarness()
+        harness._rendering_service = service
+        _snap_support_FakeSnapIndex.query_result = (
+            1.0,
+            2.0,
+            placement_mode.ENDPOINT,
+            0,
         )
         self.assertEqual(
-            takeoff_snap_index.build_calls[-1],
-            [
-                (
-                    9.646446609406727,
-                    20.353553390593273,
-                    29.646446609406727,
-                    40.35355339059328,
-                ),
-                (
-                    10.353553390593273,
-                    19.646446609406727,
-                    30.353553390593273,
-                    39.64644660940672,
-                ),
-            ],
+            harness._query_pdf_line_snap(10.0, 20.0, 8),
+            (1.0, 2.0, placement_mode.ENDPOINT, 0),
         )
+        self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 0)
+        self.assertEqual(_snap_support_FakePDFRenderer.extract_calls, 0)
+        self.assertEqual(self._pdf_index_builds(), [])
+        self.assertEqual(len(service.pending), 1)
+        self.assertEqual(service.priorities, [placement_mode.RenderPriority.PDF_TEXT])
+        harness._query_pdf_line_snap(10.0, 20.0, 8)
+        self.assertEqual(service.submitted, 1)
+        service.finish()
+        self.assertEqual(_snap_support_FakePDFRenderer.extract_calls, 1)
+        self.assertEqual(self._pdf_index_builds(), [[(2.0, 196.0, 6.0, 192.0)]])
+        self.assertEqual(harness._pdf_snap_index.build_calls, self._pdf_index_builds())
+
+    def test_pdf_snap_job_uses_the_source_captured_on_the_gui_thread(self):
+        service = _snap_support_DeferredJobService()
+        harness = _snap_support_PlacementHarness()
+        harness._rendering_service = service
+        harness._ensure_pdf_snap_index()
+        harness._current_page.image_path = "replaced.pdf"
+        harness._pdf_height_pts = 500.0
+        service.finish()
+        self.assertEqual(_snap_support_FakePDFRenderer.open_paths, ["drawing.pdf"])
+        self.assertEqual(self._pdf_index_builds(), [[(2.0, 196.0, 6.0, 192.0)]])
+
+    def test_changed_source_cancels_and_ignores_the_stale_pdf_snap_job(self):
+        service = _snap_support_DeferredJobService()
+        harness = _snap_support_PlacementHarness()
+        harness._rendering_service = service
+        harness._ensure_pdf_snap_index()
+        harness._current_page.image_path = "second.pdf"
+        harness._invalidate_snap_index()
+        placeholder = harness._ensure_pdf_snap_index()
+        self.assertEqual(service.cancelled, ["job-1"])
+        self.assertEqual(len(service.pending), 2)
+        service.finish(0)
+        self.assertIs(harness._pdf_snap_index, placeholder)
+        self.assertEqual(placeholder.build_calls, [])
+        service.finish(0)
+        self.assertIsNot(harness._pdf_snap_index, placeholder)
+        self.assertEqual(
+            _snap_support_FakePDFRenderer.open_paths, ["drawing.pdf", "second.pdf"]
+        )
+
+    def test_failed_pdf_snap_job_is_retried_once_per_invalidation(self):
+        service = _snap_support_DeferredJobService()
+        harness = _snap_support_PlacementHarness()
+        harness._rendering_service = service
+        placeholder = harness._ensure_pdf_snap_index()
+        request_id, _job, callback = service.pending.pop()
+        callback(RenderResult(request_id, False, None, "worker failed"))
+        self.assertIsNot(harness._pdf_snap_index, placeholder)
+        self.assertEqual(harness._pdf_snap_index.build_calls, [])
+        for _query in range(3):
+            harness._query_pdf_line_snap(10.0, 20.0, 8)
+        self.assertEqual(service.submitted, 1)
+        harness._invalidate_snap_index()
+        harness._ensure_pdf_snap_index()
+        self.assertEqual(service.submitted, 2)
+        service.finish()
+        self.assertEqual(_snap_support_FakePDFRenderer.extract_calls, 1)
+        harness._invalidate_snap_index()
+        harness._ensure_pdf_snap_index()
+        self.assertEqual(service.submitted, 2)
+
+    def test_line_snap_queries_request_intersections(self):
+        harness = _snap_support_PlacementHarness()
+        harness._query_takeoff_snap(10.0, 20.0, 8)
+        harness._query_pdf_line_snap(10.0, 20.0, 8)
+        queried = [
+            call
+            for instance in _snap_support_FakeSnapIndex.instances
+            for call in instance.query_calls
+        ]
+        self.assertEqual(queried, [(10.0, 20.0, 1.0, True), (10.0, 20.0, 1.0, True)])
+        self.assertTrue(harness._is_line_snap(placement_mode.INTERSECTION))
 
     def test_linear_takeoff_snap_uses_border_segments_not_centerline(self):
         harness = _snap_support_PlacementHarness()
@@ -701,15 +793,31 @@ class SnapSegmentCacheTests(unittest.TestCase):
             ],
         )
 
-    def test_pdf_extraction_failure_is_cached_for_same_page(self):
+    def test_pdf_extraction_failure_is_not_retried_by_queries(self):
         _snap_support_FakePDFRenderer.open_ok = False
         harness = _snap_support_PlacementHarness()
         with self.assertLogs(placement_mode.logger, level="WARNING"):
             harness._ensure_pdf_snap_index()
-        harness._invalidate_snap_index()
-        harness._ensure_pdf_snap_index()
+        for _query in range(5):
+            harness._query_pdf_line_snap(10.0, 20.0, 8)
         self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 1)
         self.assertEqual(_snap_support_FakePDFRenderer.extract_calls, 0)
+
+    def test_failed_pdf_read_is_retried_after_the_next_invalidation(self):
+        _snap_support_FakePDFRenderer.open_ok = False
+        harness = _snap_support_PlacementHarness()
+        with self.assertLogs(placement_mode.logger, level="WARNING"):
+            harness._ensure_pdf_snap_index()
+        _snap_support_FakePDFRenderer.open_ok = True
+        harness._invalidate_snap_index()
+        harness._ensure_pdf_snap_index()
+        self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 2)
+        self.assertEqual(
+            harness._pdf_snap_index.build_calls, [[(2.0, 196.0, 6.0, 192.0)]]
+        )
+        harness._invalidate_snap_index()
+        harness._ensure_pdf_snap_index()
+        self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 2)
 
     def test_pdf_snap_waits_until_page_load_geometry_is_ready(self):
         harness = _snap_support_PlacementHarness()
@@ -885,7 +993,7 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._snap_to_takeoffs_threshold_px = 16
         harness._placement_snap_from_scene(QtCore.QPointF(10.4, 20.6))
         takeoff_snap_index = _snap_support_FakeSnapIndex.instances[0]
-        self.assertEqual(takeoff_snap_index.query_calls[-1], (10.4, 20.6, 2.0))
+        self.assertEqual(takeoff_snap_index.query_calls[-1], (10.4, 20.6, 2.0, True))
 
     def test_native_line_hit_returns_exact_hit_without_increment_quantizing(self):
         from PySide6 import QtCore
@@ -1264,6 +1372,37 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._current_page.deskew_rotation_overlay = 0.125
         self.assertNotEqual(rotation_key, harness._pdf_snap_cache_key())
 
+    def test_captured_overlay_source_maps_segments_like_the_live_page(self):
+        _snap_support_FakePDFRenderer.raw_segments = [
+            (10.0, 20.0, 40.0, 5.0),
+            (0.0, 0.0, 100.0, 50.0),
+        ]
+        _snap_support_FakePDFRenderer.page_width = 100.0
+        _snap_support_FakePDFRenderer.page_height = 50.0
+        _snap_support_FakePDFRenderer.media_width = 100.0
+        _snap_support_FakePDFRenderer.media_height = 50.0
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.overlay_image_path = "overlay.pdf"
+        harness._current_page.image_show_mode = 1
+        harness._current_page.width_pts = 200.0
+        harness._current_page.overlay_rotation = 0.3
+        harness._current_page.deskew_rotation_overlay = 0.05
+        harness._current_page.overlay_rect = (64.0, 32.0, 160.0, 96.0)
+        source = harness._pdf_snap_source()
+        segments = placement_mode.extract_pdf_snap_segments(source)
+        expected = []
+        for x1, y1, x2, y2 in _snap_support_FakePDFRenderer.raw_segments:
+            ax, ay = harness._pdf_intelligence_point_to_page_point(
+                "overlay", x1, 50.0 - y1, 100.0, 50.0
+            )
+            bx, by = harness._pdf_intelligence_point_to_page_point(
+                "overlay", x2, 50.0 - y2, 100.0, 50.0
+            )
+            expected.append((ax * 2.0, ay * 2.0, bx * 2.0, by * 2.0))
+        self.assertEqual(source.layer, "overlay")
+        self.assertNotEqual(source.overlay_rect, (0.0, 0.0, 0.0, 0.0))
+        self.assertEqual(segments, expected)
+
     def test_overlay_pdf_snap_points_map_through_overlay_rect_scale_and_rotation(self):
         harness = _snap_support_PlacementHarness()
         harness._current_page.overlay_image_path = "overlay.pdf"
@@ -1314,7 +1453,7 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._current_page.layer_visible = False
         self.assertIsNone(harness._pdf_intelligence_source())
         self.assertIsNone(harness._pdf_snap_cache_key())
-        self.assertEqual(harness._build_pdf_snap_segments(), [])
+        self.assertIsNone(harness._pdf_snap_source())
         self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 0)
 
     def test_linear_preview_adds_start_and_current_endpoint_handles(self):
@@ -2485,6 +2624,40 @@ class PdfSnapVisibleBoxOriginTests(unittest.TestCase):
         self.addCleanup(snap_patch.stop)
         _snap_support_FakeSnapIndex.instances.clear()
 
+    def test_lines_inside_form_xobjects_are_snap_targets(self):
+        from tests.presentation.services.ai_takeoff_pdf_support import write_content_pdf
+
+        pdf = write_content_pdf(
+            self.directory / "forms.pdf",
+            "1 w 200 300 m 400 300 l S 50 50 m 50 50 l S /F1 Do",
+            forms=(
+                (
+                    "F1",
+                    "1 0 0 1 0 0",
+                    "100 100 m 150 100 l S 0 0 m 10 10 20 10 30 0 c S",
+                ),
+            ),
+        )
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.image_path = str(pdf)
+        harness._current_page.height_pts = 792.0
+        harness._pdf_width_pts = 612.0
+        harness._pdf_height_pts = 792.0
+        segments = sorted(
+            tuple(round(value, 3) for value in segment)
+            for segment in placement_mode.extract_pdf_snap_segments(
+                harness._pdf_snap_source()
+            )
+        )
+        self.assertEqual(
+            segments,
+            [
+                (100.0, 1484.0, 100.0, 1484.0),
+                (200.0, 1384.0, 300.0, 1384.0),
+                (400.0, 984.0, 800.0, 984.0),
+            ],
+        )
+
     def test_snap_segments_start_at_the_visible_box_origin(self):
         for label, (boxes, width, height, expected_pts) in self.CASES.items():
             with self.subTest(label=label):
@@ -2498,7 +2671,9 @@ class PdfSnapVisibleBoxOriginTests(unittest.TestCase):
                 harness._current_page.height_pts = height
                 harness._pdf_width_pts = width
                 harness._pdf_height_pts = height
-                segments = harness._build_pdf_snap_segments()
+                segments = placement_mode.extract_pdf_snap_segments(
+                    harness._pdf_snap_source()
+                )
                 self.assertEqual(len(segments), 1)
                 for actual, expected in zip(segments[0], expected_pts):
                     self.assertAlmostEqual(actual, expected * 2.0, places=3)

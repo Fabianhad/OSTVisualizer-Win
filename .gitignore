@@ -50,6 +50,7 @@ ostv_corpus/
 corpus_run_*.csv
 corpus_summary_*.md
 corpus_compare_*.md
+corpus_*_keys.csv
 inventory.csv
 sample.csv
 hand_values.csv

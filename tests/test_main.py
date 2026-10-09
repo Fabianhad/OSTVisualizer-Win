@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from ost_visualizer import main as application_main
+from ost_visualizer.presentation.utils.theme import ActiveIndicatorStyle
 import tempfile
 from pathlib import Path
 from ost_visualizer.application.dtos.file_import_args import (
@@ -83,7 +84,11 @@ class ApplicationStartupFailureTests(unittest.TestCase):
         ):
             application_main.main()
         self.assertEqual(shutdown_calls, [True])
-        app.setStyle.assert_called_once_with("Fusion")
+        self.assertEqual(app.setStyle.call_args_list[0].args, ("Fusion",))
+        self.assertIsInstance(
+            app.setStyle.call_args_list[1].args[0], ActiveIndicatorStyle
+        )
+        self.assertEqual(app.setStyle.call_count, 2)
 
     def test_event_loop_exit_shuts_down_application_without_window_close(self):
         shutdown_calls = []
@@ -136,7 +141,11 @@ class ApplicationStartupFailureTests(unittest.TestCase):
             application_main.main()
         self.assertEqual(raised.exception.code, 7)
         self.assertEqual(shutdown_calls, [True])
-        app.setStyle.assert_called_once_with("Fusion")
+        self.assertEqual(app.setStyle.call_args_list[0].args, ("Fusion",))
+        self.assertIsInstance(
+            app.setStyle.call_args_list[1].args[0], ActiveIndicatorStyle
+        )
+        self.assertEqual(app.setStyle.call_count, 2)
 
 
 class SingleInstanceFileArgumentTests(unittest.TestCase):

@@ -142,6 +142,8 @@ NB_MODULE(ost_pdf, m)
                  "Get the last error message from PDFium")
             .def("page_count", &PDFRenderer::page_count,
                  "Get the number of pages in the PDF")
+            .def("page_loads", &PDFRenderer::page_loads,
+                 "Number of pages PDFium has loaded and parsed for this renderer")
             .def("page_size", &PDFRenderer::page_size,
                  nb::arg("page_index"),
                  nb::call_guard<nb::gil_scoped_release>(),

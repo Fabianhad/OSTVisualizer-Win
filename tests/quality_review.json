@@ -2031,6 +2031,63 @@
       ],
       "release_evidence": "Unreleased M2.2",
       "affected_result": "dashed_boundary 2.53 s -> 1.0 s; whole-page default seeded call 3.3 s -> 1.7 s (HEAD 0.4 s)"
+    },
+    {
+      "file": "ost_visualizer/domain/services/ai_dashed_outline.py",
+      "defect": "Corner-chain joining was quadratic on thousands of ends sharing a spot and the dashed analysis had no time limit, so seeded find_regions passed the 120 s proxy timeout",
+      "proof": "CornerChainScalingTests.test_thousands_of_ends_sharing_cells_join_in_near_linear_time and FindRegionFilterTests.test_a_slow_dashed_analysis_stops_at_its_time_budget failed first",
+      "fix": "Grid-based exact joining; deadline checked in every stage (DashedAnalysisTimeout)",
+      "tests": [
+        "CornerChainScalingTests",
+        "FindRegionFilterTests"
+      ],
+      "release_evidence": "Unreleased",
+      "affected_result": "Seeded find_regions returns within about 20 s of dashed work; dashed_analysis reported"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "Over-the-cap seeded calls ran the dashed analysis before being refused",
+      "proof": "FindRegionFilterTests.test_over_the_cap_seeded_calls_are_refused_before_the_dashed_analysis failed first",
+      "fix": "check_segment_count on the finite filtered segments before the dashed analysis; DASHED_ANALYSIS_BUDGET_S 20 s with skipped_time_budget fallback",
+      "tests": [
+        "FindRegionFilterTests"
+      ],
+      "release_evidence": "Unreleased",
+      "affected_result": "Immediate invalid_argument refusals; dashed_analysis field"
+    },
+    {
+      "file": "cpp_extensions/src/pdf/pdf_renderer.cpp",
+      "defect": "A hostile dash array multiplied memory per piece",
+      "proof": "PdfPathItemsTests.test_huge_dash_arrays_are_capped_per_piece failed first",
+      "fix": "Dash arrays keep at most 32 entries",
+      "tests": [
+        "PdfPathItemsTests"
+      ],
+      "release_evidence": "Unreleased",
+      "affected_result": "1,016 MB to 96 MB on the synthetic case"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/plan_view/components/placement_mode.py",
+      "defect": "No snapping on PDFs whose linework is inside Form XObjects",
+      "proof": "PdfSnapVisibleBoxOriginTests.test_lines_inside_form_xobjects_are_snap_targets failed first",
+      "fix": "Snap segments add straight Form XObject pieces from extract_path_items",
+      "tests": [
+        "PdfSnapVisibleBoxOriginTests"
+      ],
+      "release_evidence": "Unreleased",
+      "affected_result": "Form XObject PDFs snap; top-level targets unchanged"
+    },
+    {
+      "file": "ost_visualizer/presentation/utils/theme.py",
+      "defect": "Checked indicators darkened in inactive windows under Fusion",
+      "proof": "ActiveIndicatorStyleTests and WindowsThemeTests.test_checked_boxes_keep_their_accent_in_inactive_windows failed first",
+      "fix": "ActiveIndicatorStyle proxy draws indicators with the Active color group",
+      "tests": [
+        "ActiveIndicatorStyleTests",
+        "WindowsThemeTests"
+      ],
+      "release_evidence": "Unreleased",
+      "affected_result": "Checkboxes keep their accent when a window loses focus"
     }
   ],
   "removed_tests": [
@@ -15540,6 +15597,30 @@
         "The leak guard adds two planar passes; on a whole unfiltered 17,000-segment sheet a seeded call takes about 7.5 s against 2.4 s at HEAD.",
         "coverage and pyflakes were installed in a temporary folder outside the repository because the venv pip is broken (its vendored rich fails to import); the venv was not changed."
       ]
+    },
+    {
+      "batch": "ai-takeoff-pentest-stage1-and-fixes",
+      "findings": [
+        "Pentest stage 1 (30 sampled PDFs, aggregate only): 425/436 pages ok, 11 hit the 180 s page timeout; seeded calls on those took 15-102 s, and 4 pages exceeded 900 s (P23 p35, P24 p18, p22, p24). Proposals 202/206 ok, 4 changeset_too_large. Outlined-text pages 74/425; callouts drawn as lines 8/218; min_width=0 refused over the cap on 107 plans. Corrected metrics: the suggested width removes the dominant wall weight on 14/154 plans (9%; the earlier 80% counted annotation linework), and the 60 wall-filter failures were auto seeds in the sheet frame (harness fixed, stage 1 not re-run).",
+        "Native dash arrays: a hostile 20,000-entry dash pattern on 3,000 lines took 1,016 MB and 54 s; dash arrays now keep their first 32 entries (96 MB, 8 s).",
+        "Slow seeded find_regions (P24 p18, about 270 s per seeded call against the 120 s proxy): root cause is the dashed-outline analysis running on every line in the box, including about 246,000 short loose pieces that the width filter later drops; up to 2,568 ends share one 0.5 pt cell, so pairwise exploded-run checks (74% of the profile) and corner-chain joining (26%) were quadratic. Fixes: the 20,000-segment cap is checked before the dashed analysis, corner chains join through a grid of cells smaller than the join distance (exact, near-linear), and the analysis has a 20 s deadline; past it the call continues without dashed pieces and reports dashed_analysis skipped_time_budget.",
+        "Synthetic reproduction (60,000 thin 0.25 pt strokes in 24 dense clusters, seeded call): 127.5 s before, 20.7 s after (skipped_time_budget, room still found); a 5,000-stroke page 10.1 s before and 10.0 s after with identical output. Differential: 2,400 random seeded and dashed-kind find_regions calls equal to the previous dashed module apart from the new field.",
+        "Found while reproducing, not changed: the planar splitter is quadratic when thousands of kept segments cross each other inside a few points (2,500 crossing strokes take about 140 s per pass); not seen on the corpus, recorded for follow-up.",
+        "Snapping on PDFs that keep their drawing in Form XObjects: extract_path_segments reads top-level lines only, so a client PDF snapped to 12 segments per page; snap targets now add the straight pieces inside Form XObjects (101,000-250,000 per page on that PDF, built in 0.5-1.0 s; SnapIndex builds 250,000 segments in 0.03 s).",
+        "Checkboxes under Fusion (Windows 10): checked indicators turned dark blue in inactive windows; ActiveIndicatorStyle draws indicators with the Active color group. The reported loss of blue fill after a theme switch was a probe artifact (captured before events were processed).",
+        "Mutation (in memory only): slow find_regions 19/20 killed, 1 equivalent (skipping the same-chain test only repeats joins); snapping 4/4; checkbox 5/5."
+      ],
+      "tests_added": [
+        "See added_tests and modules"
+      ],
+      "validation": "Full suite: 14196 tests OK (38 skipped) in 416 s with -X faulthandler (a first run found 2 architecture convention failures, fixed: docstring-only exception body and two test modules relocated). Focused and affected: 402 OK; architecture discovery 118 OK. tools/check_architecture.py: no violations; compileall exit 0; git diff --check with cr-at-eol exit 0. Mutation in memory: slow find_regions 19/20 (1 equivalent), snapping 4/4, checkbox 5/5.",
+      "limitations": [
+        "Stage 1 was not re-run after the harness metric fixes; stage 2 (about 300 PDFs) needs approval.",
+        "The slow find_regions fix was timed on synthetic pages, not re-run on P24 p18.",
+        "Pages whose dashed analysis took between 20 s and 120 s before now skip it and report skipped_time_budget.",
+        "The planar splitter stays quadratic on thousands of mutually crossing kept segments (synthetic only).",
+        "Native C++ changes are covered by tests against real PDFium, not by mutation."
+      ]
     }
   ],
   "modules": {
@@ -21155,7 +21236,7 @@
     },
     "tests/presentation/components/plan_view/components/test_placement_mode.py": {
       "status": "reviewed; final fresh pass pending",
-      "fixture_review": "Checked snap_support (PlacementHarness, PreviewHarness, FakeSnapIndex, FakePDFRenderer, area harness helpers), interaction_support (AnnotationPlacementHarness, AreaPlacementHarness, _PlacementMouseEvent) and test_input_handler fixtures against placement_mode.py. Harness overrides replace only collaborators (coordinate system, snap index, pdf renderer, signals) and run the real mixin logic; identity coordinate system keeps expected values independently derivable (ratio 144/72 = 2.0 OST->pt, PDF y flip). Class-level FakePDFRenderer state is reset in SnapSegmentCacheTests.setUp. QGuiApplication is monkeypatched with try/finally restore. Global annotation style state changed by two tests was restored to hard-coded defaults; now snapshots and restores the original style. Note many snap/preview/right-angle tests live in SnapSegmentCacheTests; names untouched.",
+      "fixture_review": "Checked snap_support (PlacementHarness, PreviewHarness, FakeSnapIndex, FakePDFRenderer, area harness helpers), interaction_support (AnnotationPlacementHarness, AreaPlacementHarness, _PlacementMouseEvent) and test_input_handler fixtures against placement_mode.py. Harness overrides replace only collaborators (coordinate system, snap index, pdf renderer, signals) and run the real mixin logic; identity coordinate system keeps expected values independently derivable (ratio 144/72 = 2.0 OST->pt, PDF y flip). Class-level FakePDFRenderer state is reset in SnapSegmentCacheTests.setUp. QGuiApplication is monkeypatched with try/finally restore. Global annotation style state changed by two tests was restored to hard-coded defaults; now snapshots and restores the original style. Note many snap/preview/right-angle tests live in SnapSegmentCacheTests; names untouched. PDF snap jobs run through InlineJobService (synchronous) or DeferredJobService (records priority, cancellations and pending jobs) in snap_support; FakeSnapIndex records the intersections flag.",
       "reviewed_tests": {
         "PlacementModePreferenceTests.test_invalid_paste_backout_click_is_rejected_without_commit": "Sound: invalid validation -> event accepted, True returned, nothing emitted, tool not cancelled. Fake view raises AttributeError if production reached past the validity check.",
         "PlacementModePreferenceTests.test_valid_paste_backout_click_emits_placements_and_cancels_tool": "ADDED. Success sibling: exact placement dict (condition/source uid, parent_is_internal computed from source uid set, curve, position, page uid, parent uid from validation, rotation, is_negative, extras copy) and source bid uid emitted, tool cancelled once.",
@@ -21166,7 +21247,6 @@
         "PlacementPreviewContinuationTests.test_destroyed_preview_owner_ignores_queued_timer": "Sound as a no-raise guard: scene (and items) are deleted with the view, so removing the isValid guard would raise RuntimeError on setPen.",
         "PlacementPreviewLifecycleTests.test_paste_backout_refresh_tolerates_missing_viewport": "Kept as a no-raise test (the viewport None branch and last-mouse None branch).",
         "PlacementPreviewLifecycleTests.test_paste_backout_refresh_redraws_at_last_mouse_position_and_repaints": "ADDED. Positive path: preview rebuilt at mapToScene(last mouse) and viewport.update called once.",
-        "SnapSegmentCacheTests.test_pdf_segments_are_cached_across_takeoff_rebuilds": "STRENGTHENED. Added that the PDF snap index was really rebuilt twice with the cached, correctly flipped/scaled segment (2,196,6,192) while the renderer opened/extracted once; takeoff border segments already exact.",
         "SnapSegmentCacheTests.test_linear_takeoff_snap_uses_border_segments_not_centerline": "Sound: exact offset border segments for thickness 2.",
         "SnapSegmentCacheTests.test_area_takeoff_snap_uses_polygon_border_segments": "Sound: exact closed polygon edges.",
         "SnapSegmentCacheTests.test_count_square_snap_uses_shape_border_segments": "Sound: exact square border for a 4x4 Count symbol.",
@@ -21176,7 +21256,6 @@
         "SnapSegmentCacheTests.test_linear_takeoff_snap_ignores_trailing_unpaired_coordinate": "ADDED. Position with a trailing unpaired coordinate keeps the one complete segment (production usable_len handling).",
         "SnapSegmentCacheTests.test_hidden_condition_takeoffs_do_not_contribute_snap_segments": "ADDED. Takeoffs of layer-hidden Conditions and orphans with a deleted Condition contribute no snap segments.",
         "SnapSegmentCacheTests.test_linear_takeoff_snap_uses_default_border_for_non_positive_thickness": "Sound: zero thickness falls back to 1.0 (0.5 offsets).",
-        "SnapSegmentCacheTests.test_pdf_extraction_failure_is_cached_for_same_page": "Sound: open failure logged once, cached for the same page/key, extraction never attempted.",
         "SnapSegmentCacheTests.test_pdf_snap_waits_until_page_load_geometry_is_ready": "Sound: no renderer open and index stays dirty before geometry ready; builds after.",
         "SnapSegmentCacheTests.test_pdf_snap_waits_for_current_page_uid_to_match_page": "Sound: stale _current_bid_page_uid defers extraction.",
         "SnapSegmentCacheTests.test_pdf_snap_extraction_uses_shared_pdfium_lock": "Sound: lock entered/exited twice (open+extract, close); patched module global restored in finally.",
@@ -21263,7 +21342,18 @@
         "AttachmentMovementTests.test_backout_placement_rejects_stale_parent": "Sound.",
         "AttachmentMovementTests.test_overlapping_area_parent_search_skips_area_blocked_by_backout": "Sound.",
         "PlanViewInteractionTests.test_starting_annotation_placement_clears_selected_text_toolbar": "Sound: real view; selection/text toolbar state cleared when a placement press begins.",
-        "PdfSnapVisibleBoxOriginTests.test_snap_segments_start_at_the_visible_box_origin": "Added: the real ost_pdf renderer and placement-mode _build_pdf_snap_segments on real PDFs with an offset CropBox, a MediaBox origin of (50, 50) and an offset CropBox with /Rotate 90; snap segments equal the visible-box-relative page points times ratio/72. Failed before the fix by the box offset (for example 400 instead of 200 OST)."
+        "PdfSnapVisibleBoxOriginTests.test_snap_segments_start_at_the_visible_box_origin": "Added: the real ost_pdf renderer and placement-mode _build_pdf_snap_segments on real PDFs with an offset CropBox, a MediaBox origin of (50, 50) and an offset CropBox with /Rotate 90; snap segments equal the visible-box-relative page points times ratio/72. Failed before the fix by the box offset (for example 400 instead of 200 OST).",
+        "PdfSnapVisibleBoxOriginTests.test_lines_inside_form_xobjects_are_snap_targets": "Added (snapping, failing first): straight pieces inside Form XObjects (object ids with a dot) become snap targets with the visible-box origin applied; curves and top-level duplicates are not added.",
+        "SnapSegmentCacheTests.test_takeoff_edits_do_not_rebuild_the_pdf_snap_index": "Counts one PDF extraction, one worker job and one PDF index build across a takeoff edit; the takeoff index rebuilds separately.",
+        "SnapSegmentCacheTests.test_unchanged_page_invalidation_reuses_the_pdf_snap_index": "Repeated invalidation with an unchanged cache key returns the same index without new jobs or builds.",
+        "SnapSegmentCacheTests.test_first_pdf_snap_query_extracts_on_a_worker_not_the_gui_thread": "The first query submits one PDF_TEXT-priority job and performs no open/extract/build on the calling thread; the delivered index serves later queries.",
+        "SnapSegmentCacheTests.test_pdf_snap_job_uses_the_source_captured_on_the_gui_thread": "Page changes after submission do not affect the queued job (captured path and size).",
+        "SnapSegmentCacheTests.test_changed_source_cancels_and_ignores_the_stale_pdf_snap_job": "A source change cancels the pending job, ignores its late result and installs only the current source's index.",
+        "SnapSegmentCacheTests.test_line_snap_queries_request_intersections": "Takeoff and PDF line queries request intersections and INTERSECTION hits get the line-snap marker.",
+        "SnapSegmentCacheTests.test_captured_overlay_source_maps_segments_like_the_live_page": "Differential: captured overlay rectangle/rotation map segments exactly like the live-page mapping helper.",
+        "SnapSegmentCacheTests.test_pdf_extraction_failure_is_not_retried_by_queries": "A failed PDF read is not reopened by repeated queries without an invalidation.",
+        "SnapSegmentCacheTests.test_failed_pdf_read_is_retried_after_the_next_invalidation": "Bug hunt: a transient open failure is retried once by the next invalidation and then cached as complete.",
+        "SnapSegmentCacheTests.test_failed_pdf_snap_job_is_retried_once_per_invalidation": "Bug hunt: a failed worker result is not retried by queries, is retried once per invalidation, and stops after a successful read."
       }
     },
     "tests/presentation/components/plan_view/components/test_selection_manager.py": {
@@ -22393,7 +22483,8 @@
         "AiChangesetPreviewTests.test_clearing_skips_items_another_scene_has_taken": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): clearing skips items another scene has taken. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "PdfTextVisibleOriginMappingTests.test_raw_boxes_are_shifted_by_the_visible_box_origin": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): raw boxes are shifted by the visible box origin. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "PdfTextVisibleOriginMappingTests.test_extracted_payloads_without_an_origin_are_mapped_unshifted": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): extracted payloads without an origin are mapped unshifted. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "TakeoffPlanViewLoadPageTests.test_page_switch_reports_the_cleared_selection_once_the_new_page_is_current": "Added: load_page reports the cleared selection once, after the new page is current; a plain clear still reports it with no page. Failed before the fix ([], None)."
+        "TakeoffPlanViewLoadPageTests.test_page_switch_reports_the_cleared_selection_once_the_new_page_is_current": "Added: load_page reports the cleared selection once, after the new page is current; a plain clear still reports it with no page. Failed before the fix ([], None).",
+        "TakeoffPlanViewOverlayRefreshTests.test_clear_cancels_a_pending_pdf_snap_job": "Bug hunt: clear() cancels the queued PDF snap job and its late result does not replace the cleared index."
       }
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -33343,7 +33434,10 @@
         "PdfRenderingRequestSchedulingTests.test_entry_points_build_requests_with_documented_type_and_priority": "Added: each entry point builds the expected request type and default priority (REQUIRED/VISIBLE/PDF_TEXT) and frame geometry. Kills a changed frame default priority.",
         "PdfRenderingRequestSchedulingTests.test_overlay_request_is_blue_tinted_only_in_comparison_mode": "Added: overlay requests are tinted (80,80,255) only in show_mode 2, with overlay path, page 0 and the page's invert flag.",
         "PdfRenderingRequestSchedulingTests.test_composite_requests_snapshot_the_page_at_submission_time": "Added: composite and composite-frame requests snapshot the page (takeoffs copied, invert captured) so later page mutations do not alter queued work. Kills sharing the takeoff list.",
-        "PdfRenderingRequestSchedulingTests.test_queue_orders_by_priority_then_submission_order": "Added: queue pops REQUIRED, REQUIRED (FIFO), VISIBLE, PREFETCH order. Kills constant priority."
+        "PdfRenderingRequestSchedulingTests.test_queue_orders_by_priority_then_submission_order": "Added: queue pops REQUIRED, REQUIRED (FIFO), VISIBLE, PREFETCH order. Kills constant priority.",
+        "PdfRenderingRequestExecutionTests.test_worker_job_runs_off_the_gui_thread_and_returns_its_value": "A worker job runs once on a render worker thread and its return value is delivered as the result image.",
+        "PdfRenderingRequestExecutionTests.test_failing_worker_job_reports_failure_without_value": "A raising job is logged and reported as a failed result without a value.",
+        "PdfRenderingRequestExecutionTests.test_cancelled_worker_job_never_runs": "A job cancelled before a worker starts never runs and only the live job calls back."
       }
     },
     "tests/presentation/visualization/pdf/test_page_cache.py": {
@@ -37597,7 +37691,8 @@
         "WindowsThemeTests.test_windows_10_default_style_follows_dark_light_dark_on_all_windows": "Retained: windowsvista is replaced by Fusion at startup, and across dark/light/dark each of four windows (MainWindow, annotation and view windows, a dialog) has background darker than text exactly when dark and the DWM dark border matches; 12 snapshots. Killed: removing the Fusion switch.",
         "WindowsThemeTests.test_windows_11_style_keeps_native_theme_and_runtime_switching": "Retained: windows11 style is kept and the same palette/border cycle holds. Killed: replacing the style condition (Windows 11 forced to Fusion; condition widened).",
         "WindowsThemeTests.test_explicit_platform_dark_mode_opt_out_is_respected": "Strengthened: requires 12 snapshots before the all() over dark_border in (None, False) so it cannot pass on an empty probe result.",
-        "WindowsThemeTests.test_platform_without_windows_theme_api_keeps_its_style_without_crashing": "Strengthened: requires 12 snapshots before asserting every dark_border is None on the offscreen platform."
+        "WindowsThemeTests.test_platform_without_windows_theme_api_keeps_its_style_without_crashing": "Strengthened: requires 12 snapshots before asserting every dark_border is None on the offscreen platform.",
+        "WindowsThemeTests.test_checked_boxes_keep_their_accent_in_inactive_windows": "Added (checkbox, failing first under Fusion): real on-screen pixels of a checked box are the same in active and inactive windows, stable over a second dark pass, and differ between light and dark."
       }
     },
     "tests/integration/visibility/test_deferred_layers.py": {
@@ -38707,7 +38802,7 @@
         "ToolCatalogTests.test_list_segments_offers_line_attributes_and_a_kind_filter": "Added (M2): kinds schema enum and the documented new fields; the old 'not available yet' sentence is gone.",
         "ToolCatalogTests.test_find_regions_filters_paging_and_workflow": "Added (M2): filter schemas, limit 1-50, cursor and the workflow phrases in the description.",
         "ToolCatalogTests.test_m2_1_fields_are_described": "Added (M2.1, synthetic fixtures only): m2 1 fields are described.",
-        "ToolCatalogTests.test_dashed_boundaries_and_leaks_are_described": "Re-read (M2.2 bug hunt): also pins the 18 pt cap and that open gaps set leak_risk."
+        "ToolCatalogTests.test_dashed_boundaries_and_leaks_are_described": "Re-read: also requires the find_regions description to explain dashed_analysis, skipped_time_budget and the 20 s budget (failing first)."
       }
     },
     "tests/mcp_takeoff/test_pipe_client.py": {
@@ -39316,7 +39411,16 @@
         "LeakGuardTests.test_a_raster_region_reports_an_opening_to_the_outside": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): a raster region reports an opening to the outside.",
         "LeakGuardTests.test_region_records_default_to_no_warnings": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): region records default to no warnings.",
         "DashedBoundaryTests.test_huge_dash_gaps_neither_fail_nor_bridge_separate_outlines": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): an infinite dash gap raised OverflowError in every seeded call and a 300 pt gap bridged two separate rectangles into one 74 SF region; both failed first.",
-        "LeakGuardTests.test_an_open_gap_assumption_blocks_approval_until_accepted": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): the store refuses approve (assumption_unresolved) while the open-gap assumption is open and approves after accept_assumption; the assumption id is unchanged."
+        "LeakGuardTests.test_an_open_gap_assumption_blocks_approval_until_accepted": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): the store refuses approve (assumption_unresolved) while the open-gap assumption is open and approves after accept_assumption; the assumption id is unchanged.",
+        "FindRegionFilterTests.test_the_dashed_analysis_state_is_reported": "Added (slow find_regions, failing first): dashed_analysis is complete for a seeded call and not_run without seed or dashed kind.",
+        "FindRegionFilterTests.test_a_slow_dashed_analysis_stops_at_its_time_budget": "Added (slow find_regions, failing first): 10,000 tiny thin strokes in dense clusters with a 0.5 s budget return skipped_time_budget within 6 s and still find the room; the default budget is 20 s.",
+        "FindRegionFilterTests.test_non_finite_segments_do_not_count_toward_the_early_cap": "Added (slow find_regions, kills the count-everything mutant): 20,001 non-finite pieces do not trip the early cap, as in the planar step.",
+        "FindRegionFilterTests.test_over_the_cap_seeded_calls_are_refused_before_the_dashed_analysis": "Added (slow find_regions, failing first): an over-the-cap seeded call is refused with the 20000 message and dashed_boundary is never called.",
+        "DashedAnalysisBudgetTests.test_skipped_analysis_does_not_use_dashed_edges": "Bug hunt: after skipped_time_budget, dash-array lines are not used as dashed edges (list and seeded), matching the catalog.",
+        "DashedAnalysisBudgetTests.test_complete_analysis_still_uses_dashed_edges": "The same dashed rectangle still closes a region when the analysis completes.",
+        "DashedAnalysisBudgetTests.test_dashed_outline_time_out_is_reported_as_skipped": "Bug hunt: a timeout while building the seeded dashed outline is reported as skipped_time_budget instead of escaping.",
+        "DashedAnalysisBudgetTests.test_dashed_outline_shares_the_analysis_deadline": "The seeded dashed outlines receive the same deadline as the dashed boundary analysis.",
+        "DashedAnalysisBudgetTests.test_non_finite_dashed_lines_are_ignored": "Bug hunt: infinite-coordinate dashed lines no longer crash seeded or dashed find_regions and leave regions unchanged."
       }
     },
     "tests/application/services/test_ai_takeoff_sidecar_service.py": {
@@ -39806,7 +39910,8 @@
         "PdfPathItemsTests.test_a_box_limits_the_pieces_and_the_cap_counts_only_the_box": "Added (M2.1, synthetic fixtures only): a box limits the pieces and the cap counts only the box.",
         "PdfPathItemsTests.test_box_boundaries": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): box boundaries.",
         "PdfPathItemsTests.test_truncation_means_a_piece_was_left_out": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): truncation means a piece was left out.",
-        "PdfPathItemsTests.test_ids_do_not_depend_on_the_box": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): ids do not depend on the box."
+        "PdfPathItemsTests.test_ids_do_not_depend_on_the_box": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): ids do not depend on the box.",
+        "PdfPathItemsTests.test_huge_dash_arrays_are_capped_per_piece": "Added (pentest, failing first): a 20,000-entry dash array keeps at most 32 entries per piece."
       }
     },
     "tests/integration/native/test_snap_index_grid.py": {
@@ -39899,7 +40004,13 @@
         "RunEndToEndTests.test_a_synthetic_sample_runs_end_to_end_with_a_hand_value": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a synthetic sample runs end to end with a hand value.",
         "LegacyHelperTests.test_edge_cases_of_the_legacy_page_reading": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): edge cases of the legacy page reading.",
         "LegacyHelperTests.test_every_failure_category_is_reported": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): every failure category is reported.",
-        "ReportTests.test_hand_values_that_failed_are_listed_and_counted": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): hand values that failed are listed and counted."
+        "ReportTests.test_hand_values_that_failed_are_listed_and_counted": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): hand values that failed are listed and counted.",
+        "PlanPageCapTests.test_at_most_n_plan_pages_spread_over_the_set_are_measured": "Added (pentest harness): --max-plan-pages measures at most N plan pages spread over the PDF, hand-valued pages always included.",
+        "PlanPageCapTests.test_without_a_cap_every_page_is_measured": "Added (pentest harness): without the cap every page is measured.",
+        "ReportTests.test_the_key_file_stays_next_to_the_summary": "Added (pentest harness): the P-id/J-id key file is written next to the summary in the output folder, never in the summary.",
+        "ReportTests.test_pentest_sections_and_the_fix_list": "Added (pentest harness): the summary has wall width, variants, outlined text, timing against the proxy, proposal categories, per-project and fix-list sections with P-ids only.",
+        "OutputFolderTests.test_other_spellings_of_a_folder_inside_the_root_are_refused": "Bug hunt: \\?\\ and upper-case spellings of a folder inside the root are refused via volume and file identity; siblings are not.",
+        "NotMeasuredReportTests.test_pages_skipped_by_the_plan_page_cap_are_not_failures": "Bug hunt: not_measured pages are not failure categories and are left out of the pass-rate denominator."
       }
     },
     "tests/tools/test_ai_takeoff_corpus_worker.py": {
@@ -39919,7 +40030,15 @@
         "WorkerHelperTests.test_timed_calls_report_error_codes_without_their_messages": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): timed calls report error codes without their messages.",
         "WorkerProcessTests.test_prepare_refuses_unreadable_pdfs_and_replaces_an_old_scratch_bid": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): prepare refuses unreadable pdfs and replaces an old scratch bid.",
         "WorkerProcessTests.test_in_process_measurement_of_truncated_and_unseeded_pages": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): in process measurement of truncated and unseeded pages.",
-        "WorkerProcessTests.test_plans_without_regions_skip_seeding_and_a_missed_hand_seed_stops": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): plans without regions skip seeding and a missed hand seed stops."
+        "WorkerProcessTests.test_plans_without_regions_skip_seeding_and_a_missed_hand_seed_stops": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): plans without regions skip seeding and a missed hand seed stops.",
+        "WorkerHelperTests.test_the_wall_profile_finds_the_dominant_and_heaviest_long_classes": "Added (pentest harness): dominant wall width is the longest class at or above the heavy threshold.",
+        "WorkerHelperTests.test_annotation_linework_is_never_the_dominant_wall_weight": "Added (pentest harness, corrected metric): thin annotation linework is never reported as the dominant wall weight.",
+        "WorkerHelperTests.test_the_auto_seed_skips_frame_sized_regions": "Added (pentest harness, corrected metric): auto seeds skip regions above half the page (sheet frames).",
+        "WorkerHelperTests.test_region_shapes_against_the_search_box": "Added (pentest harness): region shape classes against the search box.",
+        "WorkerHelperTests.test_wall_filter_failures": "Added (pentest harness): wall-filter failure classification.",
+        "WorkerHelperTests.test_plan_pages_are_spread_across_the_set": "Added (pentest harness): plan pages are spread across the set.",
+        "WorkerHelperTests.test_drawing_text_leaves_out_the_title_block": "Added (pentest harness): drawing-text runs leave out the title block.",
+        "WorkerProcessTests.test_wall_width_variants_and_callouts_are_measured": "Added (pentest harness): a synthetic page through the worker records the three width variants and callouts drawn as lines."
       }
     },
     "tests/integration/placement/test_page_switch_tools.py": {
@@ -39995,7 +40114,7 @@
     },
     "tests/domain/services/test_ai_dashed_outline.py": {
       "status": "reviewed; final fresh pass pending",
-      "fixture_review": "Pure domain tests of ai_dashed_outline on literal LineSegment lists and the synthetic mat outline helper (no fakes).",
+      "fixture_review": "Pure domain tests of ai_dashed_outline on literal LineSegment lists and the synthetic mat outline helper (no fakes). DashedDeadlineTests use a counting monotonic clock patched onto the module, so deadline behaviour is deterministic.",
       "reviewed_tests": {
         "DashPatternTests.test_the_gap_is_the_longest_off_length_of_the_dash_array": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): the gap is the longest off length of the dash array.",
         "DashPatternTests.test_the_bridge_limit_adds_a_small_tolerance": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): the bridge limit adds a small tolerance.",
@@ -40030,7 +40149,15 @@
         "DashedComponentTests.test_components_follow_touching_pieces_and_bridges_of_one_style": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): components follow touching pieces and bridges of one style.",
         "DashPatternTests.test_the_pattern_gap_never_exceeds_the_longest_dash_gap": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): dash-array off lengths above 18 pt (and infinity) are capped at DASH_GAP_MAX_PTS; failed first with 300.",
         "DashedPieceTests.test_gaps_just_over_the_dash_limit_are_not_a_pattern": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): gaps of 18.3 pt (inside the prefilter box, outside the dash limit) never form a pattern.",
-        "DashedPieceTests.test_a_solid_line_split_with_a_small_offset_is_not_a_dash": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): two abutting pieces offset 0.45 pt still merge into one solid run longer than a dash."
+        "DashedPieceTests.test_a_solid_line_split_with_a_small_offset_is_not_a_dash": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): two abutting pieces offset 0.45 pt still merge into one solid run longer than a dash.",
+        "CornerChainScalingTests.test_corner_chains_match_a_brute_force_reference_on_random_pages": "Added (slow find_regions): differential test; the grid-based corner chain joining equals a brute-force pairwise reference of the earlier semantics on 400 random synthetic pages (more than 100 with chains).",
+        "CornerChainScalingTests.test_an_expired_deadline_stops_the_analysis": "Added (slow find_regions): an expired deadline raises DashedAnalysisTimeout at once; a generous deadline gives the same boundary as no deadline.",
+        "CornerChainScalingTests.test_corner_pieces_exactly_at_the_join_distance_are_chained": "Added (slow find_regions, kills the strict-less mutant): ends exactly DASH_JOIN_PTS apart are chained, ends just beyond are not, matching the brute-force reference.",
+        "CornerChainScalingTests.test_each_stage_honours_an_expired_deadline": "Added (slow find_regions, kills the removed-check mutant): exploded runs, touching chains, corner chains and bridges each stop on an expired deadline.",
+        "CornerChainScalingTests.test_thousands_of_ends_sharing_cells_join_in_near_linear_time": "Added (slow find_regions, failing first): 8,000 short pieces sharing one spot join in under 1 s (the pairwise version was quadratic).",
+        "DashedDeadlineTests.test_dashed_components_stops_at_the_deadline": "Bug hunt: dashed_components raises DashedAnalysisTimeout for an expired deadline instead of running unbounded.",
+        "DashedDeadlineTests.test_dashed_components_skip_lines_that_are_already_joined": "Bug hunt: a 400-line dashed star needs fewer than 1,600 distance checks (quadratic before).",
+        "DashedDeadlineTests.test_touching_chains_checks_the_deadline_inside_crowded_cell_pairs": "Bug hunt: a counting clock shows the deadline is checked per end point inside crowded cell pairs, stopping within 60 checks."
       }
     },
     "tests/integration/ai_takeoff/test_m2_2_dashed_outline.py": {
@@ -40043,6 +40170,56 @@
         "RealS100Tests.test_a_seed_in_each_pit_returns_its_dashed_outline": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): a seed in each pit returns its dashed outline.",
         "RealS100Tests.test_the_leak_case_is_never_silently_merged": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): the leak case is never silently merged.",
         "TransformedMatOutlineTests.test_rotated_cropped_and_scaled_pages_keep_the_outline": "Added (M2.2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): real ost_pdf extraction of the synthetic outline on /Rotate 90, /Rotate 270 with an offset CropBox, and a 0.5 transform keeps the hand area within 0.5%."
+      }
+    },
+    "tests/presentation/utils/test_theme.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Offscreen QApplication; a recording Fusion proxy style captures the color group each primitive is drawn with while painting into a QImage; no screen pixels, no client data.",
+      "reviewed_tests": {
+        "ActiveIndicatorStyleTests.test_indicators_in_inactive_windows_draw_with_the_active_colours": "Added (checkbox, failing first): check box, radio and item-view check indicators in an inactive window are drawn with the Active color group.",
+        "ActiveIndicatorStyleTests.test_disabled_indicators_and_other_elements_are_left_alone": "Added (checkbox): disabled indicators and other primitives keep their own group.",
+        "ActiveIndicatorStyleTests.test_the_wrapped_style_keeps_its_name_and_is_installed_once": "Added (checkbox): the proxy keeps the base style name (Fusion) and configure_application_style wraps once.",
+        "ActiveIndicatorStyleTests.test_a_style_without_a_factory_name_is_left_unwrapped": "Bug hunt: a style whose name is not a factory key is left unwrapped instead of crashing."
+      }
+    },
+    "tests/integration/ai_takeoff/test_ai_takeoff_corpus_adversarial.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Synthetic hostile PDFs only (written by write_content_pdf), run through the real harness in subprocesses with a scratch Access bid; outputs in a temp folder.",
+      "reviewed_tests": {
+        "AdversarialPdfTests.test_hostile_pdfs_never_crash_hang_blow_up_or_leak_instructions": "Added (pentest): injection text, a 20,000-entry dash array, extreme coordinates, 50,000 tiny objects, deep and self-referencing forms and five malformed files never crash, hang, exceed the peak memory limit or put drawing text in trusted fields.",
+        "AdversarialPdfTests.test_drawing_text_from_a_hostile_pdf_stays_untrusted": "Added (pentest): sheet hints, view titles and text runs from a hostile PDF stay untrusted and never reach the tool catalog."
+      }
+    },
+    "tests/integration/native/test_pdf_page_reuse.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real ost_pdf PDFRenderer on generated PDFs (two-page fixture with a rotated page, seeded random line/text pages). page_loads() is the deterministic work counter for the per-renderer loaded-page cache; differential cases compare reused renderers byte-for-byte with fresh renderers for frames, path segments and text runs, including after a cancelled progressive render. Failed against the old binary (no page_loads); the cancelled-render case is a pure differential that passes before and after.",
+      "reviewed_tests": {
+        "PdfPageReuseTests.test_repeated_page_work_loads_the_page_once": "Counts one PDFium page load across size, info, page, frame, path, item and text calls on one page.",
+        "PdfPageReuseTests.test_alternating_pages_stay_loaded_within_capacity": "Two alternating pages stay within the two-page capacity: two loads for eight frame renders.",
+        "PdfPageReuseTests.test_reopen_discards_pages_of_the_previous_document": "Reopening releases the previous document's pages (new page size reported) and close leaves no stale page info.",
+        "PdfPageReuseTests.test_cancelled_render_leaves_the_reused_page_renderable": "A cancelled progressive render on the cached page does not corrupt the next render (bytes equal a fresh renderer).",
+        "PdfPageReuseTests.test_reused_pages_match_fresh_renderers_on_random_pages": "Seeded random pages: reused-page frames at random scales/rotations, path segments and text runs equal fresh renderers; one load per document."
+      }
+    },
+    "tests/integration/native/test_snap_index_intersections.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real ost_snap SnapIndex. Python reference reproduces the intersection contract (float32 storage, distance and tiny-segment prefilter, nearest-128 cap, strict parameter interior, nearest crossing, lower index reported) and falls back to the existing linear-scan reference. last_candidate_count and last_intersection_pairs are deterministic work counters. Failed against the old binary (no INTERSECTION constant, no counters, no intersections argument). Bug-hunt round: the reference now pairs segments nearest first with early termination, a 32,768-pair budget, a 1e-3 crossing-sine floor and a float-aware endpoint tolerance; the dense-cluster case asserts the pair budget.",
+      "reviewed_tests": {
+        "SnapIndexIntersectionTests.test_crossing_lines_snap_to_their_intersection": "Two diagonals crossing near the cursor snap to the exact crossing as INTERSECTION.",
+        "SnapIndexIntersectionTests.test_intersection_wins_over_a_closer_endpoint_and_midpoint": "A crossing outranks a closer endpoint; without intersections the endpoint still wins.",
+        "SnapIndexIntersectionTests.test_shared_vertices_and_t_junctions_stay_endpoints": "Polyline vertices and T-junction stems remain ENDPOINT hits; one pair examined.",
+        "SnapIndexIntersectionTests.test_parallel_overlapping_and_tiny_segments_do_not_intersect": "Parallel/collinear pairs never intersect and tiny segments are excluded from pairing (three pairs).",
+        "SnapIndexIntersectionTests.test_intersection_outside_the_radius_is_ignored": "A crossing just outside the radius falls back to the perpendicular hit after one pair.",
+        "SnapIndexIntersectionTests.test_only_segments_within_radius_are_paired": "Hundreds of grid candidates outside the radius are not paired: one pair for the crossing lines.",
+        "SnapIndexIntersectionTests.test_dense_clusters_cap_the_pairs_examined": "A 400-segment cluster examines exactly 128*127/2 pairs.",
+        "SnapIndexIntersectionTests.test_default_query_never_reports_intersections_or_pairs": "The default query keeps the old contract and examines no pairs.",
+        "SnapIndexIntersectionTests.test_random_queries_match_reference_with_intersections": "Seeded random pages: hits equal the Python intersection reference.",
+        "SnapIndexIntersectionTests.test_random_queries_without_intersections_keep_the_old_contract": "Seeded random queries without intersections equal the pre-change linear-scan reference.",
+        "SnapIndexIntersectionTests.test_intersection_constant_is_exported": "INTERSECTION is 4 and the existing kind constants are unchanged.",
+        "SnapIndexIntersectionTests.test_nearest_crossing_survives_many_nearer_parallel_lines": "Bug hunt: 200 short hatch strokes nearer than a real crossing no longer push it out of the search (the old 128-segment cap dropped it).",
+        "SnapIndexIntersectionTests.test_crossing_near_the_end_of_a_long_line_is_found": "Bug hunt: a crossing 5 units from the end of a 100,000-unit line is an INTERSECTION (the old parametric epsilon rejected it).",
+        "SnapIndexIntersectionTests.test_t_junctions_at_large_coordinates_stay_endpoints": "Bug hunt: 2,000 seeded T-junctions at 4,000-9,000 unit coordinates never report INTERSECTION (4 did with float rounding before).",
+        "SnapIndexIntersectionTests.test_near_duplicate_lines_do_not_create_crossings": "Bug hunt: two nearly identical lines (CAD double strokes) produce no spurious crossing; one pair examined."
       }
     }
   },
@@ -40385,6 +40562,21 @@
       "access_violation_chase": "10 full suites with faulthandler across M2.1 and the bug hunt, 0 access violations; native PDF and snap tests 50/50 in fresh processes; targeted unlocked-destructor race 0/10",
       "mutation": "M2 113/122 (6 equivalent, 3 not applicable), M2.1 88/93 (5 replaced), bug hunt 41/42 (1 equivalent)",
       "line_endings": "Python files keep LF; AGENTS.md and CHANGELOG.md keep their mixed endings line by line; README LF; .gitignore CRLF"
+    },
+    "ai_takeoff_pentest_stage1_and_fixes": {
+      "full_suite": {
+        "tests_run": 14196,
+        "skips": 38,
+        "seconds": 416.3,
+        "result": "OK",
+        "command": ".\u000benv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      },
+      "architecture_checker": "tools/check_architecture.py full scan: No violations found",
+      "compileall": "compileall -q ost_visualizer tests tools exit 0",
+      "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+      "mutation": "slow find_regions 19/20 (1 equivalent), snapping 4/4, checkbox 5/5",
+      "timing": "synthetic 60,000-stroke seeded find_regions 127.5 s before, 20.7 s after (skipped_time_budget); 5,000-stroke page 10.1 s before, 10.0 s after, identical",
+      "line_endings": "CRLF Python files stay CRLF, LF files stay LF; AGENTS.md and CHANGELOG.md keep mixed endings line by line"
     }
   },
   "skip_observations": [
@@ -41530,6 +41722,28 @@
           "tests/integration/native/test_pdf_path_items.py",
           "tests/domain/services/test_ai_polygon_simplify.py",
           "tests/tools/test_ai_takeoff_corpus.py"
+        ]
+      },
+      {
+        "id": "Z17",
+        "decision": "Pentest stage 1 of the AI takeoff tools on the 30-file corpus sample, harness measurements, dash-array cap, and the P24 p18 slow seeded find_regions fix",
+        "status": "fixed",
+        "outcome": "Stage 1 measured (aggregate only); dash arrays capped; seeded find_regions bounded (cap first, near-linear corner chains, 20 s dashed budget). Stage 2 not run (needs approval). Tool counts unchanged (takeoff 15, read 38); no M3 work.",
+        "tests": [
+          "tests/domain/services/test_ai_dashed_outline.py",
+          "tests/application/services/test_ai_takeoff_proposal_service.py",
+          "tests/integration/ai_takeoff/test_ai_takeoff_corpus_adversarial.py"
+        ]
+      },
+      {
+        "id": "Z18",
+        "decision": "Snapping on PDFs with Form XObject linework and checkbox colors in inactive windows",
+        "status": "fixed",
+        "outcome": "Both fixed with failing-first tests; the theme-switch fill loss was not a product bug.",
+        "tests": [
+          "tests/presentation/components/plan_view/components/test_placement_mode.py",
+          "tests/presentation/utils/test_theme.py",
+          "tests/integration/theme/test_windows_startup.py"
         ]
       },
       {

@@ -58,6 +58,14 @@ class PdfPathItemsTests(unittest.TestCase):
         self.assertFalse(item.curve)
         self.assertFalse(item.closed)
 
+    def test_huge_dash_arrays_are_capped_per_piece(self):
+        dash = " ".join("1 2" for _ in range(10000))
+        lines = "".join(f"10 {10 + i} m 50 {10 + i} l S " for i in range(3))
+        items = self.items(f"0.5 w [{dash}] 0 d {lines}")
+        self.assertEqual(len(items), 3)
+        for item in items:
+            self.assertEqual(list(item.dash), [1.0, 2.0] * 16)
+
     def test_solid_lines_have_no_dash_and_hairlines_have_zero_width(self):
         solid, hairline = self.items(
             "3 w 0 0 0 RG 10 10 m 50 10 l S 0 w 0 0 1 RG 10 20 m 50 20 l S"

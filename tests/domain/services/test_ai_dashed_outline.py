@@ -1,8 +1,13 @@
 import math
+import time
 import unittest
+from unittest import mock
+from ost_visualizer.domain.services import ai_dashed_outline as dashed_module
 from ost_visualizer.domain.services.ai_dashed_outline import (
     DASH_BRIDGE_TOLERANCE_PTS,
+    DashedAnalysisTimeout,
     DashedBoundary,
+    _touching_chains,
     _pattern_gap,
     bridge_limit,
     dash_bridges,
@@ -376,6 +381,252 @@ class DashedComponentTests(unittest.TestCase):
                 ],
             ],
         )
+
+
+def _reference_corner_chains(lines, members, pieces):
+    from ost_visualizer.domain.services import ai_dashed_outline as dashed
+
+    chosen = [index for index in members if index in pieces]
+    loose = [
+        index
+        for index in members
+        if index not in pieces and lines[index].length <= dashed.DASH_PIECE_MAX_PTS
+    ]
+    if not chosen or not loose:
+        return {}
+
+    def touches(first, second):
+        return any(
+            math.dist(a, b) <= dashed.DASH_JOIN_PTS
+            for a in ((first.x1, first.y1), (first.x2, first.y2))
+            for b in ((second.x1, second.y1), (second.x2, second.y2))
+        )
+
+    parent = list(range(len(loose)))
+
+    def find(item):
+        while parent[item] != item:
+            item = parent[item]
+        return item
+
+    for position in range(len(loose)):
+        for other in range(position + 1, len(loose)):
+            if touches(lines[loose[position]], lines[loose[other]]):
+                parent[find(other)] = find(position)
+    groups = {}
+    for position in range(len(loose)):
+        groups.setdefault(find(position), []).append(loose[position])
+    found = {}
+    for indices in groups.values():
+        if sum(lines[index].length for index in indices) > dashed.DASH_CORNER_MAX_PTS:
+            continue
+        touched = {
+            other
+            for index in indices
+            for other in chosen
+            if touches(lines[index], lines[other])
+        }
+        if touched:
+            gap = max(pieces[index] for index in touched)
+            for index in indices:
+                found[index] = gap
+    return found
+
+
+class CornerChainScalingTests(unittest.TestCase):
+    def random_page(self, rng):
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        anchors = [
+            (rng.uniform(0, 60), rng.uniform(0, 60)) for _ in range(rng.randint(3, 12))
+        ]
+        lines = []
+        pieces = {}
+        for _ in range(rng.randint(5, 220)):
+            ax, ay = rng.choice(anchors)
+            jitter = rng.choice((0.0, 0.0, 0.1, 0.3, 0.49, 0.5, 0.51, 0.7, 2.0))
+            start = (
+                ax + rng.uniform(-jitter, jitter),
+                ay + rng.uniform(-jitter, jitter),
+            )
+            angle = rng.uniform(0, 2 * math.pi)
+            length = rng.choice((0.3, 1.0, 3.0, 8.0, 17.9, 18.0, 25.0))
+            end = (
+                start[0] + length * math.cos(angle),
+                start[1] + length * math.sin(angle),
+            )
+            if rng.random() < 0.5:
+                start, end = end, start
+            lines.append(LineSegment(start[0], start[1], end[0], end[1], width=0.5))
+            if rng.random() < 0.25:
+                pieces[len(lines) - 1] = rng.choice((3.0, 4.5, 6.0))
+        return lines, list(range(len(lines))), pieces
+
+    def test_corner_chains_match_a_brute_force_reference_on_random_pages(self):
+        import random
+        from ost_visualizer.domain.services.ai_dashed_outline import _corner_chains
+
+        rng = random.Random(29)
+        compared = 0
+        for _ in range(400):
+            lines, members, pieces = self.random_page(rng)
+            expected = _reference_corner_chains(lines, members, pieces)
+            self.assertEqual(_corner_chains(lines, members, pieces), expected)
+            compared += bool(expected)
+        self.assertGreater(compared, 100)
+
+    def fan(self, count):
+        from ost_visualizer.domain.services.ai_linework import (
+            LineSegment,
+            classify_linework,
+        )
+
+        lines = [
+            LineSegment(
+                300.0,
+                300.0,
+                300.0 + 3.0 * math.cos(2 * math.pi * i / count),
+                300.0 + 3.0 * math.sin(2 * math.pi * i / count),
+                width=0.5,
+            )
+            for i in range(count)
+        ]
+        lines.append(
+            LineSegment(100.0, 100.0, 500.0, 100.0, width=0.5, dash=(6.0, 3.0))
+        )
+        return lines, classify_linework(lines)
+
+    def test_an_expired_deadline_stops_the_analysis(self):
+        import time
+        from ost_visualizer.domain.services.ai_dashed_outline import (
+            DashedAnalysisTimeout,
+        )
+
+        lines, kinds = self.fan(600)
+        started = time.perf_counter()
+        with self.assertRaises(DashedAnalysisTimeout):
+            dashed_boundary(lines, kinds, deadline=time.monotonic() - 1.0)
+        self.assertLess(time.perf_counter() - started, 0.5)
+        unlimited = dashed_boundary(lines, kinds)
+        self.assertEqual(
+            dashed_boundary(lines, kinds, deadline=time.monotonic() + 600.0), unlimited
+        )
+
+    def test_corner_pieces_exactly_at_the_join_distance_are_chained(self):
+        from ost_visualizer.domain.services.ai_dashed_outline import (
+            DASH_JOIN_PTS,
+            _corner_chains,
+        )
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        lines = [
+            LineSegment(0.0, 0.0, 3.0, 0.0, width=0.5),
+            LineSegment(3.0, 0.0, 3.0, 2.0, width=0.5),
+            LineSegment(3.0, 2.0 + DASH_JOIN_PTS, 3.0, 5.0, width=0.5),
+            LineSegment(3.0, 5.0 + DASH_JOIN_PTS + 0.01, 3.0, 6.0, width=0.5),
+        ]
+        expected = {1: 3.0, 2: 3.0}
+        self.assertEqual(
+            _reference_corner_chains(lines, [0, 1, 2, 3], {0: 3.0}), expected
+        )
+        self.assertEqual(_corner_chains(lines, [0, 1, 2, 3], {0: 3.0}), expected)
+
+    def test_each_stage_honours_an_expired_deadline(self):
+        import time
+        from ost_visualizer.domain.services import ai_dashed_outline as dashed
+
+        lines, _kinds = self.fan(50)
+        expired = time.monotonic() - 1.0
+        stages = (
+            lambda: dashed._exploded_runs(lines, list(range(len(lines))), expired),
+            lambda: dashed._touching_chains(lines, expired),
+            lambda: dashed._corner_chains(
+                lines, list(range(len(lines))), {0: 3.0}, expired
+            ),
+            lambda: dashed.dash_bridges(lines, {0: 3.0}, expired),
+        )
+        for stage in stages:
+            with self.subTest(stage=stage):
+                with self.assertRaises(dashed.DashedAnalysisTimeout):
+                    stage()
+
+    def test_thousands_of_ends_sharing_cells_join_in_near_linear_time(self):
+        import time
+        from ost_visualizer.domain.services.ai_dashed_outline import _corner_chains
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        timings = {}
+        for count in (2000, 8000):
+            lines = [
+                LineSegment(
+                    300.0,
+                    300.0,
+                    300.0 + 3.0 * math.cos(2 * math.pi * i / count),
+                    300.0 + 3.0 * math.sin(2 * math.pi * i / count),
+                    width=0.5,
+                )
+                for i in range(count)
+            ]
+            lines.append(LineSegment(296.5, 300.0, 299.9, 300.0, width=0.5))
+            started = time.perf_counter()
+            found = _corner_chains(lines, list(range(len(lines))), {count: 4.5})
+            timings[count] = time.perf_counter() - started
+            self.assertEqual(found, {})
+        self.assertLess(timings[8000], 1.0)
+
+
+class _CountingClock:
+    def __init__(self):
+        self.calls = 0
+
+    def monotonic(self):
+        self.calls += 1
+        return float(self.calls)
+
+
+class DashedDeadlineTests(unittest.TestCase):
+    def test_dashed_components_stops_at_the_deadline(self):
+        lines, _dash_count = _outline()
+        boundary = _boundary(lines)
+        self.assertTrue(dashed_components(lines, boundary))
+        with self.assertRaises(DashedAnalysisTimeout):
+            dashed_components(lines, boundary, time.monotonic() - 1.0)
+
+    def test_dashed_components_skip_lines_that_are_already_joined(self):
+        count = 400
+        lines = []
+        for index in range(count):
+            angle = 2.0 * math.pi * index / count
+            lines.append(
+                LineSegment(
+                    100.0,
+                    100.0,
+                    100.0 + 50.0 * math.cos(angle),
+                    100.0 + 50.0 * math.sin(angle),
+                    **OUTLINE,
+                )
+            )
+        boundary = DashedBoundary({index: 3.0 for index in range(count)}, ())
+        calls = []
+        original = dashed_module.point_segment_distance
+
+        def counted(*args):
+            calls.append(1)
+            return original(*args)
+
+        with mock.patch.object(dashed_module, "point_segment_distance", counted):
+            components = dashed_components(lines, boundary)
+        self.assertEqual(len(components), 1)
+        self.assertLess(len(calls), 4 * count)
+
+    def test_touching_chains_checks_the_deadline_inside_crowded_cell_pairs(self):
+        segments = [LineSegment(0.01, 0.01, 0.02, 0.01, **OUTLINE) for _ in range(300)]
+        segments += [LineSegment(1.05, 0.01, 1.04, 0.01, **OUTLINE) for _ in range(300)]
+        clock = _CountingClock()
+        with mock.patch.object(dashed_module, "time", clock):
+            with self.assertRaises(DashedAnalysisTimeout):
+                _touching_chains(segments, 50.0)
+        self.assertLessEqual(clock.calls, 60)
 
 
 if __name__ == "__main__":

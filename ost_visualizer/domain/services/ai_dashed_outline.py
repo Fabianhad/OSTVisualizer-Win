@@ -1,8 +1,9 @@
 import math
 import statistics
+import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 from .ai_linework import (
     DASH_GAP_MAX_PTS,
     DASH_GAP_MIN_PTS,
@@ -23,6 +24,8 @@ DASH_BRIDGE_TOLERANCE_SHARE = 0.1
 DASH_BRIDGE_ANGLE_DEG = 30.0
 DASH_CORNER_MAX_PTS = 2.0 * DASH_PIECE_MAX_PTS
 DASH_JOIN_PTS = 0.5
+_JOIN_CELL_PTS = DASH_JOIN_PTS / math.sqrt(2.0) * 0.999
+_JOIN_REACH = math.ceil(DASH_JOIN_PTS / _JOIN_CELL_PTS)
 RUN_CELL_PTS = 2.0
 STYLE_WIDTH_DECIMALS = 2
 Segment = Tuple[float, float, float, float]
@@ -34,6 +37,15 @@ StyleKey = Tuple[float, str, bool]
 class DashedBoundary:
     pieces: Dict[int, float]
     bridges: Tuple[Segment, ...]
+
+
+class DashedAnalysisTimeout(Exception):
+    """The dashed outline analysis passed its deadline."""
+
+
+def _check(deadline: Optional[float]) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise DashedAnalysisTimeout("The dashed outline analysis ran out of time")
 
 
 def dash_pattern_gap(dash: Sequence[float]) -> float:
@@ -56,14 +68,18 @@ def style_key(line: LineSegment) -> StyleKey:
 
 
 def dashed_boundary(
-    lines: Sequence[LineSegment], kinds: Sequence[str]
+    lines: Sequence[LineSegment],
+    kinds: Sequence[str],
+    deadline: Optional[float] = None,
 ) -> DashedBoundary:
-    pieces = dashed_pieces(lines, kinds)
-    return DashedBoundary(pieces, tuple(dash_bridges(lines, pieces)))
+    pieces = dashed_pieces(lines, kinds, deadline)
+    return DashedBoundary(pieces, tuple(dash_bridges(lines, pieces, deadline)))
 
 
 def dashed_pieces(
-    lines: Sequence[LineSegment], kinds: Sequence[str]
+    lines: Sequence[LineSegment],
+    kinds: Sequence[str],
+    deadline: Optional[float] = None,
 ) -> Dict[int, float]:
     pieces: Dict[int, float] = {}
     for index, line in enumerate(lines):
@@ -80,10 +96,10 @@ def dashed_pieces(
         ):
             groups[style_key(line)].append(index)
     for members in groups.values():
-        pieces.update(_exploded_runs(lines, members))
-    pieces.update(_classified_gaps(lines, kinds, pieces))
+        pieces.update(_exploded_runs(lines, members, deadline))
+    pieces.update(_classified_gaps(lines, kinds, pieces, deadline))
     for members in groups.values():
-        pieces.update(_corner_chains(lines, members, pieces))
+        pieces.update(_corner_chains(lines, members, pieces, deadline))
     return pieces
 
 
@@ -202,13 +218,16 @@ def _run(lines: Sequence[LineSegment], members: List[int]) -> LineSegment:
 
 
 def _exploded_runs(
-    lines: Sequence[LineSegment], members: List[int]
+    lines: Sequence[LineSegment],
+    members: List[int],
+    deadline: Optional[float] = None,
 ) -> Dict[int, float]:
     short = [index for index in members if lines[index].length <= DASH_PIECE_MAX_PTS]
     joined = _Union(len(short))
     reach = DASH_GAP_MIN_PTS + DASH_OFFSET_TOLERANCE_PTS
     grid = _BoxHash([_box(lines[index].points, 0.0) for index in short], RUN_CELL_PTS)
     for position, index in enumerate(short):
+        _check(deadline)
         area = _box(lines[index].points, reach)
         for other in grid.query(area):
             if other > position and _meets(lines[short[other]].points, area):
@@ -241,6 +260,7 @@ def _exploded_runs(
     clusters = _Union(len(runs))
     run_grid = SegmentGrid([run.points for run, _indices in runs])
     for position, (run, _indices) in enumerate(runs):
+        _check(deadline)
         if position in crowded:
             continue
         area = _box(run.points, size)
@@ -284,7 +304,10 @@ def _pattern_gap(runs: List[LineSegment]) -> float:
 
 
 def _classified_gaps(
-    lines: Sequence[LineSegment], kinds: Sequence[str], pieces: Dict[int, float]
+    lines: Sequence[LineSegment],
+    kinds: Sequence[str],
+    pieces: Dict[int, float],
+    deadline: Optional[float] = None,
 ) -> Dict[int, float]:
     classified = [
         index
@@ -294,6 +317,7 @@ def _classified_gaps(
     grid = SegmentGrid([lines[index].points for index in classified])
     found: Dict[int, float] = {}
     for index in classified:
+        _check(deadline)
         if index in pieces:
             continue
         best = math.inf
@@ -318,8 +342,56 @@ def _touches(first: LineSegment, second: LineSegment) -> bool:
     )
 
 
+def _touching_chains(
+    segments: Sequence[LineSegment], deadline: Optional[float] = None
+) -> _Union:
+    chains = _Union(len(segments))
+    cells: Dict[Tuple[int, int], List[Tuple[Point, int]]] = defaultdict(list)
+    for position, segment in enumerate(segments):
+        for point in _ends(segment):
+            key = (
+                int(math.floor(point[0] / _JOIN_CELL_PTS)),
+                int(math.floor(point[1] / _JOIN_CELL_PTS)),
+            )
+            cells[key].append((point, position))
+    for members in cells.values():
+        for _point, position in members[1:]:
+            chains.join(members[0][1], position)
+    offsets = [
+        (dx, dy)
+        for dx in range(-_JOIN_REACH, _JOIN_REACH + 1)
+        for dy in range(-_JOIN_REACH, _JOIN_REACH + 1)
+        if (dx, dy) > (0, 0)
+    ]
+    for (column, row), members in cells.items():
+        _check(deadline)
+        for dx, dy in offsets:
+            other = cells.get((column + dx, row + dy))
+            if other is None or chains.find(members[0][1]) == chains.find(other[0][1]):
+                continue
+            if _cells_touch(members, other, deadline):
+                chains.join(members[0][1], other[0][1])
+    return chains
+
+
+def _cells_touch(
+    members: List[Tuple[Point, int]],
+    other: List[Tuple[Point, int]],
+    deadline: Optional[float],
+) -> bool:
+    for point, _position in members:
+        _check(deadline)
+        for near, _other in other:
+            if math.dist(point, near) <= DASH_JOIN_PTS:
+                return True
+    return False
+
+
 def _corner_chains(
-    lines: Sequence[LineSegment], members: List[int], pieces: Dict[int, float]
+    lines: Sequence[LineSegment],
+    members: List[int],
+    pieces: Dict[int, float],
+    deadline: Optional[float] = None,
 ) -> Dict[int, float]:
     dashed = [index for index in members if index in pieces]
     loose = [
@@ -329,15 +401,11 @@ def _corner_chains(
     ]
     if not dashed or not loose:
         return {}
-    chains = _Union(len(loose))
-    loose_ends = _EndHash([lines[index] for index in loose])
-    for position, index in enumerate(loose):
-        for other in loose_ends.near(lines[index]):
-            if other > position and _touches(lines[index], lines[loose[other]]):
-                chains.join(position, other)
+    chains = _touching_chains([lines[index] for index in loose], deadline)
     dashed_ends = _EndHash([lines[index] for index in dashed])
     found: Dict[int, float] = {}
     for group in chains.groups():
+        _check(deadline)
         indices = [loose[position] for position in group]
         if sum(lines[index].length for index in indices) > DASH_CORNER_MAX_PTS:
             continue
@@ -363,13 +431,16 @@ class _End:
 
 
 def dash_bridges(
-    lines: Sequence[LineSegment], pieces: Dict[int, float]
+    lines: Sequence[LineSegment],
+    pieces: Dict[int, float],
+    deadline: Optional[float] = None,
 ) -> List[Segment]:
     indices = sorted(index for index in pieces if lines[index].length > 0.0)
     grid = SegmentGrid([lines[index].points for index in indices])
     ends: List[_End] = []
     cosine = math.cos(math.radians(DASH_BRIDGE_ANGLE_DEG))
     for index in indices:
+        _check(deadline)
         line = lines[index]
         start, end = _ends(line)
         for point, other in ((start, end), (end, start)):
@@ -393,6 +464,7 @@ def dash_bridges(
     end_grid = SegmentGrid([end.point + end.point for end in ends])
     pairs = []
     for position, end in enumerate(ends):
+        _check(deadline)
         x, y = end.point
         for other in end_grid.query(x - reach, y - reach, x + reach, y + reach):
             partner = ends[other]
@@ -420,13 +492,16 @@ def dash_bridges(
 
 
 def dashed_components(
-    lines: Sequence[LineSegment], boundary: DashedBoundary
+    lines: Sequence[LineSegment],
+    boundary: DashedBoundary,
+    deadline: Optional[float] = None,
 ) -> List[List[Segment]]:
     indices = sorted(index for index in boundary.pieces if lines[index].length > 0.0)
     grid = SegmentGrid([lines[index].points for index in indices])
     joined = _Union(len(indices))
     owner: Dict[Point, int] = {}
     for position, index in enumerate(indices):
+        _check(deadline)
         for point in _ends(lines[index]):
             owner[point] = position
             x, y = point
@@ -436,6 +511,8 @@ def dashed_components(
                 x + DASH_JOIN_PTS,
                 y + DASH_JOIN_PTS,
             ):
+                if joined.find(position) == joined.find(other):
+                    continue
                 line = lines[indices[other]]
                 if (
                     style_key(line) == style_key(lines[index])

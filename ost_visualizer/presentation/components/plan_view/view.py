@@ -503,8 +503,10 @@ class TakeoffPlanView(
         self._pdf_snap_index = None
         self._takeoff_snap_index_dirty: bool = True
         self._pdf_snap_index_dirty: bool = True
-        self._pdf_snap_segments_cache_key = None
-        self._pdf_snap_segments_cache: List[tuple] = []
+        self._pdf_snap_index_key = None
+        self._pdf_snap_index_complete: bool = False
+        self._pdf_snap_request_key = None
+        self._pdf_snap_request_id: Optional[str] = None
         self._pdf_text_runs: List[PdfTextRun] = []
         self._pdf_text_cache_key = None
         self._pdf_text_request_id: Optional[str] = None
@@ -6101,6 +6103,7 @@ class TakeoffPlanView(
         self._scene.clear()
         self._current_takeoffs = {}
         self._invalidate_snap_index()
+        self._cancel_pdf_snap_request()
         self._current_conditions = {}
         self._current_color_map = {}
         self._current_page_area_selections = None
@@ -6517,3 +6520,7 @@ class TakeoffPlanView(
         self._pending_page_data = None
         self._takeoff_snap_index = None
         self._pdf_snap_index = None
+        self._pdf_snap_index_key = None
+        self._pdf_snap_index_complete = False
+        self._pdf_snap_request_key = None
+        self._pdf_snap_request_id = None

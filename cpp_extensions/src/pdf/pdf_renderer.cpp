@@ -17,6 +17,7 @@ namespace ost_pdf
 {
 #define DOC() (static_cast<FPDF_DOCUMENT>(doc_))
     static std::mutex g_init_mutex;
+    constexpr std::size_t kLoadedPageCapacity = 2;
     static bool g_initialized = false;
     void RenderCancelToken::cancel()
     {
@@ -215,9 +216,13 @@ namespace ost_pdf
         close();
     }
     PDFRenderer::PDFRenderer(PDFRenderer &&other) noexcept
-        : doc_(other.doc_), last_error_(std::move(other.last_error_))
+        : doc_(other.doc_),
+          pages_(std::move(other.pages_)),
+          page_loads_(other.page_loads_),
+          last_error_(std::move(other.last_error_))
     {
         other.doc_ = nullptr;
+        other.pages_.clear();
     }
     PDFRenderer &PDFRenderer::operator=(PDFRenderer &&other) noexcept
     {
@@ -225,8 +230,11 @@ namespace ost_pdf
         {
             close();
             doc_ = other.doc_;
+            pages_ = std::move(other.pages_);
+            page_loads_ = other.page_loads_;
             last_error_ = std::move(other.last_error_);
             other.doc_ = nullptr;
+            other.pages_.clear();
         }
         return *this;
     }
@@ -243,11 +251,50 @@ namespace ost_pdf
     }
     void PDFRenderer::close()
     {
+        close_pages();
         if (doc_)
         {
             FPDF_CloseDocument(DOC());
             doc_ = nullptr;
         }
+    }
+    void *PDFRenderer::acquire_page(int page_index) const
+    {
+        for (auto it = pages_.begin(); it != pages_.end(); ++it)
+        {
+            if (it->first == page_index)
+            {
+                const std::pair<int, void *> entry = *it;
+                pages_.erase(it);
+                pages_.push_back(entry);
+                return entry.second;
+            }
+        }
+        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        if (!page)
+        {
+            return nullptr;
+        }
+        ++page_loads_;
+        if (pages_.size() >= kLoadedPageCapacity)
+        {
+            FPDF_ClosePage(static_cast<FPDF_PAGE>(pages_.front().second));
+            pages_.erase(pages_.begin());
+        }
+        pages_.emplace_back(page_index, page);
+        return page;
+    }
+    void PDFRenderer::close_pages() const
+    {
+        for (const auto &entry : pages_)
+        {
+            FPDF_ClosePage(static_cast<FPDF_PAGE>(entry.second));
+        }
+        pages_.clear();
+    }
+    int PDFRenderer::page_loads() const
+    {
+        return page_loads_;
     }
     bool PDFRenderer::is_open() const
     {
@@ -267,14 +314,13 @@ namespace ost_pdf
         {
             return {0.0, 0.0};
         }
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        FPDF_PAGE page = static_cast<FPDF_PAGE>(acquire_page(page_index));
         if (!page)
         {
             return {0.0, 0.0};
         }
         double width = FPDF_GetPageWidth(page);
         double height = FPDF_GetPageHeight(page);
-        FPDF_ClosePage(page);
         return {width, height};
     }
     std::string PDFRenderer::page_label(int page_index) const
@@ -324,7 +370,7 @@ namespace ost_pdf
         double effective_h = media_h;
         double crop_w = 0.0;
         double crop_h = 0.0;
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        FPDF_PAGE page = static_cast<FPDF_PAGE>(acquire_page(page_index));
         if (page)
         {
             int raw = FPDFPage_GetRotation(page);
@@ -336,7 +382,6 @@ namespace ost_pdf
             }
             effective_w = FPDF_GetPageWidth(page);
             effective_h = FPDF_GetPageHeight(page);
-            FPDF_ClosePage(page);
             switch (raw & 3)
             {
             case 1:
@@ -391,7 +436,7 @@ namespace ost_pdf
         {
             return result;
         }
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        FPDF_PAGE page = static_cast<FPDF_PAGE>(acquire_page(page_index));
         if (!page)
         {
             return result;
@@ -477,12 +522,12 @@ namespace ost_pdf
                 }
             }
         }
-        FPDF_ClosePage(page);
         return result;
     }
     namespace
     {
         constexpr int kMaxFormDepth = 16;
+        constexpr std::size_t kMaxDashEntries = 32;
         constexpr int kMinCurvePieces = 2;
         constexpr int kMaxCurvePieces = 32;
         constexpr float kCurvePieceLengthPts = 2.0f;
@@ -543,6 +588,7 @@ namespace ost_pdf
                 std::vector<float> dash(static_cast<size_t>(dash_count), 0.0f);
                 if (FPDFPageObj_GetDashArray(object, dash.data(), dash.size()))
                 {
+                    dash.resize(std::min(dash.size(), kMaxDashEntries));
                     for (float value : dash)
                     {
                         style.dash.push_back(
@@ -841,7 +887,7 @@ namespace ost_pdf
         {
             return result;
         }
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        FPDF_PAGE page = static_cast<FPDF_PAGE>(acquire_page(page_index));
         if (!page)
         {
             return result;
@@ -856,7 +902,6 @@ namespace ost_pdf
                 collector.collect(object, identity, std::to_string(object_index), 0);
             }
         }
-        FPDF_ClosePage(page);
         return result;
     }
     std::vector<PDFTextRun> PDFRenderer::extract_text_runs(int page_index) const
@@ -866,7 +911,7 @@ namespace ost_pdf
         {
             return result;
         }
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        FPDF_PAGE page = static_cast<FPDF_PAGE>(acquire_page(page_index));
         if (!page)
         {
             return result;
@@ -874,7 +919,6 @@ namespace ost_pdf
         FPDF_TEXTPAGE text_page = FPDFText_LoadPage(page);
         if (!text_page)
         {
-            FPDF_ClosePage(page);
             return result;
         }
         PDFTextRun current;
@@ -946,7 +990,6 @@ namespace ost_pdf
         }
         finish_run();
         FPDFText_ClosePage(text_page);
-        FPDF_ClosePage(page);
         return result;
     }
     static int normalize_user_rotation_deg(int rotation_deg)
@@ -988,7 +1031,7 @@ namespace ost_pdf
             return std::nullopt;
         }
         rotation = normalize_user_rotation_deg(rotation);
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        FPDF_PAGE page = static_cast<FPDF_PAGE>(acquire_page(page_index));
         if (!page)
         {
             return std::nullopt;
@@ -1000,7 +1043,6 @@ namespace ost_pdf
         if (!checked_pixel_dimension(pdf_width * scale, false, render_width) ||
             !checked_pixel_dimension(pdf_height * scale, false, render_height))
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         if (rotation == 1 || rotation == 3)
@@ -1012,7 +1054,6 @@ namespace ost_pdf
         if (!allocate_bitmap_pixels(
                 render_width, render_height, stride, pixels))
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(
@@ -1022,7 +1063,6 @@ namespace ost_pdf
             stride);
         if (!bitmap)
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         FPDFBitmap_FillRect(bitmap, 0, 0, render_width, render_height, 0xFFFFFFFF);
@@ -1036,7 +1076,6 @@ namespace ost_pdf
             FPDF_ANNOT | FPDF_LCD_TEXT,
             cancel_token);
         FPDFBitmap_Destroy(bitmap);
-        FPDF_ClosePage(page);
         if (!rendered)
         {
             return std::nullopt;
@@ -1123,7 +1162,7 @@ namespace ost_pdf
             return std::nullopt;
         }
         rotation = normalize_user_rotation_deg(rotation);
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        FPDF_PAGE page = static_cast<FPDF_PAGE>(acquire_page(page_index));
         if (!page)
         {
             return std::nullopt;
@@ -1135,7 +1174,6 @@ namespace ost_pdf
             page_w <= 0.0 ||
             page_h <= 0.0)
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         double canvas_w = (rotation == 1 || rotation == 3) ? page_h : page_w;
@@ -1148,7 +1186,6 @@ namespace ost_pdf
         double clipped_h = bottom - top;
         if (clipped_w <= 0.0 || clipped_h <= 0.0)
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         int render_width = 0;
@@ -1160,7 +1197,6 @@ namespace ost_pdf
             !checked_pixel_dimension(page_w * scale, false, full_w) ||
             !checked_pixel_dimension(page_h * scale, false, full_h))
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         if (rotation == 1 || rotation == 3)
@@ -1176,7 +1212,6 @@ namespace ost_pdf
             !allocate_bitmap_pixels(
                 render_width, render_height, stride, pixels))
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(
@@ -1186,7 +1221,6 @@ namespace ost_pdf
             stride);
         if (!bitmap)
         {
-            FPDF_ClosePage(page);
             return std::nullopt;
         }
         FPDFBitmap_FillRect(bitmap, 0, 0, render_width, render_height, 0xFFFFFFFF);
@@ -1200,7 +1234,6 @@ namespace ost_pdf
             FPDF_ANNOT | FPDF_LCD_TEXT,
             cancel_token);
         FPDFBitmap_Destroy(bitmap);
-        FPDF_ClosePage(page);
         if (!rendered)
         {
             return std::nullopt;

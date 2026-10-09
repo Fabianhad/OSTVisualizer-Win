@@ -454,6 +454,22 @@ class CommandLineTests(unittest.TestCase):
 
 
 class OutputFolderTests(unittest.TestCase):
+    def test_other_spellings_of_a_folder_inside_the_root_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            (root / "tools").mkdir(parents=True)
+            prefix = "\\\\?\\"
+            spellings = [
+                Path(prefix + str(root / "out")),
+                Path(prefix + str(root / "tools" / "new" / "deeper")),
+                Path(prefix + str(root).upper() + "\\x"),
+            ]
+            for spelling in spellings:
+                with self.subTest(spelling=str(spelling)):
+                    self.assertTrue(corpus.inside(spelling, root))
+            self.assertFalse(corpus.inside(Path(prefix + directory) / "other", root))
+            self.assertFalse(corpus.inside(Path(directory) / "repository", root))
+
     def test_output_inside_the_repository_is_refused(self):
         self.assertTrue(corpus.inside_repository(corpus.REPO_ROOT / "corpus_out"))
         self.assertFalse(corpus.inside_repository(corpus.DEFAULT_ROOT))
@@ -576,6 +592,7 @@ class OutputFolderTests(unittest.TestCase):
             "x/corpus_run_1.csv",
             "x/corpus_summary_1.md",
             "x/corpus_compare_1.md",
+            "x/corpus_summary_1_keys.csv",
             "x/sample.csv",
             "x/inventory.csv",
             "x/hand_values.csv",
@@ -772,6 +789,42 @@ class CompareTests(unittest.TestCase):
             ("not measured", "0/1 (0%)"),
         )
         self.assertEqual(table["Plan: proposal failures"], ("1/2 (50%)", "0/2 (0%)"))
+        for name in (
+            "Plan: seeded region found (default width)",
+            "Plan: wall-filter failure (default width)",
+            "Plan: leak not flagged (region touches the box or fills 80%)",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(table[name], ("not measured", "not measured"))
+        seeded = [
+            _plan(
+                default_found="True",
+                default_wall_failure="True",
+                default_leak="False",
+                default_touches_edge="True",
+            ),
+            _plan(page="2", default_found="False", default_wall_failure="True"),
+            _plan(
+                page="3",
+                default_found="True",
+                default_wall_failure="False",
+                default_leak="True",
+                default_box_ratio="0.9",
+            ),
+        ]
+        later = dict(
+            (name, new) for name, _old, new in corpus.compare_metrics(before, seeded)
+        )
+        self.assertEqual(
+            later["Plan: seeded region found (default width)"], "2/3 (67%)"
+        )
+        self.assertEqual(
+            later["Plan: wall-filter failure (default width)"], "2/3 (67%)"
+        )
+        self.assertEqual(
+            later["Plan: leak not flagged (region touches the box or fills 80%)"],
+            "1/3 (33%)",
+        )
         with tempfile.TemporaryDirectory() as directory:
             first, second = (
                 Path(directory) / "corpus_run_a.csv",
@@ -887,6 +940,72 @@ class RunFailureTests(unittest.TestCase):
         self.assertEqual(corpus.long_path(Path(prefixed)), prefixed)
 
 
+class PlanPageCapTests(unittest.TestCase):
+    def run_with(self, cap):
+        import json
+        from unittest import mock
+
+        measured = []
+
+        def fake_child(command, timeout):
+            step = command[3]
+            if step == "prepare":
+                pages = [{"uid": f"u{i}", "index": i} for i in range(5)]
+                Path(command[6]).write_text(
+                    json.dumps(
+                        {"db": "x.mdb", "bid_uid": "b", "pdf": "p.pdf", "pages": pages}
+                    ),
+                    encoding="utf-8",
+                )
+                return {"status": "ok", "error": ""}
+            if step == "sheets":
+                kinds = ["plan", "plan", "detail", "plan", "plan"]
+                Path(command[5]).write_text(
+                    json.dumps(
+                        [{"index": i, "kind": kind} for i, kind in enumerate(kinds)]
+                    ),
+                    encoding="utf-8",
+                )
+                return {"status": "ok", "error": ""}
+            measured.append(command[5])
+            Path(command[7]).write_text(
+                json.dumps({"status": "ok", "kind": "plan"}), encoding="utf-8"
+            )
+            return {"status": "ok", "error": ""}
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            rel = "2025\P1\a.pdf"
+            corpus.write_csv(
+                out / "sample.csv",
+                [{"rel": rel, "local": corpus.local_name(rel), "size": 1}],
+                ("rel", "local", "size"),
+            )
+            with mock.patch.object(corpus, "_run_child", fake_child):
+                path = corpus.run(out, 1, sys.executable, max_plan_pages=cap)
+            rows = corpus.read_csv(path)
+        return measured, [(row["page"], row["status"], row["kind"]) for row in rows]
+
+    def test_at_most_n_plan_pages_spread_over_the_set_are_measured(self):
+        measured, rows = self.run_with(2)
+        self.assertEqual(measured, ["u0", "u4"])
+        self.assertEqual(
+            rows,
+            [
+                ("1", "ok", "plan"),
+                ("2", "not_measured", "plan"),
+                ("3", "not_measured", "detail"),
+                ("4", "not_measured", "plan"),
+                ("5", "ok", "plan"),
+            ],
+        )
+
+    def test_without_a_cap_every_page_is_measured(self):
+        measured, rows = self.run_with(None)
+        self.assertEqual(measured, ["u0", "u1", "u2", "u3", "u4"])
+        self.assertEqual([status for _page, status, _kind in rows], ["ok"] * 5)
+
+
 class RunEndToEndTests(unittest.TestCase):
     def test_a_synthetic_sample_runs_end_to_end_with_a_hand_value(self):
         import tests.helpers.mdb.schema_support as access
@@ -998,6 +1117,27 @@ class LegacyHelperTests(unittest.TestCase):
         self.assertIn("| peak_mb | 512 | 512 | 512 | 512 |", text)
 
 
+class NotMeasuredReportTests(unittest.TestCase):
+    def test_pages_skipped_by_the_plan_page_cap_are_not_failures(self):
+        rows = [{"rel": "a.pdf", "page": "1", "status": "ok", "kind": KIND_PLAN}]
+        rows += [
+            {"rel": "a.pdf", "page": str(page), "status": "not_measured"}
+            for page in range(2, 11)
+        ]
+        names = dict(corpus.failure_categories(rows))
+        self.assertFalse([name for name in names if "not_measured" in name])
+        with tempfile.TemporaryDirectory() as directory:
+            run_csv = Path(directory) / "corpus_run_x.csv"
+            corpus.write_csv(run_csv, rows, corpus.RUN_COLUMNS)
+            text = corpus.report(run_csv, Path(directory) / "s.md").read_text(
+                encoding="utf-8"
+            )
+        self.assertIn(
+            "| Page measured without crash, hang or error | 1/1 (100%) |", text
+        )
+        self.assertNotIn("not_measured (", text)
+
+
 class ChildProcessTests(unittest.TestCase):
     def test_timeouts_are_hangs_and_failures_name_the_exception(self):
         hang = corpus._run_child(
@@ -1082,10 +1222,11 @@ class ReportTests(unittest.TestCase):
         ):
             with self.subTest(category=category):
                 self.assertIn(category, text)
-        self.assertIn(
-            "| 2024\\P1\\S-101.pdf | 1 | S-101 | plan | FOUNDATION PLAN | none |", text
-        )
-        self.assertIn("| 2024\\P1\\S-101.pdf | 1 | 100 | 101.2 | 1.2 |", text)
+        for private in ("2024", "S-101", "S-102", "FOUNDATION PLAN", ".pdf"):
+            with self.subTest(private=private):
+                self.assertNotIn(private, text)
+        self.assertIn("| P01 | 1 | 100 | 101.2 | 1.2 |", text)
+        self.assertIn("Examples: P02 p2", text)
         categories = dict(corpus.failure_categories([dict(row) for row in rows]))
         self.assertEqual(len(categories["page failed: hang (timeout after 180 s)"]), 1)
 
@@ -1116,8 +1257,136 @@ class ReportTests(unittest.TestCase):
                 encoding="utf-8"
             )
         self.assertIn("| Hand values within 0.5% | 1/3 (33%) |", text)
-        self.assertIn("| a.pdf | 2 | 50 | none | n/a |", text)
-        self.assertIn("| a.pdf | 3 | 75 | none | n/a |", text)
+        self.assertIn("| P01 | 2 | 50 | none | n/a |", text)
+        self.assertIn("| P01 | 3 | 75 | none | n/a |", text)
+
+    def test_the_key_file_stays_next_to_the_summary(self):
+        rows = [
+            {"rel": "2025\\B\\b.pdf", "page": "1", "status": "ok"},
+            {"rel": "2025\\A\\a.pdf", "page": "1", "status": "ok"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run_csv = Path(directory) / "corpus_run_x.csv"
+            corpus.write_csv(run_csv, rows, corpus.RUN_COLUMNS)
+            corpus.report(run_csv, Path(directory) / "corpus_summary_x.md")
+            keys = corpus.read_csv(Path(directory) / "corpus_summary_x_keys.csv")
+        self.assertEqual(
+            [(row["id"], row["project"], row["rel"]) for row in keys],
+            [("P01", "J01", "2025\\A\\a.pdf"), ("P02", "J02", "2025\\B\\b.pdf")],
+        )
+
+    def test_pentest_sections_and_the_fix_list(self):
+        def plan(page, rel="2025\\A\\a.pdf", **values):
+            row = {
+                "rel": rel,
+                "page": str(page),
+                "status": "ok",
+                "kind": KIND_PLAN,
+                "text_runs": "50",
+                "segments": "900",
+            }
+            row.update({key: str(value) for key, value in values.items()})
+            return row
+
+        rows = [
+            plan(
+                1,
+                suggestion_removes_dominant=True,
+                default_found=True,
+                default_touches_edge=True,
+                default_box_ratio=0.9,
+                default_segments=10,
+                default_leak=False,
+                default_wall_failure=True,
+                default_seconds=130.0,
+                zero_found=True,
+                zero_touches_edge=False,
+                zero_box_ratio=0.1,
+                zero_segments=500,
+                zero_leak=True,
+                zero_open_gaps=2,
+                zero_dashed_outline=True,
+                zero_wall_failure=False,
+                zero_seconds=3.0,
+                proposal_status="ok",
+                proposal_subjects='{"closing_segment": 2}',
+                callouts_as_lines=True,
+                dash_arrays=4,
+                dominant_wall_width=2.0,
+            ),
+            plan(
+                2,
+                suggestion_removes_dominant=False,
+                default_found=True,
+                default_touches_edge=False,
+                default_box_ratio=0.2,
+                default_segments=0,
+                default_leak=False,
+                default_wall_failure=True,
+                default_seconds=70.0,
+                proposal_status="changeset_too_large",
+                callouts_as_lines=False,
+                dominant_wall_width=2.0,
+            ),
+            plan(
+                3,
+                rel="2026\\B\\b.pdf",
+                suggestion_removes_dominant=False,
+                default_found=True,
+                default_touches_edge=False,
+                default_box_ratio=0.3,
+                default_segments=40,
+                default_leak=False,
+                default_wall_failure=False,
+                default_seconds=2.0,
+                proposal_status="ok",
+                callouts_as_lines=False,
+                extraction_truncated=True,
+                dominant_wall_width=1.0,
+            ),
+            {
+                "rel": "2026\\B\\b.pdf",
+                "page": "4",
+                "status": "ok",
+                "kind": KIND_UNKNOWN,
+                "text_runs": "0",
+                "segments": "800",
+                "content": "vector",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run_csv = Path(directory) / "corpus_run_x.csv"
+            corpus.write_csv(run_csv, rows, corpus.RUN_COLUMNS)
+            text = corpus.report(run_csv, Path(directory) / "s.md").read_text(
+                encoding="utf-8"
+            )
+        for expected in (
+            "| Suggestion removes the dominant wall weight | 1/3 (33%) |",
+            "| Seeded region touches the search-box edge | 1/3 (33%) |",
+            "| Seeded region keeps zero edges | 1/3 (33%) |",
+            "| Seeded region above 80% of the box | 1/3 (33%) |",
+            "| Wall-filter failure (any of the three) | 2/3 (67%) |",
+            "| default | 3 | 3 | 0 | 0 | 0 | 1 | 1 | 2 | 0.30 |",
+            "| zero | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0.10 |",
+            "| Vector pages without any text (outlined text) | 1/4 (25%) |",
+            "| Plans whose callouts are lines | 1/3 (33%) |",
+            "| default | 70.00 | 118.00 | 130.00 | 2 | 1 |",
+            "| zero | 3.00 | 3.00 | 3.00 | 0 | 0 |",
+            "| ok | 2 |",
+            "| changeset_too_large | 1 |",
+            "| closing_segment | 2 |",
+            "| J01 | 2 | 2 | 2.0 | 4 | 0/2 (0%) | 2/2 (100%) | 1/2 (50%) |",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, text)
+        fixes = text.split("## Prioritized fix list", 1)[1]
+        order = [
+            fixes.index(name)
+            for name in ("Wall-width suggestion", "Outlined-text fallback")
+        ]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("Leak guard coverage", fixes)
+        self.assertIn("Examples: P01 p1", fixes)
 
     def test_hand_values_without_expected_areas_are_not_measured(self):
         rows = [{"rel": "a.pdf", "page": "1", "status": "ok", "kind": KIND_PLAN}]
