@@ -69,6 +69,10 @@ class FakeProposalService:
         self.calls.append((call_name, args, kwargs))
         self.threads[call_name] = threading.get_ident()
 
+    def plan_scale(self, *args, **kwargs):
+        self._record("plan_scale", *args, **kwargs)
+        return lambda: self.propose_scale(*args, **kwargs)
+
     def propose_scale(self, *args, **kwargs):
         self._record("propose_scale", *args, **kwargs)
         return ok_result({"changeset_id": "cs-1", "status": "proposed"})
@@ -76,6 +80,10 @@ class FakeProposalService:
     def find_regions(self, *args, **kwargs):
         self._record("find_regions", *args, **kwargs)
         return ok_result({"regions": []})
+
+    def plan_element(self, *args, **kwargs):
+        self._record("plan_element", *args, **kwargs)
+        return lambda: self.propose_element(*args, **kwargs)
 
     def propose_element(self, *args, **kwargs):
         self._record("propose_element", *args, **kwargs)
@@ -448,7 +456,13 @@ class WriteCommandBridgeTests(BridgeTestCase):
             "propose_scale",
             {"page_uid": "p1", "p1_pts": [0, 0], "p2_pts": [1, 0], "real_in": 1},
         )
-        self.assertEqual(self.proposal.threads["propose_scale"], gui)
+        self.assertEqual(self.proposal.threads["plan_scale"], gui)
+        self.assertNotEqual(self.proposal.threads["propose_scale"], gui)
+        self.call(
+            "propose_element", {"kind": "slab", "page_uid": "p1", "region_id": "r1"}
+        )
+        self.assertEqual(self.proposal.threads["plan_element"], gui)
+        self.assertNotEqual(self.proposal.threads["propose_element"], gui)
 
     def test_undo_replies_when_the_deferred_undo_finishes(self):
         self.assertEqual(

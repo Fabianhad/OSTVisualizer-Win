@@ -178,13 +178,17 @@ of the loaded page. Curves, text outlines, and image content are ignored.
             .def("extract_path_items", &PDFRenderer::extract_path_items,
                  nb::arg("page_index"),
                  nb::arg("max_items"),
+                 nb::arg("box") = nb::none(),
                  nb::call_guard<nb::gil_scoped_release>(),
                  R"doc(
 Extract PDF path pieces with stroke width, dash array, colors, paint mode
 and stable object ids. Bezier curves are flattened into short straight
 pieces marked curve, and Form XObjects are followed with their transforms.
 Coordinates are PDF user-space points with the origin at the bottom-left
-of the loaded page. Stops after max_items pieces and sets truncated.
+of the loaded page. With box (left, bottom, right, top in the same
+space) only pieces touching the box are returned and counted, so
+max_items applies after the box. Stops after max_items pieces and sets
+truncated.
 )doc")
             .def("extract_text_runs", &PDFRenderer::extract_text_runs,
                  nb::arg("page_index"),

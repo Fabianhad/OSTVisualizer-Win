@@ -1941,6 +1941,53 @@
       ],
       "release_evidence": "Unreleased",
       "affected_result": "Takeoff, pan and zoom cursors keep their tool across page switches"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "propose_element sent traced region outlines and holes unsimplified, so dense or curved outlines failed with changeset_too_large and holes crossing the outline failed with invalid_geometry",
+      "proof": "Corpus run: 4 changeset_too_large and 1 invalid_geometry proposals; RegionSimplificationTests failed first",
+      "fix": "simplify_slab (Douglas-Peucker at 0.25 in, area within 0.1 percent) before the changeset; crossing holes are kept unsimplified or left out with an assumption; geometry reported",
+      "tests": [
+        "RegionSimplificationTests",
+        "SimplifySlabTests",
+        "SimplifyRingTests"
+      ],
+      "release_evidence": "Unreleased M2.1",
+      "affected_result": "Region proposals stay under the vertex cap and never carry a hole crossing the outline"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_read_service.py",
+      "defect": "A page over the 250,000-piece cap stayed truncated for every box, so find_regions and list_segments saw an arbitrary subset of a busy sheet",
+      "proof": "Corpus run: 57 truncated pages; box extraction tests failed first",
+      "fix": "extract_path_items takes a box (native filter before the cap); truncated pages are extracted again inside the request box and report extraction_scope",
+      "tests": [
+        "SegmentAttributeTests.test_a_truncated_page_is_extracted_again_inside_the_box",
+        "PdfPathItemsTests.test_a_box_limits_the_pieces_and_the_cap_counts_only_the_box"
+      ],
+      "release_evidence": "Unreleased M2.1",
+      "affected_result": "extraction_truncated is true only when the box itself is over the cap"
+    },
+    {
+      "file": "cpp_extensions/src/pdf/pdf_renderer.cpp",
+      "defect": "extract_path_items reported truncation when nothing was left out, numbered segment ids after the box filter, and accepted inverted or NaN boxes",
+      "proof": "PdfPathItemsTests.test_truncation_means_a_piece_was_left_out, test_ids_do_not_depend_on_the_box and test_box_boundaries failed against the previous build",
+      "fix": "truncated set only when an in-box piece cannot be stored; piece counter before the box test; box normalized or rejected before the page is loaded",
+      "tests": [
+        "PdfPathItemsTests"
+      ],
+      "release_evidence": "Unreleased",
+      "affected_result": "Box scope only when needed; ids stable across scopes"
+    },
+    {
+      "file": "ost_visualizer/domain/services/ai_polygon_simplify.py",
+      "defect": "Simplification could cross itself, make holes touch, miss the net area limit and drop valid holes",
+      "proof": "SimplifySlabTests failed with the reviewer's inputs",
+      "fix": "All rings simplified at one tolerance and accepted only when every ring and the net area hold, holes stay inside and no edges touch; holes dropped only when they do not fit the traced outline",
+      "tests": [
+        "SimplifySlabTests"
+      ],
+      "release_evidence": "Unreleased",
+      "affected_result": "Simplified slabs are valid polygons"
     }
   ],
   "removed_tests": [
@@ -15356,6 +15403,58 @@
         "No hand values were supplied yet; hand_values.csv is a header-only template.",
         "Page kind and scale come from text heuristics; graphic scale bars without the words GRAPHIC SCALE are not detected.",
         "Firm is approximated by project folder; firm names are drawing content and are not read."
+      ]
+    },
+    {
+      "batch": "ai-takeoff-m2-1-corpus-fixes",
+      "findings": [
+        "Corpus root causes (30-PDF sample, geometry statistics only): changeset_too_large came from traced outlines of 3,600-6,750 vertices or one hole of 4,686 against the 2,000-vertex cap; invalid_geometry came from traced holes crossing the outline on a 0.18 SF region; many false sheet numbers were S0-style hits; most plan pages exceeded the 20,000-segment region cap without a width filter; 57 pages exceeded the 250,000-piece extraction cap.",
+        "Found while implementing: text runs on one baseline far apart (two view titles side by side) were joined into one line, giving the second view's scale the first view's title; runs more than twice the text height apart now start a new line (TextLineTests.test_wide_gaps_on_a_baseline_split_the_line failed first).",
+        "Found in the corpus re-run: the first sheet-number rule took 'SEE 790' as a number (S plus letters plus a spaced number) and took small detail references in the upper right drawing area as title-block numbers. Unlabelled numbers in the right strip must now be in its lower 30 percent, and a space before the number is allowed only after a bare S (tests failed first). A diagnostic over the local copies showed every legacy hit lost on single-sheet PDFs was a detail reference at 1-2 percent of the tallest text height in the drawing body.",
+        "Equivalent mutants removed by simplification: the len(classes) < 2 guard in suggested_min_width and the is_pdf guard in the dimension check were redundant (the loop and the read service already answer the same), so both guards were removed. The two-page variant of the consistency threshold is equivalent (with two pages neither the dominant-location rule nor the repeat rule can change a pick).",
+        "Mutation (in memory only): 93 Python mutants over ai_sheet_text, ai_polygon_simplify, ai_linework suggested_min_width, the proposal and read services, the PDF source, bridge, write commands, DTOs, catalog and the corpus tools; first sweep 27 survivors, all closed by new tests except 3 equivalents (two redundant guards removed from production, the two-page consistency threshold); final 93/93 killed. Native C++ (box filtering in extract_path_items) was not mutated; it is covered by tests/integration/native/test_pdf_path_items.py against real PDFium. Worker-process code paths in tools/ai_takeoff_corpus_worker.py that only run in subprocesses (measure_page fields) are covered by the subprocess tests, not by in-memory mutation.",
+        "Corpus before/after (same 30-PDF sample, read-only share, apply_changeset never called): sheet number found 224/436 (51%) before vs 85/436 (19%) after; S0-style numbers 27 vs 0; numbers repeated within a PDF 144 vs 0 (before counted detail references and S0 hits; 80 pages have no extractable text)",
+        "Corpus before/after (same 30-PDF sample, read-only share, apply_changeset never called): plan pages with one resolved plan scale 133/229 (single scale on the page) vs 118/229 (one plan-view scale), plus 36 sheet-level single scales, 12 ambiguous, 2 NTS, 19 no plan view, 42 none",
+        "Corpus before/after (same 30-PDF sample, read-only share, apply_changeset never called): plan region list over the 20,000-segment cap 132/229 (58%) without a filter vs 17/229 (7%) with the default suggested width",
+        "Corpus before/after (same 30-PDF sample, read-only share, apply_changeset never called): pages truncated at 250,000 pieces 57/436 both runs; truncated plan pages still truncated in a quarter-page box 8/24",
+        "Corpus before/after (same 30-PDF sample, read-only share, apply_changeset never called): plan proposal failures 5/217 (4 changeset_too_large, 1 invalid_geometry) vs 3/217 (3 changeset_too_large); largest simplified outline 941 vertices, area change at most 0.0435 percent, no holes dropped",
+        "Corpus before/after (same 30-PDF sample, read-only share, apply_changeset never called): 436/436 pages measured without crash, hang or error in both runs; hand values not measured (hand_values.csv has no expected_sf rows)"
+      ],
+      "tests_added": [
+        "See modules (2 new modules) and added_tests"
+      ],
+      "validation": "Full suite 14,028 tests OK (36 skipped); check_architecture, compileall and git diff --check clean",
+      "limitations": [
+        "Graphic scale bars are reported as a candidate label only; their length is not measured, so they never resolve a plan scale.",
+        "The dimension check reads dimension strings that are a single horizontal text line near the measured segment; rotated or split dimension text is not matched.",
+        "Sheet-number hit rates are measured without ground truth; the corpus reports plausibility checks (S0-style numbers, repeats within a PDF) instead of accuracy.",
+        "Hand values: hand_values.csv has no expected_sf rows, so area error was not measured.",
+        "Native C++ changes were covered by real-PDFium tests, not by mutation. The Nuitka builds and an MCP client were not run with M2.1."
+      ]
+    },
+    {
+      "batch": "ai-takeoff-m2-bug-hunt",
+      "findings": [
+        "Scopes: the last commit (50 files) and the uncommitted work (30 modified, 4 untracked). Four read-only reviews (native, sheet text, regions and proposals, page switch plus harness plus docs) proposed defects; each was reproduced with a failing test before any fix or rejected with evidence.",
+        "Access violation chase: the one-off 0xC0000005 after a suite summary did not recur: 5 consecutive full suites with faulthandler (0 fatal errors; runs 3-5 included in-progress tests) plus 2 earlier clean runs, the native PDF and snap tests 50 times in fresh processes (50/50 exit 0), and a targeted race (worker threads extracting under pdfium_lock while the main thread drops unclosed renderers, 10 runs) all exited 0. Suspected, not reproduced: PDFRenderer's destructor and some infrastructure callers reach PDFium without pdfium_lock; a review only crashed PDFium by running it from several threads with no lock at all.",
+        "Native extract_path_items: truncated was set when the list was full before a text, image or out-of-box object (nothing left out); segment ids were numbered after the box filter, so the same id named different pieces with and without a box; an inverted box filtered wrongly and a NaN box disabled filtering. Fixed: truncated only when a piece inside the box is dropped, ids counted before the box test (unboxed ids unchanged), inverted boxes normalized, non-finite boxes raise ValueError before the page is loaded.",
+        "Sheet text: 1\"=1'-0\" matched both scale patterns and made plans ambiguous; 1-1/2\" read as 1/2; a reference note (SEE ... PLAN) became a view title; ELEVATION followed by a value made a plan an elevation view; plan_scale returned sheet although view titles existed; consistency ran only within one page of results; page size came from the database while text came from the PDF frame (a rotated page gave a negative-width crop).",
+        "Regions and proposals: simplification could make an outline cross itself, make holes touch, keep the per-ring but not the net area, and drop a hole that fitted the traced outline; the suggested width dropped dashed lines the caller kept with exclude_dashed false; box re-extraction turned a clipped closed outline into a symbol. propose_element now simplifies on a worker (plan_element) because the safe simplification of a 10,000-vertex region takes about a second.",
+        "Harness: --out inside --source wrote into the source tree; report and compare wrote next to a --run inside the source or the repository; missing arguments or files raised tracebacks; children depended on the working folder; a hand value whose page failed or found no region was reported as not measured; the sampler stopped early when an exhausted project headed the queue (a request for 12 returned 3 of 4 rows while a request for 4 returned 4); compare outputs and sample/inventory/hand_values files were not in .gitignore.",
+        "Docs: AGENTS.md, README and CHANGELOG claims corrected (sheet semantics, reason values, dominant location needs two pages, consistency over the whole PDF, simplification limits, the default width on single-weight pages, harness refusals).",
+        "Not changed, with reasons: S-0.0 is accepted (S0.x cover sheets exist), a trailing period after a sheet number is rejected (title blocks do not use one), full-width digits match \\\\d (no such input seen), fraction-only dimensions such as 1/2\" are not checked (not promised), 11/2\" reads as 5.5 (cannot be told apart from extraction loss); the suggested width is the page's, as the M2.1 specification asks; the legacy harness title column can hold any short title-block line containing a view word (titles are allowed in reports).",
+        "Mutation (in memory only): M2 batch 113/122 killed, 6 equivalents recorded at M2 time, 3 no longer applicable (dead code removed in M2; two re-targeted and killed); M2.1 batch 88/93 killed, 5 replaced by re-targeted mutants; bug-hunt batch 41/42 killed, 1 equivalent (removing one collinear branch of the contact test: every collinear overlap triggers at least two branches). In-process page-switch mutants: reverting the fix fails the condition test; removing the cursor restore fails the new no-condition test. Native C++ was covered by real-PDFium tests, not mutated.",
+        "Coverage (line/branch, touched production modules with their tests): proposal service 99.6/99.0 -> 100/100, read service 99.5/98.7 -> 100/100, linework 98.5/96.9 -> 100/100, polygon simplify 97.5/91.7 -> 100/100, sheet text 98.5/95.5 -> 100/100, corpus tool 82.8/73.9 -> 98.3+/97.2, corpus worker 92.8/68.3 -> 100/91.7; uncovered lines left in scope are the script entry point and loop-exit arcs."
+      ],
+      "tests_added": [
+        "See added_tests"
+      ],
+      "validation": "Full suite 14,078 tests OK (36 skipped, exit 0); check_architecture, compileall and git diff --check clean",
+      "limitations": [
+        "The intermittent access violation was not reproduced; the unlocked PDFium destructor path stays a suspicion.",
+        "Native C++ changes are covered by tests against real PDFium, not by mutation.",
+        "The sampler fix can change which files a new sample command picks; the existing 30-file sample was not regenerated.",
+        "The Nuitka builds and an MCP client were not run."
       ]
     }
   ],
@@ -38522,7 +38621,8 @@
         "ToolCatalogTests.test_numeric_write_arguments_have_their_documented_ranges": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): numeric write arguments have their documented ranges. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "ToolCatalogTests.test_tool_specs_are_immutable": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): tool specs are immutable. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "ToolCatalogTests.test_list_segments_offers_line_attributes_and_a_kind_filter": "Added (M2): kinds schema enum and the documented new fields; the old 'not available yet' sentence is gone.",
-        "ToolCatalogTests.test_find_regions_filters_paging_and_workflow": "Added (M2): filter schemas, limit 1-50, cursor and the workflow phrases in the description."
+        "ToolCatalogTests.test_find_regions_filters_paging_and_workflow": "Added (M2): filter schemas, limit 1-50, cursor and the workflow phrases in the description.",
+        "ToolCatalogTests.test_m2_1_fields_are_described": "Added (M2.1, synthetic fixtures only): m2 1 fields are described."
       }
     },
     "tests/mcp_takeoff/test_pipe_client.py": {
@@ -38723,7 +38823,20 @@
         "SegmentAttributeTests.test_kinds_must_be_known": "Added (M2): kinds must be known.",
         "SegmentAttributeTests.test_kinds_use_the_whole_page_even_inside_a_box": "Added (M2): kinds use the whole page even inside a box.",
         "SegmentAttributeTests.test_a_truncated_extraction_is_reported": "Added (M2): a truncated extraction is reported.",
-        "SegmentAttributeTests.test_page_linework_converts_attributes_to_page_space": "Added (M2): page linework converts attributes to page space."
+        "SegmentAttributeTests.test_page_linework_converts_attributes_to_page_space": "Added (M2): page linework converts attributes to page space.",
+        "ListSheetsTests.test_text_hints_are_off_by_default": "Added (M2.1, synthetic fixtures only): text hints are off by default.",
+        "ListSheetsTests.test_text_hints_report_sheet_number_scales_and_a_title_block_crop": "Added (M2.1, synthetic fixtures only): text hints report sheet number scales and a title block crop.",
+        "ListSheetsTests.test_sheet_numbers_are_made_consistent_per_pdf": "Re-read: hints now use sheet_hint_snapshots, so pages of the same PDF outside the listed page of results take part in consistency.",
+        "ListSheetsTests.test_pages_without_text_get_a_default_crop_for_vision": "Added (M2.1, synthetic fixtures only): pages without text get a default crop for vision.",
+        "ListSheetsTests.test_text_hints_cap_the_page_size_and_need_a_boolean": "Added (M2.1, synthetic fixtures only): text hints cap the page size and need a boolean.",
+        "SegmentAttributeTests.test_the_suggested_min_width_comes_from_the_width_histogram": "Added (M2.1, synthetic fixtures only): the suggested min width comes from the width histogram.",
+        "SegmentAttributeTests.test_a_truncated_page_is_extracted_again_inside_the_box": "Re-read: pins the exact padded raw box.",
+        "SegmentAttributeTests.test_a_complete_page_is_never_extracted_again": "Added (M2.1, synthetic fixtures only): a complete page is never extracted again.",
+        "SegmentAttributeTests.test_page_boxes_map_back_to_raw_pdf_boxes_on_rotated_pages": "Added (M2.1, synthetic fixtures only): page boxes map back to raw pdf boxes on rotated pages.",
+        "ListSheetsTests.test_consistency_covers_the_whole_pdf_on_every_page_of_results": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): consistency covers the whole pdf on every page of results.",
+        "ListSheetsTests.test_page_size_comes_from_the_pdf_frame": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): page size comes from the pdf frame.",
+        "ListSheetsTests.test_unreadable_pdfs_report_their_status_and_nts_has_no_factors": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): unreadable pdfs report their status and nts has no factors.",
+        "SegmentAttributeTests.test_outlines_clipped_by_the_box_are_not_symbols": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): outlines clipped by the box are not symbols."
       }
     },
     "tests/presentation/services/test_ai_takeoff_pdf_source.py": {
@@ -38750,7 +38863,8 @@
         "PageCachePdfSourceTests.test_path_extraction_is_capped_and_reports_truncation": "Added (M2, real PDFs): path extraction is capped and reports truncation.",
         "PageCachePdfSourceTests.test_path_segments_are_cached_until_the_file_changes_or_is_released": "Added (M2, real PDFs): path segments are cached until the file changes or is released.",
         "PageCachePdfSourceTests.test_failed_extractions_are_not_cached": "Added (M2, real PDFs): failed extractions are not cached.",
-        "PageCachePdfSourceTests.test_a_large_page_extracts_quickly": "Added (M2, real PDFs): a large page extracts quickly."
+        "PageCachePdfSourceTests.test_a_large_page_extracts_quickly": "Added (M2, real PDFs): a large page extracts quickly.",
+        "PageCachePdfSourceTests.test_a_box_extracts_only_the_pieces_inside_it": "Added (M2.1, synthetic fixtures only): a box extracts only the pieces inside it."
       }
     },
     "tests/presentation/services/test_ai_takeoff_crop_renderer.py": {
@@ -38789,7 +38903,7 @@
         "BridgeSecurityTests.test_cleanup_keeps_a_token_file_written_by_another_session": "Added: cleanup keeps a token file written by another session. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
         "BridgeThreadingTests.test_pdf_work_runs_off_the_gui_thread": "Re-read: also checks that kinds reaches list_segments; fakes accept the new kinds argument.",
         "BridgeThreadingTests.test_raster_pages_answer_not_pdf_without_planning_a_crop": "Added: raster pages answer not pdf without planning a crop. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
-        "BridgeThreadingTests.test_model_reads_stay_on_the_gui_thread": "Added: model reads stay on the gui thread. Bridge: declared command table only (update_assumption, apply and approve never reach the service), argument allow-list, size cap, token checks (wrong, missing, stale after restart), feature_denied, token never in logs, responses or files, pipe ACL grants only the current user SID, cleanup, worker-thread PDF work and GUI-thread model reads.",
+        "BridgeThreadingTests.test_model_reads_stay_on_the_gui_thread": "Re-read: also asserts list_sheets without text_hints never starts the worker step.",
         "BridgeProtocolTests.test_results_with_lone_surrogates_are_still_delivered": "Added (bug hunt): a service result containing a lone surrogate reaches the real pipe client; before the fix the bridge's UTF-8 encode raised in the slot and the client never got an answer.",
         "BridgeProtocolTests.test_deeply_nested_requests_get_an_error_instead_of_escaping_the_slot": "Added (bug hunt): 5000-deep JSON arrays (with and without a token key) over the real pipe get invalid_argument and never reach the service; before the fix RecursionError escaped the slot (crash report in the app) and the client timed out.",
         "BridgeProtocolTests.test_a_worker_finishing_after_the_bridge_is_destroyed_raises_nothing": "Added (bug hunt): a worker job finishing after the bridge's C++ object is deleted raises nothing on its thread; before the fix it raised RuntimeError('Signal source has been deleted'), which the app's threading excepthook turns into a crash report.",
@@ -38835,7 +38949,8 @@
         "BridgeWorkerLifecycleTests.test_a_worker_finishing_after_the_client_left_is_not_answered": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a worker finishing after the client left is not answered. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "BridgeDeferredReplyTests.test_a_resolved_reply_reaches_the_waiting_client": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a resolved reply reaches the waiting client. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "BridgeDeferredReplyTests.test_a_reply_resolved_after_the_client_left_is_dropped": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a reply resolved after the client left is dropped. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "BridgeDeferredReplyTests.test_a_reply_resolved_after_cleanup_is_dropped": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a reply resolved after cleanup is dropped. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
+        "BridgeDeferredReplyTests.test_a_reply_resolved_after_cleanup_is_dropped": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a reply resolved after cleanup is dropped. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+        "BridgeThreadingTests.test_sheet_text_hints_read_the_pdf_off_the_gui_thread": "Re-read: also asserts sheet_hint_snapshots runs on the GUI thread."
       }
     },
     "tests/integration/ai_takeoff/test_m1a_end_to_end.py": {
@@ -39074,7 +39189,21 @@
         "FindRegionFilterTests.test_global_gap_closing_is_the_fallback_when_no_opening_is_found": "Added (M2): global gap closing is the fallback when no opening is found.",
         "FindRegionFilterTests.test_a_raster_fill_that_may_have_closed_unseen_openings_says_so": "Added (M2): a raster fill that may have closed unseen openings says so.",
         "FindRegionFilterTests.test_exclude_thin_curves_must_be_true_or_false": "Added (M2): exclude thin curves must be true or false.",
-        "FindRegionFilterTests.test_too_many_segments_after_filtering_are_refused_but_filtered_ones_are_not": "Added (M2): too many segments after filtering are refused but filtered ones are not."
+        "FindRegionFilterTests.test_too_many_segments_after_filtering_are_refused_but_filtered_ones_are_not": "Added (M2): too many segments after filtering are refused but filtered ones are not.",
+        "ScaleProposalTests.test_a_preset_is_checked_against_a_nearby_dimension": "Added (M2.1, synthetic fixtures only): a preset is checked against a nearby dimension.",
+        "ScaleProposalTests.test_a_disagreeing_dimension_is_reported_in_the_assumption": "Added (M2.1, synthetic fixtures only): a disagreeing dimension is reported in the assumption.",
+        "ScaleProposalTests.test_the_nearest_dimension_is_used": "Added (M2.1, synthetic fixtures only): the nearest dimension is used.",
+        "ScaleProposalTests.test_dimensions_far_from_the_measured_points_are_ignored": "Added (M2.1, synthetic fixtures only): dimensions far from the measured points are ignored.",
+        "ScaleProposalTests.test_the_scale_proposal_can_be_split_for_a_worker": "Added (M2.1, synthetic fixtures only): the scale proposal can be split for a worker.",
+        "FindRegionFilterTests.test_a_suggested_wall_width_is_applied_by_default": "Added (M2.1, synthetic fixtures only): a suggested wall width is applied by default.",
+        "FindRegionFilterTests.test_a_truncated_page_is_read_again_inside_the_box": "Added (M2.1, synthetic fixtures only): a truncated page is read again inside the box.",
+        "FindRegionFilterTests.test_no_suggestion_without_two_width_classes": "Added (M2.1, synthetic fixtures only): no suggestion without two width classes.",
+        "RegionSimplificationTests.test_a_dense_traced_outline_is_simplified_before_the_proposal": "Added (M2.1, synthetic fixtures only): a dense traced outline is simplified before the proposal.",
+        "RegionSimplificationTests.test_a_traced_hole_that_crosses_its_outline_is_left_out_and_recorded": "Added (M2.1, synthetic fixtures only): a traced hole that crosses its outline is left out and recorded.",
+        "RegionSimplificationTests.test_given_polygons_are_not_simplified": "Added (M2.1, synthetic fixtures only): given polygons are not simplified.",
+        "ScaleProposalTests.test_other_text_and_raster_pages_give_no_dimension_check": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): other text and raster pages give no dimension check.",
+        "FindRegionFilterTests.test_the_suggested_width_keeps_dashed_lines_the_caller_asked_for": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): the suggested width keeps dashed lines the caller asked for.",
+        "RegionSimplificationTests.test_the_element_proposal_can_be_split_for_a_worker": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): the element proposal can be split for a worker."
       }
     },
     "tests/application/services/test_ai_takeoff_sidecar_service.py": {
@@ -39420,7 +39549,7 @@
         "WriteCommandBridgeTests.test_no_bridge_code_can_approve_accept_or_reject": "Reviewed (new M1b module, written before the code): no bridge code can approve accept or reject.",
         "WriteCommandBridgeTests.test_update_assumption_cannot_carry_a_status": "Reviewed (new M1b module, written before the code): update assumption cannot carry a status.",
         "WriteCommandBridgeTests.test_apply_changeset_asks_the_app_only_while_pending": "Reviewed (new M1b module, written before the code): apply changeset asks the app only while pending.",
-        "WriteCommandBridgeTests.test_regions_and_3d_run_on_worker_threads": "Re-read: also checks every new find_regions argument is forwarded unchanged.",
+        "WriteCommandBridgeTests.test_regions_and_3d_run_on_worker_threads": "Re-read: also asserts plan_element runs on the GUI thread and propose_element's finishing job off it.",
         "WriteCommandBridgeTests.test_undo_replies_when_the_deferred_undo_finishes": "Reviewed (new M1b module, written before the code): undo replies when the deferred undo finishes.",
         "WriteCommandBridgeTests.test_other_bids_are_refused": "Reviewed (new M1b module, written before the code): other bids are refused.",
         "WriteCommandBridgeTests.test_every_command_is_audited_without_the_token": "Reviewed (new M1b module, written before the code): every command is audited without the token.",
@@ -39512,7 +39641,16 @@
         "UncoveredRunTests.test_fully_covered_rings_and_rings_with_nothing_near_give_no_runs": "Asserts exact kinds or values for the stated case; written before the module and kept as mutation killers (in-memory sweep, every survivor closed). Case: fully covered rings and rings with nothing near give no runs.",
         "UncoveredRunTests.test_runs_no_longer_than_twice_the_tolerance_are_noise": "Asserts exact kinds or values for the stated case; written before the module and kept as mutation killers (in-memory sweep, every survivor closed). Case: runs no longer than twice the tolerance are noise.",
         "UncoveredRunTests.test_runs_longer_than_the_closing_distance_are_dropped": "Asserts exact kinds or values for the stated case; written before the module and kept as mutation killers (in-memory sweep, every survivor closed). Case: runs longer than the closing distance are dropped.",
-        "UncoveredRunTests.test_a_run_that_wraps_past_the_first_vertex_is_joined": "Asserts exact kinds or values for the stated case; written before the module and kept as mutation killers (in-memory sweep, every survivor closed). Case: a run that wraps past the first vertex is joined."
+        "UncoveredRunTests.test_a_run_that_wraps_past_the_first_vertex_is_joined": "Asserts exact kinds or values for the stated case; written before the module and kept as mutation killers (in-memory sweep, every survivor closed). Case: a run that wraps past the first vertex is joined.",
+        "SuggestedMinWidthTests.test_the_lightest_heavy_width_class_is_suggested": "Added (M2.1, synthetic fixtures only): the lightest heavy width class is suggested.",
+        "SuggestedMinWidthTests.test_the_median_sets_the_heavy_threshold": "Added (M2.1, synthetic fixtures only): the median sets the heavy threshold.",
+        "SuggestedMinWidthTests.test_too_few_heavy_lines_steps_down_to_a_lighter_class": "Added (M2.1, synthetic fixtures only): too few heavy lines steps down to a lighter class.",
+        "SuggestedMinWidthTests.test_no_suggestion_for_one_width_or_no_widths": "Added (M2.1, synthetic fixtures only): no suggestion for one width or no widths.",
+        "SuggestedMinWidthTests.test_a_class_is_suggested_at_its_thinnest_member": "Added (M2.1, synthetic fixtures only): a class is suggested at its thinnest member.",
+        "SuggestedMinWidthTests.test_heavy_dashed_lines_do_not_become_the_suggestion": "Added (M2.1, synthetic fixtures only): heavy dashed lines do not become the suggestion.",
+        "SuggestedMinWidthTests.test_dashed_and_fill_only_lines_do_not_count": "Added (M2.1, synthetic fixtures only): dashed and fill only lines do not count.",
+        "SegmentGridTests.test_segments_spanning_many_cells_are_still_found": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): segments spanning many cells are still found.",
+        "SegmentGridTests.test_point_distance_to_a_degenerate_segment": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): point distance to a degenerate segment."
       }
     },
     "tests/integration/native/test_pdf_path_items.py": {
@@ -39531,7 +39669,11 @@
         "PdfPathItemsTests.test_subpaths_are_numbered_and_only_closed_ones_are_marked": "Exact coordinates, widths, dashes, packed colors, flags, ids or counts from real PDFium extraction. Case: subpaths are numbered and only closed ones are marked.",
         "PdfPathItemsTests.test_max_items_truncates_and_reports_it": "Exact coordinates, widths, dashes, packed colors, flags, ids or counts from real PDFium extraction. Case: max items truncates and reports it.",
         "PdfPathItemsTests.test_text_and_zero_length_pieces_are_skipped": "Exact coordinates, widths, dashes, packed colors, flags, ids or counts from real PDFium extraction. Case: text and zero length pieces are skipped.",
-        "PdfPathItemsTests.test_invalid_pages_return_nothing": "Exact coordinates, widths, dashes, packed colors, flags, ids or counts from real PDFium extraction. Case: invalid pages return nothing."
+        "PdfPathItemsTests.test_invalid_pages_return_nothing": "Exact coordinates, widths, dashes, packed colors, flags, ids or counts from real PDFium extraction. Case: invalid pages return nothing.",
+        "PdfPathItemsTests.test_a_box_limits_the_pieces_and_the_cap_counts_only_the_box": "Added (M2.1, synthetic fixtures only): a box limits the pieces and the cap counts only the box.",
+        "PdfPathItemsTests.test_box_boundaries": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): box boundaries.",
+        "PdfPathItemsTests.test_truncation_means_a_piece_was_left_out": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): truncation means a piece was left out.",
+        "PdfPathItemsTests.test_ids_do_not_depend_on_the_box": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): ids do not depend on the box."
       }
     },
     "tests/integration/native/test_snap_index_grid.py": {
@@ -39554,7 +39696,7 @@
         "S101LikeGoldenTests.test_the_room_matches_the_hand_value_with_the_door_recorded": "Asserts the hand value 333.33 SF within 0.5 percent, the recorded 36 in high-impact door closure, exclusions and suppression counts, ordering, and that switching the M2 defaults off reproduces the S101 failures. Case: the room matches the hand value with the door recorded.",
         "S101LikeGoldenTests.test_dashes_are_excluded_and_symbols_are_not_holes": "Asserts the hand value 333.33 SF within 0.5 percent, the recorded 36 in high-impact door closure, exclusions and suppression counts, ordering, and that switching the M2 defaults off reproduces the S101 failures. Case: dashes are excluded and symbols are not holes.",
         "S101LikeGoldenTests.test_regions_are_sorted_with_a_total": "Asserts the hand value 333.33 SF within 0.5 percent, the recorded 36 in high-impact door closure, exclusions and suppression counts, ordering, and that switching the M2 defaults off reproduces the S101 failures. Case: regions are sorted with a total.",
-        "S101LikeGoldenTests.test_turning_the_m2_defaults_off_brings_back_the_s101_failures": "Asserts the hand value 333.33 SF within 0.5 percent, the recorded 36 in high-impact door closure, exclusions and suppression counts, ordering, and that switching the M2 defaults off reproduces the S101 failures. Case: turning the m2 defaults off brings back the s101 failures.",
+        "S101LikeGoldenTests.test_turning_the_m2_defaults_off_brings_back_the_s101_failures": "Re-read: failed in the first M2.1 full suite because the suggested wall width is now a default; the defaults-off calls pass min_width 0 (intended rule change). The hand-value golden tests pass with the suggested width.",
         "S101LikeGoldenTests.test_segment_kinds_widths_and_dashes": "Asserts the hand value 333.33 SF within 0.5 percent, the recorded 36 in high-impact door closure, exclusions and suppression counts, ordering, and that switching the M2 defaults off reproduces the S101 failures. Case: segment kinds widths and dashes.",
         "S101LikeGoldenTests.test_a_whole_sheet_call_stays_within_the_time_budget": "Asserts the hand value 333.33 SF within 0.5 percent, the recorded 36 in high-impact door closure, exclusions and suppression counts, ordering, and that switching the M2 defaults off reproduces the S101 failures. Case: a whole sheet call stays within the time budget.",
         "RealS101Tests.test_the_real_sheet_has_kinds_and_a_bounded_whole_building_call": "Asserts the hand value 333.33 SF within 0.5 percent, the recorded 36 in high-impact door closure, exclusions and suppression counts, ordering, and that switching the M2 defaults off reproduces the S101 failures. Case: the real sheet has kinds and a bounded whole building call."
@@ -39573,7 +39715,8 @@
       "reviewed_tests": {
         "NativeDestinationTests.test_every_built_module_installs_and_copies_to_its_canonical_folder": "Asserts the 13 parsed modules, the parsed install and copy destinations of ost_pdf and ost_snap, and one reported problem per broken input. Case: every built module installs and copies to its canonical folder.",
         "NativeDestinationTests.test_wrong_install_or_copy_destinations_are_reported": "Asserts the 13 parsed modules, the parsed install and copy destinations of ost_pdf and ost_snap, and one reported problem per broken input. Case: wrong install or copy destinations are reported.",
-        "NativeDestinationTests.test_unlisted_and_unbuilt_modules_are_reported": "Asserts the 13 parsed modules, the parsed install and copy destinations of ost_pdf and ost_snap, and one reported problem per broken input. Case: unlisted and unbuilt modules are reported."
+        "NativeDestinationTests.test_unlisted_and_unbuilt_modules_are_reported": "Asserts the 13 parsed modules, the parsed install and copy destinations of ost_pdf and ost_snap, and one reported problem per broken input. Case: unlisted and unbuilt modules are reported.",
+        "NativeDestinationTests.test_the_checker_reports_cmake_problems_as_cpp_violations": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): the checker reports cmake problems as cpp violations."
       }
     },
     "tests/tools/test_ai_takeoff_corpus.py": {
@@ -39601,11 +39744,29 @@
         "SmallHelperTests.test_long_paths": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: long paths.",
         "SamplingTests.test_the_sample_spreads_over_years_projects_and_patterns": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: the sample spreads over years projects and patterns.",
         "SamplingTests.test_large_sets_come_from_different_projects_and_size_is_capped": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: large sets come from different projects and size is capped.",
-        "SamplingTests.test_copy_skips_unreadable_files_and_keeps_only_the_sample": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: copy skips unreadable files and keeps only the sample.",
+        "SamplingTests.test_copy_skips_unreadable_files_and_keeps_only_the_sample": "Re-read: coverage showed the unreadable-file branch never ran (the sampler never picked the unreadable row, so the assertion held trivially); it now samples every row so the unreadable file is attempted.",
         "OutputFolderTests.test_output_inside_the_repository_is_refused": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: output inside the repository is refused.",
         "HandValueTests.test_rows_are_parsed_and_bad_rows_skipped": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: rows are parsed and bad rows skipped.",
         "ChildProcessTests.test_timeouts_are_hangs_and_failures_name_the_exception": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: timeouts are hangs and failures name the exception.",
-        "ReportTests.test_report_has_rates_categories_and_no_unlisted_content": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: report has rates categories and no unlisted content."
+        "ReportTests.test_report_has_rates_categories_and_no_unlisted_content": "Asserts exact classifications, sheet numbers, parsed scales, sampling spread, copy fallback, report rows and child status. Case: report has rates categories and no unlisted content.",
+        "SheetHintMergeTests.test_hints_join_their_page_rows_and_failures_are_marked": "Added (M2.1, synthetic fixtures only): hints join their page rows and failures are marked.",
+        "CompareTests.test_before_and_after_metrics": "Added (M2.1, synthetic fixtures only): before and after metrics.",
+        "ReportTests.test_hand_values_without_expected_areas_are_not_measured": "Added (M2.1, synthetic fixtures only): hand values without expected areas are not measured.",
+        "SamplingEdgeTests.test_one_large_set_per_project_and_no_endless_loop_when_rows_run_out": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): one large set per project and no endless loop when rows run out.",
+        "CommandLineTests.test_inventory_sample_report_and_compare_from_the_command_line": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): inventory sample report and compare from the command line.",
+        "OutputFolderTests.test_output_inside_the_source_share_is_refused": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): output inside the source share is refused.",
+        "OutputFolderTests.test_reports_are_never_written_into_the_source_or_the_repository": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): reports are never written into the source or the repository.",
+        "OutputFolderTests.test_missing_input_files_are_usage_errors": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): missing input files are usage errors.",
+        "OutputFolderTests.test_outputs_are_ignored_by_git": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): outputs are ignored by git.",
+        "OutputFolderTests.test_children_run_from_the_repository_whatever_the_working_folder": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): children run from the repository whatever the working folder.",
+        "OutputFolderTests.test_missing_arguments_are_usage_errors": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): missing arguments are usage errors.",
+        "RunOrchestrationTests.test_a_hand_value_on_a_page_that_hangs_is_still_listed": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a hand value on a page that hangs is still listed.",
+        "RunFailureTests.test_a_pdf_that_cannot_be_prepared_is_one_failed_row_and_main_runs": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a pdf that cannot be prepared is one failed row and main runs.",
+        "RunFailureTests.test_long_paths_that_are_already_prefixed_are_kept": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): long paths that are already prefixed are kept.",
+        "RunEndToEndTests.test_a_synthetic_sample_runs_end_to_end_with_a_hand_value": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a synthetic sample runs end to end with a hand value.",
+        "LegacyHelperTests.test_edge_cases_of_the_legacy_page_reading": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): edge cases of the legacy page reading.",
+        "LegacyHelperTests.test_every_failure_category_is_reported": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): every failure category is reported.",
+        "ReportTests.test_hand_values_that_failed_are_listed_and_counted": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): hand values that failed are listed and counted."
       }
     },
     "tests/tools/test_ai_takeoff_corpus_worker.py": {
@@ -39617,14 +39778,86 @@
         "WorkerHelperTests.test_interior_points_fall_inside_the_region": "Asserts the measured row (kind, title, sheet number, scale, seeded region, hand error, proposal without apply), that every field has a CSV column and that drawing text other than the title never reaches the output. Case: interior points fall inside the region.",
         "WorkerHelperTests.test_peak_memory_is_reported_in_megabytes": "Asserts the measured row (kind, title, sheet number, scale, seeded region, hand error, proposal without apply), that every field has a CSV column and that drawing text other than the title never reaches the output. Case: peak memory is reported in megabytes.",
         "WorkerProcessTests.test_a_synthetic_plan_is_measured_against_a_scratch_access_bid": "Asserts the measured row (kind, title, sheet number, scale, seeded region, hand error, proposal without apply), that every field has a CSV column and that drawing text other than the title never reaches the output. Case: a synthetic plan is measured against a scratch access bid.",
-        "WorkerProcessTests.test_pages_that_are_not_plans_are_measured_but_not_traced": "Asserts the measured row (kind, title, sheet number, scale, seeded region, hand error, proposal without apply), that every field has a CSV column and that drawing text other than the title never reaches the output. Case: pages that are not plans are measured but not traced."
+        "WorkerProcessTests.test_pages_that_are_not_plans_are_measured_but_not_traced": "Asserts the measured row (kind, title, sheet number, scale, seeded region, hand error, proposal without apply), that every field has a CSV column and that drawing text other than the title never reaches the output. Case: pages that are not plans are measured but not traced.",
+        "WorkerHelperTests.test_quadrants_tile_the_page": "Added (M2.1, synthetic fixtures only): quadrants tile the page.",
+        "WorkerHelperTests.test_sheet_hint_rows_keep_metrics_and_the_sheet_number_only": "Added (M2.1, synthetic fixtures only): sheet hint rows keep metrics and the sheet number only.",
+        "WorkerProcessTests.test_sheet_hints_come_from_list_sheets_for_the_whole_pdf": "Added (M2.1, synthetic fixtures only): sheet hints come from list sheets for the whole pdf.",
+        "WorkerHelperTests.test_a_ring_without_inside_samples_has_no_interior_point": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a ring without inside samples has no interior point.",
+        "WorkerHelperTests.test_timed_calls_report_error_codes_without_their_messages": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): timed calls report error codes without their messages.",
+        "WorkerProcessTests.test_prepare_refuses_unreadable_pdfs_and_replaces_an_old_scratch_bid": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): prepare refuses unreadable pdfs and replaces an old scratch bid.",
+        "WorkerProcessTests.test_in_process_measurement_of_truncated_and_unseeded_pages": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): in process measurement of truncated and unseeded pages.",
+        "WorkerProcessTests.test_plans_without_regions_skip_seeding_and_a_missed_hand_seed_stops": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): plans without regions skip seeding and a missed hand seed stops."
       }
     },
     "tests/integration/placement/test_page_switch_tools.py": {
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Real Access bid with two pages in a child process, offscreen MainWindow shown on the 2D takeoff view, the bid selected through UIEventCoordinator, the condition clicked in the real Conditions sidebar and the real toolbar actions triggered.",
       "reviewed_tests": {
-        "PageSwitchToolTests.test_every_tool_survives_a_page_switch_while_a_condition_is_selected": "Failed before the fix for the takeoff tool (cursor came back as select and placement ended); asserts the cursor, the checked toolbar action, placement state and the sidebar selection after each page switch for takeoff, pan, zoom and select. Case: every tool survives a page switch while a condition is selected."
+        "PageSwitchToolTests.test_every_tool_survives_a_page_switch_while_a_condition_is_selected": "Failed before the fix for the takeoff tool (cursor came back as select and placement ended); asserts the cursor, the checked toolbar action, placement state and the sidebar selection after each page switch for takeoff, pan, zoom and select. Case: every tool survives a page switch while a condition is selected.",
+        "PageSwitchToolTests.test_pan_zoom_and_select_survive_a_page_switch_without_a_condition": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): pan zoom and select survive a page switch without a condition."
+      }
+    },
+    "tests/domain/services/test_ai_sheet_text.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Pure domain tests of ai_sheet_text with literal TextLine and SheetCandidate fixtures on a 36x24 in page (no fakes): line grouping and gap splitting, sheet-number formats, labels (same line, below, beside), S0 rejection, note references, exact scores and sources, per-PDF consistency (dominant location, off-location drops, labelled keeps, repeats), scale labels including NTS and graphic, view assignment, plan_scale statuses, dimension strings and the title block crop.",
+      "reviewed_tests": {
+        "TextLineTests.test_runs_on_a_baseline_join_and_lines_stay_apart": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: runs on a baseline join and lines stay apart.",
+        "TextLineTests.test_wide_gaps_on_a_baseline_split_the_line": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: wide gaps on a baseline split the line.",
+        "SheetNumberTests.test_the_large_title_block_number_wins": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: the large title block number wins.",
+        "SheetNumberTests.test_formats": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: formats.",
+        "SheetNumberTests.test_text_next_to_a_sheet_label": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: text next to a sheet label.",
+        "SheetNumberTests.test_references_and_notes_are_rejected": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: references and notes are rejected.",
+        "SheetNumberTests.test_s0_and_zero_sheets_are_false_positives": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: s0 and zero sheets are false positives.",
+        "SheetNumberTests.test_unlabelled_numbers_in_the_upper_right_drawing_area_are_references": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: unlabelled numbers in the upper right drawing area are references.",
+        "SheetNumberTests.test_a_number_far_from_the_title_block_needs_a_label": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: a number far from the title block needs a label.",
+        "SheetNumberTests.test_no_text_means_no_sheet_number": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: no text means no sheet number.",
+        "SheetNumberTests.test_scores_and_sources": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: scores and sources.",
+        "SheetNumberTests.test_labels_beside_the_number_and_on_the_same_line": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: labels beside the number and on the same line.",
+        "SheetNumberTests.test_candidates_carry_their_box_and_score_order": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: candidates carry their box and score order.",
+        "ConsistentSheetNumberTests.test_pages_follow_the_dominant_location": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: pages follow the dominant location.",
+        "ConsistentSheetNumberTests.test_off_location_numbers_are_dropped_unless_labelled_and_the_best_near_one_wins": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: off location numbers are dropped unless labelled and the best near one wins.",
+        "ConsistentSheetNumberTests.test_scattered_numbers_have_no_dominant_location": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: scattered numbers have no dominant location.",
+        "ConsistentSheetNumberTests.test_a_number_on_two_of_six_pages_is_kept": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: a number on two of six pages is kept.",
+        "ConsistentSheetNumberTests.test_a_number_repeated_on_most_pages_is_dropped_unless_labelled": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: a number repeated on most pages is dropped unless labelled.",
+        "ConsistentSheetNumberTests.test_single_pages_and_empty_pages": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: single pages and empty pages.",
+        "ScaleTests.test_scale_labels": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: scale labels.",
+        "ScaleTests.test_each_scale_belongs_to_the_view_title_above_it": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: each scale belongs to the view title above it.",
+        "ScaleTests.test_a_title_and_scale_on_one_line": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: a title and scale on one line.",
+        "ScaleTests.test_the_nearest_title_above_wins_and_far_titles_are_ignored": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: the nearest title above wins and far titles are ignored.",
+        "ScaleTests.test_a_scale_with_no_title_nearby_has_no_view": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: a scale with no title nearby has no view.",
+        "ScaleTests.test_plan_scale_is_resolved_only_without_ambiguity": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: plan scale is resolved only without ambiguity.",
+        "DimensionTests.test_dimensions": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: dimensions.",
+        "TitleBlockCropTests.test_crop_follows_the_sheet_number_or_falls_back_to_the_right_strip": "Asserts exact numbers, sources, scores, labels, statuses or coordinates; written before the module and extended to close every in-memory mutation survivor. Case: crop follows the sheet number or falls back to the right strip.",
+        "ScaleTests.test_one_inch_to_the_foot_is_one_scale": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): one inch to the foot is one scale.",
+        "ScaleTests.test_hyphenated_mixed_fractions": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): hyphenated mixed fractions.",
+        "ScaleTests.test_reference_notes_are_not_view_titles": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): reference notes are not view titles.",
+        "ScaleTests.test_an_elevation_value_does_not_make_a_plan_an_elevation_view": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): an elevation value does not make a plan an elevation view.",
+        "ScaleTests.test_a_loose_scale_beside_titled_views_is_not_a_sheet_scale": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a loose scale beside titled views is not a sheet scale."
+      }
+    },
+    "tests/domain/services/test_ai_polygon_simplify.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Pure domain tests of ai_polygon_simplify on literal rings and dense circles (no fakes).",
+      "reviewed_tests": {
+        "SimplifyRingTests.test_constants": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: constants.",
+        "SimplifyRingTests.test_collinear_and_tiny_wiggles_go_and_corners_stay": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: collinear and tiny wiggles go and corners stay.",
+        "SimplifyRingTests.test_dense_curves_shrink_within_the_area_limit": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: dense curves shrink within the area limit.",
+        "SimplifyRingTests.test_a_ring_that_cannot_keep_its_area_is_returned_unchanged": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: a ring that cannot keep its area is returned unchanged.",
+        "SimplifySlabTests.test_dense_outline_and_holes_are_simplified": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: dense outline and holes are simplified.",
+        "SimplifySlabTests.test_holes_that_cross_the_outline_are_dropped": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: holes that cross the outline are dropped.",
+        "SimplifySlabTests.test_a_hole_is_kept_unsimplified_when_its_simplified_ring_would_cross": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: a hole is kept unsimplified when its simplified ring would cross.",
+        "SimplifySlabTests.test_nothing_changes_for_simple_geometry": "Asserts vertex reduction within the 0.1 percent area limit, exact rings for simple shapes, kept, unsimplified or dropped holes and the reported area change. Case: nothing changes for simple geometry.",
+        "SimplifyRingTests.test_repeated_and_self_touching_vertices_never_divide_by_zero": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): repeated and self touching vertices never divide by zero.",
+        "SimplifyRingTests.test_a_sliver_whose_area_never_holds_keeps_every_vertex": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a sliver whose area never holds keeps every vertex.",
+        "SimplifySlabTests.test_simplification_never_makes_an_outline_cross_itself": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): simplification never makes an outline cross itself.",
+        "SimplifySlabTests.test_simplified_holes_never_touch_each_other": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): simplified holes never touch each other.",
+        "SimplifySlabTests.test_the_net_area_stays_within_the_limit": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): the net area stays within the limit.",
+        "SimplifySlabTests.test_a_hole_that_fits_the_original_outline_is_never_dropped": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a hole that fits the original outline is never dropped.",
+        "SimplifySlabTests.test_each_ring_keeps_its_own_area": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): each ring keeps its own area.",
+        "SimplifySlabTests.test_a_tiny_hole_in_a_shallow_bulge_stays_inside": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): a tiny hole in a shallow bulge stays inside.",
+        "SimplifySlabTests.test_holes_outside_the_outline_are_dropped": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): holes outside the outline are dropped.",
+        "SimplifySlabTests.test_edges_two_apart_that_touch_are_contacts": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): edges two apart that touch are contacts.",
+        "SimplifySlabTests.test_slabs_that_cannot_be_simplified_keep_their_rings": "Added (M2 bug hunt, synthetic fixtures only; failing first or written to kill a surviving mutant or cover an uncovered branch): slabs that cannot be simplified keep their rings."
       }
     }
   },
@@ -39721,11 +39954,11 @@
   },
   "latest_validation": {
     "full_suite": {
-      "tests_run": 13956,
+      "tests_run": 14078,
       "skips": 36,
-      "seconds": 383.1,
+      "seconds": 364.7,
       "result": "OK",
-      "command": ".\u000benv\\Scripts\\python.exe -m unittest discover -s tests -t ."
+      "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
     },
     "discovery": {
       "defined": 13008,
@@ -39937,6 +40170,36 @@
       "skips": 36,
       "result": "OK",
       "seconds": 383.1
+    },
+    "ai_takeoff_m2_1": {
+      "full_suite": {
+        "tests_run": 14028,
+        "skips": 36,
+        "seconds": 346.9,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -m unittest discover -s tests -t ."
+      },
+      "architecture_checker": "tools/check_architecture.py full scan: No violations found",
+      "compileall": "compileall -q ost_visualizer tests tools exit 0",
+      "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+      "line_endings": "AGENTS.md and CHANGELOG.md keep their mixed CRLF/LF endings line by line; README and Python files keep LF",
+      "mutation": "93/93 in-memory mutants killed",
+      "notes": "One earlier full-suite run ended with exit 0xC0000005 after printing its summary (its one failure was an intended rule change, fixed since); two later runs with faulthandler exited 0 with no fatal error."
+    },
+    "ai_takeoff_m2_bug_hunt": {
+      "full_suite": {
+        "tests_run": 14078,
+        "skips": 36,
+        "seconds": 364.7,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      },
+      "architecture_checker": "tools/check_architecture.py full scan: No violations found",
+      "compileall": "compileall -q ost_visualizer tests tools exit 0",
+      "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+      "access_violation_chase": "10 full suites with faulthandler across M2.1 and the bug hunt, 0 access violations; native PDF and snap tests 50/50 in fresh processes; targeted unlocked-destructor race 0/10",
+      "mutation": "M2 113/122 (6 equivalent, 3 not applicable), M2.1 88/93 (5 replaced), bug hunt 41/42 (1 equivalent)",
+      "line_endings": "Python files keep LF; AGENTS.md and CHANGELOG.md keep their mixed endings line by line; README LF; .gitignore CRLF"
     }
   },
   "skip_observations": [
@@ -41060,6 +41323,28 @@
         "tests": [
           "tests/tools/test_ai_takeoff_corpus.py",
           "tests/tools/test_ai_takeoff_corpus_worker.py"
+        ]
+      },
+      {
+        "id": "Z15",
+        "decision": "M2.1 of the AI takeoff plan from the corpus results (six items)",
+        "status": "fixed",
+        "outcome": "Implemented: sheet-number detection and per-PDF consistency, scale candidates per view with plan_scale and a dimension check in propose_scale, a default wall-width filter with override and reporting, box-only native extraction, slab simplification before propose_element, and text_extractable plus a title block crop in list_sheets(text_hints). Tool counts unchanged (15 takeoff, read server unchanged); no M3 work.",
+        "tests": [
+          "tests/domain/services/test_ai_sheet_text.py",
+          "tests/domain/services/test_ai_polygon_simplify.py",
+          "tests/tools/test_ai_takeoff_corpus_worker.py"
+        ]
+      },
+      {
+        "id": "Z16",
+        "decision": "Bug hunt and coverage audit over the last commit and the uncommitted M2.1 work",
+        "status": "fixed",
+        "outcome": "All reproduced defects fixed with regression tests; tool counts unchanged (takeoff 15, read 38); no M3 work.",
+        "tests": [
+          "tests/integration/native/test_pdf_path_items.py",
+          "tests/domain/services/test_ai_polygon_simplify.py",
+          "tests/tools/test_ai_takeoff_corpus.py"
         ]
       },
       {

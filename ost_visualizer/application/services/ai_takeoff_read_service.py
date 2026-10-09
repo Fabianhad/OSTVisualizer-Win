@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, List, Optional, Tuple
 from ...domain.entities.ai_takeoff import ASSUMPTION_STATUSES, FINGERPRINT_OK
 from ...domain.entities.condition import Condition
@@ -10,6 +10,18 @@ from ...domain.services.ai_linework import (
     LineSegment,
     classify_linework,
     rgba_hex,
+    suggested_min_width,
+)
+from ...domain.services.ai_sheet_text import (
+    ScaleCandidate,
+    SheetCandidate,
+    TextLine,
+    consistent_sheet_numbers,
+    plan_scale,
+    scale_candidates,
+    sheet_number_candidates,
+    text_lines,
+    title_block_crop,
 )
 from ...domain.services.condition_quantity_service import compute_page_quantities
 from ...domain.services.uom_service import get_uom_label
@@ -37,6 +49,7 @@ from ..dtos.ai_takeoff_dtos import (
     list_segments_coordinate_space,
     list_text_coordinate_space,
     ok_result,
+    sheet_hints_coordinate_space,
 )
 from ..interfaces.i_ai_takeoff_pdf_source import IAiTakeoffPdfSource
 from ..interfaces.i_ai_takeoff_sidecar_repository import IAiTakeoffSidecarRepository
@@ -51,6 +64,11 @@ _CONDITION_TYPE_NAMES = {
     Condition.TYPE_ATTACHMENT: "attachment",
 }
 _GROUPINGS = ("condition", "page")
+TEXT_HINT_MAX_SHEETS = 25
+_NO_TEXT = "no_text"
+EXTRACTION_SCOPE_PAGE = "page"
+EXTRACTION_SCOPE_BOX = "box"
+BOX_EXTRACTION_PADDING_PTS = 1.0
 SEGMENT_NEW_FIELDS = ("width_pts", "dash_pts", "color", "paint", "curve", "kind")
 
 
@@ -79,10 +97,17 @@ class AiTakeoffReadService:
         bid_uid: Optional[str] = None,
         cursor: Optional[str] = None,
         limit: Any = None,
+        text_hints: Any = None,
     ) -> dict:
+        if text_hints is not None and not isinstance(text_hints, bool):
+            raise AiTakeoffRequestError(
+                ERROR_INVALID_ARGUMENT, "text_hints must be true or false"
+            )
         open_bid = self._open_bid(bid_uid)
         sheets = [self._sheet(page) for page in open_bid.pages]
-        page, meta = _paginate(sheets, cursor, limit)
+        page, meta = _paginate(
+            sheets, cursor, limit, TEXT_HINT_MAX_SHEETS if text_hints else None
+        )
         return ok_result(
             {
                 "bid_uid": open_bid.bid.uid,
@@ -92,6 +117,81 @@ class AiTakeoffReadService:
             _page_status(page, meta),
             meta,
         )
+
+    def page_text_lines(self, snapshot: PageSnapshot) -> Tuple[str, List[TextLine]]:
+        frame = self._raw_frame(snapshot)
+        if isinstance(frame, str):
+            return frame, []
+        runs = []
+        for run in self._pdf_source.get_text_runs(
+            snapshot.image_path, snapshot.page_index
+        ):
+            left, top, right, bottom = _bounds(
+                (
+                    _raw_to_page(run.left, run.top, frame),
+                    _raw_to_page(run.right, run.bottom, frame),
+                )
+            )
+            runs.append((str(run.text), left, top, right, bottom))
+        return STATUS_OK, text_lines(runs)
+
+    def sheet_hint_snapshots(self, result: dict) -> List[PageSnapshot]:
+        listed = [
+            self.page_snapshot(sheet["page_uid"]) for sheet in result["data"]["sheets"]
+        ]
+        sources = {snapshot.image_path for snapshot in listed if snapshot.is_pdf}
+        seen = {snapshot.uid for snapshot in listed}
+        context = [
+            self.page_snapshot(page.uid)
+            for page in self._open_bid(None).pages
+            if page.uid not in seen and (page.image_path or "") in sources
+        ]
+        return listed + [snapshot for snapshot in context if snapshot.is_pdf]
+
+    def sheet_text_hints(self, result: dict, snapshots: List[PageSnapshot]) -> dict:
+        pages = []
+        for snapshot in snapshots:
+            frame = self._raw_frame(snapshot)
+            if isinstance(frame, str):
+                size = (snapshot.width_pts, snapshot.height_pts)
+                pages.append((snapshot, size, frame, []))
+                continue
+            raw_w, raw_h, rotation = frame
+            size = (raw_h, raw_w) if rotation in (90, 270) else (raw_w, raw_h)
+            _status, lines = self.page_text_lines(snapshot)
+            pages.append((snapshot, size, "" if lines else _NO_TEXT, lines))
+        chosen: dict = {}
+        by_source: dict = {}
+        for snapshot, (width, height), reason, lines in pages:
+            if not reason:
+                by_source.setdefault(snapshot.image_path, []).append(
+                    (
+                        snapshot.uid,
+                        width,
+                        height,
+                        sheet_number_candidates(lines, width, height),
+                    )
+                )
+        for members in by_source.values():
+            picks = consistent_sheet_numbers(
+                [
+                    (width, height, candidates)
+                    for _uid, width, height, candidates in members
+                ]
+            )
+            for (uid, _w, _h, _c), pick in zip(members, picks):
+                chosen[uid] = pick
+        by_uid = {
+            snapshot.uid: (size, reason, lines)
+            for snapshot, size, reason, lines in pages
+        }
+        for sheet in result["data"]["sheets"]:
+            (width, height), reason, lines = by_uid[sheet["page_uid"]]
+            sheet["text_hints"] = _text_hint(
+                width, height, reason, lines, chosen.get(sheet["page_uid"])
+            )
+        result["data"][COORDINATE_SPACE_KEY] = sheet_hints_coordinate_space()
+        return result
 
     def get_quantities(
         self, bid_uid: Optional[str] = None, group_by: str = "condition"
@@ -248,7 +348,7 @@ class AiTakeoffReadService:
     ) -> dict:
         box = _optional_box(bbox_pts)
         wanted = _kinds(kinds)
-        status, linework, truncated = self.page_linework(snapshot)
+        status, linework, truncated, scope = self.page_linework_scoped(snapshot, box)
         if status != STATUS_OK:
             return ok_result(
                 {
@@ -258,7 +358,8 @@ class AiTakeoffReadService:
                 },
                 status,
             )
-        line_kinds = classify_linework([line for _segment_id, line in linework])
+        lines = [line for _segment_id, line in linework]
+        line_kinds = classify_linework(lines)
         segments = []
         for (segment_id, line), kind in zip(linework, line_kinds):
             p1 = (line.x1, line.y1)
@@ -290,6 +391,8 @@ class AiTakeoffReadService:
                 "segments": page,
                 "new_fields": list(SEGMENT_NEW_FIELDS),
                 "extraction_truncated": truncated,
+                "extraction_scope": scope,
+                "suggested_min_width": suggested_min_width(lines),
                 COORDINATE_SPACE_KEY: list_segments_coordinate_space(),
             },
             _page_status(page, meta),
@@ -299,12 +402,33 @@ class AiTakeoffReadService:
     def page_linework(
         self, snapshot: PageSnapshot
     ) -> Tuple[str, List[Tuple[str, LineSegment]], bool]:
+        status, linework, truncated, _scope = self.page_linework_scoped(snapshot)
+        return status, linework, truncated
+
+    def page_linework_scoped(
+        self, snapshot: PageSnapshot, box: Optional[tuple] = None
+    ) -> Tuple[str, List[Tuple[str, LineSegment]], bool, str]:
         frame = self._raw_frame(snapshot)
         if isinstance(frame, str):
-            return frame, [], False
+            return frame, [], False, EXTRACTION_SCOPE_PAGE
         extraction = self._pdf_source.get_path_segments(
             snapshot.image_path, snapshot.page_index
         )
+        scope = EXTRACTION_SCOPE_PAGE
+        if extraction.truncated and box is not None:
+            left, top, right, bottom = box
+            padded = (
+                left - BOX_EXTRACTION_PADDING_PTS,
+                top - BOX_EXTRACTION_PADDING_PTS,
+                right + BOX_EXTRACTION_PADDING_PTS,
+                bottom + BOX_EXTRACTION_PADDING_PTS,
+            )
+            extraction = self._pdf_source.get_path_segments(
+                snapshot.image_path,
+                snapshot.page_index,
+                _page_box_to_raw(padded, frame),
+            )
+            scope = EXTRACTION_SCOPE_BOX
         linework = []
         for index, segment in enumerate(extraction.segments):
             p1 = _raw_to_page(segment.x1, segment.y1, frame)
@@ -312,7 +436,9 @@ class AiTakeoffReadService:
             linework.append(
                 (segment.segment_id or f"s{index}", _line_segment(segment, p1, p2))
             )
-        return STATUS_OK, linework, bool(extraction.truncated)
+        if scope == EXTRACTION_SCOPE_BOX:
+            linework = _unclip_groups(linework, padded)
+        return STATUS_OK, linework, bool(extraction.truncated), scope
 
     def open_bid_ref(self):
         return self._open_bid(None).bid_ref
@@ -562,6 +688,86 @@ def _kinds(kinds: Any) -> Optional[frozenset]:
     return frozenset(kinds)
 
 
+def _text_hint(
+    width: float,
+    height: float,
+    reason: str,
+    lines: List[TextLine],
+    pick: Optional[SheetCandidate],
+) -> dict:
+    scales = scale_candidates(lines)
+    plan = plan_scale(scales)
+    return {
+        "text_extractable": bool(lines),
+        "reason": reason or None,
+        "sheet_number": (
+            None if pick is None else UntrustedText.of(pick.number).to_dict()
+        ),
+        "sheet_number_source": None if pick is None else pick.source,
+        "sheet_number_bbox_pts": None if pick is None else list(pick.bbox),
+        "scale_candidates": [
+            {
+                "label": candidate.label,
+                "sf1_sf2": _sf_pair(candidate),
+                "bbox_pts": list(candidate.bbox),
+                "view_title": UntrustedText.of(candidate.view_title).to_dict(),
+                "view_kind": candidate.view_kind or None,
+            }
+            for candidate in scales
+        ],
+        "plan_scale": {
+            "status": plan.status,
+            "label": None if plan.candidate is None else plan.candidate.label,
+            "sf1_sf2": None if plan.candidate is None else _sf_pair(plan.candidate),
+        },
+        "title_block_crop_pts": title_block_crop(width, height, pick),
+    }
+
+
+def _sf_pair(candidate: ScaleCandidate) -> Optional[list]:
+    if not candidate.sf1 or not candidate.sf2:
+        return None
+    return [candidate.sf1, candidate.sf2]
+
+
+def _unclip_groups(linework: list, box: tuple) -> list:
+    left, top, right, bottom = box
+    clipped = {
+        line.group
+        for _segment_id, line in linework
+        if line.group
+        and (
+            min(line.x1, line.x2) < left
+            or max(line.x1, line.x2) > right
+            or min(line.y1, line.y2) < top
+            or max(line.y1, line.y2) > bottom
+        )
+    }
+    return [
+        (segment_id, replace(line, group="") if line.group in clipped else line)
+        for segment_id, line in linework
+    ]
+
+
+def _page_to_raw(x: float, y: float, frame: tuple) -> tuple:
+    raw_w, raw_h, rotation = frame
+    if rotation == 90:
+        return y, x
+    if rotation == 180:
+        return raw_w - x, y
+    if rotation == 270:
+        return raw_w - y, raw_h - x
+    return x, raw_h - y
+
+
+def _page_box_to_raw(box: tuple, frame: tuple) -> tuple:
+    left, top, right, bottom = box
+    corners = [_page_to_raw(x, y, frame) for x, y in ((left, top), (right, bottom))]
+    xs = [corner[0] for corner in corners]
+    ys = [corner[1] for corner in corners]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def _bounds(points) -> list:
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
@@ -625,12 +831,16 @@ def _dpi(dpi: Any) -> float:
     return value
 
 
-def _paginate(items: list, cursor: Optional[str], limit: Any):
+def _paginate(
+    items: list, cursor: Optional[str], limit: Any, cap: Optional[int] = None
+):
     try:
         offset = decode_cursor(cursor)
         size = clamp_limit(limit)
     except ValueError as exc:
         raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, str(exc)) from exc
+    if cap is not None:
+        size = min(size, cap)
     page = items[offset : offset + size]
     end = offset + len(page)
     next_cursor = encode_cursor(end) if end < len(items) else None

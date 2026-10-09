@@ -416,6 +416,18 @@ cursor for the next page. With a seed point inside a room, door openings up to
 with its end points and length and becomes an assumption you must accept when
 it is over 12 in. A whole sheet with up to 20,000 lines (after filters) can be
 searched in one call; for best results call it on a small box around the area.
+Without `min_width`, `find_regions` usually keeps only the page's wall-weight lines
+(the suggested width is in the result and in `list_segments`; a page with a single line weight is not filtered); pass
+`min_width` 0 to keep every line. Very busy sheets are read again inside the
+box you give, and the result says when even the box had too many lines.
+
+`list_sheets` with `text_hints` true also reports each sheet's number, every
+scale label with the view it belongs to, and a plan scale only when the plan
+views agree. Scanned pages and pages whose text is drawn as outlines say so
+and suggest a title block crop for `render_sheet`. `propose_scale` checks the
+scale against a dimension written near the two points. Traced slab outlines
+are simplified before they are proposed when that keeps the area within 0.1% without lines touching, and a hole
+that crosses the outline is left out and listed as an assumption.
 
 When the AI asks to apply a changeset, a review window opens in the app. It
 shows the outlines on the plan, the added area and volume, and every

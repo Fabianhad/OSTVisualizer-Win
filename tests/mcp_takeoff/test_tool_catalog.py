@@ -206,6 +206,43 @@ class ToolCatalogTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, tool.description)
 
+    def test_m2_1_fields_are_described(self):
+        tools = {tool.name: tool for tool in TOOLS}
+        hints = tools["list_sheets"].input_schema["properties"]["text_hints"]
+        self.assertEqual(hints["type"], "boolean")
+        self.assertIs(hints["default"], False)
+        expected = {
+            "list_sheets": (
+                "text_hints",
+                "text_extractable",
+                "title_block_crop_pts",
+                "scale_candidates",
+                "plan_scale",
+                "25",
+                "render_sheet",
+            ),
+            "list_segments": ("suggested_min_width", "extraction_scope"),
+            "find_regions": (
+                "suggested_min_width",
+                "min_width_source",
+                "min_width 0",
+                "extraction_scope",
+                "truncated",
+            ),
+            "propose_scale": ("dimension_check", "2%"),
+            "propose_element": ("geometry", "0.25 in", "0.1%", "holes_dropped"),
+        }
+        for name, phrases in expected.items():
+            for phrase in phrases:
+                with self.subTest(tool=name, phrase=phrase):
+                    self.assertIn(phrase, tools[name].description)
+        self.assertIn(
+            "0 turns",
+            tools["find_regions"].input_schema["properties"]["min_width"][
+                "description"
+            ],
+        )
+
     def test_tool_specs_are_immutable(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             TOOLS[0].name = "approve_changeset"

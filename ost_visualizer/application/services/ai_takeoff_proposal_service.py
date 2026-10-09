@@ -2,7 +2,7 @@ import math
 import re
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from ...domain.entities.ai_changeset import (
     ERROR_SQL_APPLY_UNAVAILABLE,
@@ -19,6 +19,7 @@ from ...domain.entities.ai_changeset import (
     STATUS_REJECTED,
     STATUS_UNDONE,
     SUBJECT_CLOSING_SEGMENT,
+    SUBJECT_OTHER,
     SUBJECT_SCALE,
     SUBJECT_THICKNESS,
     SUBJECT_TOP_ELEVATION,
@@ -42,9 +43,12 @@ from ...domain.services.ai_linework import (
     SegmentGrid,
     classify_linework,
     point_segment_distance,
+    suggested_min_width,
     symbol_groups,
     uncovered_runs,
 )
+from ...domain.services.ai_polygon_simplify import SimplifiedSlab, simplify_slab
+from ...domain.services.ai_sheet_text import parse_dimension_in
 from ...domain.services.ai_planar_regions import (
     PlanarRegion,
     PlanarRegionReport,
@@ -88,6 +92,12 @@ OPENING_TOLERANCE_PX = 3.0
 OPENING_SNAP_TOLERANCES = 3.0
 OPENING_AREA_MATCH = 0.25
 OPENING_LINE_ANGLE_DEG = 15.0
+DIMENSION_REACH_MIN_PTS = 36.0
+DIMENSION_REACH_SHARE = 0.25
+DIMENSION_AGREE_PCT = 2.0
+MIN_WIDTH_NONE = "none"
+MIN_WIDTH_GIVEN = "given"
+MIN_WIDTH_SUGGESTED = "suggested"
 _COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_THICKNESS_IN = MAX_SLAB_THICKNESS_IN
 _SCALE_ASSUMPTION_MESSAGE = (
@@ -112,6 +122,22 @@ class RasterResult:
     ring: Tuple[Tuple[float, float], ...]
     leak: bool
     px_per_pt: float = 0.0
+
+
+@dataclass(frozen=True)
+class _DimensionCheck:
+    text: str
+    real_in: float
+    error_pct: float
+    agrees: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "text": UntrustedText.of(self.text).to_dict(),
+            "real_in": self.real_in,
+            "error_pct": round(self.error_pct, 4),
+            "agrees": self.agrees,
+        }
 
 
 @dataclass(frozen=True)
@@ -140,6 +166,7 @@ class _RegionFilters:
     colors: Optional[Tuple[str, ...]]
     min_area_sf: float
     symbol_max_pts: float
+    min_width_source: str = MIN_WIDTH_NONE
 
     def to_dict(self) -> dict:
         return {
@@ -150,6 +177,7 @@ class _RegionFilters:
             "colors": None if self.colors is None else list(self.colors),
             "min_area_sf": self.min_area_sf,
             "symbol_max_pts": self.symbol_max_pts,
+            "min_width_source": self.min_width_source,
         }
 
 
@@ -216,6 +244,26 @@ class AiTakeoffProposalService:
         reason: Any = None,
         sheet_ref: Any = None,
     ) -> dict:
+        return self.plan_scale(
+            page_uid,
+            p1_pts,
+            p2_pts,
+            real_in=real_in,
+            preset=preset,
+            reason=reason,
+            sheet_ref=sheet_ref,
+        )()
+
+    def plan_scale(
+        self,
+        page_uid: Any,
+        p1_pts: Any,
+        p2_pts: Any,
+        real_in: Any = None,
+        preset: Any = None,
+        reason: Any = None,
+        sheet_ref: Any = None,
+    ) -> Callable[[], dict]:
         snapshot = self._read_service.page_snapshot(page_uid)
         first = _numbers(p1_pts, "p1_pts", 2)
         second = _numbers(p2_pts, "p2_pts", 2)
@@ -254,6 +302,8 @@ class AiTakeoffProposalService:
             None if measured is None else abs(chosen - measured) / measured * 100.0
         )
         page = self._read_service.page_entity(snapshot.uid)
+        stated_reason = _text(reason, "reason")
+        stated_sheet_ref = _text(sheet_ref, "sheet_ref")
         changeset = AiChangeset(
             uid="",
             database_id=self._open_database_id(),
@@ -269,21 +319,71 @@ class AiTakeoffProposalService:
                 float(page.scale_factor2 or 0.0),
                 error_pct,
             ),
-            assumptions=(
-                ChangesetAssumption(
-                    uid="a1",
-                    subject=SUBJECT_SCALE,
-                    target_key=snapshot.uid,
-                    value=f"{sf1:g}:{sf2:g}",
-                    reason=_text(reason, "reason")
-                    or "Scale proposed by the AI from a measured distance.",
-                    sheet_ref=_text(sheet_ref, "sheet_ref"),
-                    impact=IMPACT_HIGH,
-                ),
-            ),
             summary=f"Page scale {sf1:g} : {sf2:g}",
         )
-        return ok_result(self.describe(self._add(changeset)))
+
+        def finish() -> dict:
+            check = self._dimension_check(snapshot, first, second, chosen)
+            text = stated_reason or "Scale proposed by the AI from a measured distance."
+            if check is not None and not check.agrees:
+                text = (
+                    f"{text} A dimension near the measured points reads "
+                    f"{check.real_in:g} in, but this scale gives "
+                    f"{chosen * distance:.4g} in ({check.error_pct:.1f}% off)."
+                )
+            assumption = ChangesetAssumption(
+                uid="a1",
+                subject=SUBJECT_SCALE,
+                target_key=snapshot.uid,
+                value=f"{sf1:g}:{sf2:g}",
+                reason=text,
+                sheet_ref=stated_sheet_ref,
+                impact=IMPACT_HIGH,
+            )
+            data = self.describe(
+                self._add(replace(changeset, assumptions=(assumption,)))
+            )
+            data["scale"]["dimension_check"] = (
+                None if check is None else check.to_dict()
+            )
+            return ok_result(data)
+
+        return finish
+
+    def _dimension_check(
+        self,
+        snapshot: PageSnapshot,
+        first: Tuple[float, float],
+        second: Tuple[float, float],
+        chosen: float,
+    ) -> Optional["_DimensionCheck"]:
+        status, lines = self._read_service.page_text_lines(snapshot)
+        if status != STATUS_OK:
+            return None
+        distance = math.dist(first, second)
+        reach = max(DIMENSION_REACH_MIN_PTS, DIMENSION_REACH_SHARE * distance)
+        best = None
+        for line in lines:
+            real = parse_dimension_in(line.text)
+            if real is None:
+                continue
+            away = point_segment_distance(
+                (line.left + line.right) / 2.0,
+                (line.top + line.bottom) / 2.0,
+                first[0],
+                first[1],
+                second[0],
+                second[1],
+            )
+            if away <= reach and (best is None or away < best[0]):
+                best = (away, line.text, real)
+        if best is None:
+            return None
+        implied = best[2] / distance
+        error_pct = abs(chosen - implied) / implied * 100.0
+        return _DimensionCheck(
+            best[1], best[2], error_pct, error_pct <= DIMENSION_AGREE_PCT
+        )
 
     def find_regions(
         self,
@@ -322,9 +422,12 @@ class AiTakeoffProposalService:
         )
         seed = None if seed_pts is None else _numbers(seed_pts, "seed_pts", 2)
         offset, size = _region_page(cursor, limit)
-        status, linework, extraction_truncated = self._read_service.page_linework(
-            snapshot
-        )
+        (
+            status,
+            linework,
+            extraction_truncated,
+            extraction_scope,
+        ) = self._read_service.page_linework_scoped(snapshot, box)
         if status != STATUS_OK:
             return ok_result(
                 {
@@ -335,6 +438,12 @@ class AiTakeoffProposalService:
                 status,
             )
         lines = [line for _segment_id, line in linework]
+        if filters.min_width is None:
+            suggested = suggested_min_width(lines)
+            if suggested is not None:
+                filters = replace(
+                    filters, min_width=suggested, min_width_source=MIN_WIDTH_SUGGESTED
+                )
         segments, excluded, symbol_boxes = _filter_linework(lines, box, filters)
         next_cursor = None
         if seed is not None:
@@ -379,6 +488,7 @@ class AiTakeoffProposalService:
                     list(bounds) for bounds in suppressed[:MAX_SUPPRESSED_BOXES]
                 ],
                 "extraction_truncated": extraction_truncated,
+                "extraction_scope": extraction_scope,
                 COORDINATE_SPACE_KEY: find_regions_coordinate_space(),
             },
             result_status,
@@ -443,6 +553,34 @@ class AiTakeoffProposalService:
         summary: Any = None,
         condition_uid: Any = None,
     ) -> dict:
+        return self.plan_element(
+            kind,
+            page_uid,
+            polygon_ost=polygon_ost,
+            region_id=region_id,
+            holes_ost=holes_ost,
+            thickness_in=thickness_in,
+            top_elev_in=top_elev_in,
+            level_id=level_id,
+            name=name,
+            summary=summary,
+            condition_uid=condition_uid,
+        )()
+
+    def plan_element(
+        self,
+        kind: Any,
+        page_uid: Any,
+        polygon_ost: Any = None,
+        region_id: Any = None,
+        holes_ost: Any = None,
+        thickness_in: Any = None,
+        top_elev_in: Any = None,
+        level_id: Any = None,
+        name: Any = None,
+        summary: Any = None,
+        condition_uid: Any = None,
+    ) -> Callable[[], dict]:
         if kind not in ELEMENT_KINDS:
             raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, "kind must be slab")
         snapshot = self._read_service.page_snapshot(page_uid)
@@ -453,6 +591,9 @@ class AiTakeoffProposalService:
                 ERROR_INVALID_ARGUMENT, "Give exactly one of polygon_ost or region_id"
             )
         gaps: Tuple[_GapRecord, ...] = ()
+        record: Optional[_RegionRecord] = None
+        polygon: Tuple[float, ...] = ()
+        holes: Tuple[Tuple[float, ...], ...] = ()
         if region_id is not None:
             record = self._region(region_id, snapshot.uid)
             if not math.isclose(
@@ -466,8 +607,6 @@ class AiTakeoffProposalService:
                 raise AiTakeoffRequestError(
                     ERROR_INVALID_GEOMETRY, "That region leaks outside its outline"
                 )
-            polygon = record.polygon_ost
-            holes = record.holes_ost
             gaps = record.gaps
         else:
             polygon = _numbers(polygon_ost, "polygon_ost")
@@ -503,6 +642,52 @@ class AiTakeoffProposalService:
         conditions = (
             () if existing else (ProposedCondition("c1", base, thickness, top),)
         )
+        stated_summary = _text(summary, "summary")
+        database_id = self._open_database_id()
+        bid_uid = self._open_bid_uid()
+
+        def finish() -> dict:
+            slab = None
+            outline, inner = polygon, holes
+            if record is not None:
+                slab = simplify_slab(record.polygon_ost, record.holes_ost)
+                outline, inner = slab.outline, slab.holes
+            return self._element_result(
+                snapshot.uid,
+                base,
+                thickness,
+                top,
+                existing,
+                condition_key,
+                conditions,
+                gaps,
+                slab,
+                outline,
+                inner,
+                stated_summary,
+                database_id,
+                bid_uid,
+            )
+
+        return finish
+
+    def _element_result(
+        self,
+        page_uid: str,
+        base: str,
+        thickness: Optional[float],
+        top: Optional[float],
+        existing: str,
+        condition_key: str,
+        conditions: tuple,
+        gaps: Tuple[_GapRecord, ...],
+        slab: Optional[SimplifiedSlab],
+        polygon: Tuple[float, ...],
+        holes: Tuple[Tuple[float, ...], ...],
+        summary: str,
+        database_id: str,
+        bid_uid: str,
+    ) -> dict:
         assumptions = []
         if not existing:
             if thickness is None:
@@ -532,21 +717,37 @@ class AiTakeoffProposalService:
                     gap.length_in,
                 )
             )
+        if slab is not None and slab.holes_dropped:
+            assumptions.append(
+                self._assumption(
+                    len(assumptions),
+                    SUBJECT_OTHER,
+                    f"{slab.holes_dropped} hole(s) left out",
+                    f"{slab.holes_dropped} traced hole(s) crossed the slab outline "
+                    "and were left out; check the outline.",
+                )
+            )
         changeset = AiChangeset(
             uid="",
-            database_id=self._open_database_id(),
-            bid_uid=self._open_bid_uid(),
+            database_id=database_id,
+            bid_uid=bid_uid,
             bid_key="",
             kind=KIND_ELEMENTS,
             created_at=0.0,
             conditions=conditions,
-            takeoffs=(
-                ProposedTakeoff("t1", snapshot.uid, condition_key, polygon, holes),
-            ),
+            takeoffs=(ProposedTakeoff("t1", page_uid, condition_key, polygon, holes),),
             assumptions=tuple(assumptions),
-            summary=_text(summary, "summary") or f"{base} on page {snapshot.uid}",
+            summary=summary or f"{base} on page {page_uid}",
         )
-        return ok_result(self.describe(self._add(changeset)))
+        result = ok_result(self.describe(self._add(changeset)))
+        if slab is not None:
+            result["data"]["geometry"] = {
+                "outline_vertices": list(slab.outline_vertices),
+                "hole_vertices": list(slab.hole_vertices),
+                "holes_dropped": slab.holes_dropped,
+                "area_change_pct": round(slab.area_change_pct, 4),
+            }
+        return result
 
     def update_assumption(
         self,
@@ -922,6 +1123,7 @@ def _region_filters(
     return _RegionFilters(
         max_gap_in=gap,
         min_width=_optional_number(min_width, "min_width", None),
+        min_width_source=MIN_WIDTH_NONE if min_width is None else MIN_WIDTH_GIVEN,
         exclude_dashed=_flag(exclude_dashed, "exclude_dashed"),
         exclude_thin_curves=_flag(exclude_thin_curves, "exclude_thin_curves"),
         colors=_colors(colors),
@@ -991,6 +1193,9 @@ def _filter_linework(lines, box, filters: _RegionFilters):
             filters.min_width is not None
             and line.stroked
             and (line.width or 0.0) < filters.min_width
+            and not (
+                filters.min_width_source == MIN_WIDTH_SUGGESTED and kind == KIND_DASHED
+            )
         ):
             excluded["thin"] += 1
         elif filters.colors is not None and line.color not in filters.colors:

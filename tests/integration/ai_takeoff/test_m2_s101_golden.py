@@ -135,7 +135,10 @@ class S101LikeGoldenTests(unittest.TestCase):
 
     def test_turning_the_m2_defaults_off_brings_back_the_s101_failures(self):
         old = self.seeded(
-            exclude_dashed=False, symbol_max_pts=0, exclude_thin_curves=False
+            exclude_dashed=False,
+            symbol_max_pts=0,
+            exclude_thin_curves=False,
+            min_width=0,
         )
         (room,) = old["data"]["regions"]
         self.assertLess(room["area_sf"], fx.ROOM_AREA_SF * (1.0 - AREA_TOLERANCE))
@@ -144,7 +147,7 @@ class S101LikeGoldenTests(unittest.TestCase):
         self.assertEqual(len(holed["holes_ost"]), 2)
         self.assertEqual(len(holed["gaps"]), 1)
         self.assertLess(holed["area_sf"], fx.ROOM_AREA_SF * (1.0 - AREA_TOLERANCE))
-        (split,) = self.seeded(exclude_dashed=False)["data"]["regions"]
+        (split,) = self.seeded(exclude_dashed=False, min_width=0)["data"]["regions"]
         self.assertLess(split["area_sf"], fx.ROOM_AREA_SF * 0.6)
         self.assertEqual(split["gaps"], [])
 

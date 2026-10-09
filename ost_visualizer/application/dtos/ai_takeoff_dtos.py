@@ -34,7 +34,7 @@ M1A_COMMANDS = (
     COMMAND_LIST_ASSUMPTIONS,
 )
 M1A_COMMAND_ARGUMENTS = {
-    COMMAND_LIST_SHEETS: frozenset({"bid_uid", "cursor", "limit"}),
+    COMMAND_LIST_SHEETS: frozenset({"bid_uid", "cursor", "limit", "text_hints"}),
     COMMAND_RENDER_SHEET: frozenset({"page_uid", "crop_pts", "dpi", "overlay_ids"}),
     COMMAND_LIST_TEXT: frozenset({"page_uid", "bbox_pts", "query", "cursor", "limit"}),
     COMMAND_LIST_SEGMENTS: frozenset(
@@ -143,6 +143,14 @@ def list_segments_coordinate_space() -> dict:
         "p2_pts": COORD_PAGE_PTS_Y_DOWN,
         "p1_ost": COORD_OST_INCHES,
         "p2_ost": COORD_OST_INCHES,
+    }
+
+
+def sheet_hints_coordinate_space() -> dict:
+    return {
+        "sheets[].text_hints.sheet_number_bbox_pts": COORD_PAGE_PTS_Y_DOWN,
+        "sheets[].text_hints.scale_candidates[].bbox_pts": COORD_PAGE_PTS_Y_DOWN,
+        "sheets[].text_hints.title_block_crop_pts": COORD_PAGE_PTS_Y_DOWN,
     }
 
 

@@ -82,17 +82,26 @@ class PageCachePdfSource:
         return list(self.get_path_segments(file_path, page_index).segments)
 
     def get_path_segments(
-        self, file_path: str, page_index: int
+        self, file_path: str, page_index: int, box: Optional[tuple] = None
     ) -> PdfVectorSegmentsDto:
         if _file_status(file_path) is not None:
             return PdfVectorSegmentsDto()
-        key = _cache_key(file_path, page_index)
+        native_box = None
+        if box is not None:
+            origin_x, origin_y = self._visible_origin(file_path, page_index)
+            native_box = (
+                float(box[0]) + origin_x,
+                float(box[1]) + origin_y,
+                float(box[2]) + origin_x,
+                float(box[3]) + origin_y,
+            )
+        key = _cache_key(file_path, page_index) + (native_box,)
         with self._paths_lock:
             cached = self._paths.get(key)
             if cached is not None:
                 self._paths.move_to_end(key)
                 return cached
-        extraction = self._extract(file_path, page_index)
+        extraction = self._extract(file_path, page_index, native_box)
         if extraction is None:
             return PdfVectorSegmentsDto()
         origin_x, origin_y = self._visible_origin(file_path, page_index)
@@ -118,7 +127,7 @@ class PageCachePdfSource:
                 self._paths.popitem(last=False)
         return result
 
-    def _extract(self, file_path: str, page_index: int):
+    def _extract(self, file_path: str, page_index: int, box: Optional[tuple]):
         renderer = self._renderer_factory()
         opened = False
         try:
@@ -126,7 +135,7 @@ class PageCachePdfSource:
                 opened = bool(renderer.open(file_path))
                 if not opened:
                     return None
-                return renderer.extract_path_items(page_index, MAX_PAGE_PATH_ITEMS)
+                return renderer.extract_path_items(page_index, MAX_PAGE_PATH_ITEMS, box)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("PDF vector extraction failed: %s", type(exc).__name__)
             return None

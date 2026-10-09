@@ -89,6 +89,8 @@ class FakePdfSource:
         self.runs = list(runs)
         self.segments = list(segments)
         self.truncated = False
+        self.box_truncated = False
+        self.boxes = []
         self.calls = []
 
     def get_page_info(self, file_path, page_index):
@@ -103,9 +105,21 @@ class FakePdfSource:
         self.calls.append(("segments", file_path, page_index))
         return list(self.segments)
 
-    def get_path_segments(self, file_path, page_index):
+    def get_path_segments(self, file_path, page_index, box=None):
         self.calls.append(("segments", file_path, page_index))
-        return PdfVectorSegmentsDto(tuple(self.segments), self.truncated)
+        if box is None:
+            return PdfVectorSegmentsDto(tuple(self.segments), self.truncated)
+        self.boxes.append(box)
+        left, bottom, right, top = box
+        inside = tuple(
+            segment
+            for segment in self.segments
+            if max(segment.x1, segment.x2) >= left
+            and min(segment.x1, segment.x2) <= right
+            and max(segment.y1, segment.y2) >= bottom
+            and min(segment.y1, segment.y2) <= top
+        )
+        return PdfVectorSegmentsDto(inside, self.box_truncated)
 
 
 class SpyRepository:
@@ -232,6 +246,239 @@ class ListSheetsTests(ServiceTestCase):
         self.assertEqual(first["takeoff_count"], 2)
         self.assertEqual(sheets[2]["source"], "image")
         self.assertEqual(result["meta"]["total_count"], 3)
+
+    def runs_at(self, *items):
+        return [
+            PdfTextRunDto(
+                text,
+                left=left,
+                top=792 - top,
+                right=left + width,
+                bottom=792 - top - height,
+            )
+            for text, left, top, width, height in items
+        ]
+
+    def hinted(self, **kwargs):
+        result = self.service.list_sheets(text_hints=True, **kwargs)
+        return self.service.sheet_text_hints(
+            result, self.service.sheet_hint_snapshots(result)
+        )
+
+    def test_text_hints_are_off_by_default(self):
+        self.assertNotIn("text_hints", self.service.list_sheets()["data"]["sheets"][0])
+        self.assertNotIn("coordinate_space", self.service.list_sheets()["data"])
+
+    def test_text_hints_report_sheet_number_scales_and_a_title_block_crop(self):
+        self.pdf.runs = self.runs_at(
+            ("S-101", 520, 740, 60, 30),
+            ("FOUNDATION PLAN", 50, 300, 120, 12),
+            ('SCALE: 1/8" = 1\'-0"', 50, 314, 110, 9),
+            ("DETAIL 1", 300, 300, 60, 12),
+            ('SCALE: 3/4"=1\'-0"', 300, 314, 100, 9),
+        )
+        data = self.hinted()["data"]
+        hints = data["sheets"][0]["text_hints"]
+        self.assertTrue(hints["text_extractable"])
+        self.assertEqual(
+            hints["sheet_number"],
+            {"value": "S-101", "untrusted": True, "truncated": False},
+        )
+        self.assertEqual(hints["sheet_number_source"], "title_block")
+        self.assertEqual(hints["sheet_number_bbox_pts"], [520.0, 740.0, 580.0, 770.0])
+        self.assertEqual(
+            [
+                (c["label"], c["view_kind"], c["view_title"]["value"])
+                for c in hints["scale_candidates"]
+            ],
+            [
+                ('1/8"=1\'-0"', "plan", "FOUNDATION PLAN"),
+                ('3/4"=1\'-0"', "detail", "DETAIL 1"),
+            ],
+        )
+        self.assertTrue(hints["scale_candidates"][0]["view_title"]["untrusted"])
+        self.assertEqual(hints["scale_candidates"][0]["sf1_sf2"], [0.125, 12.0])
+        self.assertEqual(
+            hints["plan_scale"],
+            {"status": "resolved", "label": '1/8"=1\'-0"', "sf1_sf2": [0.125, 12.0]},
+        )
+        x, y, w, h = hints["title_block_crop_pts"]
+        self.assertTrue(x <= 520 and y <= 740 and x + w >= 580 and y + h >= 770)
+        self.assertEqual(
+            data["coordinate_space"],
+            {
+                "sheets[].text_hints.sheet_number_bbox_pts": "page_pts_y_down",
+                "sheets[].text_hints.scale_candidates[].bbox_pts": "page_pts_y_down",
+                "sheets[].text_hints.title_block_crop_pts": "page_pts_y_down",
+            },
+        )
+        image = data["sheets"][2]["text_hints"]
+        self.assertEqual(
+            (image["text_extractable"], image["sheet_number"]), (False, None)
+        )
+        self.assertEqual(image["reason"], "not_pdf")
+
+    def test_sheet_numbers_are_made_consistent_per_pdf(self):
+        for uid, index in (("p4", 1), ("p5", 2)):
+            self.project.pages.append(
+                Page(
+                    uid=uid,
+                    name=uid,
+                    sequence=index + 3,
+                    image_path="C:/plans/S-101.pdf",
+                    page_index=index,
+                    width_pts=612.0,
+                    height_pts=792.0,
+                    scale_factor1=0.25,
+                    scale_factor2=12.0,
+                )
+            )
+        self.pdf.runs = self.runs_at(("S-101", 520, 740, 60, 30))
+        sheets = self.hinted()["data"]["sheets"]
+        numbers = {
+            sheet["page_uid"]: (sheet["text_hints"]["sheet_number"] or {}).get("value")
+            for sheet in sheets
+        }
+        self.assertEqual(
+            numbers, {"p1": None, "p4": None, "p5": None, "p2": "S-101", "p3": None}
+        )
+
+    def test_consistency_covers_the_whole_pdf_on_every_page_of_results(self):
+        self.add_s101_pages()
+        self.pdf.runs = self.runs_at(("S-101", 520, 740, 60, 30))
+        first = self.hinted(limit=2)
+        second = self.hinted(limit=2, cursor=first["meta"]["next_cursor"])
+        third = self.hinted(limit=2, cursor=second["meta"]["next_cursor"])
+        numbers = {
+            sheet["page_uid"]: (sheet["text_hints"]["sheet_number"] or {}).get("value")
+            for chunk in (first, second, third)
+            for sheet in chunk["data"]["sheets"]
+        }
+        self.assertEqual(
+            numbers, {"p1": None, "p4": None, "p5": None, "p2": "S-101", "p3": None}
+        )
+        self.assertEqual(
+            sorted(s.uid for s in self.service.sheet_hint_snapshots(first)),
+            ["p1", "p2", "p4", "p5"],
+        )
+
+    def test_page_size_comes_from_the_pdf_frame(self):
+        from ost_visualizer.application.services.ai_takeoff_read_service import (
+            _page_to_raw,
+        )
+
+        self.pdf.info = PdfPageInfoDto(
+            status="ok",
+            media_width_pts=612.0,
+            media_height_pts=792.0,
+            crop_width_pts=612.0,
+            crop_height_pts=792.0,
+            effective_width_pts=792.0,
+            effective_height_pts=612.0,
+            intrinsic_rotation=90,
+        )
+        frame = (612.0, 792.0, 90)
+        (x1, y1), (x2, y2) = _page_to_raw(700.0, 560.0, frame), _page_to_raw(
+            760.0, 590.0, frame
+        )
+        self.pdf.runs = [
+            PdfTextRunDto(
+                "S-101",
+                left=min(x1, x2),
+                top=max(y1, y2),
+                right=max(x1, x2),
+                bottom=min(y1, y2),
+            )
+        ]
+        hints = self.hinted()["data"]["sheets"][0]["text_hints"]
+        self.assertEqual(hints["sheet_number"]["value"], "S-101")
+        x, y, w, h = hints["title_block_crop_pts"]
+        self.assertTrue(w > 0 and h > 0, hints["title_block_crop_pts"])
+        self.assertTrue(
+            x >= 0 and y >= 0 and x + w <= 792.0 + 1e-9 and y + h <= 612.0 + 1e-9
+        )
+        self.assertTrue(x <= 700.0 and x + w >= 760.0)
+        self.pdf.runs = []
+        empty = self.hinted()["data"]["sheets"][0]["text_hints"]
+        self.assertEqual(
+            empty["title_block_crop_pts"], [0.78 * 792.0, 0.0, 0.22 * 792.0, 612.0]
+        )
+
+    def add_s101_pages(self):
+        for uid, index in (("p4", 1), ("p5", 2)):
+            self.project.pages.append(
+                Page(
+                    uid=uid,
+                    name=uid,
+                    sequence=index + 3,
+                    image_path="C:/plans/S-101.pdf",
+                    page_index=index,
+                    width_pts=612.0,
+                    height_pts=792.0,
+                    scale_factor1=0.25,
+                    scale_factor2=12.0,
+                )
+            )
+
+    def test_unreadable_pdfs_report_their_status_and_nts_has_no_factors(self):
+        self.pdf.runs = self.runs_at(
+            ("SECTION A", 50, 300, 80, 12), ("NTS", 50, 314, 20, 9)
+        )
+        hints = self.hinted()["data"]["sheets"][0]["text_hints"]
+        self.assertEqual(
+            [
+                (c["label"], c["sf1_sf2"], c["view_kind"])
+                for c in hints["scale_candidates"]
+            ],
+            [("NTS", None, "section")],
+        )
+        self.assertEqual(
+            hints["plan_scale"],
+            {"status": "no_plan_view", "label": None, "sf1_sf2": None},
+        )
+        self.pdf.info = PdfPageInfoDto(status="missing")
+        broken = self.hinted()["data"]["sheets"][0]["text_hints"]
+        self.assertEqual(
+            (broken["text_extractable"], broken["reason"], broken["sheet_number"]),
+            (False, "missing", None),
+        )
+
+    def test_pages_without_text_get_a_default_crop_for_vision(self):
+        self.pdf.runs = []
+        hints = self.hinted()["data"]["sheets"][0]["text_hints"]
+        self.assertEqual(
+            {
+                k: hints[k]
+                for k in (
+                    "text_extractable",
+                    "sheet_number",
+                    "sheet_number_source",
+                    "reason",
+                )
+            },
+            {
+                "text_extractable": False,
+                "sheet_number": None,
+                "sheet_number_source": None,
+                "reason": "no_text",
+            },
+        )
+        self.assertEqual(
+            hints["title_block_crop_pts"], [0.0, 0.8 * 792.0, 612.0, 0.2 * 792.0]
+        )
+        self.assertEqual(
+            (hints["scale_candidates"], hints["plan_scale"]["status"]), ([], "none")
+        )
+
+    def test_text_hints_cap_the_page_size_and_need_a_boolean(self):
+        result = self.service.list_sheets(text_hints=True, limit=100)
+        self.assertEqual(result["meta"]["limit"], 25)
+        self.assert_error(
+            "invalid_argument", lambda: self.service.list_sheets(text_hints="yes")
+        )
+        self.assertEqual(
+            self.service.list_sheets(text_hints=False, limit=100)["meta"]["limit"], 100
+        )
 
     def test_pagination_with_cursor(self):
         first = self.service.list_sheets(limit=2)
@@ -496,6 +743,17 @@ class SegmentAttributeTests(ServiceTestCase):
             ),
         )
         self.assertFalse(data["extraction_truncated"])
+        self.assertIsNone(data["suggested_min_width"])
+
+    def test_the_suggested_min_width_comes_from_the_width_histogram(self):
+        heavy = PdfPathStyleDto(1.4, (), 0x000000FF, 0, True, False)
+        self.pdf.segments = [
+            _styled(0, i * 2, 100, i * 2, THIN, f"o{i}s0") for i in range(60)
+        ] + [
+            _styled(0, 300 + i * 2, 100, 300 + i * 2, heavy, f"o{100 + i}s0")
+            for i in range(25)
+        ]
+        self.assertEqual(self.segments(limit=1)["suggested_min_width"], 1.4)
 
     def test_segments_without_attributes_keep_m1a_ids_and_null_fields(self):
         self.pdf.segments = [PdfVectorSegmentDto(0, 792, 100, 792)]
@@ -547,7 +805,93 @@ class SegmentAttributeTests(ServiceTestCase):
 
     def test_a_truncated_extraction_is_reported(self):
         self.pdf.truncated = True
-        self.assertTrue(self.segments()["extraction_truncated"])
+        data = self.segments()
+        self.assertTrue(data["extraction_truncated"])
+        self.assertEqual(data["extraction_scope"], "page")
+
+    def test_a_truncated_page_is_extracted_again_inside_the_box(self):
+        self.pdf.truncated = True
+        data = self.segments(bbox_pts=[195, 195, 225, 225])
+        self.assertEqual(data["extraction_scope"], "box")
+        self.assertFalse(data["extraction_truncated"])
+        self.assertEqual(len(self.pdf.boxes), 1)
+        self.assertEqual(
+            self.pdf.boxes[0], (194.0, 792.0 - 226.0, 226.0, 792.0 - 194.0)
+        )
+        self.assertEqual(
+            {s["id"] for s in data["segments"]}, {f"o14s{i}" for i in range(4)}
+        )
+        self.pdf.box_truncated = True
+        self.assertTrue(
+            self.segments(bbox_pts=[195, 195, 225, 225])["extraction_truncated"]
+        )
+
+    def test_outlines_clipped_by_the_box_are_not_symbols(self):
+        def ring(left, top, right, bottom, group, step):
+            points = []
+            x = left
+            while x < right:
+                points.append((x, top))
+                x += step
+            y = top
+            while y < bottom:
+                points.append((right, y))
+                y += step
+            x = right
+            while x > left:
+                points.append((x, bottom))
+                x -= step
+            y = bottom
+            while y > top:
+                points.append((left, y))
+                y -= step
+            return [
+                PdfVectorSegmentDto(
+                    a[0],
+                    792 - a[1],
+                    b[0],
+                    792 - b[1],
+                    segment_id=f"{group}s{i}",
+                    group=group,
+                    closed=True,
+                )
+                for i, (a, b) in enumerate(zip(points, points[1:] + points[:1]))
+            ]
+
+        self.pdf.segments = ring(100, 100, 400, 400, "o1", 10.0) + ring(
+            110, 110, 120, 120, "o2", 5.0
+        )
+        whole = self.segments(bbox_pts=[95, 95, 125, 125])
+        self.pdf.truncated = True
+        boxed = self.segments(bbox_pts=[95, 95, 125, 125])
+        self.assertEqual(boxed["extraction_scope"], "box")
+        kinds = lambda data: sorted({(s["id"], s["kind"]) for s in data["segments"]})
+        self.assertEqual(kinds(boxed), kinds(whole))
+        by_group = {}
+        for segment in boxed["segments"]:
+            by_group.setdefault(segment["id"].split("s")[0], set()).add(segment["kind"])
+        self.assertEqual(by_group["o2"], {"symbol"})
+        self.assertNotIn("symbol", by_group["o1"])
+
+    def test_a_complete_page_is_never_extracted_again(self):
+        data = self.segments(bbox_pts=[195, 195, 225, 225])
+        self.assertEqual((data["extraction_scope"], self.pdf.boxes), ("page", []))
+
+    def test_page_boxes_map_back_to_raw_pdf_boxes_on_rotated_pages(self):
+        from ost_visualizer.application.services.ai_takeoff_read_service import (
+            _page_box_to_raw,
+        )
+
+        frame = (612.0, 792.0, 0)
+        self.assertEqual(_page_box_to_raw((10, 20, 30, 40), frame), (10, 752, 30, 772))
+        rotated = (612.0, 792.0, 90)
+        self.assertEqual(_page_box_to_raw((10, 20, 30, 40), rotated), (20, 10, 40, 30))
+        upside = (612.0, 792.0, 180)
+        self.assertEqual(_page_box_to_raw((10, 20, 30, 40), upside), (582, 20, 602, 40))
+        turned = (612.0, 792.0, 270)
+        self.assertEqual(
+            _page_box_to_raw((10, 20, 30, 40), turned), (572, 762, 592, 782)
+        )
 
     def test_page_linework_converts_attributes_to_page_space(self):
         status, linework, truncated = self.service.page_linework(self.snapshot())

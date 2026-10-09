@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Sheet numbers, scales and cleaner slabs for AI takeoff.** `list_sheets`
+  can now report each sheet's number from the title block or a SHEET NO
+  label (no more S0 false hits, consistent across a set), every scale label
+  with the view it belongs to, and a plan scale only when the plans agree;
+  outlined-text and scanned pages say so and get a title block crop to look
+  at. `propose_scale` checks the scale against a nearby dimension.
+  `find_regions` keeps only wall-weight lines by default (the suggested width
+  is reported and can be overridden), very busy sheets are read again inside
+  the search box, and traced slabs are simplified so most large or curved outlines
+  no longer fail with too many vertices or crossing holes (an outline that cannot be simplified safely is still refused).
 - **Line weights, dashes and smarter areas for AI takeoff.** The AI takeoff
   helper's `list_segments` now reports each line's width, dash pattern, color,
   stroke or fill, whether it comes from a curve, and a kind guess (wall,

@@ -574,17 +574,50 @@ namespace ost_pdf
         class PathCollector
         {
         public:
-            PathCollector(PDFPathExtraction &out, std::size_t max_items)
-                : out_(out), max_items_(max_items) {}
+            PathCollector(PDFPathExtraction &out, std::size_t max_items, const std::optional<PathBox> &box)
+                : out_(out), max_items_(max_items), box_(normalized(box)) {}
+            static std::optional<PathBox> normalized(const std::optional<PathBox> &box)
+            {
+                if (!box)
+                {
+                    return box;
+                }
+                const auto [left, bottom, right, top] = *box;
+                if (!std::isfinite(left) || !std::isfinite(bottom) || !std::isfinite(right) || !std::isfinite(top))
+                {
+                    throw std::invalid_argument("box must be four finite numbers");
+                }
+                return PathBox{std::min(left, right), std::min(bottom, top), std::max(left, right), std::max(bottom, top)};
+            }
+            bool outside(float left, float bottom, float right, float top) const
+            {
+                if (!box_)
+                {
+                    return false;
+                }
+                const auto [box_left, box_bottom, box_right, box_top] = *box_;
+                return right < box_left || left > box_right || top < box_bottom || bottom > box_top;
+            }
+            bool object_outside(FPDF_PAGEOBJECT object) const
+            {
+                float left = 0.0f;
+                float bottom = 0.0f;
+                float right = 0.0f;
+                float top = 0.0f;
+                if (!box_ || !FPDFPageObj_GetBounds(object, &left, &bottom, &right, &top))
+                {
+                    return false;
+                }
+                return outside(left, bottom, right, top);
+            }
             bool full() const
             {
                 return out_.items.size() >= max_items_;
             }
             void collect(FPDF_PAGEOBJECT object, const Affine &parent, const std::string &object_id, int depth)
             {
-                if (full())
+                if (out_.truncated)
                 {
-                    out_.truncated = true;
                     return;
                 }
                 const int type = FPDFPageObj_GetType(object);
@@ -638,8 +671,7 @@ namespace ost_pdf
                 {
                     if (subpath_first < out_.items.size())
                     {
-                        const PDFPathItem &last = out_.items.back();
-                        const bool ends_at_start = last.x2 == start_x && last.y2 == start_y;
+                        const bool ends_at_start = current_x == start_x && current_y == start_y;
                         if (subpath_closed || ends_at_start)
                         {
                             for (std::size_t index = subpath_first; index < out_.items.size(); ++index)
@@ -654,6 +686,11 @@ namespace ost_pdf
                 auto emit = [&](float x1, float y1, float x2, float y2, bool curve)
                 {
                     if (x1 == x2 && y1 == y2)
+                    {
+                        return;
+                    }
+                    const int piece_index = emitted++;
+                    if (outside(std::min(x1, x2), std::min(y1, y2), std::max(x1, x2), std::max(y1, y2)))
                     {
                         return;
                     }
@@ -677,7 +714,7 @@ namespace ost_pdf
                     item.closed = false;
                     item.object_id = object_id;
                     item.subpath_index = subpath < 0 ? 0 : subpath;
-                    item.segment_index = emitted++;
+                    item.segment_index = piece_index;
                     out_.items.push_back(std::move(item));
                 };
                 for (int segment_index = 0; segment_index < segment_count; ++segment_index)
@@ -790,11 +827,16 @@ namespace ost_pdf
             }
             PDFPathExtraction &out_;
             std::size_t max_items_;
+            std::optional<PathBox> box_;
         };
     }
-    PDFPathExtraction PDFRenderer::extract_path_items(int page_index, std::size_t max_items) const
+    PDFPathExtraction PDFRenderer::extract_path_items(
+        int page_index,
+        std::size_t max_items,
+        std::optional<PathBox> box) const
     {
         PDFPathExtraction result{{}, false};
+        PathCollector collector(result, max_items, box);
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
             return result;
@@ -804,13 +846,12 @@ namespace ost_pdf
         {
             return result;
         }
-        PathCollector collector(result, max_items);
         const Affine identity{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
         const int object_count = FPDFPage_CountObjects(page);
         for (int object_index = 0; object_index < object_count && !result.truncated; ++object_index)
         {
             FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, object_index);
-            if (object)
+            if (object && !collector.object_outside(object))
             {
                 collector.collect(object, identity, std::to_string(object_index), 0);
             }

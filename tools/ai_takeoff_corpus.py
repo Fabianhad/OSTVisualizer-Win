@@ -22,14 +22,13 @@ import os
 import random
 import re
 import shutil
-import statistics
 import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 DEFAULT_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ostv_corpus"
 STRUCTURAL_PARTS = ("01. Drawings", "1. Drawings", "3. Structural")
@@ -331,28 +330,28 @@ def stratified_sample(
             if len(chosen) >= count:
                 break
             options = fresh(year) if any_fresh else list(queues[year])
-            if not options:
-                continue
-            project = options[0]
-            queues[year].remove(project)
-            candidates = [
-                row for row in groups[year][project] if row["rel"] not in seen
-            ]
-            if candidates:
-                candidates.sort(
-                    key=lambda row: (
-                        pattern_counts[file_pattern(row["rel"])],
-                        rng.random(),
+            for project in options:
+                queues[year].remove(project)
+                candidates = [
+                    row for row in groups[year][project] if row["rel"] not in seen
+                ]
+                if candidates:
+                    candidates.sort(
+                        key=lambda row: (
+                            pattern_counts[file_pattern(row["rel"])],
+                            rng.random(),
+                        )
                     )
-                )
-                row = candidates[0]
-                chosen.append(row)
-                seen.add(row["rel"])
-                used.add((year, project))
-                pattern_counts[file_pattern(row["rel"])] += 1
-                progressed = True
-            if any(r["rel"] not in seen for r in groups[year][project]):
-                queues[year].append(project)
+                    row = candidates[0]
+                    chosen.append(row)
+                    seen.add(row["rel"])
+                    used.add((year, project))
+                    pattern_counts[file_pattern(row["rel"])] += 1
+                    progressed = True
+                if any(r["rel"] not in seen for r in groups[year][project]):
+                    queues[year].append(project)
+                if candidates:
+                    break
         if not progressed:
             break
     return chosen
@@ -493,10 +492,20 @@ RUN_COLUMNS = (
     "outlined_text",
     "kind",
     "title",
+    "sheets_status",
     "sheet_number",
+    "sheet_number_source",
+    "sheet_number_legacy",
+    "text_extractable",
+    "text_reason",
+    "title_block_crop",
     "scale_status",
     "scale_label",
     "scale_hits",
+    "plan_scale_status",
+    "plan_scale_label",
+    "scale_candidates",
+    "scale_views",
     "kinds_wall",
     "kinds_dashed",
     "kinds_thin",
@@ -511,6 +520,10 @@ RUN_COLUMNS = (
     "list_gaps",
     "list_suppressed",
     "list_excluded",
+    "list_min_width",
+    "list_min_width_source",
+    "list_extraction_scope",
+    "box_quadrants_truncated",
     "filtered_status",
     "filtered_seconds",
     "filtered_regions",
@@ -528,6 +541,10 @@ RUN_COLUMNS = (
     "seed_unlocated",
     "proposal_status",
     "proposal_assumptions",
+    "proposal_outline_vertices",
+    "proposal_hole_vertices",
+    "proposal_area_change_pct",
+    "proposal_holes_dropped",
     "hand_expected_sf",
     "hand_error_pct",
     "error",
@@ -565,6 +582,21 @@ def run(out: Path, timeout: float, python: str) -> Path:
             )
             continue
         bid = json.loads(prepared.read_text(encoding="utf-8"))
+        hints_path = work / f"{Path(item['local']).stem}_sheets.json"
+        command = [
+            python,
+            "-m",
+            "tools.ai_takeoff_corpus_worker",
+            "sheets",
+            str(prepared),
+            str(hints_path),
+        ]
+        done = _run_child(command, timeout)
+        sheets_status = done["status"]
+        hints = []
+        if sheets_status == "ok" and hints_path.exists():
+            hints = json.loads(hints_path.read_text(encoding="utf-8"))
+        pdf_rows = []
         for page in bid["pages"]:
             page_number = page["index"] + 1
             result_path = work / f"{Path(item['local']).stem}_p{page_number}.json"
@@ -586,17 +618,30 @@ def run(out: Path, timeout: float, python: str) -> Path:
                 "page": page_number,
                 "pages_in_pdf": len(bid["pages"]),
             }
+            if page_seeds:
+                row["hand_expected_sf"] = page_seeds[0]["expected_sf"]
             if done["status"] == "ok" and result_path.exists():
                 row.update(json.loads(result_path.read_text(encoding="utf-8")))
             else:
                 row.update(status=done["status"], error=done["error"])
             row["seconds"] = round(time.perf_counter() - started, 2)
-            rows.append(row)
+            pdf_rows.append(row)
             print(f"{item['rel']} p{page_number}: {row.get('status')}", flush=True)
+        merge_sheet_hints(pdf_rows, sheets_status, hints)
+        rows.extend(pdf_rows)
     path = out / f"corpus_run_{stamp}.csv"
     write_csv(path, rows, RUN_COLUMNS)
     report(path, out / f"corpus_summary_{stamp}.md")
     return path
+
+
+def merge_sheet_hints(rows: List[dict], status: str, hints: Sequence[dict]) -> None:
+    by_page = {int(hint["index"]) + 1: hint for hint in hints}
+    for row in rows:
+        row["sheets_status"] = status
+        hint = by_page.get(int(row["page"]))
+        if hint is not None:
+            row.update({key: value for key, value in hint.items() if key != "index"})
 
 
 def _run_child(command: Sequence[str], timeout: float) -> dict:
@@ -608,6 +653,7 @@ def _run_child(command: Sequence[str], timeout: float) -> dict:
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            cwd=REPO_ROOT,
             env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
         )
     except subprocess.TimeoutExpired:
@@ -698,6 +744,118 @@ def failure_categories(rows: Sequence[dict]) -> List[Tuple[str, List[dict]]]:
     return sorted(categories.items(), key=lambda item: -len(item[1]))
 
 
+_ZERO_SHEET = re.compile(r"^S[A-Z]{0,2}\s*-?\s*0+[A-Z]?$")
+
+
+def _repeated_sheets(rows: Sequence[dict]) -> set:
+    counts = Counter(
+        (row["rel"], row.get("sheet_number")) for row in rows if row.get("sheet_number")
+    )
+    return {key for key, count in counts.items() if count > 1}
+
+
+def _plan_resolved(row: dict) -> bool:
+    if row.get("plan_scale_status"):
+        return row["plan_scale_status"] == "resolved"
+    return row.get("scale_status") == "single"
+
+
+def _metrics(rows: Sequence[dict]) -> List[Tuple[str, str]]:
+    ok = [row for row in rows if row.get("status") == "ok"]
+    plans = [row for row in ok if row.get("kind") == KIND_PLAN]
+    repeated = _repeated_sheets(ok)
+    truncated = [
+        row
+        for row in ok
+        if row.get("extraction_truncated") == "True"
+        and row.get("box_quadrants_truncated") not in (None, "")
+    ]
+    proposed = [row for row in plans if row.get("proposal_status")]
+    return [
+        ("Sheet number found", _rate(ok, lambda r: bool(r.get("sheet_number")))),
+        (
+            "Zero sheet numbers (S0 style)",
+            _rate(ok, lambda r: bool(_ZERO_SHEET.match(r.get("sheet_number") or ""))),
+        ),
+        (
+            "Sheet number repeated within its PDF",
+            _rate(ok, lambda r: (r["rel"], r.get("sheet_number")) in repeated),
+        ),
+        ("Plan: one plan scale resolved", _rate(plans, _plan_resolved)),
+        (
+            "Plan: region list over the segment cap (default filter)",
+            _rate(plans, lambda r: r.get("list_status") == "invalid_argument"),
+        ),
+        (
+            "Pages truncated (whole page)",
+            _rate(ok, lambda r: r.get("extraction_truncated") == "True"),
+        ),
+        (
+            "Truncated plan pages still truncated in a quarter-page box",
+            (
+                _rate(
+                    truncated,
+                    lambda r: (_number(r.get("box_quadrants_truncated")) or 0) > 0,
+                )
+                if truncated
+                else "not measured"
+            ),
+        ),
+        (
+            "Plan: proposal failures",
+            _rate(proposed, lambda r: r.get("proposal_status") != "ok"),
+        ),
+    ]
+
+
+def compare_metrics(
+    before: Sequence[dict], after: Sequence[dict]
+) -> List[Tuple[str, str, str]]:
+    return [
+        (name, old, new)
+        for (name, old), (_same, new) in zip(_metrics(before), _metrics(after))
+    ]
+
+
+def compare(before_csv: Path, after_csv: Path, out: Path) -> Path:
+    lines = [
+        f"# AI takeoff corpus: {before_csv.stem} vs {after_csv.stem}",
+        "",
+        "Metrics only. Plan pages are the same page-kind guess in both runs.",
+        "",
+        "| Metric | Before | After |",
+        "| --- | --- | --- |",
+    ]
+    for name, old, new in compare_metrics(read_csv(before_csv), read_csv(after_csv)):
+        lines.append(f"| {name} | {old} | {new} |")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out
+
+
+def _hand_within(row: dict) -> bool:
+    error = _number(row.get("hand_error_pct"))
+    return error is not None and abs(error) <= 0.5
+
+
+def _hand_section(rows: Sequence[dict]) -> List[str]:
+    lines = ["", "## Hand values", ""]
+    hand = [row for row in rows if _number(row.get("hand_expected_sf")) is not None]
+    if not hand:
+        return lines + [
+            "Not measured: hand_values.csv has no expected_sf rows for these pages."
+        ]
+    lines += [
+        "| PDF | Page | Expected SF | Measured SF | Error % |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in hand:
+        lines.append(
+            f"| {row['rel']} | {row['page']} | {row['hand_expected_sf']} | "
+            f"{row.get('seed_area_sf') or 'none'} | {row.get('hand_error_pct') or 'n/a'} |"
+        )
+    return lines
+
+
 def report(run_csv: Path, out: Path) -> Path:
     rows = read_csv(run_csv)
     ok = [row for row in rows if row.get("status") == "ok"]
@@ -724,10 +882,9 @@ def report(run_csv: Path, out: Path) -> Path:
         f"| Plan: seeded call returned a vector region | {_rate([r for r in plans if r.get('seed_status') not in ('', 'skipped')], lambda r: r.get('seed_method') == 'vector')} |",
         f"| Plan: changeset proposed (never applied) | {_rate([r for r in plans if r.get('proposal_status')], lambda r: r.get('proposal_status') == 'ok')} |",
     ]
-    hand = [row for row in ok if _number(row.get("hand_error_pct")) is not None]
-    lines.append(
-        f"| Hand values within 0.5% | {_rate(hand, lambda r: abs(_number(r['hand_error_pct'])) <= 0.5)} |"
-    )
+    hand = [row for row in rows if _number(row.get("hand_expected_sf")) is not None]
+    lines.append(f"| Hand values within 0.5% | {_rate(hand, _hand_within)} |")
+    lines += _hand_section(rows)
     lines += ["", "## Page mix", ""]
     for column in (
         "kind",
@@ -812,27 +969,58 @@ def report(run_csv: Path, out: Path) -> Path:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def inside_repository(path: Path) -> bool:
+def inside(path: Path, root: Path) -> bool:
     try:
-        path.resolve().relative_to(REPO_ROOT)
+        path.resolve().relative_to(root.resolve())
     except ValueError:
         return False
     return True
 
 
+def inside_repository(path: Path) -> bool:
+    return inside(path, REPO_ROOT)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("inventory", "sample", "run", "report"))
+    parser.add_argument(
+        "command", choices=("inventory", "sample", "run", "report", "compare")
+    )
     parser.add_argument("--source", type=Path)
     parser.add_argument("--out", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--count", type=int, default=30)
     parser.add_argument("--max-mb", type=float, default=150.0)
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--run", type=Path)
+    parser.add_argument("--before", type=Path)
     args = parser.parse_args(argv)
     if inside_repository(args.out):
         parser.error(
             "--out must be outside the repository (the corpus is confidential)"
+        )
+    if args.source is not None and inside(args.out, args.source):
+        parser.error("--out must be outside --source (the source is read-only)")
+    needed = {
+        "inventory": ("source",),
+        "report": ("run",),
+        "compare": ("before", "run"),
+    }.get(args.command, ())
+    if args.command == "sample" and not (args.out / "inventory.csv").is_file():
+        needed = ("source",)
+    missing = [name for name in needed if vars(args)[name] is None]
+    if missing:
+        parser.error(f"{args.command} needs --{', --'.join(missing)}")
+    for name in ("run", "before"):
+        given = vars(args)[name]
+        if name in needed and inside_repository(given):
+            parser.error(f"--{name} must be outside the repository")
+        if name in needed and args.source is not None and inside(given, args.source):
+            parser.error(f"--{name} must be outside --source (the source is read-only)")
+        if name in needed and not given.is_file():
+            parser.error(f"--{name} {given} does not exist")
+    if args.command == "run" and not (args.out / "sample.csv").is_file():
+        parser.error(
+            "run needs sample.csv in --out; run the sample command with --source first"
         )
     args.out.mkdir(parents=True, exist_ok=True)
     if args.command == "inventory":
@@ -851,6 +1039,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(row["rel"])
     elif args.command == "run":
         print(run(args.out, args.timeout, sys.executable))
+    elif args.command == "compare":
+        print(
+            compare(
+                args.before,
+                args.run,
+                args.run.with_name(
+                    args.run.stem.replace("run_", "compare_", 1) + ".md"
+                ),
+            )
+        )
     else:
         print(
             report(

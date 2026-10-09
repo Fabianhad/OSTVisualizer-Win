@@ -73,6 +73,7 @@ namespace ost_pdf
         int subpath_index;
         int segment_index;
     };
+    using PathBox = std::tuple<float, float, float, float>;
     struct PDFPathExtraction
     {
         std::vector<PDFPathItem> items;
@@ -100,7 +101,8 @@ namespace ost_pdf
             int page_index) const;
         PDFPathExtraction extract_path_items(
             int page_index,
-            std::size_t max_items) const;
+            std::size_t max_items,
+            std::optional<PathBox> box = std::nullopt) const;
         std::vector<PDFTextRun> extract_text_runs(int page_index) const;
         std::optional<RenderedPage> render_page(
             int page_index,

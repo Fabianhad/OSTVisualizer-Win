@@ -92,8 +92,26 @@ TOOLS = (
         "factors and the page-points-to-OST-inches factor (ost-takeoff server). "
         "Use when you work on the bid open in the running OST Visualizer app. For "
         "other bids or databases, or when the app is closed, use list_pages in the "
-        "ost-visualizer server. " + UNTRUSTED_NOTE,
-        _schema({"bid_uid": _BID_UID, "cursor": _CURSOR, "limit": _LIMIT}),
+        "ost-visualizer server. With text_hints true (at most 25 sheets per "
+        "page of results) each sheet also gets text_hints read from the PDF text: "
+        "the sheet number found in the title block or next to a SHEET NO label, "
+        "scale_candidates with the view each scale label belongs to, plan_scale "
+        "(resolved only when exactly one plan scale is found; otherwise check the "
+        "candidates and confirm with propose_scale), text_extractable, and "
+        "title_block_crop_pts, a page-points crop to pass to render_sheet when "
+        "the text is outlined or the page is a scan. " + UNTRUSTED_NOTE,
+        _schema(
+            {
+                "bid_uid": _BID_UID,
+                "cursor": _CURSOR,
+                "limit": _LIMIT,
+                "text_hints": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Add sheet number, scale and title block hints.",
+                },
+            }
+        ),
     ),
     ToolSpec(
         COMMAND_RENDER_SHEET,
@@ -161,7 +179,9 @@ TOOLS = (
         "color, paint (stroke, fill or stroke_fill), curve and a kind guess (wall: "
         "heavy or filled, dashed, thin, symbol: small closed shape such as a "
         "section bubble or tag); new_fields lists these added fields. Use kinds "
-        "and widths to choose find_regions filters.",
+        "and widths to choose find_regions filters; suggested_min_width is the "
+        "wall width find_regions uses by default. extraction_scope is box when "
+        "the whole page had too many pieces and only the box was read.",
         _schema(
             {
                 "page_uid": _PAGE_UID,
@@ -222,6 +242,8 @@ TOOLS = (
         "Propose a page scale from two points and their real distance and/or a "
         "named scale preset. Returns the scale, its error against the measured "
         "distance and a high-impact assumption the user must accept. "
+        "dimension_check compares the scale with a dimension string printed "
+        "near the two points (agrees within 2%; null when none is found). "
         + CHANGESET_NOTE
         + " "
         + UNTRUSTED_NOTE,
@@ -261,7 +283,11 @@ TOOLS = (
         "closing-segment assumption in propose_element, high impact above "
         "12 in. leak_risk is true when a gap was closed or a fill escaped. "
         "Polygons and holes are in OST inches (ost_inches); gap and symbol "
-        "points are in page points (page_pts_y_down).",
+        "points are in page points (page_pts_y_down). Without min_width the "
+        "page's suggested_min_width is applied and filters.min_width_source "
+        "says so; pass min_width 0 to keep every width. extraction_scope is box "
+        "when only the box could be read, and truncated stays true if even the "
+        "box had too many pieces.",
         _schema(
             {
                 "page_uid": _PAGE_UID,
@@ -273,7 +299,8 @@ TOOLS = (
                     "type": "number",
                     "minimum": 0,
                     "description": "Leave out stroked lines thinner than this, in "
-                    "page points; filled shapes are kept.",
+                    "page points; filled shapes are kept. Defaults to the page's "
+                    "suggested wall width; 0 turns the filter off.",
                 },
                 "exclude_dashed": {"type": "boolean", "default": True},
                 "exclude_thin_curves": {"type": "boolean", "default": True},
@@ -304,7 +331,10 @@ TOOLS = (
         COMMAND_PROPOSE_ELEMENT,
         "Propose a slab from a polygon in OST inches or a find_regions region. "
         "A missing thickness or top elevation becomes a high-impact assumption; "
-        "closed gaps become closing-segment assumptions. "
+        "closed gaps become closing-segment assumptions. Region outlines and "
+        "holes are simplified (0.25 in tolerance, area kept within 0.1%); "
+        "geometry reports vertex counts, area_change_pct and holes_dropped "
+        "(holes crossing the outline, recorded as an assumption). "
         + CHANGESET_NOTE
         + " "
         + UNTRUSTED_NOTE,

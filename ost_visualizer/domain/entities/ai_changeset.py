@@ -157,7 +157,7 @@ class ProposedTakeoff:
         for ring in (self.polygon, *self.holes):
             _validate_ring(ring)
         for hole in self.holes:
-            if not _ring_within(hole, self.polygon):
+            if not ring_within(hole, self.polygon):
                 raise ChangesetError(
                     ERROR_INVALID_GEOMETRY,
                     "Every hole must lie inside its slab outline",
@@ -204,7 +204,7 @@ def _properly_cross(first_start, first_end, second_start, second_end) -> bool:
     return d1 * d2 < 0.0 and d3 * d4 < 0.0
 
 
-def _ring_within(inner: Tuple[float, ...], outer: Tuple[float, ...]) -> bool:
+def ring_within(inner: Tuple[float, ...], outer: Tuple[float, ...]) -> bool:
     inner_points = _ring_points(inner)
     outer_points = _ring_points(outer)
     if abs(polygon_area(inner)) >= abs(polygon_area(outer)):

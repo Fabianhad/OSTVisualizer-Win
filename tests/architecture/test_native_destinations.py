@@ -80,6 +80,34 @@ class NativeDestinationTests(unittest.TestCase):
             check_architecture.cmake_destination_problems(missing),
         )
 
+    def test_the_checker_reports_cmake_problems_as_cpp_violations(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        broken = self.text.replace(
+            "nanobind_add_module(ost_snap", "add_library(ost_snap"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            lists = Path(directory) / "CMakeLists.txt"
+            lists.write_text(broken, encoding="utf-8")
+            for path, expected in (
+                (lists, check_architecture.cmake_destination_problems(broken)),
+                (Path(directory) / "missing.txt", []),
+            ):
+                with self.subTest(path=path.name):
+                    found = []
+                    with mock.patch.object(
+                        check_architecture, "CMAKE_LISTS", path
+                    ), mock.patch.object(check_architecture, "violations", found):
+                        check_architecture.check_cpp_extensions()
+                    self.assertEqual(
+                        [v.message for v in found if v.filepath == path], expected
+                    )
+                    self.assertTrue(
+                        all(v.category == "cpp" for v in found if v.filepath == path)
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

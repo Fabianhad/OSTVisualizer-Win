@@ -77,8 +77,8 @@ class AiTakeoffWriteCommands:
             COMMAND_UPDATE_ASSUMPTION: self._update_assumption,
         }
 
-    def _propose_scale(self, arguments: dict) -> dict:
-        return self._proposal.propose_scale(
+    def _propose_scale(self, arguments: dict) -> Callable[[], dict]:
+        return self._proposal.plan_scale(
             arguments.get("page_uid"),
             arguments.get("p1_pts"),
             arguments.get("p2_pts"),
@@ -107,8 +107,8 @@ class AiTakeoffWriteCommands:
             limit=arguments.get("limit"),
         )
 
-    def _propose_element(self, arguments: dict) -> dict:
-        return self._proposal.propose_element(
+    def _propose_element(self, arguments: dict) -> Callable[[], dict]:
+        return self._proposal.plan_element(
             arguments.get("kind"),
             arguments.get("page_uid"),
             polygon_ost=arguments.get("polygon_ost"),

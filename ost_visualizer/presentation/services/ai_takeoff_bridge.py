@@ -352,12 +352,19 @@ class TakeoffCommandBridge(QtCore.QObject):
         socket.flush()
         socket.disconnectFromServer()
 
-    def _list_sheets(self, arguments: dict) -> dict:
-        return self._read_service.list_sheets(
+    def _list_sheets(self, arguments: dict):
+        text_hints = arguments.get("text_hints")
+        result = self._read_service.list_sheets(
             bid_uid=arguments.get("bid_uid"),
             cursor=arguments.get("cursor"),
             limit=arguments.get("limit"),
+            text_hints=text_hints,
         )
+        if text_hints is not True:
+            return result
+        snapshots = self._read_service.sheet_hint_snapshots(result)
+        service = self._read_service
+        return lambda: service.sheet_text_hints(result, snapshots)
 
     def _get_quantities(self, arguments: dict) -> dict:
         return self._read_service.get_quantities(

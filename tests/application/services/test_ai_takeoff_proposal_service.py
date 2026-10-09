@@ -10,6 +10,7 @@ from ost_visualizer.application.dtos.ai_takeoff_dtos import (
 from ost_visualizer.application.dtos.pdf_metadata_dtos import (
     PdfPageInfoDto,
     PdfPathStyleDto,
+    PdfTextRunDto,
     PdfVectorSegmentDto,
 )
 from ost_visualizer.application.services.ai_changeset_store import (
@@ -22,6 +23,7 @@ from ost_visualizer.application.services.ai_takeoff_proposal_service import (
     MAX_REGIONS_RETURNED,
     AiTakeoffProposalService,
     RasterResult,
+    _RegionRecord,
     _sealed_openings,
 )
 from ost_visualizer.domain.entities.ai_changeset import (
@@ -127,6 +129,109 @@ class ScaleProposalTests(ProposalTestCase):
         )["data"]
         self.assertEqual(data["scale"]["sf1_sf2"], [0.25, 12.0])
         self.assertAlmostEqual(data["scale"]["error_pct"], 0.0)
+
+    def dimension_text(self, text, x=300.0, y=90.0):
+        self.pdf.runs = [
+            PdfTextRunDto(
+                text,
+                left=x,
+                top=PAGE_HEIGHT - y,
+                right=x + 30,
+                bottom=PAGE_HEIGHT - y - 8,
+            )
+        ]
+
+    def test_a_preset_is_checked_against_a_nearby_dimension(self):
+        self.dimension_text("24'-0\"")
+        data = self.service_m1b.propose_scale(
+            "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        check = data["scale"]["dimension_check"]
+        self.assertEqual(
+            (check["real_in"], check["error_pct"], check["agrees"]), (288.0, 0.0, True)
+        )
+        self.assertEqual(
+            check["text"], {"value": "24'-0\"", "untrusted": True, "truncated": False}
+        )
+        self.assertNotIn("dimension", data["assumptions"][0]["reason"]["value"])
+
+    def test_a_disagreeing_dimension_is_reported_in_the_assumption(self):
+        self.dimension_text("30'-0\"")
+        data = self.service_m1b.propose_scale(
+            "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        check = data["scale"]["dimension_check"]
+        self.assertFalse(check["agrees"])
+        self.assertAlmostEqual(check["error_pct"], 20.0)
+        self.assertIn("dimension", data["assumptions"][0]["reason"]["value"])
+        self.assertEqual(data["assumptions"][0]["impact"], IMPACT_HIGH)
+
+    def test_the_nearest_dimension_is_used(self):
+        self.pdf.runs = [
+            PdfTextRunDto(
+                "30'-0\"",
+                left=300,
+                top=PAGE_HEIGHT - 130,
+                right=330,
+                bottom=PAGE_HEIGHT - 138,
+            ),
+            PdfTextRunDto(
+                "24'-0\"",
+                left=300,
+                top=PAGE_HEIGHT - 90,
+                right=330,
+                bottom=PAGE_HEIGHT - 98,
+            ),
+        ]
+        data = self.service_m1b.propose_scale(
+            "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        self.assertEqual(data["scale"]["dimension_check"]["real_in"], 288.0)
+
+    def test_other_text_and_raster_pages_give_no_dimension_check(self):
+        self.pdf.runs = [
+            PdfTextRunDto(
+                "FOUNDATION PLAN",
+                left=300,
+                top=PAGE_HEIGHT - 90,
+                right=400,
+                bottom=PAGE_HEIGHT - 98,
+            )
+        ]
+        data = self.service_m1b.propose_scale(
+            "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        self.assertIsNone(data["scale"]["dimension_check"])
+        self.dimension_text("24'-0\"")
+        raster = self.service_m1b.propose_scale(
+            "p3", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        self.assertIsNone(raster["scale"]["dimension_check"])
+        self.assertEqual(raster["scale"]["page_uid"], "p3")
+
+    def test_dimensions_far_from_the_measured_points_are_ignored(self):
+        self.dimension_text("24'-0\"", x=300.0, y=600.0)
+        data = self.service_m1b.propose_scale(
+            "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        self.assertIsNone(data["scale"]["dimension_check"])
+
+    def test_the_scale_proposal_can_be_split_for_a_worker(self):
+        self.dimension_text("24'-0\"")
+        finish = self.service_m1b.plan_scale(
+            "p1", [100, 100], [532, 100], real_in=288.0
+        )
+        self.assertEqual(self.proposals_count(), 0)
+        data = finish()["data"]
+        self.assertEqual(data["scale"]["dimension_check"]["agrees"], True)
+        self.assertEqual(self.proposals_count(), 1)
+
+    def proposals_count(self):
+        return len(
+            self.store.open_for_bid(
+                self.project.bid_ref.file_path, self.project.bid_ref.bid_uid
+            )
+        )
 
     def test_invalid_scale_requests(self):
         self.assert_error(
@@ -1135,6 +1240,7 @@ class FindRegionFilterTests(ProposalTestCase):
                 "colors": None,
                 "min_area_sf": 0.0,
                 "symbol_max_pts": 48.0,
+                "min_width_source": "none",
             },
         )
         self.assertEqual(
@@ -1154,6 +1260,7 @@ class FindRegionFilterTests(ProposalTestCase):
                 "colors": ["#abcdef"],
                 "min_area_sf": 3.0,
                 "symbol_max_pts": 10.0,
+                "min_width_source": "given",
             },
         )
 
@@ -1450,6 +1557,77 @@ class FindRegionFilterTests(ProposalTestCase):
         (wider,) = self.find(seed_pts=[15, 15], max_gap_in=K * 1.01)["data"]["regions"]
         self.assertAlmostEqual(wider["unlocated_gaps_up_to_in"], K * 1.01)
 
+    def walled_page(self):
+        rooms = []
+        for index in range(6):
+            left = 50 + index * 90
+            rooms += _styled_rect(left, 100, left + 80, 300)
+        split = [_styled(50, 200, 130, 200, style=THIN_STYLE)]
+        hatch = [_styled(10, 600 + i, 40, 600 + i, style=THIN_STYLE) for i in range(40)]
+        return rooms + split + hatch
+
+    def test_a_suggested_wall_width_is_applied_by_default(self):
+        self.pdf.segments = self.walled_page()
+        data = self.find()["data"]
+        self.assertEqual(data["total_count"], 6)
+        self.assertEqual(data["filters"]["min_width"], 2.0)
+        self.assertEqual(data["filters"]["min_width_source"], "suggested")
+        self.assertEqual(data["excluded"]["thin"], 41)
+        given = self.find(min_width=0.1)["data"]
+        self.assertEqual(given["total_count"], 8)
+        self.assertEqual(
+            (given["filters"]["min_width"], given["filters"]["min_width_source"]),
+            (0.1, "given"),
+        )
+        off = self.find(min_width=0)["data"]
+        self.assertEqual(off["total_count"], 8)
+        self.assertEqual(off["excluded"]["thin"], 0)
+
+    def test_a_truncated_page_is_read_again_inside_the_box(self):
+        self.pdf.segments = self.three_rooms()
+        whole = self.find()["data"]
+        self.assertEqual(
+            (whole["extraction_scope"], whole["extraction_truncated"]), ("page", False)
+        )
+        self.pdf.truncated = True
+        boxed = self.find(bbox=[90, 90, 210, 210], min_width=0)["data"]
+        self.assertEqual(
+            (boxed["extraction_scope"], boxed["extraction_truncated"]), ("box", False)
+        )
+        self.assertEqual(boxed["total_count"], 1)
+        self.assertEqual(len(self.pdf.boxes), 1)
+        self.pdf.box_truncated = True
+        still = self.find(bbox=[90, 90, 210, 210], min_width=0)["data"]
+        self.assertEqual(
+            (still["extraction_scope"], still["extraction_truncated"]), ("box", True)
+        )
+
+    def test_the_suggested_width_keeps_dashed_lines_the_caller_asked_for(self):
+        page = self.walled_page()
+        page[24] = _styled(50, 200, 130, 200, style=DASH_STYLE)
+        self.pdf.segments = page
+        kept = self.find(exclude_dashed=False)["data"]
+        self.assertEqual(kept["filters"]["min_width_source"], "suggested")
+        self.assertEqual(
+            (kept["total_count"], kept["excluded"]["thin"], kept["excluded"]["dashed"]),
+            (8, 40, 0),
+        )
+        given = self.find(exclude_dashed=False, min_width=2.0)["data"]
+        self.assertEqual((given["total_count"], given["excluded"]["thin"]), (6, 41))
+        dropped = self.find()["data"]
+        self.assertEqual(
+            (dropped["total_count"], dropped["excluded"]["dashed"]), (6, 1)
+        )
+
+    def test_no_suggestion_without_two_width_classes(self):
+        self.pdf.segments = _rect(100, 100, 300, 300) + [_raw(100, 200, 300, 200)]
+        data = self.find()["data"]
+        self.assertEqual(data["total_count"], 3)
+        self.assertEqual(
+            (data["filters"]["min_width"], data["filters"]["min_width_source"]),
+            (None, "none"),
+        )
+
     def test_exclude_thin_curves_must_be_true_or_false(self):
         self.pdf.segments = _rect(100, 100, 300, 300)
         for value in ("no", 0, 1):
@@ -1468,6 +1646,109 @@ class FindRegionFilterTests(ProposalTestCase):
         self.pdf.segments = crowd
         self.assert_error("invalid_argument", self.find)
         self.assertEqual(self.find(min_width=1.0)["data"]["regions"], [])
+
+
+class RegionSimplificationTests(ProposalTestCase):
+    def propose(self, region_id):
+        return self.service_m1b.propose_element(
+            "slab", "p1", region_id=region_id, thickness_in=8.0, top_elev_in=0.0
+        )
+
+    def test_a_dense_traced_outline_is_simplified_before_the_proposal(self):
+        count = 2500
+        points = [
+            (
+                320 + 260 * math.cos(2 * math.pi * i / count),
+                370 + 260 * math.sin(2 * math.pi * i / count),
+            )
+            for i in range(count)
+        ]
+        self.pdf.segments = [
+            _raw(*a, *b) for a, b in zip(points, points[1:] + points[:1])
+        ]
+        (region,) = self.service_m1b.find_regions(
+            self.snapshot(), [50, 50, 600, 700], seed_pts=[320, 370], min_width=0
+        )["data"]["regions"]
+        self.assertEqual(len(region["polygon_ost"]) // 2, count)
+        data = self.propose(region["id"])["data"]
+        geometry = data["geometry"]
+        self.assertEqual(geometry["outline_vertices"][0], count)
+        self.assertLess(geometry["outline_vertices"][1], 2000)
+        self.assertLessEqual(abs(geometry["area_change_pct"]), 0.1)
+        self.assertEqual(geometry["holes_dropped"], 0)
+        self.assertEqual(
+            data["takeoffs"][0]["vertex_count"], geometry["outline_vertices"][1]
+        )
+        self.assertAlmostEqual(
+            data["quantity_delta"][0]["area_sf"],
+            region["area_sf"],
+            delta=region["area_sf"] * 0.001,
+        )
+
+    def test_the_element_proposal_can_be_split_for_a_worker(self):
+        self.pdf.segments = _rect(100, 100, 300, 300)
+        (region,) = self.service_m1b.find_regions(
+            self.snapshot(), [50, 50, 600, 700], seed_pts=[200, 200], min_width=0
+        )["data"]["regions"]
+        before = len(
+            self.store.open_for_bid(
+                self.project.bid_ref.file_path, self.project.bid_ref.bid_uid
+            )
+        )
+        finish = self.service_m1b.plan_element(
+            "slab", "p1", region_id=region["id"], thickness_in=8.0, top_elev_in=0.0
+        )
+        self.assertEqual(
+            len(
+                self.store.open_for_bid(
+                    self.project.bid_ref.file_path, self.project.bid_ref.bid_uid
+                )
+            ),
+            before,
+        )
+        data = finish()["data"]
+        self.assertEqual(data["geometry"]["holes_dropped"], 0)
+        self.assertEqual(
+            len(
+                self.store.open_for_bid(
+                    self.project.bid_ref.file_path, self.project.bid_ref.bid_uid
+                )
+            ),
+            before + 1,
+        )
+        self.assert_error(
+            "not_found",
+            lambda: self.service_m1b.plan_element("slab", "p1", region_id="r-missing"),
+        )
+
+    def test_a_traced_hole_that_crosses_its_outline_is_left_out_and_recorded(self):
+        record = _RegionRecord(
+            "p1",
+            (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0),
+            (
+                (100.0, 100.0, 160.0, 100.0, 160.0, 160.0, 100.0, 160.0),
+                (-10.0, 200.0, 50.0, 200.0, 50.0, 250.0, -10.0, 250.0),
+            ),
+            (),
+            False,
+            K,
+        )
+        region_id = self.service_m1b._store_region(record)
+        data = self.propose(region_id)["data"]
+        self.assertEqual(data["takeoffs"][0]["hole_count"], 1)
+        self.assertEqual(data["geometry"]["holes_dropped"], 1)
+        (other,) = data["assumptions"]
+        self.assertEqual((other["subject"], other["impact"]), ("other", IMPACT_NORMAL))
+        self.assertIn("1 traced hole", other["reason"]["value"])
+        self.assertEqual(data["blocking_assumption_ids"], [])
+
+    def test_given_polygons_are_not_simplified(self):
+        noisy = [0.0, 0.0, 240.0, 0.1, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0]
+        data = self.service_m1b.propose_element(
+            "slab", "p1", polygon_ost=noisy, thickness_in=8.0, top_elev_in=0.0
+        )["data"]
+        self.assertEqual(data["takeoffs"][0]["vertex_count"], 5)
+        self.assertNotIn("geometry", data)
 
 
 class RasterRegionTests(ProposalTestCase):

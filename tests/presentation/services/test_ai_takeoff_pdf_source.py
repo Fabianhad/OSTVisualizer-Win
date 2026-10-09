@@ -43,9 +43,9 @@ class _RecordingRenderer:
             return self._open_result
         return self._real.open(file_path)
 
-    def extract_path_items(self, page_index, max_items):
+    def extract_path_items(self, page_index, max_items, box=None):
         self._calls.append("extract")
-        return self._real.extract_path_items(page_index, max_items)
+        return self._real.extract_path_items(page_index, max_items, box)
 
     def close(self):
         self._calls.append("close")
@@ -223,6 +223,29 @@ class PageCachePdfSourceTests(unittest.TestCase):
         source.release()
         source.get_path_segments(str(self.pdf), 0)
         self.assertEqual(calls.count("open"), 4)
+
+    def test_a_box_extracts_only_the_pieces_inside_it(self):
+        pdf = write_content_pdf(
+            self.directory / "boxed.pdf",
+            "10 10 m 50 10 l S 300 300 m 340 300 l S",
+            page_boxes="/MediaBox [0 0 612 792] /CropBox [5 5 607 787]",
+        )
+        boxed = self.source.get_path_segments(str(pdf), 0, (280.0, 280.0, 350.0, 310.0))
+        self.assertEqual([(s.x1, s.x2) for s in boxed.segments], [(295.0, 335.0)])
+        self.assertFalse(boxed.truncated)
+        beyond = self.source.get_path_segments(
+            str(pdf), 0, (336.0, 290.0, 400.0, 300.0)
+        )
+        self.assertEqual(list(beyond.segments), [])
+        self.assertEqual(len(self.source.get_path_segments(str(pdf), 0).segments), 2)
+        with patch.object(ai_takeoff_pdf_source, "MAX_PAGE_PATH_ITEMS", 1):
+            source = PageCachePdfSource(self.cache)
+            self.assertTrue(source.get_path_segments(str(pdf), 0).truncated)
+            self.assertFalse(
+                source.get_path_segments(
+                    str(pdf), 0, (280.0, 280.0, 350.0, 310.0)
+                ).truncated
+            )
 
     def test_failed_extractions_are_not_cached(self):
         calls = []

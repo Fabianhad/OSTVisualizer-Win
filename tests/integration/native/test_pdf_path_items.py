@@ -184,6 +184,121 @@ class PdfPathItemsTests(unittest.TestCase):
         self.assertFalse(exact.truncated)
         self.assertEqual(len(exact.items), 4)
 
+    def test_a_box_limits_the_pieces_and_the_cap_counts_only_the_box(self):
+        content = "10 10 m 50 10 l S 300 300 m 340 300 l S 90 200 m 400 200 l S"
+        path = write_content_pdf(Path(self.directory.name) / "boxed.pdf", content)
+        renderer = ost_pdf.PDFRenderer()
+        self.assertTrue(renderer.open(str(path)))
+        try:
+            whole = renderer.extract_path_items(0, 2)
+            self.assertTrue(whole.truncated)
+            self.assertEqual(len(whole.items), 2)
+            boxed = renderer.extract_path_items(0, 1, (280.0, 250.0, 360.0, 350.0))
+            self.assertFalse(boxed.truncated)
+            self.assertEqual([(i.x1, i.x2) for i in boxed.items], [(300.0, 340.0)])
+            crossing = renderer.extract_path_items(0, CAP, (100.0, 150.0, 120.0, 250.0))
+            self.assertEqual([(i.x1, i.x2) for i in crossing.items], [(90.0, 400.0)])
+            self.assertEqual(crossing.items[0].object_id, "2")
+            touching = renderer.extract_path_items(0, CAP, (50.0, 0.0, 60.0, 10.0))
+            self.assertEqual([(i.x1, i.x2) for i in touching.items], [(10.0, 50.0)])
+            empty = renderer.extract_path_items(0, CAP, (500.0, 500.0, 600.0, 600.0))
+            self.assertEqual((list(empty.items), empty.truncated), ([], False))
+            self.assertEqual(len(renderer.extract_path_items(0, CAP, None).items), 3)
+        finally:
+            renderer.close()
+
+    def test_box_boundaries(self):
+        content = (
+            "10 10 m 50 10 l S "
+            "0 100 m 400 100 l S "
+            "200 200 m 200 260 l S "
+            "300 300 m 340 300 l 340 340 l 300 340 l h S"
+        )
+        path = write_content_pdf(Path(self.directory.name) / "edges.pdf", content)
+        renderer = ost_pdf.PDFRenderer()
+        self.assertTrue(renderer.open(str(path)))
+        try:
+
+            def pieces(box):
+                return [
+                    (i.object_id, i.x1, i.y1, i.x2, i.y2)
+                    for i in renderer.extract_path_items(0, CAP, box).items
+                ]
+
+            self.assertEqual(
+                pieces((150.0, 90.0, 160.0, 110.0)), [("1", 0.0, 100.0, 400.0, 100.0)]
+            )
+            self.assertEqual(
+                pieces((200.0, 260.0, 200.0, 260.0)),
+                [("2", 200.0, 200.0, 200.0, 260.0)],
+            )
+            self.assertEqual(
+                pieces((340.0, 320.0, 360.0, 330.0)),
+                [("3", 340.0, 300.0, 340.0, 340.0)],
+            )
+            self.assertEqual(pieces((500.0, 500.0, 500.0, 500.0)), [])
+            self.assertEqual(
+                pieces((160.0, 110.0, 150.0, 90.0)), pieces((150.0, 90.0, 160.0, 110.0))
+            )
+            for bad in (
+                (float("nan"), 0.0, 10.0, 10.0),
+                (0.0, 0.0, float("inf"), 10.0),
+            ):
+                with self.subTest(box=bad):
+                    with self.assertRaises(ValueError):
+                        renderer.extract_path_items(0, CAP, bad)
+        finally:
+            renderer.close()
+
+    def test_truncation_means_a_piece_was_left_out(self):
+        path = write_content_pdf(
+            Path(self.directory.name) / "trunc.pdf",
+            "10 10 m 100 10 l S BT /F1 12 Tf 50 50 Td (Hi) Tj ET 120 120 m 130 120 l S 0 300 m 300 300 l S",
+        )
+        renderer = ost_pdf.PDFRenderer()
+        self.assertTrue(renderer.open(str(path)))
+        try:
+            whole = renderer.extract_path_items(0, 1)
+            self.assertEqual((len(whole.items), whole.truncated), (1, True))
+            only_text_after = renderer.extract_path_items(0, 1, (0.0, 0.0, 110.0, 60.0))
+            self.assertEqual(
+                (len(only_text_after.items), only_text_after.truncated), (1, False)
+            )
+            boxed = renderer.extract_path_items(0, 1, (100.0, 100.0, 200.0, 200.0))
+            self.assertEqual((len(boxed.items), boxed.truncated), (1, False))
+            two = renderer.extract_path_items(0, 1, (0.0, 0.0, 400.0, 400.0))
+            self.assertEqual((len(two.items), two.truncated), (1, True))
+        finally:
+            renderer.close()
+
+    def test_ids_do_not_depend_on_the_box(self):
+        path = write_content_pdf(
+            Path(self.directory.name) / "ids.pdf",
+            "10 10 m 100 10 l 100 300 l 10 300 l S",
+        )
+        renderer = ost_pdf.PDFRenderer()
+        self.assertTrue(renderer.open(str(path)))
+        try:
+
+            def keyed(box):
+                return {
+                    (i.object_id, i.subpath_index, i.segment_index): (
+                        i.x1,
+                        i.y1,
+                        i.x2,
+                        i.y2,
+                    )
+                    for i in renderer.extract_path_items(0, CAP, box).items
+                }
+
+            whole = keyed(None)
+            boxed = keyed((50.0, 250.0, 200.0, 400.0))
+            self.assertEqual(len(boxed), 2)
+            for key, piece in boxed.items():
+                self.assertEqual(whole[key], piece)
+        finally:
+            renderer.close()
+
     def test_text_and_zero_length_pieces_are_skipped(self):
         items = self.items(
             "BT /F1 12 Tf 10 10 Td (Hello) Tj ET 5 5 m 5 5 l S 1 1 m 2 1 l S"

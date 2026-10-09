@@ -23,6 +23,7 @@ from ost_visualizer.domain.services.ai_linework import (
     SegmentGrid,
     classify_linework,
     heavy_width_threshold,
+    suggested_min_width,
     is_symbol_box,
     rgba_hex,
     symbol_groups,
@@ -325,6 +326,65 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(classify_linework([]), [])
 
 
+class SuggestedMinWidthTests(unittest.TestCase):
+    def page(self, widths):
+        segments = []
+        for width, count in widths:
+            for index in range(count):
+                segments.append(
+                    _line(
+                        0,
+                        index * 3.0 + width * 1000,
+                        100,
+                        index * 3.0 + width * 1000,
+                        width=width,
+                    )
+                )
+        return segments
+
+    def test_the_lightest_heavy_width_class_is_suggested(self):
+        segments = self.page([(0.25, 200), (0.5, 80), (1.0199999, 40), (2.0, 30)])
+        self.assertEqual(suggested_min_width(segments), 1.0199999)
+
+    def test_the_median_sets_the_heavy_threshold(self):
+        segments = self.page([(1.0, 200), (1.4, 30), (2.0, 30)])
+        self.assertEqual(suggested_min_width(segments), 2.0)
+
+    def test_too_few_heavy_lines_steps_down_to_a_lighter_class(self):
+        segments = self.page([(0.25, 300), (0.7, 60), (2.0, 5)])
+        self.assertEqual(suggested_min_width(segments), 0.7)
+
+    def test_no_suggestion_for_one_width_or_no_widths(self):
+        self.assertIsNone(suggested_min_width(self.page([(1.0, 100)])))
+        self.assertIsNone(suggested_min_width([_line(0, 0, 10, 0)] * 30))
+        self.assertIsNone(suggested_min_width([]))
+        self.assertIsNone(suggested_min_width(self.page([(0.25, 300), (2.0, 5)])))
+
+    def test_a_class_is_suggested_at_its_thinnest_member(self):
+        segments = self.page([(0.25, 200), (1.016, 20), (1.024, 20)])
+        self.assertEqual(suggested_min_width(segments), 1.016)
+
+    def test_heavy_dashed_lines_do_not_become_the_suggestion(self):
+        segments = self.page([(0.25, 200), (0.5, 30)])
+        segments += [
+            _line(0, 900 + i, 100, 900 + i, width=5.0, dash=(4.0, 2.0))
+            for i in range(50)
+        ]
+        self.assertEqual(suggested_min_width(segments), 0.5)
+
+    def test_dashed_and_fill_only_lines_do_not_count(self):
+        segments = self.page([(0.25, 200), (2.0, 30)])
+        segments += [
+            _line(0, 900 + i, 100, 900 + i, width=5.0, dash=(4.0, 2.0))
+            for i in range(50)
+        ]
+        segments += [
+            _line(0, 950 + i, 100, 950 + i, width=0.0, stroked=False, filled=True)
+            for i in range(50)
+        ]
+        self.assertEqual(suggested_min_width(segments), 2.0)
+
+
 class SegmentGridTests(unittest.TestCase):
     def test_box_queries_return_every_overlapping_segment_once(self):
         rng = random.Random(3)
@@ -351,6 +411,31 @@ class SegmentGridTests(unittest.TestCase):
             self.assertLess(len(found), len(segments) / 4)
             for index in found:
                 self.assertEqual(grid.segment(index), segments[index])
+
+    def test_segments_spanning_many_cells_are_still_found(self):
+        rng = random.Random(5)
+        segments = [
+            (x, y, x + 1.0, y)
+            for x, y in (
+                (rng.uniform(0, 1000), rng.uniform(0, 1000)) for _ in range(5000)
+            )
+        ]
+        segments.append((0.0, 0.0, 1000.0, 1000.0))
+        grid = SegmentGrid(segments)
+        from ost_visualizer.domain.services.ai_linework import point_segment_distance
+
+        self.assertIn(5000, grid.query(400.0, 400.0, 401.0, 401.0))
+        for point in ((600.0, 590.0), (250.0, 262.0), (900.0, 880.0)):
+            nearest = min(
+                point_segment_distance(*point, *segment) for segment in segments
+            )
+            self.assertAlmostEqual(grid.distance(point, 20.0), nearest, places=9)
+
+    def test_point_distance_to_a_degenerate_segment(self):
+        from ost_visualizer.domain.services.ai_linework import point_segment_distance
+
+        self.assertEqual(point_segment_distance(3.0, 4.0, 0.0, 0.0, 0.0, 0.0), 5.0)
+        self.assertEqual(point_segment_distance(5.0, 1.0, 0.0, 0.0, 10.0, 0.0), 1.0)
 
     def test_nearest_distance(self):
         grid = SegmentGrid([(0.0, 0.0, 10.0, 0.0), (20.0, 0.0, 20.0, 10.0)])
@@ -391,6 +476,8 @@ class UncoveredRunTests(unittest.TestCase):
         ring = ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0))
         self.assertEqual(uncovered_runs(ring, SegmentGrid(walls), 1.0, 48.0), [])
         self.assertEqual(uncovered_runs(ring, SegmentGrid([]), 1.0, 48.0), [])
+        self.assertEqual(uncovered_runs(ring[:2], SegmentGrid([]), 1.0, 48.0), [])
+        self.assertEqual(uncovered_runs(ring, SegmentGrid([]), 0.0, 48.0), [])
 
     def test_runs_no_longer_than_twice_the_tolerance_are_noise(self):
         walls = [

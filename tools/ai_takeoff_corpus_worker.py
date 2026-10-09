@@ -1,6 +1,9 @@
 """Subprocess worker for tools.ai_takeoff_corpus (one PDF or one page per process).
 prepare <pdf> <work dir> <out json>: create a scratch Access bid with one page per
 PDF page and write its page records.
+sheets <prepared json> <out json>: read every page's sheet number and scale hints
+with the app's list_sheets(text_hints=true), so sheet numbers are made
+consistent across the PDF as in the app.
 page <prepared json> <page uid> <seeds json> <out json>: measure one page with the
 app's AI takeoff read service and proposal service over that bid. Only read
 calls and propose_element run; nothing is applied. The output holds metrics,
@@ -124,6 +127,109 @@ def prepare(pdf: Path, work: Path, out: Path) -> int:
     return 0
 
 
+def _scratch_read_service(prepared: dict, sidecar_dir: str, source, pages=None):
+    from ost_visualizer.application.services.ai_takeoff_read_service import (
+        AiTakeoffReadService,
+    )
+    from ost_visualizer.domain.entities.bid import Bid
+    from ost_visualizer.domain.entities.database_descriptor import DatabaseDescriptor
+    from ost_visualizer.domain.entities.identity_refs import BidRef
+    from ost_visualizer.domain.entities.page import build_pages_from_bid_data
+    from ost_visualizer.infrastructure.mdb.connection_manager import (
+        MdbConnectionManager,
+    )
+    from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+    from ost_visualizer.infrastructure.persistence.repositories.json_ai_takeoff_sidecar_repository import (
+        JsonAiTakeoffSidecarRepository,
+    )
+
+    db = prepared["db"]
+    if pages is None:
+        connections = MdbConnectionManager()
+        try:
+            records = MdbReader(connections).get_bid_data(db, prepared["bid_uid"])[3]
+        finally:
+            connections.close()
+        pages = list(build_pages_from_bid_data(records, []).values())
+    service = AiTakeoffReadService(
+        _ScratchProject(
+            BidRef(db, prepared["bid_uid"]),
+            Bid(uid=prepared["bid_uid"], name="Corpus scratch"),
+            pages,
+        ),
+        source,
+        JsonAiTakeoffSidecarRepository(Path(sidecar_dir)),
+        {db: DatabaseDescriptor.for_access(db, database_id="corpus")}.get,
+    )
+    return service, pages
+
+
+def sheet_hint_row(index: int, hints: dict) -> dict:
+    plan = hints["plan_scale"]
+    views = Counter(
+        candidate["view_kind"] or "none" for candidate in hints["scale_candidates"]
+    )
+    number = hints["sheet_number"]
+    return {
+        "index": index,
+        "sheet_number": "" if number is None else number["value"],
+        "sheet_number_source": hints["sheet_number_source"] or "",
+        "text_extractable": hints["text_extractable"],
+        "text_reason": hints["reason"] or "",
+        "plan_scale_status": plan["status"],
+        "plan_scale_label": plan["label"] or "",
+        "scale_candidates": len(hints["scale_candidates"]),
+        "scale_views": json.dumps(dict(views), sort_keys=True),
+        "title_block_crop": bool(hints["title_block_crop_pts"]),
+    }
+
+
+def sheets(prepared: dict, out: Path) -> int:
+    from PySide6 import QtWidgets
+    from ost_visualizer.presentation.services.ai_takeoff_pdf_source import (
+        PageCachePdfSource,
+    )
+    from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    cache = PageCache()
+    sidecars = tempfile.TemporaryDirectory()
+    try:
+        read, _pages = _scratch_read_service(
+            prepared, sidecars.name, PageCachePdfSource(cache)
+        )
+        order = {page["uid"]: page["index"] for page in prepared["pages"]}
+        rows = []
+        cursor = None
+        while True:
+            listed = read.list_sheets(cursor=cursor, text_hints=True)
+            snapshots = [
+                read.page_snapshot(sheet["page_uid"])
+                for sheet in listed["data"]["sheets"]
+            ]
+            hinted = read.sheet_text_hints(listed, snapshots)
+            for sheet in hinted["data"]["sheets"]:
+                rows.append(
+                    sheet_hint_row(order[sheet["page_uid"]], sheet["text_hints"])
+                )
+            cursor = listed["meta"].get("next_cursor")
+            if not cursor:
+                break
+    finally:
+        cache.clear()
+        sidecars.cleanup()
+    rows.sort(key=lambda row: row["index"])
+    out.write_text(json.dumps(rows), encoding="utf-8")
+    return 0
+
+
+def quadrants(width: float, height: float) -> list:
+    half_w, half_h = width / 2.0, height / 2.0
+    return [
+        (x, y, x + half_w, y + half_h) for y in (0.0, half_h) for x in (0.0, half_w)
+    ]
+
+
 class _ScratchProject:
     def __init__(self, bid_ref, bid, pages):
         self._bid_ref = bid_ref
@@ -141,12 +247,6 @@ class _ScratchProject:
 
     def get_page(self, page_uid):
         return next((page for page in self._pages if page.uid == page_uid), None)
-
-    def get_bid_conditions(self):
-        return {}
-
-    def get_all_takeoffs(self):
-        return []
 
     def get_page_takeoffs(self, page_uid):
         return []
@@ -221,23 +321,13 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
     from ost_visualizer.application.services.ai_takeoff_proposal_service import (
         AiTakeoffProposalService,
     )
-    from ost_visualizer.application.services.ai_takeoff_read_service import (
-        AiTakeoffReadService,
-    )
-    from ost_visualizer.domain.entities.bid import Bid
-    from ost_visualizer.domain.entities.database_descriptor import DatabaseDescriptor
-    from ost_visualizer.domain.entities.identity_refs import BidRef
-    from ost_visualizer.domain.entities.page import build_pages_from_bid_data
     from ost_visualizer.domain.services.ai_linework import (
         classify_linework,
         heavy_width_threshold,
     )
-    from ost_visualizer.infrastructure.mdb.connection_manager import (
-        MdbConnectionManager,
-    )
-    from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
-    from ost_visualizer.infrastructure.persistence.repositories.json_ai_takeoff_sidecar_repository import (
-        JsonAiTakeoffSidecarRepository,
+    from ost_visualizer.domain.services.ai_sheet_text import (
+        plan_scale,
+        scale_candidates,
     )
     from ost_visualizer.presentation.services.ai_region_raster import raster_fill_region
     from ost_visualizer.presentation.services.ai_takeoff_pdf_source import (
@@ -250,33 +340,16 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
     from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 
     QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    db = prepared["db"]
-    connections = MdbConnectionManager()
-    try:
-        pages = MdbReader(connections).get_bid_data(db, prepared["bid_uid"])[3]
-    finally:
-        connections.close()
-    page_list = list(build_pages_from_bid_data(pages, []).values())
     row = {"status": "ok"}
     cache = PageCache()
     source = PageCachePdfSource(cache)
     sidecars = tempfile.TemporaryDirectory()
     try:
-        bid_ref = BidRef(db, prepared["bid_uid"])
+        read, page_list = _scratch_read_service(prepared, sidecars.name, source)
 
         def service(pages_now):
-            return AiTakeoffReadService(
-                _ScratchProject(
-                    bid_ref,
-                    Bid(uid=prepared["bid_uid"], name="Corpus scratch"),
-                    pages_now,
-                ),
-                source,
-                JsonAiTakeoffSidecarRepository(Path(sidecars.name)),
-                {db: DatabaseDescriptor.for_access(db, database_id="corpus")}.get,
-            )
+            return _scratch_read_service(prepared, sidecars.name, source, pages_now)[0]
 
-        read = service(page_list)
         snapshot = read.page_snapshot(page_uid)
         info = source.get_page_info(snapshot.image_path, snapshot.page_index)
         width, height = snapshot.width_pts, snapshot.height_pts
@@ -305,7 +378,10 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
                 break
         lines = text_lines(runs)
         kind, title = classify_page(lines, width, height)
-        status, scale, hits = page_scale(lines)
+        status, legacy_scale, hits = page_scale(lines)
+        _text_status, domain_lines = read.page_text_lines(snapshot)
+        plan = plan_scale(scale_candidates(domain_lines))
+        scale = plan.candidate if plan.status == "resolved" else None
         status_code, linework, truncated = read.page_linework(snapshot)
         line_items = [line for _segment_id, line in linework]
         kinds = classify_linework(line_items)
@@ -320,10 +396,12 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
             outlined_text=len(raw_runs) == 0 and symbol_share >= OUTLINED_SYMBOL_SHARE,
             kind=kind,
             title=title[:80],
-            sheet_number=sheet_number(lines, width, height),
+            sheet_number_legacy=sheet_number(lines, width, height),
             scale_status=status,
-            scale_label="" if scale is None else scale.label,
+            scale_label="" if legacy_scale is None else legacy_scale.label,
             scale_hits=hits,
+            plan_scale_status=plan.status,
+            plan_scale_label="" if scale is None else scale.label,
             kinds_wall=kind_counts["wall"],
             kinds_dashed=kind_counts["dashed"],
             kinds_thin=kind_counts["thin"],
@@ -340,6 +418,13 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
             )
             return row
         row["scale_used"] = "default 1/8" if scale is None else scale.label
+        row["box_quadrants_truncated"] = ""
+        if truncated:
+            row["box_quadrants_truncated"] = sum(
+                1
+                for box in quadrants(width, height)
+                if read.page_linework_scoped(snapshot, box)[2]
+            )
         if scale is not None and scale.ost_per_point:
             page_list = [
                 (
@@ -360,6 +445,12 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
             lambda: proposal.find_regions(snapshot, whole, limit=50)
         )
         row.update(_region_summary("list", timing, listed))
+        if listed is not None:
+            row.update(
+                list_min_width=listed["data"]["filters"]["min_width"],
+                list_min_width_source=listed["data"]["filters"]["min_width_source"],
+                list_extraction_scope=listed["data"]["extraction_scope"],
+            )
         threshold = heavy_width_threshold(line_items)
         timing, filtered = _timed(
             lambda: proposal.find_regions(
@@ -417,7 +508,14 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
         )
         row["proposal_status"] = timing["status"]
         if proposed is not None:
-            row["proposal_assumptions"] = len(proposed["data"]["assumptions"])
+            geometry = proposed["data"]["geometry"]
+            row.update(
+                proposal_assumptions=len(proposed["data"]["assumptions"]),
+                proposal_outline_vertices=geometry["outline_vertices"][1],
+                proposal_hole_vertices=geometry["hole_vertices"][1],
+                proposal_area_change_pct=geometry["area_change_pct"],
+                proposal_holes_dropped=geometry["holes_dropped"],
+            )
         return row
     finally:
         cache.clear()
@@ -457,6 +555,8 @@ def main(argv=None) -> int:
     if command == "prepare":
         return prepare(Path(argv[0]), Path(argv[1]), Path(argv[2]))
     prepared = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
+    if command == "sheets":
+        return sheets(prepared, Path(argv[1]))
     row = measure_page(prepared, argv[1], json.loads(argv[2]))
     row["peak_mb"] = peak_mb()
     Path(argv[3]).write_text(json.dumps(row, default=str), encoding="utf-8")

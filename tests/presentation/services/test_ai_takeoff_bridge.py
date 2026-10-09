@@ -40,9 +40,23 @@ class FakeReadService:
         self.calls.append((name, kwargs))
         self.threads[name] = threading.get_ident()
 
-    def list_sheets(self, bid_uid=None, cursor=None, limit=None):
+    def list_sheets(self, bid_uid=None, cursor=None, limit=None, text_hints=None):
         self._record("list_sheets", bid_uid=bid_uid, cursor=cursor, limit=limit)
+        if text_hints:
+            return ok_result({"sheets": [{"page_uid": "p1"}, {"page_uid": "raster"}]})
         return ok_result({"sheets": []})
+
+    def sheet_hint_snapshots(self, result):
+        self._record("sheet_hint_snapshots")
+        return [
+            self.page_snapshot(sheet["page_uid"]) for sheet in result["data"]["sheets"]
+        ]
+
+    def sheet_text_hints(self, result, snapshots):
+        self._record("sheet_text_hints", pages=[snapshot.uid for snapshot in snapshots])
+        for sheet in result["data"]["sheets"]:
+            sheet["text_hints"] = {"text_extractable": False}
+        return result
 
     def get_quantities(self, bid_uid=None, group_by="condition"):
         self._record("get_quantities", bid_uid=bid_uid, group_by=group_by)
@@ -606,6 +620,22 @@ class BridgeThreadingTests(BridgeTestCase):
         self.assertEqual(data["image"]["width_px"], 20)
         self.assertTrue(data["image"]["png_base64"])
 
+    def test_sheet_text_hints_read_the_pdf_off_the_gui_thread(self):
+        gui_thread = threading.get_ident()
+        result = self.call("list_sheets", {"text_hints": True})
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            [sheet["text_hints"] for sheet in result["data"]["sheets"]],
+            [{"text_extractable": False}] * 2,
+        )
+        self.assertIn(
+            ("sheet_text_hints", {"pages": ["p1", "raster"]}), self.service.calls
+        )
+        self.assertEqual(self.service.threads["list_sheets"], gui_thread)
+        self.assertEqual(self.service.threads["page_snapshot"], gui_thread)
+        self.assertEqual(self.service.threads["sheet_hint_snapshots"], gui_thread)
+        self.assertNotEqual(self.service.threads["sheet_text_hints"], gui_thread)
+
     def test_raster_pages_answer_not_pdf_without_planning_a_crop(self):
         result = self.call("render_sheet", {"page_uid": "raster", "overlay_ids": []})
         self.assertEqual(result["status"], "not_pdf")
@@ -623,6 +653,7 @@ class BridgeThreadingTests(BridgeTestCase):
         ):
             self.assertTrue(self.call(command)["success"])
             self.assertEqual(self.service.threads[command], gui_thread)
+        self.assertNotIn("sheet_text_hints", self.service.threads)
 
 
 class DeferredWriteCommands:

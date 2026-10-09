@@ -19,6 +19,8 @@ DASH_MIN_PIECES = 3
 DASH_ANGLE_TOLERANCE_DEG = 2.0
 DASH_OFFSET_TOLERANCE_PTS = 0.5
 DASH_NEIGHBOUR_LIMIT = 128
+SUGGESTED_MIN_KEPT = 20
+WIDTH_CLASS_DECIMALS = 2
 _COMPACT_RATIO = 0.25
 _TINY_FRACTION = 0.25
 _MAX_GRID_SIDE = 512
@@ -107,6 +109,28 @@ def heavy_width_threshold(segments: Sequence[LineSegment]) -> float:
     if not widths:
         return HEAVY_MIN_WIDTH_PTS
     return max(HEAVY_MIN_WIDTH_PTS, HEAVY_WIDTH_RATIO * statistics.median(widths))
+
+
+def suggested_min_width(segments: Sequence[LineSegment]) -> Optional[float]:
+    widths = sorted(
+        float(segment.width)
+        for segment in segments
+        if segment.stroked and segment.width is not None and not segment.has_dash
+    )
+    classes: Dict[float, float] = {}
+    for width in widths:
+        key = round(width, WIDTH_CLASS_DECIMALS)
+        classes[key] = min(classes.get(key, width), width)
+    ordered = sorted(classes.values())
+    threshold = heavy_width_threshold(segments)
+    heavy = [width for width in ordered if width >= threshold]
+    position = ordered.index(heavy[0]) if heavy else len(ordered) - 1
+    while position > 0:
+        candidate = ordered[position]
+        if sum(1 for width in widths if width >= candidate) >= SUGGESTED_MIN_KEPT:
+            return candidate
+        position -= 1
+    return None
 
 
 def classify_linework(
