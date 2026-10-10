@@ -559,6 +559,22 @@ Persistence:
   Do not reintroduce per-call page loading. Plan View keeps one visible frame
   plus overscan rather than tiles: with page reuse a tile still costs several
   milliseconds per call, so tiling only pays off with incremental pan rendering.
+- PDFium is not thread safe, even across documents, so `ost_pdf` serializes
+  every PDFium call itself: init/shutdown, `open`, `close` (including the
+  destructor of a renderer that was never closed) and every page, text, path
+  and render method take one process-wide recursive mutex. It is a leaf lock:
+  methods take it with the GIL released (only the destructor, which locks only
+  while a document is still open, and library init/shutdown wait with the GIL
+  held), and it is never held while running Python or acquiring another lock,
+  so it always nests inside Python `pdfium_lock`, which stays the coarse
+  open-read-close lock for Plan View, snap and AI takeoff. Callers outside
+  those, such as `get_pdf_page_sizes` on the Cover Sheet thread pool and the
+  MCP `NativePdfMetadataProvider`, rely on the native lock alone.
+  Process-exit cleanup skips `FPDF_DestroyLibrary` when a killed thread still
+  owns the lock. `ost_pdf.pdfium_entry_counts()` returns
+  (entries, unlocked entries); `tests/integration/native/test_pdfium_lock_coverage.py`
+  requires every path to keep the unlocked count at 0. Do not add a PDFium
+  call outside a guarded method.
 - PDF snap vectors are read on the rendering worker through
   `PDFRenderingService.run_job_async`: the GUI thread captures an immutable
   `PdfSnapSource` (cache key, source layer, fallback size, overlay rectangle and

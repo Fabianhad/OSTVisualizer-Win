@@ -12,13 +12,76 @@
 #include <new>
 #include <stdexcept>
 #include <cstddef>
+#include <thread>
 #include <utility>
 namespace ost_pdf
 {
 #define DOC() (static_cast<FPDF_DOCUMENT>(doc_))
-    static std::mutex g_init_mutex;
     constexpr std::size_t kLoadedPageCapacity = 2;
-    static bool g_initialized = false;
+    static std::atomic<bool> g_initialized{false};
+    namespace
+    {
+        class PdfiumLock
+        {
+        public:
+            void lock()
+            {
+                mutex_.lock();
+                if (depth_++ == 0)
+                {
+                    owner_.store(std::this_thread::get_id());
+                }
+            }
+            bool try_lock()
+            {
+                if (!mutex_.try_lock())
+                {
+                    return false;
+                }
+                if (depth_++ == 0)
+                {
+                    owner_.store(std::this_thread::get_id());
+                }
+                return true;
+            }
+            void unlock()
+            {
+                if (--depth_ == 0)
+                {
+                    owner_.store(std::thread::id());
+                }
+                mutex_.unlock();
+            }
+            bool held_by_current_thread() const
+            {
+                return owner_.load() == std::this_thread::get_id();
+            }
+
+        private:
+            std::recursive_mutex mutex_;
+            std::atomic<std::thread::id> owner_{};
+            int depth_ = 0;
+        };
+        PdfiumLock &pdfium_lock()
+        {
+            static PdfiumLock *lock = new PdfiumLock();
+            return *lock;
+        }
+        std::atomic<std::uint64_t> g_pdfium_entries{0};
+        std::atomic<std::uint64_t> g_unlocked_pdfium_entries{0};
+        void note_pdfium_entry()
+        {
+            g_pdfium_entries.fetch_add(1);
+            if (!pdfium_lock().held_by_current_thread())
+            {
+                g_unlocked_pdfium_entries.fetch_add(1);
+            }
+        }
+    }
+    std::pair<std::uint64_t, std::uint64_t> pdfium_entry_counts()
+    {
+        return {g_pdfium_entries.load(), g_unlocked_pdfium_entries.load()};
+    }
     void RenderCancelToken::cancel()
     {
         cancelled_.store(true);
@@ -33,20 +96,26 @@ namespace ost_pdf
     }
     void initialize_pdfium()
     {
-        std::lock_guard<std::mutex> lock(g_init_mutex);
-        if (!g_initialized)
+        if (g_initialized.load())
         {
+            return;
+        }
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
+        if (!g_initialized.load())
+        {
+            note_pdfium_entry();
             FPDF_InitLibrary();
-            g_initialized = true;
+            g_initialized.store(true);
         }
     }
     void shutdown_pdfium()
     {
-        std::lock_guard<std::mutex> lock(g_init_mutex);
-        if (g_initialized)
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
+        if (g_initialized.load())
         {
+            note_pdfium_entry();
             FPDF_DestroyLibrary();
-            g_initialized = false;
+            g_initialized.store(false);
         }
     }
     namespace
@@ -150,7 +219,18 @@ namespace ost_pdf
         }
         struct PDFiumCleanup
         {
-            ~PDFiumCleanup() { shutdown_pdfium(); }
+            ~PDFiumCleanup()
+            {
+                // A thread stopped inside PDFium at process exit still owns the
+                // lock; leave the library to the OS instead of tearing it down.
+                PdfiumLock &lock = pdfium_lock();
+                if (!lock.try_lock())
+                {
+                    return;
+                }
+                shutdown_pdfium();
+                lock.unlock();
+            }
         };
         static PDFiumCleanup g_cleanup;
         FPDF_BOOL need_to_pause(IFSDK_PAUSE *pause)
@@ -240,8 +320,10 @@ namespace ost_pdf
     }
     bool PDFRenderer::open(const std::string &path)
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         close();
         last_error_.clear();
+        note_pdfium_entry();
         doc_ = FPDF_LoadDocument(path.c_str(), nullptr);
         if (doc_)
         {
@@ -251,15 +333,22 @@ namespace ost_pdf
     }
     void PDFRenderer::close()
     {
+        if (!doc_ && pages_.empty())
+        {
+            return;
+        }
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         close_pages();
         if (doc_)
         {
+            note_pdfium_entry();
             FPDF_CloseDocument(DOC());
             doc_ = nullptr;
         }
     }
     void *PDFRenderer::acquire_page(int page_index) const
     {
+        note_pdfium_entry();
         for (auto it = pages_.begin(); it != pages_.end(); ++it)
         {
             if (it->first == page_index)
@@ -288,6 +377,7 @@ namespace ost_pdf
     {
         for (const auto &entry : pages_)
         {
+            note_pdfium_entry();
             FPDF_ClosePage(static_cast<FPDF_PAGE>(entry.second));
         }
         pages_.clear();
@@ -306,10 +396,17 @@ namespace ost_pdf
     }
     int PDFRenderer::page_count() const
     {
-        return doc_ ? FPDF_GetPageCount(DOC()) : 0;
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
+        if (!doc_)
+        {
+            return 0;
+        }
+        note_pdfium_entry();
+        return FPDF_GetPageCount(DOC());
     }
     std::pair<double, double> PDFRenderer::page_size(int page_index) const
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
             return {0.0, 0.0};
@@ -325,10 +422,12 @@ namespace ost_pdf
     }
     std::string PDFRenderer::page_label(int page_index) const
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
             return {};
         }
+        note_pdfium_entry();
         unsigned long len = FPDF_GetPageLabel(DOC(), page_index, nullptr, 0);
         if (len <= 2)
         {
@@ -356,11 +455,13 @@ namespace ost_pdf
     }
     std::optional<PageInfo> PDFRenderer::page_info(int page_index) const
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
             return std::nullopt;
         }
         double media_w = 0.0, media_h = 0.0;
+        note_pdfium_entry();
         if (!FPDF_GetPageSizeByIndex(DOC(), page_index, &media_w, &media_h))
         {
             return std::nullopt;
@@ -431,6 +532,7 @@ namespace ost_pdf
     std::vector<std::tuple<float, float, float, float>> PDFRenderer::extract_path_segments(
         int page_index) const
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         std::vector<std::tuple<float, float, float, float>> result;
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
@@ -881,6 +983,7 @@ namespace ost_pdf
         std::size_t max_items,
         std::optional<PathBox> box) const
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         PDFPathExtraction result{{}, false};
         PathCollector collector(result, max_items, box);
         if (!doc_ || page_index < 0 || page_index >= page_count())
@@ -906,6 +1009,7 @@ namespace ost_pdf
     }
     std::vector<PDFTextRun> PDFRenderer::extract_text_runs(int page_index) const
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         std::vector<PDFTextRun> result;
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
@@ -1018,6 +1122,7 @@ namespace ost_pdf
         int rotation,
         RenderCancelToken *cancel_token)
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
             return std::nullopt;
@@ -1136,6 +1241,7 @@ namespace ost_pdf
         int rotation,
         RenderCancelToken *cancel_token)
     {
+        const std::lock_guard<PdfiumLock> guard(pdfium_lock());
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
             return std::nullopt;

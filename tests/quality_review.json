@@ -2088,6 +2088,18 @@
       ],
       "release_evidence": "Unreleased",
       "affected_result": "Checkboxes keep their accent when a window loses focus"
+    },
+    {
+      "file": "cpp_extensions/src/pdf/pdf_renderer.cpp",
+      "defect": "PDFium was not serialized: InfrastructureServiceProvider.get_pdf_page_sizes (Cover Sheet QThreadPool loader and import QThread) and NativePdfMetadataProvider ran open/page_count/page_size/page_label/page_info/extract/close outside pdfium_lock while Plan View rendered, and a renderer dropped without close(), reopen, and explicit shutdown/initialize entered PDFium with no lock on whatever thread ran them",
+      "proof": "RendererMethodLockTests and PythonCallerLockTests failed first against a probe-only build (30/30 checks reported unlocked PDFium entries, e.g. page sizes 8, metadata page_info 9, destructor 2, shutdown+initialize 2 of 2); a recording proxy confirmed only get_pdf_page_sizes and NativePdfMetadataProvider ran outside Python pdfium_lock",
+      "fix": "One process-wide recursive PDFium mutex inside ost_pdf, taken by init/shutdown, open, close (and so the destructor) and every page, text, path and render method; page_count releases the GIL; exit cleanup uses try_lock; pdfium_entry_counts() reports entries made without the lock",
+      "tests": [
+        "RendererMethodLockTests",
+        "PythonCallerLockTests"
+      ],
+      "release_evidence": "Cover Sheet background page-size reads shipped in 1.2.6.1 (edd74f4)",
+      "affected_result": "Every PDFium entry runs under one lock; Cover Sheet page-size reads wait for an in-flight render instead of racing it"
     }
   ],
   "removed_tests": [
@@ -15620,6 +15632,30 @@
         "Pages whose dashed analysis took between 20 s and 120 s before now skip it and report skipped_time_budget.",
         "The planar splitter stays quadratic on thousands of mutually crossing kept segments (synthetic only).",
         "Native C++ changes are covered by tests against real PDFium, not by mutation."
+      ]
+    },
+    {
+      "batch": "pdfium-lock-audit",
+      "findings": [
+        "Only ost_pdf links PDFium (ost_pdf_writer is QPDF only). Before the fix ost_pdf had no lock of its own; Python pdfium_lock (a threading.Lock) was the only serialization and covered only some callers.",
+        "Held pdfium_lock (all calls, by a recording proxy): PageRenderer render/frame/count/size/info/text/close via PageCache (Plan View render worker, GUI-thread page size/info/count, AI takeoff bridge thread), placement_mode.extract_pdf_snap_segments (render worker job) and PageCachePdfSource._extract (AI takeoff bridge thread).",
+        "Did not hold it: InfrastructureServiceProvider.get_pdf_page_sizes (Cover Sheet PdfMetadataLoader on QThreadPool.globalInstance() and the import ProgressDialog QThread, concurrent with the Plan View render worker in the app); NativePdfMetadataProvider get_page_info/get_text_runs/get_vector_segments (MCP read server: separate single-threaded stdio process, so unlocked but not concurrent in production; concurrent only inside the shared test process); tools/ai_takeoff_corpus_worker.prepare (separate single-threaded process); explicit ost_pdf.shutdown/initialize (tests only).",
+        "Unlocked on every path: ~PDFRenderer -> close() -> FPDF_ClosePage/FPDF_CloseDocument for a renderer never closed (PageCache dropped without clear(), a worker thread's thread-local renderer at thread exit, GC during interpreter finalization), open() closing a previous document, and the static PDFiumCleanup FPDF_DestroyLibrary at DLL detach. The parsed-page cache (pages_) is per renderer and only touched inside guarded methods.",
+        "Fix at the lowest layer: a recursive mutex inside ost_pdf. It is a leaf lock: taken with the GIL released by every bound method (page_count gained gil_scoped_release); only the destructor (only while a document is open) and init/shutdown wait with the GIL held, which cannot deadlock because no lock holder needs the GIL or another lock. It nests inside Python pdfium_lock and never around PageCache, rendering-service or snap locks; no GUI callback runs under it. Re-entry (page_info -> page_label -> page_count, open -> close) is handled by recursion.",
+        "Proof: a deterministic seam, ost_pdf.pdfium_entry_counts(), counts every PDFium entry and those made without the native lock on the calling thread. The new tests failed first on a probe-only build and pass with the lock; no threads are timed, no sleeps or retries.",
+        "Native mutation (scratch builds only: mutant source, objects and .pyd under the session scratchpad, module swapped in sys.modules including the shutdown subprocess; nothing written in the repository): control passes; 13/13 dropped-guard mutants killed. The all_page_info guard was removed as an equivalent mutant (every entry inside it goes through page_count/page_info, which lock). Surviving: replacing the exit cleanup try_lock with a blocking lock (untestable without a hook that parks a thread inside PDFium at exit).",
+        "Python mutation (in memory only): 8/8 killed; each mutant bypasses one caller's PDFium path (provider page sizes, three metadata reads, PageRenderer.close, PageCache size, snap extraction, AI path extraction) and its test fails on the entry count.",
+        "Access violation: the previous chase recorded the unlocked destructor and infrastructure callers as suspicions. They are now proven unlocked. A renderer finalized during interpreter shutdown, or dropped by a test's PageCache, while a daemon PDFRenderWorker or a QThreadPool page-size read is still inside PDFium, is a plausible cause of a crash after the summary, but no run reproduced it, so the fix is plausible, not confirmed."
+      ],
+      "tests_added": [
+        "tests/integration/native/test_pdfium_lock_coverage.py"
+      ],
+      "validation": "Baseline before changes: 14239 tests OK (40 skipped) with -X faulthandler, exit 0. After: full suite three times with -X faulthandler, run 1: 14250 OK (38 skipped) in 371.8 s; run 2: 14250 OK (38 skipped) in 310.0 s; run 3: 14250 OK (38 skipped) in 327.5 s, exit 0 and no fatal error each. Focused 11 OK; affected native 121, rendering/snap/provider/cover sheet 524, AI takeoff integration 37 (3 skipped), MCP server 153 and architecture 118 (3 skipped) OK. tools/check_architecture.py all 7 PASS; compileall exit 0; git diff --check and cr-at-eol clean. ost_pdf rebuilt (cmake --build cpp_extensions/build --config Release --target ost_pdf).",
+      "limitations": [
+        "The intermittent 0xC0000005 was not reproduced before or after; the fix removes proven unlocked paths but is not shown to be the crash's cause.",
+        "Exit-time try_lock in PDFiumCleanup is not covered by a deterministic test.",
+        "A daemon render thread that dies holding the Python pdfium_lock at finalization is outside this fix (native lock is released before the GIL is reacquired).",
+        "The GUI thread can still wait for a worker render under pdfium_lock or, through the destructor or page_count, under the native lock; this is a latency cost, not a deadlock."
       ]
     }
   ],
@@ -40221,6 +40257,23 @@
         "SnapIndexIntersectionTests.test_t_junctions_at_large_coordinates_stay_endpoints": "Bug hunt: 2,000 seeded T-junctions at 4,000-9,000 unit coordinates never report INTERSECTION (4 did with float rounding before).",
         "SnapIndexIntersectionTests.test_near_duplicate_lines_do_not_create_crossings": "Bug hunt: two nearly identical lines (CAD double strokes) produce no spurious crossing; one pair examined."
       }
+    },
+    "tests/integration/native/test_pdfium_lock_coverage.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Real ost_pdf on a generated one-page PDF with a line, a filled rectangle and text. ost_pdf.pdfium_entry_counts() is the deterministic seam: each check asserts the path reached PDFium (entries > 0) and made no entry without the native lock. Failed first against a probe-only build; skips like test_pdf_renderer when pdf_renderer.cpp is newer than the binary.",
+      "reviewed_tests": {
+        "RendererMethodLockTests.test_every_renderer_method_enters_pdfium_under_the_lock": "Added (failing first): one subtest per page, label, info, path, text and render method including the cancellable variants.",
+        "RendererMethodLockTests.test_open_and_close_enter_pdfium_under_the_lock": "Added (failing first): open and close of a document with a parsed page.",
+        "RendererMethodLockTests.test_reopening_releases_the_parsed_pages_under_the_lock": "Added (failing first): open() over an open document with a cached page.",
+        "RendererMethodLockTests.test_dropping_an_open_renderer_releases_pdfium_under_the_lock": "Added (failing first): the destructor of a never-closed renderer.",
+        "RendererMethodLockTests.test_explicit_shutdown_and_initialize_hold_the_lock": "Added (failing first): in a child process, shutdown and initialize make exactly two entries, both locked.",
+        "PythonCallerLockTests.test_provider_page_size_read_holds_the_lock": "Added (failing first): the real get_pdf_page_sizes returns the page size in inches with every entry locked.",
+        "PythonCallerLockTests.test_mcp_metadata_reads_hold_the_lock": "Added (failing first): NativePdfMetadataProvider page info, text runs and vector segments.",
+        "PythonCallerLockTests.test_page_renderer_calls_hold_the_lock": "Added: PageRenderer render, frame, count, size, info, text and close (already under pdfium_lock; failed on the probe-only build because no native lock existed).",
+        "PythonCallerLockTests.test_worker_page_cache_dropped_without_clear_releases_under_the_lock": "Added (failing first): a worker thread's thread-local renderer released at thread exit and a PageCache dropped without clear().",
+        "PythonCallerLockTests.test_snap_vector_extraction_holds_the_lock": "Added: extract_pdf_snap_segments (already under pdfium_lock).",
+        "PythonCallerLockTests.test_ai_takeoff_path_extraction_holds_the_lock": "Added: PageCachePdfSource path extraction and release (already under pdfium_lock)."
+      }
     }
   },
   "subsystems": {
@@ -40577,7 +40630,30 @@
       "mutation": "slow find_regions 19/20 (1 equivalent), snapping 4/4, checkbox 5/5",
       "timing": "synthetic 60,000-stroke seeded find_regions 127.5 s before, 20.7 s after (skipped_time_budget); 5,000-stroke page 10.1 s before, 10.0 s after, identical",
       "line_endings": "CRLF Python files stay CRLF, LF files stay LF; AGENTS.md and CHANGELOG.md keep mixed endings line by line"
-    }
+    },
+    "pdfium_lock_audit_full_suites": [
+      {
+        "tests_run": 14250,
+        "skips": 38,
+        "seconds": 371.8,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      },
+      {
+        "tests_run": 14250,
+        "skips": 38,
+        "seconds": 310.0,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      },
+      {
+        "tests_run": 14250,
+        "skips": 38,
+        "seconds": 327.5,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      }
+    ]
   },
   "skip_observations": [
     {

@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
-  "module_count": 589,
-  "method_count": 14263,
+  "module_count": 590,
+  "method_count": 14274,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -6076,7 +6076,7 @@
       "duplicate_method_names": []
     },
     "tests/application/services/test_ai_takeoff_proposal_service.py": {
-      "sha256": "2e2fbe0d01b570c3c72b79d085b92709ef74ff947b838584662b7a3d9feeaac8",
+      "sha256": "03df6dfcea2340de2fb43b2c3fc5f8343be188618b4c51e288e375f896540a9d",
       "methods": [
         {
           "name": "ScaleProposalTests.test_a_measured_distance_matching_a_preset_proposes_it",
@@ -7848,7 +7848,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_the_dashed_analysis_state_is_reported",
-          "line": 1677,
+          "line": 1683,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -7866,7 +7866,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_slow_dashed_analysis_stops_at_its_time_budget",
-          "line": 1683,
+          "line": 1689,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7890,7 +7890,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_non_finite_segments_do_not_count_toward_the_early_cap",
-          "line": 1696,
+          "line": 1702,
           "assertions": [
             "self.assertEqual"
           ],
@@ -7911,7 +7911,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_over_the_cap_seeded_calls_are_refused_before_the_dashed_analysis",
-          "line": 1704,
+          "line": 1710,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -7936,7 +7936,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_a_dense_traced_outline_is_simplified_before_the_proposal",
-          "line": 1724,
+          "line": 1732,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7970,7 +7970,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_the_element_proposal_can_be_split_for_a_worker",
-          "line": 1755,
+          "line": 1763,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7996,7 +7996,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_a_traced_hole_that_crosses_its_outline_is_left_out_and_recorded",
-          "line": 1791,
+          "line": 1799,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8019,7 +8019,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_given_polygons_are_not_simplified",
-          "line": 1812,
+          "line": 1820,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn"
@@ -8037,7 +8037,7 @@
         },
         {
           "name": "RasterRegionTests.test_raster_regions_scale_to_ost_inches",
-          "line": 1832,
+          "line": 1840,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8060,7 +8060,7 @@
         },
         {
           "name": "RasterRegionTests.test_the_raster_pen_covers_the_closing_gap",
-          "line": 1843,
+          "line": 1851,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -8078,7 +8078,7 @@
         },
         {
           "name": "RasterRegionTests.test_no_raster_fill_means_no_region",
-          "line": 1852,
+          "line": 1860,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8097,7 +8097,7 @@
         },
         {
           "name": "RasterRegionTests.test_a_leaking_raster_region_cannot_be_proposed",
-          "line": 1858,
+          "line": 1866,
           "assertions": [
             "self.assertTrue",
             "self.assert_error"
@@ -8117,7 +8117,7 @@
         },
         {
           "name": "ElementArgumentTests.test_thickness_bounds",
-          "line": 1876,
+          "line": 1884,
           "assertions": [
             "self.assertEqual",
             "self.assert_error"
@@ -8138,7 +8138,7 @@
         },
         {
           "name": "ElementArgumentTests.test_top_elevation_bounds",
-          "line": 1890,
+          "line": 1898,
           "assertions": [
             "self.assertEqual",
             "self.assert_error"
@@ -8159,7 +8159,7 @@
         },
         {
           "name": "ElementArgumentTests.test_polygons_must_be_lists_of_numbers",
-          "line": 1902,
+          "line": 1910,
           "assertions": [
             "self.assert_error",
             "self.assertEqual"
@@ -8179,7 +8179,7 @@
         },
         {
           "name": "ElementArgumentTests.test_unscaled_pages_cannot_take_elements",
-          "line": 1914,
+          "line": 1922,
           "assertions": [
             "self.assert_error",
             "self.assertEqual"
@@ -8198,7 +8198,7 @@
         },
         {
           "name": "ElementArgumentTests.test_an_existing_condition_needs_no_new_condition_or_assumptions",
-          "line": 1919,
+          "line": 1927,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8217,7 +8217,7 @@
         },
         {
           "name": "ElementArgumentTests.test_quantity_deltas_are_rounded_to_four_decimals",
-          "line": 1928,
+          "line": 1936,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8233,7 +8233,7 @@
         },
         {
           "name": "ElementArgumentTests.test_changesets_record_the_open_bid",
-          "line": 1935,
+          "line": 1943,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8250,7 +8250,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_changeset_ids_are_required_text",
-          "line": 1947,
+          "line": 1955,
           "assertions": [
             "self.assert_error"
           ],
@@ -8269,7 +8269,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_unknown_changesets_are_not_found",
-          "line": 1961,
+          "line": 1969,
           "assertions": [
             "self.assert_error"
           ],
@@ -8286,7 +8286,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_added_assumptions_default_to_empty_text",
-          "line": 1972,
+          "line": 1980,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8303,7 +8303,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_target_and_assumption_ids_are_required",
-          "line": 1987,
+          "line": 1995,
           "assertions": [
             "self.assert_error",
             "self.assert_error",
@@ -8325,7 +8325,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_closing_segment_assumptions_use_the_given_length",
-          "line": 2001,
+          "line": 2009,
           "assertions": [
             "self.assertEqual",
             "self.assert_error"
@@ -8344,7 +8344,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_reported_statuses_are_returned_without_a_new_request",
-          "line": 2019,
+          "line": 2027,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn",
@@ -8371,7 +8371,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_boundary_kinds_must_be_a_list_of_known_kinds",
-          "line": 2101,
+          "line": 2109,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8393,7 +8393,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_the_suggested_width_is_not_applied_to_boundary_kinds",
-          "line": 2114,
+          "line": 2122,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -8413,7 +8413,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_the_default_call_is_unchanged_and_reports_the_ignored_outline",
-          "line": 2130,
+          "line": 2138,
           "assertions": [
             "self.assertIsNone",
             "self.assertNotIn",
@@ -8450,7 +8450,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_seed_inside_the_dashed_outline_returns_it_with_rounded_corners",
-          "line": 2158,
+          "line": 2166,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -8487,7 +8487,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_crossing_dashed_line_does_not_cut_the_outline",
-          "line": 2176,
+          "line": 2184,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -8508,7 +8508,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_dashed_line_joined_to_the_outline_does_not_cut_it",
-          "line": 2186,
+          "line": 2194,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -8530,7 +8530,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_dashed_corner_curves_stay_in_the_outline",
-          "line": 2199,
+          "line": 2207,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual"
@@ -8552,7 +8552,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_walls_and_dashes_together_follow_the_walls",
-          "line": 2210,
+          "line": 2218,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertIsNotNone",
@@ -8577,7 +8577,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_given_width_never_drops_dashed_boundary_pieces",
-          "line": 2219,
+          "line": 2227,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -8600,7 +8600,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_thin_curves_stay_out_of_thin_boundaries",
-          "line": 2234,
+          "line": 2242,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8618,7 +8618,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_gap_longer_than_the_pattern_gap_is_reported_with_its_end_points",
-          "line": 2243,
+          "line": 2251,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -8643,7 +8643,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_colors_choose_the_dashed_outline",
-          "line": 2259,
+          "line": 2267,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -8664,7 +8664,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_an_outline_within_half_a_percent_of_the_region_is_not_reported",
-          "line": 2274,
+          "line": 2282,
           "assertions": [
             "self.assertIsNone",
             "self.assertAlmostEqual",
@@ -8690,7 +8690,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_huge_dash_gaps_neither_fail_nor_bridge_separate_outlines",
-          "line": 2294,
+          "line": 2302,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual"
@@ -8711,7 +8711,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_dashed_outline_too_complex_to_trace_is_skipped",
-          "line": 2308,
+          "line": 2316,
           "assertions": [
             "self.assertIsNone"
           ],
@@ -8731,7 +8731,7 @@
         },
         {
           "name": "LeakGuardTests.test_two_rooms_joined_by_a_39_in_gap_are_never_silently_merged",
-          "line": 2328,
+          "line": 2336,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -8758,7 +8758,7 @@
         },
         {
           "name": "LeakGuardTests.test_an_open_gap_assumption_blocks_approval_until_accepted",
-          "line": 2350,
+          "line": 2358,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8785,7 +8785,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_closed_room_has_no_open_gaps",
-          "line": 2372,
+          "line": 2380,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse"
@@ -8805,7 +8805,7 @@
         },
         {
           "name": "LeakGuardTests.test_openings_wider_than_the_check_are_not_reported",
-          "line": 2380,
+          "line": 2388,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -8824,7 +8824,7 @@
         },
         {
           "name": "LeakGuardTests.test_only_the_opening_to_a_second_area_is_reported",
-          "line": 2389,
+          "line": 2397,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -8842,7 +8842,7 @@
         },
         {
           "name": "LeakGuardTests.test_an_opening_the_region_closed_is_not_reported_again",
-          "line": 2398,
+          "line": 2406,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -8860,7 +8860,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_raster_region_that_matches_the_room_reports_no_opening",
-          "line": 2414,
+          "line": 2422,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -8879,7 +8879,7 @@
         },
         {
           "name": "LeakGuardTests.test_open_gaps_keep_the_closures_the_region_was_traced_with",
-          "line": 2428,
+          "line": 2436,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8899,7 +8899,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_capped_double_wall_opening_is_reported",
-          "line": 2449,
+          "line": 2457,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -8920,7 +8920,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_small_corner_split_off_by_a_stray_line_is_not_a_leak",
-          "line": 2467,
+          "line": 2475,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse"
@@ -8940,7 +8940,7 @@
         },
         {
           "name": "LeakGuardTests.test_an_opening_that_cannot_be_traced_is_skipped",
-          "line": 2475,
+          "line": 2483,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8961,7 +8961,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_raster_region_reports_an_opening_to_the_outside",
-          "line": 2488,
+          "line": 2496,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -8985,7 +8985,7 @@
         },
         {
           "name": "LeakGuardTests.test_region_records_default_to_no_warnings",
-          "line": 2511,
+          "line": 2519,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9003,7 +9003,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_skipped_analysis_does_not_use_dashed_edges",
-          "line": 2520,
+          "line": 2528,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9025,7 +9025,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_complete_analysis_still_uses_dashed_edges",
-          "line": 2531,
+          "line": 2539,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9044,7 +9044,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_dashed_outline_time_out_is_reported_as_skipped",
-          "line": 2537,
+          "line": 2545,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9065,7 +9065,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_dashed_outline_shares_the_analysis_deadline",
-          "line": 2546,
+          "line": 2554,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNotNone",
@@ -9093,7 +9093,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_non_finite_dashed_lines_are_ignored",
-          "line": 2569,
+          "line": 2577,
           "assertions": [
             "self.assertEqual"
           ],
@@ -53661,7 +53661,7 @@
       "duplicate_method_names": []
     },
     "tests/domain/services/test_ai_dashed_outline.py": {
-      "sha256": "b6b9cfa0d3da4be1adfbf5239f1ac42d3e7cf99961fc7a5b09797a2fbd7c26e4",
+      "sha256": "e183517090509c18088f1e742ec022cf1955699f69367db122bd1b5118e78655",
       "methods": [
         {
           "name": "DashPatternTests.test_the_gap_is_the_longest_off_length_of_the_dash_array",
@@ -54320,7 +54320,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_corner_chains_match_a_brute_force_reference_on_random_pages",
-          "line": 452,
+          "line": 465,
           "assertions": [
             "self.assertGreater",
             "self.assertEqual"
@@ -54343,7 +54343,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_an_expired_deadline_stops_the_analysis",
-          "line": 475,
+          "line": 499,
           "assertions": [
             "self.assertLess",
             "self.assertEqual",
@@ -54366,7 +54366,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_corner_pieces_exactly_at_the_join_distance_are_chained",
-          "line": 487,
+          "line": 515,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54385,7 +54385,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_each_stage_honours_an_expired_deadline",
-          "line": 501,
+          "line": 534,
           "assertions": [
             "self.assertRaises"
           ],
@@ -54411,7 +54411,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_thousands_of_ends_sharing_cells_join_in_near_linear_time",
-          "line": 518,
+          "line": 553,
           "assertions": [
             "self.assertLess",
             "self.assertEqual"
@@ -54437,7 +54437,7 @@
         },
         {
           "name": "DashedDeadlineTests.test_dashed_components_stops_at_the_deadline",
-          "line": 547,
+          "line": 588,
           "assertions": [
             "self.assertTrue",
             "self.assertRaises"
@@ -54458,7 +54458,7 @@
         },
         {
           "name": "DashedDeadlineTests.test_dashed_components_skip_lines_that_are_already_joined",
-          "line": 554,
+          "line": 595,
           "assertions": [
             "self.assertEqual",
             "self.assertLess"
@@ -54486,7 +54486,7 @@
         },
         {
           "name": "DashedDeadlineTests.test_touching_chains_checks_the_deadline_inside_crowded_cell_pairs",
-          "line": 581,
+          "line": 622,
           "assertions": [
             "self.assertLessEqual",
             "self.assertRaises"
@@ -105802,11 +105802,11 @@
       "duplicate_method_names": []
     },
     "tests/integration/ai_takeoff/test_ai_takeoff_corpus_adversarial.py": {
-      "sha256": "bd503b3c1a99133a15e46d95951313550f47476891afe84b643db3b7c21d1b0a",
+      "sha256": "78e4fc737b8b76db2a935639de677f09c89072aad6e7aa15e047468a72561d2c",
       "methods": [
         {
           "name": "AdversarialPdfTests.test_hostile_pdfs_never_crash_hang_blow_up_or_leak_instructions",
-          "line": 80,
+          "line": 92,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -105860,7 +105860,7 @@
         },
         {
           "name": "AdversarialPdfTests.test_drawing_text_from_a_hostile_pdf_stays_untrusted",
-          "line": 121,
+          "line": 165,
           "assertions": [
             "self.assertEqual",
             "self.assertGreaterEqual",
@@ -123277,6 +123277,274 @@
       ],
       "duplicate_method_names": []
     },
+    "tests/integration/native/test_pdfium_lock_coverage.py": {
+      "sha256": "f1c86cc4231f07e4b95a21d5d59284cc59d6d3d4f85996591c27d8353db7c377",
+      "methods": [
+        {
+          "name": "RendererMethodLockTests.test_every_renderer_method_enters_pdfium_under_the_lock",
+          "line": 48,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertLockedEntries"
+          ],
+          "calls": [
+            "_PdfiumEntries",
+            "call",
+            "calls.items",
+            "ost_pdf.PDFRenderer",
+            "ost_pdf.RenderCancelToken",
+            "r.all_page_info",
+            "r.extract_path_items",
+            "r.extract_path_segments",
+            "r.extract_text_runs",
+            "r.page_count",
+            "r.page_info",
+            "r.page_label",
+            "r.page_size",
+            "r.render_page",
+            "r.render_page_cancellable",
+            "r.render_page_frame",
+            "r.render_page_frame_cancellable",
+            "renderer.close",
+            "renderer.open",
+            "self.assertLockedEntries",
+            "self.assertTrue",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): one subtest per page, label, info, path, text and render method including the cancellable variants.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RendererMethodLockTests.test_open_and_close_enter_pdfium_under_the_lock",
+          "line": 81,
+          "assertions": [
+            "self.assertLockedEntries",
+            "self.assertLockedEntries",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "_PdfiumEntries",
+            "ost_pdf.PDFRenderer",
+            "renderer.close",
+            "renderer.open",
+            "renderer.page_size",
+            "self.assertLockedEntries",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): open and close of a document with a parsed page.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RendererMethodLockTests.test_reopening_releases_the_parsed_pages_under_the_lock",
+          "line": 91,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertLockedEntries",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "_PdfiumEntries",
+            "ost_pdf.PDFRenderer",
+            "renderer.close",
+            "renderer.open",
+            "renderer.render_page",
+            "self.assertLockedEntries",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): open() over an open document with a cached page.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RendererMethodLockTests.test_dropping_an_open_renderer_releases_pdfium_under_the_lock",
+          "line": 100,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertLockedEntries"
+          ],
+          "calls": [
+            "_PdfiumEntries",
+            "gc.collect",
+            "ost_pdf.PDFRenderer",
+            "renderer.open",
+            "renderer.render_page",
+            "self.assertLockedEntries",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): the destructor of a never-closed renderer.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RendererMethodLockTests.test_explicit_shutdown_and_initialize_hold_the_lock",
+          "line": 109,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "int",
+            "result.stdout.split",
+            "self.assertEqual",
+            "subprocess.run"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): in a child process, shutdown and initialize make exactly two entries, both locked.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PythonCallerLockTests.test_provider_page_size_read_holds_the_lock",
+          "line": 136,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertLockedEntries"
+          ],
+          "calls": [
+            "_PdfiumEntries",
+            "logging.getLogger",
+            "object",
+            "providers.InfrastructureServiceProvider",
+            "self.assertEqual",
+            "self.assertLockedEntries",
+            "service_provider.get_pdf_page_sizes"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): the real get_pdf_page_sizes returns the page size in inches with every entry locked.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PythonCallerLockTests.test_mcp_metadata_reads_hold_the_lock",
+          "line": 149,
+          "assertions": [
+            "self.assertLockedEntries",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "NativePdfMetadataProvider",
+            "_PdfiumEntries",
+            "logging.getLogger",
+            "read",
+            "reads.items",
+            "self.assertLockedEntries",
+            "self.assertTrue",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): NativePdfMetadataProvider page info, text runs and vector segments.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PythonCallerLockTests.test_page_renderer_calls_hold_the_lock",
+          "line": 166,
+          "assertions": [
+            "self.assertLockedEntries"
+          ],
+          "calls": [
+            "PageRenderer",
+            "_PdfiumEntries",
+            "call",
+            "calls.items",
+            "renderer.extract_text_runs",
+            "renderer.get_page_count",
+            "renderer.get_page_info",
+            "renderer.get_page_size",
+            "renderer.render",
+            "renderer.render_frame",
+            "self.assertLockedEntries",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: PageRenderer render, frame, count, size, info, text and close (already under pdfium_lock; failed on the probe-only build because no native lock existed).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PythonCallerLockTests.test_worker_page_cache_dropped_without_clear_releases_under_the_lock",
+          "line": 189,
+          "assertions": [
+            "self.assertLockedEntries",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "PageCache",
+            "_PdfiumEntries",
+            "cache.get_page_size",
+            "gc.collect",
+            "self.assertEqual",
+            "self.assertLockedEntries",
+            "sizes.append",
+            "threading.Thread",
+            "worker.join",
+            "worker.start"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): a worker thread's thread-local renderer released at thread exit and a PageCache dropped without clear().",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PythonCallerLockTests.test_snap_vector_extraction_holds_the_lock",
+          "line": 206,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertLockedEntries"
+          ],
+          "calls": [
+            "_PdfiumEntries",
+            "placement_mode.PdfSnapSource",
+            "placement_mode.extract_pdf_snap_segments",
+            "self.assertLockedEntries",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: extract_pdf_snap_segments (already under pdfium_lock).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PythonCallerLockTests.test_ai_takeoff_path_extraction_holds_the_lock",
+          "line": 227,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertLockedEntries"
+          ],
+          "calls": [
+            "PageCache",
+            "PageCachePdfSource",
+            "_PdfiumEntries",
+            "self.assertLockedEntries",
+            "self.assertTrue",
+            "source.get_path_segments",
+            "source.release"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added: PageCachePdfSource path extraction and release (already under pdfium_lock).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
     "tests/integration/native/test_qt_window_ownership.py": {
       "sha256": "466cf25a1daaea817bfbaeb573f2214abae9760ed01d2c6367d311236c36fe61",
       "methods": [
@@ -123566,11 +123834,11 @@
       "duplicate_method_names": []
     },
     "tests/integration/native/test_snap_index_intersections.py": {
-      "sha256": "9da8d3b23dfc0072d8a0357473eb6d1385997c2f6ec87ca61f5644a06a2f3f3b",
+      "sha256": "750f477f707b72597f76e49400b65c6abdbbe303362b313830756d909e098384",
       "methods": [
         {
           "name": "SnapIndexIntersectionTests.test_crossing_lines_snap_to_their_intersection",
-          "line": 116,
+          "line": 121,
           "assertions": [
             "self.assert_hit"
           ],
@@ -123587,7 +123855,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_intersection_wins_over_a_closer_endpoint_and_midpoint",
-          "line": 122,
+          "line": 125,
           "assertions": [
             "self.assert_hit",
             "self.assert_hit"
@@ -123605,7 +123873,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_shared_vertices_and_t_junctions_stay_endpoints",
-          "line": 132,
+          "line": 137,
           "assertions": [
             "self.assert_hit",
             "self.assert_hit",
@@ -123626,7 +123894,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_parallel_overlapping_and_tiny_segments_do_not_intersect",
-          "line": 144,
+          "line": 149,
           "assertions": [
             "self.assertNotEqual",
             "self.assertEqual"
@@ -123646,7 +123914,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_intersection_outside_the_radius_is_ignored",
-          "line": 157,
+          "line": 162,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -123665,7 +123933,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_only_segments_within_radius_are_paired",
-          "line": 163,
+          "line": 168,
           "assertions": [
             "self.assertGreater",
             "self.assert_hit",
@@ -123693,7 +123961,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_dense_clusters_cap_the_pairs_examined",
-          "line": 175,
+          "line": 180,
           "assertions": [
             "self.assertEqual"
           ],
@@ -123713,7 +123981,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_nearest_crossing_survives_many_nearer_parallel_lines",
-          "line": 184,
+          "line": 189,
           "assertions": [
             "self.assert_hit",
             "self.assertLess"
@@ -123734,7 +124002,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_crossing_near_the_end_of_a_long_line_is_found",
-          "line": 191,
+          "line": 198,
           "assertions": [
             "self.assert_hit"
           ],
@@ -123751,7 +124019,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_t_junctions_at_large_coordinates_stay_endpoints",
-          "line": 195,
+          "line": 202,
           "assertions": [
             "self.assertEqual"
           ],
@@ -123774,7 +124042,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_near_duplicate_lines_do_not_create_crossings",
-          "line": 215,
+          "line": 222,
           "assertions": [
             "self.assertNotEqual",
             "self.assertEqual"
@@ -123794,7 +124062,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_default_query_never_reports_intersections_or_pairs",
-          "line": 221,
+          "line": 228,
           "assertions": [
             "self.assertNotEqual",
             "self.assertEqual"
@@ -123814,7 +124082,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_random_queries_match_reference_with_intersections",
-          "line": 226,
+          "line": 233,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -123843,7 +124111,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_random_queries_without_intersections_keep_the_old_contract",
-          "line": 245,
+          "line": 252,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone"
@@ -123869,7 +124137,7 @@
         },
         {
           "name": "SnapIndexIntersectionTests.test_intersection_constant_is_exported",
-          "line": 261,
+          "line": 268,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -142086,11 +142354,11 @@
       "duplicate_method_names": []
     },
     "tests/integration/theme/test_windows_startup.py": {
-      "sha256": "2b59e7d7b0ea23f8ce69651fcfc6ab0a7843e56134fff5f417e524ea51368cf3",
+      "sha256": "5740f7bf02734114407d4f8eb8f703f8af6387f1fcc31e6f6c3548c99ea9856d",
       "methods": [
         {
           "name": "WindowsThemeTests.test_checked_boxes_keep_their_accent_in_inactive_windows",
-          "line": 219,
+          "line": 244,
           "assertions": [
             "self.assert_checkbox_accent_holds_when_inactive"
           ],
@@ -142107,7 +142375,7 @@
         },
         {
           "name": "WindowsThemeTests.test_windows_10_default_style_follows_dark_light_dark_on_all_windows",
-          "line": 226,
+          "line": 255,
           "assertions": [
             "self.assert_theme_cycles",
             "self.assertEqual"
@@ -142125,7 +142393,7 @@
         },
         {
           "name": "WindowsThemeTests.test_windows_11_style_keeps_native_theme_and_runtime_switching",
-          "line": 231,
+          "line": 260,
           "assertions": [
             "self.assertEqual",
             "self.assert_theme_cycles"
@@ -142143,7 +142411,7 @@
         },
         {
           "name": "WindowsThemeTests.test_explicit_platform_dark_mode_opt_out_is_respected",
-          "line": 236,
+          "line": 265,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -142164,7 +142432,7 @@
         },
         {
           "name": "WindowsThemeTests.test_platform_without_windows_theme_api_keeps_its_style_without_crashing",
-          "line": 247,
+          "line": 276,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -175450,7 +175718,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/components/plan_view/components/test_placement_mode.py": {
-      "sha256": "b22f9f1c1dd72e3c682d15941f7291773cfae2abdf21dce3decfe9f32c1fb88d",
+      "sha256": "617b50687c56af992f07421a25d855c99890c3b8823e12d9736b2392231b5f26",
       "methods": [
         {
           "name": "PlacementModePreferenceTests.test_invalid_paste_backout_click_is_rejected_without_commit",
@@ -175755,7 +176023,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_snap_job_uses_the_source_captured_on_the_gui_thread",
-          "line": 543,
+          "line": 548,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -175776,7 +176044,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_changed_source_cancels_and_ignores_the_stale_pdf_snap_job",
-          "line": 554,
+          "line": 559,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -175804,7 +176072,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_failed_pdf_snap_job_is_retried_once_per_invalidation",
-          "line": 573,
+          "line": 578,
           "assertions": [
             "self.assertIsNot",
             "self.assertEqual",
@@ -175835,7 +176103,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_line_snap_queries_request_intersections",
-          "line": 594,
+          "line": 599,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue"
@@ -175856,7 +176124,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_linear_takeoff_snap_uses_border_segments_not_centerline",
-          "line": 606,
+          "line": 611,
           "assertions": [
             "self.assertEqual"
           ],
@@ -175874,7 +176142,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_area_takeoff_snap_uses_polygon_border_segments",
-          "line": 623,
+          "line": 628,
           "assertions": [
             "self.assertEqual"
           ],
@@ -175893,7 +176161,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_count_square_snap_uses_shape_border_segments",
-          "line": 646,
+          "line": 651,
           "assertions": [
             "self.assertEqual"
           ],
@@ -175912,7 +176180,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_count_circle_snap_uses_approximated_border_segments",
-          "line": 674,
+          "line": 679,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -175938,7 +176206,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_rotated_ellipse_snap_uses_rotated_physical_footprint",
-          "line": 700,
+          "line": 705,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -175963,7 +176231,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_linear_takeoff_snap_skips_degenerate_segments",
-          "line": 728,
+          "line": 733,
           "assertions": [
             "self.assertEqual"
           ],
@@ -175981,7 +176249,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_linear_takeoff_snap_ignores_trailing_unpaired_coordinate",
-          "line": 739,
+          "line": 744,
           "assertions": [
             "self.assertEqual"
           ],
@@ -175999,7 +176267,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_hidden_condition_takeoffs_do_not_contribute_snap_segments",
-          "line": 756,
+          "line": 761,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176017,7 +176285,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_linear_takeoff_snap_uses_default_border_for_non_positive_thickness",
-          "line": 772,
+          "line": 777,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176035,7 +176303,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_extraction_failure_is_not_retried_by_queries",
-          "line": 791,
+          "line": 796,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176057,7 +176325,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_failed_pdf_read_is_retried_after_the_next_invalidation",
-          "line": 801,
+          "line": 806,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176079,7 +176347,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_snap_waits_until_page_load_geometry_is_ready",
-          "line": 815,
+          "line": 822,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual",
@@ -176104,7 +176372,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_snap_waits_for_current_page_uid_to_match_page",
-          "line": 826,
+          "line": 833,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual",
@@ -176129,7 +176397,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_snap_extraction_uses_shared_pdfium_lock",
-          "line": 837,
+          "line": 844,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176148,7 +176416,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_grid_fallback_still_rounds_when_snap_index_is_empty",
-          "line": 859,
+          "line": 866,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176167,7 +176435,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_priority_uses_takeoffs_before_pdf_and_grid",
-          "line": 870,
+          "line": 877,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176188,7 +176456,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_priority_uses_pdf_before_grid_when_takeoff_misses",
-          "line": 890,
+          "line": 897,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176208,7 +176476,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_disabling_snap_sources_returns_unsnapped_cursor_position",
-          "line": 908,
+          "line": 915,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176227,7 +176495,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_zero_grid_threshold_disables_grid_snap",
-          "line": 921,
+          "line": 928,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176246,7 +176514,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_non_positive_snap_increment_disables_grid_snap",
-          "line": 935,
+          "line": 942,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176265,7 +176533,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_grid_snap_is_skipped_when_snapped_point_is_beyond_pixel_threshold",
-          "line": 949,
+          "line": 956,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176288,7 +176556,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_disabled_or_zero_threshold_snap_sources_are_never_queried",
-          "line": 972,
+          "line": 979,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176307,7 +176575,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_takeoff_snap_threshold_is_screen_pixel_based",
-          "line": 982,
+          "line": 989,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176325,7 +176593,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_native_line_hit_returns_exact_hit_without_increment_quantizing",
-          "line": 991,
+          "line": 998,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176345,7 +176613,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_angle_snap_distance_increment_applies_only_to_grid_snap",
-          "line": 1010,
+          "line": 1017,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176363,7 +176631,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_grid_distance_snap_rounds_to_increment_and_collapses_short_drags",
-          "line": 1021,
+          "line": 1028,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176385,7 +176653,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_default_mouse_snap_angles_are_15_unpressed_and_off_when_pressed",
-          "line": 1041,
+          "line": 1048,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -176407,7 +176675,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_zero_mouse_snap_angle_disables_angle_snap",
-          "line": 1067,
+          "line": 1074,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176424,7 +176692,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_configured_pressed_mouse_snap_angle_uses_shift_state",
-          "line": 1072,
+          "line": 1079,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -176444,7 +176712,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_right_angle_target_uses_first_point_axis_when_snap_enabled",
-          "line": 1094,
+          "line": 1101,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -176470,7 +176738,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_right_angle_snap_threshold_controls_target_distance",
-          "line": 1112,
+          "line": 1119,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -176489,7 +176757,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_right_angle_target_disabled_when_snap_is_off",
-          "line": 1121,
+          "line": 1128,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -176508,7 +176776,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_right_angle_snap_disabled_uses_area_angle_snap",
-          "line": 1128,
+          "line": 1135,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -176531,7 +176799,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_to_right_angle_can_snap_area_point_to_first_point_axis",
-          "line": 1148,
+          "line": 1155,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176550,7 +176818,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_to_right_angle_hides_indicator_when_final_endpoint_is_not_right_angle",
-          "line": 1166,
+          "line": 1173,
           "assertions": [
             "self.assertNotEqual",
             "self.assertEqual"
@@ -176572,7 +176840,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_to_right_angle_indicator_shows_for_final_x_axis_alignment",
-          "line": 1183,
+          "line": 1190,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176599,7 +176867,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_to_right_angle_indicator_shows_for_final_y_axis_alignment",
-          "line": 1199,
+          "line": 1206,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -176627,7 +176895,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_to_right_angle_disabled_hides_indicator",
-          "line": 1216,
+          "line": 1223,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176646,7 +176914,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_to_right_angle_candidate_still_uses_mouse_angle_snap",
-          "line": 1227,
+          "line": 1234,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -176672,7 +176940,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_to_right_angle_respects_zero_pressed_mouse_snap_angle",
-          "line": 1244,
+          "line": 1251,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -176694,7 +176962,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_odd_length_takeoff_position_is_ignored_safely",
-          "line": 1272,
+          "line": 1279,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176712,7 +176980,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_rotated_pdf_segments_are_mapped_to_rendered_page_coordinates",
-          "line": 1281,
+          "line": 1288,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176729,7 +176997,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_raw_point_rotation_mapping",
-          "line": 1307,
+          "line": 1314,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176751,7 +177019,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_snap_cache_key_includes_rendered_pdf_width",
-          "line": 1334,
+          "line": 1341,
           "assertions": [
             "self.assertNotEqual"
           ],
@@ -176768,7 +177036,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_snap_cache_key_includes_overlay_coordinate_calibration",
-          "line": 1341,
+          "line": 1348,
           "assertions": [
             "self.assertNotEqual"
           ],
@@ -176785,7 +177053,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_pdf_snap_cache_key_changes_with_overlay_geometry_and_is_stable_otherwise",
-          "line": 1350,
+          "line": 1357,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176807,7 +177075,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_captured_overlay_source_maps_segments_like_the_live_page",
-          "line": 1368,
+          "line": 1375,
           "assertions": [
             "self.assertEqual",
             "self.assertNotEqual",
@@ -176830,7 +177098,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_overlay_pdf_snap_points_map_through_overlay_rect_scale_and_rotation",
-          "line": 1399,
+          "line": 1406,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -176848,23 +177116,6 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_composite_pdf_snap_uses_overlay_source",
-          "line": 1423,
-          "assertions": [
-            "self.assertEqual"
-          ],
-          "calls": [
-            "_snap_support_PlacementHarness",
-            "harness._ensure_pdf_snap_index",
-            "self.assertEqual"
-          ],
-          "decorators": [],
-          "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Sound.",
-          "second_pass_status": "not selected or pending",
-          "second_pass_note": ""
-        },
-        {
-          "name": "SnapSegmentCacheTests.test_raster_overlay_falls_back_to_main_pdf_snap_source",
           "line": 1430,
           "assertions": [
             "self.assertEqual"
@@ -176881,8 +177132,25 @@
           "second_pass_note": ""
         },
         {
-          "name": "SnapSegmentCacheTests.test_snap_source_ignores_hidden_overlay_and_hidden_page_layer",
+          "name": "SnapSegmentCacheTests.test_raster_overlay_falls_back_to_main_pdf_snap_source",
           "line": 1437,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_snap_support_PlacementHarness",
+            "harness._ensure_pdf_snap_index",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Sound.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SnapSegmentCacheTests.test_snap_source_ignores_hidden_overlay_and_hidden_page_layer",
+          "line": 1444,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -176907,7 +177175,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_linear_preview_adds_start_and_current_endpoint_handles",
-          "line": 1452,
+          "line": 1459,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -176926,7 +177194,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_diagonal_linear_preview_passes_line_direction_to_pattern",
-          "line": 1463,
+          "line": 1470,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -176944,7 +177212,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_area_preview_adds_current_endpoint_handle",
-          "line": 1473,
+          "line": 1480,
           "assertions": [
             "self.assertEqual"
           ],
@@ -176963,7 +177231,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_display_pattern_while_drawing_off_uses_outline_only_preview",
-          "line": 1497,
+          "line": 1504,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -177001,7 +177269,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_linear_preview_uses_pattern_even_without_display_pattern_flag",
-          "line": 1526,
+          "line": 1533,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -177031,7 +177299,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_area_pattern_preview_never_receives_line_orientation",
-          "line": 1555,
+          "line": 1562,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -177059,7 +177327,7 @@
         },
         {
           "name": "SnapSegmentCacheTests.test_snap_cursor_marker_remains_line_snap_only",
-          "line": 1580,
+          "line": 1587,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -177078,7 +177346,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_legacy_parented_point_and_linear_paste_use_their_own_geometry",
-          "line": 1594,
+          "line": 1601,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -177102,7 +177370,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_minimum_fractional_linear_and_area_release_preserves_preview",
-          "line": 1681,
+          "line": 1688,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -177124,7 +177392,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_backout_release_without_mouse_move_accepts_minimum_fractional_size",
-          "line": 1708,
+          "line": 1715,
           "assertions": [
             "self.assertEqual"
           ],
@@ -177141,7 +177409,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_subminimum_geometry_does_not_commit",
-          "line": 1723,
+          "line": 1730,
           "assertions": [
             "self.assertEqual"
           ],
@@ -177159,7 +177427,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_subminimum_backout_preview_cannot_be_committed_as_last_valid",
-          "line": 1730,
+          "line": 1737,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual",
@@ -177186,7 +177454,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_paste_backout_checks_all_overlapping_candidate_parents",
-          "line": 1741,
+          "line": 1748,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -177206,7 +177474,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_concave_backout_paste_does_not_require_vertex_average_inside_parent",
-          "line": 1754,
+          "line": 1761,
           "assertions": [
             "self.assertEqual"
           ],
@@ -177223,7 +177491,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_pasted_backouts_must_not_collide_with_each_other",
-          "line": 1775,
+          "line": 1782,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -177242,7 +177510,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_child_only_paste_retains_nested_source_parent",
-          "line": 1782,
+          "line": 1789,
           "assertions": [
             "self.assertEqual"
           ],
@@ -177259,7 +177527,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_cyclic_source_parents_are_rejected_without_assignment",
-          "line": 1794,
+          "line": 1801,
           "assertions": [
             "self.assertEqual"
           ],
@@ -177276,7 +177544,7 @@
         },
         {
           "name": "TakeoffLifecyclePlacementTests.test_paste_backout_rejects_geometry_outside_every_parent",
-          "line": 1806,
+          "line": 1813,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -177296,7 +177564,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_dimension_annotation_preview_uses_live_dimension_label",
-          "line": 1820,
+          "line": 1827,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -177327,7 +177595,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_dimension_annotation_commit_and_cancel_clear_preview",
-          "line": 1843,
+          "line": 1850,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177354,7 +177622,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_annotation_commit_rejects_degenerate_geometry_and_missing_page",
-          "line": 1864,
+          "line": 1871,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -177380,7 +177648,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_polygon_and_cloud_creation_rejects_self_intersection",
-          "line": 1890,
+          "line": 1897,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -177401,7 +177669,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_polygon_and_cloud_simple_click_starts_click_point_placement",
-          "line": 1902,
+          "line": 1909,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177432,7 +177700,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_polygon_and_cloud_click_drag_creates_area_like_rectangle",
-          "line": 1918,
+          "line": 1925,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177484,7 +177752,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_area_takeoff_click_drag_rectangle_placement_is_unchanged",
-          "line": 1973,
+          "line": 1980,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -177513,7 +177781,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_area_takeoff_simple_click_starts_point_placement_lock",
-          "line": 1992,
+          "line": 1999,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177544,7 +177812,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_backout_click_drag_rectangle_does_not_enter_placement_lock",
-          "line": 2009,
+          "line": 2016,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177574,7 +177842,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_backout_simple_click_starts_point_placement_lock",
-          "line": 2035,
+          "line": 2042,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177605,7 +177873,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_linear_takeoff_click_drag_does_not_enter_area_placement_lock",
-          "line": 2052,
+          "line": 2059,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177635,7 +177903,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_drag_annotation_tools_use_press_drag_release_positions",
-          "line": 2078,
+          "line": 2085,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177674,7 +177942,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_named_view_single_click_does_not_create_draft",
-          "line": 2118,
+          "line": 2125,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177702,7 +177970,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_hotlink_annotation_tool_requests_named_view_selection_on_press",
-          "line": 2130,
+          "line": 2137,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177729,7 +177997,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_hotlink_annotation_release_consumes_placement_gesture",
-          "line": 2144,
+          "line": 2151,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177755,7 +178023,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_hotlink_annotation_release_survives_tool_reactivation_after_dialog",
-          "line": 2156,
+          "line": 2163,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177779,7 +178047,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_point_annotation_pending_release_is_cleared_when_exiting_tool",
-          "line": 2169,
+          "line": 2176,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177804,7 +178072,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_point_annotation_pending_release_is_cleared_when_switching_tool",
-          "line": 2182,
+          "line": 2189,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177829,7 +178097,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_ink_annotation_uses_freehand_drag_preview_and_commit",
-          "line": 2195,
+          "line": 2202,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177875,7 +178143,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_tiny_ink_annotation_drag_does_not_persist",
-          "line": 2228,
+          "line": 2235,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -177902,7 +178170,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_arrow_preview_preserves_start_to_head_direction",
-          "line": 2245,
+          "line": 2252,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -177941,7 +178209,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_box_annotation_previews_use_drag_bounds",
-          "line": 2271,
+          "line": 2278,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -177984,7 +178252,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_polygon_and_cloud_annotations_use_area_like_multi_point_completion",
-          "line": 2306,
+          "line": 2313,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -178024,7 +178292,7 @@
         },
         {
           "name": "AnnotationPlacementTests.test_polygon_and_cloud_placement_lock_clears_when_switching_tools",
-          "line": 2357,
+          "line": 2364,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -178052,7 +178320,7 @@
         },
         {
           "name": "AttachmentMovementTests.test_backout_placement_rejects_attachment_footprint",
-          "line": 2431,
+          "line": 2438,
           "assertions": [
             "self.assertTrue"
           ],
@@ -178072,7 +178340,7 @@
         },
         {
           "name": "AttachmentMovementTests.test_backout_placement_accepts_hole_clear_of_attachment_footprint",
-          "line": 2443,
+          "line": 2450,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue"
@@ -178094,7 +178362,7 @@
         },
         {
           "name": "AttachmentMovementTests.test_backout_placement_rejects_stale_parent",
-          "line": 2459,
+          "line": 2466,
           "assertions": [
             "self.assertTrue"
           ],
@@ -178113,7 +178381,7 @@
         },
         {
           "name": "AttachmentMovementTests.test_overlapping_area_parent_search_skips_area_blocked_by_backout",
-          "line": 2472,
+          "line": 2479,
           "assertions": [
             "self.assertEqual"
           ],
@@ -178135,7 +178403,7 @@
         },
         {
           "name": "PlanViewInteractionTests.test_starting_annotation_placement_clears_selected_text_toolbar",
-          "line": 2502,
+          "line": 2509,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -178168,7 +178436,7 @@
         },
         {
           "name": "PdfSnapVisibleBoxOriginTests.test_lines_inside_form_xobjects_are_snap_targets",
-          "line": 2620,
+          "line": 2627,
           "assertions": [
             "self.assertEqual"
           ],
@@ -178191,7 +178459,7 @@
         },
         {
           "name": "PdfSnapVisibleBoxOriginTests.test_snap_segments_start_at_the_visible_box_origin",
-          "line": 2645,
+          "line": 2661,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -341112,11 +341380,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/utils/test_theme.py": {
-      "sha256": "872eceb95089bf43adcf3babc3c76199e08c1409c7bb21b701750a1015e46576",
+      "sha256": "0fdac7900550e101a8ede4bde4562d60508747e84470ce452a5fc179714993ac",
       "methods": [
         {
           "name": "ActiveIndicatorStyleTests.test_indicators_in_inactive_windows_draw_with_the_active_colours",
-          "line": 50,
+          "line": 49,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -341136,7 +341404,7 @@
         },
         {
           "name": "ActiveIndicatorStyleTests.test_disabled_indicators_and_other_elements_are_left_alone",
-          "line": 62,
+          "line": 61,
           "assertions": [
             "self.assertEqual"
           ],
@@ -341152,7 +341420,7 @@
         },
         {
           "name": "ActiveIndicatorStyleTests.test_the_wrapped_style_keeps_its_name_and_is_installed_once",
-          "line": 77,
+          "line": 76,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -341178,7 +341446,7 @@
         },
         {
           "name": "ActiveIndicatorStyleTests.test_a_style_without_a_factory_name_is_left_unwrapped",
-          "line": 90,
+          "line": 89,
           "assertions": [
             "self.assertIs"
           ],
@@ -367822,7 +368090,7 @@
       "duplicate_method_names": []
     },
     "tests/test_main.py": {
-      "sha256": "bc8d6c9895410b24a056bb99950e5aaa019b7e0f6137700a276f13f4b689d7b3",
+      "sha256": "ff76f196a76c4d6962afc08a1be8044c658ae6df30afab07149d9b25b7794d92",
       "methods": [
         {
           "name": "ApplicationStartupFailureTests.test_main_window_construction_failure_shuts_down_configured_application",
@@ -367853,7 +368121,7 @@
         },
         {
           "name": "ApplicationStartupFailureTests.test_event_loop_exit_shuts_down_application_without_window_close",
-          "line": 91,
+          "line": 93,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -367881,7 +368149,7 @@
         },
         {
           "name": "SingleInstanceFileArgumentTests.test_socket_payload_round_trip_preserves_file_args",
-          "line": 148,
+          "line": 152,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -367904,7 +368172,7 @@
         },
         {
           "name": "SingleInstanceFileArgumentTests.test_single_instance_handler_buffers_fragmented_socket_payload",
-          "line": 159,
+          "line": 163,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -367934,7 +368202,7 @@
         },
         {
           "name": "ApplicationStartupWiringTests.test_second_instance_forwards_file_args_and_exits_without_starting_a_window",
-          "line": 327,
+          "line": 331,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -367962,7 +368230,7 @@
         },
         {
           "name": "ApplicationStartupWiringTests.test_second_instance_without_file_args_sends_nothing",
-          "line": 348,
+          "line": 352,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -367982,7 +368250,7 @@
         },
         {
           "name": "ApplicationStartupWiringTests.test_first_instance_owns_the_server_and_hands_file_args_to_the_window",
-          "line": 355,
+          "line": 359,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -368015,7 +368283,7 @@
         },
         {
           "name": "ApplicationStartupWiringTests.test_shutdown_failure_on_exit_is_logged_and_keeps_the_exit_code",
-          "line": 388,
+          "line": 392,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -368034,7 +368302,7 @@
         },
         {
           "name": "ApplicationStartupWiringTests.test_startup_cleanup_failure_is_logged_and_the_startup_error_still_propagates",
-          "line": 399,
+          "line": 403,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn",
@@ -368057,7 +368325,7 @@
         },
         {
           "name": "ApplicationStartupWiringTests.test_failure_before_the_lifecycle_exists_has_nothing_to_shut_down",
-          "line": 416,
+          "line": 420,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -368079,7 +368347,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_payload_wire_format_is_compact_typed_json",
-          "line": 425,
+          "line": 429,
           "assertions": [
             "self.assertEqual"
           ],
@@ -368098,7 +368366,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_payload_decoding_normalizes_extensions_and_defaults_missing_lists",
-          "line": 436,
+          "line": 440,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -368120,7 +368388,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_payload_decoding_rejects_other_types_and_malformed_data",
-          "line": 448,
+          "line": 452,
           "assertions": [
             "self.assertRaises"
           ],
@@ -368138,7 +368406,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_sender_writes_the_payload_then_flushes_and_waits_one_second",
-          "line": 468,
+          "line": 472,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -368159,7 +368427,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_each_new_connection_is_drained_and_queued_once_when_it_disconnects",
-          "line": 487,
+          "line": 491,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -368188,7 +368456,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_every_pending_connection_is_accepted_not_just_the_first",
-          "line": 504,
+          "line": 508,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -368217,7 +368485,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_connection_that_closed_before_the_handler_ran_is_processed_immediately",
-          "line": 521,
+          "line": 525,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -368239,7 +368507,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_malformed_payloads_are_logged_and_never_reach_the_window",
-          "line": 534,
+          "line": 538,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -368263,7 +368531,7 @@
         },
         {
           "name": "SingleInstancePayloadTests.test_empty_or_argument_free_connections_do_not_enqueue_anything",
-          "line": 552,
+          "line": 556,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -368285,7 +368553,7 @@
         },
         {
           "name": "CrashReportingTests.test_crash_reports_are_skipped_until_a_log_stream_exists",
-          "line": 590,
+          "line": 594,
           "assertions": [],
           "calls": [
             "application_main._write_crash_report"
@@ -368298,7 +368566,7 @@
         },
         {
           "name": "CrashReportingTests.test_crash_report_has_a_header_with_runtime_identity_and_the_details",
-          "line": 594,
+          "line": 598,
           "assertions": [
             "self.assertTrue",
             "self.assertRegex",
@@ -368327,7 +368595,7 @@
         },
         {
           "name": "CrashReportingTests.test_crash_report_is_flushed_so_it_survives_a_hard_exit",
-          "line": 623,
+          "line": 627,
           "assertions": [
             "self.assertEqual"
           ],
@@ -368346,7 +368614,7 @@
         },
         {
           "name": "CrashReportingTests.test_existing_crash_log_content_is_appended_to_not_replaced",
-          "line": 635,
+          "line": 639,
           "assertions": [
             "self.assertEqual"
           ],
@@ -368370,7 +368638,7 @@
         },
         {
           "name": "CrashReportingTests.test_faulthandler_writes_to_the_crash_log_and_survives_setup_errors",
-          "line": 650,
+          "line": 654,
           "assertions": [
             "self.assertEqual",
             "enable.assert_not_called",
@@ -368399,7 +368667,7 @@
         },
         {
           "name": "CrashReportingTests.test_logging_is_flushed_through_every_root_handler",
-          "line": 672,
+          "line": 676,
           "assertions": [
             "self.assertEqual"
           ],
@@ -368419,7 +368687,7 @@
         },
         {
           "name": "CrashReportingTests.test_unhandled_exceptions_are_logged_reported_and_forwarded",
-          "line": 683,
+          "line": 687,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -368454,7 +368722,7 @@
         },
         {
           "name": "CrashReportingTests.test_thread_exceptions_name_the_thread_and_ignore_keyboard_interrupts",
-          "line": 708,
+          "line": 712,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -368488,7 +368756,7 @@
         },
         {
           "name": "CrashReportingTests.test_unraisable_exceptions_are_logged_reported_and_forwarded",
-          "line": 748,
+          "line": 752,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -368520,7 +368788,7 @@
         },
         {
           "name": "CrashReportingTests.test_runtime_logging_is_installed_in_a_fixed_order_and_records_the_version",
-          "line": 775,
+          "line": 779,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -368543,7 +368811,7 @@
         },
         {
           "name": "CrashReportingTests.test_bootstrap_logging_configures_the_factory_with_the_app_data_dir",
-          "line": 824,
+          "line": 828,
           "assertions": [
             "factory.configure.assert_called_once_with",
             "factory.get_logger.assert_called_once_with",
@@ -368567,7 +368835,7 @@
       "duplicate_method_names": []
     },
     "tests/tools/test_ai_takeoff_corpus.py": {
-      "sha256": "bfd31b3f5876c75b16cbd9a40cf45639dcfa33348960e4f054cb882da08ea7c0",
+      "sha256": "ac084c0ce7e7a78146057c940d6bea1325764a269a767d2b304909a59947cc0a",
       "methods": [
         {
           "name": "TextLineTests.test_runs_on_one_baseline_join_left_to_right",
@@ -369355,7 +369623,7 @@
         },
         {
           "name": "RunOrchestrationTests.test_a_hand_value_on_a_page_that_hangs_is_still_listed",
-          "line": 823,
+          "line": 843,
           "assertions": [
             "self.assertEqual"
           ],
@@ -369381,7 +369649,7 @@
         },
         {
           "name": "RunFailureTests.test_a_pdf_that_cannot_be_prepared_is_one_failed_row_and_main_runs",
-          "line": 887,
+          "line": 907,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -369409,7 +369677,7 @@
         },
         {
           "name": "RunFailureTests.test_long_paths_that_are_already_prefixed_are_kept",
-          "line": 918,
+          "line": 938,
           "assertions": [
             "self.assertEqual"
           ],
@@ -369426,7 +369694,7 @@
         },
         {
           "name": "PlanPageCapTests.test_at_most_n_plan_pages_spread_over_the_set_are_measured",
-          "line": 959,
+          "line": 989,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -369443,7 +369711,7 @@
         },
         {
           "name": "PlanPageCapTests.test_without_a_cap_every_page_is_measured",
-          "line": 967,
+          "line": 1003,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -369460,7 +369728,7 @@
         },
         {
           "name": "RunEndToEndTests.test_a_synthetic_sample_runs_end_to_end_with_a_hand_value",
-          "line": 974,
+          "line": 1010,
           "assertions": [
             "self.assertEqual",
             "self.assertLess",
@@ -369499,7 +369767,7 @@
         },
         {
           "name": "LegacyHelperTests.test_edge_cases_of_the_legacy_page_reading",
-          "line": 1035,
+          "line": 1071,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -369525,7 +369793,7 @@
         },
         {
           "name": "LegacyHelperTests.test_every_failure_category_is_reported",
-          "line": 1051,
+          "line": 1087,
           "assertions": [
             "self.assertIn",
             "self.assertIn"
@@ -369549,7 +369817,7 @@
         },
         {
           "name": "NotMeasuredReportTests.test_pages_skipped_by_the_plan_page_cap_are_not_failures",
-          "line": 1085,
+          "line": 1121,
           "assertions": [
             "self.assertFalse",
             "self.assertIn",
@@ -369577,7 +369845,7 @@
         },
         {
           "name": "ChildProcessTests.test_timeouts_are_hangs_and_failures_name_the_exception",
-          "line": 1104,
+          "line": 1142,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -369596,7 +369864,7 @@
         },
         {
           "name": "ReportTests.test_report_has_rates_categories_and_no_unlisted_content",
-          "line": 1122,
+          "line": 1160,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -369630,7 +369898,7 @@
         },
         {
           "name": "ReportTests.test_hand_values_that_failed_are_listed_and_counted",
-          "line": 1195,
+          "line": 1233,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -369652,7 +369920,7 @@
         },
         {
           "name": "ReportTests.test_the_key_file_stays_next_to_the_summary",
-          "line": 1225,
+          "line": 1263,
           "assertions": [
             "self.assertEqual"
           ],
@@ -369672,7 +369940,7 @@
         },
         {
           "name": "ReportTests.test_pentest_sections_and_the_fix_list",
-          "line": 1240,
+          "line": 1278,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -369704,7 +369972,7 @@
         },
         {
           "name": "ReportTests.test_hand_values_without_expected_areas_are_not_measured",
-          "line": 1294,
+          "line": 1391,
           "assertions": [
             "self.assertIn"
           ],
@@ -369726,7 +369994,7 @@
       "duplicate_method_names": []
     },
     "tests/tools/test_ai_takeoff_corpus_worker.py": {
-      "sha256": "68d60c7cb1b52ec987e7aa879021248f8110efcd374ce5d4f842cf4490d054ee",
+      "sha256": "789f66a308cfe00971d9ab884c85a62e175a8d7eae6006291482596cbe7bbbe1",
       "methods": [
         {
           "name": "WorkerHelperTests.test_content_classes",
@@ -369854,7 +370122,7 @@
         },
         {
           "name": "WorkerHelperTests.test_annotation_linework_is_never_the_dominant_wall_weight",
-          "line": 144,
+          "line": 154,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -369873,7 +370141,7 @@
         },
         {
           "name": "WorkerHelperTests.test_the_auto_seed_skips_frame_sized_regions",
-          "line": 153,
+          "line": 163,
           "assertions": [
             "self.assertIs",
             "self.assertIsNone",
@@ -369892,7 +370160,7 @@
         },
         {
           "name": "WorkerHelperTests.test_region_shapes_against_the_search_box",
-          "line": 162,
+          "line": 172,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -369913,7 +370181,7 @@
         },
         {
           "name": "WorkerHelperTests.test_wall_filter_failures",
-          "line": 172,
+          "line": 185,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -369934,7 +370202,7 @@
         },
         {
           "name": "WorkerHelperTests.test_plan_pages_are_spread_across_the_set",
-          "line": 179,
+          "line": 192,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -369955,7 +370223,7 @@
         },
         {
           "name": "WorkerHelperTests.test_drawing_text_leaves_out_the_title_block",
-          "line": 185,
+          "line": 198,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -369973,7 +370241,7 @@
         },
         {
           "name": "WorkerHelperTests.test_quadrants_tile_the_page",
-          "line": 197,
+          "line": 210,
           "assertions": [
             "self.assertEqual"
           ],
@@ -369989,7 +370257,7 @@
         },
         {
           "name": "WorkerHelperTests.test_sheet_hint_rows_keep_metrics_and_the_sheet_number_only",
-          "line": 208,
+          "line": 221,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -370007,7 +370275,7 @@
         },
         {
           "name": "WorkerHelperTests.test_peak_memory_is_reported_in_megabytes",
-          "line": 253,
+          "line": 266,
           "assertions": [
             "self.assertGreater",
             "self.assertLess"
@@ -370025,7 +370293,7 @@
         },
         {
           "name": "WorkerProcessTests.test_a_synthetic_plan_is_measured_against_a_scratch_access_bid",
-          "line": 278,
+          "line": 291,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -370078,7 +370346,7 @@
         },
         {
           "name": "WorkerProcessTests.test_sheet_hints_come_from_list_sheets_for_the_whole_pdf",
-          "line": 337,
+          "line": 350,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -370108,7 +370376,7 @@
         },
         {
           "name": "WorkerProcessTests.test_prepare_refuses_unreadable_pdfs_and_replaces_an_old_scratch_bid",
-          "line": 366,
+          "line": 379,
           "assertions": [
             "self.assertNotEqual",
             "self.assertEqual",
@@ -370140,7 +370408,7 @@
         },
         {
           "name": "WorkerProcessTests.test_wall_width_variants_and_callouts_are_measured",
-          "line": 383,
+          "line": 396,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -370192,7 +370460,7 @@
         },
         {
           "name": "WorkerProcessTests.test_in_process_measurement_of_truncated_and_unseeded_pages",
-          "line": 412,
+          "line": 434,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -370224,7 +370492,7 @@
         },
         {
           "name": "WorkerProcessTests.test_plans_without_regions_skip_seeding_and_a_missed_hand_seed_stops",
-          "line": 433,
+          "line": 455,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -370249,7 +370517,7 @@
         },
         {
           "name": "WorkerProcessTests.test_pages_that_are_not_plans_are_measured_but_not_traced",
-          "line": 452,
+          "line": 474,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -373842,7 +374110,7 @@
     }
   },
   "discovery": {
-    "count": 14263,
+    "count": 14274,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

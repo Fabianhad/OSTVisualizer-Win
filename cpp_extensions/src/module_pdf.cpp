@@ -141,6 +141,7 @@ NB_MODULE(ost_pdf, m)
             .def("get_last_error", &PDFRenderer::get_last_error,
                  "Get the last error message from PDFium")
             .def("page_count", &PDFRenderer::page_count,
+                 nb::call_guard<nb::gil_scoped_release>(),
                  "Get the number of pages in the PDF")
             .def("page_loads", &PDFRenderer::page_loads,
                  "Number of pages PDFium has loaded and parsed for this renderer")
@@ -276,5 +277,9 @@ Returns None when cancellation is requested or rendering fails.
               "Initialize PDFium library (called automatically on first use)");
         m.def("shutdown", &shutdown_pdfium,
               "Shutdown PDFium library (called automatically at program exit)");
+        m.def("pdfium_entry_counts", &pdfium_entry_counts,
+              "Return (entries, unlocked_entries): PDFium entries made by this module "
+              "and how many ran without the module's process-wide PDFium lock. "
+              "unlocked_entries stays 0 in a correct build.");
         m.attr("__version__") = "1.0.0";
 }

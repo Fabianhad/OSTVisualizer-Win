@@ -169,6 +169,11 @@
   after 20 s. The response then reports `dashed_analysis` as
   `skipped_time_budget` and the region is found without dashed edges. Results on
   sheets that finish quickly are unchanged.
+- **No crash when PDF page sizes are read while a plan is drawing.** The
+  Cover Sheet and its page import read PDF page sizes in the background
+  without waiting for the plan's PDF rendering, so both could use the PDF
+  library at the same time and crash the app. Every use of the PDF library
+  now waits its turn, including releasing a PDF that was never closed.
 
 - **Snapping works on PDFs that keep their drawing in Form XObjects.** Some
   CAD exports place all linework inside Form XObjects; snapping only read

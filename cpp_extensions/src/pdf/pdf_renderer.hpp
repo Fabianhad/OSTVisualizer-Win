@@ -156,4 +156,5 @@ namespace ost_pdf
     };
     void initialize_pdfium();
     void shutdown_pdfium();
+    std::pair<std::uint64_t, std::uint64_t> pdfium_entry_counts();
 }
