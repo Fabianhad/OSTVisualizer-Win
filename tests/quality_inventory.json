@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
   "module_count": 590,
-  "method_count": 14274,
+  "method_count": 14320,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -6076,11 +6076,11 @@
       "duplicate_method_names": []
     },
     "tests/application/services/test_ai_takeoff_proposal_service.py": {
-      "sha256": "03df6dfcea2340de2fb43b2c3fc5f8343be188618b4c51e288e375f896540a9d",
+      "sha256": "1a623d99cacf7bc092c75857cd90d0ed9e6e76f2b0da3fc63b3d3474312ef8ac",
       "methods": [
         {
           "name": "ScaleProposalTests.test_a_measured_distance_matching_a_preset_proposes_it",
-          "line": 113,
+          "line": 116,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6102,7 +6102,7 @@
         },
         {
           "name": "ScaleProposalTests.test_a_distance_far_from_any_preset_proposes_a_custom_scale",
-          "line": 129,
+          "line": 132,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -6120,7 +6120,7 @@
         },
         {
           "name": "ScaleProposalTests.test_a_named_preset_with_a_check_distance",
-          "line": 136,
+          "line": 139,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -6138,7 +6138,7 @@
         },
         {
           "name": "ScaleProposalTests.test_a_preset_is_checked_against_a_nearby_dimension",
-          "line": 154,
+          "line": 157,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6158,7 +6158,7 @@
         },
         {
           "name": "ScaleProposalTests.test_a_disagreeing_dimension_is_reported_in_the_assumption",
-          "line": 168,
+          "line": 171,
           "assertions": [
             "self.assertFalse",
             "self.assertAlmostEqual",
@@ -6181,7 +6181,7 @@
         },
         {
           "name": "ScaleProposalTests.test_the_nearest_dimension_is_used",
-          "line": 179,
+          "line": 182,
           "assertions": [
             "self.assertEqual"
           ],
@@ -6198,7 +6198,7 @@
         },
         {
           "name": "ScaleProposalTests.test_other_text_and_raster_pages_give_no_dimension_check",
-          "line": 201,
+          "line": 204,
           "assertions": [
             "self.assertIsNone",
             "self.assertIsNone",
@@ -6219,7 +6219,7 @@
         },
         {
           "name": "ScaleProposalTests.test_dimensions_far_from_the_measured_points_are_ignored",
-          "line": 222,
+          "line": 225,
           "assertions": [
             "self.assertIsNone"
           ],
@@ -6236,7 +6236,7 @@
         },
         {
           "name": "ScaleProposalTests.test_the_scale_proposal_can_be_split_for_a_worker",
-          "line": 229,
+          "line": 232,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6257,7 +6257,7 @@
         },
         {
           "name": "ScaleProposalTests.test_invalid_scale_requests",
-          "line": 246,
+          "line": 249,
           "assertions": [
             "self.assert_error",
             "self.assert_error",
@@ -6277,7 +6277,7 @@
         },
         {
           "name": "ScaleProposalTests.test_degenerate_or_overflowing_scales_are_invalid_arguments",
-          "line": 276,
+          "line": 279,
           "assertions": [
             "self.assert_error"
           ],
@@ -6294,7 +6294,7 @@
         },
         {
           "name": "FindRegionTests.test_regions_come_back_in_ost_inches_with_ids_and_gaps",
-          "line": 299,
+          "line": 302,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -6322,7 +6322,7 @@
         },
         {
           "name": "FindRegionTests.test_a_seed_selects_the_containing_region_and_raster_runs_only_as_fallback",
-          "line": 329,
+          "line": 332,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -6347,7 +6347,7 @@
         },
         {
           "name": "FindRegionTests.test_scale_must_be_set_and_boxes_are_required",
-          "line": 349,
+          "line": 352,
           "assertions": [
             "self.assert_error"
           ],
@@ -6365,7 +6365,7 @@
         },
         {
           "name": "ElementProposalTests.test_a_complete_slab_needs_no_assumptions",
-          "line": 360,
+          "line": 363,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6389,7 +6389,7 @@
         },
         {
           "name": "ElementProposalTests.test_missing_thickness_and_elevation_become_high_impact_assumptions",
-          "line": 379,
+          "line": 382,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6409,7 +6409,7 @@
         },
         {
           "name": "ElementProposalTests.test_region_gaps_become_closing_segment_assumptions",
-          "line": 396,
+          "line": 399,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6431,7 +6431,7 @@
         },
         {
           "name": "ElementProposalTests.test_invalid_elements",
-          "line": 414,
+          "line": 417,
           "assertions": [
             "self.assert_error",
             "self.assert_error",
@@ -6456,7 +6456,7 @@
         },
         {
           "name": "ElementProposalTests.test_malformed_argument_types_are_invalid_arguments",
-          "line": 455,
+          "line": 458,
           "assertions": [
             "self.assert_error"
           ],
@@ -6473,7 +6473,7 @@
         },
         {
           "name": "ElementProposalTests.test_an_area_too_large_to_compute_is_invalid_geometry",
-          "line": 473,
+          "line": 476,
           "assertions": [
             "self.assert_error"
           ],
@@ -6489,7 +6489,7 @@
         },
         {
           "name": "ElementProposalTests.test_a_long_untrusted_name_is_cleaned",
-          "line": 484,
+          "line": 487,
           "assertions": [
             "self.assertNotIn",
             "self.assertEqual"
@@ -6508,7 +6508,7 @@
         },
         {
           "name": "ChangesetLifecycleTests.test_update_assumption_adds_and_revises_but_never_accepts",
-          "line": 501,
+          "line": 504,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6533,7 +6533,7 @@
         },
         {
           "name": "ChangesetLifecycleTests.test_the_scale_assumption_can_only_change_through_a_new_proposal",
-          "line": 542,
+          "line": 545,
           "assertions": [
             "self.assert_error",
             "self.assert_error",
@@ -6554,7 +6554,7 @@
         },
         {
           "name": "ChangesetLifecycleTests.test_apply_only_asks_for_approval_and_discard_closes",
-          "line": 566,
+          "line": 569,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6580,7 +6580,7 @@
         },
         {
           "name": "ChangesetLifecycleTests.test_impacts_reported_for_normal_assumptions",
-          "line": 581,
+          "line": 584,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -6598,7 +6598,7 @@
         },
         {
           "name": "RegionScaleTests.test_a_region_found_at_another_scale_is_refused",
-          "line": 593,
+          "line": 596,
           "assertions": [
             "self.assert_error",
             "self.assertAlmostEqual"
@@ -6620,7 +6620,7 @@
         },
         {
           "name": "SqlApplyTests.test_sql_bids_keep_proposals_but_cannot_be_applied",
-          "line": 617,
+          "line": 620,
           "assertions": [
             "self.assert_error",
             "self.assertIn",
@@ -6652,7 +6652,7 @@
         },
         {
           "name": "SqlApplyTests.test_a_database_that_cannot_be_resolved_is_never_applied",
-          "line": 665,
+          "line": 668,
           "assertions": [
             "self.assertTrue",
             "self.assert_error",
@@ -6681,7 +6681,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_points_must_be_lists_of_two_finite_numbers",
-          "line": 728,
+          "line": 731,
           "assertions": [
             "self.assertEqual"
           ],
@@ -6700,7 +6700,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_the_minimum_distance_is_one_point_inclusive",
-          "line": 748,
+          "line": 751,
           "assertions": [
             "self.assert_error",
             "self.assertEqual"
@@ -6719,7 +6719,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_real_in_must_be_positive",
-          "line": 758,
+          "line": 761,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -6738,7 +6738,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_a_real_distance_that_underflows_is_out_of_range",
-          "line": 771,
+          "line": 774,
           "assertions": [
             "self.assertEqual"
           ],
@@ -6755,7 +6755,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_a_preset_alone_has_no_error_estimate",
-          "line": 780,
+          "line": 783,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone"
@@ -6773,7 +6773,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_custom_presets_parse_sf1_then_sf2",
-          "line": 785,
+          "line": 788,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -6791,7 +6791,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_invalid_presets_are_refused",
-          "line": 800,
+          "line": 803,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -6810,7 +6810,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_a_scale_that_underflows_to_zero_is_out_of_range",
-          "line": 830,
+          "line": 833,
           "assertions": [
             "self.assertEqual"
           ],
@@ -6827,7 +6827,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_presets_within_one_percent_inclusive_are_matched",
-          "line": 847,
+          "line": 850,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6847,7 +6847,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_custom_scales_are_rounded_to_six_decimals",
-          "line": 856,
+          "line": 859,
           "assertions": [
             "self.assertEqual"
           ],
@@ -6863,7 +6863,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_the_previous_scale_and_open_bid_are_recorded",
-          "line": 860,
+          "line": 863,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6885,7 +6885,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_the_reason_and_sheet_reference_are_kept",
-          "line": 874,
+          "line": 877,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -6905,7 +6905,7 @@
         },
         {
           "name": "ScaleArgumentTests.test_raster_results_are_immutable",
-          "line": 889,
+          "line": 892,
           "assertions": [
             "self.assertRaises"
           ],
@@ -6921,7 +6921,7 @@
         },
         {
           "name": "RegionLimitTests.test_limits_match_the_plan",
-          "line": 901,
+          "line": 904,
           "assertions": [
             "self.assertEqual"
           ],
@@ -6936,7 +6936,7 @@
         },
         {
           "name": "RegionLimitTests.test_region_ids_count_up_from_one",
-          "line": 907,
+          "line": 910,
           "assertions": [
             "self.assertEqual"
           ],
@@ -6953,7 +6953,7 @@
         },
         {
           "name": "RegionLimitTests.test_at_most_fifty_regions_are_returned_without_a_seed",
-          "line": 913,
+          "line": 916,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -6981,7 +6981,7 @@
         },
         {
           "name": "RegionLimitTests.test_the_region_cache_keeps_the_newest_two_hundred",
-          "line": 930,
+          "line": 933,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -7007,7 +7007,7 @@
         },
         {
           "name": "RegionLimitTests.test_gap_close_bounds_are_inclusive",
-          "line": 948,
+          "line": 951,
           "assertions": [
             "self.assertEqual",
             "self.assert_error"
@@ -7028,7 +7028,7 @@
         },
         {
           "name": "RegionLimitTests.test_small_gaps_stay_open_unless_asked_to_close",
-          "line": 959,
+          "line": 962,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7049,7 +7049,7 @@
         },
         {
           "name": "RegionLimitTests.test_boxes_need_positive_width_and_height",
-          "line": 973,
+          "line": 976,
           "assertions": [
             "self.assert_error"
           ],
@@ -7067,7 +7067,7 @@
         },
         {
           "name": "RegionLimitTests.test_a_zero_or_negative_scale_is_unset",
-          "line": 985,
+          "line": 988,
           "assertions": [
             "self.assert_error"
           ],
@@ -7085,7 +7085,7 @@
         },
         {
           "name": "RegionLimitTests.test_unreadable_pages_report_their_status",
-          "line": 996,
+          "line": 999,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7105,7 +7105,7 @@
         },
         {
           "name": "RegionLimitTests.test_too_many_segments_are_refused",
-          "line": 1012,
+          "line": 1015,
           "assertions": [
             "self.assert_error"
           ],
@@ -7122,7 +7122,7 @@
         },
         {
           "name": "RegionLimitTests.test_region_areas_and_holes_are_in_ost_units",
-          "line": 1018,
+          "line": 1021,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7145,7 +7145,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_regions_are_sorted_by_area_with_a_total_and_a_cursor",
-          "line": 1108,
+          "line": 1111,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7179,7 +7179,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_dashed_lines_are_left_out_unless_asked_for",
-          "line": 1128,
+          "line": 1131,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -7202,7 +7202,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_exploded_dashes_are_never_bridged_into_a_wall",
-          "line": 1140,
+          "line": 1143,
           "assertions": [
             "self.assertEqual",
             "self.assertGreaterEqual",
@@ -7228,7 +7228,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_min_width_leaves_out_thin_lines_but_keeps_fills",
-          "line": 1157,
+          "line": 1160,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7251,7 +7251,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_colors_keep_only_the_listed_colors",
-          "line": 1170,
+          "line": 1173,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7274,7 +7274,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_min_area_drops_small_regions_from_the_total",
-          "line": 1183,
+          "line": 1186,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7293,7 +7293,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_small_symbols_are_not_holes_and_are_counted",
-          "line": 1193,
+          "line": 1196,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -7320,7 +7320,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_max_gap_in_is_the_same_setting_as_gap_close_in",
-          "line": 1218,
+          "line": 1221,
           "assertions": [
             "self.assertEqual",
             "self.assert_error",
@@ -7343,7 +7343,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_filters_are_echoed_with_their_defaults",
-          "line": 1241,
+          "line": 1244,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -7361,7 +7361,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_invalid_filters_are_refused",
-          "line": 1279,
+          "line": 1282,
           "assertions": [
             "self.assert_error"
           ],
@@ -7381,7 +7381,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_door_opening_found_from_a_seed_is_closed_and_recorded",
-          "line": 1297,
+          "line": 1300,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -7414,7 +7414,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_passage_to_an_island_is_not_an_opening",
-          "line": 1325,
+          "line": 1328,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7439,7 +7439,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_an_opening_as_wide_as_the_pen_is_still_found",
-          "line": 1356,
+          "line": 1359,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -7459,7 +7459,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_vector_outline_that_disagrees_with_the_fill_is_not_used",
-          "line": 1367,
+          "line": 1370,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -7481,7 +7481,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_an_opening_must_continue_a_drawn_line_at_both_ends",
-          "line": 1386,
+          "line": 1389,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7500,7 +7500,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_lines_left_of_the_box_are_ignored",
-          "line": 1412,
+          "line": 1415,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -7519,7 +7519,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_the_minimum_area_is_inclusive",
-          "line": 1417,
+          "line": 1420,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -7537,7 +7537,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_short_opening_closure_is_a_normal_assumption",
-          "line": 1423,
+          "line": 1426,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -7559,7 +7559,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_sealed_opening_is_recorded_even_when_the_vector_outline_stays_open",
-          "line": 1438,
+          "line": 1441,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7581,7 +7581,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_raster_region_without_openings_keeps_no_gaps",
-          "line": 1462,
+          "line": 1465,
           "assertions": [
             "self.assertEqual"
           ],
@@ -7600,7 +7600,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_thin_door_swings_never_close_an_opening_silently",
-          "line": 1472,
+          "line": 1475,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -7627,7 +7627,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_heavy_curves_stay_region_edges",
-          "line": 1490,
+          "line": 1493,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -7649,7 +7649,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_seed_closes_its_own_openings_before_bridging_nearby_lines",
-          "line": 1530,
+          "line": 1533,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -7674,7 +7674,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_global_gap_closing_is_the_fallback_when_no_opening_is_found",
-          "line": 1541,
+          "line": 1544,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7695,7 +7695,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_raster_fill_that_may_have_closed_unseen_openings_says_so",
-          "line": 1548,
+          "line": 1551,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7724,7 +7724,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_suggested_wall_width_is_applied_by_default",
-          "line": 1581,
+          "line": 1584,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7748,7 +7748,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_truncated_page_is_read_again_inside_the_box",
-          "line": 1598,
+          "line": 1601,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7770,7 +7770,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_the_suggested_width_keeps_dashed_lines_the_caller_asked_for",
-          "line": 1617,
+          "line": 1620,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7791,7 +7791,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_no_suggestion_without_two_width_classes",
-          "line": 1634,
+          "line": 1637,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -7810,7 +7810,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_exclude_thin_curves_must_be_true_or_false",
-          "line": 1643,
+          "line": 1646,
           "assertions": [
             "self.assert_error"
           ],
@@ -7828,7 +7828,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_too_many_segments_after_filtering_are_refused_but_filtered_ones_are_not",
-          "line": 1651,
+          "line": 1654,
           "assertions": [
             "self.assert_error",
             "self.assertEqual"
@@ -7848,7 +7848,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_the_dashed_analysis_state_is_reported",
-          "line": 1683,
+          "line": 1686,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -7866,7 +7866,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_a_slow_dashed_analysis_stops_at_its_time_budget",
-          "line": 1689,
+          "line": 1692,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7890,7 +7890,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_non_finite_segments_do_not_count_toward_the_early_cap",
-          "line": 1702,
+          "line": 1705,
           "assertions": [
             "self.assertEqual"
           ],
@@ -7911,7 +7911,7 @@
         },
         {
           "name": "FindRegionFilterTests.test_over_the_cap_seeded_calls_are_refused_before_the_dashed_analysis",
-          "line": 1710,
+          "line": 1713,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -7936,7 +7936,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_a_dense_traced_outline_is_simplified_before_the_proposal",
-          "line": 1732,
+          "line": 1735,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7970,7 +7970,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_the_element_proposal_can_be_split_for_a_worker",
-          "line": 1763,
+          "line": 1766,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -7996,7 +7996,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_a_traced_hole_that_crosses_its_outline_is_left_out_and_recorded",
-          "line": 1799,
+          "line": 1802,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8019,7 +8019,7 @@
         },
         {
           "name": "RegionSimplificationTests.test_given_polygons_are_not_simplified",
-          "line": 1820,
+          "line": 1823,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn"
@@ -8037,7 +8037,7 @@
         },
         {
           "name": "RasterRegionTests.test_raster_regions_scale_to_ost_inches",
-          "line": 1840,
+          "line": 1843,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8060,7 +8060,7 @@
         },
         {
           "name": "RasterRegionTests.test_the_raster_pen_covers_the_closing_gap",
-          "line": 1851,
+          "line": 1854,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -8078,7 +8078,7 @@
         },
         {
           "name": "RasterRegionTests.test_no_raster_fill_means_no_region",
-          "line": 1860,
+          "line": 1863,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8097,7 +8097,7 @@
         },
         {
           "name": "RasterRegionTests.test_a_leaking_raster_region_cannot_be_proposed",
-          "line": 1866,
+          "line": 1869,
           "assertions": [
             "self.assertTrue",
             "self.assert_error"
@@ -8117,7 +8117,7 @@
         },
         {
           "name": "ElementArgumentTests.test_thickness_bounds",
-          "line": 1884,
+          "line": 1887,
           "assertions": [
             "self.assertEqual",
             "self.assert_error"
@@ -8138,7 +8138,7 @@
         },
         {
           "name": "ElementArgumentTests.test_top_elevation_bounds",
-          "line": 1898,
+          "line": 1901,
           "assertions": [
             "self.assertEqual",
             "self.assert_error"
@@ -8159,7 +8159,7 @@
         },
         {
           "name": "ElementArgumentTests.test_polygons_must_be_lists_of_numbers",
-          "line": 1910,
+          "line": 1913,
           "assertions": [
             "self.assert_error",
             "self.assertEqual"
@@ -8179,7 +8179,7 @@
         },
         {
           "name": "ElementArgumentTests.test_unscaled_pages_cannot_take_elements",
-          "line": 1922,
+          "line": 1925,
           "assertions": [
             "self.assert_error",
             "self.assertEqual"
@@ -8198,7 +8198,7 @@
         },
         {
           "name": "ElementArgumentTests.test_an_existing_condition_needs_no_new_condition_or_assumptions",
-          "line": 1927,
+          "line": 1930,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8217,7 +8217,7 @@
         },
         {
           "name": "ElementArgumentTests.test_quantity_deltas_are_rounded_to_four_decimals",
-          "line": 1936,
+          "line": 1939,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8233,7 +8233,7 @@
         },
         {
           "name": "ElementArgumentTests.test_changesets_record_the_open_bid",
-          "line": 1943,
+          "line": 1946,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8250,7 +8250,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_changeset_ids_are_required_text",
-          "line": 1955,
+          "line": 1958,
           "assertions": [
             "self.assert_error"
           ],
@@ -8269,7 +8269,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_unknown_changesets_are_not_found",
-          "line": 1969,
+          "line": 1972,
           "assertions": [
             "self.assert_error"
           ],
@@ -8286,7 +8286,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_added_assumptions_default_to_empty_text",
-          "line": 1980,
+          "line": 1983,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8303,7 +8303,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_target_and_assumption_ids_are_required",
-          "line": 1995,
+          "line": 1998,
           "assertions": [
             "self.assert_error",
             "self.assert_error",
@@ -8325,7 +8325,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_closing_segment_assumptions_use_the_given_length",
-          "line": 2009,
+          "line": 2012,
           "assertions": [
             "self.assertEqual",
             "self.assert_error"
@@ -8344,7 +8344,7 @@
         },
         {
           "name": "ChangesetToolArgumentTests.test_reported_statuses_are_returned_without_a_new_request",
-          "line": 2027,
+          "line": 2030,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn",
@@ -8371,7 +8371,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_boundary_kinds_must_be_a_list_of_known_kinds",
-          "line": 2109,
+          "line": 2112,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8393,7 +8393,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_the_suggested_width_is_not_applied_to_boundary_kinds",
-          "line": 2122,
+          "line": 2125,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -8413,7 +8413,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_the_default_call_is_unchanged_and_reports_the_ignored_outline",
-          "line": 2138,
+          "line": 2142,
           "assertions": [
             "self.assertIsNone",
             "self.assertNotIn",
@@ -8450,7 +8450,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_seed_inside_the_dashed_outline_returns_it_with_rounded_corners",
-          "line": 2166,
+          "line": 2170,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -8487,7 +8487,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_crossing_dashed_line_does_not_cut_the_outline",
-          "line": 2184,
+          "line": 2188,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -8508,7 +8508,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_dashed_line_joined_to_the_outline_does_not_cut_it",
-          "line": 2194,
+          "line": 2198,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -8530,7 +8530,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_dashed_corner_curves_stay_in_the_outline",
-          "line": 2207,
+          "line": 2211,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual"
@@ -8552,7 +8552,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_walls_and_dashes_together_follow_the_walls",
-          "line": 2218,
+          "line": 2222,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertIsNotNone",
@@ -8577,7 +8577,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_given_width_never_drops_dashed_boundary_pieces",
-          "line": 2227,
+          "line": 2231,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -8600,7 +8600,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_thin_curves_stay_out_of_thin_boundaries",
-          "line": 2242,
+          "line": 2246,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8618,7 +8618,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_gap_longer_than_the_pattern_gap_is_reported_with_its_end_points",
-          "line": 2251,
+          "line": 2255,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -8643,7 +8643,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_colors_choose_the_dashed_outline",
-          "line": 2267,
+          "line": 2271,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -8664,7 +8664,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_an_outline_within_half_a_percent_of_the_region_is_not_reported",
-          "line": 2282,
+          "line": 2286,
           "assertions": [
             "self.assertIsNone",
             "self.assertAlmostEqual",
@@ -8690,7 +8690,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_huge_dash_gaps_neither_fail_nor_bridge_separate_outlines",
-          "line": 2302,
+          "line": 2306,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual"
@@ -8711,7 +8711,7 @@
         },
         {
           "name": "DashedBoundaryTests.test_a_dashed_outline_too_complex_to_trace_is_skipped",
-          "line": 2316,
+          "line": 2320,
           "assertions": [
             "self.assertIsNone"
           ],
@@ -8731,7 +8731,7 @@
         },
         {
           "name": "LeakGuardTests.test_two_rooms_joined_by_a_39_in_gap_are_never_silently_merged",
-          "line": 2336,
+          "line": 2340,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -8758,7 +8758,7 @@
         },
         {
           "name": "LeakGuardTests.test_an_open_gap_assumption_blocks_approval_until_accepted",
-          "line": 2358,
+          "line": 2362,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -8785,7 +8785,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_closed_room_has_no_open_gaps",
-          "line": 2380,
+          "line": 2384,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse"
@@ -8805,7 +8805,7 @@
         },
         {
           "name": "LeakGuardTests.test_openings_wider_than_the_check_are_not_reported",
-          "line": 2388,
+          "line": 2392,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -8824,7 +8824,7 @@
         },
         {
           "name": "LeakGuardTests.test_only_the_opening_to_a_second_area_is_reported",
-          "line": 2397,
+          "line": 2401,
           "assertions": [
             "self.assertAlmostEqual"
           ],
@@ -8842,7 +8842,7 @@
         },
         {
           "name": "LeakGuardTests.test_an_opening_the_region_closed_is_not_reported_again",
-          "line": 2406,
+          "line": 2410,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual"
@@ -8860,7 +8860,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_raster_region_that_matches_the_room_reports_no_opening",
-          "line": 2422,
+          "line": 2426,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -8879,7 +8879,7 @@
         },
         {
           "name": "LeakGuardTests.test_open_gaps_keep_the_closures_the_region_was_traced_with",
-          "line": 2436,
+          "line": 2440,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8899,7 +8899,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_capped_double_wall_opening_is_reported",
-          "line": 2457,
+          "line": 2461,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -8920,7 +8920,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_small_corner_split_off_by_a_stray_line_is_not_a_leak",
-          "line": 2475,
+          "line": 2479,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse"
@@ -8940,7 +8940,7 @@
         },
         {
           "name": "LeakGuardTests.test_an_opening_that_cannot_be_traced_is_skipped",
-          "line": 2483,
+          "line": 2487,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8961,7 +8961,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_raster_region_reports_an_opening_to_the_outside",
-          "line": 2496,
+          "line": 2500,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -8985,7 +8985,7 @@
         },
         {
           "name": "LeakGuardTests.test_region_records_default_to_no_warnings",
-          "line": 2519,
+          "line": 2523,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9003,7 +9003,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_skipped_analysis_does_not_use_dashed_edges",
-          "line": 2528,
+          "line": 2532,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9025,7 +9025,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_complete_analysis_still_uses_dashed_edges",
-          "line": 2539,
+          "line": 2543,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9044,7 +9044,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_dashed_outline_time_out_is_reported_as_skipped",
-          "line": 2545,
+          "line": 2549,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9065,7 +9065,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_dashed_outline_shares_the_analysis_deadline",
-          "line": 2554,
+          "line": 2558,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNotNone",
@@ -9093,7 +9093,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_non_finite_dashed_lines_are_ignored",
-          "line": 2577,
+          "line": 2581,
           "assertions": [
             "self.assertEqual"
           ],
@@ -9109,6 +9109,278 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Bug hunt: infinite-coordinate dashed lines no longer crash seeded or dashed find_regions and leave regions unchanged.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WallWidthSuggestionTests.test_an_s101_like_sheet_keeps_its_walls",
+          "line": 2614,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pen",
+            "_styled",
+            "self.assertEqual",
+            "self.find",
+            "wall_width_page"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "find_regions on the synthetic S101 sheet applies 0.66 pt, reports width_suggestion and finds the 12 rooms plus their outline.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WallWidthSuggestionTests.test_wall_boundaries_keep_s101_walls_lighter_than_the_old_floor",
+          "line": 2630,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pen",
+            "_styled",
+            "self.assertEqual",
+            "self.find",
+            "wall_width_page"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "boundary_kinds wall on the synthetic S101 keeps the 0.66 pt walls (13 regions) and excludes the 1,000 thin lines by kind.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WallWidthSuggestionTests.test_low_confidence_suggests_no_filter_and_records_an_assumption",
+          "line": 2639,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pen",
+            "_styled",
+            "_styled_rect",
+            "range",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.find",
+            "self.service_m1b.propose_element"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A 0.5/0.6 pt page gets no filter, reason no_clear_pen_step, and propose_element records one normal-impact non-blocking no wall-width filter assumption.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WallWidthSuggestionTests.test_walls_dominating_a_few_thin_lines_record_nothing",
+          "line": 2665,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pen",
+            "_styled",
+            "_styled_rect",
+            "range",
+            "self.assertEqual",
+            "self.find",
+            "self.service_m1b.propose_element"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A page whose 2.0 pt walls dominate a few thin lines reports light_pens_too_rare and adds no width assumption.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WallWidthSuggestionTests.test_a_given_width_one_pen_or_unstyled_lines_record_nothing",
+          "line": 2684,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pen",
+            "_rect",
+            "_styled_rect",
+            "self.assertEqual",
+            "self.assertIsNone",
+            "self.find",
+            "self.service_m1b.propose_element"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A given width (null width_suggestion), a single pen and unstyled lines add no width assumption.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchBudgetTests.test_the_region_search_reports_complete_within_budget",
+          "line": 2712,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_rect",
+            "self.assertEqual",
+            "self.find"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A normal search reports region_search complete.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchBudgetTests.test_a_dashed_outline_search_over_budget_reports_a_skip",
+          "line": 2718,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "RegionSearchTimeout",
+            "_mat_page",
+            "list",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.find"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A timed-out planar search inside the dashed outline reports dashed_analysis and region_search skipped_time_budget instead of raising.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchBudgetTests.test_the_raster_fill_and_sealed_openings_check_the_deadline",
+          "line": 2744,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertGreaterEqual",
+            "self.assertNotIn",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "len",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.assertGreaterEqual",
+            "self.assertNotIn",
+            "self.find",
+            "self.sealed_page",
+            "set"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "The seeded raster path checks the region deadline before and after the fill and per sealed-opening run (at least three checks, one deadline).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchBudgetTests.test_an_expired_deadline_skips_the_raster_fill",
+          "line": 2754,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "RegionSearchTimeout",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.find",
+            "self.sealed_page"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "With the deadline expired at the raster step the fill is never called and the search reports skipped_time_budget.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchBudgetTests.test_a_search_over_budget_is_skipped_instead_of_overrunning",
+          "line": 2766,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_rect",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.find",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "With an expired budget listed and seeded searches return empty with region_search skipped_time_budget.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SegmentCapTests.test_a_page_over_the_cap_names_a_min_width_that_would_pass",
+          "line": 2801,
+          "assertions": [
+            "self.assert_error",
+            "self.assertIn",
+            "self.assertIsNotNone",
+            "self.assertEqual",
+            "self.assertLessEqual"
+          ],
+          "calls": [
+            "hint.group",
+            "int",
+            "re.search",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertIsNotNone",
+            "self.assertLessEqual",
+            "self.assert_error",
+            "self.crowded_page",
+            "self.find"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A page the new rule leaves over 20,000 segments is refused and the message names min_width 1 with the count that a min_width 1 call then keeps.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SegmentCapTests.test_no_hint_when_no_width_would_pass",
+          "line": 2813,
+          "assertions": [
+            "self.assert_error",
+            "self.assertIn",
+            "self.assertNotIn"
+          ],
+          "calls": [
+            "_scattered",
+            "self.assertIn",
+            "self.assertNotIn",
+            "self.assert_error",
+            "self.find"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A single-pen page over the cap is refused without a min_width hint.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -9665,7 +9937,7 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (M2): kinds filter keeps only the given kinds.",
+          "review_note": "Kind filters: the 2.0 pt wall and the filled poche are walls; the 0.5 pt curve keeps the old curve threshold and stays thin; dashed and symbol filters keep theirs.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
@@ -53661,7 +53933,7 @@
       "duplicate_method_names": []
     },
     "tests/domain/services/test_ai_dashed_outline.py": {
-      "sha256": "e183517090509c18088f1e742ec022cf1955699f69367db122bd1b5118e78655",
+      "sha256": "3f7e8222163a57aec4852931e71f4d1257957e9f8e86ed6299cf5bf002df13a8",
       "methods": [
         {
           "name": "DashPatternTests.test_the_gap_is_the_longest_off_length_of_the_dash_array",
@@ -53765,7 +54037,8 @@
           "name": "DashedPieceTests.test_a_crowd_of_another_style_does_not_hide_the_outline",
           "line": 96,
           "assertions": [
-            "self.assertIn",
+            "self.assertNotIn",
+            "self.assertEqual",
             "self.assertTrue",
             "self.assertTrue",
             "self.assertFalse"
@@ -53778,20 +54051,21 @@
             "enumerate",
             "len",
             "range",
+            "self.assertEqual",
             "self.assertFalse",
-            "self.assertIn",
+            "self.assertNotIn",
             "self.assertTrue",
             "set"
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): a crowd of another style does not hide the outline.",
+          "review_note": "The 0.6 pt outline over a 0.24 pt hatch is classified wall (pen step), the hatch thin, and every outline piece is still a dash piece while the hatch middle is not.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "DashedPieceTests.test_a_crowd_of_the_same_style_is_not_dashed",
-          "line": 112,
+          "line": 113,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse"
@@ -53814,7 +54088,7 @@
         },
         {
           "name": "DashedPieceTests.test_abutting_pieces_form_one_dash",
-          "line": 126,
+          "line": 127,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -53834,7 +54108,7 @@
         },
         {
           "name": "DashedPieceTests.test_runs_longer_than_a_dash_are_solid",
-          "line": 137,
+          "line": 138,
           "assertions": [
             "self.assertEqual"
           ],
@@ -53852,7 +54126,7 @@
         },
         {
           "name": "DashedPieceTests.test_two_dashes_are_not_a_pattern",
-          "line": 146,
+          "line": 147,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -53872,7 +54146,7 @@
         },
         {
           "name": "DashedPieceTests.test_dash_arrays_and_symbols",
-          "line": 156,
+          "line": 157,
           "assertions": [
             "self.assertEqual"
           ],
@@ -53890,7 +54164,7 @@
         },
         {
           "name": "DashedPieceTests.test_closed_and_unstroked_pieces_never_join_a_pattern",
-          "line": 167,
+          "line": 168,
           "assertions": [
             "self.assertEqual"
           ],
@@ -53907,7 +54181,7 @@
         },
         {
           "name": "DashedPieceTests.test_classified_dashes_of_mixed_styles_get_their_nearest_gap",
-          "line": 176,
+          "line": 177,
           "assertions": [
             "self.assertEqual"
           ],
@@ -53924,7 +54198,7 @@
         },
         {
           "name": "DashedPieceTests.test_corner_chains_must_touch_a_dash_and_stay_short",
-          "line": 186,
+          "line": 187,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -53945,7 +54219,7 @@
         },
         {
           "name": "DashedPieceTests.test_pieces_within_half_a_point_touch",
-          "line": 199,
+          "line": 200,
           "assertions": [
             "self.assertIn",
             "self.assertNotIn",
@@ -53968,7 +54242,7 @@
         },
         {
           "name": "DashedPieceTests.test_gaps_just_over_the_dash_limit_are_not_a_pattern",
-          "line": 209,
+          "line": 210,
           "assertions": [
             "self.assertEqual"
           ],
@@ -53985,7 +54259,7 @@
         },
         {
           "name": "DashedPieceTests.test_a_solid_line_split_with_a_small_offset_is_not_a_dash",
-          "line": 213,
+          "line": 214,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54003,7 +54277,7 @@
         },
         {
           "name": "DashedPieceTests.test_a_long_solid_piece_touching_a_dash_is_not_a_corner",
-          "line": 223,
+          "line": 224,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54022,7 +54296,7 @@
         },
         {
           "name": "DashedPieceTests.test_unstroked_pieces_are_never_dashes",
-          "line": 228,
+          "line": 229,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54039,7 +54313,7 @@
         },
         {
           "name": "DashedPieceTests.test_a_dash_abutting_a_solid_line_still_starts_a_pattern",
-          "line": 232,
+          "line": 233,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54057,7 +54331,7 @@
         },
         {
           "name": "DashedPieceTests.test_a_crowded_dash_is_not_pulled_into_a_pattern",
-          "line": 241,
+          "line": 242,
           "assertions": [
             "self.assertTrue",
             "self.assertNotIn"
@@ -54079,7 +54353,7 @@
         },
         {
           "name": "DashBridgeTests.test_the_outline_closes_into_one_face_with_its_rounded_corners",
-          "line": 262,
+          "line": 263,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertGreaterEqual",
@@ -54109,7 +54383,7 @@
         },
         {
           "name": "DashBridgeTests.test_a_gap_longer_than_the_pattern_gap_stays_open",
-          "line": 283,
+          "line": 284,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54128,7 +54402,7 @@
         },
         {
           "name": "DashBridgeTests.test_bridges_join_only_aligned_ends_of_the_same_style",
-          "line": 289,
+          "line": 290,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54145,7 +54419,7 @@
         },
         {
           "name": "DashBridgeTests.test_each_end_is_bridged_once_to_its_nearest_partner",
-          "line": 300,
+          "line": 301,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54162,7 +54436,7 @@
         },
         {
           "name": "DashBridgeTests.test_bridges_need_ends_within_thirty_degrees",
-          "line": 309,
+          "line": 310,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54180,7 +54454,7 @@
         },
         {
           "name": "DashBridgeTests.test_a_partner_that_points_away_is_not_bridged",
-          "line": 317,
+          "line": 318,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54197,7 +54471,7 @@
         },
         {
           "name": "DashBridgeTests.test_the_larger_pattern_gap_of_two_ends_sets_the_reach",
-          "line": 321,
+          "line": 322,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54215,7 +54489,7 @@
         },
         {
           "name": "DashBridgeTests.test_an_end_continued_by_a_corner_is_not_bridged_past_it",
-          "line": 326,
+          "line": 327,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54232,7 +54506,7 @@
         },
         {
           "name": "DashBridgeTests.test_an_end_continued_by_another_piece_is_not_bridged",
-          "line": 330,
+          "line": 331,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54249,7 +54523,7 @@
         },
         {
           "name": "DashBridgeTests.test_an_end_touched_from_the_side_is_still_bridged",
-          "line": 339,
+          "line": 340,
           "assertions": [
             "self.assertIn"
           ],
@@ -54266,7 +54540,7 @@
         },
         {
           "name": "DashBridgeTests.test_ends_meeting_at_a_sharp_corner_are_never_bridged",
-          "line": 348,
+          "line": 349,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54283,7 +54557,7 @@
         },
         {
           "name": "DashBridgeTests.test_nothing_to_bridge",
-          "line": 352,
+          "line": 353,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54301,7 +54575,7 @@
         },
         {
           "name": "DashedComponentTests.test_components_follow_touching_pieces_and_bridges_of_one_style",
-          "line": 358,
+          "line": 359,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54320,7 +54594,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_corner_chains_match_a_brute_force_reference_on_random_pages",
-          "line": 465,
+          "line": 466,
           "assertions": [
             "self.assertGreater",
             "self.assertEqual"
@@ -54343,7 +54617,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_an_expired_deadline_stops_the_analysis",
-          "line": 499,
+          "line": 500,
           "assertions": [
             "self.assertLess",
             "self.assertEqual",
@@ -54366,7 +54640,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_corner_pieces_exactly_at_the_join_distance_are_chained",
-          "line": 515,
+          "line": 516,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54385,7 +54659,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_each_stage_honours_an_expired_deadline",
-          "line": 534,
+          "line": 535,
           "assertions": [
             "self.assertRaises"
           ],
@@ -54411,7 +54685,7 @@
         },
         {
           "name": "CornerChainScalingTests.test_thousands_of_ends_sharing_cells_join_in_near_linear_time",
-          "line": 553,
+          "line": 554,
           "assertions": [
             "self.assertLess",
             "self.assertEqual"
@@ -54437,7 +54711,7 @@
         },
         {
           "name": "DashedDeadlineTests.test_dashed_components_stops_at_the_deadline",
-          "line": 588,
+          "line": 589,
           "assertions": [
             "self.assertTrue",
             "self.assertRaises"
@@ -54458,7 +54732,7 @@
         },
         {
           "name": "DashedDeadlineTests.test_dashed_components_skip_lines_that_are_already_joined",
-          "line": 595,
+          "line": 596,
           "assertions": [
             "self.assertEqual",
             "self.assertLess"
@@ -54486,7 +54760,7 @@
         },
         {
           "name": "DashedDeadlineTests.test_touching_chains_checks_the_deadline_inside_crowded_cell_pairs",
-          "line": 622,
+          "line": 623,
           "assertions": [
             "self.assertLessEqual",
             "self.assertRaises"
@@ -54510,11 +54784,11 @@
       "duplicate_method_names": []
     },
     "tests/domain/services/test_ai_linework.py": {
-      "sha256": "f17f2f523fbf7a7f483f9d26114ba3b03489aa2cedcab3a417abb318e2789c7d",
+      "sha256": "afe3c55197e08e5dfbeaf45b5aa6a6f2ed834bb5a7a331785368052264720a0c",
       "methods": [
         {
           "name": "ConstantsTests.test_thresholds",
-          "line": 59,
+          "line": 72,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54529,7 +54803,7 @@
         },
         {
           "name": "ConstantsTests.test_segments_are_frozen_with_neutral_defaults",
-          "line": 72,
+          "line": 85,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54550,7 +54824,7 @@
         },
         {
           "name": "ConstantsTests.test_kind_names_and_defaults_match_the_tool_catalog_constants",
-          "line": 92,
+          "line": 105,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54566,7 +54840,7 @@
         },
         {
           "name": "ConstantsTests.test_rgba_hex_drops_alpha",
-          "line": 96,
+          "line": 109,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54584,7 +54858,7 @@
         },
         {
           "name": "ClassificationTests.test_heavy_lines_are_walls_and_light_lines_are_thin",
-          "line": 103,
+          "line": 116,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54602,8 +54876,8 @@
           "second_pass_note": ""
         },
         {
-          "name": "ClassificationTests.test_the_heavy_threshold_follows_the_page_median",
-          "line": 113,
+          "name": "ClassificationTests.test_walls_start_at_the_pen_step_above_the_light_bulk",
+          "line": 126,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54617,13 +54891,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Asserts exact kinds or values for the stated case; written before the module and kept as mutation killers (in-memory sweep, every survivor closed). Case: the heavy threshold follows the page median.",
+          "review_note": "Over a 1.0 pt bulk, 1.29 pt stays thin and 1.49 and 1.5 pt are walls (the pen step, not 1.5 times the median).",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "ClassificationTests.test_hairlines_and_unknown_widths_are_thin",
-          "line": 121,
+          "line": 135,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54640,7 +54914,7 @@
         },
         {
           "name": "ClassificationTests.test_dash_arrays_make_dashed_lines",
-          "line": 131,
+          "line": 145,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54658,7 +54932,7 @@
         },
         {
           "name": "ClassificationTests.test_exploded_dashes_are_dashed",
-          "line": 142,
+          "line": 156,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54676,7 +54950,7 @@
         },
         {
           "name": "ClassificationTests.test_exploded_dash_chains_need_three_pieces_with_real_gaps",
-          "line": 148,
+          "line": 162,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54699,7 +54973,7 @@
         },
         {
           "name": "ClassificationTests.test_exploded_dashes_follow_slanted_lines_and_ignore_parallel_neighbours",
-          "line": 161,
+          "line": 175,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54722,7 +54996,7 @@
         },
         {
           "name": "ClassificationTests.test_a_cross_tick_on_the_line_does_not_extend_a_chain",
-          "line": 183,
+          "line": 197,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54740,7 +55014,7 @@
         },
         {
           "name": "ClassificationTests.test_two_pieces_are_not_a_dash_line_even_with_other_short_pieces",
-          "line": 188,
+          "line": 202,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54758,7 +55032,7 @@
         },
         {
           "name": "ClassificationTests.test_edges_of_closed_shapes_never_form_dashes",
-          "line": 192,
+          "line": 206,
           "assertions": [
             "self.assertNotIn"
           ],
@@ -54776,7 +55050,7 @@
         },
         {
           "name": "ClassificationTests.test_a_dash_line_in_a_crowd_of_separate_short_pieces_is_not_dashed",
-          "line": 198,
+          "line": 212,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54796,7 +55070,7 @@
         },
         {
           "name": "ClassificationTests.test_crowded_short_lines_are_not_dashes",
-          "line": 215,
+          "line": 229,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54820,7 +55094,7 @@
         },
         {
           "name": "ClassificationTests.test_small_compact_closed_shapes_are_symbols",
-          "line": 230,
+          "line": 244,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54838,7 +55112,7 @@
         },
         {
           "name": "ClassificationTests.test_long_thin_closed_shapes_are_not_symbols_but_tiny_ones_are",
-          "line": 237,
+          "line": 251,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54858,7 +55132,7 @@
         },
         {
           "name": "ClassificationTests.test_symbol_detection_needs_a_closed_group_and_can_be_disabled",
-          "line": 253,
+          "line": 267,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54879,7 +55153,7 @@
         },
         {
           "name": "ClassificationTests.test_fill_only_shapes_are_walls_unless_symbols",
-          "line": 266,
+          "line": 280,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54896,7 +55170,7 @@
         },
         {
           "name": "ClassificationTests.test_open_or_ungrouped_pieces_never_form_symbols",
-          "line": 276,
+          "line": 290,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54917,7 +55191,7 @@
         },
         {
           "name": "ClassificationTests.test_the_heavy_threshold_ignores_fills_and_has_a_floor",
-          "line": 295,
+          "line": 309,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -54937,7 +55211,7 @@
         },
         {
           "name": "ClassificationTests.test_symbol_groups_report_one_box_per_shape",
-          "line": 304,
+          "line": 318,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -54956,7 +55230,7 @@
         },
         {
           "name": "ClassificationTests.test_symbol_boxes",
-          "line": 317,
+          "line": 331,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse",
@@ -54978,7 +55252,7 @@
         },
         {
           "name": "ClassificationTests.test_classification_is_empty_for_no_segments",
-          "line": 325,
+          "line": 339,
           "assertions": [
             "self.assertEqual"
           ],
@@ -54993,8 +55267,8 @@
           "second_pass_note": ""
         },
         {
-          "name": "SuggestedMinWidthTests.test_the_lightest_heavy_width_class_is_suggested",
-          "line": 345,
+          "name": "SuggestedMinWidthTests.test_the_lightest_pen_above_the_light_bulk_is_suggested",
+          "line": 359,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55005,13 +55279,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (M2.1, synthetic fixtures only): the lightest heavy width class is suggested.",
+          "review_note": "With a 0.25 pt bulk, the 0.5 pt pen is the lightest kept pen and becomes the suggestion (the old rule jumped to 1.02 pt).",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
-          "name": "SuggestedMinWidthTests.test_the_median_sets_the_heavy_threshold",
-          "line": 349,
+          "name": "SuggestedMinWidthTests.test_every_pen_above_the_light_bulk_is_kept",
+          "line": 363,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55022,13 +55296,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (M2.1, synthetic fixtures only): the median sets the heavy threshold.",
+          "review_note": "With a 1.0 pt bulk the 1.4 pt pen is 1.4x heavier and kept, so the suggestion is 1.4 rather than 2.0.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "SuggestedMinWidthTests.test_too_few_heavy_lines_steps_down_to_a_lighter_class",
-          "line": 353,
+          "line": 367,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55045,7 +55319,7 @@
         },
         {
           "name": "SuggestedMinWidthTests.test_no_suggestion_for_one_width_or_no_widths",
-          "line": 357,
+          "line": 371,
           "assertions": [
             "self.assertIsNone",
             "self.assertIsNone",
@@ -55066,7 +55340,7 @@
         },
         {
           "name": "SuggestedMinWidthTests.test_a_class_is_suggested_at_its_thinnest_member",
-          "line": 363,
+          "line": 377,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55083,7 +55357,7 @@
         },
         {
           "name": "SuggestedMinWidthTests.test_heavy_dashed_lines_do_not_become_the_suggestion",
-          "line": 367,
+          "line": 381,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55102,7 +55376,7 @@
         },
         {
           "name": "SuggestedMinWidthTests.test_dashed_and_fill_only_lines_do_not_count",
-          "line": 375,
+          "line": 389,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55120,8 +55394,256 @@
           "second_pass_note": ""
         },
         {
+          "name": "WidthSuggestionTests.test_an_s101_like_sheet_keeps_its_walls",
+          "line": 418,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertLess"
+          ],
+          "calls": [
+            "_styled_lines",
+            "self.assertEqual",
+            "self.assertLess",
+            "wall_width_page",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Synthetic S101: 0.66 pt walls between a 0.25 pt bulk and 1.02 pt frames give 0.66 (the old rule gave 1.02).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_the_suggestion_never_exceeds_the_pens_it_keeps",
+          "line": 425,
+          "assertions": [
+            "self.assertLessEqual"
+          ],
+          "calls": [
+            "_pens",
+            "pens.append",
+            "random.Random",
+            "range",
+            "rng.choice",
+            "rng.random",
+            "rng.uniform",
+            "self.assertLessEqual",
+            "self.subTest",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "300 seeded pen distributions: a suggestion is never above the wall pen's stroke width.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_a_single_pen_gets_no_suggestion",
+          "line": 444,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pens",
+            "self.assertEqual",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "One pen class gives no suggestion with reason single_pen.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_pens_without_a_clear_step_get_no_suggestion",
+          "line": 448,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pens",
+            "self.assertEqual",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "0.5 and 0.6 pt pens (1.2x) give no suggestion with reason no_clear_pen_step.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_a_rare_light_pen_gets_no_suggestion",
+          "line": 454,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pens",
+            "self.assertEqual",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "When thin lines are 7% of the length the bulk is the heavy pen: no suggestion, light_pens_too_rare.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_a_rare_heavy_pen_gets_no_suggestion",
+          "line": 460,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pens",
+            "self.assertEqual",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Heavy lines with about 3% of the length give no suggestion, heavy_pens_too_rare.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_a_long_but_tiny_heavy_family_gets_no_suggestion",
+          "line": 466,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pens",
+            "self.assertEqual",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Eight long heavy lines (enough length, fewer than 20 lines) give too_few_heavy_lines.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_no_stroke_widths_get_no_suggestion",
+          "line": 472,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_line",
+            "self.assertEqual",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "No lines or unstyled lines give no_stroke_widths.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_s101_walls_are_classified_as_walls",
+          "line": 479,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_styled_lines",
+            "by_width.setdefault",
+            "by_width.setdefault(line.width, set()).add",
+            "classify_linework",
+            "self.assertEqual",
+            "set",
+            "wall_width_page",
+            "zip"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Synthetic S101: 0.66 and 1.02 pt lines are walls, 0.25 pt lines thin.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_classification_keeps_the_old_threshold_without_a_pen_step",
+          "line": 489,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pens",
+            "classify_linework",
+            "self.assertEqual",
+            "self.subTest",
+            "set"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A single 0.5 or 1.2 pt pen keeps the old threshold and stays thin.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_a_split_classifies_walls_even_when_the_filter_is_withheld",
+          "line": 495,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_pens",
+            "classify_linework",
+            "self.assertEqual",
+            "width_suggestion",
+            "zip"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Eight long 0.6 pt lines over a 0.25 pt bulk: no filter (too_few_heavy_lines) but the 0.6 pt lines are walls.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_curves_above_the_bulk_keep_the_old_threshold",
+          "line": 504,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_line",
+            "_styled_lines",
+            "classify_linework",
+            "len",
+            "self.assertEqual",
+            "wall_width_page"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "On the synthetic S101 a 0.66 pt curve (door swing) stays thin under the old curve threshold while a 3.0 pt arc is a wall; straight-line kinds are unchanged.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WidthSuggestionTests.test_the_legacy_helper_returns_the_same_width",
+          "line": 512,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_styled_lines",
+            "self.assertEqual",
+            "suggested_min_width",
+            "wall_width_page",
+            "width_suggestion"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "suggested_min_width returns the width of width_suggestion.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "SegmentGridTests.test_box_queries_return_every_overlapping_segment_once",
-          "line": 389,
+          "line": 518,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -55154,7 +55676,7 @@
         },
         {
           "name": "SegmentGridTests.test_segments_spanning_many_cells_are_still_found",
-          "line": 415,
+          "line": 544,
           "assertions": [
             "self.assertIn",
             "self.assertAlmostEqual"
@@ -55180,7 +55702,7 @@
         },
         {
           "name": "SegmentGridTests.test_point_distance_to_a_degenerate_segment",
-          "line": 434,
+          "line": 563,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55197,7 +55719,7 @@
         },
         {
           "name": "SegmentGridTests.test_nearest_distance",
-          "line": 440,
+          "line": 569,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -55222,7 +55744,7 @@
         },
         {
           "name": "UncoveredRunTests.test_a_ring_crossing_an_opening_reports_one_run",
-          "line": 451,
+          "line": 580,
           "assertions": [
             "self.assertLessEqual",
             "self.assertLessEqual",
@@ -55246,7 +55768,7 @@
         },
         {
           "name": "UncoveredRunTests.test_fully_covered_rings_and_rings_with_nothing_near_give_no_runs",
-          "line": 469,
+          "line": 598,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -55266,7 +55788,7 @@
         },
         {
           "name": "UncoveredRunTests.test_runs_no_longer_than_twice_the_tolerance_are_noise",
-          "line": 482,
+          "line": 611,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55285,7 +55807,7 @@
         },
         {
           "name": "UncoveredRunTests.test_runs_longer_than_the_closing_distance_are_dropped",
-          "line": 495,
+          "line": 624,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55304,7 +55826,7 @@
         },
         {
           "name": "UncoveredRunTests.test_a_run_that_wraps_past_the_first_vertex_is_joined",
-          "line": 507,
+          "line": 636,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertAlmostEqual",
@@ -55327,11 +55849,11 @@
       "duplicate_method_names": []
     },
     "tests/domain/services/test_ai_planar_regions.py": {
-      "sha256": "43d00734bb098c28db8a9dcb5158df60f02aa65ddfc70daf5a400f26bc5eb363",
+      "sha256": "d0dae7ec12b5956824b9373d4dddea41e09b056f08d41dc9e8db99c5e2ed7951",
       "methods": [
         {
           "name": "PlanarRegionTests.test_a_rectangle_gives_one_region_with_its_area",
-          "line": 37,
+          "line": 73,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -55353,7 +55875,7 @@
         },
         {
           "name": "PlanarRegionTests.test_an_l_slab_with_a_drawn_hole_has_the_hole_subtracted",
-          "line": 46,
+          "line": 82,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -55379,7 +55901,7 @@
         },
         {
           "name": "PlanarRegionTests.test_a_gap_up_to_the_closing_distance_is_closed_and_reported",
-          "line": 59,
+          "line": 95,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -55399,7 +55921,7 @@
         },
         {
           "name": "PlanarRegionTests.test_crossing_lines_are_split_into_faces",
-          "line": 73,
+          "line": 109,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55421,7 +55943,7 @@
         },
         {
           "name": "PlanarRegionTests.test_t_junctions_and_near_misses_within_tolerance_connect",
-          "line": 82,
+          "line": 118,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55440,7 +55962,7 @@
         },
         {
           "name": "PlanarRegionTests.test_duplicate_and_overlapping_lines_do_not_create_extra_faces",
-          "line": 89,
+          "line": 125,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55458,7 +55980,7 @@
         },
         {
           "name": "PlanarRegionTests.test_dangling_lines_are_ignored",
-          "line": 94,
+          "line": 130,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55476,7 +55998,7 @@
         },
         {
           "name": "PlanarRegionTests.test_too_many_segments_are_refused",
-          "line": 99,
+          "line": 135,
           "assertions": [
             "self.assertRaises"
           ],
@@ -55494,7 +56016,7 @@
         },
         {
           "name": "PlanarRegionTests.test_rings_and_points",
-          "line": 106,
+          "line": 142,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -55519,7 +56041,7 @@
         },
         {
           "name": "PlanarRegionPlacementTests.test_results_do_not_depend_on_position_or_rotation",
-          "line": 141,
+          "line": 177,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55541,7 +56063,7 @@
         },
         {
           "name": "PlanarRegionPlacementTests.test_a_slanted_line_drawn_first_splits_a_rectangle_in_two",
-          "line": 168,
+          "line": 204,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -55562,7 +56084,7 @@
         },
         {
           "name": "PlanarRegionPlacementTests.test_a_sub_point_drawing_keeps_its_small_faces",
-          "line": 175,
+          "line": 211,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55580,7 +56102,7 @@
         },
         {
           "name": "PlanarRegionPlacementTests.test_a_snap_tolerance_above_one_point_still_joins_nearby_ends",
-          "line": 183,
+          "line": 219,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55598,7 +56120,7 @@
         },
         {
           "name": "PlanarRegionPlacementTests.test_ends_in_neighbouring_snap_cells_are_joined",
-          "line": 196,
+          "line": 232,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55617,7 +56139,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_exactly_the_segment_cap_is_accepted",
-          "line": 222,
+          "line": 258,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -55637,7 +56159,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_empty_degenerate_and_non_finite_input_gives_no_regions",
-          "line": 231,
+          "line": 267,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55656,7 +56178,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_zero_length_segments_are_ignored",
-          "line": 242,
+          "line": 278,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55676,7 +56198,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_an_end_exactly_the_snap_tolerance_from_a_line_joins_it",
-          "line": 248,
+          "line": 284,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55695,7 +56217,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_a_near_miss_on_a_unit_length_line_joins_it",
-          "line": 259,
+          "line": 295,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55713,7 +56235,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_a_short_line_is_not_extended_to_meet_another",
-          "line": 264,
+          "line": 300,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55730,7 +56252,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_far_lines_in_the_same_search_cell_add_no_vertices",
-          "line": 277,
+          "line": 313,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55750,7 +56272,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_regions_are_listed_largest_first",
-          "line": 286,
+          "line": 322,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55768,7 +56290,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_the_minimum_area_is_exclusive",
-          "line": 293,
+          "line": 329,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55786,7 +56308,7 @@
         },
         {
           "name": "PlanarRegionBoundaryTests.test_only_the_directly_nested_ring_is_a_hole",
-          "line": 304,
+          "line": 340,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55805,7 +56327,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_a_short_line_crossing_a_wall_is_never_closed_onto_itself",
-          "line": 314,
+          "line": 350,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55825,7 +56347,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_slanted_lines_crossing_walls_far_from_the_origin_stay_open",
-          "line": 322,
+          "line": 358,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55849,7 +56371,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_slanted_or_tiny_lines_crossing_a_wall_are_never_closed_onto_themselves",
-          "line": 339,
+          "line": 375,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55869,7 +56391,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_a_gap_exactly_the_closing_distance_is_closed",
-          "line": 357,
+          "line": 393,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55887,7 +56409,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_closing_distances_below_one_point_still_close_gaps",
-          "line": 364,
+          "line": 400,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55905,7 +56427,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_a_loose_end_closes_onto_a_corner_within_the_closing_distance",
-          "line": 370,
+          "line": 406,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -55927,7 +56449,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_loose_ends_pair_with_each_other_before_reaching_for_corners",
-          "line": 380,
+          "line": 416,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55948,7 +56470,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_a_third_loose_end_closes_onto_the_nearest_closed_end",
-          "line": 388,
+          "line": 424,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -55971,7 +56493,7 @@
         },
         {
           "name": "PlanarGapClosingTests.test_a_closed_end_is_not_preferred_over_a_nearer_corner",
-          "line": 404,
+          "line": 440,
           "assertions": [
             "self.assertEqual"
           ],
@@ -55990,7 +56512,7 @@
         },
         {
           "name": "PlanarRegionHelperTests.test_region_values_are_frozen",
-          "line": 422,
+          "line": 458,
           "assertions": [
             "self.assertRaises",
             "self.assertRaises"
@@ -56008,7 +56530,7 @@
         },
         {
           "name": "PlanarRegionHelperTests.test_a_ray_through_a_vertex_is_counted_once",
-          "line": 430,
+          "line": 466,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse"
@@ -56026,7 +56548,7 @@
         },
         {
           "name": "PlanarRegionHelperTests.test_points_are_classified_against_slanted_edges",
-          "line": 435,
+          "line": 471,
           "assertions": [
             "self.assertTrue",
             "self.assertFalse"
@@ -56045,7 +56567,7 @@
         },
         {
           "name": "PlanarRegionHelperTests.test_points_on_left_and_bottom_edges_are_inside_and_right_and_top_are_not",
-          "line": 444,
+          "line": 480,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -56065,7 +56587,7 @@
         },
         {
           "name": "PlanarRegionHelperTests.test_ring_inside_needs_a_smaller_ring_with_its_first_vertex_inside",
-          "line": 451,
+          "line": 487,
           "assertions": [
             "self.assertIs"
           ],
@@ -56082,21 +56604,19 @@
         },
         {
           "name": "PlanarRegionHelperTests.test_candidate_pairs_include_every_pair_within_the_padding",
-          "line": 467,
+          "line": 503,
           "assertions": [
             "self.assertEqual",
             "self.assertIn"
           ],
           "calls": [
             "_candidate_pairs",
-            "all",
+            "_segment_distance",
             "generator.choice",
             "generator.uniform",
             "len",
             "math.cos",
             "math.sin",
-            "max",
-            "min",
             "random.Random",
             "range",
             "segments.append",
@@ -56107,13 +56627,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (2026-10-07 HEAD~2..HEAD audit, domain group, mutation/coverage): candidate pairs include every pair within the padding. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+          "review_note": "Every pair of 300 seeded short segments within the padding distance (exact segment distance) is a candidate; the old box-overlap superset is no longer required.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "PlanarSymbolSuppressionTests.test_small_compact_shapes_inside_a_region_are_not_holes",
-          "line": 499,
+          "line": 528,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -56137,7 +56657,7 @@
         },
         {
           "name": "PlanarSymbolSuppressionTests.test_shapes_at_or_above_the_threshold_stay_holes",
-          "line": 515,
+          "line": 544,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -56159,7 +56679,7 @@
         },
         {
           "name": "PlanarSymbolSuppressionTests.test_suppression_is_off_by_default",
-          "line": 525,
+          "line": 554,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -56182,7 +56702,7 @@
         },
         {
           "name": "PlanarSymbolSuppressionTests.test_a_symbol_suppressed_inside_two_regions_is_counted_once",
-          "line": 537,
+          "line": 566,
           "assertions": [
             "self.assertEqual",
             "self.assertIsInstance"
@@ -56202,7 +56722,7 @@
         },
         {
           "name": "PlanarClosureTests.test_given_closures_close_an_opening_and_are_reported_as_gaps",
-          "line": 551,
+          "line": 580,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -56223,7 +56743,7 @@
         },
         {
           "name": "PlanarClosureTests.test_a_closure_crossing_a_drawn_line_is_split_there",
-          "line": 562,
+          "line": 591,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual"
@@ -56247,7 +56767,7 @@
         },
         {
           "name": "PlanarClosureTests.test_non_finite_closures_are_ignored",
-          "line": 574,
+          "line": 603,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -56267,7 +56787,7 @@
         },
         {
           "name": "PlanarClosureTests.test_closures_count_towards_the_segment_cap",
-          "line": 581,
+          "line": 610,
           "assertions": [
             "self.assertRaises"
           ],
@@ -56285,7 +56805,7 @@
         },
         {
           "name": "PlanarTieOrderTests.test_equal_distance_corners_keep_the_m1b_choice",
-          "line": 596,
+          "line": 625,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56301,7 +56821,7 @@
         },
         {
           "name": "PlanarTieOrderTests.test_equal_distance_loose_ends_keep_the_m1b_choice",
-          "line": 619,
+          "line": 648,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56317,7 +56837,7 @@
         },
         {
           "name": "PlanarTieOrderTests.test_a_dangling_chain_is_pruned_back_to_the_wall",
-          "line": 630,
+          "line": 659,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual"
@@ -56338,7 +56858,7 @@
         },
         {
           "name": "PlanarScaleTests.test_a_large_floor_with_loose_ends_finishes_quickly",
-          "line": 640,
+          "line": 669,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assertLess"
@@ -56362,7 +56882,7 @@
         },
         {
           "name": "PlanarScaleTests.test_many_separate_shapes_assign_holes_quickly",
-          "line": 660,
+          "line": 689,
           "assertions": [
             "self.assertEqual",
             "self.assertLess"
@@ -56385,7 +56905,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_facing_wall_ends_across_a_gap_are_an_opening",
-          "line": 696,
+          "line": 725,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56402,7 +56922,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_openings_stay_within_the_length_limits",
-          "line": 699,
+          "line": 728,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -56421,7 +56941,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_a_wall_end_facing_another_wall_gets_its_foot",
-          "line": 707,
+          "line": 736,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -56439,7 +56959,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_a_wall_end_must_point_at_the_opening",
-          "line": 712,
+          "line": 741,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -56458,7 +56978,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_loose_dashes_never_pair_but_an_open_outline_closes_on_itself",
-          "line": 718,
+          "line": 747,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -56477,7 +56997,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_an_opening_across_a_drawn_line_is_left_out",
-          "line": 728,
+          "line": 757,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56494,7 +57014,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_capped_jambs_on_the_region_ring_are_an_opening",
-          "line": 732,
+          "line": 761,
           "assertions": [
             "self.assertAlmostEqual",
             "self.assertEqual",
@@ -56519,7 +57039,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_wall_ends_outside_the_region_box_are_ignored",
-          "line": 743,
+          "line": 772,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -56537,7 +57057,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_an_l_shaped_room_and_its_straight_walls_have_no_opening",
-          "line": 753,
+          "line": 782,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56555,7 +57075,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_both_wall_ends_must_face_each_other",
-          "line": 758,
+          "line": 787,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56572,7 +57092,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_the_nearest_facing_wall_end_is_chosen",
-          "line": 764,
+          "line": 793,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56589,7 +57109,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_the_nearest_foot_is_chosen",
-          "line": 776,
+          "line": 805,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56606,7 +57126,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_a_loose_piece_is_never_an_opening_end",
-          "line": 782,
+          "line": 811,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56623,7 +57143,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_a_jamb_pair_must_continue_a_wall_at_both_ends",
-          "line": 786,
+          "line": 815,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56643,7 +57163,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_a_line_drawn_across_the_opening_keeps_it_closed",
-          "line": 797,
+          "line": 826,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56662,7 +57182,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_a_chord_outside_the_region_is_not_an_opening",
-          "line": 804,
+          "line": 833,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -56681,7 +57201,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_points_along_a_curve_are_not_an_opening",
-          "line": 830,
+          "line": 859,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56703,7 +57223,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_ring_points_that_are_not_drawn_vertices_are_skipped",
-          "line": 841,
+          "line": 870,
           "assertions": [
             "self.assertEqual"
           ],
@@ -56720,7 +57240,7 @@
         },
         {
           "name": "OpeningCandidateTests.test_the_vertex_index_finds_only_points_within_its_tolerance",
-          "line": 846,
+          "line": 875,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -56736,6 +57256,453 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): the vertex index finds only points within its tolerance.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitDifferentialTests.test_random_small_pages_match_the_bounding_box_pairing",
+          "line": 1018,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_random_page",
+            "find_planar_regions_report",
+            "mock.patch.object",
+            "random.Random",
+            "range",
+            "rng.choice",
+            "rng.randint",
+            "rng.random",
+            "self.assertEqual",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "60 seeded pages with gaps, symbols and closures: reports equal the old pairing exactly.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitDifferentialTests.test_every_pair_that_splits_is_still_a_candidate",
+          "line": 1035,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_box_candidate_pairs",
+            "_candidate_pairs",
+            "_finite_pairs",
+            "_productive",
+            "_random_page",
+            "random.Random",
+            "range",
+            "rng.randint",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.subTest",
+            "set",
+            "sorted"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Every productive old pair is a candidate, candidates are a sorted subset of the old box pairs, at two tolerances.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitDifferentialTests.test_classic_layouts_match_the_bounding_box_pairing",
+          "line": 1048,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_diagonal_hatch",
+            "_room_walls",
+            "_star",
+            "find_planar_regions_report",
+            "layouts.items",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A grid, a star and rooms with hatch match the old pairing exactly.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_parallel_diagonal_hatch_pairs_grow_linearly",
+          "line": 1077,
+          "assertions": [
+            "self.assert_near_linear",
+            "self.assertEqual",
+            "self.assertGreater"
+          ],
+          "calls": [
+            "_box_candidate_pairs",
+            "_diagonal_hatch",
+            "_finite_pairs",
+            "len",
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.assert_near_linear"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "600 parallel 45 degree lines: no productive pairs, unproductive and examined work linear (the old pairing gives over 50,000 pairs).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_hatch_angles_on_bucket_edges_and_reversed_lines_stay_linear",
+          "line": 1083,
+          "assertions": [
+            "self.assert_near_linear"
+          ],
+          "calls": [
+            "_diagonal_hatch",
+            "self.assert_near_linear",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Hatches at 0, 15, 30, 60, 90, 135 and 179.9 degrees with reversed lines stay linear.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_a_horizontal_hatch_with_angle_noise_across_zero_stays_linear",
+          "line": 1088,
+          "assertions": [
+            "self.assert_near_linear"
+          ],
+          "calls": [
+            "math.radians",
+            "math.tan",
+            "random.Random",
+            "range",
+            "rng.uniform",
+            "segments.append",
+            "self.assert_near_linear"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Lines tilted either side of 0 degrees share one bucket (wrap at 180), keeping examined work linear.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_shallow_crossings_far_from_the_cell_center_are_paired",
+          "line": 1100,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_candidate_pairs",
+            "math.radians",
+            "math.tan",
+            "self.assertEqual",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Two long lines crossing at 0.1 to 0.49 degrees are paired despite a large offset at the cell centre.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_a_giant_segment_walks_a_bounded_number_of_cells",
+          "line": 1122,
+          "assertions": [
+            "self.assert_bounded_registrations",
+            "self.assertEqual",
+            "self.assertLessEqual"
+          ],
+          "calls": [
+            "range",
+            "self.assertEqual",
+            "self.assertLessEqual",
+            "self.assert_bounded_registrations"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A 1e6 pt line is paired as an oversized segment: no walk exceeds 4,096 cells and pairs stay within the old box pairs.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_a_very_tall_segment_walks_a_bounded_number_of_cells",
+          "line": 1128,
+          "assertions": [
+            "self.assert_bounded_registrations",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "range",
+            "self.assertEqual",
+            "self.assert_bounded_registrations"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A 1e6 pt vertical line is oversized and bounded the same way.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_tiny_pieces_mixed_with_very_long_lines_stay_bounded",
+          "line": 1133,
+          "assertions": [
+            "self.assert_bounded_registrations",
+            "self.assertGreater"
+          ],
+          "calls": [
+            "math.cos",
+            "math.sin",
+            "random.Random",
+            "range",
+            "rng.uniform",
+            "segments.append",
+            "self.assertGreater",
+            "self.assert_bounded_registrations"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "3,000 0.3 pt pieces with 20 1e5 pt lines: bounded walks, oversized lines, pairs between the productive and box pairs.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_giant_segments_give_the_same_regions_as_the_old_pairing",
+          "line": 1148,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_room_walls",
+            "find_planar_regions_report",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Rooms crossed by 1e9 pt horizontal and vertical lines give the same report as the old pairing.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_crossing_hatches_scale_with_their_crossings",
+          "line": 1158,
+          "assertions": [
+            "self.assert_near_linear",
+            "self.assertGreater"
+          ],
+          "calls": [
+            "_diagonal_hatch",
+            "len",
+            "self.assertGreater",
+            "self.assert_near_linear"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Two 150-line hatches: work bounded by registrations plus their 22,500 crossings.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_rooms_with_dense_hatch_scale_with_their_crossings",
+          "line": 1163,
+          "assertions": [
+            "self.assert_near_linear"
+          ],
+          "calls": [
+            "_diagonal_hatch",
+            "_room_walls",
+            "self.assert_near_linear"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Room walls under a 2,000-line hatch: work bounded by registrations plus crossings.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSplitWorkTests.test_a_star_examines_only_its_crossings",
+          "line": 1166,
+          "assertions": [
+            "self.assert_near_linear",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_star",
+            "len",
+            "self.assertEqual",
+            "self.assert_near_linear"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A 150-line star returns exactly its 11,175 crossing pairs.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchDeadlineTests.test_an_expired_deadline_stops_the_search",
+          "line": 1174,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "calls": [
+            "_CountingClock",
+            "_diagonal_hatch",
+            "_room_walls",
+            "find_planar_regions_report",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A deadline passed after three clock reads raises RegionSearchTimeout on the third.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchDeadlineTests.test_the_pairing_stage_checks_the_deadline",
+          "line": 1182,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "calls": [
+            "_CountingClock",
+            "_candidate_pairs",
+            "_diagonal_hatch",
+            "_finite_pairs",
+            "mock.patch.object",
+            "real_near_cells",
+            "self.assertEqual",
+            "self.assertRaises",
+            "walked.append"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "An expired deadline stops pairing before any cell walk (counted through _near_cells).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchDeadlineTests.test_registration_checks_the_deadline_for_every_segment",
+          "line": 1200,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "calls": [
+            "_CountingClock",
+            "_candidate_pairs",
+            "_diagonal_hatch",
+            "_finite_pairs",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A counting clock shows registration reads the clock once per segment and raises on the 30th.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchDeadlineTests.test_hole_assignment_checks_the_deadline_for_every_region",
+          "line": 1208,
+          "assertions": [
+            "self.assertGreaterEqual",
+            "self.assertGreaterEqual"
+          ],
+          "calls": [
+            "_CountingClock",
+            "_room_walls",
+            "find_planar_regions_report",
+            "len",
+            "mock.patch.object",
+            "self.assertGreaterEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A 12 by 12 room grid reads the clock at least once per region during hole assignment.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchDeadlineTests.test_the_production_pairing_signature_has_no_work_counter",
+          "line": 1216,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertGreater"
+          ],
+          "calls": [
+            "_candidate_pairs",
+            "_candidate_pairs_with_work",
+            "_finite_pairs",
+            "_star",
+            "inspect.signature",
+            "list",
+            "self.assertEqual",
+            "self.assertGreater"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "_candidate_pairs takes segments, padding and deadline only; _candidate_pairs_with_work returns the same pairs plus counters.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchDeadlineTests.test_no_deadline_means_no_clock_reads",
+          "line": 1227,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_CountingClock",
+            "_room_walls",
+            "find_planar_regions_report",
+            "len",
+            "mock.patch.object",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Without a deadline the clock is never read.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "RegionSearchDeadlineTests.test_a_generous_deadline_gives_the_same_result",
+          "line": 1234,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertGreater"
+          ],
+          "calls": [
+            "_CountingClock",
+            "_room_walls",
+            "find_planar_regions_report",
+            "mock.patch.object",
+            "self.assertEqual",
+            "self.assertGreater"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "A far deadline reads the clock but returns the same report.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -148888,7 +149855,7 @@
       "duplicate_method_names": []
     },
     "tests/mcp_takeoff/test_tool_catalog.py": {
-      "sha256": "21d9e84011ea2c058d1062d98ec3654675f615e1b006126f060601c85f24ac4d",
+      "sha256": "cdc9aacadbb83f70e3f0629997dd5f785fb03d87a4a02b9cd223b1b035e73a13",
       "methods": [
         {
           "name": "ToolCatalogTests.test_the_m1a_tools_then_the_m1b_tools_under_the_cap",
@@ -149169,7 +150136,7 @@
         },
         {
           "name": "ToolCatalogTests.test_dashed_boundaries_and_leaks_are_described",
-          "line": 246,
+          "line": 255,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -149191,7 +150158,7 @@
         },
         {
           "name": "ToolCatalogTests.test_tool_specs_are_immutable",
-          "line": 290,
+          "line": 299,
           "assertions": [
             "self.assertRaises"
           ],
@@ -149206,7 +150173,7 @@
         },
         {
           "name": "ToolCatalogTests.test_render_sheet_limits_dpi_and_documents_overlay_ids_as_a_no_op",
-          "line": 294,
+          "line": 303,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -149226,7 +150193,7 @@
         },
         {
           "name": "ToolCatalogTests.test_text_bearing_tools_warn_that_drawing_text_is_untrusted_data",
-          "line": 304,
+          "line": 313,
           "assertions": [
             "self.assertIn"
           ],
@@ -149243,7 +150210,7 @@
         },
         {
           "name": "ToolCatalogTests.test_tool_items_are_mcp_tool_descriptors",
-          "line": 321,
+          "line": 330,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn",
@@ -374110,7 +375077,7 @@
     }
   },
   "discovery": {
-    "count": 14274,
+    "count": 14320,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

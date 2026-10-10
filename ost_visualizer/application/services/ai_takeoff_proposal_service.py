@@ -50,18 +50,23 @@ from ...domain.services.ai_linework import (
     SYMBOL_MAX_PTS,
     SegmentGrid,
     classify_linework,
+    WIDTH_HEAVY_PENS_TOO_RARE,
+    WIDTH_NO_CLEAR_PEN_STEP,
     point_segment_distance,
-    suggested_min_width,
     symbol_groups,
     uncovered_runs,
+    width_suggestion,
 )
 from ...domain.services.ai_polygon_simplify import SimplifiedSlab, simplify_slab
 from ...domain.services.ai_sheet_text import parse_dimension_in
 from ...domain.services.ai_planar_regions import (
     PlanarRegion,
     PlanarRegionReport,
+    MAX_REGION_SEGMENTS,
     RegionGap,
+    RegionSearchTimeout,
     RegionTooComplex,
+    check_deadline,
     check_segment_count,
     find_planar_regions_report,
     opening_candidates,
@@ -117,6 +122,20 @@ DASHED_ANALYSIS_BUDGET_S = 20.0
 DASHED_ANALYSIS_COMPLETE = "complete"
 DASHED_ANALYSIS_NOT_RUN = "not_run"
 DASHED_ANALYSIS_SKIPPED = "skipped_time_budget"
+REGION_SEARCH_BUDGET_S = 20.0
+REGION_SEARCH_COMPLETE = "complete"
+REGION_SEARCH_SKIPPED = "skipped_time_budget"
+WIDTH_NOTE_VALUE = "no wall-width filter"
+WIDTH_NOTE_REASONS = {
+    WIDTH_NO_CLEAR_PEN_STEP: (
+        "No stroke width stands clearly above the page's lightest lines, so no "
+        "width filter was applied; thin lines may split or close the region."
+    ),
+    WIDTH_HEAVY_PENS_TOO_RARE: (
+        "Few lines are drawn heavier than the page's thin lines, so a width "
+        "filter could remove the walls and none was applied; check the outline."
+    ),
+}
 _COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_THICKNESS_IN = MAX_SLAB_THICKNESS_IN
 _SCALE_ASSUMPTION_MESSAGE = (
@@ -176,6 +195,7 @@ class _RegionRecord:
     ost_per_page_point: float
     open_gaps: Tuple[_GapRecord, ...] = ()
     dashed_outline_sf: Optional[float] = None
+    width_note: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -475,12 +495,19 @@ class AiTakeoffProposalService:
                 status,
             )
         lines = [line for _segment_id, line in linework]
+        width_report = None
+        width_note = None
         if filters.min_width is None and filters.boundary_kinds is None:
-            suggested = suggested_min_width(lines)
-            if suggested is not None:
+            suggestion = width_suggestion(lines)
+            width_report = {"min_width": suggestion.width, "reason": suggestion.reason}
+            if suggestion.width is not None:
                 filters = replace(
-                    filters, min_width=suggested, min_width_source=MIN_WIDTH_SUGGESTED
+                    filters,
+                    min_width=suggestion.width,
+                    min_width_source=MIN_WIDTH_SUGGESTED,
                 )
+            elif suggestion.reason in WIDTH_NOTE_REASONS:
+                width_note = suggestion.reason
         page_kinds = classify_linework(lines, filters.symbol_max_pts)
         symbols = symbol_groups(lines, filters.symbol_max_pts)
         inside = [
@@ -497,7 +524,13 @@ class AiTakeoffProposalService:
             segments, excluded, symbol_boxes = _filter_linework(
                 lines, kinds, symbols, filters, {}
             )
-            _check_segment_cap(segments)
+            try:
+                _check_segment_cap(segments)
+            except AiTakeoffRequestError as exc:
+                hint = _segment_cap_hint(lines, kinds, symbols, filters)
+                raise AiTakeoffRequestError(
+                    exc.code, f"{exc.message} {hint}" if hint else exc.message
+                ) from exc
         deadline = time.monotonic() + DASHED_ANALYSIS_BUDGET_S
         boundary, dashed_analysis = _bounded_dashed_boundary(
             lines, kinds, seed is not None or dashed_edges, deadline
@@ -530,37 +563,66 @@ class AiTakeoffProposalService:
             )
         bridges = list(boundary.bridges) if dashed_edges else []
         next_cursor = None
-        if seed is not None:
-            item, report = self._seed_item(
-                snapshot, segments + bridges, box, seed, filters, outline, closed
-            )
-            items = [] if item is None else [item]
-            total = len(items)
-            meta = ResultMeta(limit=1, returned_count=total, total_count=total)
-            result_status = STATUS_OK if items else STATUS_EMPTY
-        else:
-            report = _planar(
-                segments + bridges, filters.max_gap_in / k, filters.symbol_max_pts
-            )
-            min_area_pts = filters.min_area_sf * 144.0 / (k * k)
-            regions = [
-                region for region in report.regions if region.area >= min_area_pts
-            ]
-            page = regions[offset : offset + size]
-            items = [self._vector_item(snapshot, region, k) for region in page]
-            total = len(regions)
-            end = offset + len(page)
-            next_cursor = encode_cursor(end) if end < total else None
-            meta = ResultMeta(
-                limit=size,
-                returned_count=len(items),
-                total_count=total,
-                next_cursor=next_cursor,
-            )
-            if next_cursor is not None:
-                result_status = STATUS_TRUNCATED
-            else:
+        region_search = REGION_SEARCH_COMPLETE
+        search_deadline = time.monotonic() + REGION_SEARCH_BUDGET_S
+        try:
+            if seed is not None:
+                item, report = self._seed_item(
+                    snapshot,
+                    segments + bridges,
+                    box,
+                    seed,
+                    filters,
+                    outline,
+                    closed,
+                    width_note,
+                    search_deadline,
+                )
+                items = [] if item is None else [item]
+                total = len(items)
+                meta = ResultMeta(limit=1, returned_count=total, total_count=total)
                 result_status = STATUS_OK if items else STATUS_EMPTY
+            else:
+                report = _planar(
+                    segments + bridges,
+                    filters.max_gap_in / k,
+                    filters.symbol_max_pts,
+                    deadline=search_deadline,
+                )
+                min_area_pts = filters.min_area_sf * 144.0 / (k * k)
+                regions = [
+                    region for region in report.regions if region.area >= min_area_pts
+                ]
+                page = regions[offset : offset + size]
+                items = [
+                    self._vector_item(snapshot, region, k, width_note=width_note)
+                    for region in page
+                ]
+                total = len(regions)
+                end = offset + len(page)
+                next_cursor = encode_cursor(end) if end < total else None
+                meta = ResultMeta(
+                    limit=size,
+                    returned_count=len(items),
+                    total_count=total,
+                    next_cursor=next_cursor,
+                )
+                if next_cursor is not None:
+                    result_status = STATUS_TRUNCATED
+                else:
+                    result_status = STATUS_OK if items else STATUS_EMPTY
+        except RegionSearchTimeout:
+            region_search = REGION_SEARCH_SKIPPED
+            report = PlanarRegionReport((), ())
+            items = []
+            total = 0
+            next_cursor = None
+            meta = ResultMeta(
+                limit=1 if seed is not None else size,
+                returned_count=0,
+                total_count=0,
+            )
+            result_status = STATUS_EMPTY
         suppressed = list(symbol_boxes) + list(report.suppressed)
         return ok_result(
             {
@@ -572,6 +634,8 @@ class AiTakeoffProposalService:
                 "segment_count": len(segments),
                 "dash_bridge_count": len(bridges),
                 "dashed_analysis": dashed_analysis,
+                "region_search": region_search,
+                "width_suggestion": width_report,
                 "excluded": excluded,
                 "suppressed_symbol_count": len(suppressed),
                 "suppressed_symbols_pts": [
@@ -594,6 +658,8 @@ class AiTakeoffProposalService:
         filters: _RegionFilters,
         outline: Optional[PlanarRegion] = None,
         closed: Optional[PlanarRegion] = None,
+        width_note: Optional[str] = None,
+        deadline: Optional[float] = None,
     ) -> Tuple[Optional[dict], PlanarRegionReport]:
         k = snapshot.ost_per_page_point
         open_gaps: Tuple[RegionGap, ...] = ()
@@ -601,7 +667,7 @@ class AiTakeoffProposalService:
             choice = _SeedChoice(PlanarRegionReport((closed,), ()), region=closed)
             ring = closed.outer
         else:
-            choice = self._seed_choice(segments, box, seed, filters, k)
+            choice = self._seed_choice(segments, box, seed, filters, k, deadline)
             if choice.region is not None:
                 ring = choice.region.outer
             elif choice.raster is not None:
@@ -609,11 +675,13 @@ class AiTakeoffProposalService:
             else:
                 return None, choice.report
             open_gaps = _open_gaps(
-                segments, choice, seed, ring, k, filters.symbol_max_pts
+                segments, choice, seed, ring, k, filters.symbol_max_pts, deadline
             )
         outline_sf = _ignored_outline_sf(outline, ring, k)
         if choice.region is not None:
-            item = self._vector_item(snapshot, choice.region, k, open_gaps, outline_sf)
+            item = self._vector_item(
+                snapshot, choice.region, k, open_gaps, outline_sf, width_note
+            )
         else:
             gaps = tuple(
                 RegionGap((x1, y1), (x2, y2), math.dist((x1, y1), (x2, y2)))
@@ -627,6 +695,7 @@ class AiTakeoffProposalService:
                 choice.sealed_in,
                 open_gaps,
                 outline_sf,
+                width_note,
             )
         return item, choice.report
 
@@ -637,20 +706,25 @@ class AiTakeoffProposalService:
         seed: Tuple[float, ...],
         filters: _RegionFilters,
         k: float,
+        deadline: Optional[float] = None,
     ) -> _SeedChoice:
         symbol_max = filters.symbol_max_pts
-        plain = _planar(segments, 0.0, symbol_max)
+        plain = _planar(segments, 0.0, symbol_max, deadline=deadline)
         best = _smallest_containing(plain.regions, seed)
         if best is not None:
             return _SeedChoice(plain, region=best)
         gap_pts = filters.max_gap_in / k
         pen = max(gap_pts, 1.0)
+        check_deadline(deadline)
         raster = self._raster_fill(segments, box, seed, pen)
+        check_deadline(deadline)
         closures = (
-            [] if raster is None else _sealed_openings(raster, segments, pen, seed)
+            []
+            if raster is None
+            else _sealed_openings(raster, segments, pen, seed, deadline)
         )
         if closures:
-            closed = _planar(segments, 0.0, symbol_max, closures)
+            closed = _planar(segments, 0.0, symbol_max, closures, deadline)
             best = _smallest_containing(closed.regions, seed)
             raster_area = abs(ring_area(raster.ring))
             if (
@@ -660,7 +734,7 @@ class AiTakeoffProposalService:
             ):
                 return _SeedChoice(closed, region=best, closures=tuple(closures))
         if gap_pts > 0.0:
-            bridged = _planar(segments, gap_pts, symbol_max)
+            bridged = _planar(segments, gap_pts, symbol_max, deadline=deadline)
             best = _smallest_containing(bridged.regions, seed)
             if best is not None:
                 return _SeedChoice(bridged, region=best, gap_pts=gap_pts)
@@ -724,6 +798,7 @@ class AiTakeoffProposalService:
             )
         gaps: Tuple[_GapRecord, ...] = ()
         warnings: Tuple[Tuple[str, str], ...] = ()
+        notes: Tuple[Tuple[str, str], ...] = ()
         record: Optional[_RegionRecord] = None
         polygon: Tuple[float, ...] = ()
         holes: Tuple[Tuple[float, ...], ...] = ()
@@ -742,6 +817,7 @@ class AiTakeoffProposalService:
                 )
             gaps = record.gaps
             warnings = _region_warnings(record)
+            notes = _region_notes(record)
         else:
             polygon = _numbers(polygon_ost, "polygon_ost")
             if holes_ost is not None and not isinstance(holes_ost, list):
@@ -802,6 +878,7 @@ class AiTakeoffProposalService:
                 database_id,
                 bid_uid,
                 warnings,
+                notes,
             )
 
         return finish
@@ -823,6 +900,7 @@ class AiTakeoffProposalService:
         database_id: str,
         bid_uid: str,
         warnings: Tuple[Tuple[str, str], ...] = (),
+        notes: Tuple[Tuple[str, str], ...] = (),
     ) -> dict:
         assumptions = []
         if not existing:
@@ -858,6 +936,10 @@ class AiTakeoffProposalService:
                 self._assumption(
                     len(assumptions), SUBJECT_OTHER, value, reason, impact=IMPACT_HIGH
                 )
+            )
+        for value, reason in notes:
+            assumptions.append(
+                self._assumption(len(assumptions), SUBJECT_OTHER, value, reason)
             )
         if slab is not None and slab.holes_dropped:
             assumptions.append(
@@ -1131,6 +1213,7 @@ class AiTakeoffProposalService:
         k: float,
         open_gaps: Tuple[RegionGap, ...] = (),
         outline_sf: Optional[float] = None,
+        width_note: Optional[str] = None,
     ) -> dict:
         polygon = tuple(value * k for point in region.outer for value in point)
         holes = tuple(
@@ -1146,6 +1229,7 @@ class AiTakeoffProposalService:
             k,
             _gap_records(open_gaps, k),
             outline_sf,
+            width_note,
         )
         return {
             "id": self._store_region(record),
@@ -1168,6 +1252,7 @@ class AiTakeoffProposalService:
         sealed_in: Optional[float] = None,
         open_gaps: Tuple[RegionGap, ...] = (),
         outline_sf: Optional[float] = None,
+        width_note: Optional[str] = None,
     ) -> dict:
         polygon = tuple(value * k for point in raster.ring for value in point)
         records = _gap_records(gaps, k)
@@ -1182,6 +1267,7 @@ class AiTakeoffProposalService:
             k,
             _gap_records(open_gaps, k),
             outline_sf,
+            width_note,
         )
         return {
             "id": self._store_region(record),
@@ -1223,6 +1309,38 @@ def _bounded_dashed_boundary(
         return DashedBoundary({}, ()), DASHED_ANALYSIS_SKIPPED
 
 
+def _finite_count(segments) -> int:
+    return sum(
+        1 for segment in segments if all(math.isfinite(value) for value in segment)
+    )
+
+
+def _segment_cap_hint(lines, kinds, symbols, filters: _RegionFilters) -> str:
+    current = filters.min_width or 0.0
+    widths = sorted(
+        {
+            float(line.width)
+            for line in lines
+            if line.stroked
+            and line.width is not None
+            and math.isfinite(float(line.width))
+            and float(line.width) > current
+        }
+    )
+    for width in widths:
+        kept, _excluded, _boxes = _filter_linework(
+            lines,
+            kinds,
+            symbols,
+            replace(filters, min_width=width, min_width_source=MIN_WIDTH_GIVEN),
+            {},
+        )
+        count = _finite_count(kept)
+        if 0 < count <= MAX_REGION_SEGMENTS:
+            return f"min_width {width:g} keeps {count} line segments and would pass."
+    return ""
+
+
 def _check_segment_cap(segments) -> None:
     try:
         check_segment_count(
@@ -1237,7 +1355,11 @@ def _check_segment_cap(segments) -> None:
 
 
 def _planar(
-    segments, gap_pts: float, symbol_max: float, closures=()
+    segments,
+    gap_pts: float,
+    symbol_max: float,
+    closures=(),
+    deadline: Optional[float] = None,
 ) -> PlanarRegionReport:
     try:
         return find_planar_regions_report(
@@ -1246,6 +1368,7 @@ def _planar(
             gap_pts,
             symbol_max=symbol_max,
             closures=closures,
+            deadline=deadline,
         )
     except RegionTooComplex as exc:
         raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, str(exc)) from exc
@@ -1454,9 +1577,13 @@ def _dashed_outline(
         if not (min(xs) < seed[0] < max(xs) and min(ys) < seed[1] < max(ys)):
             continue
         try:
-            report = find_planar_regions_report(segments, SNAP_TOLERANCE_PTS, 0.0)
+            report = find_planar_regions_report(
+                segments, SNAP_TOLERANCE_PTS, 0.0, deadline=deadline
+            )
         except RegionTooComplex:
             continue
+        except RegionSearchTimeout as exc:
+            raise DashedAnalysisTimeout(str(exc)) from exc
         if report.regions:
             loops.append(
                 max(report.regions, key=lambda region: abs(ring_area(region.outer)))
@@ -1501,7 +1628,13 @@ def _ignored_outline_sf(
 
 
 def _open_gaps(
-    segments, choice: _SeedChoice, seed, ring, k: float, symbol_max: float
+    segments,
+    choice: _SeedChoice,
+    seed,
+    ring,
+    k: float,
+    symbol_max: float,
+    deadline: Optional[float] = None,
 ) -> Tuple[RegionGap, ...]:
     reach = 2.0 * SNAP_TOLERANCE_PTS
     closed = choice.region.gaps if choice.region is not None else ()
@@ -1525,6 +1658,7 @@ def _open_gaps(
             choice.gap_pts,
             symbol_max=symbol_max,
             closures=list(choice.closures) + candidates,
+            deadline=deadline,
         )
     except RegionTooComplex:
         return ()
@@ -1586,6 +1720,12 @@ def _outline_item(outline_sf: Optional[float]) -> Optional[dict]:
     return {"area_sf": round(outline_sf, 4)}
 
 
+def _region_notes(record: _RegionRecord) -> Tuple[Tuple[str, str], ...]:
+    if record.width_note is None:
+        return ()
+    return ((WIDTH_NOTE_VALUE, WIDTH_NOTE_REASONS[record.width_note]),)
+
+
 def _region_warnings(record: _RegionRecord) -> Tuple[Tuple[str, str], ...]:
     warnings = [
         (
@@ -1611,7 +1751,11 @@ def _region_warnings(record: _RegionRecord) -> Tuple[Tuple[str, str], ...]:
 
 
 def _sealed_openings(
-    raster, segments, pen: float, seed: Tuple[float, ...]
+    raster,
+    segments,
+    pen: float,
+    seed: Tuple[float, ...],
+    deadline: Optional[float] = None,
 ) -> List[Tuple[float, float, float, float]]:
     if raster.px_per_pt > 0.0:
         tolerance = max(
@@ -1625,6 +1769,7 @@ def _sealed_openings(
     for start, end, chord in uncovered_runs(
         raster.ring, grid, tolerance, pen + 2.0 * tolerance
     ):
+        check_deadline(deadline)
         reach = max(near, min(pen, chord) / 2.0)
         first = _snap_to_linework(start, grid, reach, seed)
         second = _snap_to_linework(end, grid, reach, seed)

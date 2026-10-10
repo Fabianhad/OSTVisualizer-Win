@@ -20,6 +20,16 @@ DASH_ANGLE_TOLERANCE_DEG = 2.0
 DASH_OFFSET_TOLERANCE_PTS = 0.5
 DASH_NEIGHBOUR_LIMIT = 128
 SUGGESTED_MIN_KEPT = 20
+PEN_STEP_MIN_RATIO = 1.3
+LIGHT_PEN_MIN_SHARE = 0.2
+HEAVY_PEN_MIN_SHARE = 0.1
+WIDTH_SUGGESTED = "suggested"
+WIDTH_NO_STROKE_WIDTHS = "no_stroke_widths"
+WIDTH_SINGLE_PEN = "single_pen"
+WIDTH_NO_CLEAR_PEN_STEP = "no_clear_pen_step"
+WIDTH_LIGHT_PENS_TOO_RARE = "light_pens_too_rare"
+WIDTH_HEAVY_PENS_TOO_RARE = "heavy_pens_too_rare"
+WIDTH_TOO_FEW_HEAVY_LINES = "too_few_heavy_lines"
 WIDTH_CLASS_DECIMALS = 2
 _COMPACT_RATIO = 0.25
 _TINY_FRACTION = 0.25
@@ -111,26 +121,93 @@ def heavy_width_threshold(segments: Sequence[LineSegment]) -> float:
     return max(HEAVY_MIN_WIDTH_PTS, HEAVY_WIDTH_RATIO * statistics.median(widths))
 
 
-def suggested_min_width(segments: Sequence[LineSegment]) -> Optional[float]:
-    widths = sorted(
-        float(segment.width)
-        for segment in segments
-        if segment.stroked and segment.width is not None and not segment.has_dash
-    )
-    classes: Dict[float, float] = {}
-    for width in widths:
+@dataclass(frozen=True)
+class WidthSuggestion:
+    width: Optional[float]
+    reason: str
+
+
+@dataclass(frozen=True)
+class _PenClasses:
+    keys: Tuple[float, ...]
+    lengths: Dict[float, float]
+    counts: Dict[float, int]
+    lightest: Dict[float, float]
+    heaviest: Dict[float, float]
+    bulk: Optional[float]
+    heavy: Tuple[float, ...]
+
+
+def _pen_classes(segments: Sequence[LineSegment]) -> _PenClasses:
+    lengths: Dict[float, float] = defaultdict(float)
+    lightest: Dict[float, float] = {}
+    heaviest: Dict[float, float] = {}
+    counts: Dict[float, int] = defaultdict(int)
+    for segment in segments:
+        if not segment.stroked or segment.width is None or segment.has_dash:
+            continue
+        width = float(segment.width)
+        length = segment.length
+        if not (math.isfinite(width) and width > 0.0 and math.isfinite(length)):
+            continue
+        if length <= 0.0:
+            continue
         key = round(width, WIDTH_CLASS_DECIMALS)
-        classes[key] = min(classes.get(key, width), width)
-    ordered = sorted(classes.values())
-    threshold = heavy_width_threshold(segments)
-    heavy = [width for width in ordered if width >= threshold]
-    position = ordered.index(heavy[0]) if heavy else len(ordered) - 1
-    while position > 0:
-        candidate = ordered[position]
-        if sum(1 for width in widths if width >= candidate) >= SUGGESTED_MIN_KEPT:
-            return candidate
-        position -= 1
-    return None
+        lengths[key] += length
+        counts[key] += 1
+        lightest[key] = min(lightest.get(key, width), width)
+        heaviest[key] = max(heaviest.get(key, width), width)
+    keys = tuple(sorted(lengths))
+    bulk = None
+    heavy: Tuple[float, ...] = ()
+    if len(keys) > 1:
+        total = sum(lengths.values())
+        covered = 0.0
+        bulk = keys[-1]
+        for key in keys:
+            covered += lengths[key]
+            if covered >= LIGHT_PEN_MIN_SHARE * total:
+                bulk = key
+                break
+        cutoff = PEN_STEP_MIN_RATIO * heaviest[bulk]
+        heavy = tuple(key for key in keys if lightest[key] >= cutoff)
+    return _PenClasses(keys, lengths, counts, lightest, heaviest, bulk, heavy)
+
+
+def width_suggestion(segments: Sequence[LineSegment]) -> WidthSuggestion:
+    pens = _pen_classes(segments)
+    if not pens.keys:
+        return WidthSuggestion(None, WIDTH_NO_STROKE_WIDTHS)
+    if len(pens.keys) == 1:
+        return WidthSuggestion(None, WIDTH_SINGLE_PEN)
+    if not pens.heavy:
+        lighter = any(
+            PEN_STEP_MIN_RATIO * pens.heaviest[key] <= pens.lightest[pens.bulk]
+            for key in pens.keys
+            if key < pens.bulk
+        )
+        return WidthSuggestion(
+            None, WIDTH_LIGHT_PENS_TOO_RARE if lighter else WIDTH_NO_CLEAR_PEN_STEP
+        )
+    total = sum(pens.lengths.values())
+    heavy_length = sum(pens.lengths[key] for key in pens.heavy)
+    heavy_count = sum(pens.counts[key] for key in pens.heavy)
+    if heavy_length < HEAVY_PEN_MIN_SHARE * total:
+        return WidthSuggestion(None, WIDTH_HEAVY_PENS_TOO_RARE)
+    if heavy_count < SUGGESTED_MIN_KEPT:
+        return WidthSuggestion(None, WIDTH_TOO_FEW_HEAVY_LINES)
+    return WidthSuggestion(pens.lightest[pens.heavy[0]], WIDTH_SUGGESTED)
+
+
+def wall_width_threshold(segments: Sequence[LineSegment]) -> float:
+    pens = _pen_classes(segments)
+    if pens.heavy:
+        return pens.lightest[pens.heavy[0]]
+    return heavy_width_threshold(segments)
+
+
+def suggested_min_width(segments: Sequence[LineSegment]) -> Optional[float]:
+    return width_suggestion(segments).width
 
 
 def classify_linework(
@@ -138,16 +215,18 @@ def classify_linework(
 ) -> List[str]:
     symbols = symbol_groups(segments, symbol_max)
     exploded = _exploded_dashes(segments)
-    heavy = heavy_width_threshold(segments)
+    heavy = wall_width_threshold(segments)
+    heavy_curve = heavy_width_threshold(segments)
     kinds = []
     for index, segment in enumerate(segments):
+        threshold = heavy_curve if segment.curve else heavy
         if segment.closed and segment.group in symbols:
             kinds.append(KIND_SYMBOL)
         elif segment.has_dash or index in exploded:
             kinds.append(KIND_DASHED)
         elif not segment.stroked:
             kinds.append(KIND_WALL)
-        elif segment.width is not None and segment.width >= heavy:
+        elif segment.width is not None and segment.width >= threshold:
             kinds.append(KIND_WALL)
         else:
             kinds.append(KIND_THIN)

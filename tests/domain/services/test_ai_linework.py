@@ -6,6 +6,11 @@ from ost_visualizer.application.dtos.ai_takeoff_dtos import (
     LINE_KIND_NAMES,
     SYMBOL_MAX_PTS_DEFAULT,
 )
+from tests.helpers.ai_wall_width_page import (
+    HEAVY_WIDTH,
+    WALL_WIDTH,
+    wall_width_page,
+)
 from ost_visualizer.domain.services.ai_linework import (
     DASH_GAP_MAX_PTS,
     DASH_MIN_PIECES,
@@ -23,7 +28,15 @@ from ost_visualizer.domain.services.ai_linework import (
     SegmentGrid,
     classify_linework,
     heavy_width_threshold,
+    WIDTH_HEAVY_PENS_TOO_RARE,
+    WIDTH_LIGHT_PENS_TOO_RARE,
+    WIDTH_NO_CLEAR_PEN_STEP,
+    WIDTH_NO_STROKE_WIDTHS,
+    WIDTH_SINGLE_PEN,
+    WIDTH_SUGGESTED,
+    WIDTH_TOO_FEW_HEAVY_LINES,
     suggested_min_width,
+    width_suggestion,
     is_symbol_box,
     rgba_hex,
     symbol_groups,
@@ -110,13 +123,14 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(kinds[:5], [KIND_THIN] * 5)
         self.assertEqual(kinds[5:], [KIND_WALL, KIND_WALL])
 
-    def test_the_heavy_threshold_follows_the_page_median(self):
+    def test_walls_start_at_the_pen_step_above_the_light_bulk(self):
         segments = [_line(0, i * 10, 100, i * 10, width=1.0) for i in range(5)]
-        segments.append(_line(0, 100, 100, 100, width=1.49))
-        segments.append(_line(0, 110, 100, 110, width=1.5))
+        segments.append(_line(0, 100, 100, 100, width=1.29))
+        segments.append(_line(0, 110, 100, 110, width=1.49))
+        segments.append(_line(0, 120, 100, 120, width=1.5))
         kinds = classify_linework(segments)
         self.assertEqual(kinds[:6], [KIND_THIN] * 6)
-        self.assertEqual(kinds[6], KIND_WALL)
+        self.assertEqual(kinds[6:], [KIND_WALL, KIND_WALL])
 
     def test_hairlines_and_unknown_widths_are_thin(self):
         kinds = classify_linework(
@@ -342,13 +356,13 @@ class SuggestedMinWidthTests(unittest.TestCase):
                 )
         return segments
 
-    def test_the_lightest_heavy_width_class_is_suggested(self):
+    def test_the_lightest_pen_above_the_light_bulk_is_suggested(self):
         segments = self.page([(0.25, 200), (0.5, 80), (1.0199999, 40), (2.0, 30)])
-        self.assertEqual(suggested_min_width(segments), 1.0199999)
+        self.assertEqual(suggested_min_width(segments), 0.5)
 
-    def test_the_median_sets_the_heavy_threshold(self):
+    def test_every_pen_above_the_light_bulk_is_kept(self):
         segments = self.page([(1.0, 200), (1.4, 30), (2.0, 30)])
-        self.assertEqual(suggested_min_width(segments), 2.0)
+        self.assertEqual(suggested_min_width(segments), 1.4)
 
     def test_too_few_heavy_lines_steps_down_to_a_lighter_class(self):
         segments = self.page([(0.25, 300), (0.7, 60), (2.0, 5)])
@@ -383,6 +397,124 @@ class SuggestedMinWidthTests(unittest.TestCase):
             for i in range(50)
         ]
         self.assertEqual(suggested_min_width(segments), 2.0)
+
+
+def _styled_lines(rows):
+    return [_line(x1, y1, x2, y2, width=width) for x1, y1, x2, y2, width in rows]
+
+
+def _pens(widths_and_lengths, per_line=50.0):
+    segments = []
+    y = 0.0
+    for width, total in widths_and_lengths:
+        count = max(1, int(round(total / per_line)))
+        for _ in range(count):
+            segments.append(_line(0.0, y, total / count, y, width=width))
+            y += 2.0
+    return segments
+
+
+class WidthSuggestionTests(unittest.TestCase):
+    def test_an_s101_like_sheet_keeps_its_walls(self):
+        lines = _styled_lines(wall_width_page())
+        suggestion = width_suggestion(lines)
+        self.assertEqual(suggestion.reason, WIDTH_SUGGESTED)
+        self.assertEqual(suggestion.width, WALL_WIDTH)
+        self.assertLess(suggestion.width, HEAVY_WIDTH)
+
+    def test_the_suggestion_never_exceeds_the_pens_it_keeps(self):
+        rng = random.Random(20261010)
+        for page in range(300):
+            thin = rng.choice((0.1, 0.18, 0.24, 0.25, 0.3))
+            wall = thin * rng.uniform(1.6, 4.0)
+            heavy = wall * rng.uniform(1.2, 2.5)
+            thin_length = rng.uniform(20000.0, 200000.0)
+            wall_length = thin_length * rng.uniform(0.15, 0.8)
+            heavy_length = wall_length * rng.uniform(0.0, 1.2)
+            pens = [(thin, thin_length), (wall, wall_length)]
+            if heavy_length > 0.0:
+                pens.append((heavy, heavy_length))
+            if rng.random() < 0.5:
+                pens.append((thin * rng.uniform(1.05, 1.3), thin_length * 0.05))
+            suggestion = width_suggestion(_pens(pens))
+            with self.subTest(page=page, pens=pens):
+                if suggestion.width is not None:
+                    self.assertLessEqual(suggestion.width, wall)
+
+    def test_a_single_pen_gets_no_suggestion(self):
+        suggestion = width_suggestion(_pens([(0.24, 50000.0)]))
+        self.assertEqual(
+            (suggestion.width, suggestion.reason), (None, WIDTH_SINGLE_PEN)
+        )
+
+    def test_pens_without_a_clear_step_get_no_suggestion(self):
+        suggestion = width_suggestion(_pens([(0.5, 30000.0), (0.6, 20000.0)]))
+        self.assertEqual(
+            (suggestion.width, suggestion.reason), (None, WIDTH_NO_CLEAR_PEN_STEP)
+        )
+
+    def test_a_rare_light_pen_gets_no_suggestion(self):
+        suggestion = width_suggestion(_pens([(0.25, 3000.0), (0.7, 40000.0)]))
+        self.assertEqual(
+            (suggestion.width, suggestion.reason), (None, WIDTH_LIGHT_PENS_TOO_RARE)
+        )
+
+    def test_a_rare_heavy_pen_gets_no_suggestion(self):
+        suggestion = width_suggestion(_pens([(0.25, 60000.0), (2.0, 2000.0)]))
+        self.assertEqual(
+            (suggestion.width, suggestion.reason), (None, WIDTH_HEAVY_PENS_TOO_RARE)
+        )
+
+    def test_a_long_but_tiny_heavy_family_gets_no_suggestion(self):
+        suggestion = width_suggestion(_pens([(0.25, 10000.0), (2.0, 8000.0)], 1000.0))
+        self.assertEqual(
+            (suggestion.width, suggestion.reason), (None, WIDTH_TOO_FEW_HEAVY_LINES)
+        )
+
+    def test_no_stroke_widths_get_no_suggestion(self):
+        for lines in ([], [_line(0, 0, 10, 0)] * 30):
+            suggestion = width_suggestion(lines)
+            self.assertEqual(
+                (suggestion.width, suggestion.reason), (None, WIDTH_NO_STROKE_WIDTHS)
+            )
+
+    def test_s101_walls_are_classified_as_walls(self):
+        lines = _styled_lines(wall_width_page())
+        kinds = classify_linework(lines)
+        by_width = {}
+        for line, kind in zip(lines, kinds):
+            by_width.setdefault(line.width, set()).add(kind)
+        self.assertEqual(
+            by_width,
+            {WALL_WIDTH: {KIND_WALL}, HEAVY_WIDTH: {KIND_WALL}, 0.25: {KIND_THIN}},
+        )
+
+    def test_classification_keeps_the_old_threshold_without_a_pen_step(self):
+        for width, kind in ((0.5, KIND_THIN), (1.2, KIND_THIN)):
+            with self.subTest(width=width):
+                kinds = classify_linework(_pens([(width, 50000.0)]))
+                self.assertEqual(set(kinds), {kind})
+
+    def test_a_split_classifies_walls_even_when_the_filter_is_withheld(self):
+        lines = _pens([(0.25, 10000.0), (0.6, 8000.0)], 1000.0)
+        self.assertEqual(width_suggestion(lines).reason, WIDTH_TOO_FEW_HEAVY_LINES)
+        kinds = classify_linework(lines)
+        self.assertEqual(
+            {line.width: kind for line, kind in zip(lines, kinds)},
+            {0.25: KIND_THIN, 0.6: KIND_WALL},
+        )
+
+    def test_curves_above_the_bulk_keep_the_old_threshold(self):
+        lines = _styled_lines(wall_width_page())
+        swing = _line(100.0, 100.0, 130.0, 130.0, width=WALL_WIDTH, curve=True)
+        heavy_arc = _line(100.0, 140.0, 130.0, 170.0, width=3.0, curve=True)
+        kinds = classify_linework(lines + [swing, heavy_arc])
+        self.assertEqual(kinds[-2:], [KIND_THIN, KIND_WALL])
+        self.assertEqual(kinds[: len(lines)], classify_linework(lines))
+
+    def test_the_legacy_helper_returns_the_same_width(self):
+        lines = _styled_lines(wall_width_page())
+        self.assertEqual(suggested_min_width(lines), width_suggestion(lines).width)
 
 
 class SegmentGridTests(unittest.TestCase):

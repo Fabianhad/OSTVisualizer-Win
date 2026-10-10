@@ -1,5 +1,6 @@
 import dataclasses
 import math
+import re
 import unittest
 from dataclasses import replace
 from unittest import mock
@@ -20,6 +21,7 @@ from ost_visualizer.application.services.ai_changeset_store import (
 )
 from ost_visualizer.application.services import ai_takeoff_proposal_service as module
 from ost_visualizer.domain.services.ai_dashed_outline import DashedAnalysisTimeout
+from ost_visualizer.domain.services.ai_planar_regions import RegionSearchTimeout
 from ost_visualizer.application.services.ai_takeoff_proposal_service import (
     DASHED_MATCH_SHARE,
     LEAK_GAP_MAX_IN,
@@ -57,6 +59,7 @@ from tests.application.services.test_ai_takeoff_read_service import (
     ServiceTestCase,
 )
 from tests.helpers import ai_mat_outline as mat
+from tests.helpers.ai_wall_width_page import WALL_WIDTH, wall_width_page
 
 PRESETS = [
     (0.125, 12.0, '1/8" = 1\' 0"'),
@@ -2128,7 +2131,8 @@ class DashedBoundaryTests(ProposalTestCase):
         self.pdf.segments = _mat_page() + walls + thin
         default = self.find()["data"]["filters"]
         self.assertEqual(
-            (default["min_width"], default["min_width_source"]), (2.0, "suggested")
+            (default["min_width"], default["min_width_source"]),
+            (mat.OUTLINE_WIDTH, "suggested"),
         )
         filters = self.find(boundary_kinds=["dashed"])["data"]["filters"]
         self.assertEqual(
@@ -2598,3 +2602,230 @@ class DashedAnalysisBudgetTests(ProposalTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _pen(width):
+    return PdfPathStyleDto(width, (), 0x000000FF, 0, True, False)
+
+
+class WallWidthSuggestionTests(ProposalTestCase):
+    find = FindRegionFilterTests.find
+
+    def test_an_s101_like_sheet_keeps_its_walls(self):
+        self.pdf.segments = [
+            _styled(x1, y1, x2, y2, style=_pen(width))
+            for x1, y1, x2, y2, width in wall_width_page()
+        ]
+        data = self.find(bbox=[0, 0, 1000, 1000])["data"]
+        self.assertEqual(
+            (data["filters"]["min_width"], data["filters"]["min_width_source"]),
+            (WALL_WIDTH, "suggested"),
+        )
+        self.assertEqual(
+            data["width_suggestion"], {"min_width": WALL_WIDTH, "reason": "suggested"}
+        )
+        self.assertEqual(data["total_count"], 13)
+        self.assertEqual(data["excluded"]["thin"], 1000)
+
+    def test_wall_boundaries_keep_s101_walls_lighter_than_the_old_floor(self):
+        self.pdf.segments = [
+            _styled(x1, y1, x2, y2, style=_pen(width))
+            for x1, y1, x2, y2, width in wall_width_page()
+        ]
+        data = self.find(bbox=[0, 0, 1000, 1000], boundary_kinds=["wall"])["data"]
+        self.assertEqual(data["total_count"], 13)
+        self.assertEqual(data["excluded"]["kind"], 1000)
+
+    def test_low_confidence_suggests_no_filter_and_records_an_assumption(self):
+        self.pdf.segments = _styled_rect(100, 100, 300, 250, style=_pen(0.5)) + [
+            _styled(400, 100 + index * 3.0, 600, 100 + index * 3.0, style=_pen(0.6))
+            for index in range(10)
+        ]
+        data = self.find()["data"]
+        self.assertEqual(
+            (data["filters"]["min_width"], data["filters"]["min_width_source"]),
+            (None, "none"),
+        )
+        self.assertEqual(
+            data["width_suggestion"], {"min_width": None, "reason": "no_clear_pen_step"}
+        )
+        proposal = self.service_m1b.propose_element(
+            "slab",
+            "p1",
+            region_id=data["regions"][0]["id"],
+            thickness_in=8.0,
+            top_elev_in=0.0,
+        )["data"]
+        (note,) = proposal["assumptions"]
+        self.assertEqual((note["subject"], note["impact"]), ("other", IMPACT_NORMAL))
+        self.assertEqual(note["value"]["value"], "no wall-width filter")
+        self.assertIn("No stroke width stands clearly above", note["reason"]["value"])
+        self.assertEqual(proposal["blocking_assumption_ids"], [])
+
+    def test_walls_dominating_a_few_thin_lines_record_nothing(self):
+        self.pdf.segments = _styled_rect(100, 100, 300, 250, style=_pen(2.0)) + [
+            _styled(400, 100 + index * 3.0, 420, 100 + index * 3.0, style=_pen(0.25))
+            for index in range(5)
+        ]
+        data = self.find()["data"]
+        self.assertEqual(
+            data["width_suggestion"],
+            {"min_width": None, "reason": "light_pens_too_rare"},
+        )
+        proposal = self.service_m1b.propose_element(
+            "slab",
+            "p1",
+            region_id=data["regions"][0]["id"],
+            thickness_in=8.0,
+            top_elev_in=0.0,
+        )["data"]
+        self.assertEqual(proposal["assumptions"], [])
+
+    def test_a_given_width_one_pen_or_unstyled_lines_record_nothing(self):
+        self.pdf.segments = _styled_rect(100, 100, 300, 250, style=_pen(0.24))
+        given = self.find(min_width=0.1)["data"]
+        self.assertIsNone(given["width_suggestion"])
+        one_pen = self.find()["data"]
+        self.assertEqual(
+            one_pen["width_suggestion"], {"min_width": None, "reason": "single_pen"}
+        )
+        self.pdf.segments = _rect(100, 100, 300, 250)
+        unstyled = self.find()["data"]
+        self.assertEqual(
+            unstyled["width_suggestion"],
+            {"min_width": None, "reason": "no_stroke_widths"},
+        )
+        for data in (given, one_pen, unstyled):
+            proposal = self.service_m1b.propose_element(
+                "slab",
+                "p1",
+                region_id=data["regions"][0]["id"],
+                thickness_in=8.0,
+                top_elev_in=0.0,
+            )["data"]
+            self.assertEqual(proposal["assumptions"], [])
+
+
+class RegionSearchBudgetTests(ProposalTestCase):
+    find = FindRegionFilterTests.find
+
+    def test_the_region_search_reports_complete_within_budget(self):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        result = self.find()
+        self.assertEqual(result["data"]["region_search"], "complete")
+        self.assertEqual(result["data"]["total_count"], 1)
+
+    def test_a_dashed_outline_search_over_budget_reports_a_skip(self):
+        self.pdf.segments = _mat_page()
+
+        def timed_out(*_args, **_kwargs):
+            raise RegionSearchTimeout("late")
+
+        with mock.patch.object(module, "find_planar_regions_report", timed_out):
+            result = self.find(
+                bbox=MAT_BOX, seed_pts=list(mat.SEED), boundary_kinds=["dashed"]
+            )
+        self.assertEqual(result["data"]["dashed_analysis"], "skipped_time_budget")
+        self.assertEqual(result["data"]["region_search"], "skipped_time_budget")
+        self.assertEqual(result["data"]["regions"], [])
+
+    def sealed_page(self):
+        self.pdf.segments = [
+            _styled(100, 300, 200, 300),
+            _styled(254, 300, 400, 300),
+            _styled(100, 300, 100, 500),
+            _styled(400, 300, 400, 500),
+            _styled(100, 500, 400, 500),
+        ]
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+
+    def test_the_raster_fill_and_sealed_openings_check_the_deadline(self):
+        self.sealed_page()
+        deadlines = []
+        with mock.patch.object(module, "check_deadline", deadlines.append):
+            (region,) = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"][
+                "regions"
+            ]
+        self.assertEqual(region["method"], "raster")
+        self.assertGreaterEqual(len(deadlines), 3)
+        self.assertNotIn(None, deadlines)
+        self.assertEqual(len(set(deadlines)), 1)
+
+    def test_an_expired_deadline_skips_the_raster_fill(self):
+        self.sealed_page()
+
+        def expired(_deadline):
+            raise RegionSearchTimeout("late")
+
+        with mock.patch.object(module, "check_deadline", expired):
+            result = self.find(seed_pts=[250, 200], max_gap_in=40.0)
+        self.assertEqual(self.raster_calls, [])
+        self.assertEqual(result["data"]["region_search"], "skipped_time_budget")
+        self.assertEqual(result["data"]["regions"], [])
+
+    def test_a_search_over_budget_is_skipped_instead_of_overrunning(self):
+        self.pdf.segments = _rect(100, 100, 200, 200) + _rect(300, 100, 400, 200)
+        with mock.patch.object(module, "REGION_SEARCH_BUDGET_S", -1.0):
+            listed = self.find()
+            seeded = self.find(seed_pts=[150, 150])
+        for result in (listed, seeded):
+            with self.subTest(seeded=result is seeded):
+                self.assertEqual(result["status"], "empty")
+                self.assertEqual(result["data"]["region_search"], "skipped_time_budget")
+                self.assertEqual(result["data"]["regions"], [])
+                self.assertEqual(result["data"]["total_count"], 0)
+
+
+def _scattered(count, columns, left, width):
+    pieces = []
+    for index in range(count):
+        x = left + (index % columns) * 6.0
+        y = (index // columns) * 6.0
+        angle = math.radians((index * 37) % 180)
+        pieces.append(
+            _styled(
+                x,
+                y,
+                x + 4.0 * math.cos(angle),
+                y + 4.0 * math.sin(angle),
+                style=_pen(width),
+            )
+        )
+    return pieces
+
+
+class SegmentCapTests(ProposalTestCase):
+    find = FindRegionFilterTests.find
+
+    def crowded_page(self):
+        thin = [
+            _styled(0, 1300 + index * 2.0, 2000, 1300 + index * 2.0, style=_pen(0.25))
+            for index in range(200)
+        ]
+        return (
+            thin + _scattered(16000, 160, 0.0, 0.5) + _scattered(6000, 60, 1000.0, 1.0)
+        )
+
+    def test_a_page_over_the_cap_names_a_min_width_that_would_pass(self):
+        self.pdf.segments = self.crowded_page()
+        error = self.assert_error(
+            "invalid_argument", lambda: self.find(bbox=[0, 0, 2000, 2000])
+        )
+        self.assertIn("More than 20000 line segments", error.message)
+        hint = re.search(
+            r"min_width 1 keeps (\d+) line segments and would pass", error.message
+        )
+        self.assertIsNotNone(hint)
+        passed = self.find(bbox=[0, 0, 2000, 2000], min_width=1.0)["data"]
+        self.assertEqual(passed["segment_count"], int(hint.group(1)))
+        self.assertLessEqual(passed["segment_count"], 20000)
+
+    def test_no_hint_when_no_width_would_pass(self):
+        self.pdf.segments = _scattered(20001, 150, 0.0, 1.0)
+        error = self.assert_error(
+            "invalid_argument", lambda: self.find(bbox=[0, 0, 2000, 2000])
+        )
+        self.assertIn("More than 20000 line segments", error.message)
+        self.assertNotIn("min_width", error.message)

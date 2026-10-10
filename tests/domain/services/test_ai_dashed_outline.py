@@ -98,7 +98,8 @@ class DashedPieceTests(unittest.TestCase):
         hatch = _hatch(80.0, 80.0, 210.0, 285.0)
         page = lines + hatch
         kinds = classify_linework(page)
-        self.assertIn(KIND_THIN, kinds[: len(lines)])
+        self.assertNotIn(KIND_THIN, kinds[: len(lines)])
+        self.assertEqual(set(kinds[len(lines) :]), {KIND_THIN})
         pieces = dashed_pieces(page, kinds)
         self.assertTrue(set(range(len(lines))) <= set(pieces))
         middle = [

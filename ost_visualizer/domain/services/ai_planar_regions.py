@@ -1,4 +1,5 @@
 import math
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -7,6 +8,10 @@ from .ai_linework import SegmentGrid, is_symbol_box
 MAX_REGION_SEGMENTS = 20000
 OPENING_ANGLE_DEG = 15.0
 OPENING_NECK_RATIO = 3.0
+PAIR_ANGLE_BUCKET_DEG = 1.0
+PAIR_CELL_MIN_PADDINGS = 8.0
+PAIR_MAX_CELLS_PER_SEGMENT = 4096
+DEADLINE_CHECK_EVERY = 256
 Point = Tuple[float, float]
 Ring = Tuple[Point, ...]
 Box = Tuple[float, float, float, float]
@@ -14,6 +19,23 @@ Box = Tuple[float, float, float, float]
 
 class RegionTooComplex(Exception):
     """Raised when a region search gets more segments than MAX_REGION_SEGMENTS."""
+
+
+class RegionSearchTimeout(Exception):
+    """The region search passed its deadline."""
+
+
+@dataclass
+class PairingWork:
+    registered: int = 0
+    examined: int = 0
+    oversized: int = 0
+    longest_walk: int = 0
+
+
+def check_deadline(deadline: Optional[float]) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise RegionSearchTimeout("The region search ran out of time")
 
 
 @dataclass(frozen=True)
@@ -129,31 +151,190 @@ def _intersection(
     return None
 
 
-def _candidate_pairs(segments: List[Tuple[Point, Point]], padding: float):
+def _pair_cell_size(segments: List[Tuple[Point, Point]], padding: float) -> float:
+    xs = [value for a, b in segments for value in (a[0], b[0])]
+    ys = [value for a, b in segments for value in (a[1], b[1])]
+    extent = max(max(xs) - min(xs), max(ys) - min(ys))
+    lengths = sorted(math.dist(a, b) for a, b in segments)
+    typical = lengths[len(lengths) // 2]
+    return max(
+        min(typical, extent / max(1.0, math.sqrt(len(segments)))),
+        PAIR_CELL_MIN_PADDINGS * padding,
+        1e-6,
+    )
+
+
+def _near_cells(a: Point, b: Point, reach: float, cell: float):
+    (x1, y1), (x2, y2) = (a, b) if a[0] <= b[0] else (b, a)
+    dx = x2 - x1
+    dy = y2 - y1
+    for column in range(
+        int(math.floor((x1 - reach) / cell)), int(math.floor((x2 + reach) / cell)) + 1
+    ):
+        if dx == 0.0:
+            low, high = min(y1, y2), max(y1, y2)
+        else:
+            left = max(x1, column * cell - reach)
+            right = min(x2, (column + 1) * cell + reach)
+            if left > right:
+                continue
+            ya = y1 + (left - x1) / dx * dy
+            yb = y1 + (right - x1) / dx * dy
+            low, high = min(ya, yb), max(ya, yb)
+        for row in range(
+            int(math.floor((low - reach) / cell)),
+            int(math.floor((high + reach) / cell)) + 1,
+        ):
+            yield column, row
+
+
+def _walk_estimate(a: Point, b: Point, reach: float, cell: float) -> int:
+    columns = (
+        int(math.floor((max(a[0], b[0]) + reach) / cell))
+        - int(math.floor((min(a[0], b[0]) - reach) / cell))
+        + 1
+    )
+    rows = (
+        int(math.floor((max(a[1], b[1]) + reach) / cell))
+        - int(math.floor((min(a[1], b[1]) - reach) / cell))
+        + 1
+    )
+    return rows + 3 * columns
+
+
+def _direction_bucket(a: Point, b: Point, buckets: int) -> Optional[int]:
+    dx = b[0] - a[0]
+    dy = b[1] - a[1]
+    if dx == 0.0 and dy == 0.0:
+        return None
+    step = math.pi / buckets
+    angle = math.atan2(dy, dx) % math.pi
+    return int(math.floor((angle + step / 2.0) / step)) % buckets
+
+
+def _line_offset(a: Point, b: Point, normal: Point, center: Point) -> float:
+    dx = b[0] - a[0]
+    dy = b[1] - a[1]
+    t = ((center[0] - a[0]) * dx + (center[1] - a[1]) * dy) / (dx * dx + dy * dy)
+    return normal[0] * (a[0] + t * dx) + normal[1] * (a[1] + t * dy)
+
+
+def _add_pair(
+    first: int, second: int, boxes: List[Box], found: Set[Tuple[int, int]]
+) -> None:
+    a = boxes[first]
+    b = boxes[second]
+    if a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]:
+        found.add((first, second) if first < second else (second, first))
+
+
+def _cell_pairs(
+    members: List[int],
+    segments: List[Tuple[Point, Point]],
+    buckets: List[Optional[int]],
+    boxes: List[Box],
+    center: Point,
+    window: float,
+    found: Set[Tuple[int, int]],
+) -> int:
+    examined = 0
+    groups: Dict[Optional[int], List[int]] = defaultdict(list)
+    for member in members:
+        groups[buckets[member]].append(member)
+    keys = sorted(groups, key=lambda key: -1 if key is None else key)
+    for position, key in enumerate(keys):
+        group = groups[key]
+        for other_key in keys[position + 1 :]:
+            examined += len(group) * len(groups[other_key])
+            for first in group:
+                for second in groups[other_key]:
+                    _add_pair(first, second, boxes, found)
+        if key is None:
+            examined += len(group) * (len(group) - 1) // 2
+            for index, first in enumerate(group):
+                for second in group[index + 1 :]:
+                    _add_pair(first, second, boxes, found)
+            continue
+        angle = key * math.radians(PAIR_ANGLE_BUCKET_DEG)
+        normal = (-math.sin(angle), math.cos(angle))
+        ordered = sorted(
+            (_line_offset(*segments[member], normal, center), member)
+            for member in group
+        )
+        for index, (offset, first) in enumerate(ordered):
+            for other_offset, second in ordered[index + 1 :]:
+                if other_offset - offset > window:
+                    break
+                examined += 1
+                _add_pair(first, second, boxes, found)
+    return examined
+
+
+def _candidate_pairs(
+    segments: List[Tuple[Point, Point]],
+    padding: float,
+    deadline: Optional[float] = None,
+) -> List[Tuple[int, int]]:
+    return _candidate_pairs_with_work(segments, padding, deadline)[0]
+
+
+def _candidate_pairs_with_work(
+    segments: List[Tuple[Point, Point]],
+    padding: float,
+    deadline: Optional[float] = None,
+) -> Tuple[List[Tuple[int, int]], PairingWork]:
+    work = PairingWork()
     if not segments:
-        return []
+        return [], work
+    cell = _pair_cell_size(segments, padding)
+    reach = padding * (1.0 + 1e-9) + 1e-9
+    count = int(round(180.0 / PAIR_ANGLE_BUCKET_DEG))
+    buckets = [_direction_bucket(a, b, count) for a, b in segments]
     boxes = [
-        (min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+        (
+            min(a[0], b[0]) - padding,
+            min(a[1], b[1]) - padding,
+            max(a[0], b[0]) + padding,
+            max(a[1], b[1]) + padding,
+        )
         for a, b in segments
     ]
-    grid = SegmentGrid(boxes)
-    reach = 2.0 * padding
-    pairs = []
-    for first, (left, top, right, bottom) in enumerate(boxes):
-        for second in grid.query(
-            left - reach, top - reach, right + reach, bottom + reach
-        ):
-            if second <= first:
-                continue
-            other = boxes[second]
-            if (
-                other[0] - padding <= right + padding
-                and left - padding <= other[2] + padding
-                and other[1] - padding <= bottom + padding
-                and top - padding <= other[3] + padding
-            ):
-                pairs.append((first, second))
-    return pairs
+    cells: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+    oversized: List[int] = []
+    for position, (a, b) in enumerate(segments):
+        check_deadline(deadline)
+        if _walk_estimate(a, b, reach, cell) > PAIR_MAX_CELLS_PER_SEGMENT:
+            oversized.append(position)
+            continue
+        walked = 0
+        for key in _near_cells(a, b, reach, cell):
+            cells[key].append(position)
+            walked += 1
+        work.registered += walked
+        work.longest_walk = max(work.longest_walk, walked)
+    work.oversized = len(oversized)
+    half_angle = math.radians(PAIR_ANGLE_BUCKET_DEG) / 2.0
+    window = (
+        reach + (2.0 * math.sqrt(2.0) * cell + 2.0 * reach) * math.sin(half_angle)
+    ) * (1.0 + 1e-9) + 1e-9
+    found: Set[Tuple[int, int]] = set()
+    for visited, ((column, row), members) in enumerate(cells.items()):
+        if visited % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
+        if len(members) < 2:
+            continue
+        center = ((column + 0.5) * cell, (row + 0.5) * cell)
+        work.examined += _cell_pairs(
+            members, segments, buckets, boxes, center, window, found
+        )
+    for first in oversized:
+        for second in range(len(segments)):
+            if second % DEADLINE_CHECK_EVERY == 0:
+                check_deadline(deadline)
+            if second != first:
+                _add_pair(first, second, boxes, found)
+        work.examined += len(segments) - 1
+    return sorted(found), work
 
 
 def _split_segments(
@@ -161,9 +342,14 @@ def _split_segments(
     index: _VertexIndex,
     tolerance: float,
     marked_from: Optional[int] = None,
+    deadline: Optional[float] = None,
 ) -> Tuple[Set[Tuple[int, int]], Set[Tuple[int, int]]]:
     splits: Dict[int, List[Tuple[float, Point]]] = defaultdict(list)
-    for first, second in _candidate_pairs(segments, tolerance):
+    for checked, (first, second) in enumerate(
+        _candidate_pairs(segments, tolerance, deadline)
+    ):
+        if checked % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
         a, b = segments[first]
         c, d = segments[second]
         hit = _intersection(a, b, c, d)
@@ -186,6 +372,8 @@ def _split_segments(
     edges: Set[Tuple[int, int]] = set()
     drawn: Set[Tuple[int, int]] = set()
     for position, (a, b) in enumerate(segments):
+        if position % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
         points = [(0.0, a), (1.0, b)] + splits.get(position, [])
         points.sort(key=lambda item: item[0])
         vertices = []
@@ -319,7 +507,11 @@ def _prune_dangling(edges: Set[Tuple[int, int]]) -> None:
             queue.append(other)
 
 
-def _trace_cycles(edges: Set[Tuple[int, int]], points: List[Point]) -> List[List[int]]:
+def _trace_cycles(
+    edges: Set[Tuple[int, int]],
+    points: List[Point],
+    deadline: Optional[float] = None,
+) -> List[List[int]]:
     neighbours = _adjacency(edges)
     ordered = {
         vertex: sorted(
@@ -333,7 +525,9 @@ def _trace_cycles(edges: Set[Tuple[int, int]], points: List[Point]) -> List[List
     }
     visited: Set[Tuple[int, int]] = set()
     cycles = []
-    for u, v in sorted(edges):
+    for checked, (u, v) in enumerate(sorted(edges)):
+        if checked % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
         for start in ((u, v), (v, u)):
             if start in visited:
                 continue
@@ -398,6 +592,7 @@ def find_planar_regions_report(
     min_area: float = 1e-6,
     symbol_max: float = 0.0,
     closures: Sequence[Tuple[float, float, float, float]] = (),
+    deadline: Optional[float] = None,
 ) -> PlanarRegionReport:
     clean = _finite_pairs(segments)
     given = _finite_pairs(closures)
@@ -405,7 +600,7 @@ def find_planar_regions_report(
     tolerance = max(float(snap_tol), 1e-6)
     index = _VertexIndex(tolerance)
     edges, given_edges = _split_segments(
-        clean + given, index, tolerance, len(clean) if given else None
+        clean + given, index, tolerance, len(clean) if given else None, deadline
     )
     closures_found = _close_gaps(edges, index, float(gap_close))
     _prune_dangling(edges)
@@ -413,7 +608,7 @@ def find_planar_regions_report(
     component_of = _components(edges)
     faces: Dict[int, List[List[int]]] = defaultdict(list)
     outers: Dict[int, List[int]] = {}
-    for cycle in _trace_cycles(edges, points):
+    for cycle in _trace_cycles(edges, points, deadline):
         ring = [points[vertex] for vertex in cycle]
         area = ring_area(ring)
         component = component_of[cycle[0]]
@@ -440,6 +635,7 @@ def find_planar_regions_report(
     suppressed: Dict[int, Box] = {}
     regions = []
     for component, cycle in candidates:
+        check_deadline(deadline)
         ring = tuple(points[vertex] for vertex in cycle)
         holes = []
         inside = [
@@ -450,6 +646,7 @@ def find_planar_regions_report(
         ]
         inside_set = set(inside)
         for other in inside:
+            check_deadline(deadline)
             other_ring = outer_rings[other]
             other_box = _ring_box(other_ring)
             nested = any(

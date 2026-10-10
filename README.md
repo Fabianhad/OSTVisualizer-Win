@@ -416,9 +416,15 @@ cursor for the next page. With a seed point inside a room, door openings up to
 with its end points and length and becomes an assumption you must accept when
 it is over 12 in. A whole sheet with up to 20,000 lines (after filters) can be
 searched in one call; for best results call it on a small box around the area.
-Without `min_width`, `find_regions` usually keeps only the page's wall-weight lines
-(the suggested width is in the result and in `list_segments`; a page with a single line weight is not filtered); pass
-`min_width` 0 to keep every line. Very busy sheets are read again inside the
+Without `min_width`, `find_regions` keeps the page's heavier pens: every line
+weight clearly heavier than the page's bulk of thin lines, so the suggested width
+never removes a wall pen (the suggestion and its reason are in the result and in
+`list_segments`; a page with a single line weight is not filtered). When the line
+weights are ambiguous no filter is applied and the region carries a "no wall-width
+filter" assumption. Pass `min_width` 0 to keep every line. A region search that
+passes 20 s is skipped (`region_search` `skipped_time_budget`); retry on a smaller
+box. A page left with more than 20,000 lines after the filters is refused, and
+the message names the `min_width` that would pass. Very busy sheets are read again inside the
 box you give, and the result says when even the box had too many lines.
 
 Dashed lines often mark mat, footing or below-grade edges that reach past the

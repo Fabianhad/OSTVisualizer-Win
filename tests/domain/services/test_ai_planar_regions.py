@@ -3,15 +3,24 @@ import random
 import time
 import unittest
 from dataclasses import FrozenInstanceError
+from unittest import mock
+from ost_visualizer.domain.services import ai_planar_regions as planar
+from ost_visualizer.domain.services.ai_linework import SegmentGrid
 from ost_visualizer.domain.services.ai_planar_regions import (
     MAX_REGION_SEGMENTS,
+    PAIR_MAX_CELLS_PER_SEGMENT,
+    RegionSearchTimeout,
     PlanarRegion,
     PlanarRegionReport,
     RegionGap,
     RegionTooComplex,
     _VertexIndex,
     _candidate_pairs,
+    _candidate_pairs_with_work,
+    _finite_pairs,
+    _intersection,
     _ring_inside,
+    _segment_point_parameter,
     find_planar_regions,
     find_planar_regions_report,
     opening_candidates,
@@ -26,6 +35,33 @@ def _rect(x1, y1, x2, y2):
 
 def _polyline(points):
     return [(*a, *b) for a, b in zip(points, points[1:])]
+
+
+def _point_segment_distance(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0.0:
+        return math.dist(p, a)
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length_sq))
+    return math.dist(p, (a[0] + t * dx, a[1] + t * dy))
+
+
+def _segment_distance(a, b, c, d):
+    rx, ry = b[0] - a[0], b[1] - a[1]
+    sx, sy = d[0] - c[0], d[1] - c[1]
+    denominator = rx * sy - ry * sx
+    if denominator != 0.0:
+        qx, qy = c[0] - a[0], c[1] - a[1]
+        t = (qx * sy - qy * sx) / denominator
+        u = (qx * ry - qy * rx) / denominator
+        if 0.0 <= t <= 1.0 and 0.0 <= u <= 1.0:
+            return 0.0
+    return min(
+        _point_segment_distance(a, c, d),
+        _point_segment_distance(b, c, d),
+        _point_segment_distance(c, a, b),
+        _point_segment_distance(d, a, b),
+    )
 
 
 def _smallest_containing(regions, point):
@@ -481,14 +517,7 @@ class PlanarRegionHelperTests(unittest.TestCase):
                 for first in range(len(segments)):
                     for second in range(first + 1, len(segments)):
                         (a, b), (c, d) = segments[first], segments[second]
-                        overlaps = all(
-                            min(a[axis], b[axis]) - padding
-                            <= max(c[axis], d[axis]) + padding
-                            and min(c[axis], d[axis]) - padding
-                            <= max(a[axis], b[axis]) + padding
-                            for axis in (0, 1)
-                        )
-                        if overlaps:
+                        if _segment_distance(a, b, c, d) <= padding:
                             self.assertIn((first, second), found)
         self.assertEqual(_candidate_pairs([], 0.5), [])
 
@@ -849,6 +878,389 @@ class OpeningCandidateTests(unittest.TestCase):
         self.assertEqual(index.find((10.3, 10.3)), vertex)
         self.assertIsNone(index.find((10.4, 10.4)))
         self.assertIsNone(index.find((50.0, 50.0)))
+
+
+TOLERANCE = 0.5
+UNPRODUCTIVE_PAIRS_PER_SEGMENT = 6
+EXAMINED_PER_REGISTRATION = 2
+EXAMINED_PER_CROSSING = 4
+
+
+def _box_candidate_pairs(segments, padding, deadline=None):
+    if not segments:
+        return []
+    boxes = [
+        (min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+        for a, b in segments
+    ]
+    grid = SegmentGrid(boxes)
+    reach = 2.0 * padding
+    pairs = []
+    for first, (left, top, right, bottom) in enumerate(boxes):
+        for second in grid.query(
+            left - reach, top - reach, right + reach, bottom + reach
+        ):
+            if second <= first:
+                continue
+            other = boxes[second]
+            if (
+                other[0] - padding <= right + padding
+                and left - padding <= other[2] + padding
+                and other[1] - padding <= bottom + padding
+                and top - padding <= other[3] + padding
+            ):
+                pairs.append((first, second))
+    return pairs
+
+
+def _productive(segments, pairs, tolerance=TOLERANCE):
+    found = []
+    for first, second in pairs:
+        a, b = segments[first]
+        c, d = segments[second]
+        if _intersection(a, b, c, d) is not None or any(
+            _segment_point_parameter(p, q, end)[1] <= tolerance
+            for (p, q), ends in (((a, b), (c, d)), ((c, d), (a, b)))
+            for end in ends
+        ):
+            found.append((first, second))
+    return found
+
+
+def _diagonal_hatch(count, spacing, angle_deg, extent=1500.0, flip_every=0):
+    angle = math.radians(angle_deg)
+    ux, uy = math.cos(angle), math.sin(angle)
+    nx, ny = -uy, ux
+    cx, cy = extent / 2.0, extent / 2.0
+    half = extent * 0.75
+    segments = []
+    for index in range(count):
+        offset = (index - count / 2.0) * spacing
+        ox, oy = cx + nx * offset, cy + ny * offset
+        start = (ox - ux * half, oy - uy * half)
+        end = (ox + ux * half, oy + uy * half)
+        if flip_every and index % flip_every == 0:
+            start, end = end, start
+        segments.append((*start, *end))
+    return segments
+
+
+def _room_walls(rooms, extent=1500.0):
+    step = extent / rooms
+    segments = []
+    for index in range(rooms + 1):
+        segments.append((0.0, index * step, extent, index * step))
+        segments.append((index * step, 0.0, index * step, extent))
+    return segments
+
+
+def _star(count, center=(750.0, 750.0), radius=700.0):
+    cx, cy = center
+    return [
+        (
+            cx - radius * math.cos(math.pi * index / count),
+            cy - radius * math.sin(math.pi * index / count),
+            cx + radius * math.cos(math.pi * index / count),
+            cy + radius * math.sin(math.pi * index / count),
+        )
+        for index in range(count)
+    ]
+
+
+def _random_page(rng, count):
+    segments = []
+    for _ in range(count // 5):
+        x, y = rng.uniform(0, 400), rng.uniform(0, 400)
+        w, h = rng.uniform(5, 120), rng.uniform(5, 120)
+        segments += [
+            (x, y, x + w, y),
+            (x + w, y, x + w, y + h),
+            (x + w, y + h, x, y + h),
+            (x, y + h, x, y),
+        ]
+    while len(segments) < count:
+        kind = rng.random()
+        if kind < 0.3:
+            x, y = rng.uniform(0, 400), rng.uniform(0, 400)
+            angle = rng.choice((0.0, 90.0, 45.0, 15.0, rng.uniform(0, 180)))
+            length = rng.uniform(1, 300)
+            radians = math.radians(angle)
+            segments.append(
+                (x, y, x + length * math.cos(radians), y + length * math.sin(radians))
+            )
+        elif kind < 0.5 and segments:
+            x1, y1, x2, y2 = rng.choice(segments)
+            t = rng.random()
+            px, py = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+            angle = rng.uniform(0, math.tau)
+            gap = rng.choice((0.0, 0.2, 0.49, 0.51, 0.8))
+            sx, sy = px + gap * math.cos(angle), py + gap * math.sin(angle)
+            length = rng.uniform(2, 80)
+            segments.append(
+                (sx, sy, sx + length * math.cos(angle), sy + length * math.sin(angle))
+            )
+        elif kind < 0.6 and segments:
+            x1, y1, x2, y2 = rng.choice(segments)
+            t1, t2 = sorted((rng.random(), rng.random()))
+            segments.append(
+                (
+                    x1 + (x2 - x1) * t1,
+                    y1 + (y2 - y1) * t1,
+                    x1 + (x2 - x1) * t2,
+                    y1 + (y2 - y1) * t2,
+                )
+            )
+        elif kind < 0.65 and segments:
+            segments.append(rng.choice(segments))
+        elif kind < 0.7:
+            x, y = rng.uniform(0, 400), rng.uniform(0, 400)
+            segments.append((x, y, x, y))
+        else:
+            x, y = rng.uniform(0, 400), rng.uniform(0, 400)
+            segments.append((x, y, x + rng.uniform(-3, 3), y + rng.uniform(-3, 3)))
+    return segments
+
+
+class _CountingClock:
+    def __init__(self):
+        self.calls = 0
+
+    def monotonic(self):
+        self.calls += 1
+        return float(self.calls)
+
+
+class RegionSplitDifferentialTests(unittest.TestCase):
+    def test_random_small_pages_match_the_bounding_box_pairing(self):
+        rng = random.Random(20261010)
+        for page in range(60):
+            segments = _random_page(rng, rng.randint(5, 140))
+            gap = rng.choice((0.0, 0.0, 3.0, 12.0))
+            symbol_max = rng.choice((0.0, 48.0))
+            closures = [] if rng.random() < 0.7 else _random_page(rng, 3)[:2]
+            current = find_planar_regions_report(
+                segments, TOLERANCE, gap, symbol_max=symbol_max, closures=closures
+            )
+            with mock.patch.object(planar, "_candidate_pairs", _box_candidate_pairs):
+                reference = find_planar_regions_report(
+                    segments, TOLERANCE, gap, symbol_max=symbol_max, closures=closures
+                )
+            with self.subTest(page=page):
+                self.assertEqual(current, reference)
+
+    def test_every_pair_that_splits_is_still_a_candidate(self):
+        rng = random.Random(77)
+        for page in range(40):
+            segments = _finite_pairs(_random_page(rng, rng.randint(10, 160)))
+            for tolerance in (0.5, 2.0):
+                boxed = _box_candidate_pairs(segments, tolerance)
+                reference = _productive(segments, boxed, tolerance)
+                current = _candidate_pairs(segments, tolerance)
+                with self.subTest(page=page, tolerance=tolerance):
+                    self.assertTrue(set(reference) <= set(current))
+                    self.assertTrue(set(current) <= set(boxed))
+                    self.assertEqual(current, sorted(set(current)))
+
+    def test_classic_layouts_match_the_bounding_box_pairing(self):
+        layouts = {
+            "grid": _room_walls(12, extent=300.0),
+            "star": _star(40, center=(150.0, 150.0), radius=120.0),
+            "rooms_and_hatch": _room_walls(4, extent=300.0)
+            + _diagonal_hatch(60, 6.0, 45.0, extent=300.0),
+        }
+        for name, segments in layouts.items():
+            current = find_planar_regions_report(segments, TOLERANCE, 0.0)
+            with mock.patch.object(planar, "_candidate_pairs", _box_candidate_pairs):
+                reference = find_planar_regions_report(segments, TOLERANCE, 0.0)
+            with self.subTest(layout=name):
+                self.assertEqual(current, reference)
+
+
+class RegionSplitWorkTests(unittest.TestCase):
+    def assert_near_linear(self, segments):
+        clean = _finite_pairs(segments)
+        pairs, work = _candidate_pairs_with_work(clean, TOLERANCE)
+        productive = _productive(clean, pairs)
+        unproductive = len(pairs) - len(productive)
+        self.assertLessEqual(unproductive, UNPRODUCTIVE_PAIRS_PER_SEGMENT * len(clean))
+        self.assertLessEqual(
+            work.examined,
+            EXAMINED_PER_REGISTRATION * work.registered
+            + EXAMINED_PER_CROSSING * len(productive),
+        )
+        return pairs, productive
+
+    def test_parallel_diagonal_hatch_pairs_grow_linearly(self):
+        segments = _diagonal_hatch(600, 2.5, 45.0)
+        pairs, productive = self.assert_near_linear(segments)
+        self.assertEqual(productive, [])
+        self.assertGreater(
+            len(_box_candidate_pairs(_finite_pairs(segments), TOLERANCE)), 50000
+        )
+
+    def test_hatch_angles_on_bucket_edges_and_reversed_lines_stay_linear(self):
+        for angle in (0.0, 15.0, 30.0, 60.0, 90.0, 135.0, 179.9):
+            with self.subTest(angle=angle):
+                self.assert_near_linear(_diagonal_hatch(600, 2.5, angle, flip_every=2))
+
+    def test_a_horizontal_hatch_with_angle_noise_across_zero_stays_linear(self):
+        rng = random.Random(5)
+        segments = []
+        for index in range(800):
+            y = 100.0 + index * 1.5
+            tilt = rng.uniform(-0.03, 0.03)
+            start, end = (0.0, y), (1200.0, y + 1200.0 * math.tan(math.radians(tilt)))
+            if index % 2:
+                start, end = end, start
+            segments.append((*start, *end))
+        self.assert_near_linear(segments)
+
+    def test_shallow_crossings_far_from_the_cell_center_are_paired(self):
+        for angle in (0.1, 0.3, 0.49):
+            tilt = math.tan(math.radians(angle))
+            segments = [
+                ((0.0, 1000.0), (2000.0, 1000.0)),
+                ((0.0, 1000.0 - 1700.0 * tilt), (2000.0, 1000.0 + 300.0 * tilt)),
+            ]
+            with self.subTest(angle=angle):
+                self.assertEqual(_candidate_pairs(segments, TOLERANCE), [(0, 1)])
+
+    def assert_bounded_registrations(self, segments):
+        clean = _finite_pairs(segments)
+        pairs, work = _candidate_pairs_with_work(clean, TOLERANCE)
+        self.assertLessEqual(work.registered, PAIR_MAX_CELLS_PER_SEGMENT * len(clean))
+        self.assertLessEqual(work.longest_walk, PAIR_MAX_CELLS_PER_SEGMENT)
+        reference = _box_candidate_pairs(clean, TOLERANCE)
+        self.assertTrue(set(_productive(clean, reference)) <= set(pairs))
+        self.assertTrue(set(pairs) <= set(reference))
+        return pairs, work
+
+    def test_a_giant_segment_walks_a_bounded_number_of_cells(self):
+        short = [(i * 3.0, -5.0, i * 3.0 + 1.0, 5.0) for i in range(50)]
+        _pairs, work = self.assert_bounded_registrations([(0.0, 0.0, 1e6, 0.0)] + short)
+        self.assertEqual(work.oversized, 1)
+        self.assertLessEqual(work.registered, 60 * 50)
+
+    def test_a_very_tall_segment_walks_a_bounded_number_of_cells(self):
+        short = [(-5.0, i * 3.0, 5.0, i * 3.0 + 1.0) for i in range(50)]
+        _pairs, work = self.assert_bounded_registrations([(0.0, 0.0, 0.0, 1e6)] + short)
+        self.assertEqual(work.oversized, 1)
+
+    def test_tiny_pieces_mixed_with_very_long_lines_stay_bounded(self):
+        rng = random.Random(9)
+        segments = []
+        for _ in range(3000):
+            x, y = rng.uniform(0, 2000), rng.uniform(0, 2000)
+            angle = rng.uniform(0, math.pi)
+            segments.append(
+                (x, y, x + 0.3 * math.cos(angle), y + 0.3 * math.sin(angle))
+            )
+        for index in range(20):
+            angle = rng.uniform(0, math.pi)
+            cx, cy = rng.uniform(0, 2000), rng.uniform(0, 2000)
+            dx, dy = 5e4 * math.cos(angle), 5e4 * math.sin(angle)
+            segments.append((cx - dx, cy - dy, cx + dx, cy + dy))
+        _pairs, work = self.assert_bounded_registrations(segments)
+        self.assertGreater(work.oversized, 0)
+
+    def test_giant_segments_give_the_same_regions_as_the_old_pairing(self):
+        rooms = _room_walls(4, extent=120.0)
+        for giant in ((0.0, 60.0, 1e9, 60.0), (60.0, -1e9, 60.0, 50.0)):
+            segments = rooms + [giant]
+            current = find_planar_regions_report(segments, TOLERANCE, 0.0)
+            with mock.patch.object(planar, "_candidate_pairs", _box_candidate_pairs):
+                reference = find_planar_regions_report(segments, TOLERANCE, 0.0)
+            with self.subTest(giant=giant):
+                self.assertEqual(current, reference)
+
+    def test_crossing_hatches_scale_with_their_crossings(self):
+        segments = _diagonal_hatch(150, 8.0, 45.0) + _diagonal_hatch(150, 8.0, 135.0)
+        _pairs, productive = self.assert_near_linear(segments)
+        self.assertGreater(len(productive), 150 * 150 * 0.9)
+
+    def test_rooms_with_dense_hatch_scale_with_their_crossings(self):
+        self.assert_near_linear(_room_walls(20) + _diagonal_hatch(2000, 2.0, 45.0))
+
+    def test_a_star_examines_only_its_crossings(self):
+        segments = _star(150)
+        pairs, productive = self.assert_near_linear(segments)
+        self.assertEqual(len(pairs), 150 * 149 // 2)
+        self.assertEqual(len(productive), len(pairs))
+
+
+class RegionSearchDeadlineTests(unittest.TestCase):
+    def test_an_expired_deadline_stops_the_search(self):
+        clock = _CountingClock()
+        segments = _room_walls(30, extent=600.0) + _diagonal_hatch(
+            300, 3.0, 45.0, extent=600.0
+        )
+        with mock.patch.object(planar, "time", clock):
+            with self.assertRaises(RegionSearchTimeout):
+                find_planar_regions_report(segments, TOLERANCE, 0.0, deadline=3.0)
+        self.assertEqual(clock.calls, 3)
+
+    def test_the_pairing_stage_checks_the_deadline(self):
+        clock = _CountingClock()
+        segments = _finite_pairs(_diagonal_hatch(300, 3.0, 45.0, extent=600.0))
+        walked = []
+        real_near_cells = planar._near_cells
+
+        def counted(*args):
+            walked.append(1)
+            return real_near_cells(*args)
+
+        with mock.patch.object(planar, "time", clock), mock.patch.object(
+            planar, "_near_cells", counted
+        ):
+            with self.assertRaises(RegionSearchTimeout):
+                _candidate_pairs(segments, TOLERANCE, deadline=1.0)
+        self.assertEqual(clock.calls, 1)
+        self.assertEqual(walked, [])
+
+    def test_registration_checks_the_deadline_for_every_segment(self):
+        clock = _CountingClock()
+        segments = _finite_pairs(_diagonal_hatch(40, 3.0, 45.0, extent=300.0))
+        with mock.patch.object(planar, "time", clock):
+            with self.assertRaises(RegionSearchTimeout):
+                _candidate_pairs(segments, TOLERANCE, deadline=30.0)
+        self.assertEqual(clock.calls, 30)
+
+    def test_hole_assignment_checks_the_deadline_for_every_region(self):
+        clock = _CountingClock()
+        segments = _room_walls(12, extent=360.0)
+        with mock.patch.object(planar, "time", clock):
+            report = find_planar_regions_report(segments, TOLERANCE, 0.0, deadline=1e12)
+        self.assertGreaterEqual(len(report.regions), 144)
+        self.assertGreaterEqual(clock.calls, len(report.regions))
+
+    def test_the_production_pairing_signature_has_no_work_counter(self):
+        import inspect
+
+        self.assertEqual(
+            list(inspect.signature(_candidate_pairs).parameters),
+            ["segments", "padding", "deadline"],
+        )
+        pairs, work = _candidate_pairs_with_work(_finite_pairs(_star(10)), TOLERANCE)
+        self.assertEqual(pairs, _candidate_pairs(_finite_pairs(_star(10)), TOLERANCE))
+        self.assertGreater(work.registered, 0)
+
+    def test_no_deadline_means_no_clock_reads(self):
+        clock = _CountingClock()
+        with mock.patch.object(planar, "time", clock):
+            report = find_planar_regions_report(
+                _room_walls(3, extent=90.0), TOLERANCE, 0.0
+            )
+        self.assertEqual(len(report.regions), 10)
+        self.assertEqual(clock.calls, 0)
+
+    def test_a_generous_deadline_gives_the_same_result(self):
+        segments = _room_walls(6, extent=180.0)
+        plain = find_planar_regions_report(segments, TOLERANCE, 0.0)
+        clock = _CountingClock()
+        with mock.patch.object(planar, "time", clock):
+            timed = find_planar_regions_report(segments, TOLERANCE, 0.0, deadline=1e12)
+        self.assertEqual(timed, plain)
+        self.assertGreater(clock.calls, 0)
 
 
 if __name__ == "__main__":

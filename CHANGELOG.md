@@ -30,6 +30,20 @@
   is reported and can be overridden), very busy sheets are read again inside
   the search box, and traced slabs are simplified so most large or curved outlines
   no longer fail with too many vertices or crossing holes (an outline that cannot be simplified safely is still refused).
+- **The default wall-width filter keeps the walls, and hatched sheets search
+  much faster.** `find_regions` now keeps every line weight clearly heavier
+  than the page's thin lines, so a sheet whose walls are lighter than its
+  frame or grid lines (walls at 0.66 pt, frames at 1.02 pt) no longer loses
+  all its walls; the result gives the suggested width and why. When the line
+  weights are ambiguous no filter is applied and the region carries a
+  "no wall-width filter" assumption. `boundary_kinds` `["wall"]` and the
+  segment kinds use the same rule, so lighter walls are walls there too. A
+  page left with more than 20,000 lines is refused with the min_width that
+  would pass. Splitting lines into regions now only compares lines that
+  pass near each other, so a 2,000-line hatch takes under a second instead
+  of about 30 s, a single extremely long line no longer stalls the search,
+  and a search that still passes 20 s reports `region_search`
+  `skipped_time_budget` instead of running on.
 - **Line weights, dashes and smarter areas for AI takeoff.** The AI takeoff
   helper's `list_segments` now reports each line's width, dash pattern, color,
   stroke or fill, whether it comes from a curve, and a kind guess (wall,
