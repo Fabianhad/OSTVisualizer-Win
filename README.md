@@ -128,7 +128,7 @@ For licensing questions, contact [fabian@fabianhad.com](mailto:fabian@fabianhad.
 
 ## Microsoft SQL Server
 
-Choose **Find...** in Open Files, select **Microsoft SQL Server**, and enter a
+Choose **Find...** in Open Databases, select **Microsoft SQL Server**, and enter a
 local server, named instance (`server\instance`), or host and port
 (`host,port`). Windows authentication is the default. SQL Server authentication
 is also supported; its password is stored in Windows Credential Manager and is

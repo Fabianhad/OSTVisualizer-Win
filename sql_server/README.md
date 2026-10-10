@@ -12,10 +12,10 @@ repository; there is no duplicate schema or Linux application runtime.
 
 ## Creating a database from the Windows application
 
-Use **File > New > Database > Microsoft SQL Server** to open
+Use **File > New > Database > Microsoft SQL Server Database** to open
 **Database Properties (SQL Server)** directly. Enter the SQL Server at the top,
 select Windows or SQL authentication for normal access, and enter the new name
-in the Database text box. Finding an existing database through Open Files keeps
+in the Database text box. Finding an existing database through Open Databases keeps
 its separate **Connect to SQL Server** step. The dialogs retain their configured
 width and calculate height from their contents. Certificate settings appear
 in the form; there are no tabs, Options button, or duplicate application-user fields.
@@ -51,7 +51,7 @@ the same `apply_sql_client_permissions()` used by deployment tooling. A fresh
 connection with runtime credentials must pass the production client editing gate,
 including collaboration permissions and protected-table write restrictions,
 before registration. Only runtime credentials are returned to the desktop
-handler. Both creation and Open Files save the selected normal-access identity.
+handler. Both creation and Open Databases save the selected normal-access identity.
 For SQL authentication only its password goes to Windows Credential Manager,
 never `file_state.json`; Windows authentication saves no password. The creator
 password is used only for setup and is cleared from the temporary prompt. Shared
@@ -60,12 +60,12 @@ provisioning services and deployment tooling use the same permission contract.
 If runtime provisioning or verification fails, the initialized database remains
 on the server and no descriptor is registered. The error identifies the failed
 stage. IT can repair the selected login's mapping/permissions and the user can
-add the database through **Open Files**, without repeating database creation.
+add the database through **Open Databases**, without repeating database creation.
 Successful registration starts collaboration with one initial attempt. The
 creation workflow waits for initial reconciliation, change-feed catch-up, the
 normal capability check, and main-thread `HEALTHY` publication before reporting
 success. Startup failure retains the saved runtime connection and reports that
-the database is not ready for editing; retry through Open Files. A bounded opening
+the database is not ready for editing; retry through Open Databases. A bounded opening
 wait can expire without cancelling the underlying connection attempt. A terminal
 result received before the progress dialog closes takes precedence over that
 timeout. Setup results are discarded if the owning Properties workflow has been

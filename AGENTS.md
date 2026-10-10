@@ -594,7 +594,7 @@ Persistence:
   and `last_intersection_pairs()` are the deterministic work counters.
 - PySide holds the GIL for each QImage/QPainter call, so Plan View render workers
   must not run one native pixel operation over a whole large frame: conversion,
-  copy, invert, bitonal, tint and overlay crops use `visualization/utils/image_bands.py`,
+  copy, invert, bitonal, tint and overlay crops use `presentation/visualization/utils/image_bands.py`,
   which caps each call at `BAND_PIXELS` so the GUI thread keeps running.
 - Font and color creation defaults plus the live inactive-object color belong to
   `Config` in `config.json`. Workspace annotation styles retain only alignment
@@ -1453,4 +1453,4 @@ receives table/column identity and rejects unsupported binary text encoding
 instead of dropping bytes; it must not guess an encoding from byte validity.
 ClippedTextGraphicsItem owns wrapping/clipping; do not destructively pre-elide its
 stored text. Resize follows the established unrotated model contract in both preview
-and commit. See TEXT_ANNOTATION_LIFECYCLE_AUDIT.md for coverage and format limits.
+and commit.
