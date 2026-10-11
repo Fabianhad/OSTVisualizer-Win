@@ -150,7 +150,7 @@ Write-Host "  Version source file found" -ForegroundColor Green
 
 Write-Host "`nStep 2/7: Extracting version from source code..." -ForegroundColor Cyan
 
-$VersionPattern = 'APPLICATION_VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)"'
+$VersionPattern = 'APPLICATION_VERSION\s*=\s*"([0-9]+\.[0-9]+(?:\.[0-9]+){0,2})"'
 $FileContent = Get-Content $ApplicationInfoFile -Raw
 
 if ($FileContent -match $VersionPattern) {
@@ -158,7 +158,7 @@ if ($FileContent -match $VersionPattern) {
     Write-Host "  Version extracted: $Version" -ForegroundColor Green
 } else {
     Write-Host "ERROR: Could not extract APPLICATION_VERSION from application_info.py" -ForegroundColor Red
-    Write-Host "  Please ensure APPLICATION_VERSION is defined in the format: APPLICATION_VERSION = `"x.x.x`" or `"x.x.x.x`"" -ForegroundColor Yellow
+    Write-Host "  Please ensure APPLICATION_VERSION is defined in the format: APPLICATION_VERSION = `"x.x`", `"x.x.x`" or `"x.x.x.x`"" -ForegroundColor Yellow
     Read-Host "Press Enter to exit"
     exit 1
 }
