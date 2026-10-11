@@ -40,7 +40,9 @@
   "no wall-width filter" assumption. `boundary_kinds` `["wall"]` and the
   segment kinds use the same rule, so lighter walls are walls there too. A
   page left with more than 20,000 lines is refused with the min_width that
-  would pass. Splitting lines into regions now only compares lines that
+  would pass, but a seeded search that already found its room returns it,
+  and when the room is too crowded to check for openings into its
+  neighbours the result says so and Accept waits for the user. Splitting lines into regions now only compares lines that
   pass near each other, so a 2,000-line hatch takes under a second instead
   of about 30 s, a single extremely long line no longer stalls the search,
   and a search that still passes 20 s reports `region_search`

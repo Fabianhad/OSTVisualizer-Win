@@ -2193,6 +2193,40 @@
       ],
       "release_evidence": "Developer tooling",
       "affected_result": "check_architecture reports 8 categories; the takeoff rules pass"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "A seeded find_regions whose raster fill had found the room was refused as a whole (More than 20000 line segments) when adding the sealed openings to 20,000 kept lines passed the cap, with default filters and with boundary_kinds",
+      "proof": "SeededSegmentCapTests.test_a_closures_pass_over_the_cap_keeps_the_raster_region failed first in both subtests (AiTakeoffRequestError)",
+      "fix": "_planar_within_cap returns None instead of raising; the closures pass then keeps the raster or bridged result and find_regions reports closures skipped_segment_cap (complete or not_run otherwise)",
+      "tests": [
+        "SeededSegmentCapTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (AI takeoff find_regions)",
+      "affected_result": "The found room is returned; refusals stay for the front cap check (with the min_width hint) and the plain pass"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "The leak guard's split check swallowed RegionTooComplex and returned no open gaps, so on a 20,000-line page two rooms joined by a 39 in opening reported leak_risk false and propose_element raised no assumption",
+      "proof": "Probe: the same two rooms report leak_risk true with one open gap alone and false with no gaps when padded to 20,000 lines; SeededSegmentCapTests.test_a_leak_check_over_the_cap_is_reported_not_passed failed first",
+      "fix": "_open_gaps returns its status; over the cap find_regions reports leak_guard skipped_segment_cap, leak_risk null, and the region record adds a high-impact leak check skipped assumption that blocks Accept",
+      "tests": [
+        "SeededSegmentCapTests",
+        "LeakGuardTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (AI takeoff find_regions)",
+      "affected_result": "A skipped leak check is never reported as no leak"
+    },
+    {
+      "file": "ost_visualizer/mcp_takeoff/tool_catalog.py",
+      "defect": "The find_regions description said every page over the cap is refused with a min_width hint; boundary_kinds refusals have no hint and seeded searches that found a region are no longer refused",
+      "proof": "ToolCatalogTests.test_m2_1_fields_are_described failed first on the new phrases",
+      "fix": "The refusal text names the default-filter path and the boundary_kinds case and documents closures, leak_guard and leak_risk null",
+      "tests": [
+        "ToolCatalogTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased",
+      "affected_result": "Catalog matches the cap paths"
     }
   ],
   "removed_tests": [
@@ -15796,6 +15830,27 @@
         "One affected-group run during this work printed a faulthandler stack and no summary; its full output was not kept. 35 later runs of that group were clean.",
         "Production can still race: a daemon AiTakeoffBridgeWorker can emit _job_finished while the GUI thread deletes the bridge after cleanup (deleteLater) or with MainWindow; not proven, not changed.",
         "Client QLocalSocket objects created by the write-command tests and the test cases themselves are still freed by the garbage collector; not measured."
+      ]
+    },
+    {
+      "batch": "seeded-segment-cap",
+      "findings": [
+        "Cap paths in find_regions: the front check (default filters, with the min_width hint) and the plain planar pass refuse before anything is found; those refusals are kept. The closures pass (sealed openings added to the kept lines) and the leak guard's split ran over the same cap after a region was already found: the first refused the whole call, the second silently reported no leak. Both now report a skipped_segment_cap status instead.",
+        "boundary_kinds: the planar cap check refuses without a hint (no front check); a listed or plain over-cap page has found nothing, so that refusal is correct and is now documented. The seeded closures overflow under boundary_kinds lost the region the same way and is covered by the same fix (subtest). _dashed_outline still skips an over-cap dashed component silently (falls back to the normal pipeline); not shown to lose a result, not changed.",
+        "Found while fixing: an existing test called _open_gaps directly and expected only the gaps; it now unpacks (gaps, status) and asserts complete. The heavy cap tests run several planar passes over 20,000 segments and once returned no region under load (most likely the 20 s region budget); the class now lifts REGION_SEARCH_BUDGET_S and asserts region_search complete.",
+        "Mutation (in memory only, child processes exec mutated module sources): control passes (182 tests); 15/15 killed (closures pass raising, skip/complete statuses on the raster and bridged returns, both data fields, the leak split raising or reporting complete, leak_risk false instead of null, the vector item ignoring the skip, the missing high-impact assumption, the no-candidate complete status, the catalog caveat)."
+      ],
+      "tests_added": [
+        "SeededSegmentCapTests (7) in tests/application/services/test_ai_takeoff_proposal_service.py",
+        "LeakGuardTests.test_open_gaps_keep_the_closures_the_region_was_traced_with changed (status asserted)",
+        "ToolCatalogTests.test_m2_1_fields_are_described extended in tests/mcp_takeoff/test_tool_catalog.py"
+      ],
+      "validation": "Full suite with -X faulthandler three times (logs to files): 14325 tests OK (38 skipped) in 419.1 s; 14325 tests OK (38 skipped) in 397.5 s; 14325 tests OK (38 skipped) in 407.2 s, exit 0, no fatal error. Focused 38 OK three times; affected service/read/planar/linework 388 OK, AI takeoff integration 37 (3 skipped), mcp_takeoff 91, corpus tools 72, architecture 121 (3 skipped) OK. check_architecture 8 categories PASS; compileall exit 0; git diff --check and cr-at-eol clean.",
+      "limitations": [
+        "The focused-run failure of the bridged test before the budget patch was not captured with region_search in its output; a timeout is the likely cause, not proven.",
+        "tools/ai_takeoff_corpus_worker records leak_risk as is and counts truthy values, so a skipped leak check (null) counts as no leak there; measurement tool not changed.",
+        "On a real 20,000-line page a seeded search can still pass the 20 s region budget and report skipped_time_budget; that path is unchanged.",
+        "_dashed_outline skips over-cap dashed components silently (unproven loss)."
       ]
     }
   ],
@@ -38977,7 +39032,7 @@
         "ToolCatalogTests.test_tool_specs_are_immutable": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): tool specs are immutable. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "ToolCatalogTests.test_list_segments_offers_line_attributes_and_a_kind_filter": "Added (M2): kinds schema enum and the documented new fields; the old 'not available yet' sentence is gone.",
         "ToolCatalogTests.test_find_regions_filters_paging_and_workflow": "Added (M2): filter schemas, limit 1-50, cursor and the workflow phrases in the description.",
-        "ToolCatalogTests.test_m2_1_fields_are_described": "Added (M2.1, synthetic fixtures only): m2 1 fields are described.",
+        "ToolCatalogTests.test_m2_1_fields_are_described": "Extended (failing first): find_regions names the default-filter hint, the boundary_kinds caveat, closures and leak_guard skipped_segment_cap, leak_risk null and the leak check skipped assumption.",
         "ToolCatalogTests.test_dashed_boundaries_and_leaks_are_described": "Re-read: also requires the find_regions description to explain dashed_analysis, skipped_time_budget and the 20 s budget (failing first)."
       }
     },
@@ -39586,7 +39641,7 @@
         "LeakGuardTests.test_only_the_opening_to_a_second_area_is_reported": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): only the opening to a second area is reported.",
         "LeakGuardTests.test_an_opening_the_region_closed_is_not_reported_again": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): an opening the region closed is not reported again.",
         "LeakGuardTests.test_a_raster_region_that_matches_the_room_reports_no_opening": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): a raster region that matches the room reports no opening.",
-        "LeakGuardTests.test_open_gaps_keep_the_closures_the_region_was_traced_with": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): open gaps keep the closures the region was traced with.",
+        "LeakGuardTests.test_open_gaps_keep_the_closures_the_region_was_traced_with": "Changed: _open_gaps returns (gaps, status); the opening is unchanged and the status is complete.",
         "LeakGuardTests.test_a_capped_double_wall_opening_is_reported": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): a capped double wall opening is reported.",
         "LeakGuardTests.test_a_small_corner_split_off_by_a_stray_line_is_not_a_leak": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): a small corner split off by a stray line is not a leak.",
         "LeakGuardTests.test_an_opening_that_cannot_be_traced_is_skipped": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): an opening that cannot be traced is skipped.",
@@ -39619,7 +39674,13 @@
         "WallWidthSuggestionTests.test_a_hairline_thin_bulk_keeps_the_walls": "Added (failing first): end to end, a hairline bulk suggests 0.66 and finds the 13 rooms.",
         "SegmentCapTests.test_the_named_min_width_passes_when_widths_differ_past_six_digits": "Added (failing first): the named width, passed back, keeps exactly the named 19,500 segments.",
         "SegmentCapTests.test_naming_a_passing_min_width_takes_logarithmic_filter_passes": "Added (failing first): 20,100 distinct widths need at most 1 + ceil(log2 n) + 1 filter passes and name the width keeping exactly 20,000.",
-        "SegmentCapTests.test_no_hint_when_the_only_passing_width_keeps_nothing": "Added (mutation coverage): the heaviest pen exists only in a symbol, so the only passing width keeps nothing and no hint is given."
+        "SegmentCapTests.test_no_hint_when_the_only_passing_width_keeps_nothing": "Added (mutation coverage): the heaviest pen exists only in a symbol, so the only passing width keeps nothing and no hint is given.",
+        "SeededSegmentCapTests.test_a_closures_pass_over_the_cap_keeps_the_raster_region": "Added (failing first): 20,000 kept lines plus a sealed opening; with default filters and with boundary_kinds the raster room is returned, segment_count 20000, closures skipped_segment_cap, region_search complete.",
+        "SeededSegmentCapTests.test_a_bridged_room_after_a_skipped_closures_pass_keeps_the_status": "Added (mutation coverage): after the skipped closures pass the bridged search finds the room (vector, one gap) and closures stays skipped_segment_cap.",
+        "SeededSegmentCapTests.test_the_closures_pass_reports_complete_or_not_run": "Added (failing first): complete for the sealed room, not_run for a listing and for a plain seeded room.",
+        "SeededSegmentCapTests.test_nothing_found_over_the_cap_is_still_refused_with_the_hint": "Added (guard): raster finds nothing on a 20,005-line page; still refused at the front check with min_width 2 keeps 4, and the raster fill never runs.",
+        "SeededSegmentCapTests.test_a_leak_check_over_the_cap_is_reported_not_passed": "Added (failing first): two rooms joined by a 39 in opening padded to 20,000 lines report leak_guard skipped_segment_cap, leak_risk null and one blocking high-impact leak check skipped assumption.",
+        "SeededSegmentCapTests.test_the_leak_check_reports_complete_or_not_run": "Added (failing first): complete with leak_risk true for the joined rooms, not_run for a listing, complete with leak_risk false for a closed room."
       }
     },
     "tests/application/services/test_ai_takeoff_sidecar_service.py": {
@@ -40906,6 +40967,29 @@
         "seconds": 346.4,
         "result": "OK",
         "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      }
+    ],
+    "seeded_segment_cap_full_suites": [
+      {
+        "tests_run": 14325,
+        "skips": 38,
+        "seconds": 419.1,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t . > log"
+      },
+      {
+        "tests_run": 14325,
+        "skips": 38,
+        "seconds": 397.5,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t . > log"
+      },
+      {
+        "tests_run": 14325,
+        "skips": 38,
+        "seconds": 407.2,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t . > log"
       }
     ]
   },

@@ -2468,9 +2468,10 @@ class LeakGuardTests(ProposalTestCase):
         report = module._planar(segments, 0.0, 48.0, [closure])
         region = module._smallest_containing(report.regions, (200.0, 200.0))
         choice = module._SeedChoice(report, region=region, closures=(closure,))
-        (opening,) = module._open_gaps(
+        (opening,), leak_guard = module._open_gaps(
             segments, choice, (200.0, 200.0), region.outer, K, 48.0
         )
+        self.assertEqual(leak_guard, "complete")
         self.assertEqual(
             sorted([opening.p1, opening.p2]), [(300.0, 150.0), (300.0, 150.0 + GAP_PTS)]
         )
@@ -2910,3 +2911,115 @@ class SegmentCapTests(ProposalTestCase):
         )
         self.assertIn("More than 20000 line segments", error.message)
         self.assertNotIn("min_width", error.message)
+
+
+class SeededSegmentCapTests(ProposalTestCase):
+    find = FindRegionFilterTests.find
+    sealed_page = RegionSearchBudgetTests.sealed_page
+    BOX = [0, 0, 2000, 2000]
+
+    def setUp(self):
+        super().setUp()
+        budget = mock.patch.object(module, "REGION_SEARCH_BUDGET_S", 1e6)
+        budget.start()
+        self.addCleanup(budget.stop)
+
+    def fill_to(self, total, width=0.5):
+        base = list(self.pdf.segments)
+        self.pdf.segments = base + _scattered(total - len(base), 150, 1000.0, width)
+
+    def test_a_closures_pass_over_the_cap_keeps_the_raster_region(self):
+        for boundary_kinds in (None, ["wall", "thin"]):
+            with self.subTest(boundary_kinds=boundary_kinds):
+                self.sealed_page()
+                self.fill_to(20000)
+                result = self.find(
+                    bbox=self.BOX,
+                    seed_pts=[250, 200],
+                    max_gap_in=40.0,
+                    min_width=0.0,
+                    boundary_kinds=boundary_kinds,
+                )
+                data = result["data"]
+                self.assertEqual(data["region_search"], "complete")
+                (region,) = data["regions"]
+                self.assertEqual(region["method"], "raster")
+                self.assertEqual(data["segment_count"], 20000)
+                self.assertEqual(data["closures"], "skipped_segment_cap")
+                self.assertEqual(result["status"], "ok")
+
+    def test_a_bridged_room_after_a_skipped_closures_pass_keeps_the_status(self):
+        self.sealed_page()
+        self.raster_result = RasterResult(
+            ((100.0, 300.0), (400.0, 300.0), (400.0, 500.0), (100.0, 500.0)), False, 4.0
+        )
+        self.fill_to(20000)
+        result = self.find(
+            bbox=self.BOX, seed_pts=[250, 400], max_gap_in=40.0, min_width=0.0
+        )
+        data = result["data"]
+        self.assertEqual(data["region_search"], "complete")
+        (region,) = data["regions"]
+        self.assertEqual(region["method"], "vector")
+        self.assertEqual(len(region["gaps"]), 1)
+        self.assertEqual(data["closures"], "skipped_segment_cap")
+
+    def test_the_closures_pass_reports_complete_or_not_run(self):
+        self.sealed_page()
+        seeded = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"]
+        self.assertEqual(seeded["closures"], "complete")
+        listed = self.find(max_gap_in=40.0)["data"]
+        self.assertEqual(listed["closures"], "not_run")
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        plain = self.find(seed_pts=[150, 150])["data"]
+        self.assertEqual(plain["closures"], "not_run")
+
+    def test_nothing_found_over_the_cap_is_still_refused_with_the_hint(self):
+        self.pdf.segments = _styled_rect(100, 100, 300, 250) + _scattered(
+            20001, 150, 1000.0, 0.25
+        )
+        self.raster_result = None
+        error = self.assert_error(
+            "invalid_argument",
+            lambda: self.find(bbox=self.BOX, seed_pts=[250, 200], min_width=0.0),
+        )
+        self.assertIn("More than 20000 line segments", error.message)
+        self.assertIn("min_width 2 keeps 4 line segments and would pass", error.message)
+        self.assertEqual(self.raster_calls, [])
+
+    def test_a_leak_check_over_the_cap_is_reported_not_passed(self):
+        self.pdf.segments = _two_rooms()
+        self.fill_to(20000, width=2.0)
+        result = self.service_m1b.find_regions(
+            self.snapshot(), self.BOX, seed_pts=[200, 200]
+        )
+        data = result["data"]
+        self.assertEqual(data["region_search"], "complete")
+        (region,) = data["regions"]
+        self.assertEqual(data["leak_guard"], "skipped_segment_cap")
+        self.assertIsNone(region["leak_risk"])
+        proposal = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=4.0, top_elev_in=0.0
+        )["data"]
+        (note,) = proposal["assumptions"]
+        self.assertEqual(
+            (note["subject"], note["impact"], note["value"]["value"]),
+            ("other", IMPACT_HIGH, "leak check skipped"),
+        )
+        self.assertEqual(proposal["blocking_assumption_ids"], [note["id"]])
+
+    def test_the_leak_check_reports_complete_or_not_run(self):
+        self.pdf.segments = _two_rooms()
+        seeded = self.service_m1b.find_regions(
+            self.snapshot(), ROOM_BOX, seed_pts=[200, 200]
+        )["data"]
+        self.assertEqual(seeded["leak_guard"], "complete")
+        self.assertIs(seeded["regions"][0]["leak_risk"], True)
+        listed = self.service_m1b.find_regions(self.snapshot(), ROOM_BOX)["data"]
+        self.assertEqual(listed["leak_guard"], "not_run")
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        closed = self.service_m1b.find_regions(
+            self.snapshot(), ROOM_BOX, seed_pts=[150, 150]
+        )["data"]
+        self.assertEqual(closed["leak_guard"], "complete")
+        self.assertIs(closed["regions"][0]["leak_risk"], False)

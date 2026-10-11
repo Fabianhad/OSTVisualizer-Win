@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
   "module_count": 591,
-  "method_count": 14343,
+  "method_count": 14349,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -6076,7 +6076,7 @@
       "duplicate_method_names": []
     },
     "tests/application/services/test_ai_takeoff_proposal_service.py": {
-      "sha256": "cc139795f56c6ae10faf6d31d6a49eeb129d65cd809e81a51d9735060eb8d223",
+      "sha256": "26a677b41f234539f39d55bbf70f5540d45082369d9ab9f233a4e147b44252d0",
       "methods": [
         {
           "name": "ScaleProposalTests.test_a_measured_distance_matching_a_preset_proposes_it",
@@ -8909,6 +8909,7 @@
           "name": "LeakGuardTests.test_open_gaps_keep_the_closures_the_region_was_traced_with",
           "line": 2457,
           "assertions": [
+            "self.assertEqual",
             "self.assertEqual"
           ],
           "calls": [
@@ -8921,13 +8922,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (M2.2 dashed boundaries and leak guard, synthetic fixtures only; failing first or written to kill a surviving in-memory mutant): open gaps keep the closures the region was traced with.",
+          "review_note": "Changed: _open_gaps returns (gaps, status); the opening is unchanged and the status is complete.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "LeakGuardTests.test_a_capped_double_wall_opening_is_reported",
-          "line": 2478,
+          "line": 2479,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -8948,7 +8949,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_small_corner_split_off_by_a_stray_line_is_not_a_leak",
-          "line": 2496,
+          "line": 2497,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse"
@@ -8968,7 +8969,7 @@
         },
         {
           "name": "LeakGuardTests.test_an_opening_that_cannot_be_traced_is_skipped",
-          "line": 2504,
+          "line": 2505,
           "assertions": [
             "self.assertEqual"
           ],
@@ -8989,7 +8990,7 @@
         },
         {
           "name": "LeakGuardTests.test_a_raster_region_reports_an_opening_to_the_outside",
-          "line": 2517,
+          "line": 2518,
           "assertions": [
             "self.assertEqual",
             "self.assertAlmostEqual",
@@ -9013,7 +9014,7 @@
         },
         {
           "name": "LeakGuardTests.test_region_records_default_to_no_warnings",
-          "line": 2540,
+          "line": 2541,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9031,7 +9032,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_skipped_analysis_does_not_use_dashed_edges",
-          "line": 2549,
+          "line": 2550,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9053,7 +9054,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_complete_analysis_still_uses_dashed_edges",
-          "line": 2560,
+          "line": 2561,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9072,7 +9073,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_dashed_outline_time_out_is_reported_as_skipped",
-          "line": 2566,
+          "line": 2567,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9093,7 +9094,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_dashed_outline_shares_the_analysis_deadline",
-          "line": 2575,
+          "line": 2576,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNotNone",
@@ -9121,7 +9122,7 @@
         },
         {
           "name": "DashedAnalysisBudgetTests.test_non_finite_dashed_lines_are_ignored",
-          "line": 2598,
+          "line": 2599,
           "assertions": [
             "self.assertEqual"
           ],
@@ -9142,7 +9143,7 @@
         },
         {
           "name": "WallWidthSuggestionTests.test_an_s101_like_sheet_keeps_its_walls",
-          "line": 2631,
+          "line": 2632,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9164,7 +9165,7 @@
         },
         {
           "name": "WallWidthSuggestionTests.test_a_hairline_thin_bulk_keeps_the_walls",
-          "line": 2647,
+          "line": 2648,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9185,7 +9186,7 @@
         },
         {
           "name": "WallWidthSuggestionTests.test_wall_boundaries_keep_s101_walls_lighter_than_the_old_floor",
-          "line": 2659,
+          "line": 2660,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9205,7 +9206,7 @@
         },
         {
           "name": "WallWidthSuggestionTests.test_low_confidence_suggests_no_filter_and_records_an_assumption",
-          "line": 2668,
+          "line": 2669,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9232,7 +9233,7 @@
         },
         {
           "name": "WallWidthSuggestionTests.test_walls_dominating_a_few_thin_lines_record_nothing",
-          "line": 2694,
+          "line": 2695,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9254,7 +9255,7 @@
         },
         {
           "name": "WallWidthSuggestionTests.test_a_given_width_one_pen_or_unstyled_lines_record_nothing",
-          "line": 2713,
+          "line": 2714,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual",
@@ -9278,7 +9279,7 @@
         },
         {
           "name": "RegionSearchBudgetTests.test_the_region_search_reports_complete_within_budget",
-          "line": 2741,
+          "line": 2742,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -9296,7 +9297,7 @@
         },
         {
           "name": "RegionSearchBudgetTests.test_a_dashed_outline_search_over_budget_reports_a_skip",
-          "line": 2747,
+          "line": 2748,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9318,7 +9319,7 @@
         },
         {
           "name": "RegionSearchBudgetTests.test_the_raster_fill_and_sealed_openings_check_the_deadline",
-          "line": 2773,
+          "line": 2774,
           "assertions": [
             "self.assertEqual",
             "self.assertGreaterEqual",
@@ -9343,7 +9344,7 @@
         },
         {
           "name": "RegionSearchBudgetTests.test_an_expired_deadline_skips_the_raster_fill",
-          "line": 2785,
+          "line": 2786,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9364,7 +9365,7 @@
         },
         {
           "name": "RegionSearchBudgetTests.test_a_search_over_budget_is_skipped_instead_of_overrunning",
-          "line": 2797,
+          "line": 2798,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -9386,7 +9387,7 @@
         },
         {
           "name": "SegmentCapTests.test_a_page_over_the_cap_names_a_min_width_that_would_pass",
-          "line": 2840,
+          "line": 2841,
           "assertions": [
             "self.assert_error",
             "self.assertIn",
@@ -9414,7 +9415,7 @@
         },
         {
           "name": "SegmentCapTests.test_the_named_min_width_passes_when_widths_differ_past_six_digits",
-          "line": 2854,
+          "line": 2855,
           "assertions": [
             "self.assert_error",
             "self.assertIsNotNone",
@@ -9440,7 +9441,7 @@
         },
         {
           "name": "SegmentCapTests.test_naming_a_passing_min_width_takes_logarithmic_filter_passes",
-          "line": 2870,
+          "line": 2871,
           "assertions": [
             "self.assertIn",
             "self.assertLessEqual",
@@ -9469,7 +9470,7 @@
         },
         {
           "name": "SegmentCapTests.test_no_hint_when_the_only_passing_width_keeps_nothing",
-          "line": 2896,
+          "line": 2897,
           "assertions": [
             "self.assert_error",
             "self.assertIn",
@@ -9492,7 +9493,7 @@
         },
         {
           "name": "SegmentCapTests.test_no_hint_when_no_width_would_pass",
-          "line": 2906,
+          "line": 2907,
           "assertions": [
             "self.assert_error",
             "self.assertIn",
@@ -9508,6 +9509,144 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "A single-pen page over the cap is refused without a min_width hint.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SeededSegmentCapTests.test_a_closures_pass_over_the_cap_keeps_the_raster_region",
+          "line": 2931,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self.assertEqual",
+            "self.fill_to",
+            "self.find",
+            "self.sealed_page",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): 20,000 kept lines plus a sealed opening; with default filters and with boundary_kinds the raster room is returned, segment_count 20000, closures skipped_segment_cap, region_search complete.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SeededSegmentCapTests.test_a_bridged_room_after_a_skipped_closures_pass_keeps_the_status",
+          "line": 2951,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "RasterResult",
+            "len",
+            "self.assertEqual",
+            "self.fill_to",
+            "self.find",
+            "self.sealed_page"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (mutation coverage): after the skipped closures pass the bridged search finds the room (vector, one gap) and closures stays skipped_segment_cap.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SeededSegmentCapTests.test_the_closures_pass_reports_complete_or_not_run",
+          "line": 2967,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_rect",
+            "self.assertEqual",
+            "self.find",
+            "self.sealed_page"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): complete for the sealed room, not_run for a listing and for a plain seeded room.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SeededSegmentCapTests.test_nothing_found_over_the_cap_is_still_refused_with_the_hint",
+          "line": 2977,
+          "assertions": [
+            "self.assert_error",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_scattered",
+            "_styled_rect",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assert_error",
+            "self.find"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (guard): raster finds nothing on a 20,005-line page; still refused at the front check with min_width 2 keeps 4, and the raster fill never runs.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SeededSegmentCapTests.test_a_leak_check_over_the_cap_is_reported_not_passed",
+          "line": 2990,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIsNone",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_two_rooms",
+            "self.assertEqual",
+            "self.assertIsNone",
+            "self.fill_to",
+            "self.service_m1b.find_regions",
+            "self.service_m1b.propose_element",
+            "self.snapshot"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): two rooms joined by a 39 in opening padded to 20,000 lines report leak_guard skipped_segment_cap, leak_risk null and one blocking high-impact leak check skipped assumption.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "SeededSegmentCapTests.test_the_leak_check_reports_complete_or_not_run",
+          "line": 3011,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "calls": [
+            "_rect",
+            "_two_rooms",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.service_m1b.find_regions",
+            "self.snapshot"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): complete with leak_risk true for the joined rooms, not_run for a listing, complete with leak_risk false for a closed room.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -150244,7 +150383,7 @@
       "duplicate_method_names": []
     },
     "tests/mcp_takeoff/test_tool_catalog.py": {
-      "sha256": "cdc9aacadbb83f70e3f0629997dd5f785fb03d87a4a02b9cd223b1b035e73a13",
+      "sha256": "4e9be00f01d16954115b79d7de853a0d5906bd43fe68d284cd4a496098aed1b9",
       "methods": [
         {
           "name": "ToolCatalogTests.test_the_m1a_tools_then_the_m1b_tools_under_the_cap",
@@ -150519,13 +150658,13 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (M2.1, synthetic fixtures only): m2 1 fields are described.",
+          "review_note": "Extended (failing first): find_regions names the default-filter hint, the boundary_kinds caveat, closures and leak_guard skipped_segment_cap, leak_risk null and the leak check skipped assumption.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "ToolCatalogTests.test_dashed_boundaries_and_leaks_are_described",
-          "line": 255,
+          "line": 261,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -150547,7 +150686,7 @@
         },
         {
           "name": "ToolCatalogTests.test_tool_specs_are_immutable",
-          "line": 299,
+          "line": 305,
           "assertions": [
             "self.assertRaises"
           ],
@@ -150562,7 +150701,7 @@
         },
         {
           "name": "ToolCatalogTests.test_render_sheet_limits_dpi_and_documents_overlay_ids_as_a_no_op",
-          "line": 303,
+          "line": 309,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -150582,7 +150721,7 @@
         },
         {
           "name": "ToolCatalogTests.test_text_bearing_tools_warn_that_drawing_text_is_untrusted_data",
-          "line": 313,
+          "line": 319,
           "assertions": [
             "self.assertIn"
           ],
@@ -150599,7 +150738,7 @@
         },
         {
           "name": "ToolCatalogTests.test_tool_items_are_mcp_tool_descriptors",
-          "line": 330,
+          "line": 336,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn",
@@ -327496,7 +327635,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/services/test_ai_takeoff_bridge.py": {
-      "sha256": "7748ed727864729ab2ed208464686b50315fad339f13974b150f0a2fe6ff9c55",
+      "sha256": "7b07aa1b6315e02a9af3d6c72954f5bbd14b9ca10e8a128d884f12b32db13234",
       "methods": [
         {
           "name": "BridgeProtocolTests.test_round_trip_passes_declared_arguments",
@@ -329046,7 +329185,7 @@
         },
         {
           "name": "BridgeFixtureLifetimeTests.test_every_bridge_is_deleted_on_the_gui_thread_by_its_own_test",
-          "line": 1313,
+          "line": 1315,
           "assertions": [
             "self.assertEqual",
             "self.assertGreater",
@@ -329073,7 +329212,7 @@
         },
         {
           "name": "BridgeFixtureLifetimeTests.test_a_failing_capacity_check_still_releases_its_blocked_workers",
-          "line": 1333,
+          "line": 1335,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -375651,7 +375790,7 @@
     }
   },
   "discovery": {
-    "count": 14343,
+    "count": 14349,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

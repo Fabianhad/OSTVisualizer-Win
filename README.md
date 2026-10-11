@@ -424,7 +424,10 @@ weights are ambiguous no filter is applied and the region carries a "no wall-wid
 filter" assumption. Pass `min_width` 0 to keep every line. A region search that
 passes 20 s is skipped (`region_search` `skipped_time_budget`); retry on a smaller
 box. A page left with more than 20,000 lines after the filters is refused, and
-the message names the `min_width` that would pass. Very busy sheets are read again inside the
+the message names the `min_width` that would pass (not with `boundary_kinds`).
+A seeded search that already found its room still returns it; if the room
+is too crowded to check for openings into other rooms, `leak_guard` says so
+and the region carries a "leak check skipped" assumption to accept. Very busy sheets are read again inside the
 box you give, and the result says when even the box had too many lines.
 
 Dashed lines often mark mat, footing or below-grade edges that reach past the

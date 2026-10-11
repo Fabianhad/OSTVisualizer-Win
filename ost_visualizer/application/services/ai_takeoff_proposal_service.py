@@ -125,6 +125,15 @@ DASHED_ANALYSIS_SKIPPED = "skipped_time_budget"
 REGION_SEARCH_BUDGET_S = 20.0
 REGION_SEARCH_COMPLETE = "complete"
 REGION_SEARCH_SKIPPED = "skipped_time_budget"
+PASS_NOT_RUN = "not_run"
+PASS_COMPLETE = "complete"
+PASS_SKIPPED_SEGMENT_CAP = "skipped_segment_cap"
+LEAK_CHECK_SKIPPED_VALUE = "leak check skipped"
+LEAK_CHECK_SKIPPED_REASON = (
+    "This region was not checked for openings into neighbouring areas because "
+    "the check would pass the 20,000-segment cap, so it may merge two areas; "
+    "check the outline, or search a smaller box or with a larger min_width."
+)
 WIDTH_NOTE_VALUE = "no wall-width filter"
 WIDTH_NOTE_REASONS = {
     WIDTH_NO_CLEAR_PEN_STEP: (
@@ -196,6 +205,7 @@ class _RegionRecord:
     open_gaps: Tuple[_GapRecord, ...] = ()
     dashed_outline_sf: Optional[float] = None
     width_note: Optional[str] = None
+    leak_check_skipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -206,6 +216,7 @@ class _SeedChoice:
     closures: Tuple[Tuple[float, float, float, float], ...] = ()
     gap_pts: float = 0.0
     sealed_in: Optional[float] = None
+    closures_status: str = PASS_NOT_RUN
 
 
 @dataclass(frozen=True)
@@ -564,10 +575,12 @@ class AiTakeoffProposalService:
         bridges = list(boundary.bridges) if dashed_edges else []
         next_cursor = None
         region_search = REGION_SEARCH_COMPLETE
+        closures_status = PASS_NOT_RUN
+        leak_guard = PASS_NOT_RUN
         search_deadline = time.monotonic() + REGION_SEARCH_BUDGET_S
         try:
             if seed is not None:
-                item, report = self._seed_item(
+                item, report, closures_status, leak_guard = self._seed_item(
                     snapshot,
                     segments + bridges,
                     box,
@@ -613,6 +626,8 @@ class AiTakeoffProposalService:
                     result_status = STATUS_OK if items else STATUS_EMPTY
         except RegionSearchTimeout:
             region_search = REGION_SEARCH_SKIPPED
+            closures_status = PASS_NOT_RUN
+            leak_guard = PASS_NOT_RUN
             report = PlanarRegionReport((), ())
             items = []
             total = 0
@@ -635,6 +650,8 @@ class AiTakeoffProposalService:
                 "dash_bridge_count": len(bridges),
                 "dashed_analysis": dashed_analysis,
                 "region_search": region_search,
+                "closures": closures_status,
+                "leak_guard": leak_guard,
                 "width_suggestion": width_report,
                 "excluded": excluded,
                 "suppressed_symbol_count": len(suppressed),
@@ -660,9 +677,10 @@ class AiTakeoffProposalService:
         closed: Optional[PlanarRegion] = None,
         width_note: Optional[str] = None,
         deadline: Optional[float] = None,
-    ) -> Tuple[Optional[dict], PlanarRegionReport]:
+    ) -> Tuple[Optional[dict], PlanarRegionReport, str, str]:
         k = snapshot.ost_per_page_point
         open_gaps: Tuple[RegionGap, ...] = ()
+        leak_guard = PASS_NOT_RUN
         if closed is not None:
             choice = _SeedChoice(PlanarRegionReport((closed,), ()), region=closed)
             ring = closed.outer
@@ -673,14 +691,21 @@ class AiTakeoffProposalService:
             elif choice.raster is not None:
                 ring = choice.raster.ring
             else:
-                return None, choice.report
-            open_gaps = _open_gaps(
+                return None, choice.report, choice.closures_status, leak_guard
+            open_gaps, leak_guard = _open_gaps(
                 segments, choice, seed, ring, k, filters.symbol_max_pts, deadline
             )
         outline_sf = _ignored_outline_sf(outline, ring, k)
+        leak_skipped = leak_guard == PASS_SKIPPED_SEGMENT_CAP
         if choice.region is not None:
             item = self._vector_item(
-                snapshot, choice.region, k, open_gaps, outline_sf, width_note
+                snapshot,
+                choice.region,
+                k,
+                open_gaps,
+                outline_sf,
+                width_note,
+                leak_skipped,
             )
         else:
             gaps = tuple(
@@ -696,8 +721,9 @@ class AiTakeoffProposalService:
                 open_gaps,
                 outline_sf,
                 width_note,
+                leak_skipped,
             )
-        return item, choice.report
+        return item, choice.report, choice.closures_status, leak_guard
 
     def _seed_choice(
         self,
@@ -723,26 +749,45 @@ class AiTakeoffProposalService:
             if raster is None
             else _sealed_openings(raster, segments, pen, seed, deadline)
         )
+        closures_status = PASS_NOT_RUN
         if closures:
-            closed = _planar(segments, 0.0, symbol_max, closures, deadline)
-            best = _smallest_containing(closed.regions, seed)
-            raster_area = abs(ring_area(raster.ring))
-            if (
-                best is not None
-                and abs(abs(ring_area(best.outer)) - raster_area)
-                <= OPENING_AREA_MATCH * raster_area
-            ):
-                return _SeedChoice(closed, region=best, closures=tuple(closures))
+            closed = _planar_within_cap(segments, 0.0, symbol_max, closures, deadline)
+            if closed is None:
+                closures_status = PASS_SKIPPED_SEGMENT_CAP
+            else:
+                closures_status = PASS_COMPLETE
+                best = _smallest_containing(closed.regions, seed)
+                raster_area = abs(ring_area(raster.ring))
+                if (
+                    best is not None
+                    and abs(abs(ring_area(best.outer)) - raster_area)
+                    <= OPENING_AREA_MATCH * raster_area
+                ):
+                    return _SeedChoice(
+                        closed,
+                        region=best,
+                        closures=tuple(closures),
+                        closures_status=closures_status,
+                    )
         if gap_pts > 0.0:
             bridged = _planar(segments, gap_pts, symbol_max, deadline=deadline)
             best = _smallest_containing(bridged.regions, seed)
             if best is not None:
-                return _SeedChoice(bridged, region=best, gap_pts=gap_pts)
+                return _SeedChoice(
+                    bridged,
+                    region=best,
+                    gap_pts=gap_pts,
+                    closures_status=closures_status,
+                )
         if raster is None:
             return _SeedChoice(plain)
         sealed_in = filters.max_gap_in if not closures and pen > 1.0 else None
         return _SeedChoice(
-            plain, raster=raster, closures=tuple(closures), sealed_in=sealed_in
+            plain,
+            raster=raster,
+            closures=tuple(closures),
+            sealed_in=sealed_in,
+            closures_status=closures_status,
         )
 
     def propose_element(
@@ -1214,6 +1259,7 @@ class AiTakeoffProposalService:
         open_gaps: Tuple[RegionGap, ...] = (),
         outline_sf: Optional[float] = None,
         width_note: Optional[str] = None,
+        leak_check_skipped: bool = False,
     ) -> dict:
         polygon = tuple(value * k for point in region.outer for value in point)
         holes = tuple(
@@ -1230,6 +1276,7 @@ class AiTakeoffProposalService:
             _gap_records(open_gaps, k),
             outline_sf,
             width_note,
+            leak_check_skipped,
         )
         return {
             "id": self._store_region(record),
@@ -1237,7 +1284,9 @@ class AiTakeoffProposalService:
             "polygon_ost": list(polygon),
             "holes_ost": [list(hole) for hole in holes],
             "area_sf": round(region.area * k * k / 144.0, 4),
-            "leak_risk": bool(region.gaps) or bool(open_gaps),
+            "leak_risk": _leak_risk(
+                bool(region.gaps) or bool(open_gaps), leak_check_skipped
+            ),
             "gaps": _gap_items(region.gaps, k),
             "open_gaps": _gap_items(open_gaps, k),
             "dashed_outline": _outline_item(outline_sf),
@@ -1253,6 +1302,7 @@ class AiTakeoffProposalService:
         open_gaps: Tuple[RegionGap, ...] = (),
         outline_sf: Optional[float] = None,
         width_note: Optional[str] = None,
+        leak_check_skipped: bool = False,
     ) -> dict:
         polygon = tuple(value * k for point in raster.ring for value in point)
         records = _gap_records(gaps, k)
@@ -1268,6 +1318,7 @@ class AiTakeoffProposalService:
             _gap_records(open_gaps, k),
             outline_sf,
             width_note,
+            leak_check_skipped,
         )
         return {
             "id": self._store_region(record),
@@ -1275,7 +1326,10 @@ class AiTakeoffProposalService:
             "polygon_ost": list(polygon),
             "holes_ost": [],
             "area_sf": round(abs(polygon_area(polygon)) / 144.0, 4),
-            "leak_risk": bool(raster.leak) or bool(records) or bool(open_gaps),
+            "leak_risk": _leak_risk(
+                bool(raster.leak) or bool(records) or bool(open_gaps),
+                leak_check_skipped,
+            ),
             "gaps": _gap_items(gaps, k),
             "unlocated_gaps_up_to_in": sealed_in,
             "open_gaps": _gap_items(open_gaps, k),
@@ -1387,6 +1441,32 @@ def _planar(
         )
     except RegionTooComplex as exc:
         raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, str(exc)) from exc
+
+
+def _planar_within_cap(
+    segments,
+    gap_pts: float,
+    symbol_max: float,
+    closures=(),
+    deadline: Optional[float] = None,
+) -> Optional[PlanarRegionReport]:
+    try:
+        return find_planar_regions_report(
+            segments,
+            SNAP_TOLERANCE_PTS,
+            gap_pts,
+            symbol_max=symbol_max,
+            closures=closures,
+            deadline=deadline,
+        )
+    except RegionTooComplex:
+        return None
+
+
+def _leak_risk(found: bool, check_skipped: bool) -> Optional[bool]:
+    if found:
+        return True
+    return None if check_skipped else False
 
 
 def _gap_records(gaps: Sequence[RegionGap], k: float) -> Tuple[_GapRecord, ...]:
@@ -1650,7 +1730,7 @@ def _open_gaps(
     k: float,
     symbol_max: float,
     deadline: Optional[float] = None,
-) -> Tuple[RegionGap, ...]:
+) -> Tuple[Tuple[RegionGap, ...], str]:
     reach = 2.0 * SNAP_TOLERANCE_PTS
     closed = choice.region.gaps if choice.region is not None else ()
     candidates = [
@@ -1666,22 +1746,20 @@ def _open_gaps(
         if not any(_same_gap(gap, candidate, reach) for gap in closed)
     ]
     if not candidates:
-        return ()
-    try:
-        split = find_planar_regions_report(
-            segments,
-            SNAP_TOLERANCE_PTS,
-            choice.gap_pts,
-            symbol_max=symbol_max,
-            closures=list(choice.closures) + candidates,
-            deadline=deadline,
-        )
-    except RegionTooComplex:
-        return ()
+        return (), PASS_COMPLETE
+    split = _planar_within_cap(
+        segments,
+        choice.gap_pts,
+        symbol_max,
+        list(choice.closures) + candidates,
+        deadline,
+    )
+    if split is None:
+        return (), PASS_SKIPPED_SEGMENT_CAP
     face = _smallest_containing(split.regions, seed)
     total = abs(ring_area(ring))
     if face is None or abs(ring_area(face.outer)) > (1.0 - LEAK_SPLIT_SHARE) * total:
-        return ()
+        return (), PASS_COMPLETE
     beyond = _areas_beyond(split.regions, face)
     found = tuple(
         gap
@@ -1689,7 +1767,7 @@ def _open_gaps(
         if beyond.get(_gap_key(gap), math.inf) >= LEAK_SPLIT_SHARE * total
         and any(_same_gap(gap, candidate, reach) for candidate in candidates)
     )
-    return found[:MAX_OPEN_GAPS]
+    return found[:MAX_OPEN_GAPS], PASS_COMPLETE
 
 
 def _gap_key(gap: RegionGap) -> tuple:
@@ -1753,6 +1831,8 @@ def _region_warnings(record: _RegionRecord) -> Tuple[Tuple[str, str], ...]:
         )
         for gap in record.open_gaps
     ]
+    if record.leak_check_skipped:
+        warnings.append((LEAK_CHECK_SKIPPED_VALUE, LEAK_CHECK_SKIPPED_REASON))
     if record.dashed_outline_sf is not None:
         warnings.append(
             (
