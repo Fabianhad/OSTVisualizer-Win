@@ -43,10 +43,12 @@ from ost_visualizer.presentation.services.ai_takeoff_write_commands import (
 )
 from PySide6 import QtCore
 from PySide6.QtNetwork import QLocalSocket
+from shiboken6 import isValid
 from tests.presentation.services.test_ai_takeoff_bridge import (
     BridgeTestCase,
     FakePdfSource,
     FakeReadService,
+    run_recording_bridges,
 )
 
 
@@ -325,7 +327,7 @@ class WriteCommandBridgeTests(BridgeTestCase):
         self.start_bridge()
 
     def start_bridge(self, **overrides):
-        self.bridge.cleanup()
+        self.release_bridge(self.bridge)
         options = dict(
             read_service=self.service,
             pdf_source=FakePdfSource(),
@@ -348,7 +350,6 @@ class WriteCommandBridgeTests(BridgeTestCase):
         options.update(overrides)
         self.bridge = TakeoffCommandBridge(**options)
         self.assertTrue(self.bridge.start())
-        self.addCleanup(self.bridge.cleanup)
 
     def _undo(self, uid, done):
         self.undo_calls.append(uid)
@@ -652,6 +653,23 @@ class WriteCommandBridgeTests(BridgeTestCase):
         poll.stop()
         deadline.stop()
         self.assertTrue(predicate())
+
+
+class WriteBridgeFixtureLifetimeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        BridgeTestCase.setUpClass()
+
+    def test_write_command_bridges_are_deleted_on_the_gui_thread_by_their_test(self):
+        result, created, destroyed, outlived = run_recording_bridges(
+            WriteCommandBridgeTests
+        )
+        self.assertEqual(result.errors + result.failures, [])
+        self.assertGreater(result.testsRun, 10)
+        self.assertEqual(outlived, [])
+        self.assertEqual([isValid(bridge) for bridge in created].count(True), 0)
+        self.assertEqual(set(destroyed), {(threading.main_thread().name, 0)})
+        self.assertEqual(len(destroyed), len(created))
 
 
 if __name__ == "__main__":

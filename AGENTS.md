@@ -63,6 +63,10 @@ infrastructure ----------|
 - `config/di_config.py` is the composition root and may wire all layers.
 - `presentation/main_window.py` is the presentation composition root. Other presentation files should receive dependencies by constructor injection.
 - `ServiceContainer.get_by_interface()` is expected only for runtime discovery such as `IShutdownAware`.
+- Packages under `ost_visualizer/` are namespace packages: never add an
+  `__init__.py` there (`tools/check_architecture.py` "Package layout"). The
+  Nuitka builds follow imports from the entry scripts and compile namespace
+  packages, including `ost_visualizer.mcp_takeoff`.
 - Declaration-only `Protocol` and `@abstractmethod` methods use `...`. Production
   exception and marker classes use a concise, meaningful docstring as their sole
   body. Intentional concrete no-op hooks use `pass`; an explicit `return None`
@@ -1234,6 +1238,13 @@ Runtime shape:
 
 - `ostv-takeoff-mcp.exe` (`McpTakeoffServer.py` -> `ost_visualizer.mcp_takeoff.main`) is a stdlib JSON-RPC stdio proxy. Source command: `.\venv\Scripts\python.exe -m ost_visualizer.mcp_takeoff.main`.
 - The proxy sends each `tools/call` over the named pipe `OSTVisualizerTakeoffBridge.v1` to `TakeoffCommandBridge` (`presentation/services/ai_takeoff_bridge.py`). `MainWindow` creates, starts and cleans it up next to `McpContextBridge`. The app must be running with the bid open; otherwise the proxy returns `app_not_running` or `bid_not_open`.
+- `TakeoffCommandBridge` is created with `MainWindow` as parent. `cleanup()` is
+  idempotent: it stops listening, aborts its sockets, drops its command table,
+  disconnects its own signals and calls `deleteLater()`, so the bridge is deleted
+  on the GUI thread instead of by the cyclic garbage collector on whatever thread
+  runs it. Tests release bridges through `BridgeTestCase.release_bridge`: cleanup,
+  join that test's `AiTakeoffBridgeWorker` threads, then `shiboken6.delete` on the
+  GUI thread, so no worker emits into a bridge being deleted.
 - The proxy imports only the stdlib and `application/dtos/ai_takeoff_dtos.py`. It never imports PySide6, presentation, `config/di_config.py` or `mcp_server/`; `tests/architecture/test_ai_takeoff_rules.py` checks the module list of a fresh interpreter.
 - Packaging: `scripts/build-takeoff-mcp.ps1` builds the proxy alone; `scripts/build.ps1` builds it and copies it next to the desktop exe.
 - Windows only, stdio only. The proxy reads stdin as UTF-8 (a leading BOM is ignored and undecodable bytes are replaced) and writes ASCII-only JSON, so the console code page never matters; over-deep JSON gets a parse error instead of ending the process. Requests to the app are ASCII JSON too, so arguments and results with lone surrogates pass through. A JSON-RPC id that is not finite (`NaN`, `Infinity`, `1e400`) is refused with -32600, and `initialize` echoes `protocolVersion` only when it is a non-empty string.

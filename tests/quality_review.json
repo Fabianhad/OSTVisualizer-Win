@@ -2168,6 +2168,31 @@
       ],
       "release_evidence": "Same-cycle Unreleased (6b49b41)",
       "affected_result": "At most 1 + ceil(log2(widths)) filter passes for the hint"
+    },
+    {
+      "file": "ost_visualizer/presentation/services/ai_takeoff_bridge.py",
+      "defect": "A cleaned-up TakeoffCommandBridge stayed in a reference cycle (bound methods in _commands, its own signal connections) and was never deleted, so a parentless bridge (every test bridge) and its QLocalServer and pipe sockets were destroyed by the cyclic garbage collector on whatever thread ran it",
+      "proof": "BridgeCleanupReleaseTests (3 of 4) and BridgeFixtureLifetimeTests / WriteBridgeFixtureLifetimeTests failed first; the crash-hunt probe recorded 12-16 of 122 bridges destroyed on non-GUI threads and 18-19 alive after the bridge modules, every run",
+      "fix": "cleanup() returns at once when already released, then clears _commands, disconnects _job_finished and rebind_suggested, and calls deleteLater(); production keeps parent=MainWindow",
+      "tests": [
+        "BridgeCleanupReleaseTests",
+        "BridgeFixtureLifetimeTests",
+        "WriteBridgeFixtureLifetimeTests"
+      ],
+      "release_evidence": "Tests only (production bridges are parented to MainWindow)",
+      "affected_result": "All 138 bridges in the bridge modules are destroyed on the GUI thread by their own test; none is alive after the modules"
+    },
+    {
+      "file": "tools/check_architecture.py",
+      "defect": "The no-__init__.py rule for production packages was not enforced; test_ai_takeoff_rules still expected mcp_takeoff/__init__.py, which 1d1d3a4 deleted, so 5 architecture tests failed on HEAD",
+      "proof": "ProductionPackageLayoutTests failed first (no check_package_layout, no Package layout category); test_ai_takeoff_rules failed 5 tests on HEAD",
+      "fix": "check_package_layout (category 8, Package layout) flags any __init__.py under ost_visualizer; _PROXY_MODULES no longer lists __init__.py",
+      "tests": [
+        "ProductionPackageLayoutTests",
+        "AiTakeoffProxyIsolationTests"
+      ],
+      "release_evidence": "Developer tooling",
+      "affected_result": "check_architecture reports 8 categories; the takeoff rules pass"
     }
   ],
   "removed_tests": [
@@ -15748,6 +15773,29 @@
         "The raster fill is still not interruptible (documented); the dashed and region budgets are sequential (up to about 40 s plus the fill).",
         "Unexplained: one intermittent native crash mid-suite (above) on a non-Python thread; the changed code is pure Python and single-threaded in these tests, the crash point is far from the AI takeoff tests, and two later full runs were clean, but the cause was not found.",
         "Real-sheet opt-in tests (OSTV_S100_PDF, S101) and the corpus were not re-run; no MCP client was run."
+      ]
+    },
+    {
+      "batch": "bridge-teardown-and-namespace-packages",
+      "findings": [
+        "Crash-hunt follow-up. Tests destroyed TakeoffCommandBridge objects on non-GUI threads: cleanup() never deleted the bridge and its _commands and signal connections kept it in a cycle, so the cyclic garbage collector destroyed it (and its QLocalServer and sockets) on a test's pipe-client thread. Production is unaffected (parent=MainWindow).",
+        "Fixed in production cleanup() (idempotent, clears _commands, disconnects its own signals, deleteLater) and in the fixtures: BridgeTestCase.release_bridge cleans up, joins that test's AiTakeoffBridgeWorker threads, then shiboken6.delete on the GUI thread; the fixture setUp, capped_bridge, the standalone bridges, the stale-token replacement and WriteCommandBridgeTests.start_bridge use it. The write fixture's extra addCleanup was redundant (the base fixture releases the current bridge) and was removed.",
+        "Found while fixing: deleting a bridge at test cleanup can race a just-released worker emitting _job_finished into it; release_bridge joins the workers first. test_a_worker_finishing_after_cleanup_is_not_answered_or_audited waited on _active_workers, which the disconnected slot no longer decrements; it now joins the worker thread and keeps its assertions.",
+        "Capacity test: release.set() moved to addCleanup; the probe now runs it with an injected failure and requires both 10 s waits to be released.",
+        "Package layout: check_architecture category 8 (Package layout) flags __init__.py under ost_visualizer; test_ai_takeoff_rules matches the namespace package. A scratch Nuitka build of ostv-takeoff-mcp (build-takeoff-mcp.ps1 arguments, LTO off, output in the scratchpad) compiled ost_visualizer.mcp_takeoff and its five modules, and the exe answered tools/list.",
+        "Mutation (in memory only, child processes exec mutated module sources): control passes; 15/17 killed. Survivors: replacing the stale-token release with a plain cleanup (equivalent: the test runs event loops, so deleteLater deletes it on the GUI thread anyway) and removing the worker join (a race guard; workers finished before deletion in every run, so it is not deterministically observable)."
+      ],
+      "tests_added": [
+        "tests/architecture/test_production_package_layout.py",
+        "BridgeCleanupReleaseTests (4) and BridgeFixtureLifetimeTests (2) in tests/presentation/services/test_ai_takeoff_bridge.py",
+        "WriteBridgeFixtureLifetimeTests (1) in tests/presentation/services/test_ai_takeoff_write_commands.py"
+      ],
+      "validation": "Full suite with -X faulthandler three times: 14319 tests, OK in 360.7 s; 14319 tests, OK in 343.7 s; 14319 tests, OK in 346.4 s, no fatal error. Focused 26 OK; affected bridge, main window, lifecycle and AI takeoff end-to-end 236 OK; architecture 121 OK (3 skipped); mcp_takeoff 91 OK; the affected group 20/20 clean in a loop. Before the fix: the destruction probe showed 12-16 bridges destroyed off the GUI thread per run; after: 138/138 on the GUI thread, 0 alive. check_architecture full and changed-only: 8 categories PASS; compileall exit 0; git diff --check and cr-at-eol clean.",
+      "limitations": [
+        "The intermittent 0xC000000D / access violation was not reproduced; the fix removes the proven cross-thread destruction but is not shown to be its cause.",
+        "One affected-group run during this work printed a faulthandler stack and no summary; its full output was not kept. 35 later runs of that group were clean.",
+        "Production can still race: a daemon AiTakeoffBridgeWorker can emit _job_finished while the GUI thread deletes the bridge after cleanup (deleteLater) or with MainWindow; not proven, not changed.",
+        "Client QLocalSocket objects created by the write-command tests and the test cases themselves are still freed by the garbage collector; not measured."
       ]
     }
   ],
@@ -39253,12 +39301,18 @@
         "BridgeWorkerLifecycleTests.test_one_finished_worker_frees_exactly_one_slot": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): one finished worker frees exactly one slot. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "BridgeWorkerLifecycleTests.test_the_idle_timer_leaves_a_request_that_is_being_worked_on_alone": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): the idle timer leaves a request that is being worked on alone. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "BridgeWorkerLifecycleTests.test_bytes_after_a_complete_request_are_ignored": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): bytes after a complete request are ignored. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "BridgeWorkerLifecycleTests.test_a_worker_finishing_after_cleanup_is_not_answered_or_audited": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a worker finishing after cleanup is not answered or audited. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+        "BridgeWorkerLifecycleTests.test_a_worker_finishing_after_cleanup_is_not_answered_or_audited": "Changed: waits for the worker thread itself (the counter slot is disconnected by cleanup); no slot errors, no audit and a failed client result as before.",
         "BridgeWorkerLifecycleTests.test_a_worker_finishing_after_the_client_left_is_not_answered": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a worker finishing after the client left is not answered. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "BridgeDeferredReplyTests.test_a_resolved_reply_reaches_the_waiting_client": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a resolved reply reaches the waiting client. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "BridgeDeferredReplyTests.test_a_reply_resolved_after_the_client_left_is_dropped": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a reply resolved after the client left is dropped. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "BridgeDeferredReplyTests.test_a_reply_resolved_after_cleanup_is_dropped": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a reply resolved after cleanup is dropped. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "BridgeThreadingTests.test_sheet_text_hints_read_the_pdf_off_the_gui_thread": "Re-read: also asserts sheet_hint_snapshots runs on the GUI thread."
+        "BridgeThreadingTests.test_sheet_text_hints_read_the_pdf_off_the_gui_thread": "Re-read: also asserts sheet_hint_snapshots runs on the GUI thread.",
+        "BridgeCleanupReleaseTests.test_cleanup_drops_its_commands_and_disconnects_its_own_signals": "Added (failing first): after cleanup the command table is empty, rebind_suggested reaches no slot and _job_finished no longer runs _finish (active workers unchanged).",
+        "BridgeCleanupReleaseTests.test_cleanup_deletes_the_bridge_on_its_own_thread": "Added (failing first): cleanup schedules deletion; flushing deferred deletes destroys the bridge on the main thread.",
+        "BridgeCleanupReleaseTests.test_cleanup_after_the_bridge_is_deleted_raises_nothing": "Added (guard for the released early return): a second cleanup after deletion raises nothing and start() reports False.",
+        "BridgeCleanupReleaseTests.test_a_parented_bridge_is_deleted_without_its_parent": "Added (failing first): a bridge parented like production is deleted by cleanup while its parent stays valid.",
+        "BridgeFixtureLifetimeTests.test_every_bridge_is_deleted_on_the_gui_thread_by_its_own_test": "Added (failing first): runs every BridgeTestCase class with a tracked constructor; no bridge outlives its test, all are destroyed on the main thread with no bridge worker alive.",
+        "BridgeFixtureLifetimeTests.test_a_failing_capacity_check_still_releases_its_blocked_workers": "Added (failing first): the capacity test with an injected failure still releases both 10 s waits through addCleanup and deletes its bridges on the main thread."
       }
     },
     "tests/integration/ai_takeoff/test_m1a_end_to_end.py": {
@@ -39973,7 +40027,8 @@
         "UndoIdempotencyTests.test_a_failed_undo_answers_every_waiting_call_and_can_be_retried": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a failed undo answers every waiting call and can be retried.",
         "UndoIdempotencyTests.test_a_changeset_of_another_bid_or_database_is_never_undone": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a changeset of another bid or database is never undone.",
         "UndoIdempotencyTests.test_the_changeset_must_be_named_and_be_the_latest_applied": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): the changeset must be named and be the latest applied.",
-        "WriteCommandBridgeTests.test_a_retry_over_the_pipe_during_a_slow_undo_never_undoes_twice": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a retry over the pipe during a slow undo never undoes twice."
+        "WriteCommandBridgeTests.test_a_retry_over_the_pipe_during_a_slow_undo_never_undoes_twice": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a retry over the pipe during a slow undo never undoes twice.",
+        "WriteBridgeFixtureLifetimeTests.test_write_command_bridges_are_deleted_on_the_gui_thread_by_their_test": "Added (failing first): every WriteCommandBridgeTests bridge, including the one start_bridge replaces, is deleted on the main thread by its own test."
       }
     },
     "tests/presentation/services/test_ai_undo_refusal_notice.py": {
@@ -40425,6 +40480,15 @@
         "PythonCallerLockTests.test_snap_vector_extraction_holds_the_lock": "Added: extract_pdf_snap_segments (already under pdfium_lock).",
         "PythonCallerLockTests.test_ai_takeoff_path_extraction_holds_the_lock": "Added: PageCachePdfSource path extraction and release (already under pdfium_lock)."
       }
+    },
+    "tests/architecture/test_production_package_layout.py": {
+      "status": "reviewed; final fresh pass pending",
+      "fixture_review": "Loads tools/check_architecture.py from its path like test_native_destinations; OST_ROOT and REPO_ROOT are patched to a temporary tree for the violation case, and main() runs in process with stdout captured so in-memory mutants of the checker are seen.",
+      "reviewed_tests": {
+        "ProductionPackageLayoutTests.test_an_init_file_in_a_production_package_is_a_violation": "Added (failing first): a temporary ost_visualizer/mcp_takeoff/__init__.py is the only violation, in category package layout.",
+        "ProductionPackageLayoutTests.test_the_production_tree_is_namespace_packages_only": "Added (failing first): the real tree has no __init__.py and no layout violation.",
+        "ProductionPackageLayoutTests.test_the_full_scan_reports_the_package_layout_category": "Added (failing first): main() returns 0 and prints Package layout: PASS."
+      }
     }
   },
   "subsystems": {
@@ -40817,6 +40881,29 @@
         "tests_run": 14309,
         "skips": 38,
         "seconds": 337.6,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      }
+    ],
+    "bridge_teardown_full_suites": [
+      {
+        "tests_run": 14319,
+        "skips": 38,
+        "seconds": 360.7,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      },
+      {
+        "tests_run": 14319,
+        "skips": 38,
+        "seconds": 343.7,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      },
+      {
+        "tests_run": 14319,
+        "skips": 38,
+        "seconds": 346.4,
         "result": "OK",
         "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
       }

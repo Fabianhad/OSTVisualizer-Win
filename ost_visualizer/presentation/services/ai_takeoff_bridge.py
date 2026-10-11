@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import threading
+import warnings
 from pathlib import Path
 from typing import Callable, Optional, Union
 from PySide6 import QtCore
@@ -132,6 +133,8 @@ class TakeoffCommandBridge(QtCore.QObject):
         return True
 
     def cleanup(self) -> None:
+        if self._server is None and not self._commands:
+            return
         if self._server is not None:
             try:
                 self._server.newConnection.disconnect(self._on_new_connection)
@@ -149,6 +152,18 @@ class TakeoffCommandBridge(QtCore.QObject):
         self._server = None
         self._read_service = None
         self._pdf_source = None
+        self._commands = {}
+        self._disconnect_own_signals()
+        self.deleteLater()
+
+    def _disconnect_own_signals(self) -> None:
+        for signal in (self._job_finished, self.rebind_suggested):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                try:
+                    signal.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
 
     def _remove_own_token(self) -> None:
         if self._token is None:

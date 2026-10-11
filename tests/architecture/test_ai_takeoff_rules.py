@@ -22,7 +22,6 @@ from tests.paths import REPO_ROOT
 
 PACKAGE = REPO_ROOT / "ost_visualizer"
 _PROXY_MODULES = {
-    "__init__.py",
     "main.py",
     "pipe_client.py",
     "protocol.py",

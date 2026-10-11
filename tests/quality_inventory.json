@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
-  "module_count": 590,
-  "method_count": 14333,
+  "module_count": 591,
+  "method_count": 14343,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -47799,11 +47799,11 @@
       "duplicate_method_names": []
     },
     "tests/architecture/test_ai_takeoff_rules.py": {
-      "sha256": "c7c809c08d18f71cca8cc4986303af52a57f6be14a65c6965dd57f54cc3cccce",
+      "sha256": "df62ac78c2767363cb53b40dc84bf4c2d8f32fbdac9cafd70c73b9204660524f",
       "methods": [
         {
           "name": "AiTakeoffProxyIsolationTests.test_entrypoint_routes_to_the_takeoff_main",
-          "line": 140,
+          "line": 139,
           "assertions": [
             "self.assertIn",
             "self.assertIn"
@@ -47820,7 +47820,7 @@
         },
         {
           "name": "AiTakeoffProxyIsolationTests.test_proxy_sources_never_name_qt_presentation_or_the_app_graph",
-          "line": 145,
+          "line": 144,
           "assertions": [
             "self.assertNotIn"
           ],
@@ -47837,7 +47837,7 @@
         },
         {
           "name": "AiTakeoffProxyIsolationTests.test_a_fresh_interpreter_imports_only_stdlib_and_the_takeoff_dtos",
-          "line": 160,
+          "line": 159,
           "assertions": [
             "self.assertIn",
             "self.assertEqual",
@@ -47861,7 +47861,7 @@
         },
         {
           "name": "AiTakeoffReadOnlySliceTests.test_m1a_modules_import_no_write_path",
-          "line": 206,
+          "line": 205,
           "assertions": [
             "self.assertNotIn"
           ],
@@ -47878,7 +47878,7 @@
         },
         {
           "name": "AiTakeoffReadOnlySliceTests.test_m1a_production_code_has_no_comments_or_reflection",
-          "line": 212,
+          "line": 211,
           "assertions": [
             "self.assertNotEqual",
             "self.assertNotIn"
@@ -47900,7 +47900,7 @@
         },
         {
           "name": "AiTakeoffReadOnlySliceTests.test_the_takeoff_surface_is_the_seven_read_tools_under_the_cap",
-          "line": 223,
+          "line": 222,
           "assertions": [
             "self.assertEqual",
             "self.assertLessEqual"
@@ -47918,7 +47918,7 @@
         },
         {
           "name": "AiTakeoffReadOnlySliceTests.test_the_read_server_is_untouched_by_the_takeoff_slice",
-          "line": 238,
+          "line": 237,
           "assertions": [
             "self.assertNotIn",
             "self.assertNotIn",
@@ -47956,7 +47956,7 @@
         },
         {
           "name": "AiTakeoffApprovalSliceTests.test_m1b_production_code_has_no_comments_or_reflection",
-          "line": 262,
+          "line": 261,
           "assertions": [
             "self.assertNotEqual",
             "self.assertNotIn"
@@ -47978,7 +47978,7 @@
         },
         {
           "name": "AiTakeoffApprovalSliceTests.test_ai_takeoff_sources_hold_no_raw_bidi_or_control_characters",
-          "line": 273,
+          "line": 272,
           "assertions": [],
           "calls": [
             "_m1a_sources",
@@ -47997,7 +47997,7 @@
         },
         {
           "name": "AiTakeoffApprovalSliceTests.test_no_pipe_reachable_module_names_an_approval_or_write_path",
-          "line": 283,
+          "line": 282,
           "assertions": [
             "self.assertTrue",
             "self.assertNotIn"
@@ -48016,7 +48016,7 @@
         },
         {
           "name": "AiTakeoffApprovalSliceTests.test_only_the_approval_controller_reaches_store_approval_methods",
-          "line": 291,
+          "line": 290,
           "assertions": [
             "self.assertEqual"
           ],
@@ -48040,7 +48040,7 @@
         },
         {
           "name": "AiTakeoffApprovalSliceTests.test_main_window_gives_the_pipe_proposals_and_the_apply_request_only",
-          "line": 304,
+          "line": 303,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -48072,7 +48072,7 @@
         },
         {
           "name": "AiTakeoffApprovalSliceTests.test_the_proposal_facade_offers_no_approval_method",
-          "line": 339,
+          "line": 338,
           "assertions": [
             "self.assertEqual"
           ],
@@ -48089,7 +48089,7 @@
         },
         {
           "name": "AiTakeoffApprovalSliceTests.test_the_takeoff_surface_is_fifteen_tools_under_the_cap",
-          "line": 357,
+          "line": 356,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -48111,7 +48111,7 @@
         },
         {
           "name": "AiTakeoffPackagingTests.test_component_script_builds_the_takeoff_helper_on_its_own",
-          "line": 379,
+          "line": 378,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -48135,7 +48135,7 @@
         },
         {
           "name": "AiTakeoffPackagingTests.test_release_build_copies_the_takeoff_helper_next_to_the_desktop_exe",
-          "line": 400,
+          "line": 399,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -49932,6 +49932,76 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added: other events, subscribe(), non-publish calls and a bare publish() are not flagged.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        }
+      ],
+      "duplicate_method_names": []
+    },
+    "tests/architecture/test_production_package_layout.py": {
+      "sha256": "29af9b603647fd2224094e4a094c31fbda57d45e928c3fdc50256818445cae5e",
+      "methods": [
+        {
+          "name": "ProductionPackageLayoutTests.test_an_init_file_in_a_production_package_is_a_violation",
+          "line": 23,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "(package / '__init__.py').write_text",
+            "(package / 'proxy.py').write_text",
+            "Path",
+            "check_architecture.check_package_layout",
+            "check_architecture.relpath",
+            "mock.patch.object",
+            "package.mkdir",
+            "self.assertEqual",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): a temporary ost_visualizer/mcp_takeoff/__init__.py is the only violation, in category package layout.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ProductionPackageLayoutTests.test_the_production_tree_is_namespace_packages_only",
+          "line": 47,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "(REPO_ROOT / 'ost_visualizer').rglob",
+            "check_architecture.check_package_layout",
+            "list",
+            "self.assertEqual",
+            "str"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): the real tree has no __init__.py and no layout violation.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ProductionPackageLayoutTests.test_the_full_scan_reports_the_package_layout_category",
+          "line": 54,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIn"
+          ],
+          "calls": [
+            "check_architecture.main",
+            "contextlib.redirect_stdout",
+            "io.StringIO",
+            "output.getvalue",
+            "self.assertEqual",
+            "self.assertIn"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): main() returns 0 and prints Package layout: PASS.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -56037,7 +56107,7 @@
       "duplicate_method_names": []
     },
     "tests/domain/services/test_ai_planar_regions.py": {
-      "sha256": "d0612ad954105c048d4acd6aff3dd0fc5c88e860154e975268739a3bbd80c463",
+      "sha256": "2e5157b7af2b08faaeaafee892411dfb2956e56fb9bd502e7f10bd1cb5736051",
       "methods": [
         {
           "name": "PlanarRegionTests.test_a_rectangle_gives_one_region_with_its_area",
@@ -57941,7 +58011,7 @@
         },
         {
           "name": "RegionDeadlineCoverageTests.test_gap_closing_stops_at_the_deadline",
-          "line": 1321,
+          "line": 1319,
           "assertions": [
             "self.assertGreater",
             "self.assertEqual",
@@ -57969,7 +58039,7 @@
         },
         {
           "name": "PairingEdgeCaseTests.test_a_steep_segment_never_walks_more_than_the_cell_cap",
-          "line": 1348,
+          "line": 1346,
           "assertions": [
             "self.assertEqual",
             "self.assertLessEqual",
@@ -58005,7 +58075,7 @@
         },
         {
           "name": "PairingEdgeCaseTests.test_a_finite_segment_too_short_to_square_is_treated_as_a_point",
-          "line": 1380,
+          "line": 1378,
           "assertions": [
             "self.assertNotEqual",
             "self.assertEqual",
@@ -327426,11 +327496,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/services/test_ai_takeoff_bridge.py": {
-      "sha256": "feadbd33e060f38a60d2b7c1b8e319551dedb8d6081e10a90899899d32b547cf",
+      "sha256": "7748ed727864729ab2ed208464686b50315fad339f13974b150f0a2fe6ff9c55",
       "methods": [
         {
           "name": "BridgeProtocolTests.test_round_trip_passes_declared_arguments",
-          "line": 284,
+          "line": 296,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327448,7 +327518,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_token_file_holds_the_current_token_only",
-          "line": 292,
+          "line": 304,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327467,7 +327537,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_command_table_is_exactly_the_seven_read_only_tools",
-          "line": 298,
+          "line": 310,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327485,7 +327555,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_undeclared_commands_never_reach_the_service",
-          "line": 302,
+          "line": 314,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327503,7 +327573,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_unknown_or_malformed_arguments_are_rejected",
-          "line": 318,
+          "line": 330,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327525,7 +327595,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_assumption_status_is_only_a_read_filter",
-          "line": 332,
+          "line": 344,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -327543,7 +327613,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_oversized_requests_are_refused",
-          "line": 340,
+          "line": 352,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327562,7 +327632,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_results_with_lone_surrogates_are_still_delivered",
-          "line": 354,
+          "line": 366,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -327581,7 +327651,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_deeply_nested_requests_get_an_error_instead_of_escaping_the_slot",
-          "line": 362,
+          "line": 374,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327600,7 +327670,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_a_worker_finishing_after_the_bridge_is_destroyed_raises_nothing",
-          "line": 368,
+          "line": 380,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327628,7 +327698,7 @@
         },
         {
           "name": "BridgeProtocolTests.test_service_errors_become_error_results",
-          "line": 401,
+          "line": 413,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327645,7 +327715,7 @@
         },
         {
           "name": "BridgeCapacityTests.test_requests_beyond_the_worker_cap_get_busy_and_capacity_returns",
-          "line": 412,
+          "line": 424,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327663,6 +327733,7 @@
             "release.wait",
             "results.__setitem__",
             "results.values",
+            "self.addCleanup",
             "self.assertEqual",
             "self.assertIn",
             "self.assertTrue",
@@ -327686,7 +327757,7 @@
         },
         {
           "name": "BridgeCapacityTests.test_connections_beyond_the_cap_get_busy_until_one_closes",
-          "line": 447,
+          "line": 460,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue"
@@ -327710,7 +327781,7 @@
         },
         {
           "name": "BridgeCapacityTests.test_a_connection_that_never_finishes_its_request_is_closed",
-          "line": 457,
+          "line": 470,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -327734,7 +327805,7 @@
         },
         {
           "name": "BridgeCapacityTests.test_default_caps",
-          "line": 470,
+          "line": 483,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327751,7 +327822,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_wrong_or_missing_token_is_unauthorized",
-          "line": 479,
+          "line": 492,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327773,7 +327844,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_a_token_that_cannot_be_utf8_encoded_is_unauthorized",
-          "line": 488,
+          "line": 501,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -327796,7 +327867,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_a_token_from_a_previous_session_is_stale",
-          "line": 507,
+          "line": 520,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -327806,11 +327877,11 @@
           "calls": [
             "self.assertEqual",
             "self.assertTrue",
-            "self.bridge.cleanup",
             "self.bridge.start",
             "self.call",
             "self.make_bridge",
             "self.other_token_file",
+            "self.release_bridge",
             "self.token_path.read_text"
           ],
           "decorators": [],
@@ -327821,7 +327892,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_feature_denied_when_ai_takeoff_is_not_allowed",
-          "line": 518,
+          "line": 531,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327838,7 +327909,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_the_token_never_appears_in_logs_responses_or_files",
-          "line": 523,
+          "line": 536,
           "assertions": [
             "self.assertNotIn",
             "self.assertNotIn",
@@ -327868,7 +327939,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_pipe_access_list_grants_only_the_current_user",
-          "line": 542,
+          "line": 555,
           "assertions": [
             "self.assertEqual"
           ],
@@ -327894,7 +327965,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_cleanup_removes_the_token_and_stops_listening",
-          "line": 578,
+          "line": 591,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual"
@@ -327916,7 +327987,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_cleanup_keeps_a_token_file_written_by_another_session",
-          "line": 585,
+          "line": 598,
           "assertions": [
             "self.assertEqual"
           ],
@@ -327934,7 +328005,7 @@
         },
         {
           "name": "BridgeSecurityTests.test_cleanup_keeps_a_token_file_that_is_not_text_and_still_stops",
-          "line": 590,
+          "line": 603,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -327954,7 +328025,7 @@
         },
         {
           "name": "BridgeThreadingTests.test_pdf_work_runs_off_the_gui_thread",
-          "line": 598,
+          "line": 611,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -327986,7 +328057,7 @@
         },
         {
           "name": "BridgeThreadingTests.test_sheet_text_hints_read_the_pdf_off_the_gui_thread",
-          "line": 623,
+          "line": 636,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -328012,7 +328083,7 @@
         },
         {
           "name": "BridgeThreadingTests.test_raster_pages_answer_not_pdf_without_planning_a_crop",
-          "line": 639,
+          "line": 652,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -328033,7 +328104,7 @@
         },
         {
           "name": "BridgeThreadingTests.test_model_reads_stay_on_the_gui_thread",
-          "line": 646,
+          "line": 659,
           "assertions": [
             "self.assertNotIn",
             "self.assertTrue",
@@ -328054,7 +328125,7 @@
         },
         {
           "name": "BridgeStartupTests.test_session_token_path_lives_in_the_app_data_folder",
-          "line": 693,
+          "line": 706,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328072,7 +328143,7 @@
         },
         {
           "name": "BridgeStartupTests.test_request_size_cap_is_64_kib",
-          "line": 700,
+          "line": 713,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328087,7 +328158,7 @@
         },
         {
           "name": "BridgeStartupTests.test_default_token_is_a_fresh_32_byte_urlsafe_secret",
-          "line": 705,
+          "line": 718,
           "assertions": [
             "self.assertTrue",
             "self.assertRegex"
@@ -328108,7 +328179,7 @@
         },
         {
           "name": "BridgeStartupTests.test_start_creates_missing_parent_folders",
-          "line": 719,
+          "line": 732,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -328129,7 +328200,7 @@
         },
         {
           "name": "BridgeStartupTests.test_start_after_cleanup_reports_failure",
-          "line": 733,
+          "line": 746,
           "assertions": [
             "self.assertIs",
             "self.assertFalse"
@@ -328149,7 +328220,7 @@
         },
         {
           "name": "BridgeStartupTests.test_start_reports_failure_when_the_pipe_cannot_listen",
-          "line": 738,
+          "line": 751,
           "assertions": [
             "self.assertEqual",
             "self.assertFalse",
@@ -328174,7 +328245,7 @@
         },
         {
           "name": "BridgeStartupTests.test_start_closes_the_pipe_when_the_token_cannot_be_written",
-          "line": 762,
+          "line": 775,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -328205,13 +328276,14 @@
         },
         {
           "name": "BridgeStartupTests.test_cleanup_of_a_never_started_bridge_ignores_an_unreadable_token_file",
-          "line": 790,
+          "line": 803,
           "assertions": [
             "self.assertEqual"
           ],
           "calls": [
             "TakeoffCommandBridge",
             "bridge.cleanup",
+            "self.addCleanup",
             "self.assertEqual",
             "token_path.parent.mkdir",
             "token_path.read_bytes",
@@ -328225,7 +328297,7 @@
         },
         {
           "name": "BridgeConnectionLifecycleTests.test_handling_connections_raises_nothing_in_qt_slots",
-          "line": 806,
+          "line": 820,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -328245,7 +328317,7 @@
         },
         {
           "name": "BridgeConnectionLifecycleTests.test_the_bridge_hangs_up_after_answering",
-          "line": 812,
+          "line": 826,
           "assertions": [
             "self.assertTrue"
           ],
@@ -328265,7 +328337,7 @@
         },
         {
           "name": "BridgeConnectionLifecycleTests.test_a_client_that_hangs_up_mid_request_is_forgotten_and_deleted",
-          "line": 823,
+          "line": 837,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328291,7 +328363,7 @@
         },
         {
           "name": "BridgeConnectionLifecycleTests.test_a_refused_extra_connection_is_deleted_once_the_client_leaves",
-          "line": 835,
+          "line": 849,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328314,7 +328386,7 @@
         },
         {
           "name": "BridgeConnectionLifecycleTests.test_cleanup_aborts_open_connections_and_drops_their_state",
-          "line": 848,
+          "line": 862,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328348,7 +328420,7 @@
         },
         {
           "name": "BridgeConnectionLifecycleTests.test_cleanup_tolerates_a_connection_signal_that_is_already_detached",
-          "line": 865,
+          "line": 879,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -328371,7 +328443,7 @@
         },
         {
           "name": "BridgeConnectionLifecycleTests.test_connection_cap_has_a_floor_of_one",
-          "line": 872,
+          "line": 886,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328392,7 +328464,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_a_request_of_exactly_the_size_cap_is_accepted",
-          "line": 893,
+          "line": 907,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -328412,7 +328484,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_an_oversized_request_is_answered_exactly_once",
-          "line": 902,
+          "line": 916,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328438,7 +328510,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_well_formed_json_that_is_not_an_object_is_malformed",
-          "line": 918,
+          "line": 932,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328457,7 +328529,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_missing_arguments_mean_no_arguments",
-          "line": 926,
+          "line": 940,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -328475,7 +328547,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_unexpected_gui_thread_failures_are_logged_and_answered",
-          "line": 931,
+          "line": 945,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328497,7 +328569,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_worker_failures_are_logged_and_answered",
-          "line": 944,
+          "line": 958,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -328518,7 +328590,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_worker_request_errors_keep_their_code",
-          "line": 956,
+          "line": 970,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328536,7 +328608,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_a_failed_render_reports_the_render_status",
-          "line": 965,
+          "line": 979,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone"
@@ -328554,7 +328626,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_a_failing_audit_is_logged_and_the_reply_still_arrives",
-          "line": 971,
+          "line": 985,
           "assertions": [
             "self.assertEqual",
             "self.assertLogs",
@@ -328576,7 +328648,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_rebind_is_suggested_only_for_rebind_required_results",
-          "line": 988,
+          "line": 1002,
           "assertions": [
             "self.assertTrue",
             "self.assertTrue",
@@ -328600,7 +328672,7 @@
         },
         {
           "name": "BridgeRequestEdgeTests.test_data_that_is_not_an_object_never_suggests_a_rebind",
-          "line": 1000,
+          "line": 1014,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328623,7 +328695,7 @@
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_workers_are_daemon_threads",
-          "line": 1038,
+          "line": 1052,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual"
@@ -328645,7 +328717,7 @@
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_a_single_worker_slot_is_freed_after_each_job",
-          "line": 1047,
+          "line": 1061,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue"
@@ -328665,7 +328737,7 @@
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_worker_cap_has_a_floor_of_one",
-          "line": 1054,
+          "line": 1068,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328686,7 +328758,7 @@
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_one_finished_worker_frees_exactly_one_slot",
-          "line": 1064,
+          "line": 1078,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn"
@@ -328710,7 +328782,7 @@
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_the_idle_timer_leaves_a_request_that_is_being_worked_on_alone",
-          "line": 1081,
+          "line": 1095,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328733,7 +328805,7 @@
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_bytes_after_a_complete_request_are_ignored",
-          "line": 1091,
+          "line": 1105,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328760,10 +328832,11 @@
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_a_worker_finishing_after_cleanup_is_not_answered_or_audited",
-          "line": 1114,
+          "line": 1128,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
+            "self.assertFalse",
             "self.assertFalse"
           ],
           "calls": [
@@ -328775,17 +328848,21 @@
             "self.blocking.release",
             "self.pump_until",
             "self.slot_errors",
-            "self.start_call"
+            "self.start_call",
+            "set",
+            "threading.enumerate",
+            "worker.is_alive",
+            "worker.join"
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a worker finishing after cleanup is not answered or audited. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+          "review_note": "Changed: waits for the worker thread itself (the counter slot is disconnected by cleanup); no slot errors, no audit and a failed client result as before.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "BridgeWorkerLifecycleTests.test_a_worker_finishing_after_the_client_left_is_not_answered",
-          "line": 1127,
+          "line": 1148,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -328811,7 +328888,7 @@
         },
         {
           "name": "BridgeDeferredReplyTests.test_a_resolved_reply_reaches_the_waiting_client",
-          "line": 1169,
+          "line": 1190,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328831,7 +328908,7 @@
         },
         {
           "name": "BridgeDeferredReplyTests.test_a_reply_resolved_after_the_client_left_is_dropped",
-          "line": 1177,
+          "line": 1198,
           "assertions": [
             "self.assertEqual"
           ],
@@ -328852,7 +328929,7 @@
         },
         {
           "name": "BridgeDeferredReplyTests.test_a_reply_resolved_after_cleanup_is_dropped",
-          "line": 1185,
+          "line": 1206,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -328868,6 +328945,157 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): a reply resolved after cleanup is dropped. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BridgeCleanupReleaseTests.test_cleanup_drops_its_commands_and_disconnects_its_own_signals",
+          "line": 1215,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "bridge._job_finished.emit",
+            "bridge.cleanup",
+            "bridge.rebind_suggested.connect",
+            "bridge.rebind_suggested.emit",
+            "offered.append",
+            "ok_result",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): after cleanup the command table is empty, rebind_suggested reaches no slot and _job_finished no longer runs _finish (active workers unchanged).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BridgeCleanupReleaseTests.test_cleanup_deletes_the_bridge_on_its_own_thread",
+          "line": 1228,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "bridge.cleanup",
+            "bridge.destroyed.connect",
+            "destroyed.append",
+            "isValid",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.delete_later_now",
+            "threading.current_thread",
+            "threading.main_thread"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): cleanup schedules deletion; flushing deferred deletes destroys the bridge on the main thread.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BridgeCleanupReleaseTests.test_cleanup_after_the_bridge_is_deleted_raises_nothing",
+          "line": 1241,
+          "assertions": [
+            "self.assertIs"
+          ],
+          "calls": [
+            "self.assertIs",
+            "self.bridge.cleanup",
+            "self.bridge.start",
+            "self.delete_later_now"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (guard for the released early return): a second cleanup after deletion raises nothing and start() reports False.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BridgeCleanupReleaseTests.test_a_parented_bridge_is_deleted_without_its_parent",
+          "line": 1247,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "QtCore.QObject",
+            "TakeoffCommandBridge",
+            "bridge.cleanup",
+            "bridge.start",
+            "isValid",
+            "parent.findChildren",
+            "self.addCleanup",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertTrue",
+            "self.delete_later_now"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): a bridge parented like production is deleted by cleanup while its parent stays valid.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BridgeFixtureLifetimeTests.test_every_bridge_is_deleted_on_the_gui_thread_by_its_own_test",
+          "line": 1313,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "[isValid(bridge) for bridge in created].count",
+            "isValid",
+            "len",
+            "run_recording_bridges",
+            "self.assertEqual",
+            "self.assertGreater",
+            "set",
+            "threading.main_thread"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): runs every BridgeTestCase class with a tracked constructor; no bridge outlives its test, all are destroyed on the main thread with no bridge worker alive.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BridgeFixtureLifetimeTests.test_a_failing_capacity_check_still_releases_its_blocked_workers",
+          "line": 1333,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "(arguments or {}).get",
+            "FailingCapacity",
+            "len",
+            "patch.object",
+            "run_recording_bridges",
+            "self.assertEqual",
+            "super",
+            "super().call",
+            "super().wait",
+            "threading.main_thread",
+            "waits.append"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): the capacity test with an injected failure still releases both 10 s waits through addCleanup and deletes its bridges on the main thread.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -329642,11 +329870,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/services/test_ai_takeoff_write_commands.py": {
-      "sha256": "6b04da68ca177f8d6a705e2280e7a0d0a5bf71f5c75c2e24643a8c54591caed3",
+      "sha256": "0b43432921f3f6e621cec705ccd539218aa0a94af806bd78f2a5cbf9cb3f01b9",
       "methods": [
         {
           "name": "DeferredReplyTests.test_a_callback_attached_after_resolve_gets_the_result_at_once",
-          "line": 139,
+          "line": 141,
           "assertions": [
             "self.assertEqual"
           ],
@@ -329664,7 +329892,7 @@
         },
         {
           "name": "DeferredReplyTests.test_only_the_first_resolution_is_delivered",
-          "line": 146,
+          "line": 148,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -329683,7 +329911,7 @@
         },
         {
           "name": "UndoIdempotencyTests.test_a_retry_during_a_slow_undo_never_undoes_twice",
-          "line": 211,
+          "line": 213,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329708,7 +329936,7 @@
         },
         {
           "name": "UndoIdempotencyTests.test_a_retry_after_a_timed_out_undo_finished_never_undoes_the_one_before",
-          "line": 238,
+          "line": 240,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -329727,7 +329955,7 @@
         },
         {
           "name": "UndoIdempotencyTests.test_a_failed_undo_answers_every_waiting_call_and_can_be_retried",
-          "line": 249,
+          "line": 251,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329749,7 +329977,7 @@
         },
         {
           "name": "UndoIdempotencyTests.test_a_changeset_of_another_bid_or_database_is_never_undone",
-          "line": 259,
+          "line": 261,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329781,7 +330009,7 @@
         },
         {
           "name": "UndoIdempotencyTests.test_the_changeset_must_be_named_and_be_the_latest_applied",
-          "line": 292,
+          "line": 294,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329804,7 +330032,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_the_command_table_is_the_fifteen_declared_tools",
-          "line": 360,
+          "line": 361,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -329821,7 +330049,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_no_bridge_code_can_approve_accept_or_reject",
-          "line": 364,
+          "line": 365,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn"
@@ -329842,7 +330070,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_update_assumption_cannot_carry_a_status",
-          "line": 389,
+          "line": 390,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329861,7 +330089,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_apply_changeset_asks_the_app_only_while_pending",
-          "line": 408,
+          "line": 409,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329879,7 +330107,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_regions_and_3d_run_on_worker_threads",
-          "line": 416,
+          "line": 417,
           "assertions": [
             "self.assertTrue",
             "self.assertNotEqual",
@@ -329910,7 +330138,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_undo_replies_when_the_deferred_undo_finishes",
-          "line": 468,
+          "line": 469,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329930,7 +330158,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_other_bids_are_refused",
-          "line": 487,
+          "line": 488,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -329948,7 +330176,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_every_command_is_audited_without_the_token",
-          "line": 499,
+          "line": 500,
           "assertions": [
             "self.assertGreaterEqual",
             "self.assertEqual",
@@ -329985,7 +330213,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_propose_element_forwards_its_arguments_and_returns_the_proposal",
-          "line": 545,
+          "line": 546,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -330003,7 +330231,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_an_undo_finishing_after_the_client_left_writes_nothing",
-          "line": 555,
+          "line": 556,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -330025,7 +330253,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_an_undo_finishing_after_cleanup_writes_nothing",
-          "line": 565,
+          "line": 566,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -330048,7 +330276,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_a_retry_over_the_pipe_during_a_slow_undo_never_undoes_twice",
-          "line": 575,
+          "line": 576,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -330068,7 +330296,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_a_rebind_required_read_suggests_a_rebind",
-          "line": 615,
+          "line": 616,
           "assertions": [
             "self.assertEqual"
           ],
@@ -330086,7 +330314,7 @@
         },
         {
           "name": "WriteCommandBridgeTests.test_feature_denied_still_blocks_write_tools",
-          "line": 621,
+          "line": 622,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -330098,6 +330326,33 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Reviewed (new M1b module, written before the code): feature denied still blocks write tools.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "WriteBridgeFixtureLifetimeTests.test_write_command_bridges_are_deleted_on_the_gui_thread_by_their_test",
+          "line": 663,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertGreater",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "[isValid(bridge) for bridge in created].count",
+            "isValid",
+            "len",
+            "run_recording_bridges",
+            "self.assertEqual",
+            "self.assertGreater",
+            "set",
+            "threading.main_thread"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added (failing first): every WriteCommandBridgeTests bridge, including the one start_bridge replaces, is deleted on the main thread by its own test.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -375396,7 +375651,7 @@
     }
   },
   "discovery": {
-    "count": 14333,
+    "count": 14343,
     "duplicate_ids": [],
     "defined_but_not_discovered": [],
     "discovered_without_local_definition": [],

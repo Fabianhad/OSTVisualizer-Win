@@ -28,7 +28,7 @@ from ost_visualizer.presentation.services.ai_takeoff_bridge import (
 from ost_visualizer.presentation.services.ai_takeoff_write_commands import DeferredReply
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtNetwork import QLocalSocket
-from shiboken6 import isValid
+from shiboken6 import delete, isValid
 
 
 class FakeReadService:
@@ -122,12 +122,16 @@ class FakePdfSource:
         return image
 
 
+WORKER_THREAD = "AiTakeoffBridgeWorker"
+
+
 class BridgeTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def setUp(self):
+        self.threads_before = set(threading.enumerate())
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.directory = Path(directory.name)
@@ -139,7 +143,15 @@ class BridgeTestCase(unittest.TestCase):
         self.tokens = iter(f"token-{index}" for index in range(100))
         self.bridge = self.make_bridge()
         self.assertTrue(self.bridge.start())
-        self.addCleanup(lambda: self.bridge.cleanup())
+        self.addCleanup(lambda: self.release_bridge(self.bridge))
+
+    def release_bridge(self, bridge):
+        bridge.cleanup()
+        for thread in threading.enumerate():
+            if thread not in self.threads_before and thread.name == WORKER_THREAD:
+                thread.join(10)
+        if isValid(bridge):
+            delete(bridge)
 
     def make_bridge(self):
         return TakeoffCommandBridge(
@@ -217,7 +229,7 @@ class BridgeTestCase(unittest.TestCase):
             **options,
         )
         self.assertTrue(bridge.start())
-        self.addCleanup(bridge.cleanup)
+        self.addCleanup(self.release_bridge, bridge)
         return bridge
 
     def pump_until(self, condition, timeout=10.0):
@@ -412,6 +424,7 @@ class BridgeCapacityTests(BridgeTestCase):
     def test_requests_beyond_the_worker_cap_get_busy_and_capacity_returns(self):
         self.capped_bridge(max_workers=2)
         release = threading.Event()
+        self.addCleanup(release.set)
         started = []
 
         def blocking(snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None):
@@ -506,7 +519,7 @@ class BridgeSecurityTests(BridgeTestCase):
 
     def test_a_token_from_a_previous_session_is_stale(self):
         stale = self.other_token_file("token-0")
-        self.bridge.cleanup()
+        self.release_bridge(self.bridge)
         self.bridge = self.make_bridge()
         self.assertTrue(self.bridge.start())
         self.assertEqual(self.token_path.read_text(encoding="utf-8"), "token-1")
@@ -711,7 +724,7 @@ class BridgeStartupTests(BridgeTestCase):
             token_path=token_path,
             server_name=self.server_name + "-default",
         )
-        self.addCleanup(bridge.cleanup)
+        self.addCleanup(self.release_bridge, bridge)
         self.assertTrue(bridge.start())
         token = token_path.read_text(encoding="utf-8")
         self.assertRegex(token, r"^[A-Za-z0-9_-]{43}$")
@@ -726,7 +739,7 @@ class BridgeStartupTests(BridgeTestCase):
             server_name=self.server_name + "-deep",
             token_factory=lambda: "deep-token",
         )
-        self.addCleanup(bridge.cleanup)
+        self.addCleanup(self.release_bridge, bridge)
         self.assertTrue(bridge.start())
         self.assertEqual(token_path.read_text(encoding="utf-8"), "deep-token")
 
@@ -745,7 +758,7 @@ class BridgeStartupTests(BridgeTestCase):
             server_name="",
             token_factory=lambda: "unnamed-token",
         )
-        self.addCleanup(bridge.cleanup)
+        self.addCleanup(self.release_bridge, bridge)
         with self.assertLogs(
             "ost_visualizer.presentation.services.ai_takeoff_bridge", logging.WARNING
         ) as captured:
@@ -771,7 +784,7 @@ class BridgeStartupTests(BridgeTestCase):
             server_name=name,
             token_factory=lambda: "blocked-token",
         )
-        self.addCleanup(bridge.cleanup)
+        self.addCleanup(self.release_bridge, bridge)
         with self.assertLogs(
             "ost_visualizer.presentation.services.ai_takeoff_bridge", logging.WARNING
         ) as captured:
@@ -798,6 +811,7 @@ class BridgeStartupTests(BridgeTestCase):
             token_path=token_path,
             server_name=self.server_name + "-garbled",
         )
+        self.addCleanup(self.release_bridge, bridge)
         bridge.cleanup()
         self.assertEqual(token_path.read_bytes(), b"\xff\xfe\x00garbled")
 
@@ -1113,12 +1127,19 @@ class BridgeWorkerLifecycleTests(BridgeTestCase):
 
     def test_a_worker_finishing_after_cleanup_is_not_answered_or_audited(self):
         bridge = self.audited_bridge()
+        before = set(threading.enumerate())
         results = self.start_call("list_segments", {"page_uid": "p0"})
         self.pump_until(lambda: self.blocking.started == ["p0"])
+        (worker,) = [
+            thread
+            for thread in threading.enumerate()
+            if thread not in before and thread.name == "AiTakeoffBridgeWorker"
+        ]
         with self.slot_errors() as errors:
             bridge.cleanup()
             self.blocking.release("p0")
-            self.pump_until(lambda: bridge._active_workers == 0)
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
             self.pump_until(lambda: len(results) == 1)
         self.assertEqual(errors, [])
         self.assertEqual(self.audited, [])
@@ -1188,6 +1209,156 @@ class BridgeDeferredReplyTests(BridgeTestCase):
         self.writes.replies[0].resolve(ok_result({"changeset_id": "c1"}, "applied"))
         self.assertEqual(self.audited, [])
         self.assertEqual(self.read_raw_bytes(handle), b"")
+
+
+class BridgeCleanupReleaseTests(BridgeTestCase):
+    def test_cleanup_drops_its_commands_and_disconnects_its_own_signals(self):
+        bridge = self.bridge
+        offered = []
+        bridge.rebind_suggested.connect(lambda: offered.append(True))
+        bridge._active_workers = 1
+        bridge.cleanup()
+        self.assertEqual(bridge._commands, {})
+        self.assertEqual(bridge.commands, ())
+        bridge.rebind_suggested.emit()
+        bridge._job_finished.emit(None, (("list_sheets", {}), ok_result({})))
+        self.assertEqual(offered, [])
+        self.assertEqual(bridge._active_workers, 1)
+
+    def test_cleanup_deletes_the_bridge_on_its_own_thread(self):
+        bridge = self.bridge
+        destroyed = []
+        bridge.destroyed.connect(
+            lambda *_: destroyed.append(threading.current_thread().name),
+            QtCore.Qt.ConnectionType.DirectConnection,
+        )
+        bridge.cleanup()
+        self.assertTrue(isValid(bridge))
+        self.delete_later_now()
+        self.assertFalse(isValid(bridge))
+        self.assertEqual(destroyed, [threading.main_thread().name])
+
+    def test_cleanup_after_the_bridge_is_deleted_raises_nothing(self):
+        self.bridge.cleanup()
+        self.delete_later_now()
+        self.bridge.cleanup()
+        self.assertIs(self.bridge.start(), False)
+
+    def test_a_parented_bridge_is_deleted_without_its_parent(self):
+        parent = QtCore.QObject()
+        self.addCleanup(parent.deleteLater)
+        bridge = TakeoffCommandBridge(
+            read_service=self.service,
+            pdf_source=self.pdf,
+            access_allowed=lambda: True,
+            token_path=self.directory / "parented" / "session.token",
+            server_name=self.server_name + "-parented",
+            parent=parent,
+        )
+        self.assertTrue(bridge.start())
+        bridge.cleanup()
+        self.delete_later_now()
+        self.assertFalse(isValid(bridge))
+        self.assertTrue(isValid(parent))
+        self.assertEqual(parent.findChildren(TakeoffCommandBridge), [])
+
+
+def live_bridge_workers():
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == WORKER_THREAD and thread.is_alive()
+    ]
+
+
+def run_recording_bridges(*tests):
+    created = []
+    destroyed = []
+    outlived = []
+    original_init = TakeoffCommandBridge.__init__
+
+    def tracked(bridge, *args, **kwargs):
+        original_init(bridge, *args, **kwargs)
+        created.append(bridge)
+        bridge.destroyed.connect(
+            lambda *_: destroyed.append(
+                (threading.current_thread().name, len(live_bridge_workers()))
+            ),
+            QtCore.Qt.ConnectionType.DirectConnection,
+        )
+
+    class OutlivedResult(unittest.TestResult):
+        def stopTest(self, test):
+            super().stopTest(test)
+            if any(isValid(bridge) for bridge in created):
+                outlived.append(test.id())
+
+    result = OutlivedResult()
+    suite = unittest.TestSuite(
+        (
+            unittest.defaultTestLoader.loadTestsFromTestCase(test)
+            if isinstance(test, type)
+            else test
+        )
+        for test in tests
+    )
+    with patch.object(TakeoffCommandBridge, "__init__", tracked):
+        suite.run(result)
+    return result, created, destroyed, outlived
+
+
+class BridgeFixtureLifetimeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        BridgeTestCase.setUpClass()
+
+    def test_every_bridge_is_deleted_on_the_gui_thread_by_its_own_test(self):
+        result, created, destroyed, outlived = run_recording_bridges(
+            BridgeProtocolTests,
+            BridgeCapacityTests,
+            BridgeSecurityTests,
+            BridgeThreadingTests,
+            BridgeStartupTests,
+            BridgeConnectionLifecycleTests,
+            BridgeRequestEdgeTests,
+            BridgeWorkerLifecycleTests,
+            BridgeDeferredReplyTests,
+            BridgeCleanupReleaseTests,
+        )
+        self.assertEqual(result.errors + result.failures, [])
+        self.assertGreater(result.testsRun, 60)
+        self.assertEqual(outlived, [])
+        self.assertEqual([isValid(bridge) for bridge in created].count(True), 0)
+        self.assertEqual(set(destroyed), {(threading.main_thread().name, 0)})
+        self.assertEqual(len(destroyed), len(created))
+
+    def test_a_failing_capacity_check_still_releases_its_blocked_workers(self):
+        class FailingCapacity(BridgeCapacityTests):
+            def call(self, command, arguments=None, token_path=None):
+                if (arguments or {}).get("page_uid") == "p9":
+                    return {"status": "not busy"}
+                return super().call(command, arguments, token_path)
+
+        waits = []
+        real_event = threading.Event
+
+        class RecordingEvent(real_event):
+            def wait(self, timeout=None):
+                released = super().wait(timeout)
+                if timeout == 10:
+                    waits.append(released)
+                return released
+
+        with patch.object(threading, "Event", RecordingEvent):
+            result, created, destroyed, _outlived = run_recording_bridges(
+                FailingCapacity(
+                    "test_requests_beyond_the_worker_cap_get_busy_and_capacity_returns"
+                )
+            )
+        self.assertEqual(len(result.failures), 1)
+        self.assertEqual(waits, [True, True])
+        self.assertEqual(len(created), 2)
+        self.assertEqual(destroyed, [(threading.main_thread().name, 0)] * 2)
 
 
 if __name__ == "__main__":

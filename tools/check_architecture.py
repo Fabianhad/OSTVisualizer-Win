@@ -603,6 +603,20 @@ def check_reflection_calls():
 
 
 # ---------------------------------------------------------------------------
+# 8. Package layout
+# ---------------------------------------------------------------------------
+def check_package_layout():
+    for py_file in iter_py_files(OST_ROOT):
+        if py_file.name == "__init__.py":
+            add(
+                "package layout",
+                py_file,
+                1,
+                "Production packages are namespace packages; remove __init__.py.",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -616,6 +630,7 @@ def main():
         ("Logging rules", check_logging),
         ("C++ extensions", check_cpp_extensions),
         ("Reflection policy", check_reflection_calls),
+        ("Package layout", check_package_layout),
     ]
     for name, fn in checks:
         count_before = len(violations)
