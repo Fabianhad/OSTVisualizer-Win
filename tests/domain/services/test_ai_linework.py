@@ -8,6 +8,7 @@ from ost_visualizer.application.dtos.ai_takeoff_dtos import (
 )
 from tests.helpers.ai_wall_width_page import (
     HEAVY_WIDTH,
+    THIN_WIDTH,
     WALL_WIDTH,
     wall_width_page,
 )
@@ -650,6 +651,44 @@ class UncoveredRunTests(unittest.TestCase):
         self.assertAlmostEqual(ends[0][1], 20.0, delta=1.5)
         self.assertAlmostEqual(ends[1][0], 20.0, delta=1.5)
         self.assertAlmostEqual(ends[1][1], 0.0, delta=1.5)
+
+
+def _hairline_page(thin_width, with_frames=True):
+    page = wall_width_page()
+    if not with_frames:
+        page = [line for line in page if line[4] != HEAVY_WIDTH]
+    return [
+        LineSegment(x1, y1, x2, y2, thin_width if width == THIN_WIDTH else width)
+        for x1, y1, x2, y2, width in page
+    ]
+
+
+class HairlinePenTests(unittest.TestCase):
+    def test_a_hairline_bulk_suggests_what_a_light_bulk_suggests(self):
+        for with_frames in (True, False):
+            light = width_suggestion(_hairline_page(THIN_WIDTH, with_frames))
+            hairline = width_suggestion(_hairline_page(0.0, with_frames))
+            with self.subTest(with_frames=with_frames):
+                self.assertEqual(hairline, light)
+        self.assertEqual(width_suggestion(_hairline_page(0.0)).width, WALL_WIDTH)
+
+    def test_walls_above_a_hairline_bulk_stay_walls(self):
+        segments = _hairline_page(0.0)
+        kinds = classify_linework(segments, 0.0)
+        by_width = {}
+        for segment, kind in zip(segments, kinds):
+            by_width.setdefault(segment.width, set()).add(kind)
+        self.assertEqual(
+            by_width,
+            {0.0: {KIND_THIN}, WALL_WIDTH: {KIND_WALL}, HEAVY_WIDTH: {KIND_WALL}},
+        )
+
+    def test_hairlines_alone_are_a_single_pen(self):
+        segments = [
+            LineSegment(0.0, index * 3.0, 50.0, index * 3.0, 0.0) for index in range(30)
+        ]
+        self.assertEqual(width_suggestion(segments).reason, WIDTH_SINGLE_PEN)
+        self.assertEqual(set(classify_linework(segments, 0.0)), {KIND_THIN})
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from ost_visualizer.application.services.ai_changeset_store import (
     AiChangesetStore,
 )
 from ost_visualizer.application.services import ai_takeoff_proposal_service as module
+from ost_visualizer.domain.services import ai_planar_regions as planar_module
 from ost_visualizer.domain.services.ai_dashed_outline import DashedAnalysisTimeout
 from ost_visualizer.domain.services.ai_planar_regions import RegionSearchTimeout
 from ost_visualizer.application.services.ai_takeoff_proposal_service import (
@@ -59,7 +60,7 @@ from tests.application.services.test_ai_takeoff_read_service import (
     ServiceTestCase,
 )
 from tests.helpers import ai_mat_outline as mat
-from tests.helpers.ai_wall_width_page import WALL_WIDTH, wall_width_page
+from tests.helpers.ai_wall_width_page import THIN_WIDTH, WALL_WIDTH, wall_width_page
 
 PRESETS = [
     (0.125, 12.0, '1/8" = 1\' 0"'),
@@ -2359,6 +2360,22 @@ class LeakGuardTests(ProposalTestCase):
         self.assertIn("(300.0, 150.0) to (300.0, 208.5)", open_gap["reason"]["value"])
         self.assertEqual(data["blocking_assumption_ids"], [open_gap["id"]])
 
+    def test_every_planar_pass_of_a_seeded_search_runs_under_its_deadline(self):
+        self.pdf.segments = _two_rooms()
+        deadlines = []
+        real_split = planar_module._split_segments
+
+        def split(*args, **kwargs):
+            deadlines.append(args[4] if len(args) > 4 else kwargs.get("deadline"))
+            return real_split(*args, **kwargs)
+
+        with mock.patch.object(planar_module, "_split_segments", split):
+            (region,) = self.find()["data"]["regions"]
+        self.assertTrue(region["leak_risk"])
+        self.assertEqual(len(deadlines), 3)
+        self.assertNotIn(None, deadlines)
+        self.assertEqual(len(set(deadlines)), 1)
+
     def test_an_open_gap_assumption_blocks_approval_until_accepted(self):
         self.pdf.segments = _two_rooms()
         (region,) = self.find(max_gap_in=36.0)["data"]["regions"]
@@ -2627,6 +2644,18 @@ class WallWidthSuggestionTests(ProposalTestCase):
         self.assertEqual(data["total_count"], 13)
         self.assertEqual(data["excluded"]["thin"], 1000)
 
+    def test_a_hairline_thin_bulk_keeps_the_walls(self):
+        self.pdf.segments = [
+            _styled(x1, y1, x2, y2, style=_pen(0.0 if width == THIN_WIDTH else width))
+            for x1, y1, x2, y2, width in wall_width_page()
+        ]
+        data = self.find(bbox=[0, 0, 1000, 1000])["data"]
+        self.assertEqual(
+            data["width_suggestion"], {"min_width": WALL_WIDTH, "reason": "suggested"}
+        )
+        self.assertEqual(data["total_count"], 13)
+        self.assertEqual(data["excluded"]["thin"], 1000)
+
     def test_wall_boundaries_keep_s101_walls_lighter_than_the_old_floor(self):
         self.pdf.segments = [
             _styled(x1, y1, x2, y2, style=_pen(width))
@@ -2821,6 +2850,58 @@ class SegmentCapTests(ProposalTestCase):
         passed = self.find(bbox=[0, 0, 2000, 2000], min_width=1.0)["data"]
         self.assertEqual(passed["segment_count"], int(hint.group(1)))
         self.assertLessEqual(passed["segment_count"], 20000)
+
+    def test_the_named_min_width_passes_when_widths_differ_past_six_digits(self):
+        self.pdf.segments = _scattered(1000, 100, 1000.0, 0.2500001) + _scattered(
+            19500, 150, 0.0, 0.2500004
+        )
+        error = self.assert_error(
+            "invalid_argument",
+            lambda: self.find(bbox=[0, 0, 2000, 2000], min_width=0.0),
+        )
+        hint = re.search(
+            r"min_width (\S+) keeps (\d+) line segments and would pass", error.message
+        )
+        self.assertIsNotNone(hint, error.message)
+        self.assertEqual(int(hint.group(2)), 19500)
+        passed = self.find(bbox=[0, 0, 2000, 2000], min_width=float(hint.group(1)))
+        self.assertEqual(passed["data"]["segment_count"], 19500)
+
+    def test_naming_a_passing_min_width_takes_logarithmic_filter_passes(self):
+        self.pdf.segments = [
+            _styled(
+                (index % 150) * 6.0,
+                (index // 150) * 6.0,
+                (index % 150) * 6.0 + 4.0,
+                (index // 150) * 6.0 + 1.0,
+                style=_pen(0.3 + index * 1e-5),
+            )
+            for index in range(20100)
+        ]
+        calls = []
+        real_filter = module._filter_linework
+
+        def counted(*args, **kwargs):
+            calls.append(1)
+            return real_filter(*args, **kwargs)
+
+        with mock.patch.object(module, "_filter_linework", counted):
+            error = self.assert_error(
+                "invalid_argument",
+                lambda: self.find(bbox=[0, 0, 2000, 2000], min_width=0.0),
+            )
+        self.assertIn("keeps 20000 line segments and would pass", error.message)
+        self.assertLessEqual(len(calls), 1 + math.ceil(math.log2(20100)) + 1)
+
+    def test_no_hint_when_the_only_passing_width_keeps_nothing(self):
+        symbol = _styled_rect(1900, 1900, 1904, 1904, style=_pen(2.0), group="tag")
+        self.pdf.segments = _scattered(20001, 150, 0.0, 0.5) + symbol
+        error = self.assert_error(
+            "invalid_argument",
+            lambda: self.find(bbox=[0, 0, 2000, 2000], min_width=0.0),
+        )
+        self.assertIn("More than 20000 line segments", error.message)
+        self.assertNotIn("min_width", error.message)
 
     def test_no_hint_when_no_width_would_pass(self):
         self.pdf.segments = _scattered(20001, 150, 0.0, 1.0)

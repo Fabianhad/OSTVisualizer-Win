@@ -2100,6 +2100,74 @@
       ],
       "release_evidence": "Cover Sheet background page-size reads shipped in 1.2.6.1 (edd74f4)",
       "affected_result": "Every PDFium entry runs under one lock; Cover Sheet page-size reads wait for an in-flight render instead of racing it"
+    },
+    {
+      "file": "ost_visualizer/domain/services/ai_linework.py",
+      "defect": "Hairline strokes (width 0) were left out of the pen distribution, so a page whose thin bulk is drawn as hairlines took its walls (0.66 pt) for the light bulk: the default filter suggested the 1.02 pt frame width and removed every wall, and the walls were classified thin (a page of hairlines alone reported no_stroke_widths)",
+      "proof": "HairlinePenTests (3) and WallWidthSuggestionTests.test_a_hairline_thin_bulk_keeps_the_walls failed first: suggestion 1.02 instead of 0.66, walls thin, single_pen instead of heavy_pens_too_rare, no_stroke_widths instead of single_pen",
+      "fix": "Width 0 is the 0.00 pen class; a kept class must also be heavier than the bulk's heaviest stroke, so over a hairline bulk every drawn width is kept and hairlines never are",
+      "tests": [
+        "HairlinePenTests",
+        "WallWidthSuggestionTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (6b49b41)",
+      "affected_result": "A hairline thin bulk gives the same suggestion and kinds as a 0.25 pt bulk"
+    },
+    {
+      "file": "ost_visualizer/domain/services/ai_planar_regions.py",
+      "defect": "opening_candidates (the leak guard's candidate graph) ran its full pairing-and-split pass and its scans with no deadline on every seeded search, and _close_gaps had no deadline check, so region_search could overrun its 20 s budget although the docs listed every split pass as covered",
+      "proof": "RegionDeadlineCoverageTests (3) and LeakGuardTests.test_every_planar_pass_of_a_seeded_search_runs_under_its_deadline failed first (TypeError for deadline, a None deadline on the leak-guard split, thousands of gap-closing checks after expiry)",
+      "fix": "opening_candidates(deadline=...) passes it to _split_segments and checks it in the dangling-end and jamb scans; _close_gaps checks it every 256 dangling ends; _open_gaps passes the region deadline",
+      "tests": [
+        "RegionDeadlineCoverageTests",
+        "LeakGuardTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (6b49b41)",
+      "affected_result": "Seeded searches stop at the region deadline in every planar pass"
+    },
+    {
+      "file": "ost_visualizer/domain/services/ai_planar_regions.py",
+      "defect": "_walk_estimate is not an upper bound: a steep (89 degree) segment estimated at 4,096 cells walked 4,903, breaking the documented PAIR_MAX_CELLS_PER_SEGMENT cap",
+      "proof": "PairingEdgeCaseTests.test_a_steep_segment_never_walks_more_than_the_cell_cap failed first (4903 > 4096)",
+      "fix": "The walk is consumed through islice(cap + 1); a walk that reaches the cap is abandoned and the segment takes the oversized path",
+      "tests": [
+        "PairingEdgeCaseTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (6b49b41)",
+      "affected_result": "No segment registers more than 4,096 cells or consumes more than 4,097"
+    },
+    {
+      "file": "ost_visualizer/domain/services/ai_planar_regions.py",
+      "defect": "A finite segment whose squared length underflows (length 1e-170) got a direction bucket and _line_offset divided by zero, crashing find_planar_regions_report (older helpers guard length_sq == 0)",
+      "proof": "PairingEdgeCaseTests.test_a_finite_segment_too_short_to_square_is_treated_as_a_point failed first (ZeroDivisionError)",
+      "fix": "_direction_bucket treats a zero squared length as degenerate (no bucket)",
+      "tests": [
+        "PairingEdgeCaseTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (6b49b41); not reachable from float32 PDF coordinates",
+      "affected_result": "Such a segment is paired like a point"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "The 20,000-segment refusal hint printed its width with :g, so 0.2500004 was named as 0.25, and passing 0.25 back kept the 0.2500001 lines too and was refused again",
+      "proof": "SegmentCapTests.test_the_named_min_width_passes_when_widths_differ_past_six_digits failed first (min_width 0.25 refused)",
+      "fix": "The width is written exactly (repr when :g rounds it)",
+      "tests": [
+        "SegmentCapTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (6b49b41)",
+      "affected_result": "The named min_width keeps exactly the named count"
+    },
+    {
+      "file": "ost_visualizer/application/services/ai_takeoff_proposal_service.py",
+      "defect": "_segment_cap_hint ran one full filter pass per distinct stroke width until one passed: 102 passes over 20,100 lines for 20,100 widths, and up to hundreds of thousands on a hostile page, with no deadline",
+      "proof": "SegmentCapTests.test_naming_a_passing_min_width_takes_logarithmic_filter_passes failed first (102 > 17 passes)",
+      "fix": "Bisection over the sorted distinct widths (the kept count only falls as the width rises)",
+      "tests": [
+        "SegmentCapTests"
+      ],
+      "release_evidence": "Same-cycle Unreleased (6b49b41)",
+      "affected_result": "At most 1 + ceil(log2(widths)) filter passes for the hint"
     }
   ],
   "removed_tests": [
@@ -15656,6 +15724,30 @@
         "Exit-time try_lock in PDFiumCleanup is not covered by a deterministic test.",
         "A daemon render thread that dies holding the Python pdfium_lock at finalization is outside this fix (native lock is released before the GIL is reacquired).",
         "The GUI thread can still wait for a worker render under pdfium_lock or, through the destructor or page_count, under the native lock; this is a latency cost, not a deadlock."
+      ]
+    },
+    {
+      "batch": "find-regions-m2.3-bug-hunt",
+      "findings": [
+        "Scope: HEAD 6b49b41 (15 files; production ai_planar_regions, ai_linework, ai_takeoff_proposal_service, tool_catalog) reviewed in full with git diff -w, plus direct callers (find_regions, _seed_choice, _open_gaps, _dashed_outline, list_segments via suggested_min_width, the corpus tools).",
+        "Six defects proven with failing tests, then fixed: hairline thin bulk removed the walls; the leak-guard candidate graph and gap closing ran without the region deadline; the 4,096-cell walk cap was not a bound for steep segments; a finite underflowing segment crashed pairing; the cap hint named a rounded width that is refused again; the cap hint did one filter pass per distinct width.",
+        "Checked without finding a defect: grid-and-direction pairing (a pair within the tolerance shares the cell holding the nearer point, and the same-bucket offset window bound holds there; buckets wrap at 180 degrees; pairs deduplicated by set), non-finite segments (filtered), zero-length segments (no bucket), the oversized path (paired against all by padded box), the pen rule with ties and single pens, curves keeping heavy_width_threshold, the timeout result shape, dashed-stage deadlines (every stage checks; _dashed_outline converts a region timeout).",
+        "Mutation (in memory only: each mutant in a child process execs the mutated module source before the tests import it; nothing written to disk): control passes; 15/15 killed (zero-length test, walk cap registration and islice bound, opening_candidates split deadline and both scans, gap-closing loop and its deadline argument, both hairline rules, the service deadline argument, the hint's exact text, cap comparison, zero-count guard and bisection).",
+        "Native sources unchanged, no rebuild; skips stay at 38."
+      ],
+      "tests_added": [
+        "RegionDeadlineCoverageTests (3) and PairingEdgeCaseTests (2) in tests/domain/services/test_ai_planar_regions.py",
+        "HairlinePenTests (3) in tests/domain/services/test_ai_linework.py",
+        "LeakGuardTests (1), WallWidthSuggestionTests (1) and SegmentCapTests (3) in tests/application/services/test_ai_takeoff_proposal_service.py"
+      ],
+      "validation": "Full suite with -X faulthandler, three runs after the fixes: the first stopped about 12,680 tests in (near tests.presentation.services.test_modal_edit_lease_session) with Windows fatal exception 0xC000000D then an access violation on a thread with no Python frame, while the one Python thread showed a corrupted frame in pathlib open; the next two ran clean: 14309 OK (38 skipped) in 325.7 s; 14309 OK (38 skipped) in 337.6 s, exit 0, no fatal error. Focused 33 OK; affected domain/service/catalog 442, AI takeoff integration 37 (3 skipped), mcp_takeoff 91, corpus tools 72, architecture 118 (3 skipped) OK. tools/check_architecture.py all 7 PASS; compileall exit 0; git diff --check and cr-at-eol clean.",
+      "limitations": [
+        "Suspected, not proven: in _seed_choice the closures pass can exceed the 20,000 cap (segments plus closures) and turns into a refusal of the whole call although the raster fill found a region.",
+        "Suspected doc ambiguity: the catalog's cap-hint sentence reads as general, but a boundary_kinds refusal comes from the planar cap check and has no hint.",
+        "The walk estimate can overestimate about 1.3x for 45 degree lines, sending some walkable segments to the slower oversized path (performance only).",
+        "The raster fill is still not interruptible (documented); the dashed and region budgets are sequential (up to about 40 s plus the fill).",
+        "Unexplained: one intermittent native crash mid-suite (above) on a non-Python thread; the changed code is pure Python and single-threaded in these tests, the crash point is far from the AI takeoff tests, and two later full runs were clean, but the cause was not found.",
+        "Real-sheet opt-in tests (OSTV_S100_PDF, S101) and the corpus were not re-run; no MCP client was run."
       ]
     }
   ],
@@ -39468,7 +39560,12 @@
         "RegionSearchBudgetTests.test_the_raster_fill_and_sealed_openings_check_the_deadline": "The seeded raster path checks the region deadline before and after the fill and per sealed-opening run (at least three checks, one deadline).",
         "RegionSearchBudgetTests.test_an_expired_deadline_skips_the_raster_fill": "With the deadline expired at the raster step the fill is never called and the search reports skipped_time_budget.",
         "SegmentCapTests.test_a_page_over_the_cap_names_a_min_width_that_would_pass": "A page the new rule leaves over 20,000 segments is refused and the message names min_width 1 with the count that a min_width 1 call then keeps.",
-        "SegmentCapTests.test_no_hint_when_no_width_would_pass": "A single-pen page over the cap is refused without a min_width hint."
+        "SegmentCapTests.test_no_hint_when_no_width_would_pass": "A single-pen page over the cap is refused without a min_width hint.",
+        "LeakGuardTests.test_every_planar_pass_of_a_seeded_search_runs_under_its_deadline": "Added (failing first): all three split passes of a seeded two-room search (plain, leak-guard candidates, split check) get the same non-None region deadline.",
+        "WallWidthSuggestionTests.test_a_hairline_thin_bulk_keeps_the_walls": "Added (failing first): end to end, a hairline bulk suggests 0.66 and finds the 13 rooms.",
+        "SegmentCapTests.test_the_named_min_width_passes_when_widths_differ_past_six_digits": "Added (failing first): the named width, passed back, keeps exactly the named 19,500 segments.",
+        "SegmentCapTests.test_naming_a_passing_min_width_takes_logarithmic_filter_passes": "Added (failing first): 20,100 distinct widths need at most 1 + ceil(log2 n) + 1 filter passes and name the width keeping exactly 20,000.",
+        "SegmentCapTests.test_no_hint_when_the_only_passing_width_keeps_nothing": "Added (mutation coverage): the heaviest pen exists only in a symbol, so the only passing width keeps nothing and no hint is given."
       }
     },
     "tests/application/services/test_ai_takeoff_sidecar_service.py": {
@@ -39589,7 +39686,12 @@
         "RegionSplitWorkTests.test_a_giant_segment_walks_a_bounded_number_of_cells": "A 1e6 pt line is paired as an oversized segment: no walk exceeds 4,096 cells and pairs stay within the old box pairs.",
         "RegionSplitWorkTests.test_a_very_tall_segment_walks_a_bounded_number_of_cells": "A 1e6 pt vertical line is oversized and bounded the same way.",
         "RegionSplitWorkTests.test_tiny_pieces_mixed_with_very_long_lines_stay_bounded": "3,000 0.3 pt pieces with 20 1e5 pt lines: bounded walks, oversized lines, pairs between the productive and box pairs.",
-        "RegionSplitWorkTests.test_giant_segments_give_the_same_regions_as_the_old_pairing": "Rooms crossed by 1e9 pt horizontal and vertical lines give the same report as the old pairing."
+        "RegionSplitWorkTests.test_giant_segments_give_the_same_regions_as_the_old_pairing": "Rooms crossed by 1e9 pt horizontal and vertical lines give the same report as the old pairing.",
+        "RegionDeadlineCoverageTests.test_opening_candidates_split_and_scan_under_the_deadline": "Added (failing first): the leak-guard candidate pass receives the deadline in its split and stops in the dangling-end scan once a scripted clock expires after splitting.",
+        "RegionDeadlineCoverageTests.test_the_jamb_scan_checks_the_deadline": "Added (mutation coverage): a closed ring with no dangling ends stops in the jamb scan.",
+        "RegionDeadlineCoverageTests.test_gap_closing_stops_at_the_deadline": "Added (failing first): 900 strokes with gap closing examine over 1,000 neighbours without a deadline and none once it expires after splitting.",
+        "PairingEdgeCaseTests.test_a_steep_segment_never_walks_more_than_the_cell_cap": "Added (failing first): an 89 degree segment estimated under the cap is abandoned at 4,097 yielded cells, goes oversized, and every productive pair of its 49 crossings is still found.",
+        "PairingEdgeCaseTests.test_a_finite_segment_too_short_to_square_is_treated_as_a_point": "Added (failing first): a 1e-170 segment no longer raises and leaves the regions unchanged."
       }
     },
     "tests/infrastructure/persistence/test_ai_takeoff_audit_log.py": {
@@ -39969,7 +40071,10 @@
         "WidthSuggestionTests.test_s101_walls_are_classified_as_walls": "Synthetic S101: 0.66 and 1.02 pt lines are walls, 0.25 pt lines thin.",
         "WidthSuggestionTests.test_classification_keeps_the_old_threshold_without_a_pen_step": "A single 0.5 or 1.2 pt pen keeps the old threshold and stays thin.",
         "WidthSuggestionTests.test_a_split_classifies_walls_even_when_the_filter_is_withheld": "Eight long 0.6 pt lines over a 0.25 pt bulk: no filter (too_few_heavy_lines) but the 0.6 pt lines are walls.",
-        "WidthSuggestionTests.test_curves_above_the_bulk_keep_the_old_threshold": "On the synthetic S101 a 0.66 pt curve (door swing) stays thin under the old curve threshold while a 3.0 pt arc is a wall; straight-line kinds are unchanged."
+        "WidthSuggestionTests.test_curves_above_the_bulk_keep_the_old_threshold": "On the synthetic S101 a 0.66 pt curve (door swing) stays thin under the old curve threshold while a 3.0 pt arc is a wall; straight-line kinds are unchanged.",
+        "HairlinePenTests.test_a_hairline_bulk_suggests_what_a_light_bulk_suggests": "Added (failing first): with and without frame lines, a hairline bulk gives the same suggestion as the 0.25 pt bulk (0.66 with frames).",
+        "HairlinePenTests.test_walls_above_a_hairline_bulk_stay_walls": "Added (failing first): 0.66 and 1.02 pt lines are walls and hairlines thin.",
+        "HairlinePenTests.test_hairlines_alone_are_a_single_pen": "Added (failing first): a hairline-only page is single_pen and thin."
       }
     },
     "tests/integration/native/test_pdf_path_items.py": {
@@ -40696,6 +40801,22 @@
         "tests_run": 14250,
         "skips": 38,
         "seconds": 327.5,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      }
+    ],
+    "find_regions_m2_3_bug_hunt_full_suite": [
+      {
+        "tests_run": 14309,
+        "skips": 38,
+        "seconds": 325.7,
+        "result": "OK",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
+      },
+      {
+        "tests_run": 14309,
+        "skips": 38,
+        "seconds": 337.6,
         "result": "OK",
         "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t ."
       }

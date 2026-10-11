@@ -133,9 +133,6 @@ class _OptimisticConflict(SqlInfrastructureError):
 
 
 class _BidLockedRefusal(SqlInfrastructureError):
-    """The write touches a child resource of a locked Bid: refused, not conflicted.
-    Raised before the operation runs, so the transaction rolls back untouched."""
-
     def __init__(self) -> None:
         super().__init__(SqlErrorDetails(SqlErrorCode.LOCKED, BID_LOCKED_MESSAGE))
 

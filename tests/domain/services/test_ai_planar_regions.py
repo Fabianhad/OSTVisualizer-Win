@@ -1263,5 +1263,131 @@ class RegionSearchDeadlineTests(unittest.TestCase):
         self.assertGreater(clock.calls, 0)
 
 
+class _ExpiringClock:
+    def __init__(self):
+        self.expired = False
+
+    def monotonic(self):
+        return 10.0 if self.expired else 0.0
+
+
+def _expire_after_splitting(clock, deadlines=None):
+    real_split = planar._split_segments
+
+    def split(*args, **kwargs):
+        if deadlines is not None:
+            deadlines.append(args[4] if len(args) > 4 else kwargs.get("deadline"))
+        result = real_split(*args, **kwargs)
+        clock.expired = True
+        return result
+
+    return mock.patch.object(planar, "_split_segments", split)
+
+
+def _doorway_room():
+    return [
+        (0.0, 0.0, 100.0, 0.0),
+        (100.0, 0.0, 100.0, 100.0),
+        (100.0, 100.0, 60.0, 100.0),
+        (40.0, 100.0, 0.0, 100.0),
+        (0.0, 100.0, 0.0, 0.0),
+    ]
+
+
+class RegionDeadlineCoverageTests(unittest.TestCase):
+    def test_opening_candidates_split_and_scan_under_the_deadline(self):
+        self.assertEqual(
+            len(opening_candidates(_doorway_room(), TOLERANCE, 1.0, 50.0)), 1
+        )
+        clock = _ExpiringClock()
+        deadlines = []
+        with mock.patch.object(planar, "time", clock), _expire_after_splitting(
+            clock, deadlines
+        ):
+            with self.assertRaises(RegionSearchTimeout):
+                opening_candidates(_doorway_room(), TOLERANCE, 1.0, 50.0, deadline=5.0)
+        self.assertEqual(deadlines, [5.0])
+
+    def test_the_jamb_scan_checks_the_deadline(self):
+        ring = ((0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0))
+        closed = [(*ring[index], *ring[(index + 1) % len(ring)]) for index in range(4)]
+        clock = _ExpiringClock()
+        with mock.patch.object(planar, "time", clock), _expire_after_splitting(clock):
+            with self.assertRaises(RegionSearchTimeout):
+                opening_candidates(closed, TOLERANCE, 1.0, 50.0, ring, deadline=5.0)
+
+    def test_gap_closing_stops_at_the_deadline(self):
+        strokes = [
+            (column * 3.0, row * 3.0, column * 3.0 + 1.0, row * 3.0)
+            for column in range(30)
+            for row in range(30)
+        ]
+        examined = []
+        real_runs = planar._runs_along_an_edge
+
+        def runs(*args):
+            examined.append(1)
+            return real_runs(*args)
+
+        with mock.patch.object(planar, "_runs_along_an_edge", runs):
+            find_planar_regions_report(strokes, TOLERANCE, 4.0)
+        self.assertGreater(len(examined), 1000)
+        examined.clear()
+        clock = _ExpiringClock()
+        with mock.patch.object(planar, "time", clock), _expire_after_splitting(
+            clock
+        ), mock.patch.object(planar, "_runs_along_an_edge", runs):
+            with self.assertRaises(RegionSearchTimeout):
+                find_planar_regions_report(strokes, TOLERANCE, 4.0, deadline=5.0)
+        self.assertEqual(examined, [])
+
+
+class PairingEdgeCaseTests(unittest.TestCase):
+    def test_a_steep_segment_never_walks_more_than_the_cell_cap(self):
+        angle = math.radians(89.0)
+        ux, uy = math.cos(angle), math.sin(angle)
+        length = 15400.0
+        steep = (0.0, 0.0, length * ux, length * uy)
+        crossings = [
+            (x - 1.0, y, x + 1.0, y)
+            for x, y in (
+                (length * ux * index / 50.0, length * uy * index / 50.0)
+                for index in range(1, 50)
+            )
+        ]
+        clean = _finite_pairs([steep] + crossings)
+        yielded = []
+        real_near_cells = planar._near_cells
+
+        def counted(*args):
+            yielded.append(0)
+            for key in real_near_cells(*args):
+                yielded[-1] += 1
+                yield key
+
+        with mock.patch.object(planar, "_near_cells", counted):
+            pairs, work = _candidate_pairs_with_work(clean, TOLERANCE)
+        self.assertEqual(work.oversized, 1)
+        self.assertLessEqual(max(yielded), PAIR_MAX_CELLS_PER_SEGMENT + 1)
+        self.assertLessEqual(work.longest_walk, PAIR_MAX_CELLS_PER_SEGMENT)
+        reference = _box_candidate_pairs(clean, TOLERANCE)
+        self.assertEqual(len(_productive(clean, reference)), 49)
+        self.assertTrue(set(_productive(clean, reference)) <= set(pairs))
+        self.assertTrue(set(pairs) <= set(reference))
+
+    def test_a_finite_segment_too_short_to_square_is_treated_as_a_point(self):
+        rooms = _room_walls(2, extent=60.0)
+        tiny = (0.0, 30.0, 1e-170, 30.0)
+        self.assertNotEqual(tiny[0], tiny[2])
+        self.assertEqual(
+            find_planar_regions_report(rooms + [tiny], TOLERANCE, 0.0),
+            find_planar_regions_report(rooms, TOLERANCE, 0.0),
+        )
+        pairs = _candidate_pairs(
+            _finite_pairs([tiny, (0.0, 30.0, 5.0, 30.0)]), TOLERANCE
+        )
+        self.assertEqual(pairs, [(0, 1)])
+
+
 if __name__ == "__main__":
     unittest.main()

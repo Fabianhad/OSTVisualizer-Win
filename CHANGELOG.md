@@ -34,7 +34,8 @@
   much faster.** `find_regions` now keeps every line weight clearly heavier
   than the page's thin lines, so a sheet whose walls are lighter than its
   frame or grid lines (walls at 0.66 pt, frames at 1.02 pt) no longer loses
-  all its walls; the result gives the suggested width and why. When the line
+  all its walls, also when the thin lines are drawn as hairlines; the result
+  gives the suggested width and why. When the line
   weights are ambiguous no filter is applied and the region carries a
   "no wall-width filter" assumption. `boundary_kinds` `["wall"]` and the
   segment kinds use the same rule, so lighter walls are walls there too. A

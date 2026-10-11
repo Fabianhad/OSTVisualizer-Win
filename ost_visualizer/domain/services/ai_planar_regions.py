@@ -1,6 +1,7 @@
 import math
 import time
 from collections import defaultdict, deque
+from itertools import islice
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from .ai_linework import SegmentGrid, is_symbol_box
@@ -205,7 +206,7 @@ def _walk_estimate(a: Point, b: Point, reach: float, cell: float) -> int:
 def _direction_bucket(a: Point, b: Point, buckets: int) -> Optional[int]:
     dx = b[0] - a[0]
     dy = b[1] - a[1]
-    if dx == 0.0 and dy == 0.0:
+    if dx * dx + dy * dy == 0.0:
         return None
     step = math.pi / buckets
     angle = math.atan2(dy, dx) % math.pi
@@ -306,12 +307,16 @@ def _candidate_pairs_with_work(
         if _walk_estimate(a, b, reach, cell) > PAIR_MAX_CELLS_PER_SEGMENT:
             oversized.append(position)
             continue
-        walked = 0
-        for key in _near_cells(a, b, reach, cell):
+        keys = list(
+            islice(_near_cells(a, b, reach, cell), PAIR_MAX_CELLS_PER_SEGMENT + 1)
+        )
+        if len(keys) > PAIR_MAX_CELLS_PER_SEGMENT:
+            oversized.append(position)
+            continue
+        for key in keys:
             cells[key].append(position)
-            walked += 1
-        work.registered += walked
-        work.longest_walk = max(work.longest_walk, walked)
+        work.registered += len(keys)
+        work.longest_walk = max(work.longest_walk, len(keys))
     work.oversized = len(oversized)
     half_angle = math.radians(PAIR_ANGLE_BUCKET_DEG) / 2.0
     window = (
@@ -421,7 +426,10 @@ class _NearVertices:
 
 
 def _close_gaps(
-    edges: Set[Tuple[int, int]], index: _VertexIndex, gap_close: float
+    edges: Set[Tuple[int, int]],
+    index: _VertexIndex,
+    gap_close: float,
+    deadline: Optional[float] = None,
 ) -> List[Tuple[int, int]]:
     if gap_close <= 0.0:
         return []
@@ -432,7 +440,9 @@ def _close_gaps(
     near_dangling = _NearVertices(index.points, dangling, gap_close)
     near_any = _NearVertices(index.points, list(neighbours), gap_close)
     used: Set[int] = set()
-    for vertex in dangling:
+    for checked, vertex in enumerate(dangling):
+        if checked % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
         if vertex in used:
             continue
         point = index.points[vertex]
@@ -602,7 +612,7 @@ def find_planar_regions_report(
     edges, given_edges = _split_segments(
         clean + given, index, tolerance, len(clean) if given else None, deadline
     )
-    closures_found = _close_gaps(edges, index, float(gap_close))
+    closures_found = _close_gaps(edges, index, float(gap_close), deadline)
     _prune_dangling(edges)
     points = index.points
     component_of = _components(edges)
@@ -685,11 +695,12 @@ def opening_candidates(
     min_length: float,
     max_length: float,
     ring: Sequence[Point] = (),
+    deadline: Optional[float] = None,
 ) -> List[Tuple[float, float, float, float]]:
     clean = _finite_pairs(segments)
     tolerance = max(float(snap_tol), 1e-6)
     index = _VertexIndex(tolerance)
-    edges, _given = _split_segments(clean, index, tolerance)
+    edges, _given = _split_segments(clean, index, tolerance, deadline=deadline)
     points = index.points
     neighbours = _adjacency(edges)
     edge_list = sorted(edges)
@@ -725,7 +736,9 @@ def opening_candidates(
             and -_dot(outward[other], chord) >= cosine * distance
         )
 
-    for vertex in sorted(chain_ends):
+    for checked, vertex in enumerate(sorted(chain_ends)):
+        if checked % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
         point = points[vertex]
         if not (
             left - tolerance <= point[0] <= right + tolerance
@@ -776,7 +789,9 @@ def opening_candidates(
 
     corners = [position for position, vertex in enumerate(jambs) if vertex is not None]
     near_corners = _NearVertices(list(ring), corners, max_length)
-    for position in corners:
+    for checked, position in enumerate(corners):
+        if checked % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
         start = points[jambs[position]]
         best = min(
             (

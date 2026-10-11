@@ -148,7 +148,7 @@ def _pen_classes(segments: Sequence[LineSegment]) -> _PenClasses:
             continue
         width = float(segment.width)
         length = segment.length
-        if not (math.isfinite(width) and width > 0.0 and math.isfinite(length)):
+        if not (math.isfinite(width) and width >= 0.0 and math.isfinite(length)):
             continue
         if length <= 0.0:
             continue
@@ -170,7 +170,11 @@ def _pen_classes(segments: Sequence[LineSegment]) -> _PenClasses:
                 bulk = key
                 break
         cutoff = PEN_STEP_MIN_RATIO * heaviest[bulk]
-        heavy = tuple(key for key in keys if lightest[key] >= cutoff)
+        heavy = tuple(
+            key
+            for key in keys
+            if lightest[key] >= cutoff and lightest[key] > heaviest[bulk]
+        )
     return _PenClasses(keys, lengths, counts, lightest, heaviest, bulk, heavy)
 
 

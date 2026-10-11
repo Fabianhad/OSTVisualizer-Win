@@ -1327,7 +1327,8 @@ def _segment_cap_hint(lines, kinds, symbols, filters: _RegionFilters) -> str:
             and float(line.width) > current
         }
     )
-    for width in widths:
+
+    def kept_count(width: float) -> int:
         kept, _excluded, _boxes = _filter_linework(
             lines,
             kinds,
@@ -1335,10 +1336,24 @@ def _segment_cap_hint(lines, kinds, symbols, filters: _RegionFilters) -> str:
             replace(filters, min_width=width, min_width_source=MIN_WIDTH_GIVEN),
             {},
         )
-        count = _finite_count(kept)
-        if 0 < count <= MAX_REGION_SEGMENTS:
-            return f"min_width {width:g} keeps {count} line segments and would pass."
-    return ""
+        return _finite_count(kept)
+
+    low, high = 0, len(widths)
+    count = 0
+    while low < high:
+        middle = (low + high) // 2
+        middle_count = kept_count(widths[middle])
+        if middle_count <= MAX_REGION_SEGMENTS:
+            high, count = middle, middle_count
+        else:
+            low = middle + 1
+    if low == len(widths) or count == 0:
+        return ""
+    width = widths[low]
+    text = f"{width:g}"
+    if float(text) != width:
+        text = repr(width)
+    return f"min_width {text} keeps {count} line segments and would pass."
 
 
 def _check_segment_cap(segments) -> None:
@@ -1646,6 +1661,7 @@ def _open_gaps(
             reach,
             LEAK_GAP_MAX_IN / k,
             ring,
+            deadline,
         )
         if not any(_same_gap(gap, candidate, reach) for gap in closed)
     ]
