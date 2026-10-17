@@ -51,6 +51,188 @@ class RecordingRenderer:
         return []
 
 
+class ScriptedRenderer:
+    instances = []
+    page_total = 3
+    fail_in = None
+
+    def __init__(self):
+        self.closed = 0
+        self.page_info_requests = []
+        self.text_requests = []
+        self.segment_requests = []
+        ScriptedRenderer.instances.append(self)
+
+    def open(self, _file_path):
+        return True
+
+    def close(self):
+        self.closed += 1
+
+    def page_count(self):
+        return ScriptedRenderer.page_total
+
+    def _maybe_fail(self, name):
+        if ScriptedRenderer.fail_in == name:
+            raise RuntimeError(name)
+
+    def page_info(self, page_index):
+        self.page_info_requests.append(page_index)
+        self._maybe_fail("page_info")
+        return SimpleNamespace(
+            effective_width_pts=100.0 + page_index,
+            effective_height_pts=200.0,
+            media_width_pts=100.0,
+            media_height_pts=200.0,
+            crop_width_pts=100.0,
+            crop_height_pts=200.0,
+            intrinsic_rotation=0,
+        )
+
+    def extract_text_runs(self, page_index):
+        self.text_requests.append(page_index)
+        self._maybe_fail("text")
+        return [
+            SimpleNamespace(
+                text=f"page {page_index}", left=1.0, top=2.0, right=3.0, bottom=4.0
+            ),
+            SimpleNamespace(text=None, left=5.0, top=6.0, right=7.0, bottom=8.0),
+        ]
+
+    def extract_path_segments(self, page_index):
+        self.segment_requests.append(page_index)
+        self._maybe_fail("segments")
+        return [(1.0, 2.0, 3.0 + page_index, 4.0)]
+
+
+class PdfMetadataProviderBehaviourTests(unittest.TestCase):
+    def setUp(self):
+        ScriptedRenderer.instances = []
+        ScriptedRenderer.page_total = 3
+        ScriptedRenderer.fail_in = None
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = directory.name
+        self.pdf = os.path.join(self.directory, "plan.pdf")
+        with open(self.pdf, "wb") as handle:
+            handle.write(b"%PDF-1.4")
+        self.provider = self.fresh_provider()
+
+    @staticmethod
+    def fresh_provider():
+        ScriptedRenderer.instances = []
+        return NativePdfMetadataProvider(
+            logger=logging.getLogger("tests.pdf_metadata_behaviour"),
+            renderer_factory=ScriptedRenderer,
+            geometry_reader_factory=lambda: SimpleNamespace(
+                get_page_geometries=lambda _path: []
+            ),
+        )
+
+    @staticmethod
+    def readers(provider):
+        return {
+            "page info": (provider.get_page_info, "page_info_requests"),
+            "text runs": (provider.get_text_runs, "text_requests"),
+            "vector segments": (provider.get_vector_segments, "segment_requests"),
+        }
+
+    def test_page_indexes_are_clamped_to_the_pages_the_document_has(self):
+        cases = ((-5, 0), (0, 0), (2, 2), (3, 2), (99, 2), (None, 0))
+        for label in self.readers(self.provider):
+            for requested, expected in cases:
+                with self.subTest(read=label, requested=requested):
+                    provider = self.fresh_provider()
+                    read, requests = self.readers(provider)[label]
+                    read(self.pdf, requested)
+                    self.assertEqual(
+                        getattr(ScriptedRenderer.instances[-1], requests), [expected]
+                    )
+
+    def test_a_document_without_pages_is_read_at_index_zero(self):
+        ScriptedRenderer.page_total = 0
+        self.provider.get_page_info(self.pdf, 5)
+        self.assertEqual(ScriptedRenderer.instances[-1].page_info_requests, [0])
+
+    def test_different_pages_of_one_file_are_cached_separately(self):
+        first = self.provider.get_page_info(self.pdf, 0)
+        second = self.provider.get_page_info(self.pdf, 1)
+        self.assertIsNot(first, second)
+        self.assertEqual(
+            (first.effective_width_pts, second.effective_width_pts), (100.0, 101.0)
+        )
+        self.assertIs(self.provider.get_page_info(self.pdf, 0), first)
+        self.assertEqual(len(ScriptedRenderer.instances), 2)
+        runs = [self.provider.get_text_runs(self.pdf, index) for index in (0, 1)]
+        self.assertEqual([run[0].text for run in runs], ["page 0", "page 1"])
+        segments = [
+            self.provider.get_vector_segments(self.pdf, index) for index in (0, 1)
+        ]
+        self.assertEqual([item[0].x2 for item in segments], [3.0, 4.0])
+
+    def test_cache_hits_return_independent_copies_of_runs_and_segments(self):
+        for read in (self.provider.get_text_runs, self.provider.get_vector_segments):
+            first = read(self.pdf, 0)
+            expected = list(first)
+            first.clear()
+            again = read(self.pdf, 0)
+            self.assertEqual(again, expected)
+            self.assertIsNot(again, first)
+        self.assertEqual(len(ScriptedRenderer.instances), 2)
+
+    def test_text_runs_keep_their_text_and_a_missing_text_is_empty(self):
+        runs = self.provider.get_text_runs(self.pdf, 0)
+        self.assertEqual([run.text for run in runs], ["page 0", ""])
+        self.assertEqual(
+            (runs[0].left, runs[0].top, runs[0].right, runs[0].bottom),
+            (1.0, 2.0, 3.0, 4.0),
+        )
+
+    def test_the_native_document_is_closed_after_every_read(self):
+        for label in self.readers(self.provider):
+            with self.subTest(read=label):
+                provider = self.fresh_provider()
+                self.readers(provider)[label][0](self.pdf, 0)
+                self.assertEqual(
+                    [item.closed for item in ScriptedRenderer.instances], [1]
+                )
+
+    def test_the_native_document_is_closed_when_a_read_fails(self):
+        failing = {
+            "page info": "page_info",
+            "text runs": "text",
+            "vector segments": "segments",
+        }
+        for label, name in failing.items():
+            with self.subTest(read=label):
+                provider = self.fresh_provider()
+                ScriptedRenderer.fail_in = name
+                with self.assertLogs("tests.pdf_metadata_behaviour", level="WARNING"):
+                    self.readers(provider)[label][0](self.pdf, 0)
+                self.assertEqual(
+                    [item.closed for item in ScriptedRenderer.instances], [1]
+                )
+
+    def test_only_existing_pdf_files_open_the_renderer(self):
+        notes = os.path.join(self.directory, "notes.txt")
+        with open(notes, "wb") as handle:
+            handle.write(b"text")
+        folder = os.path.join(self.directory, "folder.pdf")
+        os.mkdir(folder)
+        cases = {
+            "no path": ("", "not_configured"),
+            "not a pdf": (notes, "not_pdf"),
+            "directory named like a pdf": (folder, "missing"),
+            "missing file": (os.path.join(self.directory, "gone.pdf"), "missing"),
+        }
+        for label, (path, status) in cases.items():
+            with self.subTest(case=label):
+                self.assertEqual(self.provider.get_page_info(path, 0).status, status)
+                self.assertEqual(self.provider.get_text_runs(path, 0), [])
+                self.assertEqual(self.provider.get_vector_segments(path, 0), [])
+        self.assertEqual(ScriptedRenderer.instances, [])
+
+
 class PdfMetadataProviderTests(unittest.TestCase):
     def setUp(self):
         RecordingRenderer.page_info_calls = []

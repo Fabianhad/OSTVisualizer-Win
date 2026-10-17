@@ -249,6 +249,23 @@ class ApprovalTests(StoreTestCase):
         statuses = {item.uid: item.status for item in approved.assumptions}
         self.assertEqual(statuses, {"a1": ASSUMPTION_OVERRIDDEN, "a2": ASSUMPTION_OPEN})
 
+    def test_approving_a_stale_revision_is_refused_and_changes_nothing(self):
+        added = self.add(_changeset(assumptions=(_assumption("a1"),)))
+        self.proposals.request_apply(added.uid)
+        shown = self.proposals.get(added.uid).revision
+        self.proposals.revise_assumption(added.uid, "a1", "9", "note")
+        with self.assertRaises(ChangesetError) as raised:
+            self.store.approve(added.uid, expected_revision=shown)
+        self.assertEqual(raised.exception.code, "changed_during_review")
+        current = self.proposals.get(added.uid)
+        self.assertEqual(current.status, STATUS_PENDING_APPROVAL)
+        self.assertEqual(current.revision, shown + 1)
+        accepted = self.store.accept_assumption(
+            added.uid, "a1", expected_revision=shown + 1
+        )
+        approved = self.store.approve(added.uid, expected_revision=accepted.revision)
+        self.assertEqual(approved.status, STATUS_APPLYING)
+
     def test_an_expired_apply_request_cannot_be_approved(self):
         added = self.add()
         self.proposals.request_apply(added.uid)

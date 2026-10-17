@@ -473,6 +473,283 @@ class PageOperationsCoverSheetPathTests(unittest.TestCase):
         self.assertIs(ops.conn.exit_args[-1][0], ValueError)
 
 
+class PageOperationsGuardTests(unittest.TestCase):
+    class StrictOps(_SqliteDuplicateOps):
+        logger = logging.getLogger("page-ops-guard")
+
+        def _require_write_columns(self, schema, table, columns):
+            for column in columns:
+                schema.require_column(table, column)
+
+    def ops(self, script):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.executescript(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);" + script
+        )
+        return self.StrictOps(connection), connection
+
+    def failure_of(self, call):
+        with self.assertLogs("page-ops-guard", level="ERROR") as logs:
+            self.assertIs(call(), False)
+        self.assertEqual(len(logs.records), 1)
+        return logs.records[0]
+
+    def test_a_page_scale_save_needs_the_scale_columns_and_exactly_one_page_row(self):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, ScaleFactor1 REAL);"
+            "INSERT INTO BidPages VALUES (20, 1, 0.125);"
+        )
+        record = self.failure_of(lambda: ops.save_page_scale("t.mdb", "20", 0.25, 12.0))
+        self.assertEqual(
+            record.getMessage(), "Failed to save page scale for page 20 in t.mdb"
+        )
+        self.assertRegex(str(record.exc_info[1]), "Missing BidPages.ScaleFactor2")
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, ScaleFactor1 REAL,"
+            " ScaleFactor2 REAL);"
+            "INSERT INTO BidPages VALUES (20, 1, 0.125, 12.0), (20, 1, 0.125, 12.0);"
+        )
+        record = self.failure_of(lambda: ops.save_page_scale("t.mdb", "20", 0.25, 12.0))
+        self.assertIn("duplicate", str(record.exc_info[1]).lower())
+        self.assertEqual(
+            connection.execute("SELECT ScaleFactor1 FROM BidPages").fetchall(),
+            [(0.125,), (0.125,)],
+        )
+
+    def test_overlay_saves_refuse_an_ambiguous_page_and_change_nothing(self):
+        script = (
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Width REAL, Height REAL,"
+            " ScaleFactor1 REAL, ScaleFactor2 REAL, OverlayImagePath TEXT, ImagePath TEXT,"
+            " OverlayRect TEXT);"
+            "INSERT INTO BidPages VALUES (20, 1, 10.0, 8.0, 0.125, 12.0, 'old.png', 'm.pdf',"
+            " '0,0,1,1'), (20, 1, 10.0, 8.0, 0.125, 12.0, 'old.png', 'm.pdf', '0,0,1,1');"
+        )
+        for label, call in (
+            (
+                "image",
+                lambda ops: ops.save_page_overlay_image("t.mdb", "20", "new.png"),
+            ),
+            (
+                "rect",
+                lambda ops: ops.save_page_overlay_rect(
+                    "t.mdb", "20", (0.0, 0.0, 5.0, 5.0)
+                ),
+            ),
+        ):
+            with self.subTest(save=label):
+                ops, connection = self.ops(script)
+                record = self.failure_of(lambda: call(ops))
+                self.assertIn("duplicate", str(record.exc_info[1]).lower())
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT DISTINCT OverlayImagePath, OverlayRect FROM BidPages"
+                    ).fetchall(),
+                    [("old.png", "0,0,1,1")],
+                )
+                self.assertRegex(
+                    record.getMessage(),
+                    r"^Failed to save page overlay (image|rect) for page 20 in t.mdb",
+                )
+
+    def test_a_page_scale_save_rescales_only_the_content_of_that_page(self):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, ScaleFactor1 REAL,"
+            " ScaleFactor2 REAL);"
+            "INSERT INTO BidPages VALUES (20, 1, 0.125, 12.0), (21, 1, 0.125, 12.0);"
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER,"
+            " Position BLOB);"
+            "INSERT INTO BidTakeoffs VALUES (1, 1, 20, '1;2;3;4'), (2, 1, 20, ''),"
+            " (3, 1, 21, '1;2;3;4');"
+            "CREATE TABLE BidLegends (UID INTEGER, BidPageUID INTEGER);"
+            "INSERT INTO BidLegends VALUES (9, 20);"
+        )
+        self.assertTrue(ops.save_page_scale("t.mdb", "20", 0.25, 12.0))
+        rows = connection.execute(
+            "SELECT UID, Position FROM BidTakeoffs ORDER BY UID"
+        ).fetchall()
+        self.assertEqual(
+            [(uid, parse_position_storage(position)) for uid, position in rows],
+            [(1, [0.5, 1.0, 1.5, 2.0]), (2, []), (3, [1.0, 2.0, 3.0, 4.0])],
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT UID, ScaleFactor1, ScaleFactor2 FROM BidPages ORDER BY UID"
+            ).fetchall(),
+            [(20, 0.25, 12.0), (21, 0.125, 12.0)],
+        )
+
+    def test_a_scale_change_that_keeps_the_ratio_leaves_page_content_untouched(self):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, ScaleFactor1 REAL,"
+            " ScaleFactor2 REAL);"
+            "INSERT INTO BidPages VALUES (20, 1, 0.125, 12.0);"
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER,"
+            " Position BLOB);"
+            "INSERT INTO BidTakeoffs VALUES (1, 1, 20, '1;2;3;4');"
+        )
+        self.assertTrue(ops.save_page_scale("t.mdb", "20", 0.25, 24.0))
+        self.assertEqual(
+            connection.execute("SELECT Position FROM BidTakeoffs").fetchall(),
+            [("1;2;3;4",)],
+        )
+
+    def test_overlay_rectangles_of_any_positive_size_follow_a_scale_change(self):
+        from ost_visualizer.infrastructure.mdb.components.overlay_rect import (
+            parse_overlay_rect_storage,
+            serialize_overlay_rect_storage,
+        )
+
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, ScaleFactor1 REAL,"
+            " ScaleFactor2 REAL, OverlayRect TEXT, OverlayOffsetX REAL,"
+            " OverlayOffsetY REAL);"
+            "INSERT INTO BidPages VALUES (20, 1, 0.125, 12.0, '"
+            + serialize_overlay_rect_storage((0.5, 0.5, 0.5, 0.5))
+            + "', 0.5, 0.5);"
+        )
+        self.assertTrue(ops.save_page_scale("t.mdb", "20", 0.25, 12.0))
+        rect, x, y = connection.execute(
+            "SELECT OverlayRect, OverlayOffsetX, OverlayOffsetY FROM BidPages"
+        ).fetchone()
+        for found, expected in zip(parse_overlay_rect_storage(rect), (0.25,) * 4):
+            self.assertAlmostEqual(found, expected)
+        self.assertEqual((x, y), (0.25, 0.25))
+
+    def test_image_adjustments_need_every_adjustment_column_and_one_row_per_page(self):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Rotation INTEGER,"
+            " FlipX INTEGER, FlipY INTEGER, Invert INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1, 0, 0, 0, 0);"
+        )
+        record = self.failure_of(
+            lambda: ops.save_page_image_adjustments(
+                "t.mdb", ["20"], 90, True, False, True, False
+            )
+        )
+        self.assertRegex(str(record.exc_info[1]), "Missing BidPages.Bitonal")
+        self.assertEqual(
+            connection.execute("SELECT Rotation FROM BidPages").fetchall(), [(0,)]
+        )
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Rotation INTEGER,"
+            " FlipX INTEGER, FlipY INTEGER, Invert INTEGER, Bitonal INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1, 0, 0, 0, 0, 0), (20, 1, 0, 0, 0, 0, 0);"
+        )
+        self.failure_of(
+            lambda: ops.save_page_image_adjustments(
+                "t.mdb", ["20"], 90, True, False, True, False
+            )
+        )
+        self.assertEqual(
+            connection.execute("SELECT Rotation FROM BidPages").fetchall(),
+            [(0,), (0,)],
+        )
+
+    def test_image_rotations_that_are_not_quarter_turns_are_stored_as_zero(self):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Rotation INTEGER,"
+            " FlipX INTEGER, FlipY INTEGER, Invert INTEGER, Bitonal INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1, 9, 0, 0, 0, 0);"
+        )
+        for rotation, expected in (
+            (0, 0),
+            (90, 90),
+            (180, 180),
+            (270, 270),
+            (-90, 270),
+            (450, 90),
+            (None, 0),
+            (45, 0),
+        ):
+            with self.subTest(rotation=rotation):
+                self.assertTrue(
+                    ops.save_page_image_adjustments(
+                        "t.mdb", ["20"], rotation, False, False, False, False
+                    )
+                )
+                self.assertEqual(
+                    connection.execute("SELECT Rotation FROM BidPages").fetchone(),
+                    (expected,),
+                )
+
+    def test_page_area_settings_are_required_and_the_page_must_be_unambiguous(self):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1);"
+        )
+        record = self.failure_of(lambda: ops.save_page_area("t.mdb", "20", "10"))
+        self.assertEqual(
+            str(record.exc_info[1]),
+            "This OST database does not support page area settings.",
+        )
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1), (20, 1);"
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidAreas VALUES (10, 1);"
+            "CREATE TABLE BidPageSettings (UID INTEGER, BidPageUID INTEGER,"
+            " BidAreaUID INTEGER, BidAreaSelected INTEGER);"
+        )
+        self.failure_of(lambda: ops.save_page_area("t.mdb", "20", "10"))
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM BidPageSettings").fetchone(),
+            (0,),
+        )
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1);"
+            "CREATE TABLE BidPageSettings (UID INTEGER, BidPageUID INTEGER,"
+            " BidAreaUID INTEGER);"
+        )
+        record = self.failure_of(lambda: ops.save_page_area("t.mdb", "20", ""))
+        self.assertRegex(
+            str(record.exc_info[1]), "Missing BidPageSettings.BidAreaSelected"
+        )
+
+    def test_selecting_an_area_without_a_settings_uid_column_replaces_the_selection(
+        self,
+    ):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1);"
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidAreas VALUES (10, 1), (11, 1);"
+            "CREATE TABLE BidPageSettings (BidPageUID INTEGER, BidAreaUID INTEGER,"
+            " BidAreaSelected INTEGER);"
+            "INSERT INTO BidPageSettings VALUES (20, 10, 2), (20, 99, 0);"
+        )
+        self.assertTrue(ops.save_page_area("t.mdb", "20", "11"))
+        self.assertEqual(
+            connection.execute(
+                "SELECT BidAreaUID, BidAreaSelected FROM BidPageSettings ORDER BY 1"
+            ).fetchall(),
+            [(11, 2), (99, 0)],
+        )
+
+    def test_an_area_update_reuses_the_first_selected_row_when_none_has_the_requested_mode(
+        self,
+    ):
+        ops, connection = self.ops(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidPages VALUES (20, 1);"
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidAreas VALUES (10, 1), (11, 1);"
+            "CREATE TABLE BidPageSettings (UID INTEGER, BidPageUID INTEGER,"
+            " BidAreaUID INTEGER, BidAreaSelected INTEGER);"
+            "INSERT INTO BidPageSettings VALUES (7, 20, 10, 3), (8, 20, 10, NULL),"
+            " (9, 21, 10, 2);"
+        )
+        self.assertTrue(ops.save_page_area("t.mdb", "20", "11"))
+        self.assertEqual(
+            connection.execute(
+                "SELECT UID, BidPageUID, BidAreaUID, BidAreaSelected "
+                "FROM BidPageSettings ORDER BY UID"
+            ).fetchall(),
+            [(7, 20, 11, 2), (8, 20, 10, None), (9, 21, 10, 2)],
+        )
+
+
 class PageOperationsRelationshipTests(unittest.TestCase):
     @staticmethod
     def _page_area_connection(settings_rows):

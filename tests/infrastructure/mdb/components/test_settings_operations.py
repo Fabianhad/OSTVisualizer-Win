@@ -6,6 +6,7 @@ from tests.helpers.mdb.operations import (
     _SqliteRow,
     _SqliteSchema,
 )
+import logging
 import unittest
 import sqlite3
 import os
@@ -3205,6 +3206,429 @@ class SettingsOperationsSavePayClassesTests(_SettingsOperationsPersistenceFixtur
             [(700, None), (701, 8)],
         )
         self.assertEqual(conn.execute("SELECT UID FROM PayClasses").fetchall(), [(8,)])
+
+
+class SettingsOperationsGuardTests(unittest.TestCase):
+    class StrictOps(_SqliteDuplicateOps):
+        logger = logging.getLogger("settings-ops-guard")
+
+        def _require_write_columns(self, schema, table, columns):
+            for column in columns:
+                schema.require_column(table, column)
+
+    def ops(self, script):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.executescript(script)
+        return self.StrictOps(connection), connection
+
+    def logged_failure(self, call, expected_result):
+        with self.assertLogs("settings-ops-guard", level="ERROR") as logs:
+            self.assertEqual(call(), expected_result)
+        self.assertEqual(len(logs.records), 1)
+        return str(logs.records[0].exc_info[1])
+
+    def test_master_data_saves_need_a_uid_column_in_their_table(self):
+        cases = (
+            ("JobStatuses", lambda ops: ops.save_job_statuses("x.mdb", {})),
+            ("Employees", lambda ops: ops.save_employees("x.mdb", {})),
+            ("PayClasses", lambda ops: ops.save_pay_classes("x.mdb", {})),
+            ("CdnTypes", lambda ops: ops.save_condition_types("x.mdb", {})),
+        )
+        for table, call in cases:
+            with self.subTest(table=table):
+                ops, _connection = self.ops(f"CREATE TABLE {table} (Name TEXT);")
+                message = self.logged_failure(lambda: call(ops), None)
+                self.assertRegex(message, f"Missing {table}.UID")
+
+    def test_master_data_rows_with_a_duplicated_uid_are_never_deleted(self):
+        cases = (
+            (
+                "JobStatuses",
+                "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER);"
+                "INSERT INTO Bids VALUES (1, 5);",
+                "SELECT JobStatusUID FROM Bids",
+                [(5,)],
+                lambda ops: ops.save_job_statuses("x.mdb", {"deleted_uids": ["5"]}),
+            ),
+            (
+                "PayClasses",
+                "CREATE TABLE Employees (UID INTEGER, PayClassUID INTEGER);"
+                "INSERT INTO Employees VALUES (1, 5);",
+                "SELECT PayClassUID FROM Employees",
+                [(5,)],
+                lambda ops: ops.save_pay_classes("x.mdb", {"deleted_uids": ["5"]}),
+            ),
+            (
+                "CdnTypes",
+                "",
+                "SELECT 1",
+                [(1,)],
+                lambda ops: ops.save_condition_types("x.mdb", {"deleted_uids": ["5"]}),
+            ),
+        )
+        for table, extra, probe, probe_rows, call in cases:
+            with self.subTest(table=table):
+                ops, connection = self.ops(
+                    f"CREATE TABLE {table} (UID INTEGER, Name TEXT);"
+                    f"INSERT INTO {table} VALUES (5, 'a'), (5, 'b'), (6, 'c');" + extra
+                )
+                message = self.logged_failure(lambda: call(ops), None)
+                self.assertRegex(message, "duplicate")
+                self.assertEqual(
+                    connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone(), (3,)
+                )
+                self.assertEqual(connection.execute(probe).fetchall(), probe_rows)
+
+    def test_master_data_rows_with_a_duplicated_uid_are_never_renamed(self):
+        cases = (
+            (
+                "JobStatuses",
+                lambda ops: ops.save_job_statuses(
+                    "x.mdb", {"updated": [{"uid": "5", "name": "renamed"}]}
+                ),
+            ),
+            (
+                "PayClasses",
+                lambda ops: ops.save_pay_classes(
+                    "x.mdb", {"updated": [{"uid": "5", "name": "renamed"}]}
+                ),
+            ),
+            (
+                "CdnTypes",
+                lambda ops: ops.save_condition_types(
+                    "x.mdb", {"updated": [{"uid": "5", "name": "renamed"}]}
+                ),
+            ),
+        )
+        for table, call in cases:
+            with self.subTest(table=table):
+                ops, connection = self.ops(
+                    f"CREATE TABLE {table} (UID INTEGER, Name TEXT, Locked INTEGER, Sequence INTEGER);"
+                    f"INSERT INTO {table} VALUES (5, 'a', 0, 0), (5, 'b', 0, 0);"
+                )
+                call(ops)
+                self.assertEqual(
+                    connection.execute(
+                        f"SELECT Name FROM {table} ORDER BY Name"
+                    ).fetchall(),
+                    [("a",), ("b",)],
+                )
+
+    def test_a_bid_status_change_needs_an_existing_unambiguous_status(self):
+        script = (
+            "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER);"
+            "INSERT INTO Bids VALUES (1, 2);"
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT);"
+            "INSERT INTO JobStatuses VALUES (2, 'Open'), (7, 'Won'), (7, 'Dup');"
+        )
+        ops, connection = self.ops(script)
+        self.assertTrue(ops.update_bid_job_status("x.mdb", "1", "2"))
+        self.assertTrue(ops.update_bid_job_status("x.mdb", "1", None))
+        self.assertEqual(
+            connection.execute("SELECT JobStatusUID FROM Bids").fetchall(), [(None,)]
+        )
+        message = self.logged_failure(
+            lambda: ops.update_bid_job_status("x.mdb", "1", "7"), False
+        )
+        self.assertRegex(message, "duplicate")
+        message = self.logged_failure(
+            lambda: ops.update_bid_job_status("x.mdb", "1", "99"), False
+        )
+        self.assertRegex(message, "99")
+        self.assertEqual(
+            connection.execute("SELECT JobStatusUID FROM Bids").fetchall(), [(None,)]
+        )
+
+    def test_selecting_a_page_needs_the_selection_and_page_columns(self):
+        ops, connection = self.ops(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
+            "CREATE TABLE BidSettings (BidUID INTEGER);"
+            "INSERT INTO BidSettings VALUES (1);"
+        )
+        message = self.logged_failure(
+            lambda: ops.save_bid_selected_page("x.mdb", "1", "5"), False
+        )
+        self.assertRegex(message, "Missing BidSettings.BidPageSelectedUID")
+        ops, connection = self.ops(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
+            "CREATE TABLE BidSettings (BidUID INTEGER, BidPageSelectedUID INTEGER);"
+            "INSERT INTO BidSettings VALUES (1, NULL);"
+            "CREATE TABLE BidPages (UID INTEGER);"
+            "INSERT INTO BidPages VALUES (5);"
+        )
+        message = self.logged_failure(
+            lambda: ops.save_bid_selected_page("x.mdb", "1", "5"), False
+        )
+        self.assertRegex(message, "Missing BidPages.BidUID")
+        self.assertEqual(
+            connection.execute("SELECT BidPageSelectedUID FROM BidSettings").fetchall(),
+            [(None,)],
+        )
+
+    def test_the_cover_sheet_needs_a_bid_uid_column_and_a_folder_uid_column_to_delete_folders(
+        self,
+    ):
+        ops, _connection = self.ops("CREATE TABLE Bids (JobName TEXT);")
+        message = self.logged_failure(
+            lambda: ops.save_cover_sheet("x.mdb", "1", {"job_name": "x"}), False
+        )
+        self.assertRegex(message, "Missing Bids.UID")
+        ops, connection = self.ops(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT); INSERT INTO Bids VALUES (1, 'x');"
+            "CREATE TABLE BidPageFolders (BidUID INTEGER, Name TEXT, ParentUID INTEGER);"
+            "INSERT INTO BidPageFolders VALUES (1, 'f', NULL);"
+        )
+        self.logged_failure(
+            lambda: ops.save_cover_sheet(
+                "x.mdb", "1", {"job_name": "x", "deleted_folder_uids": ["5"]}
+            ),
+            False,
+        )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM BidPageFolders").fetchone(), (1,)
+        )
+
+    def test_deleting_pages_needs_a_page_uid_column(self):
+        ops, connection = self.ops(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT); INSERT INTO Bids VALUES (1, 'x');"
+            "CREATE TABLE BidPages (BidUID INTEGER, Name TEXT);"
+            "INSERT INTO BidPages VALUES (1, 'p');"
+        )
+        self.logged_failure(lambda: ops.delete_pages("x.mdb", ["5"]), False)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM BidPages").fetchone(), (1,)
+        )
+
+    def test_every_unit_of_measure_column_is_normalised_on_its_own(self):
+        ops, connection = self.ops(
+            "CREATE TABLE Bids (UID INTEGER PRIMARY KEY, JobName TEXT, MeasureBase INTEGER);"
+            "INSERT INTO Bids VALUES (1, 'Bid', 0);"
+            "CREATE TABLE BidConditions (UID INTEGER PRIMARY KEY, BidUID INTEGER, Name TEXT,"
+            " Quantity1 INTEGER, Quantity2 INTEGER, Quantity3 INTEGER,"
+            " UOM1 INTEGER, UOM2 INTEGER, UOM3 INTEGER);"
+        )
+        rows = (
+            (
+                10,
+                1,
+                "Only second",
+                CALC_LINEAR_LENGTH,
+                CALC_LINEAR_LENGTH,
+                CALC_COUNT,
+                UOM_M,
+                UOM_LINEAR_FEET,
+                UOM_EACH,
+            ),
+            (
+                11,
+                1,
+                "Only third",
+                CALC_LINEAR_LENGTH,
+                CALC_COUNT,
+                CALC_LINEAR_LENGTH,
+                UOM_M,
+                UOM_EACH,
+                UOM_LINEAR_FEET,
+            ),
+            (
+                12,
+                1,
+                "All three",
+                CALC_LINEAR_LENGTH,
+                CALC_LINEAR_LENGTH,
+                CALC_LINEAR_LENGTH,
+                UOM_LINEAR_FEET,
+                UOM_LINEAR_FEET,
+                UOM_LINEAR_FEET,
+            ),
+            (
+                13,
+                1,
+                None,
+                CALC_COUNT,
+                CALC_COUNT,
+                CALC_COUNT,
+                UOM_EACH,
+                UOM_EACH,
+                UOM_EACH,
+            ),
+            (
+                14,
+                1,
+                "",
+                CALC_LINEAR_LENGTH,
+                CALC_COUNT,
+                CALC_COUNT,
+                UOM_LINEAR_FEET,
+                UOM_EACH,
+                UOM_EACH,
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO BidConditions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+        )
+        self.assertTrue(
+            ops.save_cover_sheet("x.mdb", "1", {"job_name": "Bid", "measure_base": 1})
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT UID, Name, UOM1, UOM2, UOM3 FROM BidConditions ORDER BY UID"
+            ).fetchall(),
+            [
+                (10, "Only second", UOM_M, UOM_M, UOM_EACH),
+                (11, "Only third", UOM_M, UOM_EACH, UOM_M),
+                (12, "All three", UOM_M, UOM_M, UOM_M),
+                (13, None, UOM_EACH, UOM_EACH, UOM_EACH),
+                (14, "", UOM_M, UOM_EACH, UOM_EACH),
+            ],
+        )
+
+
+class SettingsOperationsSparseSchemaTests(unittest.TestCase):
+    """Dependent tables that exist without the referencing column are left alone."""
+
+    def database(self, script, bare_tables=()):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.executescript(script)
+        for table in bare_tables:
+            connection.execute(f"CREATE TABLE IF NOT EXISTS [{table}] (UID INTEGER)")
+            connection.execute(f"INSERT INTO [{table}] VALUES (1)")
+        return connection
+
+    def assert_bare_tables_untouched(self, connection, tables):
+        for table in tables:
+            with self.subTest(table=table):
+                self.assertEqual(
+                    connection.execute(f"SELECT UID FROM [{table}]").fetchall(), [(1,)]
+                )
+
+    def test_deleting_pages_skips_dependents_that_lack_the_referencing_columns(self):
+        from ost_visualizer.infrastructure.mdb.components.constants import (
+            PAGE_DELETE_CHILD_TABLES,
+            TAKEOFF_REFERENCE_TABLES,
+        )
+
+        bare = sorted(
+            {
+                *PAGE_DELETE_CHILD_TABLES,
+                *TAKEOFF_REFERENCE_TABLES,
+                "BidComments",
+                "BidTakeoffs",
+                "BidPercents",
+                "AffectDPCTypGroupViews",
+                "BidTypGroupViews",
+                "BidHotLinks",
+                "BidNamedViews",
+                "BidSettings",
+            }
+        )
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);"
+            "INSERT INTO BidPages VALUES (11, 1), (21, 1);",
+            bare,
+        )
+        self.assertTrue(_SqliteDuplicateOps(connection).delete_pages("x.mdb", ["11"]))
+        self.assertEqual(
+            connection.execute("SELECT UID FROM BidPages").fetchall(), [(21,)]
+        )
+        self.assert_bare_tables_untouched(connection, bare)
+
+    def test_deleting_pages_removes_the_percentages_of_the_pages_takeoffs_only(self):
+        connection = self.database(
+            """
+            CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);
+            CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);
+            INSERT INTO BidPages VALUES (11, 1), (21, 1);
+            CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER);
+            INSERT INTO BidTakeoffs VALUES (101, 1, 11), (201, 1, 21);
+            CREATE TABLE BidPercents (UID INTEGER, BidTakeoffUID INTEGER);
+            INSERT INTO BidPercents VALUES (1, 101), (2, 201);
+            """
+        )
+        self.assertTrue(_SqliteDuplicateOps(connection).delete_pages("x.mdb", ["11"]))
+        self.assertEqual(
+            connection.execute("SELECT UID FROM BidPercents").fetchall(), [(2,)]
+        )
+        self.assertEqual(
+            connection.execute("SELECT UID FROM BidTakeoffs").fetchall(), [(201,)]
+        )
+
+    def test_deleting_areas_skips_dependents_that_lack_the_area_column(self):
+        from ost_visualizer.domain.entities.area import BidAreaChangeset
+
+        bare = [
+            "BidPageSettings",
+            "BidTakeoffs",
+            "BidTimeCards",
+            "BidTypAreaCounts",
+            "BidTakeoffTotals",
+            "BidLaborCostCodeTotals",
+            "BidTypicalGroupTotals",
+            "BidAreaTranslations",
+        ]
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, ParentUID INTEGER,"
+            " Name TEXT, Sequence INTEGER);"
+            "INSERT INTO BidAreas VALUES (5, 1, NULL, 'a', 1), (6, 1, NULL, 'b', 2);",
+            bare,
+        )
+        result = _SqliteDuplicateOps(connection).save_bid_areas(
+            "x.mdb", "1", BidAreaChangeset(new=[], updated=[], deleted_uids=["5"])
+        )
+        self.assertEqual(result, {})
+        self.assertEqual(
+            connection.execute("SELECT UID FROM BidAreas").fetchall(), [(6,)]
+        )
+        self.assert_bare_tables_untouched(connection, bare)
+
+    def test_deleting_master_data_skips_dependents_that_lack_the_reference_column(self):
+        cases = (
+            (
+                "JobStatuses",
+                ["Bids"],
+                lambda ops: ops.save_job_statuses("x.mdb", {"deleted_uids": ["5"]}),
+            ),
+            (
+                "PayClasses",
+                ["Employees", "BidEmployees"],
+                lambda ops: ops.save_pay_classes("x.mdb", {"deleted_uids": ["5"]}),
+            ),
+            (
+                "Employees",
+                [
+                    "Bids",
+                    "BidDPCSubscribers",
+                    "BidTimeCards",
+                    "BidEmployees",
+                    "ConditionSets",
+                ],
+                lambda ops: ops.save_employees("x.mdb", {"deleted_uids": ["5"]}),
+            ),
+            (
+                "CdnTypes",
+                ["BidConditions"],
+                lambda ops: ops.save_condition_types("x.mdb", {"deleted_uids": ["5"]}),
+            ),
+        )
+        for table, bare, call in cases:
+            with self.subTest(table=table):
+                connection = self.database(
+                    f"CREATE TABLE [{table}] (UID INTEGER, Name TEXT);"
+                    f"INSERT INTO [{table}] VALUES (5, 'a'), (6, 'b');",
+                    [name for name in bare if name != table],
+                )
+                result = call(_SqliteDuplicateOps(connection))
+                self.assertIsNotNone(result)
+                self.assertEqual(
+                    connection.execute(f"SELECT UID FROM [{table}]").fetchall(), [(6,)]
+                )
+                self.assert_bare_tables_untouched(
+                    connection, [name for name in bare if name != table]
+                )
 
 
 class SettingsOperationsCoverSheetPathTests(unittest.TestCase):

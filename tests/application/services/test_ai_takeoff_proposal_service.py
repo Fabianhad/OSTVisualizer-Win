@@ -113,6 +113,364 @@ class ProposalTestCase(ServiceTestCase):
         return raised.exception
 
 
+class RegionHelperTests(unittest.TestCase):
+    def test_an_opening_end_continues_a_wall_within_fifteen_degrees(self):
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        wall = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        end = (10.0, 0.0)
+
+        def toward(degrees, length=5.0):
+            radians = math.radians(degrees)
+            return (
+                end[0] + length * math.cos(radians),
+                end[1] + length * math.sin(radians),
+            )
+
+        continues = module._continues_a_line
+        self.assertTrue(continues(end, toward(0.0), wall))
+        self.assertTrue(continues(end, toward(14.0), wall))
+        self.assertTrue(continues(end, toward(-14.0), wall))
+        self.assertFalse(continues(end, toward(16.0), wall))
+        self.assertFalse(continues(end, toward(90.0), wall))
+        self.assertTrue(continues(end, (end[0] - 5.0, 0.0), wall))
+        self.assertFalse(continues(end, end, wall))
+
+    def test_an_opening_end_continues_a_diagonal_wall_only_along_its_direction(self):
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        wall = SegmentGrid([(0.0, 0.0, 10.0, 10.0)])
+        continues = module._continues_a_line
+        self.assertTrue(continues((10.0, 10.0), (20.0, 20.0), wall))
+        self.assertTrue(continues((10.0, 10.0), (14.0, 14.5), wall))
+        self.assertFalse(continues((10.0, 10.0), (20.0, 0.0), wall))
+        self.assertFalse(continues((10.0, 10.0), (0.0, 20.0), wall))
+        self.assertTrue(continues((0.0, 0.0), (-5.0, -5.0), wall))
+
+    def test_an_opening_end_must_touch_the_wall_it_continues(self):
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        wall = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        continues = module._continues_a_line
+        self.assertTrue(continues((10.0, 0.5), (20.0, 0.5), wall))
+        self.assertFalse(continues((10.0, 0.6), (20.0, 0.6), wall))
+        self.assertFalse(continues((10.0, -0.6), (20.0, -0.6), wall))
+        self.assertFalse(continues((0.0, 0.0), (5.0, 0.0), SegmentGrid([])))
+        crossing = SegmentGrid([(10.0, -5.0, 10.0, 5.0), (0.0, 0.0, 10.0, 0.0)])
+        self.assertTrue(continues((10.0, 0.0), (20.0, 0.0), crossing))
+        across = SegmentGrid([(10.0, -5.0, 10.0, 5.0)])
+        self.assertFalse(continues((10.0, 0.0), (20.0, 0.0), across))
+        dot = SegmentGrid([(3.0, 0.0, 3.0, 0.0)])
+        self.assertFalse(continues((3.0, 0.0), (9.0, 0.0), dot))
+
+    def test_snapping_prefers_the_end_nearest_the_seed_then_the_one_nearest_the_point(
+        self,
+    ):
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        snap = module._snap_to_linework
+        grid = SegmentGrid([(0.0, 0.0, 4.0, 0.0), (0.0, 1.0, 4.0, 1.0)])
+        self.assertEqual(snap((0.0, 0.4), grid, 1.0, (0.0, 50.0)), (0.0, 1.0))
+        self.assertEqual(snap((0.0, 0.4), grid, 1.0, (0.0, -50.0)), (0.0, 0.0))
+        self.assertEqual(snap((0.0, 0.4), grid, 1.0, (0.0, 0.5)), (0.0, 0.0))
+        self.assertEqual(snap((0.0, 0.6), grid, 1.0, (0.0, 0.5)), (0.0, 1.0))
+        self.assertIsNone(snap((2.0, 0.0), grid, 1.0, (0.0, 0.0)))
+        self.assertEqual(snap((1.0, 0.0), grid, 1.0, (9.0, 9.0)), (0.0, 0.0))
+        self.assertEqual(snap((0.9, 0.0), grid, 0.9, (9.0, 9.0)), (0.0, 0.0))
+        self.assertIsNone(snap((0.91, 0.0), grid, 0.9, (9.0, 9.0)))
+        self.assertIsNone(snap((0.0, 0.0), SegmentGrid([]), 1.0, (0.0, 0.0)))
+
+    def test_a_line_touches_a_box_unless_it_lies_wholly_outside_one_side(self):
+        from types import SimpleNamespace
+
+        def line(x1, y1, x2, y2):
+            return SimpleNamespace(x1=x1, y1=y1, x2=x2, y2=y2)
+
+        box = (10.0, 20.0, 30.0, 40.0)
+        touches = module._touches_box
+        self.assertTrue(touches(line(0, 25, 10, 25), box))
+        self.assertTrue(touches(line(30, 25, 50, 25), box))
+        self.assertTrue(touches(line(15, 0, 15, 20), box))
+        self.assertTrue(touches(line(15, 40, 15, 60), box))
+        self.assertTrue(touches(line(50, 25, 0, 25), box))
+        self.assertTrue(touches(line(12, 22, 14, 24), box))
+        self.assertTrue(touches(line(0, 0, 50, 50), box))
+        self.assertFalse(touches(line(0, 25, 9.9, 25), box))
+        self.assertFalse(touches(line(30.1, 25, 50, 25), box))
+        self.assertFalse(touches(line(15, 0, 15, 19.9), box))
+        self.assertFalse(touches(line(15, 40.1, 15, 60), box))
+
+    def filter_lines(self, specs, pieces=frozenset(), **filter_options):
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        lines, kinds = [], []
+        for index, (kind, extra) in enumerate(specs):
+            lines.append(
+                LineSegment(
+                    float(index),
+                    0.0,
+                    float(index) + 1.0,
+                    0.0,
+                    group="g%d" % index,
+                    **extra,
+                )
+            )
+            kinds.append(kind)
+        options = {
+            "max_gap_in": 36.0,
+            "min_width": None,
+            "exclude_dashed": False,
+            "exclude_thin_curves": False,
+            "colors": None,
+            "min_area_sf": 0.0,
+            "symbol_max_pts": 0.0,
+        }
+        options.update(filter_options)
+        symbols = {line.group: (0.0, 0.0, 1.0, 1.0) for line in lines}
+        return module._filter_linework(
+            lines, kinds, symbols, module._RegionFilters(**options), set(pieces)
+        )
+
+    def test_linework_is_filtered_in_the_documented_order_and_counted(self):
+        from ost_visualizer.domain.services.ai_linework import (
+            KIND_DASHED,
+            KIND_SYMBOL,
+            KIND_THIN,
+            KIND_WALL,
+        )
+
+        specs = [
+            (KIND_SYMBOL, {}),
+            (KIND_SYMBOL, {}),
+            (KIND_DASHED, {"dash": (3.0, 3.0)}),
+            (KIND_THIN, {"curve": True, "width": 0.1}),
+            (KIND_WALL, {"width": 0.3, "color": "#111111"}),
+            (KIND_WALL, {"width": 2.0, "color": "#222222"}),
+            (KIND_WALL, {"width": 2.0, "color": "#111111"}),
+        ]
+        kept, excluded, boxes = self.filter_lines(
+            specs,
+            exclude_dashed=True,
+            exclude_thin_curves=True,
+            min_width=1.0,
+            colors=("#111111",),
+        )
+        self.assertEqual(
+            excluded, {"dashed": 1, "thin_curve": 1, "thin": 1, "color": 1, "symbol": 2}
+        )
+        self.assertEqual(kept, [(6.0, 0.0, 7.0, 0.0)])
+        self.assertEqual(boxes, [(0.0, 0.0, 1.0, 1.0)] * 2)
+
+    def test_nothing_is_dropped_without_filters_and_unstroked_fills_ignore_the_width(
+        self,
+    ):
+        from ost_visualizer.domain.services.ai_linework import KIND_THIN, KIND_WALL
+
+        specs = [
+            (KIND_WALL, {"width": 0.1}),
+            (KIND_THIN, {"width": None, "stroked": False, "filled": True}),
+            (KIND_WALL, {"width": None}),
+        ]
+        kept, excluded, boxes = self.filter_lines(specs)
+        self.assertEqual(len(kept), 3)
+        self.assertEqual(sum(excluded.values()), 0)
+        self.assertEqual(boxes, [])
+        kept, excluded, _boxes = self.filter_lines(specs, min_width=1.0)
+        self.assertEqual((len(kept), excluded["thin"]), (1, 2))
+        kept, _excluded, _boxes = self.filter_lines(
+            [(KIND_WALL, {"width": 1.0})], min_width=1.0
+        )
+        self.assertEqual(len(kept), 1)
+
+    def test_a_suggested_minimum_width_never_drops_dashed_pieces(self):
+        from ost_visualizer.domain.services.ai_linework import KIND_DASHED
+
+        specs = [(KIND_DASHED, {"width": 0.1, "dash": (3.0, 3.0)})]
+        kept, excluded, _boxes = self.filter_lines(specs, min_width=1.0)
+        self.assertEqual((len(kept), excluded["thin"]), (0, 1))
+        kept, excluded, _boxes = self.filter_lines(
+            specs, min_width=1.0, min_width_source=module.MIN_WIDTH_SUGGESTED
+        )
+        self.assertEqual((len(kept), excluded["thin"]), (1, 0))
+
+    def test_boundary_kinds_keep_only_the_chosen_kinds_and_count_the_rest_as_kind(self):
+        from ost_visualizer.domain.services.ai_linework import (
+            KIND_DASHED,
+            KIND_SYMBOL,
+            KIND_THIN,
+            KIND_WALL,
+        )
+
+        specs = [
+            (KIND_WALL, {"width": 2.0}),
+            (KIND_THIN, {"width": 0.1}),
+            (KIND_DASHED, {"width": 0.1}),
+            (KIND_SYMBOL, {}),
+        ]
+        kept, excluded, boxes = self.filter_lines(specs, boundary_kinds=(KIND_WALL,))
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(
+            excluded,
+            {
+                "dashed": 0,
+                "thin_curve": 0,
+                "thin": 0,
+                "color": 0,
+                "symbol": 1,
+                "kind": 2,
+            },
+        )
+        self.assertEqual(len(boxes), 1)
+
+    def test_dashed_pieces_follow_the_boundary_kinds_and_the_skipped_analysis(self):
+        from ost_visualizer.domain.services.ai_linework import (
+            KIND_DASHED,
+            KIND_THIN,
+            KIND_WALL,
+            LineSegment,
+        )
+
+        lines = [
+            LineSegment(0.0, 0.0, 1.0, 0.0, width=0.1),
+            LineSegment(1.0, 0.0, 2.0, 0.0, width=0.1),
+        ]
+        kinds = [KIND_THIN, KIND_THIN]
+        filters = module._RegionFilters(
+            36.0,
+            None,
+            False,
+            False,
+            None,
+            0.0,
+            0.0,
+            boundary_kinds=(KIND_DASHED, KIND_WALL),
+        )
+        kept, excluded, _boxes = module._filter_linework(lines, kinds, {}, filters, {0})
+        self.assertEqual((kept, excluded["kind"]), ([(0.0, 0.0, 1.0, 0.0)], 1))
+        kept, excluded, _boxes = module._filter_linework(
+            lines, kinds, {}, filters, {0}, True
+        )
+        self.assertEqual((kept, excluded["kind"]), ([], 2))
+
+    def test_a_colored_boundary_keeps_only_bridges_between_kept_pieces(self):
+        from ost_visualizer.domain.services.ai_dashed_outline import DashedBoundary
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        lines = [
+            LineSegment(0.0, 0.0, 1.0, 0.0, color="#111111"),
+            LineSegment(2.0, 0.0, 3.0, 0.0, color="#111111"),
+            LineSegment(4.0, 0.0, 5.0, 0.0, color="#999999"),
+        ]
+        boundary = DashedBoundary(
+            {0: 1.0, 1: 1.0, 2: 1.0},
+            ((1.0, 0.0, 2.0, 0.0), (3.0, 0.0, 4.0, 0.0), (5.0, 0.0, 9.0, 0.0)),
+        )
+        self.assertIs(module._colored(lines, boundary, None), boundary)
+        colored = module._colored(lines, boundary, ("#111111",))
+        self.assertEqual(colored.pieces, {0: 1.0, 1: 1.0})
+        self.assertEqual(colored.bridges, ((1.0, 0.0, 2.0, 0.0),))
+
+    def test_a_dashed_outline_is_ignored_only_when_it_matches_within_half_a_percent(
+        self,
+    ):
+        from types import SimpleNamespace
+
+        def square(side):
+            return [(0.0, 0.0), (side, 0.0), (side, side), (0.0, side)]
+
+        outline = SimpleNamespace(outer=square(100.0))
+        ignored = module._ignored_outline_sf
+        self.assertIsNone(ignored(None, square(10.0), 1.0))
+        self.assertIsNone(ignored(outline, square(100.0), 1.0))
+        self.assertIsNone(ignored(outline, square(100.2), 1.0))
+        self.assertAlmostEqual(ignored(outline, square(101.0), 1.0), 10000.0 / 144.0)
+        self.assertAlmostEqual(ignored(outline, square(90.0), 2.0), 10000.0 * 4 / 144.0)
+
+    def test_a_dashed_outline_is_found_around_the_seed_only(self):
+        from ost_visualizer.domain.services.ai_dashed_outline import DashedBoundary
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        sides = (
+            (0.0, 0.0, 40.0, 0.0),
+            (40.0, 0.0, 40.0, 40.0),
+            (40.0, 40.0, 0.0, 40.0),
+            (0.0, 40.0, 0.0, 0.0),
+        )
+        dashes = [LineSegment(*side, dash=(3.0, 3.0)) for side in sides]
+        boundary = DashedBoundary({0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0}, ())
+        outline = module._dashed_outline(dashes, boundary, (20.0, 20.0))
+        self.assertIsNotNone(outline)
+        self.assertAlmostEqual(abs(planar_module.ring_area(outline.outer)), 1600.0)
+        self.assertIsNone(module._dashed_outline(dashes, boundary, (60.0, 20.0)))
+        self.assertIsNone(module._dashed_outline(dashes, boundary, (40.0, 20.0)))
+        self.assertIsNone(module._dashed_outline(dashes, boundary, (20.0, 0.0)))
+
+
+class GapMatchingTests(unittest.TestCase):
+    @staticmethod
+    def gap(p1, p2):
+        from ost_visualizer.domain.services.ai_planar_regions import RegionGap
+
+        return RegionGap(p1, p2, math.dist(p1, p2))
+
+    def test_a_candidate_matches_a_gap_when_both_ends_are_within_reach_in_either_order(
+        self,
+    ):
+        gap = self.gap((0.0, 0.0), (10.0, 0.0))
+        same = module._same_gap
+        self.assertTrue(same(gap, (0.0, 0.0, 10.0, 0.0), 0.5))
+        self.assertTrue(same(gap, (10.0, 0.0, 0.0, 0.0), 0.5))
+        self.assertTrue(same(gap, (0.5, 0.0, 10.0, 0.5), 0.5))
+        self.assertTrue(same(gap, (10.0, 0.5, 0.5, 0.0), 0.5))
+        self.assertFalse(same(gap, (0.6, 0.0, 10.0, 0.0), 0.5))
+        self.assertFalse(same(gap, (0.0, 0.0, 10.6, 0.0), 0.5))
+        self.assertFalse(same(gap, (10.6, 0.0, 0.0, 0.0), 0.5))
+        self.assertFalse(same(gap, (10.0, 0.0, 0.6, 0.0), 0.5))
+        self.assertFalse(same(gap, (0.0, 0.0, 0.0, 0.0), 0.5))
+        self.assertFalse(same(gap, (10.0, 0.0, 10.0, 0.0), 0.5))
+        self.assertFalse(same(gap, (0.0, 5.0, 10.0, 5.0), 0.5))
+
+    def test_a_gap_key_ignores_the_order_of_its_ends(self):
+        forward = self.gap((0.0, 0.0), (10.0, 0.0))
+        backward = self.gap((10.0, 0.0), (0.0, 0.0))
+        self.assertEqual(module._gap_key(forward), ((0.0, 0.0), (10.0, 0.0)))
+        self.assertEqual(module._gap_key(forward), module._gap_key(backward))
+
+    def test_the_area_beyond_a_gap_sums_the_regions_joined_by_shared_gaps(self):
+        from ost_visualizer.domain.services.ai_planar_regions import PlanarRegion
+
+        def region(area, *gaps):
+            return PlanarRegion([], (), area, tuple(gaps))
+
+        door = self.gap((0.0, 0.0), (1.0, 0.0))
+        hall = self.gap((5.0, 0.0), (6.0, 0.0))
+        window = self.gap((9.0, 0.0), (9.0, 1.0))
+        face = region(100.0, door, window)
+        room = region(30.0, door, hall)
+        corridor = region(50.0, hall)
+        closet = region(7.0, window)
+        beyond = module._areas_beyond([face, room, corridor, closet], face)
+        self.assertEqual(
+            beyond,
+            {
+                module._gap_key(door): 80.0,
+                module._gap_key(hall): 80.0,
+                module._gap_key(window): 7.0,
+            },
+        )
+        self.assertEqual(module._areas_beyond([face], face), {})
+        lone = region(12.0, door)
+        self.assertEqual(
+            module._areas_beyond([face, lone], face), {module._gap_key(door): 12.0}
+        )
+        two_sided = region(12.0, door)
+        other_side = region(40.0, door)
+        self.assertEqual(
+            module._areas_beyond([face, two_sided, other_side], face),
+            {module._gap_key(door): 52.0},
+        )
+
+
 class ScaleProposalTests(ProposalTestCase):
     def test_a_measured_distance_matching_a_preset_proposes_it(self):
         result = self.service_m1b.propose_scale(
@@ -179,6 +537,59 @@ class ScaleProposalTests(ProposalTestCase):
         self.assertAlmostEqual(check["error_pct"], 20.0)
         self.assertIn("dimension", data["assumptions"][0]["reason"]["value"])
         self.assertEqual(data["assumptions"][0]["impact"], IMPACT_HIGH)
+
+    def dimension_check(
+        self, y, text="24'-0\"", first=(100, 100), second=(532, 100), x=300.0, **options
+    ):
+        self.setUp()
+        self.dimension_text(text, x=x, y=y)
+        data = self.service_m1b.propose_scale(
+            "p1", list(first), list(second), preset='1/4" = 1\' 0"', **options
+        )["data"]
+        return data
+
+    def test_a_dimension_counts_when_within_a_quarter_of_the_measured_distance(self):
+        for y, found in (
+            (204.0, True),
+            (204.01, False),
+            (-12.0, True),
+            (-12.01, False),
+        ):
+            with self.subTest(y=y):
+                data = self.dimension_check(y)
+                self.assertEqual(data["scale"]["dimension_check"] is not None, found)
+
+    def test_a_short_measurement_still_looks_at_dimensions_within_thirty_six_points(
+        self,
+    ):
+        for y, found in ((60.0, True), (59.9, False), (132.0, True), (132.1, False)):
+            with self.subTest(y=y):
+                data = self.dimension_check(y, second=(180, 100), x=105.0)
+                self.assertEqual(data["scale"]["dimension_check"] is not None, found)
+
+    def test_a_dimension_two_percent_off_is_reported_and_quoted_in_inches(self):
+        data = self.dimension_check(90.0, text="24'-6\"")
+        check = data["scale"]["dimension_check"]
+        self.assertEqual((check["real_in"], check["agrees"]), (294.0, False))
+        self.assertAlmostEqual(check["error_pct"], 2.0408, places=3)
+        self.assertEqual(
+            data["assumptions"][0]["reason"]["value"],
+            "Scale proposed by the AI from a measured distance. A dimension near the "
+            "measured points reads 294 in, but this scale gives 288 in (2.0% off).",
+        )
+        near = self.dimension_check(90.0, text="24'-5 1/2\"")
+        self.assertTrue(near["scale"]["dimension_check"]["agrees"])
+        self.assertNotIn("dimension", near["assumptions"][0]["reason"]["value"])
+
+    def test_the_stated_reason_leads_the_dimension_warning(self):
+        data = self.dimension_check(
+            90.0, text="30'-0\"", reason="Read from the title block"
+        )
+        self.assertTrue(
+            data["assumptions"][0]["reason"]["value"].startswith(
+                "Read from the title block A dimension near"
+            )
+        )
 
     def test_the_nearest_dimension_is_used(self):
         self.pdf.runs = [
@@ -2782,6 +3193,28 @@ class RegionSearchBudgetTests(ProposalTestCase):
         self.assertGreaterEqual(len(deadlines), 3)
         self.assertNotIn(None, deadlines)
         self.assertEqual(len(set(deadlines)), 1)
+
+    def test_a_search_that_runs_out_of_time_returns_no_regions_and_a_matching_page_size(
+        self,
+    ):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+
+        def expired(*_args, **_kwargs):
+            raise RegionSearchTimeout("late")
+
+        with mock.patch.object(module, "_planar", expired):
+            seeded = self.find(seed_pts=[150, 150])
+            listed = self.find(limit=7)
+        for result in (seeded, listed):
+            data = result["data"]
+            self.assertEqual(data["region_search"], "skipped_time_budget")
+            self.assertEqual((data["regions"], data["total_count"]), ([], 0))
+            self.assertEqual(result["status"], "empty")
+            self.assertIsNone(result["meta"].get("next_cursor"))
+        self.assertEqual(seeded["meta"]["limit"], 1)
+        self.assertEqual(listed["meta"]["limit"], 7)
+        self.assertEqual(seeded["meta"]["returned_count"], 0)
+        self.assertEqual(seeded["meta"]["total_count"], 0)
 
     def test_an_expired_deadline_skips_the_raster_fill(self):
         self.sealed_page()

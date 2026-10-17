@@ -156,6 +156,39 @@ class LicenseApiTransportTests(unittest.TestCase):
             self.assertEqual(self.client.validate("LIC", None), (False, None))
         self.sleep.assert_not_called()
 
+    def test_status_500_is_the_first_server_error_and_499_the_last_client_error(self):
+        def failing(code):
+            self.urlopen.reset_mock()
+            self.urlopen.side_effect = urllib.error.HTTPError(
+                "url", code, "status", {}, io.BytesIO(b'{"error": "body"}')
+            )
+
+        for code in (400, 404, 499):
+            with self.subTest(code=code):
+                failing(code)
+                with self.assertNoLogs(self.client.logger, level="WARNING"):
+                    result = self.client.validate("LIC", None)
+                self.assertEqual(result, (False, {"error": "body"}))
+        for code in (500, 502, 599):
+            with self.subTest(code=code):
+                failing(code)
+                with self.assertLogs(self.client.logger, level="WARNING") as logs:
+                    result = self.client.validate("LIC", None)
+                self.assertEqual(result, (False, None))
+                self.assertIn(str(code), logs.output[0])
+
+    def test_http_errors_are_answered_by_the_server_and_never_retried(self):
+        for code in (403, 500):
+            with self.subTest(code=code):
+                self.urlopen.reset_mock()
+                self.sleep.reset_mock()
+                self.urlopen.side_effect = urllib.error.HTTPError(
+                    "url", code, "status", {}, io.BytesIO(b"{}")
+                )
+                self.client.validate("LIC", None)
+                self.assertEqual(self.urlopen.call_count, 1)
+                self.sleep.assert_not_called()
+
     def test_transient_network_failure_is_retried_once(self):
         self.urlopen.side_effect = [
             urllib.error.URLError("offline"),

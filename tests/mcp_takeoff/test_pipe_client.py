@@ -548,6 +548,195 @@ class RealPipeTests(unittest.TestCase):
         self.assertEqual(self.call()["status"], "app_not_running")
 
 
+class FakeClock:
+    def __init__(self, readings=(), step=0.0):
+        self.readings = list(readings)
+        self.now = 0.0
+        self.step = step
+        self.sleeps = []
+
+    def monotonic(self):
+        if self.readings:
+            self.now = self.readings.pop(0)
+            return self.now
+        value = self.now
+        self.now += self.step
+        return value
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class ScriptedKernel32:
+    def __init__(self, waits=(), opens=(), writes=(), peeks=()):
+        self.waits = list(waits)
+        self.opens = list(opens)
+        self.writes = list(writes)
+        self.peeks = list(peeks)
+        self.wait_calls = []
+        self.open_calls = []
+        self.write_calls = []
+        self.peek_calls = 0
+
+    def WaitNamedPipeW(self, path, timeout_ms):
+        import ctypes
+
+        self.wait_calls.append((path, timeout_ms))
+        ok, error = self.waits.pop(0) if self.waits else (True, 0)
+        ctypes.set_last_error(error)
+        return ok
+
+    def CreateFileW(self, *arguments):
+        import ctypes
+
+        self.open_calls.append(arguments)
+        handle, error = self.opens.pop(0)
+        ctypes.set_last_error(error)
+        return handle
+
+    def WriteFile(self, handle, buffer, length, written, overlapped):
+        import ctypes
+
+        ok, count, error = self.writes.pop(0)
+        self.write_calls.append((handle, buffer.raw[:length], length, overlapped))
+        written._obj.value = count
+        ctypes.set_last_error(error)
+        return ok
+
+    def PeekNamedPipe(self, handle, buffer, size, read, available, left):
+        self.peek_calls += 1
+        ok, count = self.peeks.pop(0) if self.peeks else (True, 0)
+        available._obj.value = count
+        return ok
+
+
+class Win32WrapperTests(unittest.TestCase):
+    PIPE = "\\\\.\\pipe\\ost"
+
+    def client(self, busy_retry_s=0.5):
+        return TakeoffPipeClient(
+            Path("unused.token"), wait_timeout_ms=25, busy_retry_s=busy_retry_s
+        )
+
+    def test_win32_constants_match_the_platform_definitions(self):
+        import ctypes
+        import win32con
+        import winerror
+
+        expected = {
+            "_GENERIC_READ": win32con.GENERIC_READ & 0xFFFFFFFF,
+            "_GENERIC_WRITE": win32con.GENERIC_WRITE & 0xFFFFFFFF,
+            "_OPEN_EXISTING": win32con.OPEN_EXISTING,
+            "_FILE_ATTRIBUTE_NORMAL": win32con.FILE_ATTRIBUTE_NORMAL,
+            "_ERROR_BROKEN_PIPE": winerror.ERROR_BROKEN_PIPE,
+            "_ERROR_SEM_TIMEOUT": winerror.ERROR_SEM_TIMEOUT,
+            "_ERROR_PIPE_BUSY": winerror.ERROR_PIPE_BUSY,
+            "_ERROR_MORE_DATA": winerror.ERROR_MORE_DATA,
+            "_INVALID_HANDLE_VALUE": ctypes.c_void_p(-1).value,
+        }
+        for name, value in expected.items():
+            with self.subTest(constant=name):
+                self.assertEqual(getattr(pipe_client, name), value)
+
+    def test_the_pipe_is_opened_for_read_write_without_sharing(self):
+        import win32con
+
+        kernel32 = ScriptedKernel32(opens=[(77, 0)])
+        handle = self.client()._open(kernel32, self.PIPE)
+        self.assertEqual(handle, 77)
+        self.assertEqual(
+            kernel32.open_calls,
+            [
+                (
+                    self.PIPE,
+                    (win32con.GENERIC_READ | win32con.GENERIC_WRITE) & 0xFFFFFFFF,
+                    0,
+                    None,
+                    win32con.OPEN_EXISTING,
+                    win32con.FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+            ],
+        )
+        self.assertEqual(kernel32.wait_calls, [(self.PIPE, 25)])
+
+    def test_the_busy_window_ends_exactly_at_the_deadline(self):
+        kernel32 = ScriptedKernel32(waits=[(False, 121), (False, 121)])
+        clock = FakeClock(readings=[0.0, 0.5, 0.6])
+        with patch.object(pipe_client, "time", clock):
+            with self.assertRaises(pipe_client.PipeBusy):
+                self.client(0.5)._open(kernel32, self.PIPE)
+        self.assertEqual(len(kernel32.wait_calls), 1)
+
+    def test_a_busy_pipe_is_waited_for_again_before_the_deadline(self):
+        kernel32 = ScriptedKernel32(waits=[(False, 121), (True, 0)], opens=[(41, 0)])
+        clock = FakeClock(readings=[0.0, 0.4])
+        with patch.object(pipe_client, "time", clock):
+            handle = self.client(0.5)._open(kernel32, self.PIPE)
+        self.assertEqual(handle, 41)
+        self.assertEqual(len(kernel32.wait_calls), 2)
+
+    def test_an_unexpected_wait_error_is_not_retried(self):
+        kernel32 = ScriptedKernel32(waits=[(False, 2)])
+        with self.assertRaises(OSError) as raised:
+            self.client()._open(kernel32, self.PIPE)
+        self.assertEqual(raised.exception.errno, 2)
+        self.assertEqual(len(kernel32.wait_calls), 1)
+
+    def test_a_complete_write_sends_the_payload_once(self):
+        kernel32 = ScriptedKernel32(writes=[(True, 4, 0)])
+        pipe_client._write_all(kernel32, 9, b"abc\n")
+        self.assertEqual(kernel32.write_calls, [(9, b"abc\n", 4, None)])
+
+    def test_a_short_or_failed_write_is_an_error(self):
+        cases = {
+            "short write reported as success": (True, 3, 109),
+            "failed write": (False, 4, 109),
+            "failed short write": (False, 0, 109),
+        }
+        for label, result in cases.items():
+            with self.subTest(label=label):
+                kernel32 = ScriptedKernel32(writes=[result])
+                with self.assertRaises(OSError) as raised:
+                    pipe_client._write_all(kernel32, 9, b"abc\n")
+                self.assertEqual(raised.exception.errno, result[2])
+
+    def test_waiting_for_data_polls_at_the_interval_instead_of_spinning(self):
+        kernel32 = ScriptedKernel32(peeks=[(True, 0)] * 4 + [(True, 7)])
+        clock = FakeClock(step=0.001)
+        with patch.object(pipe_client, "time", clock):
+            pipe_client._wait_for_data(kernel32, 1, deadline=10.0)
+        self.assertEqual(kernel32.peek_calls, 5)
+        self.assertEqual(clock.sleeps, [pipe_client._POLL_INTERVAL_SECONDS] * 4)
+
+    def test_waiting_for_data_checks_the_pipe_only_a_few_times_per_second(self):
+        kernel32 = ScriptedKernel32()
+        clock = FakeClock(step=0.001)
+        with patch.object(pipe_client, "time", clock):
+            with self.assertRaises(pipe_client.PipeReadTimeout):
+                pipe_client._wait_for_data(kernel32, 1, deadline=0.1)
+        self.assertLessEqual(kernel32.peek_calls, 12)
+        self.assertGreaterEqual(kernel32.peek_calls, 5)
+
+    def test_the_read_deadline_is_inclusive_and_checked_before_sleeping(self):
+        kernel32 = ScriptedKernel32()
+        clock = FakeClock(readings=[5.0, 5.2])
+        with patch.object(pipe_client, "time", clock):
+            with self.assertRaises(pipe_client.PipeReadTimeout):
+                pipe_client._wait_for_data(kernel32, 1, deadline=5.0)
+        self.assertEqual((kernel32.peek_calls, clock.sleeps), (1, []))
+
+    def test_data_or_a_broken_pipe_ends_the_wait_without_sleeping(self):
+        for label, peeks in {"data": [(True, 3)], "broken": [(False, 0)]}.items():
+            with self.subTest(label=label):
+                kernel32 = ScriptedKernel32(peeks=peeks)
+                clock = FakeClock(step=0.001)
+                with patch.object(pipe_client, "time", clock):
+                    pipe_client._wait_for_data(kernel32, 1, deadline=10.0)
+                self.assertEqual((kernel32.peek_calls, clock.sleeps), (1, []))
+
+
 class ReadSessionTokenTests(unittest.TestCase):
     def test_reads_and_strips_the_token(self):
         with tempfile.TemporaryDirectory() as directory:

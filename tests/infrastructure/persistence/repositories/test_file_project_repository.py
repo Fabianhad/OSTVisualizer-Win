@@ -1,7 +1,10 @@
+import os
+import tempfile
 import threading
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest.mock import patch
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.file_results import FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
@@ -505,6 +508,178 @@ class MdbFileParserTests(unittest.TestCase):
             unknown_path.error_message, "File not found in loaded files: unknown.mdb"
         )
         self.assertEqual(parser.refreshed, [])
+
+
+class RepositoryDetailTests(unittest.TestCase):
+    class SuccessfulParser(FakeLifecycleParser):
+        def __init__(self, events=None):
+            super().__init__()
+            self.events = events if events is not None else []
+
+        def refresh_connection(self, file_path):
+            self.events.append("refresh")
+            super().refresh_connection(file_path)
+
+        def close_connection(self, file_path=None):
+            self.events.append("close")
+            super().close_connection(file_path)
+
+        def parse(self, file_path):
+            self.events.append("parse")
+            return FileLoadResult(
+                success=True,
+                parsed_hierarchy=HierarchyFileEntry(file_path=file_path),
+            )
+
+    def test_bid_load_requires_a_file_path_and_says_which_bid(self):
+        repository = FileProjectRepository(FakeLifecycleParser())
+        for missing in (None, ""):
+            with self.subTest(file_path=missing):
+                with self.assertLogs(repository.logger, level="ERROR") as logs:
+                    result = repository.load_bid("bid-9", missing)
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    ["file_path is required for load_bid (bid_uid=bid-9)"],
+                )
+                self.assertEqual(result.bid_pages, {})
+                self.assertEqual(result.bid_takeoffs, [])
+
+    def test_prepare_bid_load_reads_loaded_files_only_and_changes_no_state(self):
+        calls = []
+        parser = FakeLifecycleParser()
+        data = file_project_repository.BidLoadResult()
+        parser.load_bid_data = lambda path, uid: calls.append((path, uid)) or data
+        repository = FileProjectRepository(parser)
+        repository.register_loaded_hierarchy(HierarchyFileEntry(file_path="a.mdb"), {})
+        repository.register_loaded_hierarchy(HierarchyFileEntry(file_path="b.mdb"), {})
+        repository._active_file_path = "b.mdb"
+        with self.assertLogs(repository.logger, level="WARNING") as logs:
+            unloaded = repository.prepare_bid_load("bid-1", "missing.mdb")
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            ["File not loaded: missing.mdb (bid_uid=bid-1)"],
+        )
+        self.assertIsInstance(unloaded, file_project_repository.BidLoadResult)
+        self.assertIsNot(unloaded, data)
+        self.assertEqual(unloaded.bid_pages, {})
+        self.assertEqual(calls, [])
+        self.assertIs(repository.prepare_bid_load("bid-2", "a.mdb"), data)
+        self.assertEqual(calls, [("a.mdb", "bid-2")])
+        self.assertEqual(repository.active_file_path, "b.mdb")
+
+    def test_reload_reports_each_missing_path_with_its_own_log(self):
+        repository = FileProjectRepository(FakeLifecycleParser())
+        with self.assertLogs(repository.logger, level="ERROR") as logs:
+            repository.reload_database()
+            repository.reload_database("unknown.mdb")
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "file_path is required for reload_database",
+                "File not found in loaded files: unknown.mdb",
+            ],
+        )
+
+    def test_position_caches_are_cleared_between_refresh_and_reparse(self):
+        events = []
+        parser = self.SuccessfulParser(events)
+        repository = FileProjectRepository(parser)
+        repository.register_loaded_hierarchy(HierarchyFileEntry(file_path="a.mdb"), {})
+        with patch.object(
+            file_project_repository,
+            "_clear_position_caches",
+            lambda: events.append("clear"),
+        ):
+            self.assertTrue(repository.reload_database("a.mdb").success)
+            self.assertEqual(events, ["refresh", "clear", "parse"])
+            events.clear()
+            self.assertTrue(repository.unload_file("a.mdb"))
+            self.assertEqual(events, ["clear", "close"])
+            events.clear()
+            self.assertFalse(repository.unload_file("a.mdb"))
+            self.assertEqual(events, [])
+
+    def test_creation_time_orders_only_existing_mdb_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            existing_mdb = os.path.join(folder, "Plans.MDB")
+            other_file = os.path.join(folder, "plans.sqlite")
+            for path in (existing_mdb, other_file):
+                with open(path, "wb") as handle:
+                    handle.write(b"x")
+            cases = {
+                "existing mdb with upper-case suffix": (
+                    existing_mdb,
+                    os.path.getctime(existing_mdb),
+                ),
+                "existing file that is not an mdb": (other_file, 123.5),
+                "mdb that does not exist": (os.path.join(folder, "gone.mdb"), 123.5),
+            }
+            for label, (path, expected) in cases.items():
+                with self.subTest(case=label):
+                    repository = FileProjectRepository(self.SuccessfulParser())
+                    with patch.object(
+                        file_project_repository.time, "time", lambda: 123.5
+                    ):
+                        self.assertTrue(repository.load_file(path).success)
+                    self.assertEqual(
+                        repository._loaded_files[path].created_at, expected
+                    )
+
+    def test_display_names_prefer_the_registry_then_the_database_then_the_file(self):
+        class Registry:
+            def __init__(self, display_name):
+                self.display_name = display_name
+
+            def resolve(self, _path):
+                if self.display_name is None:
+                    return None
+                return SimpleNamespace(display_name=self.display_name)
+
+        class FakeHierarchy:
+            def set(self, data):
+                self.data = data
+
+        def display_name(entry, registry):
+            repository = FileProjectRepository.__new__(FileProjectRepository)
+            repository._current_hierarchy = FakeHierarchy()
+            repository._descriptor_registry = registry
+            repository._loaded_files = {
+                entry.file_path: _LoadedFileCache(
+                    file_path=entry.file_path, created_at=1.0, parsed_hierarchy=entry
+                )
+            }
+            FileProjectRepository._rebuild_merged_hierarchy(repository)
+            return repository._current_hierarchy.data.loaded_files[0].display_name
+
+        path = os.path.join("C:\\", "plans", "Level 1.mdb")
+        named = HierarchyFileEntry(file_path=path, database_name="Tower Bid")
+        self.assertEqual(display_name(named, None), "Tower Bid")
+        self.assertEqual(
+            display_name(
+                HierarchyFileEntry(file_path=path, database_name="Tower Bid"),
+                Registry("Registered"),
+            ),
+            "Registered",
+        )
+        self.assertEqual(
+            display_name(
+                HierarchyFileEntry(file_path=path, database_name="Tower Bid"),
+                Registry(None),
+            ),
+            "Tower Bid",
+        )
+        self.assertEqual(
+            display_name(HierarchyFileEntry(file_path=path), None), "Level 1.mdb"
+        )
+        self.assertEqual(
+            display_name(
+                HierarchyFileEntry(
+                    file_path=path, database_name="Tower Bid", display_name="Kept"
+                ),
+                Registry("Registered"),
+            ),
+            "Kept",
+        )
 
 
 class HierarchyImportOrderTests(unittest.TestCase):

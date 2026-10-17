@@ -261,6 +261,128 @@ class AccessMaintenanceOwnershipTests(unittest.TestCase):
             self.assertEqual(list(Path(folder).iterdir()), [source])
             self.assertFalse(manager._maintenance_paths)
 
+    def test_table_counts_opens_read_only_and_closes_every_recordset(self):
+        def table(name, attributes=0):
+            return Mock(Name=name, Attributes=attributes)
+
+        def engine_for(tables, broken=()):
+            recordsets = []
+            database = Mock()
+            database.TableDefs = tables
+
+            def open_recordset(sql, kind):
+                rows = Mock()
+                rows.Fields.return_value.Value = (
+                    "not a number" if any(name in sql for name in broken) else 7
+                )
+                recordsets.append((sql, kind, rows))
+                return rows
+
+            database.OpenRecordset.side_effect = open_recordset
+            engine = Mock()
+            engine.OpenDatabase.return_value = database
+            return engine, database, recordsets
+
+        tables = [
+            table("Data"),
+            table("Attached", 0x40000000),
+            table("Odbc", 0x20000000),
+            table("Flagged", 0x1),
+        ]
+        engine, database, recordsets = engine_for(tables)
+        self.assertEqual(
+            _table_counts(engine, Path("db.mdb")),
+            {"Data": 7, "Attached": None, "Odbc": None, "Flagged": 7},
+        )
+        engine.OpenDatabase.assert_called_once_with("db.mdb", True, True)
+        self.assertEqual(
+            [(sql, kind) for sql, kind, _rows in recordsets],
+            [
+                ("SELECT COUNT(*) FROM [Data]", 4),
+                ("SELECT COUNT(*) FROM [Flagged]", 4),
+            ],
+        )
+        for _sql, _kind, rows in recordsets:
+            rows.Fields.assert_called_once_with(0)
+            rows.Close.assert_called_once_with()
+        database.Close.assert_called_once_with()
+        engine, database, recordsets = engine_for(
+            tables + [table("Broken")], broken=("Broken",)
+        )
+        with self.assertRaises(ValueError):
+            _table_counts(engine, Path("db.mdb"))
+        self.assertEqual(len(recordsets), 3)
+        for _sql, _kind, rows in recordsets:
+            rows.Close.assert_called_once_with()
+        database.Close.assert_called_once_with()
+
+    def test_prepare_pairs_com_initialisation_and_releases_the_lease_on_failure(self):
+        module = "ost_visualizer.infrastructure.mdb.database_maintenance"
+        for fails in (False, True):
+            with self.subTest(
+                build_fails=fails
+            ), tempfile.TemporaryDirectory() as folder:
+                source = Path(folder) / "db.mdb"
+                source.write_bytes(b"original")
+                manager = MdbConnectionManager()
+                backend = MdbDatabaseMaintenance(manager)
+                events = []
+                com = Mock()
+                com.CoInitialize.side_effect = lambda: events.append("init")
+                com.CoUninitialize.side_effect = lambda: events.append("uninit")
+
+                def build(_prepared, fails=fails):
+                    events.append("build")
+                    if fails:
+                        raise RuntimeError("build failed")
+
+                target = backend.capture_target(str(source))
+                lease = target._lease
+                with patch(f"{module}.pythoncom", com), patch(
+                    f"{module}._PreparedMdbMaintenance.build", build
+                ):
+                    if fails:
+                        with self.assertRaisesRegex(RuntimeError, "build failed"):
+                            backend.prepare(str(source), target)
+                        self.assertFalse(target.active)
+                    else:
+                        prepared = backend.prepare(str(source), target)
+                        self.assertTrue(target.active)
+                        prepared.close()
+                self.assertEqual(events, ["init", "build", "uninit"])
+                self.assertFalse(target.active)
+                self.assertFalse(manager._maintenance_paths)
+                self.assertIsNotNone(lease)
+
+    def test_capture_releases_its_lease_when_the_file_changes_after_it_is_taken(self):
+        module = "ost_visualizer.infrastructure.mdb.database_maintenance"
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "db.mdb"
+            source.write_bytes(b"original")
+            manager = MdbConnectionManager()
+            readings = iter([(1, 10, 8, 1000), (1, 11, 8, 1000)])
+            error = None
+            with patch(f"{module}._signature", lambda _path: next(readings)):
+                try:
+                    MdbDatabaseMaintenance(manager).capture_target(str(source))
+                except RuntimeError as exc:
+                    error = exc
+            self.assertIn("selected database changed", str(error))
+            self.assertFalse(manager._maintenance_paths)
+
+    def test_releasing_a_target_exits_its_lease_explicitly(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "db.mdb"
+            source.write_bytes(b"original")
+            manager = MdbConnectionManager()
+            backend = MdbDatabaseMaintenance(manager)
+            target = backend.capture_target(str(source))
+            lease = target._lease
+            backend.release_target(str(source), target)
+            self.assertFalse(target.active)
+            self.assertFalse(manager._maintenance_paths)
+            self.assertIsNotNone(lease)
+
     def test_table_counts_skips_system_tables_and_rejects_compact_errors(self):
         def table(name, attributes=0):
             return Mock(Name=name, Attributes=attributes)

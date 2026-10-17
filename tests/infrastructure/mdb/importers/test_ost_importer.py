@@ -1066,8 +1066,14 @@ class OstImporterRelationshipTests(unittest.TestCase):
                 with self.assertLogs(
                     "ost_visualizer.infrastructure.mdb.importers.ost_importer",
                     level="WARNING",
-                ):
+                ) as logs:
                     result = OstImporter(None)._validated_raw_data(str(path))
+                self.assertEqual(len(logs.records), 1)
+                self.assertRegex(
+                    logs.records[0].getMessage(),
+                    rf"\ADiscarded 2 stale Named View\(s\) and 1 dependent Hot Link\(s\) "
+                    rf"during OST import for Bid {bid_uid}; absent Page references: ",
+                )
                 self.assertEqual(result.bid_tables["BidNamedViews"], [valid])
                 self.assertEqual(
                     [row["UID"] for row in result.bid_tables["BidHotLinks"]], ["40"]
@@ -1292,6 +1298,47 @@ class OstImporterRelationshipTests(unittest.TestCase):
             unmapped,
             {"JobStatusUID": "NULL", "PayClassUID": "NULL", "CdnTypeUID": "13"},
         )
+
+    def test_a_named_view_without_a_page_is_not_stale(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={
+                "BidPages": [{"UID": "20", "BidUID": "1"}],
+                "BidNamedViews": [
+                    {"UID": "30", "BidUID": "1", "BidPageUID": "0"},
+                    {"UID": "31", "BidUID": "1", "BidPageUID": "20"},
+                ],
+                "BidHotLinks": [{"UID": "40", "BidUID": "1", "BidPageViewUID": "30"}],
+            },
+        )
+        OstImporter._discard_stale_named_views(raw_data)
+        self.assertEqual(
+            [row["UID"] for row in raw_data.bid_tables["BidNamedViews"]], ["30", "31"]
+        )
+        self.assertEqual(len(raw_data.bid_tables["BidHotLinks"]), 1)
+
+    def test_page_selection_references_map_only_known_non_zero_pages(self):
+        remap = lambda value, page_map: OstImporter(None)._remap_uid_value(
+            "BidPageSelectedUID", value, {}, page_map, {}, {}, {}, {}
+        )
+        pages = {"": "5", "0": "6", "7": "17"}
+        self.assertEqual(remap("7", pages), "17")
+        self.assertEqual(remap(" 7 ", pages), "17")
+        self.assertEqual(remap("0", pages), "NULL")
+        self.assertEqual(remap("", pages), "NULL")
+        self.assertEqual(remap(None, pages), "NULL")
+        self.assertEqual(remap("8", pages), "NULL")
+
+    def test_empty_references_are_kept_as_they_are(self):
+        importer = OstImporter(None)
+        for value in ("", None):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    importer._remap_uid_value(
+                        "BidAreaUID", value, {}, {}, {}, {}, {}, {}
+                    ),
+                    value,
+                )
 
     def test_ost_page_uid_zero_is_never_a_page_and_collapses_as_no_page_selection(
         self,

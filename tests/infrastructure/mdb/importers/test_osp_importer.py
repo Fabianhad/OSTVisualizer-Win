@@ -1,7 +1,11 @@
 import hashlib
+import os
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
+from unittest.mock import patch
 from ost_visualizer.infrastructure.mdb.importers import (
     osp_importer as osp_importer_module,
 )
@@ -36,6 +40,254 @@ def _image_members(*member_names):
     return osp_importer_module._inspect_package(
         ["Project.ost", *member_names]
     ).image_members_by_path
+
+
+class OspImporterHelperTests(unittest.TestCase):
+    def test_extract_output_dir_uses_the_extended_windows_prefix_once(self):
+        def output(resolved):
+            return osp_importer_module._cab_extract_output_dir(
+                SimpleNamespace(resolve=lambda: resolved)
+            )
+
+        cases = {
+            "C:\\work\\osp": "\\\\?\\C:\\work\\osp",
+            "\\\\?\\C:\\work\\osp": "\\\\?\\C:\\work\\osp",
+            "\\\\server\\share\\osp": "\\\\?\\UNC\\server\\share\\osp",
+        }
+        with patch.object(osp_importer_module.os, "name", "nt"):
+            for resolved, expected in cases.items():
+                with self.subTest(path=resolved):
+                    self.assertEqual(output(resolved), expected)
+        with patch.object(osp_importer_module.os, "name", "posix"):
+            self.assertEqual(output("/tmp/osp"), "/tmp/osp")
+
+    def test_only_non_empty_relative_cab_member_names_are_safe(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        for unsafe in (None, 5, b"plan.png", "", "/abs.png", "C:\\x.png", "..\\x"):
+            with self.subTest(name=unsafe):
+                self.assertFalse(safe(unsafe))
+        self.assertTrue(safe("TempImages!.tmp/plan.png"))
+
+    def test_extract_roots_must_stay_under_the_windows_path_limit(self):
+        root = Path("C:\\t")
+        limit = osp_importer_module._WINDOWS_PATH_LIMIT
+        member = "m" * (limit - 1 - len(str(root)) - 1)
+        self.assertEqual(len(str(root / member)), limit - 1)
+        safe = osp_importer_module._is_safe_extract_root
+        with patch.object(osp_importer_module.os, "name", "nt"):
+            self.assertTrue(safe(root, ("short", member)))
+            self.assertFalse(safe(root, ("short", member + "m")))
+            self.assertFalse(safe(root, (member + "m", "short")))
+        with patch.object(osp_importer_module.os, "name", "posix"):
+            self.assertTrue(safe(root, (member + "m" * 500,)))
+
+    def test_temp_parent_candidates_add_a_short_root_on_the_same_drive(self):
+        candidates = osp_importer_module._extract_temp_parent_candidates
+
+        def parents(temp, name="nt", environment=None):
+            with patch.object(osp_importer_module.os, "name", name), patch.object(
+                osp_importer_module.tempfile, "gettempdir", return_value=temp
+            ), patch.dict(os.environ, environment or {}):
+                return candidates()
+
+        self.assertEqual(
+            parents("D:\\Users\\me\\Temp"),
+            [Path("D:\\Users\\me\\Temp"), Path("D:\\OSTVTemp")],
+        )
+        self.assertEqual(parents("D:\\OSTVTemp"), [Path("D:\\OSTVTemp")])
+        self.assertEqual(
+            parents("relative\\temp", environment={"SystemDrive": "E:"}),
+            [Path("relative\\temp"), Path("E:\\OSTVTemp")],
+        )
+
+    def test_an_unsafe_default_temp_root_is_removed_before_the_short_root_is_used(self):
+        create = osp_importer_module._create_extract_temp_dir
+        with tempfile.TemporaryDirectory() as folder:
+            default = Path(folder, "deep", "er", "default")
+            short = Path(folder, "short")
+
+            def candidates():
+                return [default, short]
+
+            with patch.object(
+                osp_importer_module, "_extract_temp_parent_candidates", candidates
+            ):
+                with patch.object(
+                    osp_importer_module, "_is_safe_extract_root", lambda *_a: False
+                ):
+                    created = create(("plan.ost",))
+                self.assertEqual(created.parent, short)
+                self.assertEqual(list(default.iterdir()), [])
+                with patch.object(
+                    osp_importer_module, "_is_safe_extract_root", lambda *_a: True
+                ):
+                    kept = create(("plan.ost",))
+                self.assertEqual(kept.parent, default)
+                self.assertEqual(len(list(short.iterdir())), 1)
+
+    def test_a_temp_parent_that_cannot_be_created_is_skipped(self):
+        with tempfile.TemporaryDirectory() as folder:
+            blocked = Path(folder, "blocked")
+            blocked.write_bytes(b"a file, not a folder")
+            short = Path(folder, "short")
+            with patch.object(
+                osp_importer_module,
+                "_extract_temp_parent_candidates",
+                lambda: [blocked, short],
+            ):
+                created = osp_importer_module._create_extract_temp_dir(("plan.ost",))
+            self.assertEqual(created.parent, short)
+
+    def test_image_references_match_the_deepest_member_suffix(self):
+        members = _image_members(
+            "TempImages!.tmp\\b.pdf",
+            "TempImages!.tmp\\a\\b.pdf",
+            "TempImages!.tmp\\x\\y\\z.pdf",
+        )
+        resolve = osp_importer_module._resolve_image_member
+        cases = {
+            "a\\b.pdf": "TempImages!.tmp\\a\\b.pdf",
+            "C:\\plans\\a\\b.pdf": "TempImages!.tmp\\a\\b.pdf",
+            "C:/plans/other/b.pdf": "TempImages!.tmp\\b.pdf",
+            "z.pdf": None,
+            "y\\z.pdf": None,
+            "x\\y\\z.pdf": "TempImages!.tmp\\x\\y\\z.pdf",
+            "TempImages!.tmp\\A\\B.PDF": "TempImages!.tmp\\a\\b.pdf",
+            "TempImages!.tmp\\missing.pdf": None,
+        }
+        for reference, expected in cases.items():
+            with self.subTest(reference=reference):
+                self.assertEqual(resolve(reference, members), expected)
+
+    def test_image_paths_are_rewritten_only_for_copied_references(self):
+        original = (
+            "<Root><BidPage ImagePath='C:\\a.png' OverlayImagePath='C:\\b.png'/>"
+            "<BidPage ImagePath=''/><BidPage/><BidPage ImagePath='C:\\other.png'/></Root>"
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            ost_path = Path(folder, "Project.ost")
+            ost_path.write_text(original, encoding="utf-8")
+            tree = ET.parse(ost_path)
+            importer = OspImporter(_import_workflow_FakeImporter())
+            importer._rewrite_image_paths(tree, ost_path, {"C:\\zzz.png": "D:\\x.png"})
+            self.assertEqual(ost_path.read_text(encoding="utf-8"), original)
+            importer._rewrite_image_paths(
+                tree,
+                ost_path,
+                {
+                    "C:\\a.png": "D:\\one.png",
+                    "C:\\b.png": "D:\\two.png",
+                    "": "D:\\blank.png",
+                },
+            )
+            pages = ET.parse(ost_path).getroot().findall("BidPage")
+            self.assertEqual(
+                [
+                    (page.get("ImagePath"), page.get("OverlayImagePath"))
+                    for page in pages
+                ],
+                [
+                    ("D:\\one.png", "D:\\two.png"),
+                    ("", None),
+                    (None, None),
+                    ("C:\\other.png", None),
+                ],
+            )
+            self.assertTrue(ost_path.read_text(encoding="utf-8").startswith("<Root>"))
+
+    def test_a_failed_temp_folder_removal_is_logged_with_its_cause(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(
+                osp_importer_module.shutil,
+                "rmtree",
+                side_effect=PermissionError("locked"),
+            ):
+                with self.assertLogs(
+                    osp_importer_module.logger, level="WARNING"
+                ) as logs:
+                    osp_importer_module._remove_temp_tree(Path(folder))
+            self.assertEqual(len(logs.records), 1)
+            self.assertIs(logs.records[0].exc_info[0], PermissionError)
+            self.assertIn(folder, logs.records[0].getMessage())
+            with patch.object(
+                osp_importer_module.shutil, "rmtree", side_effect=FileNotFoundError()
+            ):
+                with self.assertNoLogs(osp_importer_module.logger, level="WARNING"):
+                    osp_importer_module._remove_temp_tree(Path(folder))
+
+    def test_member_parent_folders_are_created_once_and_nested(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            member = "TempImages!.tmp\\sheets\\level 1\\plan.pdf"
+            for _attempt in range(2):
+                osp_importer_module._create_cab_member_parent_dir(root, member)
+            self.assertTrue((root / "TempImages!.tmp" / "sheets" / "level 1").is_dir())
+            self.assertEqual(
+                osp_importer_module._cab_member_path(root, member),
+                root / "TempImages!.tmp" / "sheets" / "level 1" / "plan.pdf",
+            )
+
+    def test_staged_image_locations_are_flat_or_addressed_by_member_name(self):
+        relative = osp_importer_module._image_destination_relative_path
+        self.assertEqual(relative("TempImages!.tmp\\plan.pdf"), Path("plan.pdf"))
+        deep = "TempImages!.tmp\\Sheets\\Plan.pdf"
+        digest = hashlib.sha1(deep.casefold().encode("utf-8")).hexdigest()[:16]
+        self.assertEqual(relative(deep), Path("Images") / digest / "Plan.pdf")
+        self.assertEqual(len(digest), 16)
+
+    def test_conflicting_image_names_get_a_content_digest_suffix_that_grows(self):
+        resolve = osp_importer_module._non_conflicting_image_destination
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.png"
+            source.write_bytes(b"new image")
+            digest = hashlib.sha256(b"new image").hexdigest()
+            destination = root / "plan.png"
+            self.assertEqual(resolve(source, destination), destination)
+            destination.write_bytes(b"old")
+            names = []
+            for length in (16, 32, len(digest)):
+                candidate = resolve(source, destination)
+                names.append(candidate.name)
+                self.assertEqual(candidate.name, f"plan-{digest[:length]}.png")
+                candidate.write_bytes(b"different %d" % length)
+            with self.assertRaises(osp_importer_module._OspFormatError):
+                resolve(source, destination)
+            reusable = root / names[1]
+            reusable.write_bytes(b"new image")
+            self.assertEqual(resolve(source, destination), reusable)
+            destination.write_bytes(b"new image")
+            self.assertEqual(resolve(source, destination), destination)
+
+    def test_large_files_are_compared_and_hashed_across_chunk_boundaries(self):
+        chunk = 1024 * 1024
+        same = osp_importer_module._files_have_same_content
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+
+            def write(name, content):
+                path = root / name
+                path.write_bytes(content)
+                return path
+
+            base = b"\x01" * (2 * chunk + 10)
+            first = write("first.bin", base)
+            self.assertTrue(same(first, write("copy.bin", base)))
+            self.assertFalse(same(first, write("last.bin", base[:-1] + b"\x02")))
+            self.assertFalse(
+                same(
+                    first,
+                    write("mid.bin", base[: chunk + 5] + b"\x02" + base[chunk + 6 :]),
+                )
+            )
+            self.assertFalse(same(first, write("short.bin", base[:-1])))
+            exact = write("exact.bin", b"\x03" * chunk)
+            self.assertTrue(same(exact, write("exact2.bin", b"\x03" * chunk)))
+            self.assertTrue(same(write("empty.bin", b""), write("empty2.bin", b"")))
+            self.assertEqual(
+                osp_importer_module._file_content_digest(first),
+                hashlib.sha256(base).hexdigest(),
+            )
 
 
 class OspImporterImageAndPackageTests(unittest.TestCase):

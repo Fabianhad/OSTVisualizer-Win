@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from tools import ai_takeoff_corpus as corpus
 from tools.ai_takeoff_corpus import (
     KIND_DETAIL,
@@ -1154,6 +1155,554 @@ class ChildProcessTests(unittest.TestCase):
             corpus._run_child([sys.executable, "-c", "pass"], 30),
             {"status": "ok", "error": ""},
         )
+
+
+class FailureCategoryTests(unittest.TestCase):
+    def names(self, **fields):
+        row = {
+            "rel": "a.pdf",
+            "page": "1",
+            "status": "ok",
+            "kind": KIND_NOTES,
+            "sheet_number": "S-1",
+        }
+        row.update(fields)
+        return {name for name, _members in corpus.failure_categories([row])}
+
+    def test_a_clean_page_has_no_category_and_unmeasured_pages_are_skipped(self):
+        self.assertEqual(self.names(), set())
+        self.assertEqual(self.names(status="not_measured"), set())
+
+    def test_failed_pages_are_listed_by_status_and_error_and_nothing_else(self):
+        self.assertEqual(
+            self.names(status="timeout", error="hang", sheet_number=""),
+            {"page failed: timeout (hang)"},
+        )
+        self.assertEqual(
+            self.names(status="crash", sheet_number=""), {"page failed: crash ()"}
+        )
+
+    def test_page_content_categories_follow_their_flags_exactly(self):
+        cases = (
+            ({"content": "raster_only"}, "raster-only page (no vectors, no text)"),
+            ({"outlined_text": "True"}, "text drawn as outlines (no extractable text)"),
+            ({"extraction_truncated": "True"}, "extraction over 250,000 pieces"),
+            ({"kind": KIND_UNKNOWN}, "page kind not recognised"),
+            ({"sheet_number": ""}, "sheet number not found"),
+            ({"sheet_number": None}, "sheet number not found"),
+        )
+        for fields, name in cases:
+            with self.subTest(fields=fields):
+                self.assertEqual(self.names(**fields), {name})
+        for fields in (
+            {"content": "vector"},
+            {"outlined_text": "False"},
+            {"extraction_truncated": "False"},
+            {"kind": KIND_PLAN},
+        ):
+            with self.subTest(clean=fields):
+                self.assertEqual(self.names(**fields), set())
+
+    def test_scale_categories_apply_to_plans_only(self):
+        for scale in ("none", "graphic_only"):
+            with self.subTest(scale=scale):
+                self.assertEqual(
+                    self.names(kind=KIND_PLAN, scale_status=scale),
+                    {"plan without a readable scale"},
+                )
+                self.assertEqual(
+                    self.names(kind=KIND_DETAIL, scale_status=scale), set()
+                )
+        self.assertEqual(
+            self.names(kind=KIND_PLAN, scale_status="multiple"),
+            {"plan with several scales"},
+        )
+        self.assertEqual(self.names(kind=KIND_DETAIL, scale_status="multiple"), set())
+        self.assertEqual(self.names(kind=KIND_PLAN, scale_status="single"), set())
+
+    def test_find_regions_statuses_are_reported_per_call_for_plans_only(self):
+        for prefix in ("list", "filtered", "seed"):
+            for status in ("invalid_argument", "deadline", "exception:ValueError"):
+                with self.subTest(prefix=prefix, status=status):
+                    self.assertEqual(
+                        self.names(kind=KIND_PLAN, **{f"{prefix}_status": status}),
+                        {f"find_regions {prefix}: {status}"},
+                    )
+            for status in ("ok", "empty", "truncated", "skipped", ""):
+                with self.subTest(prefix=prefix, quiet=status):
+                    fields = {f"{prefix}_status": status}
+                    self.assertEqual(
+                        self.names(kind=KIND_PLAN, **fields)
+                        - {"plan: no region with wall-width filter"},
+                        set(),
+                    )
+            self.assertEqual(
+                self.names(kind=KIND_NOTES, **{f"{prefix}_status": "invalid_argument"}),
+                set(),
+            )
+
+    def test_plan_outcomes_are_categorised_by_their_thresholds(self):
+        plan = {"kind": KIND_PLAN}
+        self.assertEqual(
+            self.names(filtered_status="empty", **plan),
+            {"plan: no region with wall-width filter"},
+        )
+        self.assertEqual(
+            self.names(seed_method="raster", **plan),
+            {"plan: seeded region fell back to raster"},
+        )
+        self.assertEqual(self.names(seed_method="vector", **plan), set())
+        for unlocated in ("36.0", 12):
+            self.assertEqual(
+                self.names(seed_unlocated=unlocated, **plan),
+                {"plan: raster may have closed unseen openings"},
+            )
+        for unlocated in ("", None, "None"):
+            self.assertEqual(self.names(seed_unlocated=unlocated, **plan), set())
+        self.assertEqual(
+            self.names(filtered_seconds="10.5", **plan),
+            {"plan: find_regions slower than 10 s"},
+        )
+        for seconds in ("10.0", "9.9", "", None):
+            self.assertEqual(self.names(filtered_seconds=seconds, **plan), set())
+        for error in ("0.6", "-0.51", 7):
+            self.assertEqual(
+                self.names(hand_error_pct=error, **plan),
+                {"hand value off by more than 0.5%"},
+            )
+        for error in ("0.5", "-0.5", "", None):
+            self.assertEqual(self.names(hand_error_pct=error, **plan), set())
+        non_plan = {
+            "filtered_status": "empty",
+            "seed_method": "raster",
+            "seed_unlocated": "9",
+            "filtered_seconds": "99",
+            "hand_error_pct": "9",
+        }
+        self.assertEqual(self.names(**non_plan), set())
+
+    def test_the_most_frequent_category_comes_first_and_keeps_its_pages(self):
+        rows = [
+            {"rel": "a.pdf", "page": "1", "status": "ok", "kind": KIND_NOTES},
+            {
+                "rel": "a.pdf",
+                "page": "2",
+                "status": "ok",
+                "kind": KIND_UNKNOWN,
+                "sheet_number": "S-1",
+            },
+            {"rel": "a.pdf", "page": "3", "status": "ok", "kind": KIND_NOTES},
+        ]
+        categories = corpus.failure_categories(rows)
+        self.assertEqual(
+            [(name, [row["page"] for row in members]) for name, members in categories],
+            [
+                ("sheet number not found", ["1", "3"]),
+                ("page kind not recognised", ["2"]),
+            ],
+        )
+
+
+class SamplingBoundaryTests(unittest.TestCase):
+    def test_structural_files_sit_at_least_six_levels_deep_in_a_known_year(self):
+        parts = corpus.structural_parts
+        folder = ("P1", "01. Drawings", "1. Drawings", "3. Structural")
+        self.assertEqual(
+            parts(
+                str(
+                    Path(
+                        "2024",
+                        "P1",
+                        "01. Drawings",
+                        "1. Drawings",
+                        "3. Structural",
+                        "S.pdf",
+                    )
+                )
+            ),
+            ("2024", "P1"),
+        )
+        self.assertIsNone(
+            parts(
+                str(Path("2024", "P1", "01. Drawings", "1. Drawings", "3. Structural"))
+            )
+        )
+        self.assertIsNone(parts(str(Path("1999", *folder, "S.pdf"))))
+        self.assertIsNone(
+            parts(
+                str(
+                    Path(
+                        "2024", "P1", "01. Drawings", "1. Drawings", "2. Arch", "S.pdf"
+                    )
+                )
+            )
+        )
+
+    def test_files_of_exactly_the_size_limit_are_still_sampled(self):
+        rows = [
+            {"rel": _structural("2024", "P1", "S-101.pdf"), "size": "1000"},
+            {"rel": _structural("2024", "P2", "S-101.pdf"), "size": "1001"},
+        ]
+        chosen = corpus.stratified_sample(rows, 5, max_bytes=1000)
+        self.assertEqual([row["size"] for row in chosen], ["1000"])
+
+
+class ReportExactnessTests(unittest.TestCase):
+    def rows(self):
+        plan = {
+            "rel": _structural("2024", "J1", "a.pdf"),
+            "page": "1",
+            "status": "ok",
+            "kind": KIND_PLAN,
+            "content": "vector_and_text",
+            "text_runs": "5",
+            "sheet_number": "S-1",
+            "scale_status": "single",
+            "page_size_class": "ARCH D 24x36",
+            "rotation": "0",
+            "visible_offset": "no",
+            "seconds": "1.0",
+            "list_seconds": "0.5",
+            "filtered_status": "ok",
+            "filtered_regions": "2",
+            "filtered_seconds": "2.0",
+            "seed_status": "ok",
+            "seed_method": "vector",
+            "seed_seconds": "3.0",
+            "proposal_status": "ok",
+            "kinds_wall": "10",
+            "kinds_dashed": "1",
+            "kinds_thin": "2",
+            "kinds_symbol": "3",
+            "widths": '{"<0.5": 4, ">=2": 6}',
+            "peak_mb": "100",
+        }
+        notes = {
+            "rel": _structural("2024", "J1", "a.pdf"),
+            "page": "2",
+            "status": "ok",
+            "kind": KIND_NOTES,
+            "content": "text_only",
+            "text_runs": "0",
+            "sheet_number": "",
+            "scale_status": "none",
+            "page_size_class": "Letter",
+            "rotation": "90",
+            "visible_offset": "yes",
+            "seconds": "3.0",
+            "kinds_wall": "1",
+            "kinds_dashed": "0",
+            "kinds_thin": "0",
+            "kinds_symbol": "0",
+            "widths": '{"<0.5": 1}',
+            "peak_mb": "300",
+        }
+        hung = {
+            "rel": _structural("2025", "J2", "b.pdf"),
+            "page": "1",
+            "status": "timeout",
+            "error": "hang",
+            "seconds": "9.0",
+        }
+        return [plan, notes, hung]
+
+    def report_lines(self, rows):
+        with tempfile.TemporaryDirectory() as directory:
+            run_csv = Path(directory) / "corpus_run_x.csv"
+            corpus.write_csv(run_csv, rows, corpus.RUN_COLUMNS)
+            return (
+                corpus.report(run_csv, Path(directory) / "s.md")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            )
+
+    def section(self, lines, heading):
+        start = lines.index(heading) + 1
+        end = next(
+            (i for i in range(start, len(lines)) if lines[i].startswith("## ")),
+            len(lines),
+        )
+        return [line for line in lines[start:end] if line]
+
+    def test_pass_rates_count_the_right_pages(self):
+        lines = self.report_lines(self.rows())
+        self.assertIn("PDFs: 2; pages: 3; plan-like pages: 1.", lines)
+        self.assertEqual(
+            self.section(lines, "## Pass rates")[2:],
+            [
+                "| Page measured without crash, hang or error | 2/3 (67%) |",
+                "| Vector content | 1/2 (50%) |",
+                "| Extractable text | 1/2 (50%) |",
+                "| Sheet number found | 1/2 (50%) |",
+                "| Page kind recognised | 2/2 (100%) |",
+                "| Plan: numeric scale read | 1/1 (100%) |",
+                "| Plan: under the 20,000 region cap (filtered) | 1/1 (100%) |",
+                "| Plan: regions found with wall-width filter | 1/1 (100%) |",
+                "| Plan: seeded call returned a vector region | 1/1 (100%) |",
+                "| Plan: changeset proposed (never applied) | 1/1 (100%) |",
+                "| Hand values within 0.5% | n/a |",
+            ],
+        )
+
+    def test_the_page_mix_lists_each_value_with_its_count(self):
+        lines = self.report_lines(self.rows())
+        self.assertEqual(
+            self.section(lines, "## Page mix"),
+            [
+                "- kind: plan 1, general_notes 1",
+                "- content: vector_and_text 1, text_only 1",
+                "- scale_status: single 1, none 1",
+                "- page_size_class: ARCH D 24x36 1, Letter 1",
+                "- rotation: 0 1, 90 1",
+                "- visible_offset: no 1, yes 1",
+            ],
+        )
+
+    def test_timing_percentiles_interpolate_and_skip_measures_without_values(self):
+        lines = self.report_lines(self.rows())
+        self.assertEqual(
+            self.section(lines, "## Timing percentiles (seconds)")[2:],
+            [
+                "| seconds | 3.00 | 7.80 | 8.88 | 9.00 |",
+                "| list_seconds | 0.50 | 0.50 | 0.50 | 0.50 |",
+                "| filtered_seconds | 2.00 | 2.00 | 2.00 | 2.00 |",
+                "| seed_seconds | 3.00 | 3.00 | 3.00 | 3.00 |",
+                "| peak_mb | 200 | 280 | 298 | 300 |",
+            ],
+        )
+        rows = self.rows()
+        for row in rows:
+            row.pop("list_seconds", None)
+            row.pop("peak_mb", None)
+        text = "\n".join(self.report_lines(rows))
+        self.assertNotIn("| list_seconds |", text)
+        self.assertNotIn("| peak_mb |", text)
+
+    def test_failure_categories_and_project_line_kinds_are_listed_per_project(self):
+        lines = self.report_lines(self.rows())
+        self.assertEqual(
+            self.section(lines, "## Failure categories (most frequent first)"),
+            [
+                "- **sheet number not found**: 1 page(s). Examples: P01 p2",
+                "- **page failed: timeout (hang)**: 1 page(s). Examples: P02 p1",
+            ],
+        )
+        self.assertEqual(
+            self.section(lines, "## Line kinds and widths by project (proxy for firm)")[
+                2:
+            ],
+            ["| J01 | 2 | 11 | 1 | 2 | 3 | <0.5 5, >=2 6 |"],
+        )
+
+    def test_outlined_text_rates_count_pages_with_segments_but_no_text_runs(self):
+        rows = self.rows()
+        rows[0]["segments"] = "4"
+        rows[1]["segments"] = "4"
+        line = "| Vector pages without any text (outlined text) | {} |"
+        self.assertIn(
+            line.format("1/2 (50%)"),
+            self.section(self.report_lines(rows), "## Outlined text"),
+        )
+        rows[1]["segments"] = "0"
+        self.assertIn(
+            line.format("0/2 (0%)"),
+            self.section(self.report_lines(rows), "## Outlined text"),
+        )
+
+
+class ReportPredicateTests(unittest.TestCase):
+    def test_a_region_that_escaped_without_a_leak_warning_is_a_missed_leak(self):
+        base = {"default_found": "True", "default_leak": "False"}
+        self.assertTrue(corpus._leak_missed(dict(base, default_touches_edge="True")))
+        self.assertTrue(corpus._leak_missed(dict(base, default_box_ratio="0.81")))
+        self.assertFalse(corpus._leak_missed(dict(base, default_box_ratio="0.8")))
+        self.assertFalse(corpus._leak_missed(dict(base, default_touches_edge="False")))
+        self.assertFalse(
+            corpus._leak_missed(
+                dict(base, default_leak="True", default_touches_edge="True")
+            )
+        )
+        self.assertFalse(
+            corpus._leak_missed(
+                {"default_found": "False", "default_touches_edge": "True"}
+            )
+        )
+        self.assertTrue(
+            corpus._leak_missed({"heavy_found": "True", "heavy_box_ratio": "0.9"})
+        )
+        self.assertFalse(
+            corpus._leak_missed({"default_found": "True", "default_box_ratio": ""})
+        )
+
+    def test_a_seeded_call_is_slow_above_half_the_proxy_timeout(self):
+        self.assertFalse(corpus._slow({"zero_seconds": "60.0"}))
+        self.assertTrue(corpus._slow({"zero_seconds": "60.01"}))
+        self.assertTrue(corpus._slow({"heavy_seconds": "100"}))
+        self.assertFalse(corpus._slow({"default_seconds": ""}))
+        self.assertFalse(corpus._slow({}))
+
+    def test_a_hand_value_is_within_half_a_percent_either_way(self):
+        within = corpus._hand_within
+        self.assertTrue(within({"hand_error_pct": "0.5"}))
+        self.assertTrue(within({"hand_error_pct": "-0.5"}))
+        self.assertFalse(within({"hand_error_pct": "0.51"}))
+        self.assertFalse(within({"hand_error_pct": "-0.51"}))
+        self.assertFalse(within({"hand_error_pct": ""}))
+        self.assertFalse(within({}))
+
+    def test_rates_medians_examples_and_identifiers_are_formatted_for_the_summary(self):
+        self.assertEqual(corpus._rate([], bool), "n/a")
+        self.assertEqual(corpus._rate([1, 0, 1], bool), "2/3 (67%)")
+        self.assertEqual(corpus._median([3.0, None, 1.0]), "2.00")
+        self.assertEqual(corpus._median([None]), "n/a")
+        ids = {"a.pdf": "P01"}
+        rows = [{"rel": "a.pdf", "page": str(page)} for page in range(1, 6)]
+        self.assertEqual(corpus._example(rows, ids), "P01 p1; P01 p2; P01 p3")
+        self.assertEqual(corpus._example(rows, ids, limit=1), "P01 p1")
+        many = [{"rel": f"{index:03d}/p.pdf"} for index in range(100)]
+        pdf_ids, project_ids = corpus.corpus_ids(many)
+        self.assertEqual(pdf_ids["000/p.pdf"], "P001")
+        self.assertEqual(pdf_ids["099/p.pdf"], "P100")
+        self.assertEqual(project_ids["p.pdf"], "J01")
+        few, projects = corpus.corpus_ids([{"rel": "a/b.pdf"}, {"rel": "c/d.pdf"}])
+        self.assertEqual((few["a/b.pdf"], projects["b.pdf"]), ("P01", "J01"))
+        self.assertEqual(corpus._project("only.pdf"), "only.pdf")
+
+    def test_seeded_pages_and_percentiles_follow_their_definitions(self):
+        rows = [
+            {"default_found": "True"},
+            {"default_found": "False"},
+            {"default_found": ""},
+            {},
+        ]
+        self.assertEqual(len(corpus._seeded(rows, "default")), 2)
+        self.assertIsNone(corpus.percentile([], 0.5))
+        self.assertEqual(corpus.percentile([4.0], 0.99), 4.0)
+        self.assertEqual(corpus.percentile([1.0, 2.0, 3.0, 4.0], 0.5), 2.5)
+        self.assertAlmostEqual(corpus.percentile([1.0, 2.0, 3.0, 4.0], 0.9), 3.7)
+        self.assertEqual(corpus.percentile([None, 5.0, 1.0], 0.0), 1.0)
+
+
+class CommandLineDefaultsTests(unittest.TestCase):
+    def run_main(self, arguments, **patches):
+        import contextlib
+        import io
+
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error), contextlib.redirect_stdout(
+            io.StringIO()
+        ):
+            with contextlib.ExitStack() as stack:
+                for name, replacement in patches.items():
+                    stack.enter_context(mock.patch.object(corpus, name, replacement))
+                try:
+                    return corpus.main(arguments), error.getvalue()
+                except SystemExit as exit_request:
+                    return exit_request.code, error.getvalue()
+
+    def test_sampling_defaults_to_thirty_pdfs_of_at_most_150_megabytes(self):
+        import csv as csv_module
+
+        calls = []
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            out.mkdir()
+            with open(
+                out / "inventory.csv", "w", newline="", encoding="utf-8"
+            ) as handle:
+                csv_module.writer(handle).writerow(["rel", "size"])
+            code, _error = self.run_main(
+                ["sample", "--out", str(out)],
+                stratified_sample=lambda rows, count, max_bytes: calls.append(
+                    (count, max_bytes)
+                )
+                or [],
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [(30, 150 * 1024 * 1024)])
+
+    def test_the_size_cap_and_count_come_from_the_command_line(self):
+        import csv as csv_module
+
+        calls = []
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            out.mkdir()
+            with open(
+                out / "inventory.csv", "w", newline="", encoding="utf-8"
+            ) as handle:
+                csv_module.writer(handle).writerow(["rel", "size"])
+            self.run_main(
+                ["sample", "--out", str(out), "--count", "7", "--max-mb", "2"],
+                stratified_sample=lambda rows, count, max_bytes: calls.append(
+                    (count, max_bytes)
+                )
+                or [],
+            )
+        self.assertEqual(calls, [(7, 2 * 1024 * 1024)])
+
+    def test_a_run_uses_a_180_second_child_timeout_unless_told_otherwise(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            out.mkdir()
+            (out / "sample.csv").write_text("rel\n", encoding="utf-8")
+            fake = lambda *args: calls.append(args) or "run.csv"
+            self.run_main(["run", "--out", str(out)], run=fake)
+            self.run_main(
+                ["run", "--out", str(out), "--timeout", "30", "--max-plan-pages", "4"],
+                run=fake,
+            )
+        self.assertEqual(calls[0][1], 180.0)
+        self.assertIsNone(calls[0][3])
+        self.assertEqual((calls[1][1], calls[1][3]), (30.0, 4))
+
+    def test_an_output_folder_inside_the_repository_is_refused_with_the_reason(self):
+        code, error = self.run_main(
+            [
+                "inventory",
+                "--out",
+                str(corpus.REPO_ROOT / "corpus_out"),
+                "--source",
+                "x",
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--out must be outside the repository", error)
+        self.assertIn("confidential", error)
+        self.assertFalse((corpus.REPO_ROOT / "corpus_out").exists())
+
+    def test_the_output_folder_is_created_when_it_is_missing(self):
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as source:
+            target = Path(folder) / "a" / "b"
+            code, _error = self.run_main(
+                ["inventory", "--out", str(target), "--source", source],
+                inventory=lambda source, out: [],
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue(target.is_dir())
+
+    def test_sampling_prints_the_chosen_files_one_per_line(self):
+        import contextlib
+        import csv as csv_module
+        import io
+
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            out.mkdir()
+            with open(
+                out / "inventory.csv", "w", newline="", encoding="utf-8"
+            ) as handle:
+                csv_module.writer(handle).writerow(["rel", "size"])
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                with mock.patch.object(
+                    corpus,
+                    "stratified_sample",
+                    lambda *a, **k: [{"rel": "a.pdf"}, {"rel": "b.pdf"}],
+                ):
+                    corpus.main(["sample", "--out", str(out)])
+        self.assertEqual(printed.getvalue().splitlines(), ["a.pdf", "b.pdf"])
 
 
 class ReportTests(unittest.TestCase):

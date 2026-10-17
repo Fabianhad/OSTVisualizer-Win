@@ -1482,6 +1482,419 @@ class BidOperationsPersistenceTests(unittest.TestCase):
         )
 
 
+class BidOperationsCascadeAndDefaultsTests(unittest.TestCase):
+    class StrictOps(_SqliteDuplicateOps):
+        logger = logging.getLogger("bid-ops-guard")
+
+        def _require_write_columns(self, schema, table, columns):
+            for column in columns:
+                schema.require_column(table, column)
+
+    def failure_exception(self, call):
+        with self.assertLogs("bid-ops-guard", level="ERROR") as logs:
+            self.assertIn(call(), (False, None))
+        return logs.records[0].exc_info[1]
+
+    @staticmethod
+    def cascade_tables():
+        from ost_visualizer.infrastructure.mdb.components import (
+            bid_operations as module,
+        )
+
+        generic = {
+            table
+            for table in (
+                *module._PAGE_SCOPED,
+                *module._BID_SCOPED_PRE,
+                *module._BID_SCOPED_POST,
+            )
+            if table
+            not in {
+                "BidPages",
+                "BidSettings",
+                "BidPercents",
+                "BidTakeoffs",
+                "BidTimeCards",
+                "BidTypAreaCounts",
+                "BidPageSettings",
+                "BidLaborCostCodes",
+                "BidTimeCardStates",
+                "BidEmployees",
+                "BidAreas",
+                "BidTypAreas",
+                "BidConditions",
+            }
+        }
+        return module, sorted(generic)
+
+    def build_cascade(self, page_scoped_columns):
+        module, tables = self.cascade_tables()
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", ((1,), (2,)))
+        conn.executemany("INSERT INTO BidPages VALUES (?, ?)", ((11, 1), (21, 2)))
+        for table in tables:
+            page_scoped = table in module._PAGE_SCOPED
+            columns = page_scoped_columns if page_scoped else "BidUID INTEGER"
+            conn.execute(f"CREATE TABLE [{table}] (UID INTEGER, {columns})")
+            if "BidPageUID" in columns:
+                rows = ((1, 11), (2, 21))
+            else:
+                rows = ((1, 1), (2, 2))
+            conn.executemany(f"INSERT INTO [{table}] VALUES (?, ?)", rows)
+        return conn, tables
+
+    def test_duplicating_a_bid_copies_its_hot_links_onto_the_copied_pages_and_views(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.executescript(
+            """
+            CREATE TABLE Settings (NextBidNo INTEGER); INSERT INTO Settings VALUES (7);
+            CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, GUID TEXT, JobName TEXT);
+            INSERT INTO Bids VALUES (1, 3, '{A}', 'Source'), (2, 4, '{B}', 'Other');
+            CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, GUID TEXT);
+            INSERT INTO BidPages VALUES (11, 1, 'p1', '{P1}'), (21, 2, 'p2', '{P2}');
+            CREATE TABLE BidNamedViews (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER,
+                Name TEXT, GUID TEXT);
+            INSERT INTO BidNamedViews VALUES (31, 1, 11, 'v1', '{V1}'), (32, 2, 21, 'v2', '{V2}');
+            CREATE TABLE BidHotLinks (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER,
+                BidPageViewUID INTEGER, Name TEXT);
+            INSERT INTO BidHotLinks VALUES (41, 1, 11, 31, 'h1'), (42, 2, 21, 32, 'h2');
+            """
+        )
+        new_uid = _SqliteDuplicateOps(conn).duplicate_bid("x.mdb", "1")
+        self.assertIsNotNone(new_uid)
+        page = conn.execute(
+            "SELECT UID FROM BidPages WHERE BidUID=?", (int(new_uid),)
+        ).fetchone()[0]
+        view = conn.execute(
+            "SELECT UID FROM BidNamedViews WHERE BidUID=?", (int(new_uid),)
+        ).fetchone()[0]
+        self.assertEqual(
+            conn.execute(
+                "SELECT Name, BidPageUID, BidPageViewUID FROM BidHotLinks WHERE BidUID=?",
+                (int(new_uid),),
+            ).fetchall(),
+            [("h1", page, view)],
+        )
+        self.assertNotIn(page, (11, 21))
+        self.assertNotIn(view, (31, 32))
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidUID, BidPageUID, BidPageViewUID FROM BidHotLinks "
+                "WHERE Name IN ('h1','h2') AND BidUID IN (1, 2) ORDER BY UID"
+            ).fetchall(),
+            [(41, 1, 11, 31), (42, 2, 21, 32)],
+        )
+
+    def test_deleting_a_bid_removes_its_rows_from_every_scoped_table_and_no_others(
+        self,
+    ):
+        for label, columns in (
+            ("page only", "BidPageUID INTEGER"),
+            ("bid only", "BidUID INTEGER"),
+        ):
+            with self.subTest(page_scoped_tables=label):
+                conn, tables = self.build_cascade(columns)
+                self.assertTrue(_SqliteMdbOps(conn).delete_bids("bid.mdb", ["1"]))
+                self.assertEqual(
+                    conn.execute("SELECT UID FROM Bids").fetchall(), [(2,)]
+                )
+                self.assertEqual(
+                    conn.execute("SELECT UID FROM BidPages").fetchall(), [(21,)]
+                )
+                for table in tables:
+                    self.assertEqual(
+                        conn.execute(f"SELECT UID FROM [{table}]").fetchall(),
+                        [(2,)],
+                        table,
+                    )
+
+    def test_deleting_a_bid_removes_percentages_and_condition_styles_of_its_children(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.executescript(
+            """
+            CREATE TABLE Bids (UID INTEGER PRIMARY KEY);
+            INSERT INTO Bids VALUES (1), (2);
+            CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER);
+            INSERT INTO BidTakeoffs VALUES (10, 1, NULL), (20, 2, NULL);
+            CREATE TABLE BidPercents (UID INTEGER, BidTakeoffUID INTEGER);
+            INSERT INTO BidPercents VALUES (1, 10), (2, 20);
+            CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER);
+            INSERT INTO BidConditions VALUES (30, 1), (40, 2);
+            CREATE TABLE ConditionSetStyles (UID INTEGER, ConditionStyleUID INTEGER);
+            INSERT INTO ConditionSetStyles VALUES (1, 30), (2, 40);
+            """
+        )
+        self.assertTrue(_SqliteMdbOps(conn).delete_bids("bid.mdb", ["1"]))
+        for table, expected in (
+            ("BidPercents", [(2,)]),
+            ("ConditionSetStyles", [(2,)]),
+            ("BidConditions", [(40,)]),
+            ("BidTakeoffs", [(20,)]),
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    conn.execute(f"SELECT UID FROM {table}").fetchall(), expected
+                )
+
+    def test_deleting_a_bid_needs_a_bid_uid_column_before_it_touches_anything(self):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.executescript(
+            "CREATE TABLE Bids (Name TEXT); INSERT INTO Bids VALUES ('x');"
+        )
+        error = self.failure_exception(
+            lambda: self.StrictOps(conn).delete_bids("bid.mdb", ["1"])
+        )
+        self.assertRegex(str(error), "Missing Bids.UID")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone(), (1,))
+
+    def test_duplicating_a_bid_needs_the_uid_column_and_a_bid_column_in_its_settings(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.executescript("CREATE TABLE Bids (Name TEXT);")
+        error = self.failure_exception(
+            lambda: self.StrictOps(conn).duplicate_bid("bid.mdb", "1")
+        )
+        self.assertRegex(str(error), "Missing Bids.UID")
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.executescript(
+            "CREATE TABLE Bids (UID INTEGER, BidNo INTEGER); INSERT INTO Bids VALUES (1, 1);"
+            "CREATE TABLE BidSettings (UID INTEGER);"
+            "CREATE TABLE Settings (NextBidNo INTEGER); INSERT INTO Settings VALUES (2);"
+        )
+        error = self.failure_exception(
+            lambda: self.StrictOps(conn).duplicate_bid("bid.mdb", "1")
+        )
+        self.assertRegex(str(error), "Missing BidSettings.BidUID")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone(), (1,))
+        self.assertEqual(
+            conn.execute("SELECT NextBidNo FROM Settings").fetchone(), (2,)
+        )
+
+    def test_creating_a_bid_needs_a_job_name_column_and_writes_nothing_without_it(self):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.executescript(
+            "CREATE TABLE Bids (UID INTEGER);"
+            "CREATE TABLE Settings (NextBidNo INTEGER); INSERT INTO Settings VALUES (4);"
+        )
+        error = self.failure_exception(
+            lambda: self.StrictOps(conn).create_bid("bid.mdb", None, {"job_name": "X"})
+        )
+        self.assertRegex(str(error), "Missing Bids.JobName")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone(), (0,))
+        self.assertEqual(
+            conn.execute("SELECT NextBidNo FROM Settings").fetchone(), (4,)
+        )
+
+    def new_bid_database(self, settings_values):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.executescript(
+            """
+            CREATE TABLE Settings (NextBidNo INTEGER, ScaleStyle INTEGER,
+                ScaleFactor1 REAL, ScaleFactor2 REAL, PageWidth REAL, PageHeight REAL,
+                MeasureBase INTEGER, TakeoffIncrements REAL);
+            CREATE TABLE Bids (UID INTEGER, GUID TEXT, BidNo INTEGER, JobName TEXT,
+                JobID TEXT, Notes BLOB, BidDate TEXT, MeasureBase INTEGER,
+                TakeoffIncrements REAL, ScaleStyle INTEGER, ScaleFactor1 REAL,
+                ScaleFactor2 REAL, PageWidth REAL, PageHeight REAL, HoursPerDay INTEGER,
+                LegendFlags INTEGER, BidType INTEGER, PriceUsing INTEGER,
+                WeekStartDay INTEGER, PageScale REAL, CoverSheetSelItemType INTEGER,
+                CoverSheetSelItemUID INTEGER);
+            CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, SheetNo TEXT, Name TEXT,
+                Width REAL, Height REAL, ScaleFactor1 REAL, ScaleFactor2 REAL, Show INTEGER,
+                RasterDrawMethod INTEGER, ScaleStyle INTEGER, GUID TEXT, Index1 INTEGER,
+                Sequence INTEGER, MultiPageCount INTEGER, ImagePath TEXT,
+                OverlayImagePath TEXT, BidPageFolderUID INTEGER);
+            CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT,
+                ParentUID INTEGER);
+            """
+        )
+        conn.execute(
+            "INSERT INTO Settings VALUES (?, ?, ?, ?, ?, ?, ?, ?)", settings_values
+        )
+        return conn
+
+    def test_a_new_bid_falls_back_to_the_built_in_defaults_for_unset_settings(self):
+        conn = self.new_bid_database((9, None, None, None, None, None, None, None))
+        ops = _SqliteDuplicateOps(conn)
+        self.assertEqual(
+            ops.create_bid(
+                "new.mdb",
+                None,
+                {
+                    "pages": [
+                        {"width": 10.0, "height": 8.0},
+                        {"width": 5.0, "height": 4.0},
+                    ]
+                },
+            ),
+            "1",
+        )
+        columns = (
+            "BidNo, JobName, JobID, Notes, BidDate, MeasureBase, TakeoffIncrements, "
+            "ScaleStyle, ScaleFactor1, ScaleFactor2, PageWidth, PageHeight, HoursPerDay, "
+            "LegendFlags, BidType, PriceUsing, WeekStartDay, PageScale, "
+            "CoverSheetSelItemType, CoverSheetSelItemUID"
+        )
+        self.assertEqual(
+            conn.execute(f"SELECT {columns} FROM Bids").fetchall(),
+            [
+                (
+                    9,
+                    "",
+                    "",
+                    b"",
+                    None,
+                    0,
+                    1.0,
+                    1,
+                    0.125,
+                    12.0,
+                    42.0,
+                    30.0,
+                    8,
+                    41,
+                    0,
+                    0,
+                    0,
+                    0.0,
+                    1,
+                    1,
+                )
+            ],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, SheetNo, Name, Width, Height, ScaleFactor1, ScaleFactor2, Show,"
+                " RasterDrawMethod, ScaleStyle, Index1, Sequence, MultiPageCount, ImagePath,"
+                " OverlayImagePath, BidPageFolderUID FROM BidPages ORDER BY UID"
+            ).fetchall(),
+            [
+                (1, "", "", 10.0, 8.0, 0.125, 12.0, 0, 1, 1, 1, 1, 0, "", "", None),
+                (2, "", "", 5.0, 4.0, 0.125, 12.0, 0, 1, 1, 1, 2, 0, "", "", None),
+            ],
+        )
+        self.assertEqual(
+            conn.execute("SELECT NextBidNo FROM Settings").fetchone(), (10,)
+        )
+
+    def test_a_new_bid_takes_the_settings_values_and_the_callers_overrides(self):
+        conn = self.new_bid_database((3, 2, 0.25, 24.0, 36.0, 24.0, 1, 0.5))
+        ops = _SqliteDuplicateOps(conn)
+        ops.create_bid(
+            "new.mdb",
+            None,
+            {
+                "job_name": "Tower",
+                "job_id": "J-7",
+                "bid_date": "2026-01-02",
+                "measure_base": 2,
+                "takeoff_increments": 0.75,
+                "scale_style": 3,
+                "scale_factor1": 0.5,
+                "scale_factor2": 6.0,
+                "page_width": 48.0,
+                "page_height": 36.0,
+                "pages": [
+                    {
+                        "width": 10.0,
+                        "height": 8.0,
+                        "sheet_no": "S-1",
+                        "name": "Plan",
+                        "scale_factor1": 1.0,
+                        "scale_factor2": 4.0,
+                        "show_mode": 2,
+                        "index": 7,
+                        "sequence": 9,
+                        "multi_page_count": 5,
+                        "image_path": "a.pdf",
+                        "overlay_path": "b.pdf",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT BidNo, JobName, JobID, BidDate, MeasureBase, TakeoffIncrements,"
+                " ScaleStyle, ScaleFactor1, ScaleFactor2, PageWidth, PageHeight FROM Bids"
+            ).fetchall(),
+            [(3, "Tower", "J-7", "2026-01-02", 2, 0.75, 3, 0.5, 6.0, 48.0, 36.0)],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT SheetNo, Name, ScaleFactor1, ScaleFactor2, Show, ScaleStyle,"
+                " Index1, Sequence, MultiPageCount, ImagePath, OverlayImagePath"
+                " FROM BidPages"
+            ).fetchall(),
+            [("S-1", "Plan", 1.0, 4.0, 2, 3, 7, 9, 5, "a.pdf", "b.pdf")],
+        )
+
+    def test_a_new_bid_uses_the_stored_settings_when_the_caller_gives_none(self):
+        conn = self.new_bid_database((3, 2, 0.25, 24.0, 36.0, 24.0, 1, 0.5))
+        _SqliteDuplicateOps(conn).create_bid(
+            "new.mdb", None, {"pages": [{"width": 10.0, "height": 8.0}]}
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT MeasureBase, TakeoffIncrements, ScaleStyle, ScaleFactor1,"
+                " ScaleFactor2, PageWidth, PageHeight FROM Bids"
+            ).fetchall(),
+            [(1, 0.5, 2, 0.25, 24.0, 36.0, 24.0)],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT ScaleFactor1, ScaleFactor2, ScaleStyle FROM BidPages"
+            ).fetchall(),
+            [(0.25, 24.0, 2)],
+        )
+
+    def test_new_pages_land_in_the_new_folders_they_name(self):
+        conn = self.new_bid_database((1, None, None, None, None, None, None, None))
+        _SqliteDuplicateOps(conn).create_bid(
+            "new.mdb",
+            None,
+            {
+                "new_folders": [
+                    {"local_uid": "child", "name": "Child", "parent_uid": "root"},
+                    {"local_uid": "root", "name": "Root"},
+                    {"local_uid": "other", "name": ""},
+                ],
+                "pages": [
+                    {"width": 1.0, "height": 1.0, "name": "A", "folder_uid": "child"},
+                    {"width": 1.0, "height": 1.0, "name": "B"},
+                ],
+            },
+        )
+        folders = {
+            row[1]: row
+            for row in conn.execute("SELECT UID, Name, ParentUID FROM BidPageFolders")
+        }
+        self.assertEqual(set(folders), {"Child", "Root", "New Folder"})
+        self.assertIsNone(folders["Root"][2])
+        self.assertIsNone(folders["New Folder"][2])
+        self.assertEqual(folders["Child"][2], folders["Root"][0])
+        self.assertEqual(
+            conn.execute(
+                "SELECT Name, BidPageFolderUID FROM BidPages ORDER BY UID"
+            ).fetchall(),
+            [("A", folders["Child"][0]), ("B", None)],
+        )
+
+
 class BidOperationsCompatibilityTests(unittest.TestCase):
     def test_create_bid_rejects_missing_durable_bid_number_allocator(self):
         class Schema:

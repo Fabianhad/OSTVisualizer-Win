@@ -2,6 +2,7 @@ import os
 import threading
 import time
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
@@ -389,6 +390,43 @@ class PdfRenderingRequestLifecycleTests(unittest.TestCase):
         self.assertIsNone(service._page_cache)
         self.assertEqual(service._worker_threads, [])
 
+    def test_workers_are_registered_live_daemon_threads_that_shutdown_joins(self):
+        service = PDFRenderingService(PageCache(), num_workers=2)
+        workers = list(service._worker_threads)
+        self.assertEqual(
+            [thread.name for thread in workers],
+            ["PDFRenderWorker-0", "PDFRenderWorker-1"],
+        )
+        self.assertTrue(all(thread.daemon for thread in workers))
+        self.assertTrue(all(thread.is_alive() for thread in workers))
+        service.shutdown()
+        self.assertFalse(any(thread.is_alive() for thread in workers))
+        self.assertEqual(service._worker_threads, [])
+
+    def test_shutdown_releases_the_cache_composites_and_bridge_exactly_once(self):
+        class CountingPageCache(PageCache):
+            clears = 0
+
+            def clear(self):
+                type(self).clears += 1
+                super().clear()
+
+        cache = CountingPageCache()
+        service = PDFRenderingService(cache, num_workers=1)
+        bridge = service._render_bridge
+        composites = service._composite_renderer
+        released = []
+        with mock.patch.object(
+            composites, "clear_cache", side_effect=lambda: released.append("composites")
+        ):
+            service.shutdown()
+            service.shutdown()
+        self.assertEqual(CountingPageCache.clears, 1)
+        self.assertEqual(released, ["composites"])
+        self.assertTrue(bridge._closed.is_set())
+        self.assertIsNone(service._render_bridge)
+        self.assertIsNone(service._composite_renderer)
+
     def test_every_request_entry_point_fails_explicitly_after_shutdown(self):
         service = PDFRenderingService(PageCache(), num_workers=0)
         service.shutdown()
@@ -468,6 +506,45 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIsNone(result.image)
         self.assertEqual(result.error, "Failed to render page")
+
+    def test_failed_tinted_and_overlay_renders_report_a_plain_failure(self):
+        service = self._service(SolidRenderer(fail=True))
+        page = Page(
+            uid="p1", name="P1", image_path="page.pdf", overlay_image_path="o.pdf"
+        )
+        submissions = {
+            "tinted page": lambda callback: service.render_page_async(
+                "page.pdf", 0, 1.0, 0, callback, tint_rgb=(80, 80, 255)
+            ),
+            "overlay": lambda callback: service.render_overlay_async(
+                page, 1, 0, 1.0, callback
+            ),
+            "tinted overlay": lambda callback: service.render_overlay_async(
+                page, 2, 0, 1.0, callback
+            ),
+            "frame": lambda callback: service.render_frame_async(
+                "page.pdf", 0, 1.0, 0, 0.0, 0.0, 10.0, 10.0, callback
+            ),
+            "tinted frame": lambda callback: service.render_frame_async(
+                "page.pdf",
+                0,
+                1.0,
+                0,
+                0.0,
+                0.0,
+                10.0,
+                10.0,
+                callback,
+                tint_rgb=(255, 80, 80),
+            ),
+        }
+        for name, submit in submissions.items():
+            with self.subTest(request=name):
+                with self.assertNoLogs(_SERVICE_LOGGER, level="ERROR"):
+                    result = self._run(submit)
+                self.assertFalse(result.success)
+                self.assertIsNone(result.image)
+                self.assertEqual(result.error, "Cancelled or failed")
 
     def test_render_exception_becomes_failed_result_and_clears_request(self):
         service = self._service(SolidRenderer(error=RuntimeError("native boom")))

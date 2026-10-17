@@ -336,6 +336,132 @@ class OspExporterProgressTests(unittest.TestCase):
             r"C:\missing\sheet.pdf",
         )
 
+    def test_the_missing_drawing_list_shows_ten_files_and_counts_the_rest(self):
+        for count, tail in ((10, ""), (11, "; +1 more"), (13, "; +3 more")):
+            with self.subTest(count=count):
+                raw_data = RawBidData(
+                    bid_tables={
+                        "BidPages": [
+                            {
+                                "UID": str(index),
+                                "ImagePath": rf"C:\missing\s{index}.pdf",
+                            }
+                            for index in range(count)
+                        ]
+                    }
+                )
+                result = self._make_osp_exporter().export(raw_data, "unused.osp")
+                shown = "; ".join(rf"C:\missing\s{index}.pdf" for index in range(10))
+                self.assertEqual(
+                    result.error_message,
+                    "Cannot export OSP because referenced drawing files are missing: "
+                    + shown
+                    + tail,
+                )
+
+    def test_member_names_that_collide_get_numbered_from_two_without_case_sensitivity(
+        self,
+    ):
+        exporter = self._make_osp_exporter()
+        reserved = set()
+        reserve = exporter._reserve_package_image_member_path
+        preferred = "TempImages!.tmp\\Plan.pdf"
+        self.assertEqual(reserve(preferred, reserved), preferred)
+        self.assertEqual(reserve(preferred, reserved), "TempImages!.tmp\\Plan_2.pdf")
+        self.assertEqual(
+            reserve("TempImages!.tmp\\PLAN.PDF", reserved),
+            "TempImages!.tmp\\PLAN_3.PDF",
+        )
+        self.assertEqual(
+            reserved,
+            {
+                "tempimages!.tmp\\plan.pdf",
+                "tempimages!.tmp\\plan_2.pdf",
+                "tempimages!.tmp\\plan_3.pdf",
+            },
+        )
+
+    def test_colliding_images_are_named_by_page_and_a_sixteen_character_digest(self):
+        import hashlib
+
+        exporter = self._make_osp_exporter()
+        member = exporter._collision_package_image_member_path(
+            "c:\\a\\plan.pdf", "plan.pdf", "p-1"
+        )
+        digest = hashlib.sha1(b"c:\\a\\plan.pdf").hexdigest()[:16]
+        self.assertEqual(member, f"TempImages!.tmp\\p_1_{digest}_plan.pdf")
+        self.assertEqual(
+            exporter._collision_package_image_member_path("k", "x.pdf", "")[
+                len("TempImages!.tmp\\") :
+            ].split("_")[0],
+            "page",
+        )
+
+    def test_image_file_names_lose_path_characters_and_default_to_image(self):
+        exporter = self._make_osp_exporter()
+        self.assertEqual(
+            exporter._package_image_member_path('a/b\\c:d*e?f"g<h>i|j.pdf'),
+            "TempImages!.tmp\\a_b_c_d_e_f_g_h_i_j.pdf",
+        )
+        self.assertEqual(
+            exporter._package_image_member_path(""), "TempImages!.tmp\\image"
+        )
+        self.assertEqual(
+            exporter._safe_path_component("   ", default="fallback"), "fallback"
+        )
+        self.assertEqual(
+            exporter._safe_path_component("  name  ", default="fallback"), "name"
+        )
+
+    def test_the_transfer_file_carries_the_version_a_fresh_guid_and_the_send_date(self):
+        import re
+        import xml.etree.ElementTree as ET
+        from datetime import datetime
+
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 3, 4, 15, 7)
+
+        exporter = OspExporter(
+            SimpleNamespace(), "9.8.7", self._unused_ost_exporter_factory
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(osp_exporter, "datetime", FixedDatetime):
+                path = exporter._generate_bid_trans_xml(Path(tmp))
+            self.assertEqual(path, Path(tmp) / "BidTrans.xml")
+            text = path.read_text(encoding="utf-8")
+        root = ET.fromstring(text)
+        self.assertEqual(root.tag, "XML_ROOT")
+        dpc = root.find("DPC")
+        self.assertEqual(dpc.get("Version"), "9.8.7")
+        self.assertEqual(dpc.get("SendDate"), "03/04/2026 03:07 PM")
+        self.assertRegex(
+            dpc.get("STSGUID"), r"\A\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\}\Z"
+        )
+        self.assertEqual(text.count("\n"), 2)
+        self.assertTrue(re.fullmatch(r"<XML_ROOT>\n<DPC [^>]*/>\n</XML_ROOT>", text))
+
+    def test_every_transfer_file_gets_its_own_guid(self):
+        import xml.etree.ElementTree as ET
+
+        exporter = self._make_osp_exporter()
+        guids = set()
+        with tempfile.TemporaryDirectory() as tmp:
+            for _ in range(3):
+                path = exporter._generate_bid_trans_xml(Path(tmp))
+                guids.add(ET.parse(path).getroot().find("DPC").get("STSGUID"))
+        self.assertEqual(len(guids), 3)
+
+    def test_package_image_references_are_immutable(self):
+        from dataclasses import FrozenInstanceError
+
+        reference = osp_exporter._PackageImageReference(
+            {}, "ImagePath", "c", "s", "f", "1"
+        )
+        with self.assertRaises(FrozenInstanceError):
+            reference.filename = "other"
+
     def test_osp_export_with_missing_drawing_files_fails_before_building_ost(self):
         raw_data = RawBidData(
             bid_tables={

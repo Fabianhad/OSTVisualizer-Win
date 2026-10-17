@@ -246,6 +246,239 @@ class MdbWriterSqlCleanupTests(unittest.TestCase):
         self.assertEqual(update.call_count, 2)
 
 
+class MdbWriterTransactionTests(unittest.TestCase):
+    class Connection:
+        def __init__(self, events, rollback_error=None):
+            self.events = events
+            self.rollback_error = rollback_error
+
+        def commit(self):
+            self.events.append("commit")
+
+        def rollback(self):
+            self.events.append("rollback")
+            if self.rollback_error is not None:
+                raise self.rollback_error
+
+    class Manager:
+        def __init__(self, events, rollback_error=None):
+            self.events = events
+            self.rollback_error = rollback_error
+
+        @contextmanager
+        def connection(self, db_path, autocommit=True):
+            self.events.append(("open", db_path, autocommit))
+            yield MdbWriterTransactionTests.Connection(self.events, self.rollback_error)
+            self.events.append("close")
+
+        def use_committed_writer_for_reads(self, db_path):
+            self.events.append(("reads", db_path))
+
+    def writer(self, rollback_error=None):
+        events = []
+        return MdbWriter(conn_manager=self.Manager(events, rollback_error)), events
+
+    def test_an_outermost_transaction_commits_once_then_switches_reads_to_the_writer(
+        self,
+    ):
+        writer, events = self.writer()
+        with writer._connection("a.mdb") as connection:
+            self.assertEqual(writer._access_transaction_depth.get(), 1)
+            events.append("work")
+        self.assertEqual(
+            events,
+            [("open", "a.mdb", False), "work", "commit", "close", ("reads", "a.mdb")],
+        )
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+        self.assertIsNone(writer._access_transaction_error.get())
+
+    def test_nested_connections_neither_commit_nor_roll_back_on_their_own(self):
+        writer, events = self.writer()
+        with writer._connection("a.mdb"):
+            with writer._connection("a.mdb"):
+                self.assertEqual(writer._access_transaction_depth.get(), 2)
+                events.append("inner work")
+            self.assertEqual(writer._access_transaction_depth.get(), 1)
+            events.append("outer work")
+        self.assertEqual(events.count("commit"), 1)
+        self.assertEqual(events.count("rollback"), 0)
+        self.assertEqual(events.count(("reads", "a.mdb")), 1)
+        self.assertLess(events.index("outer work"), events.index("commit"))
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+
+    def test_a_failure_the_caller_swallowed_still_rolls_the_whole_transaction_back(
+        self,
+    ):
+        writer, events = self.writer()
+        with self.assertRaisesRegex(ValueError, "inner failed"):
+            with writer._connection("a.mdb"):
+                try:
+                    with writer._connection("a.mdb"):
+                        raise ValueError("inner failed")
+                except ValueError:
+                    events.append("swallowed")
+        self.assertIn("swallowed", events)
+        self.assertEqual(events.count("rollback"), 1)
+        self.assertNotIn("commit", events)
+        self.assertNotIn(("reads", "a.mdb"), events)
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+        self.assertIsNone(writer._access_transaction_error.get())
+
+    def test_the_first_swallowed_failure_is_the_one_reported(self):
+        writer, events = self.writer()
+        with self.assertRaisesRegex(ValueError, "first"):
+            with writer._connection("a.mdb"):
+                for message in ("first", "second"):
+                    try:
+                        with writer._connection("a.mdb"):
+                            raise ValueError(message)
+                    except ValueError:
+                        pass
+        self.assertEqual(events.count("rollback"), 1)
+
+    def test_a_failure_in_the_outermost_block_rolls_back_and_is_not_masked(self):
+        writer, events = self.writer()
+        with self.assertRaisesRegex(KeyError, "boom"):
+            with writer._connection("a.mdb"):
+                raise KeyError("boom")
+        self.assertEqual(events.count("rollback"), 1)
+        self.assertNotIn("commit", events)
+        self.assertNotIn(("reads", "a.mdb"), events)
+
+    def test_a_transaction_after_a_failed_one_starts_clean_and_commits(self):
+        writer, events = self.writer()
+        with self.assertRaises(ValueError):
+            with writer._connection("a.mdb"):
+                try:
+                    with writer._connection("a.mdb"):
+                        raise ValueError("first transaction")
+                except ValueError:
+                    pass
+        events.clear()
+        with writer._connection("a.mdb"):
+            events.append("second transaction")
+        self.assertEqual(events.count("commit"), 1)
+        self.assertEqual(events.count("rollback"), 0)
+
+    def test_an_error_recorded_outside_a_transaction_does_not_leak_into_the_next_one(
+        self,
+    ):
+        writer, events = self.writer()
+        writer._access_transaction_error.set(RuntimeError("stale"))
+        self.addCleanup(writer._access_transaction_error.set, None)
+        with writer._connection("a.mdb"):
+            events.append("work")
+        self.assertEqual(events.count("commit"), 1)
+
+    def test_a_rollback_failure_is_reported_with_the_original_failure_as_its_cause(
+        self,
+    ):
+        rollback_error = pyodbc.Error("rollback refused")
+        writer, events = self.writer(rollback_error)
+        with self.assertRaises(pyodbc.Error) as raised:
+            with writer._connection("a.mdb"):
+                raise ValueError("original")
+        self.assertIs(raised.exception, rollback_error)
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        self.assertEqual(
+            raised.exception.__notes__,
+            ["The MDB transaction could not be rolled back after ValueError: original"],
+        )
+        self.assertNotIn(("reads", "a.mdb"), events)
+
+    def test_only_database_errors_inside_a_transaction_count_as_caught_mutation_errors(
+        self,
+    ):
+        writer, _events = self.writer()
+        database_error = pyodbc.Error("x")
+        self.assertFalse(writer._record_caught_mutation_error(database_error))
+        with writer._connection("a.mdb"):
+            self.assertTrue(writer._record_caught_mutation_error(database_error))
+            self.assertFalse(writer._record_caught_mutation_error(ValueError("x")))
+        self.assertFalse(writer._record_caught_mutation_error(database_error))
+
+    def test_schema_inspectors_are_built_for_the_connection_and_logger(self):
+        logger = logging.getLogger("writer-test")
+        writer = MdbWriter(conn_manager=self.Manager([]), logger=logger)
+        connection = object()
+        schema = writer._schema(connection)
+        self.assertEqual(type(schema).__name__, "MdbSchemaInspector")
+        self.assertIs(schema.connection, connection)
+        self.assertIs(schema.logger, logger)
+
+
+class MdbWriterPlanPreflightTests(unittest.TestCase):
+    class StrictOps(_SqliteDuplicateOps):
+        _require_write_columns = MdbWriter._require_write_columns
+
+    def ops(self, script):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.executescript(script)
+        return self.StrictOps(connection)
+
+    def verify(self, ops, takeoffs=(), annotations=(), bid="1", ownership=()):
+        MdbWriter.verify_plan_items_exist(
+            ops, "x.mdb", bid, takeoffs, annotations, takeoff_ownership=ownership
+        )
+
+    def test_the_bid_itself_must_still_exist(self):
+        ops = self.ops("CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);")
+        self.verify(ops)
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, "Bids has no row for UID 99"
+        ):
+            self.verify(ops, bid="99")
+
+    def test_takeoffs_need_a_bid_column_to_be_scoped(self):
+        ops = self.ops(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
+            "CREATE TABLE BidTakeoffs (UID INTEGER); INSERT INTO BidTakeoffs VALUES (10);"
+        )
+        with self.assertRaisesRegex(RuntimeError, "Missing BidTakeoffs.BidUID"):
+            self.verify(ops, takeoffs=("10",))
+
+    def test_the_takeoff_ownership_snapshot_must_still_match_the_stored_rows(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            PlanTakeoffOwnership,
+        )
+
+        ops = self.ops(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER,"
+            " BidConditionUID INTEGER, BidAreaUID INTEGER, ParentUID INTEGER);"
+            "INSERT INTO BidTakeoffs VALUES (10, 1, 5, 6, 7, NULL);"
+        )
+        self.verify(
+            ops,
+            takeoffs=("10",),
+            ownership=(PlanTakeoffOwnership("10", "5", "6", "7", "0"),),
+        )
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, "takeoff ownership changed"
+        ):
+            self.verify(
+                ops,
+                takeoffs=("10",),
+                ownership=(PlanTakeoffOwnership("10", "5", "6", "8", "0"),),
+            )
+
+    def test_an_annotation_whose_table_is_gone_is_reported_as_changed(self):
+        ops = self.ops("CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);")
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, "annotation changed or was deleted"
+        ):
+            self.verify(ops, annotations=(("30", "rect"),))
+
+    def test_annotation_tables_need_a_bid_column_to_be_scoped(self):
+        ops = self.ops(
+            "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
+            "CREATE TABLE BidAnnotationRects (UID INTEGER); INSERT INTO BidAnnotationRects VALUES (30);"
+        )
+        with self.assertRaisesRegex(RuntimeError, "Missing BidAnnotationRects.BidUID"):
+            self.verify(ops, annotations=(("30", "rect"),))
+
+
 class PageScaleTransactionTests(unittest.TestCase):
     def _rescale(self, legend_value):
         from contextlib import contextmanager

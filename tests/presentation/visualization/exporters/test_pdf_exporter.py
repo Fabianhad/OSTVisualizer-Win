@@ -1390,6 +1390,310 @@ class PdfExportPhysicalGeometryTests(unittest.TestCase):
                 self.assertEqual(len(polygons), 1)
 
 
+class PdfExportQuantityDataTests(unittest.TestCase):
+    PAGE_INFO = {
+        "scale_factor1": 0.25,
+        "scale_factor2": 8.0,
+        "rotation": 0,
+        "flip_x": False,
+        "flip_y": False,
+        "width": 612.0,
+        "height": 792.0,
+        "view_scale": 1.0,
+    }
+
+    class Resolver:
+        def __init__(self):
+            self.calls = []
+
+        def resolve(self, condition, takeoff, hole_positions, settings, label):
+            self.calls.append((takeoff.uid, hole_positions, label))
+            return SimpleNamespace(
+                lines=(f"line {label}",), label=label, measurement_types=3
+            )
+
+    def setUp(self):
+        self.resolver = self.Resolver()
+        self.exporter = PDFExporter(
+            OSTCoordinateSystem(),
+            ColorService(),
+            TakeoffDomainService(),
+            UOMDomainService(),
+            self.resolver,
+        )
+
+    def collect(
+        self, takeoffs, conditions, *, captions=False, callouts=False, page_info=None
+    ):
+        return self.exporter._collect_takeoffs(
+            takeoffs,
+            {condition.uid: condition for condition in conditions},
+            page_info or self.PAGE_INFO,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            caption_settings=AnnotationCaptionSettingsDto(captions, ()),
+            elevation_callouts_enabled=callouts,
+        )
+
+    @staticmethod
+    def area_condition(**overrides):
+        values = {"uid": "c", "condition_type": Condition.TYPE_AREA, "name": "Slab"}
+        values.update(overrides)
+        return Condition(**values)
+
+    @staticmethod
+    def square(side, offset=0.0):
+        low, high = offset, offset + side
+        return [low, low, high, low, high, high, low, high]
+
+    def test_an_area_takeoff_is_exported_with_its_net_area_depth_and_scale(self):
+        parent = Takeoff(uid="a", condition_uid="c", position=self.square(120.0))
+        hole = Takeoff(
+            uid="h",
+            condition_uid="c",
+            position=self.square(60.0, 30.0),
+            parent_uid="a",
+            is_negative=True,
+        )
+        polygons, callouts = self.collect(
+            [parent, hole], [self.area_condition(thickness=6.0)]
+        )
+        self.assertEqual(callouts, [])
+        self.assertEqual(len(polygons), 1)
+        polygon = polygons[0]
+        self.assertAlmostEqual(polygon.area_sf, 75.0)
+        self.assertAlmostEqual(polygon.depth, 0.5)
+        self.assertEqual((polygon.scale_factor1, polygon.scale_factor2), (0.25, 8.0))
+        self.assertEqual(len(polygon.vertices), 4)
+        self.assertEqual([len(ring) for ring in polygon.holes], [4])
+
+    def test_missing_scale_factors_in_the_page_information_default_to_one(self):
+        takeoff = Takeoff(uid="a", condition_uid="c", position=self.square(12.0))
+        info = {k: v for k, v in self.PAGE_INFO.items() if not k.startswith("scale")}
+        polygons, _callouts = self.collect(
+            [takeoff], [self.area_condition()], page_info=info
+        )
+        self.assertEqual(
+            (polygons[0].scale_factor1, polygons[0].scale_factor2), (1.0, 1.0)
+        )
+
+    def test_area_depth_comes_from_a_positive_thickness_only(self):
+        takeoff = Takeoff(uid="a", condition_uid="c", position=self.square(12.0))
+        for thickness, depth in ((24.0, 2.0), (None, 0.0), (0.0, 0.0), (-6.0, 0.0)):
+            with self.subTest(thickness=thickness):
+                polygons, _callouts = self.collect(
+                    [takeoff], [self.area_condition(thickness=thickness)]
+                )
+                self.assertAlmostEqual(polygons[0].depth, depth)
+
+    def test_takeoffs_that_cannot_be_drawn_are_left_out(self):
+        visible = self.area_condition(uid="v")
+        hidden = self.area_condition(uid="x", layer_visible=False)
+        takeoffs = [
+            Takeoff(uid="1", condition_uid="v", position=self.square(12.0)),
+            Takeoff(uid="2", condition_uid="x", position=self.square(12.0)),
+            Takeoff(uid="3", condition_uid="unknown", position=self.square(12.0)),
+            Takeoff(uid="4", condition_uid="v", position=[0.0, 0.0, 1.0, 1.0]),
+            Takeoff(uid="5", condition_uid="v", position=[]),
+        ]
+        polygons, _callouts = self.collect(takeoffs, [visible, hidden], captions=True)
+        self.assertEqual([call[0] for call in self.resolver.calls], ["1"])
+        self.assertEqual(len(polygons), 1)
+
+    def test_holes_with_too_few_points_are_ignored_and_the_rest_are_kept(self):
+        parent = Takeoff(uid="a", condition_uid="c", position=self.square(120.0))
+        good = Takeoff(
+            uid="h1",
+            condition_uid="c",
+            position=self.square(30.0, 10.0),
+            parent_uid="a",
+            is_negative=True,
+        )
+        short = Takeoff(
+            uid="h2",
+            condition_uid="c",
+            position=[1.0, 1.0, 2.0, 2.0],
+            parent_uid="a",
+            is_negative=True,
+        )
+        polygons, _callouts = self.collect(
+            [parent, good, short], [self.area_condition()]
+        )
+        self.assertEqual([len(ring) for ring in polygons[0].holes], [4])
+
+    def test_captions_carry_the_reference_number_name_and_hole_positions(self):
+        parent = Takeoff(uid="a", condition_uid="c", position=self.square(120.0))
+        hole = Takeoff(
+            uid="h",
+            condition_uid="c",
+            position=self.square(30.0, 10.0),
+            parent_uid="a",
+            is_negative=True,
+        )
+        for condition, label in (
+            (self.area_condition(ref_no="R1", name="Slab"), "R1 - Slab"),
+            (self.area_condition(ref_no="", name="Slab"), "Slab"),
+            (self.area_condition(ref_no="R2", name=""), "R2 - Takeoff"),
+            (self.area_condition(ref_no="", name=""), "Takeoff"),
+        ):
+            with self.subTest(label=label):
+                self.resolver.calls.clear()
+                polygons, _callouts = self.collect(
+                    [parent, hole], [condition], captions=True
+                )
+                self.assertEqual(
+                    self.resolver.calls,
+                    [("a", [self.square(30.0, 10.0)], label)],
+                )
+                caption = polygons[0].caption
+                self.assertEqual(
+                    (list(caption.lines), caption.label, caption.measurement_types),
+                    ([f"line {label}"], label, 3),
+                )
+        polygons, _callouts = self.collect(
+            [parent], [self.area_condition()], captions=False
+        )
+        self.assertFalse(hasattr(polygons[0], "caption") and polygons[0].caption.lines)
+
+    def test_a_linear_takeoff_is_measured_along_its_length_and_thickness(self):
+        condition = Condition(
+            uid="c", condition_type=Condition.TYPE_LINEAR, thickness=6.0, height=24.0
+        )
+        takeoff = Takeoff(uid="t", condition_uid="c", position=[0.0, 0.0, 30.0, 40.0])
+        polygons, _callouts = self.collect([takeoff], [condition])
+        self.assertAlmostEqual(polygons[0].area_sf, 50.0 * 6.0 / 144.0)
+        self.assertAlmostEqual(polygons[0].depth, 2.0)
+        self.assertEqual(
+            (polygons[0].scale_factor1, polygons[0].scale_factor2), (0.25, 8.0)
+        )
+
+    def test_a_linear_takeoff_without_a_usable_thickness_counts_as_one_inch(self):
+        takeoff = Takeoff(uid="t", condition_uid="c", position=[0.0, 0.0, 144.0, 0.0])
+        for thickness in (None, 0.0, -4.0):
+            with self.subTest(thickness=thickness):
+                condition = Condition(
+                    uid="c", condition_type=Condition.TYPE_LINEAR, thickness=thickness
+                )
+                polygons, _callouts = self.collect([takeoff], [condition])
+                self.assertAlmostEqual(polygons[0].area_sf, 1.0)
+                self.assertEqual(polygons[0].depth, 0.0)
+
+    def test_a_linear_takeoff_needs_both_end_points(self):
+        condition = Condition(
+            uid="c", condition_type=Condition.TYPE_LINEAR, thickness=6.0
+        )
+        short = Takeoff(uid="t", condition_uid="c", position=[0.0, 0.0, 30.0])
+        polygons, _callouts = self.collect([short], [condition])
+        self.assertEqual(polygons, [])
+
+    def test_a_count_takeoff_is_sized_from_its_footprint_and_height(self):
+        condition = Condition(
+            uid="c",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.SQUARE,
+            width=24.0,
+            display_size=100.0,
+            height=36.0,
+        )
+        takeoff = Takeoff(uid="t", condition_uid="c", position=[100.0, 200.0])
+        polygons, _callouts = self.collect([takeoff], [condition])
+        self.assertAlmostEqual(polygons[0].area_sf, 24.0 * 24.0 / 144.0)
+        self.assertAlmostEqual(polygons[0].depth, 3.0)
+        without_height = Condition(
+            uid="c",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.SQUARE,
+            width=24.0,
+            display_size=100.0,
+        )
+        polygons, _callouts = self.collect([takeoff], [without_height])
+        self.assertEqual(polygons[0].depth, 0.0)
+
+    def test_elevation_callouts_are_collected_for_every_family_when_enabled(self):
+        conditions = [
+            self.area_condition(uid="area"),
+            Condition(uid="line", condition_type=Condition.TYPE_LINEAR, thickness=6.0),
+            Condition(
+                uid="count",
+                condition_type=Condition.TYPE_COUNT,
+                shape=shapes.SQUARE,
+                width=12.0,
+                display_size=100.0,
+            ),
+        ]
+        takeoffs = [
+            Takeoff(uid="a", condition_uid="area", position=self.square(12.0)),
+            Takeoff(uid="l", condition_uid="line", position=[0.0, 0.0, 30.0, 40.0]),
+            Takeoff(uid="n", condition_uid="count", position=[100.0, 200.0]),
+        ]
+        with mock.patch.object(
+            self.exporter, "_build_elevation_callout_text", return_value="callout"
+        ) as build:
+            _polygons, callouts = self.collect(takeoffs, conditions, callouts=True)
+            self.assertEqual(callouts, ["callout"] * 3)
+            self.assertEqual(build.call_count, 3)
+            build.reset_mock()
+            _polygons, callouts = self.collect(takeoffs, conditions, callouts=False)
+        self.assertEqual(callouts, [])
+        build.assert_not_called()
+
+
+class PdfExportOverlayPlacementTests(unittest.TestCase):
+    @staticmethod
+    def page(**overrides):
+        values = {
+            "uid": "p",
+            "name": "P",
+            "width_pts": 612.0,
+            "height_pts": 792.0,
+            "scale_factor1": 0.125,
+            "scale_factor2": 9.0,
+            "overlay_image_path": "overlay.png",
+            "overlay_rect": (0.0, 0.0, 612.0, 792.0),
+        }
+        values.update(overrides)
+        return Page(**values)
+
+    def matches(self, **overrides):
+        return PDFExporter._overlay_rect_matches_page(self.page(**overrides))
+
+    def test_an_overlay_covering_the_page_within_three_points_is_used_directly(self):
+        self.assertTrue(self.matches())
+        self.assertTrue(self.matches(overlay_rect=(3.0, 0.0, 612.0, 792.0)))
+        self.assertFalse(self.matches(overlay_rect=(3.01, 0.0, 612.0, 792.0)))
+        self.assertTrue(self.matches(overlay_rect=(-3.0, 0.0, 612.0, 792.0)))
+        self.assertFalse(self.matches(overlay_rect=(-3.01, 0.0, 612.0, 792.0)))
+        self.assertTrue(self.matches(overlay_rect=(0.0, 3.0, 612.0, 792.0)))
+        self.assertFalse(self.matches(overlay_rect=(0.0, 3.01, 612.0, 792.0)))
+        self.assertTrue(self.matches(overlay_rect=(0.0, 0.0, 615.0, 792.0)))
+        self.assertFalse(self.matches(overlay_rect=(0.0, 0.0, 615.01, 792.0)))
+        self.assertFalse(self.matches(overlay_rect=(0.0, 0.0, 608.99, 792.0)))
+        self.assertTrue(self.matches(overlay_rect=(0.0, 0.0, 612.0, 795.0)))
+        self.assertFalse(self.matches(overlay_rect=(0.0, 0.0, 612.0, 795.01)))
+        self.assertFalse(self.matches(overlay_rect=(0.0, 0.0, 612.0, 788.99)))
+
+    def test_an_overlay_without_a_size_yet_counts_as_matching(self):
+        for rect in (
+            (10.0, 10.0, 0.0, 792.0),
+            (10.0, 10.0, 612.0, 0.0),
+            (10.0, 10.0, 0.0, 0.0),
+        ):
+            with self.subTest(rect=rect):
+                self.assertTrue(self.matches(overlay_rect=rect))
+
+    def test_a_rotated_or_unscaled_overlay_needs_the_rendered_path(self):
+        self.assertTrue(self.matches(overlay_rotation=1e-6))
+        self.assertFalse(self.matches(overlay_rotation=2e-6))
+        self.assertFalse(self.matches(overlay_rotation=-2e-6))
+        self.assertFalse(self.matches(deskew_rotation_overlay=2e-6))
+        self.assertFalse(
+            self.matches(overlay_rotation=1e-6, deskew_rotation_overlay=1e-6)
+        )
+        self.assertTrue(
+            self.matches(overlay_rotation=1e-6, deskew_rotation_overlay=-1e-6)
+        )
+        self.assertFalse(self.matches(scale_factor1=0.0))
+
+
 class PdfElevationCalloutTests(unittest.TestCase):
     def setUp(self):
         uom_service = UOMDomainService()
@@ -1847,6 +2151,291 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             [highlights[0].paths[0][index] for index in (0, 1, 5, 4)],
             [[10.0, 772.0], [110.0, 772.0], [10.0, 732.0], [110.0, 732.0]],
         )
+
+
+class PdfExportBackgroundChoiceTests(unittest.TestCase):
+    def setUp(self):
+        self.exporter = PDFExporter(
+            OSTCoordinateSystem(),
+            ColorService(),
+            TakeoffDomainService(),
+            UOMDomainService(),
+            object(),
+        )
+        self.calls = []
+
+    def configure(self, page, *, composite="c.pdf", main=True, overlay=True):
+        calls = self.calls
+        exporter = self.exporter
+        exporter._create_composite_background_pdf = lambda *_args: (
+            calls.append("composite") or composite
+        )
+        exporter._try_main_background = lambda *_args: calls.append("main") or main
+        exporter._try_overlay_background = lambda *_args: (
+            calls.append("overlay") or overlay
+        )
+        export_data = SimpleNamespace(source_pdf=None, page_index=None, is_blank=None)
+        exporter._configure_page_background(export_data, page, {}, "tmp")
+        return export_data
+
+    @staticmethod
+    def page(mode, *, main="m.pdf", overlay="o.png", layer_visible=True):
+        return _overlay_export_support__page(
+            image_path=main,
+            overlay_image_path=overlay,
+            image_show_mode=mode,
+            layer_visible=layer_visible,
+        )
+
+    def test_both_images_visible_prefer_the_composite_then_each_source_in_turn(self):
+        page = self.page(SHOW_BOTH)
+        data = self.configure(page)
+        self.assertEqual(self.calls, ["composite"])
+        self.assertEqual(
+            (data.source_pdf, data.page_index, data.is_blank), ("c.pdf", 0, False)
+        )
+        for main, overlay, expected in (
+            (True, True, ["composite", "main"]),
+            (False, True, ["composite", "main", "overlay"]),
+            (False, False, ["composite", "main", "overlay"]),
+        ):
+            with self.subTest(main=main, overlay=overlay):
+                self.calls.clear()
+                data = self.configure(page, composite=None, main=main, overlay=overlay)
+                self.assertEqual(self.calls, expected)
+                self.assertEqual(data.is_blank, True if not (main or overlay) else None)
+
+    def test_a_single_visible_image_is_tried_alone_and_a_failure_leaves_a_blank_page(
+        self,
+    ):
+        cases = (
+            (self.page(SHOW_OVERLAY), ["overlay"]),
+            (self.page(SHOW_ORIGINAL), ["main"]),
+            (self.page(SHOW_BOTH, layer_visible=False), ["overlay"]),
+            (self.page(SHOW_BOTH, overlay=""), ["main"]),
+            (self.page(SHOW_BOTH, main=""), ["overlay"]),
+            (self.page(SHOW_ORIGINAL, main="", overlay="o.png"), []),
+            (self.page(SHOW_OVERLAY, overlay=""), []),
+            (self.page(SHOW_BOTH, main="", overlay=""), []),
+        )
+        for page, expected in cases:
+            with self.subTest(
+                mode=page.image_show_mode,
+                main=page.image_path,
+                overlay=page.overlay_image_path,
+                visible=page.layer_visible,
+            ):
+                self.calls.clear()
+                data = self.configure(page, main=False, overlay=False)
+                self.assertEqual(self.calls, expected)
+                self.assertIs(data.is_blank, True)
+                self.calls.clear()
+                data = self.configure(page, main=True, overlay=True)
+                self.assertEqual(self.calls, expected)
+                self.assertIs(data.is_blank, True if not expected else None)
+
+    def test_source_pdfs_and_blank_backgrounds_update_the_export_data(self):
+        data = SimpleNamespace(source_pdf=None, page_index=None, is_blank=True)
+        PDFExporter._use_source_pdf(data, "x.pdf", 4)
+        self.assertEqual(
+            (data.source_pdf, data.page_index, data.is_blank), ("x.pdf", 4, False)
+        )
+        PDFExporter._use_blank_background(data)
+        self.assertIs(data.is_blank, True)
+
+    def test_only_visible_annotations_of_the_page_and_type_are_exported(self):
+        def annotation(**overrides):
+            values = {
+                "uid": "a",
+                "annotation_type": ANNOTATION_TYPE_TEXT,
+                "page_uid": "p",
+                "visible": True,
+            }
+            values.update(overrides)
+            return BidAnnotation(**values)
+
+        exportable = PDFExporter._is_annotation_exportable
+        self.assertTrue(exportable(annotation(), "p", ANNOTATION_TYPE_TEXT))
+        self.assertTrue(
+            exportable(annotation(), "p", (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_TEXT))
+        )
+        self.assertFalse(exportable(annotation(), "p", ANNOTATION_TYPE_LINE))
+        self.assertFalse(
+            exportable(annotation(), "p", (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_RECT))
+        )
+        self.assertFalse(exportable(annotation(), "other", ANNOTATION_TYPE_TEXT))
+        self.assertFalse(
+            exportable(annotation(visible=False), "p", ANNOTATION_TYPE_TEXT)
+        )
+
+
+class PdfExportPageInfoTests(unittest.TestCase):
+    class Writer:
+        def __init__(self, geometries):
+            self.geometries = geometries
+            self.paths = []
+
+        def get_page_geometries(self, path):
+            self.paths.append(path)
+            return self.geometries
+
+    @staticmethod
+    def geometry(box=(10.0, 20.0, 310.0, 420.0), unit=2.0, rotation=0):
+        return SimpleNamespace(visible_box=box, user_unit=unit, rotation=rotation)
+
+    def exporter(self, geometries):
+        exporter = PDFExporter(
+            OSTCoordinateSystem(),
+            ColorService(),
+            TakeoffDomainService(),
+            UOMDomainService(),
+            object(),
+        )
+        exporter._writer = self.Writer(geometries)
+        return exporter
+
+    @staticmethod
+    def page(**overrides):
+        values = {
+            "uid": "p",
+            "name": "P",
+            "image_path": "a.pdf",
+            "width_pts": 1.0,
+            "height_pts": 2.0,
+            "scale_factor1": 0.25,
+            "scale_factor2": 8.0,
+        }
+        values.update(overrides)
+        return Page(**values)
+
+    def test_pdf_pages_take_their_size_from_the_visible_box_and_user_unit(self):
+        exporter = self.exporter([self.geometry(), self.geometry(box=(0, 0, 50, 60))])
+        info = exporter._build_page_info(self.page())
+        self.assertEqual(
+            info,
+            {
+                "scale_factor1": 0.25,
+                "scale_factor2": 8.0,
+                "rotation": 0,
+                "flip_x": False,
+                "flip_y": False,
+                "width": 600.0,
+                "height": 800.0,
+                "export_width": 600.0,
+                "export_height": 800.0,
+                "view_scale": INTERACTIVE_PDF_RENDER_SCALE,
+            },
+        )
+        self.assertEqual(exporter._writer.paths, ["a.pdf"])
+        info = exporter._build_page_info(self.page(page_index=1))
+        self.assertEqual((info["width"], info["height"]), (100.0, 120.0))
+
+    def test_native_and_user_rotations_swap_the_page_and_export_sizes_independently(
+        self,
+    ):
+        for native, user, size, export in (
+            (90, 0, (800.0, 600.0), (800.0, 600.0)),
+            (270, 0, (800.0, 600.0), (800.0, 600.0)),
+            (180, 0, (600.0, 800.0), (600.0, 800.0)),
+            (0, 90, (600.0, 800.0), (800.0, 600.0)),
+            (0, 270, (600.0, 800.0), (800.0, 600.0)),
+            (0, 180, (600.0, 800.0), (600.0, 800.0)),
+            (90, 90, (800.0, 600.0), (600.0, 800.0)),
+            (0, 450, (600.0, 800.0), (800.0, 600.0)),
+        ):
+            with self.subTest(native=native, user=user):
+                info = self.exporter([self.geometry(rotation=native)])._build_page_info(
+                    self.page(rotation=user, flip_x=True, flip_y=True)
+                )
+                self.assertEqual((info["width"], info["height"]), size)
+                self.assertEqual((info["export_width"], info["export_height"]), export)
+                self.assertEqual(
+                    (info["rotation"], info["flip_x"], info["flip_y"]),
+                    (user % 360, True, True),
+                )
+
+    def test_missing_or_empty_native_geometry_is_refused(self):
+        for index in (-1, 1, 5):
+            with self.subTest(index=index):
+                with self.assertRaisesRegex(ValueError, "geometry is unavailable"):
+                    self.exporter([self.geometry()])._build_page_info(
+                        self.page(page_index=index)
+                    )
+        for box in ((0, 0, 0, 10), (0, 0, 10, 0), (5, 5, 5, 9), (0, 0, -3, 10)):
+            with self.subTest(box=box):
+                with self.assertRaisesRegex(ValueError, "geometry is invalid"):
+                    self.exporter([self.geometry(box=box)])._build_page_info(
+                        self.page()
+                    )
+
+    def test_image_pages_keep_their_own_size_and_never_touch_the_pdf_writer(self):
+        exporter = self.exporter([])
+        info = exporter._build_page_info(
+            self.page(
+                image_path="scan.png", width_pts=300.0, height_pts=200.0, rotation=90
+            )
+        )
+        self.assertEqual((info["width"], info["height"]), (300.0, 200.0))
+        self.assertEqual((info["export_width"], info["export_height"]), (200.0, 300.0))
+        self.assertEqual(exporter._writer.paths, [])
+
+
+class PdfExportTextGeometryTests(unittest.TestCase):
+    class Coordinates:
+        def ost_to_pdf_coordinates(self, flat, _page_info):
+            return [(flat[index], flat[index + 1]) for index in range(0, len(flat), 2)]
+
+    def exporter(self):
+        return PDFExporter(
+            self.Coordinates(),
+            ColorService(),
+            TakeoffDomainService(),
+            UOMDomainService(),
+            object(),
+        )
+
+    @staticmethod
+    def text(position, **properties):
+        return BidAnnotation(
+            uid="t",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            page_uid="p",
+            position=position,
+            color="#102030",
+            properties=properties,
+        )
+
+    def test_a_text_box_is_exported_around_its_centre_with_style_defaults(self):
+        texts = self.exporter()._collect_texts(
+            "p", [self.text([100.0, 200.0, 40.0, 20.0])], {}
+        )
+        self.assertEqual(len(texts), 1)
+        box = texts[0]
+        self.assertEqual(
+            (box.min_x, box.min_y, box.max_x, box.max_y), (80.0, 190.0, 120.0, 210.0)
+        )
+        self.assertEqual(box.font_size, 12.0)
+        self.assertEqual(box.text_align, "left")
+        self.assertEqual(box.color, [0x10, 0x20, 0x30])
+
+    def test_text_style_properties_override_the_defaults(self):
+        annotation = self.text([0.0, 0.0, 10.0, 6.0], FontSize=18, TextAlign="Right")
+        box = self.exporter()._collect_texts("p", [annotation], {})[0]
+        self.assertEqual((box.font_size, box.text_align), (18.0, "right"))
+        for raw, expected in (
+            (1, "center"),
+            ("2", "right"),
+            ("CENTER", "center"),
+            (7, "left"),
+            (None, "left"),
+            ("x", "left"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(PDFExporter._text_align_to_pdf_value(raw), expected)
+
+    def test_text_boxes_without_a_full_box_are_skipped(self):
+        texts = self.exporter()._collect_texts("p", [self.text([1.0, 2.0, 3.0])], {})
+        self.assertEqual(texts, [])
 
 
 class PdfExportAnnotationRoutingTests(unittest.TestCase):

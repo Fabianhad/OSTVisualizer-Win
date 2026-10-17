@@ -1244,7 +1244,8 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
         window._collaboration_shutdown_failed = False
-        window._shutdown_deferred_callbacks = {}
+        window._shutdown_deferred_callbacks = {"late": lambda: None}
+        window._shutdown_hidden_windows = (object(),)
         window._deferred_persistence_manager = SimpleNamespace(
             cleanup=cleanup("deferred_cleanup")
         )
@@ -1314,6 +1315,8 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             ],
         )
         self.assertTrue(window._application_shutdown_finalized)
+        self.assertEqual(window._shutdown_deferred_callbacks, {})
+        self.assertEqual(window._shutdown_hidden_windows, ())
 
     def test_access_only_close_flushes_page_state_before_collaboration_shutdown(self):
         requests = []
@@ -1396,6 +1399,449 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         self.assertEqual(enabled_states, [True])
         self.assertEqual(close_calls, [])
         self.assertEqual(warnings, [True])
+
+
+class MainWindowShutdownSequenceTests(unittest.TestCase):
+    """The order in which a closing window flushes, drains, aborts or finishes."""
+
+    def host(
+        self,
+        *,
+        flush_result=True,
+        state=None,
+        pending=True,
+        complete=False,
+        failed=False,
+    ):
+        events = []
+        manager = SimpleNamespace(
+            begin_shutdown=lambda: events.append("begin_shutdown"),
+            prepare_shutdown=lambda: events.append("prepare_shutdown") or flush_result,
+            abort_shutdown=lambda: events.append("abort_shutdown"),
+        )
+        collaboration = SimpleNamespace(
+            shutdown_state=state,
+            drain_all_mutations_async=lambda callback: events.append(
+                ("drain", callback)
+            ),
+            request_shutdown=lambda callback: events.append(
+                ("request_shutdown", callback)
+            ),
+        )
+        host = SimpleNamespace(
+            events=events,
+            collaboration=collaboration,
+            _collaboration_shutdown_pending=pending,
+            _collaboration_shutdown_complete=complete,
+            _collaboration_shutdown_failed=failed,
+            _deferred_persistence_manager=manager,
+            handlers=SimpleNamespace(
+                ui_event=SimpleNamespace(
+                    capture_current_page_state_for_shutdown=lambda: events.append(
+                        "capture"
+                    )
+                )
+            ),
+            app_controller=SimpleNamespace(get_service=lambda name: collaboration),
+            show=lambda: events.append("show"),
+            close=lambda: events.append("close"),
+            _resume_shutdown_deferred_callbacks=lambda: events.append("resume"),
+            _discard_shutdown_deferred_callbacks=lambda: events.append("discard"),
+            _flush_deferred_persistence_before_close=lambda: MainWindow._flush_deferred_persistence_before_close(
+                host
+            ),
+            _on_shutdown_mutation_drain_complete=lambda *args: None,
+            _on_collaboration_shutdown_complete=lambda *args: events.append(
+                ("complete", args)
+            ),
+        )
+        return host
+
+    def test_shutdown_state_is_flushed_in_order_before_it_is_prepared(self):
+        host = self.host(flush_result=1)
+        self.assertIs(MainWindow._flush_deferred_persistence_before_close(host), True)
+        self.assertEqual(host.events, ["capture", "begin_shutdown", "prepare_shutdown"])
+        failing = self.host(flush_result=0)
+        self.assertIs(
+            MainWindow._flush_deferred_persistence_before_close(failing), False
+        )
+
+    def test_beginning_shutdown_only_acts_while_one_is_pending_and_unfinished(self):
+        for options in (
+            {"pending": False},
+            {"complete": True},
+            {"failed": True},
+            {"pending": False, "complete": True},
+        ):
+            with self.subTest(options=options):
+                host = self.host(**options)
+                MainWindow._begin_application_shutdown(host)
+                self.assertEqual(host.events, [])
+
+    def test_a_failed_flush_restores_the_window_and_the_deferred_callbacks(self):
+        host = self.host(flush_result=False)
+        MainWindow._begin_application_shutdown(host)
+        self.assertFalse(host._collaboration_shutdown_pending)
+        self.assertEqual(
+            host.events,
+            [
+                "capture",
+                "begin_shutdown",
+                "prepare_shutdown",
+                "abort_shutdown",
+                "show",
+                "resume",
+            ],
+        )
+
+    def test_a_flushed_window_hands_its_pending_mutations_to_the_collaboration_drain(
+        self,
+    ):
+        host = self.host(flush_result=True)
+        MainWindow._begin_application_shutdown(host)
+        self.assertTrue(host._collaboration_shutdown_pending)
+        self.assertEqual(
+            host.events,
+            [
+                "capture",
+                "begin_shutdown",
+                "prepare_shutdown",
+                ("drain", host._on_shutdown_mutation_drain_complete),
+            ],
+        )
+
+    def test_a_drain_result_is_ignored_unless_a_shutdown_is_pending(self):
+        host = self.host(pending=False)
+        MainWindow._on_shutdown_mutation_drain_complete(host, False, "late")
+        MainWindow._on_shutdown_mutation_drain_complete(host, True, "")
+        self.assertEqual(host.events, [])
+
+    def test_a_failed_drain_aborts_shows_the_message_and_resumes(self):
+        for message, shown in (
+            ("disk full", "disk full"),
+            ("", "A critical database setting could not be saved before shutdown."),
+        ):
+            with self.subTest(message=message):
+                host = self.host()
+                with patch(
+                    "ost_visualizer.presentation.main_window.show_critical",
+                    side_effect=lambda *args: host.events.append(("critical", args)),
+                ):
+                    MainWindow._on_shutdown_mutation_drain_complete(
+                        host, False, message
+                    )
+                self.assertFalse(host._collaboration_shutdown_pending)
+                self.assertEqual(
+                    host.events,
+                    [
+                        "abort_shutdown",
+                        "show",
+                        ("critical", (host, "Shutdown Incomplete", shown)),
+                        "resume",
+                    ],
+                )
+
+    def test_a_successful_drain_requests_the_collaboration_shutdown_unless_it_is_closed(
+        self,
+    ):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            CollaborationShutdownState,
+        )
+
+        host = self.host(state=CollaborationShutdownState.CLOSED)
+        MainWindow._on_shutdown_mutation_drain_complete(host, True, "")
+        self.assertEqual(host.events, [("complete", (True, ""))])
+        host = self.host(state=None)
+        MainWindow._on_shutdown_mutation_drain_complete(host, True, "")
+        self.assertEqual(
+            host.events,
+            [("request_shutdown", host._on_collaboration_shutdown_complete)],
+        )
+
+    def test_a_failed_collaboration_shutdown_is_final_and_reopens_the_window(self):
+        for message, shown in (
+            ("busy", "busy"),
+            ("", "SQL collaboration resources could not be closed safely."),
+        ):
+            with self.subTest(message=message):
+                host = self.host()
+                with patch(
+                    "ost_visualizer.presentation.main_window.show_critical",
+                    side_effect=lambda *args: host.events.append(("critical", args)),
+                ):
+                    MainWindow._on_collaboration_shutdown_complete(host, False, message)
+                self.assertFalse(host._collaboration_shutdown_pending)
+                self.assertTrue(host._collaboration_shutdown_failed)
+                self.assertFalse(host._collaboration_shutdown_complete)
+                self.assertEqual(
+                    host.events,
+                    [
+                        "abort_shutdown",
+                        "show",
+                        ("critical", (host, "Shutdown Incomplete", shown)),
+                        "resume",
+                    ],
+                )
+
+    def test_a_finished_collaboration_shutdown_drops_deferred_work_and_closes_the_window(
+        self,
+    ):
+        host = self.host()
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda *args: scheduled.append(args),
+        ):
+            MainWindow._on_collaboration_shutdown_complete(host, True, "")
+        self.assertFalse(host._collaboration_shutdown_pending)
+        self.assertTrue(host._collaboration_shutdown_complete)
+        self.assertFalse(host._collaboration_shutdown_failed)
+        self.assertEqual(host.events, ["discard"])
+        self.assertEqual(scheduled, [(0, host.close)])
+
+    def test_the_first_close_hides_the_window_and_schedules_the_shutdown_immediately(
+        self,
+    ):
+        events = []
+        window = MainWindow.__new__(MainWindow)
+        window.handlers = SimpleNamespace(
+            file_ops=SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            )
+        )
+        window._application_shutdown_finalized = False
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window._detached_plan_windows = lambda: ()
+        window.get_mesh_window = lambda: None
+        window._begin_application_shutdown = lambda: None
+        window.hide = lambda: events.append("hide")
+        event = FakeCloseEvent()
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda *args: scheduled.append(args),
+        ):
+            MainWindow.closeEvent(window, event)
+        self.assertEqual(events, ["hide"])
+        self.assertTrue(window._collaboration_shutdown_pending)
+        self.assertEqual(scheduled, [(0, window._begin_application_shutdown)])
+        self.assertFalse(event.accepted)
+
+
+class MainWindowSplitterBoundaryTests(unittest.TestCase):
+    @staticmethod
+    def window(**splitters):
+        window = MainWindow.__new__(MainWindow)
+        for name, splitter in splitters.items():
+            setattr(window, name, splitter)
+        return window
+
+    @staticmethod
+    def splitter(sizes, **options):
+        return _detached_support_FakeSplitterForSidebarSizes(sizes, **options)
+
+    def test_saved_left_sizes_are_usable_only_with_two_positive_panes(self):
+        valid = MainWindow._has_valid_left_splitter_sizes
+        self.assertTrue(valid([1, 1]))
+        self.assertTrue(valid([300, 200, 0]))
+        for sizes in ([], [5], [0, 5], [5, 0], [-1, 5], [5, -1], [0, 0]):
+            with self.subTest(sizes=sizes):
+                self.assertFalse(valid(sizes))
+
+    def test_saved_left_sizes_scale_to_the_current_total_keeping_both_panes_visible(
+        self,
+    ):
+        scale = MainWindow._scale_left_splitter_sizes
+        self.assertEqual(scale([100, 300], 400), [100, 300])
+        self.assertEqual(scale([100, 300], 800), [200, 600])
+        self.assertEqual(scale([1, 2], 10), [3, 7])
+        self.assertEqual(scale([1, 1000], 10), [1, 9])
+        self.assertEqual(scale([1000, 1], 10), [9, 1])
+        self.assertEqual(scale([1, 1], 1), [1, 1])
+        self.assertEqual(scale([1, 1], 0), [1, 1])
+        self.assertEqual(scale([3, 1], 2.9), [1, 1])
+
+    def test_a_one_pixel_sidebar_column_counts_as_visible(self):
+        window = self.window(_takeoff_splitter=self.splitter([1, 1999], width=2000))
+        window._last_takeoff_splitter_sizes = [360, 1640]
+        MainWindow._ensure_sidebar_column_visible(window)
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [])
+
+    def test_the_restored_sidebar_width_never_exceeds_the_splitter(self):
+        window = self.window(_takeoff_splitter=self.splitter([0, 2000], width=2000))
+        window._last_takeoff_splitter_sizes = [5000, 1]
+        MainWindow._ensure_sidebar_column_visible(window)
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [[1999, 1]])
+
+    def test_a_missing_saved_width_restores_a_quarter_but_at_least_the_minimum_width(
+        self,
+    ):
+        wide = self.window(_takeoff_splitter=self.splitter([0, 4000], width=4000))
+        wide._last_takeoff_splitter_sizes = []
+        MainWindow._ensure_sidebar_column_visible(wide)
+        self.assertEqual(wide._takeoff_splitter.applied_sizes, [[1000, 3000]])
+        narrow = self.window(_takeoff_splitter=self.splitter([0, 1000], width=1000))
+        narrow._last_takeoff_splitter_sizes = [0, 1000]
+        MainWindow._ensure_sidebar_column_visible(narrow)
+        self.assertEqual(narrow._takeoff_splitter.applied_sizes, [[320, 680]])
+
+    def test_the_sidebar_total_is_the_larger_of_the_pane_sizes_and_the_splitter_width(
+        self,
+    ):
+        window = self.window(_takeoff_splitter=self.splitter([0, 3000], width=1000))
+        window._last_takeoff_splitter_sizes = []
+        MainWindow._ensure_sidebar_column_visible(window)
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [[750, 2250]])
+        tiny = self.window(_takeoff_splitter=self.splitter([0, 0], width=0))
+        tiny._last_takeoff_splitter_sizes = []
+        MainWindow._ensure_sidebar_column_visible(tiny)
+        self.assertEqual(tiny._takeoff_splitter.applied_sizes, [[1, 1]])
+
+    def test_a_hidden_left_pane_comes_back_at_half_the_height_when_nothing_was_saved(
+        self,
+    ):
+        for index in (0, 1):
+            with self.subTest(index=index):
+                sizes = [0, 898] if index == 0 else [898, 0]
+                window = self.window(_left_splitter=self.splitter(sizes, height=898))
+                window._last_left_splitter_sizes = []
+                MainWindow._ensure_left_splitter_pane_visible(window, index)
+                self.assertEqual(window._left_splitter.applied_sizes, [[449, 449]])
+        window = self.window(_left_splitter=self.splitter([1, 897], height=898))
+        window._last_left_splitter_sizes = []
+        MainWindow._ensure_left_splitter_pane_visible(window, 0)
+        self.assertEqual(window._left_splitter.applied_sizes, [])
+        tiny = self.window(_left_splitter=self.splitter([0, 0], height=0))
+        tiny._last_left_splitter_sizes = []
+        MainWindow._ensure_left_splitter_pane_visible(tiny, 0)
+        self.assertEqual(tiny._left_splitter.applied_sizes, [[1, 1]])
+
+    def test_a_hidden_left_pane_uses_the_saved_proportions_when_they_are_usable(self):
+        window = self.window(_left_splitter=self.splitter([0, 800], height=800))
+        window._last_left_splitter_sizes = [100, 300]
+        MainWindow._ensure_left_splitter_pane_visible(window, 0)
+        self.assertEqual(window._left_splitter.applied_sizes, [[200, 600]])
+        window = self.window(_left_splitter=self.splitter([0, 800], height=800))
+        window._last_left_splitter_sizes = [0, 300]
+        MainWindow._ensure_left_splitter_pane_visible(window, 0)
+        self.assertEqual(window._left_splitter.applied_sizes, [[400, 400]])
+
+
+class MainWindowTakeoffPageNavigationTests(unittest.TestCase):
+    def window(
+        self, order, active, *, add_allowed=False, tab_active=False, add_result=True
+    ):
+        calls = []
+        sidebar = SimpleNamespace(
+            get_page_order=lambda: list(order),
+            get_active_page_uid=lambda: active,
+            go_next=lambda: calls.append("go_next"),
+        )
+        window = SimpleNamespace(
+            takeoff_sidebar=sidebar,
+            calls=calls,
+            can_add_page_from_takeoff_tab=lambda: add_allowed,
+            is_takeoff_tab_active=lambda: tab_active,
+            handlers=SimpleNamespace(
+                cover_sheet=SimpleNamespace(
+                    add_blank_page_from_takeoff_tab=lambda: calls.append("add")
+                    or add_result
+                ),
+                ui_event=SimpleNamespace(
+                    navigate_to_takeoff_page=lambda uid: calls.append(("navigate", uid))
+                ),
+            ),
+        )
+        window._can_go_takeoff_page = lambda direction: MainWindow._can_go_takeoff_page(
+            window, direction
+        )
+        window._is_on_last_takeoff_page = lambda: MainWindow._is_on_last_takeoff_page(
+            window
+        )
+        window.can_go_next_takeoff_page = lambda: MainWindow.can_go_next_takeoff_page(
+            window
+        )
+        return window
+
+    def test_paging_is_possible_only_inside_the_page_order(self):
+        order = ["a", "b", "c"]
+        for active, previous, following in (
+            ("a", False, True),
+            ("b", True, True),
+            ("c", True, False),
+            ("missing", False, False),
+            (None, False, False),
+        ):
+            with self.subTest(active=active):
+                window = self.window(order, active)
+                self.assertIs(MainWindow._can_go_takeoff_page(window, -1), previous)
+                self.assertIs(MainWindow._can_go_takeoff_page(window, 1), following)
+                self.assertIs(MainWindow.can_go_previous_takeoff_page(window), previous)
+        self.assertFalse(MainWindow._can_go_takeoff_page(self.window([], "a"), 1))
+        self.assertFalse(MainWindow._can_go_takeoff_page(self.window(["a"], "a"), -1))
+        self.assertFalse(MainWindow._can_go_takeoff_page(self.window(["a"], "a"), 1))
+
+    def test_only_the_last_page_of_a_non_empty_order_is_last(self):
+        last = MainWindow._is_on_last_takeoff_page
+        self.assertIs(last(self.window(["a", "b"], "b")), True)
+        self.assertIs(last(self.window(["a", "b"], "a")), False)
+        self.assertIs(last(self.window(["a", "b"], "x")), False)
+        self.assertIs(last(self.window([], "a")), False)
+        self.assertIs(last(self.window(["a"], "a")), True)
+
+    def test_next_on_the_last_page_needs_permission_and_the_takeoff_tab(self):
+        cases = (
+            (True, True, True),
+            (True, False, False),
+            (False, True, False),
+            (False, False, False),
+        )
+        for add_allowed, tab_active, expected in cases:
+            with self.subTest(add_allowed=add_allowed, tab_active=tab_active):
+                window = self.window(
+                    ["a", "b"], "b", add_allowed=add_allowed, tab_active=tab_active
+                )
+                self.assertIs(MainWindow.can_go_next_takeoff_page(window), expected)
+        window = self.window(["a", "b"], "a")
+        self.assertIs(MainWindow.can_go_next_takeoff_page(window), True)
+        window = self.window(["a", "b"], "x", add_allowed=True, tab_active=True)
+        self.assertIs(MainWindow.can_go_next_takeoff_page(window), False)
+
+    def test_going_next_moves_on_adds_a_page_at_the_end_or_does_nothing(self):
+        window = self.window(["a", "b"], "a")
+        MainWindow.go_next_takeoff_page(window)
+        self.assertEqual(window.calls, ["go_next"])
+        window = self.window(["a", "b"], "b")
+        MainWindow.go_next_takeoff_page(window)
+        self.assertEqual(window.calls, [])
+        window = self.window(["a", "b"], "b", add_allowed=True, tab_active=True)
+        order = ["a", "b"]
+        window.takeoff_sidebar.get_page_order = lambda: list(order)
+        window.handlers.cover_sheet.add_blank_page_from_takeoff_tab = lambda: (
+            window.calls.append("add") or order.append("c") or True
+        )
+        MainWindow.go_next_takeoff_page(window)
+        self.assertEqual(window.calls, ["add", ("navigate", "c")])
+        window = self.window(
+            ["a", "b"], "b", add_allowed=True, tab_active=True, add_result=False
+        )
+        MainWindow.go_next_takeoff_page(window)
+        self.assertEqual(window.calls, ["add"])
+
+
+class MainWindowImportProgressLabelTests(unittest.TestCase):
+    def test_the_progress_label_names_a_single_file_or_counts_several(self):
+        def args(*paths):
+            return SimpleNamespace(files=[SimpleNamespace(path=path) for path in paths])
+
+        label = MainWindow._project_file_import_progress_label
+        self.assertEqual(label(args("C:/bids/a.ost")), "C:/bids/a.ost")
+        self.assertEqual(label(args("a.ost", "b.ost")), "2 project files")
+        self.assertEqual(label(args("a", "b", "c")), "3 project files")
 
 
 class MainWindowTitleRefreshTests(unittest.TestCase):

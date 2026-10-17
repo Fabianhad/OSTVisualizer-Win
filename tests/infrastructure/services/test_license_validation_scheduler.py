@@ -63,6 +63,42 @@ class LicenseValidationSchedulerPersistenceTests(unittest.TestCase):
         self.assertIsNone(scheduler._task)
         self.assertIsNone(reference())
 
+    def test_license_validation_scheduler_runs_its_task_again_after_a_restart(self):
+        ran = threading.Semaphore(0)
+        scheduler = LicenseValidationScheduler(interval_seconds=0, task=ran.release)
+        try:
+            scheduler.start()
+            self.assertTrue(ran.acquire(timeout=2))
+            scheduler.stop()
+            self.assertFalse(scheduler.is_running())
+            while ran.acquire(blocking=False):
+                pass
+            scheduler.start()
+            self.assertTrue(scheduler.is_running())
+            self.assertTrue(ran.acquire(timeout=2))
+        finally:
+            scheduler.stop()
+
+    def test_license_validation_scheduler_thread_never_blocks_process_exit(self):
+        scheduler = LicenseValidationScheduler(interval_seconds=60)
+        scheduler.start()
+        try:
+            self.assertTrue(scheduler._thread.daemon)
+        finally:
+            scheduler.stop()
+
+    def test_license_validation_scheduler_stop_without_start_is_harmless(self):
+        scheduler = LicenseValidationScheduler(interval_seconds=60)
+        scheduler.stop()
+        scheduler.stop()
+        self.assertIsNone(scheduler._thread)
+        self.assertFalse(scheduler.is_running())
+        scheduler.start()
+        self.assertTrue(scheduler.is_running())
+        scheduler.stop()
+        scheduler.stop()
+        self.assertFalse(scheduler.is_running())
+
     def test_license_validation_scheduler_logs_task_failure_and_keeps_running(self):
         second_run = threading.Event()
         calls = []

@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 import unittest
 from ost_visualizer.application.dtos.license_dto import (
     LicenseOperationResultDto,
@@ -223,6 +224,136 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         self.assertEqual(expired.result.license_status, LicenseStatus.EXPIRED)
         self.assertEqual(expired.server_message, "Validate failed")
+
+    def test_the_server_error_codes_are_the_published_contract(self):
+        self.assertEqual(
+            dict(ERROR_CONTRACT),
+            {
+                "LICENSE_NOT_FOUND": 1001,
+                "LICENSE_EXPIRED": 1002,
+                "LICENSE_REVOKED": 1003,
+                "MAX_ACTIVATIONS_REACHED": 1005,
+                "INVALID_HWID": 1006,
+                "DEVICE_ACTIVATION_INACTIVE": 1007,
+                "INVALID_ACTIVATION_IDENTITY": 1008,
+            },
+        )
+        for name, code in ERROR_CONTRACT.items():
+            with self.subTest(error_name=name):
+                accepted = parse_failure_response(
+                    {"success": False, "error_name": name, "error_code": code},
+                    operation="activate",
+                    network_message="network",
+                )
+                self.assertEqual(accepted.error_code, code)
+                for wrong in (code + 1, code - 1, 0):
+                    rejected = parse_failure_response(
+                        {"success": False, "error_name": name, "error_code": wrong},
+                        operation="activate",
+                        network_message="network",
+                    )
+                    self.assertEqual(rejected.result.message, CONTRACT_ERROR_MESSAGE)
+                    self.assertEqual(rejected.error_code, wrong)
+                    self.assertIsNone(rejected.result.error_code)
+
+    def test_only_integer_error_codes_are_echoed_from_a_rejected_failure(self):
+        for label, code, echoed in (
+            ("string", "1001", None),
+            ("bool", True, None),
+            ("float", 1001.0, None),
+            ("null", None, None),
+            ("other integer", 7, 7),
+        ):
+            with self.subTest(label=label):
+                failure = parse_failure_response(
+                    {
+                        "success": False,
+                        "error_name": ERROR_LICENSE_NOT_FOUND,
+                        "error_code": code,
+                    },
+                    operation="activate",
+                    network_message="network",
+                )
+                self.assertEqual(failure.result.message, CONTRACT_ERROR_MESSAGE)
+                self.assertEqual(failure.error_code, echoed)
+
+    def test_each_server_error_keeps_its_user_message_and_license_status(self):
+        expired_validate = "This license key has expired. Please contact support to renew your license."
+        expected = {
+            "LICENSE_NOT_FOUND": (
+                "License key not found. Please check the key and try again, or contact support.",
+                {"activate": "invalid", "deactivate": "invalid", "validate": "invalid"},
+            ),
+            "LICENSE_REVOKED": (
+                "This license has been revoked. Please contact support for more information.",
+                {"activate": "invalid", "deactivate": "invalid", "validate": "invalid"},
+            ),
+            "MAX_ACTIVATIONS_REACHED": (
+                "License activation limit reached. This license is active on the maximum number of devices.",
+                {"activate": "invalid", "deactivate": "invalid", "validate": "invalid"},
+            ),
+            "DEVICE_ACTIVATION_INACTIVE": (
+                "This device is not currently activated for this license.",
+                {"activate": "invalid", "deactivate": "invalid", "validate": "invalid"},
+            ),
+            "INVALID_HWID": (
+                "The license server rejected this computer's hardware ID. Please contact support.",
+                {"activate": "invalid", "deactivate": "invalid", "validate": "invalid"},
+            ),
+            "INVALID_ACTIVATION_IDENTITY": (
+                "The license server rejected the Windows activation identity. Please contact support.",
+                {"activate": "invalid", "deactivate": "invalid", "validate": "invalid"},
+            ),
+        }
+        for name, (message, statuses) in expected.items():
+            for operation, status in statuses.items():
+                with self.subTest(error_name=name, operation=operation):
+                    failure = parse_failure_response(
+                        {
+                            "valid" if operation == "validate" else "success": False,
+                            "error_name": name,
+                            "error_code": ERROR_CONTRACT[name],
+                        },
+                        operation=operation,
+                        network_message="network",
+                    )
+                    self.assertEqual(failure.result.message, message)
+                    self.assertEqual(failure.result.license_status.value, status)
+        expired = {
+            "activate": (expired_validate, "invalid"),
+            "validate": (expired_validate, "expired"),
+            "deactivate": (
+                "This license has expired and cannot be deactivated. Please contact support for assistance.",
+                "invalid",
+            ),
+        }
+        for operation, (message, status) in expired.items():
+            with self.subTest(error_name="LICENSE_EXPIRED", operation=operation):
+                failure = parse_failure_response(
+                    {
+                        "valid" if operation == "validate" else "success": False,
+                        "error_name": "LICENSE_EXPIRED",
+                        "error_code": 1002,
+                    },
+                    operation=operation,
+                    network_message="network",
+                )
+                self.assertEqual(failure.result.message, message)
+                self.assertEqual(failure.result.license_status.value, status)
+
+    def test_parsed_license_responses_are_immutable(self):
+        failure = parse_failure_response(
+            None, operation="validate", network_message="offline"
+        )
+        with self.assertRaises(FrozenInstanceError):
+            failure.error_code = 1
+        response, _error = parse_signed_success_response(
+            {"success": True, "expiry_date": "2030-01-01", "signature": "sig"},
+            success_field="success",
+            operation="activate",
+        )
+        with self.assertRaises(FrozenInstanceError):
+            response.signature = "other"
 
     def test_failure_parser_reports_network_failure_for_missing_response(self):
         failure = parse_failure_response(

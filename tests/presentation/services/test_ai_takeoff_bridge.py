@@ -883,6 +883,31 @@ class BridgeConnectionLifecycleTests(BridgeTestCase):
         self.assertFalse(self.token_path.exists())
         self.assertEqual(self.call("list_sheets")["status"], "app_not_running")
 
+    def test_accepted_connections_belong_to_the_bridge_not_the_server(self):
+        bridge = self.capped_bridge(max_connections=1, idle_timeout_ms=60000)
+        idle = self.open_raw()
+        self.addCleanup(idle.Close)
+        self.pump_until(lambda: len(bridge._open_sockets) == 1)
+        extra = self.open_raw()
+        self.addCleanup(extra.Close)
+        direct = QtCore.Qt.FindChildOption.FindDirectChildrenOnly
+        self.pump_until(
+            lambda: len(bridge.findChildren(QLocalSocket, options=direct)) == 2
+        )
+
+    def test_cleanup_is_quiet_when_its_own_signals_are_already_detached(self):
+        import warnings
+
+        bridge = self.bridge
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            bridge._job_finished.disconnect()
+            bridge.rebind_suggested.disconnect()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bridge.cleanup()
+        self.assertEqual([str(item.message) for item in caught], [])
+
     def test_connection_cap_has_a_floor_of_one(self):
         bridge = self.capped_bridge(max_connections=0, idle_timeout_ms=60000)
         idle = self.open_raw()
