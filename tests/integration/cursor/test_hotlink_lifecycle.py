@@ -167,8 +167,8 @@ class HotlinkCursorLifecycleTests(unittest.TestCase):
                 elif ending == "new":
                     self.assertEqual(plan._annotation_place_type, "namedview")
                 else:
-                    self.assertEqual(plan._cursor_mode, CURSOR_MODE_SELECT)
-                    self.assertIsNone(plan._annotation_place_type)
+                    self.assertEqual(plan._cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+                    self.assertEqual(plan._annotation_place_type, "hotlink")
                 self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
                 self.assertFalse(isValid(dialogs[0]))
                 self.host_fixture._assert_no_promotion(

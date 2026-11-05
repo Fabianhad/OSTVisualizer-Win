@@ -153,7 +153,7 @@ class AboutDialog(QtWidgets.QDialog):
         self,
         icon_provider: IWindowIconProvider,
         parent=None,
-        creator_name: str = "Fabian",
+        creator_name: str = "Fabian J.",
     ):
         super().__init__(parent)
         self.icon_provider = icon_provider

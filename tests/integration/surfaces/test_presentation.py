@@ -1587,15 +1587,13 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         page.rotation = 90
         during_clear = []
 
-        def observe_clear(_selection):
+        def observe_clear():
             during_clear.append(
                 (self.main_plan.current_page_uid, annotation.isEnabled())
             )
 
-        self.main_plan.takeoff_selection_changed.connect(observe_clear)
-        self.addCleanup(
-            self.main_plan.takeoff_selection_changed.disconnect, observe_clear
-        )
+        self.main_plan.page_selection_reset.connect(observe_clear)
+        self.addCleanup(self.main_plan.page_selection_reset.disconnect, observe_clear)
         callback = QtVoidCallback(coordinator._update_plan_view_for_active)
         self.addCleanup(callback.cleanup)
         QtCore.QMetaObject.invokeMethod(

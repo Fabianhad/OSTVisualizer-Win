@@ -6,7 +6,16 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_TEXT,
+)
+from ost_visualizer.presentation.utils.plan_tool_registry import (
+    PLAN_ANNOTATION_TOOL_SPECS,
+)
 from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PAN,
     CURSOR_MODE_PLACE,
     CURSOR_MODE_SELECT,
@@ -102,6 +111,50 @@ class PageSwitchToolTests(unittest.TestCase):
                     self.assertEqual(
                         sidebar.get_selected_condition_uids(), [condition_uid]
                     )
+
+    def test_annotation_tools_survive_a_page_switch(self):
+        if self.skip_body:
+            return
+        pdf = write_takeoff_pdf(self.home / "plan.pdf", lines=[(100, 100, 400, 100)])
+        bid_uid, page_uids, _condition_uid = seed_access_bid(
+            self.db_path,
+            [("S-101", 8.5, 11.0, 0.125, 12.0), ("S-102", 8.5, 11.0, 0.125, 12.0)],
+            image_path=str(pdf),
+        )
+        with self.window(bid_uid) as (win, _controller):
+            ui = win.handlers.ui_event
+            plan = ui.plan_view
+            win.tab_widget.setCurrentIndex(TAB_INDEX_TAKEOFF)
+            win.set_active_takeoff_view("2d")
+            win.resize(1200, 800)
+            win.show()
+            self.pump(60)
+            ui.sync_after_startup_load()
+            ui.handle_bid_selection(BidRef(str(self.db_path), str(bid_uid)), force=True)
+            self.pump()
+            ui.handle_page_selection([page_uids[0]])
+            ui.handle_active_page_changed(page_uids[0])
+            self.pump()
+            page = 0
+            for spec in PLAN_ANNOTATION_TOOL_SPECS:
+                if spec.annotation_type not in (
+                    ANNOTATION_TYPE_TEXT,
+                    ANNOTATION_TYPE_DIMENSION,
+                    ANNOTATION_TYPE_HOTLINK,
+                ):
+                    continue
+                with self.subTest(tool=spec.annotation_type):
+                    win._plan_tool_actions[spec.action_key].trigger()
+                    self.pump(30)
+                    self.assertEqual(plan.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+                    self.assertEqual(plan.annotation_place_type, spec.annotation_type)
+                    page = 1 - page
+                    ui.handle_active_page_changed(page_uids[page])
+                    self.pump()
+                    self.assertEqual(plan.current_page_uid, page_uids[page])
+                    self.assertEqual(plan.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+                    self.assertEqual(plan.annotation_place_type, spec.annotation_type)
+                    self.assertEqual(self.checked_tools(win), [spec.action_key])
 
     def test_pan_zoom_and_select_survive_a_page_switch_without_a_condition(self):
         if self.skip_body:

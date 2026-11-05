@@ -101,6 +101,7 @@ from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
     _MeshScenePublication,
+    _TakeoffPageChoice,
 )
 from ost_visualizer.presentation.coordinators.placement_coordinator import (
     PlacementCoordinator,
@@ -17467,6 +17468,7 @@ class Sp3a5bWiringTests(unittest.TestCase):
         coordinator._placement = _Sp3a5bRecorder("placement", log, {"set_plan_view"})
         view = SimpleNamespace(
             takeoff_selection_changed=FakeSignal(),
+            page_selection_reset=FakeSignal(),
             takeoff_selection_command_applied=FakeSignal(),
             backout_mode_changed=FakeSignal(),
             clipboard_changed=FakeSignal(),
@@ -17486,6 +17488,7 @@ class Sp3a5bWiringTests(unittest.TestCase):
         )
         expected = {
             "takeoff_selection_changed": coordinator._on_takeoff_selection_changed,
+            "page_selection_reset": coordinator._on_plan_page_selection_reset,
             "takeoff_selection_command_applied": (
                 coordinator._on_takeoff_selection_command_applied
             ),
@@ -17805,6 +17808,23 @@ class Sp3a5bResolveTakeoffSelectionTests(unittest.TestCase):
                 coordinator._resolve_takeoff_selection(), expected, options
             )
 
+    def test_only_the_first_page_fallback_is_marked_as_a_fallback(self):
+        cases = (
+            (dict(pending_pages=["p1"], pending_active="p1"), False),
+            (dict(selected=["s1"], active="s1"), False),
+            (dict(active="s1"), False),
+            (dict(last="p7", first="p8"), False),
+            (dict(last="ghost", first="p8"), True),
+            (dict(last=None, first="p8"), True),
+            (dict(last=None, first=None), False),
+        )
+        for options, expected in cases:
+            with self.subTest(options=options):
+                coordinator = self._coordinator(**options)
+                self.assertIs(
+                    coordinator._resolve_takeoff_page_choice().is_fallback, expected
+                )
+
 
 class Sp3a5bAuthoritativePageSelectionTests(unittest.TestCase):
     def _coordinator(self, pages=()):
@@ -17930,8 +17950,8 @@ class Sp3a5bActivateTakeoffWorkspaceTests(unittest.TestCase):
         coordinator._restore_sidebar_highlight = lambda uids, reveal=True: log.append(
             ("restore_highlight", set(uids), reveal)
         )
-        coordinator._resolve_takeoff_selection = lambda: (
-            log.append(("resolve",)) or resolved
+        coordinator._resolve_takeoff_page_choice = lambda: (
+            log.append(("resolve",)) or _TakeoffPageChoice(*resolved)
         )
         coordinator.handle_active_page_changed = lambda uid: log.append(
             ("handle_active", uid)
@@ -17990,6 +18010,26 @@ class Sp3a5bActivateTakeoffWorkspaceTests(unittest.TestCase):
             ],
         )
         self.assertEqual(coordinator._takeoff_workspace_bid_ref, _SP3A5B_BID)
+
+    def test_activation_remembers_a_fallback_page_as_not_picked_by_the_user(self):
+        coordinator, _log = self._build(resolved=(["p1"], "p1", True))
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(coordinator._unpicked_fallback_page_uid, "p1")
+
+    def test_activation_forgets_the_fallback_when_the_page_was_remembered(self):
+        coordinator, _log = self._build(resolved=(["p1"], "p1"))
+        coordinator._unpicked_fallback_page_uid = "p9"
+        coordinator._activate_takeoff_workspace()
+        self.assertIsNone(coordinator._unpicked_fallback_page_uid)
+
+    def test_activation_marks_the_fallback_before_the_page_is_restored(self):
+        coordinator, log = self._build(resolved=(["p1"], "p1", True))
+        seen = []
+        coordinator.handle_active_page_changed = lambda uid: seen.append(
+            coordinator._unpicked_fallback_page_uid
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(seen, ["p1"])
 
     def test_first_activation_hydrates_database_sidebars_in_order(self):
         coordinator, log = self._build(sql=False, restore_result=True)
@@ -19628,7 +19668,24 @@ class Sp3a5cSelectionDispatchTests(unittest.TestCase):
     def test_2d_selection_change_syncs_then_restores_the_project_tree(self):
         coordinator = self._coordinator()
         coordinator._on_takeoff_selection_changed(["t1"])
-        self.assertEqual(coordinator.calls, [("sync", "2d", ["t1"], {}), ("restore",)])
+        self.assertEqual(
+            coordinator.calls,
+            [("sync", "2d", ["t1"], {}), ("restore",)],
+        )
+
+    def test_page_selection_reset_keeps_the_condition_projection(self):
+        coordinator = self._coordinator()
+        coordinator._on_plan_page_selection_reset()
+        self.assertEqual(
+            coordinator.calls,
+            [("sync", "2d", [], {"release_projection": False}), ("restore",)],
+        )
+
+    def test_page_selection_reset_is_ignored_without_placement_or_navigation(self):
+        for placement, nav in ((None, object()), (object(), None)):
+            coordinator = self._coordinator(placement=placement, nav=nav)
+            coordinator._on_plan_page_selection_reset()
+            self.assertEqual(coordinator.calls, [])
 
     def test_2d_selection_change_is_ignored_without_placement_or_navigation(self):
         for label, placement, nav in (
@@ -28344,6 +28401,26 @@ class Sp3a5FActivePageChangedTests(unittest.TestCase):
         self.assertEqual(log, [])
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "initial")
 
+    def test_picking_another_page_ends_the_unpicked_fallback(self):
+        coordinator = self._coordinator([], bid=self.BID)
+        coordinator._unpicked_fallback_page_uid = "p1"
+        coordinator.handle_active_page_changed("p2")
+        self.assertIsNone(coordinator._unpicked_fallback_page_uid)
+
+    def test_reporting_the_fallback_page_keeps_it_unpicked(self):
+        coordinator = self._coordinator([], bid=self.BID)
+        coordinator._unpicked_fallback_page_uid = "p1"
+        coordinator.handle_active_page_changed("p1")
+        self.assertEqual(coordinator._unpicked_fallback_page_uid, "p1")
+
+    def test_resetting_the_takeoff_workspace_forgets_the_unpicked_fallback(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._clear_staged_takeoff_restore = lambda: None
+        coordinator._clear_pending_hotlink_named_view_focus = lambda: None
+        coordinator._unpicked_fallback_page_uid = "p1"
+        coordinator._reset_takeoff_workspace_state(clear_sidebars=False)
+        self.assertIsNone(coordinator._unpicked_fallback_page_uid)
+
     def test_active_page_with_2d_view_updates_every_projection_in_order(self):
         log = []
         coordinator = self._coordinator(log, bid=self.BID)
@@ -29007,6 +29084,32 @@ class Sp3a5gSavePageViewStateTests(unittest.TestCase):
         coordinator, calls, _pages = self._make(plan_page=False, active_page=None)
         coordinator._save_current_page_view_state()
         self.assertEqual(self._writes(calls), [])
+
+    def test_unpicked_fallback_page_is_never_scheduled_as_the_selected_page(self):
+        for override in (None, "p1"):
+            with self.subTest(override=override):
+                coordinator, calls, _pages = self._make()
+                coordinator._unpicked_fallback_page_uid = "p1"
+                coordinator._save_current_page_view_state(
+                    selected_page_override=override
+                )
+                self.assertEqual(
+                    [c for c in calls if c[0] in {"selected", "cancel"}], []
+                )
+                # The page's view state is still persisted; only the choice is not.
+                self.assertEqual(
+                    [c[:4] for c in calls if c[0] == "view"],
+                    [("view", "a.mdb", "bid-1", "p1")],
+                )
+
+    def test_a_page_other_than_the_fallback_is_still_scheduled(self):
+        coordinator, calls, _pages = self._make()
+        coordinator._unpicked_fallback_page_uid = "p1"
+        coordinator._save_current_page_view_state(selected_page_override="p3")
+        self.assertEqual(
+            [c for c in calls if c[0] == "selected"],
+            [("selected", "a.mdb", "bid-1", "p3")],
+        )
 
 
 class Sp3a5gFlushDeferredTests(unittest.TestCase):

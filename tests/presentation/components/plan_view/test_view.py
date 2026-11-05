@@ -2683,11 +2683,14 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         second = Page(uid="p2", name="P2", width_pts=612.0, height_pts=792.0)
         self.assertTrue(view.load_page(first, [], {}, {}))
         seen = []
+        view.page_selection_reset.connect(
+            lambda: seen.append(("reset", view.current_page_uid))
+        )
         view.takeoff_selection_changed.connect(
             lambda uids: seen.append((list(uids), view.current_page_uid))
         )
         self.assertTrue(view.load_page(second, [], {}, {}))
-        self.assertEqual(seen, [([], "p2")])
+        self.assertEqual(seen, [("reset", "p2")])
         view.clear()
         self.assertEqual(seen[-1], ([], None))
         view.cleanup()

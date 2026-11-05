@@ -5347,7 +5347,7 @@ class PlanViewActionHandlerOnHotlinkPlacementRequestedTests(
             ],
         )
 
-    def test_hotlink_dialog_cancel_exits_annotation_placement_without_write(self):
+    def test_hotlink_dialog_cancel_returns_to_hotlink_tool_without_write(self):
         ann_write = FakeAnnotationWriteService()
         plan_view = FakePlanView()
         handler = PlanViewActionHandler(
@@ -5377,9 +5377,16 @@ class PlanViewActionHandlerOnHotlinkPlacementRequestedTests(
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
         self.assertEqual(ann_write.insert_calls, [])
-        self.assertEqual(plan_view.activated_annotations, [])
+        self.assertEqual(plan_view.activated_annotations, ["hotlink"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 1)
-        self.assertEqual(plan_view.placement_flow, ["cancel_place_mode", "dialog_exec"])
+        self.assertEqual(
+            plan_view.placement_flow,
+            [
+                "cancel_place_mode",
+                "dialog_exec",
+                "activate_annotation_placement:hotlink",
+            ],
+        )
 
     def test_repeated_hotlink_dialog_cancellation_releases_picker_widgets(self):
         ann_write = FakeAnnotationWriteService()

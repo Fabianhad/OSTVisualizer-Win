@@ -902,6 +902,67 @@ class ConditionDisplaySizeTests(unittest.TestCase):
 
 
 class BidDataReaderCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def _selected_page_reader(execute):
+        class Cursor:
+            def __init__(self):
+                self._rows = [("20",)]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, *params):
+                return execute(sql, *params)
+
+            def fetchone(self):
+                return self._rows.pop(0) if self._rows else None
+
+        class Connection:
+            @staticmethod
+            def cursor():
+                return Cursor()
+
+        class Schema:
+            @staticmethod
+            def optional_table_missing(_table):
+                return False
+
+            @staticmethod
+            def require_column(_table, _column):
+                pass
+
+            @staticmethod
+            def column_exists(_table, _column):
+                return True
+
+        class Reader(MdbReader):
+            @staticmethod
+            def _schema(_connection):
+                return Schema()
+
+        return Reader(), Connection()
+
+    def test_failed_selected_page_read_is_logged_and_yields_no_saved_page(self):
+        def fail(_sql, *_params):
+            raise pyodbc.Error("HY000", "transient lock error")
+
+        reader, connection = self._selected_page_reader(fail)
+        with self.assertLogs(reader.logger, level="WARNING") as logged:
+            self.assertIsNone(reader._parse_bid_selected_page(connection, "7"))
+        self.assertEqual(len(logged.records), 1)
+        message = logged.records[0].getMessage()
+        self.assertIn("bid 7", message)
+        self.assertIn("transient lock error", message)
+        self.assertIsNotNone(logged.records[0].exc_info)
+
+    def test_successful_selected_page_read_does_not_log(self):
+        reader, connection = self._selected_page_reader(lambda _sql, *_params: None)
+        with self.assertNoLogs(reader.logger, level="WARNING"):
+            self.assertEqual(reader._parse_bid_selected_page(connection, "7"), "20")
+
     def test_bid_reader_rejects_multiple_bid_settings_rows(self):
         class Cursor:
             def __init__(self):

@@ -228,6 +228,13 @@ class BidDataReaderMixin:
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):
                 raise
+            self.logger.warning(
+                "Could not read the saved page for bid %s; treating the bid as "
+                "having no saved page: %s",
+                bid_uid,
+                exc,
+                exc_info=True,
+            )
         return None
 
     def _parse_bid_areas_for_bid(

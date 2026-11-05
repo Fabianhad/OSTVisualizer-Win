@@ -3211,7 +3211,10 @@ class DetachedPageViewWindowOnHotlinkPlacementRequestedTests(
                 ):
                     window._on_hotlink_placement_requested(position, "p1")
                 self.assertEqual(write_service.insert_calls, [])
-                self.assertEqual(plan_view.activate_calls, [])
+                self.assertEqual(
+                    plan_view.activate_calls,
+                    ["hotlink"] if label == "rejected" else [],
+                )
                 self.assertEqual(len(dialogs), 0 if label == "short position" else 1)
                 self.assertEqual(
                     plan_view.cancel_place_mode_calls,

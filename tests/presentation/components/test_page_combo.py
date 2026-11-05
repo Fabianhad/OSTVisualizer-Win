@@ -12,6 +12,7 @@ from ost_visualizer.presentation.components.page_combo import (
     SinglePageComboBox,
 )
 from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtTest import QTest
 from shiboken6 import isValid
 from tests.presentation.dialogs.options.preference_support import (
     _app as _preferences_support__app,
@@ -122,6 +123,175 @@ class PageComboPreferenceTests(unittest.TestCase):
             emitted,
             [["page-a"], [], ["page-b"], [], ["page-a"]],
         )
+        combo.close()
+
+    @staticmethod
+    def _folder_bid():
+        nested = Folder(
+            uid="f2",
+            name="Nested",
+            pages=[Page(uid="p3", name="A103"), Page(uid="p4", name="A104")],
+        )
+        folder = Folder(
+            uid="f1",
+            name="Folder",
+            pages=[Page(uid="p1", name="A101"), Page(uid="p2", name="A102")],
+            subfolders={"f2": nested},
+        )
+        other = Folder(uid="f3", name="Other", pages=[Page(uid="p5", name="A105")])
+        return Bid(
+            uid="bid-1",
+            name="Bid",
+            folders={"f1": folder, "f3": other},
+            pages_without_folder=[Page(uid="p6", name="A106")],
+        )
+
+    @staticmethod
+    def _folder_item(combo, name):
+        model = combo.popup_model()
+        stack = [model.invisibleRootItem()]
+        while stack:
+            parent = stack.pop()
+            for row in range(parent.rowCount()):
+                child = parent.child(row)
+                if child.text() == name:
+                    return child
+                stack.append(child)
+        raise AssertionError(name)
+
+    def test_folder_checkbox_checks_and_unchecks_every_page_beneath_it(self):
+        combo = PageComboBox()
+        combo.load_bid(self._folder_bid())
+        emitted = []
+        combo.page_selection_changed.connect(lambda pages: emitted.append(list(pages)))
+        folder = self._folder_item(combo, "Folder")
+        nested = self._folder_item(combo, "Nested")
+        self.assertTrue(folder.isCheckable())
+        folder.setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(len(emitted), 1)
+        self.assertCountEqual(emitted[0], ["p1", "p2", "p3", "p4"])
+        self.assertCountEqual(combo.get_selected_page_uids(), ["p1", "p2", "p3", "p4"])
+        self.assertEqual(nested.checkState(), QtCore.Qt.CheckState.Checked)
+        self.assertEqual(
+            self._folder_item(combo, "Other").checkState(),
+            QtCore.Qt.CheckState.Unchecked,
+        )
+        self.assertEqual(
+            combo._page_items["p5"].checkState(), QtCore.Qt.CheckState.Unchecked
+        )
+        folder.setCheckState(QtCore.Qt.CheckState.Unchecked)
+        self.assertEqual(emitted[-1], [])
+        self.assertEqual(len(emitted), 2)
+        self.assertEqual(nested.checkState(), QtCore.Qt.CheckState.Unchecked)
+        for uid in ("p1", "p2", "p3", "p4"):
+            self.assertEqual(
+                combo._page_items[uid].checkState(), QtCore.Qt.CheckState.Unchecked
+            )
+        combo.close()
+
+    def test_folder_checkbox_keeps_pages_checked_elsewhere(self):
+        combo = PageComboBox()
+        combo.load_bid(self._folder_bid())
+        combo._page_items["p5"].setCheckState(QtCore.Qt.CheckState.Checked)
+        folder = self._folder_item(combo, "Folder")
+        folder.setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(combo.get_selected_page_uids()[0], "p5")
+        folder.setCheckState(QtCore.Qt.CheckState.Unchecked)
+        self.assertEqual(combo.get_selected_page_uids(), ["p5"])
+        combo.close()
+
+    def test_folder_checkbox_is_partial_until_all_pages_are_checked(self):
+        combo = PageComboBox()
+        combo.load_bid(self._folder_bid())
+        folder = self._folder_item(combo, "Folder")
+        nested = self._folder_item(combo, "Nested")
+        combo._page_items["p3"].setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(nested.checkState(), QtCore.Qt.CheckState.PartiallyChecked)
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.PartiallyChecked)
+        combo._page_items["p4"].setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(nested.checkState(), QtCore.Qt.CheckState.Checked)
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.PartiallyChecked)
+        combo._page_items["p1"].setCheckState(QtCore.Qt.CheckState.Checked)
+        combo._page_items["p2"].setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.Checked)
+        combo._page_items["p2"].setCheckState(QtCore.Qt.CheckState.Unchecked)
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.PartiallyChecked)
+        for uid in ("p1", "p3", "p4"):
+            combo._page_items[uid].setCheckState(QtCore.Qt.CheckState.Unchecked)
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.Unchecked)
+        self.assertEqual(nested.checkState(), QtCore.Qt.CheckState.Unchecked)
+        combo.close()
+
+    def test_toggling_a_partial_folder_checks_all_of_its_pages(self):
+        combo = PageComboBox()
+        combo.load_bid(self._folder_bid())
+        folder = self._folder_item(combo, "Folder")
+        combo._page_items["p1"].setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.PartiallyChecked)
+        emitted = []
+        combo.page_selection_changed.connect(lambda pages: emitted.append(list(pages)))
+        # The view toggles a partially checked, non-tristate item to Checked.
+        folder.setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(emitted[0][0], "p1")
+        self.assertCountEqual(emitted[0], ["p1", "p2", "p3", "p4"])
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.Checked)
+        combo.close()
+
+    def test_folder_checkbox_state_follows_reload_and_restore(self):
+        combo = PageComboBox()
+        bid = self._folder_bid()
+        combo.load_bid(bid)
+        folder = self._folder_item(combo, "Folder")
+        combo.restore_selection(["p1", "p2", "p3", "p4"], "p1")
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.Checked)
+        combo.restore_selection(["p1"], "p1")
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.PartiallyChecked)
+        combo.load_bid(bid)
+        self.assertEqual(
+            self._folder_item(combo, "Folder").checkState(),
+            QtCore.Qt.CheckState.PartiallyChecked,
+        )
+        combo.clear()
+        combo.close()
+
+    def test_folder_without_pages_has_no_checkbox(self):
+        combo = PageComboBox()
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="Bid",
+                folders={"f1": Folder(uid="f1", name="Empty")},
+            )
+        )
+        self.assertFalse(self._folder_item(combo, "Empty").isCheckable())
+        combo.close()
+
+    def test_clicking_a_folder_checkbox_selects_its_pages(self):
+        combo = PageComboBox()
+        combo.load_bid(self._folder_bid())
+        combo.show()
+        combo.showPopup()
+        self.app.processEvents()
+        tree = combo._tree
+        folder = self._folder_item(combo, "Folder")
+        index = folder.index()
+        rect = combo._page_delegate.checkbox_rect(
+            tree.style(), tree, index, tree.visualRect(index)
+        )
+        emitted = []
+        combo.page_selection_changed.connect(lambda pages: emitted.append(list(pages)))
+        QTest.mouseClick(
+            tree.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=rect.center()
+        )
+        self.assertEqual(len(emitted), 1)
+        self.assertCountEqual(emitted[0], ["p1", "p2", "p3", "p4"])
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.Checked)
+        QTest.mouseClick(
+            tree.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=rect.center()
+        )
+        self.assertEqual(emitted[-1], [])
+        self.assertEqual(folder.checkState(), QtCore.Qt.CheckState.Unchecked)
         combo.close()
 
     def test_unchecking_final_3d_page_preserves_active_2d_page(self):

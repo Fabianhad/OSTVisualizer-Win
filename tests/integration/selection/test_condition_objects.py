@@ -182,6 +182,9 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.plan.takeoff_selection_changed.connect(
             self.coordinator._on_takeoff_selection_changed
         )
+        self.plan.page_selection_reset.connect(
+            self.coordinator._on_plan_page_selection_reset
+        )
         self.plan.takeoff_selection_command_applied.connect(
             self.coordinator._on_takeoff_selection_command_applied
         )
@@ -355,6 +358,25 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.open_menu(during_menu=invoke)
         self.assertEqual(self.events, [["1", "2"]])
         self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
+
+    def test_takeoff_selected_condition_survives_page_switch(self):
+        self.plan.set_selected_uids({"1"})
+        self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
+        self.assertEqual(self.state.highlighted_condition_uids, {"target"})
+        self.load_page(self.plan, self.other_page)
+        self.assertEqual(self.plan.get_selected_takeoff_uids(), [])
+        self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
+        self.assertEqual(self.state.highlighted_condition_uids, {"target"})
+        # The condition is now the user's sidebar selection: it no longer
+        # follows takeoff selection, so deselecting on the new page keeps it.
+        self.plan.clear_selection()
+        self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
+
+    def test_clearing_takeoff_selection_on_same_page_still_releases_condition(self):
+        self.plan.set_selected_uids({"1"})
+        self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
+        self.plan.clear_selection()
+        self.assertEqual(self.sidebar.get_selected_condition_uids(), [])
 
     def test_disappearing_matches_do_not_change_selection(self):
         self.plan.set_selected_uids({"3"})

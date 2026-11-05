@@ -2907,11 +2907,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 or not self._annotation_placement_enabled()
             ):
                 return
-            if result_code != QtWidgets.QDialog.DialogCode.Accepted:
-                return
-            result = dialog.result_data()
+            accepted = result_code == QtWidgets.QDialog.DialogCode.Accepted
+            result = dialog.result_data() if accepted else None
         finally:
             delete_later_if_valid(dialog)
+        if result is None:
+            self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_HOTLINK)
+            return
         if result.create_new:
             self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
             return

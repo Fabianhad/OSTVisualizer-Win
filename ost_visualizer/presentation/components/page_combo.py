@@ -66,7 +66,10 @@ class _PageComboItemDelegate(QtWidgets.QStyledItemDelegate):
         item_rect: QtCore.QRect,
     ) -> QtCore.QRect:
         option = QtWidgets.QStyleOptionViewItem()
-        option.rect = item_rect.adjusted(cls._ICON_SIZE + cls._ICON_SPACING, 0, 0, 0)
+        has_icon = isinstance(index.data(_ITEM_ROLE_PRECHECK_ICON), QtGui.QIcon)
+        option.rect = item_rect.adjusted(
+            cls._ICON_SIZE + cls._ICON_SPACING if has_icon else 0, 0, 0, 0
+        )
         option.features |= (
             QtWidgets.QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
         )
@@ -95,6 +98,31 @@ def _walk_page_uids(root: QtGui.QStandardItem) -> List[str]:
 
     _walk(root)
     return result
+
+
+def _sync_folder_check_states(parent: QtGui.QStandardItem) -> tuple[int, int]:
+    """Derive every folder's check state from the pages beneath it.
+    Returns the (checked, total) page counts under ``parent``.
+    """
+    checked = total = 0
+    for row in range(parent.rowCount()):
+        child = parent.child(row)
+        if child.data(_ITEM_ROLE_KIND) == "page":
+            total += 1
+            checked += child.checkState() == QtCore.Qt.CheckState.Checked
+            continue
+        child_checked, child_total = _sync_folder_check_states(child)
+        if child_total:
+            if child_checked == child_total:
+                state = QtCore.Qt.CheckState.Checked
+            elif child_checked:
+                state = QtCore.Qt.CheckState.PartiallyChecked
+            else:
+                state = QtCore.Qt.CheckState.Unchecked
+            child.setCheckState(state)
+        checked += child_checked
+        total += child_total
+    return checked, total
 
 
 class PageComboBox(TreePopupComboBoxBase):
@@ -168,6 +196,7 @@ class PageComboBox(TreePopupComboBoxBase):
         ]
         for uid in self._selected_uids:
             self._page_items[uid].setCheckState(QtCore.Qt.CheckState.Checked)
+        _sync_folder_check_states(root)
         self._active_uid = (
             previous_active if previous_active in self._page_items else None
         )
@@ -206,7 +235,6 @@ class PageComboBox(TreePopupComboBoxBase):
         item.setData(folder.uid, _ITEM_ROLE_UID)
         item.setEnabled(True)
         item.setSelectable(False)
-        item.setCheckable(False)
         font = item.font()
         font.setBold(True)
         item.setFont(font)
@@ -216,6 +244,7 @@ class PageComboBox(TreePopupComboBoxBase):
             self._add_folder_item(item, subfolder)
         for page in folder.pages:
             self._add_page_item(item, page)
+        item.setCheckable(bool(_walk_page_uids(item)))
 
     def _add_page_item(self, parent: QtGui.QStandardItem, page: Page) -> None:
         item = QtGui.QStandardItem(
@@ -267,6 +296,9 @@ class PageComboBox(TreePopupComboBoxBase):
         if self._block_signals:
             return
         kind = item.data(_ITEM_ROLE_KIND)
+        if kind == "folder":
+            self._apply_folder_check_state(item)
+            return
         if kind != "page":
             return
         uid = item.data(_ITEM_ROLE_UID)
@@ -278,9 +310,44 @@ class PageComboBox(TreePopupComboBoxBase):
         elif not checked and uid in self._selected_uids:
             self._selected_uids.remove(uid)
             selection_changed = True
+        if selection_changed:
+            self._sync_folder_check_states_silently()
         self._update_display_text()
         if selection_changed:
             self.page_selection_changed.emit(list(self._selected_uids))
+
+    def _apply_folder_check_state(self, folder: QtGui.QStandardItem) -> None:
+        """Check or uncheck every page under a folder in one selection change."""
+        check = folder.checkState() == QtCore.Qt.CheckState.Checked
+        target = (
+            QtCore.Qt.CheckState.Checked if check else QtCore.Qt.CheckState.Unchecked
+        )
+        previous = list(self._selected_uids)
+        affected = _walk_page_uids(folder)
+        self._block_signals = True
+        try:
+            for uid in affected:
+                self._page_items[uid].setCheckState(target)
+            if check:
+                self._selected_uids.extend(
+                    [uid for uid in affected if uid not in previous]
+                )
+            else:
+                unchecked = set(affected)
+                self._selected_uids = [uid for uid in previous if uid not in unchecked]
+            _sync_folder_check_states(self._model.invisibleRootItem())
+        finally:
+            self._block_signals = False
+        self._update_display_text()
+        if self._selected_uids != previous:
+            self.page_selection_changed.emit(list(self._selected_uids))
+
+    def _sync_folder_check_states_silently(self) -> None:
+        self._block_signals = True
+        try:
+            _sync_folder_check_states(self._model.invisibleRootItem())
+        finally:
+            self._block_signals = False
 
     def eventFilter(self, obj, event) -> bool:
         if (
@@ -387,6 +454,7 @@ class PageComboBox(TreePopupComboBoxBase):
                 self._selected_uids.append(uid)
             else:
                 item.setCheckState(QtCore.Qt.CheckState.Unchecked)
+        _sync_folder_check_states(self._model.invisibleRootItem())
         resolved_active = active_uid if active_uid in self._page_items else None
         if not resolved_active and self._selected_uids:
             resolved_active = self._selected_uids[0]

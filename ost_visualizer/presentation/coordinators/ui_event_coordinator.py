@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
 from ...application.condition_change_impact import (
@@ -109,6 +109,14 @@ MeshRenderBuffers = Tuple[
     List[str],
     List[str],
 ]
+
+
+class _TakeoffPageChoice(NamedTuple):
+    page_uids: List[str]
+    active_uid: Optional[str]
+    # True when nothing remembered the page (no staged restore, session
+    # selection or saved page) and the first page was picked instead.
+    is_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -947,6 +955,7 @@ class UIEventCoordinator:
         self._viewer.plan_view = view
         self._toolbar.set_plan_view(view)
         view.takeoff_selection_changed.connect(self._on_takeoff_selection_changed)
+        view.page_selection_reset.connect(self._on_plan_page_selection_reset)
         view.takeoff_selection_command_applied.connect(
             self._on_takeoff_selection_command_applied
         )
@@ -998,6 +1007,7 @@ class UIEventCoordinator:
 
     def _reset_takeoff_workspace_state(self, clear_sidebars: bool = True) -> None:
         self._takeoff_workspace_bid_ref = None
+        self._unpicked_fallback_page_uid = None
         self._clear_staged_takeoff_restore()
         self._clear_pending_hotlink_named_view_focus()
         if clear_sidebars:
@@ -1041,6 +1051,10 @@ class UIEventCoordinator:
         self._pending_takeoff_place_condition_uids = list(place_condition_uids or [])
 
     def _resolve_takeoff_selection(self) -> tuple[List[str], Optional[str]]:
+        choice = self._resolve_takeoff_page_choice()
+        return choice.page_uids, choice.active_uid
+
+    def _resolve_takeoff_page_choice(self) -> _TakeoffPageChoice:
         if self._pending_takeoff_page_uids is not None:
             page_uids = [
                 uid
@@ -1052,7 +1066,7 @@ class UIEventCoordinator:
                 active_uid = None
             if not active_uid:
                 active_uid = page_uids[0] if page_uids else None
-            return page_uids, active_uid
+            return _TakeoffPageChoice(page_uids, active_uid)
         selected_uids = [
             uid
             for uid in self.ui_state_manager.selected_page_uids
@@ -1064,16 +1078,16 @@ class UIEventCoordinator:
         if selected_uids:
             if not active_uid:
                 active_uid = selected_uids[0]
-            return selected_uids, active_uid
+            return _TakeoffPageChoice(selected_uids, active_uid)
         if active_uid:
-            return [], active_uid
+            return _TakeoffPageChoice([], active_uid)
         target_page = self.project_data.get_last_selected_page_uid()
         if target_page and self.project_data.get_page(target_page):
-            return [target_page], target_page
+            return _TakeoffPageChoice([target_page], target_page)
         first_page = self.takeoff_sidebar.get_first_page_uid()
         if first_page and self.project_data.get_page(first_page):
-            return [first_page], first_page
-        return [], None
+            return _TakeoffPageChoice([first_page], first_page, is_fallback=True)
+        return _TakeoffPageChoice([], None)
 
     def _resolve_authoritative_page_selection(
         self,
@@ -1138,7 +1152,11 @@ class UIEventCoordinator:
             or not self.ui_state_manager.active_page_uid
         )
         if should_restore_selection:
-            page_uids, active_uid = self._resolve_takeoff_selection()
+            choice = self._resolve_takeoff_page_choice()
+            page_uids, active_uid = choice.page_uids, choice.active_uid
+            self._unpicked_fallback_page_uid = (
+                active_uid if choice.is_fallback else None
+            )
             active_page_changed = False
             if page_uids or self._pending_takeoff_page_uids is not None:
                 active_page_changed = self.takeoff_sidebar.restore_selection(
@@ -1466,6 +1484,7 @@ class UIEventCoordinator:
         *,
         selection_changed: bool,
         selection_command_applied: bool = False,
+        release_projection: bool = True,
     ) -> bool:
         current = set(self.ui_state_manager.highlighted_condition_uids)
         previously_projected = set(self._selection_projected_condition_uids)
@@ -1499,6 +1518,9 @@ class UIEventCoordinator:
         )
         if not selection_owns_highlight or placement_owns_highlight:
             return False
+        if not release_projection:
+            self._selection_projected_condition_uids = set()
+            return False
         if not current:
             self._selection_projected_condition_uids = set()
             return False
@@ -1507,6 +1529,9 @@ class UIEventCoordinator:
             self._selection_projected_condition_uids = set()
         return projection_changed
 
+    # The fallback page shown for the bid. It is never persisted as the bid's
+    # selected page until the user picks a page themselves.
+    _unpicked_fallback_page_uid: Optional[str] = None
     _SOURCE_2D = "2d"
     _SOURCE_3D = "3d_embedded"
     _SOURCE_3D_WINDOW = "3d_window"
@@ -1518,6 +1543,7 @@ class UIEventCoordinator:
         takeoff_uids: list,
         *,
         selection_command_applied: bool = False,
+        release_projection: bool = True,
     ) -> None:
         if self._placement is None or self._nav is None:
             return
@@ -1529,6 +1555,7 @@ class UIEventCoordinator:
             cond_uids,
             selection_changed=selection_changed,
             selection_command_applied=selection_command_applied,
+            release_projection=release_projection,
         )
         if not selection_changed:
             if (
@@ -1565,6 +1592,12 @@ class UIEventCoordinator:
         if self._placement is None or self._nav is None:
             return
         self._sync_selection(self._SOURCE_2D, uids)
+        self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_plan_page_selection_reset(self) -> None:
+        if self._placement is None or self._nav is None:
+            return
+        self._sync_selection(self._SOURCE_2D, [], release_projection=False)
         self._restore_project_tree_bid_selection_if_needed()
 
     def _on_takeoff_selection_command_applied(self, uids: list) -> None:
@@ -4641,6 +4674,8 @@ class UIEventCoordinator:
         if self._nav.is_refreshing:
             return
         self._prepare_plan_for_authoritative_refresh()
+        if active_uid != self._unpicked_fallback_page_uid:
+            self._unpicked_fallback_page_uid = None
         self._save_current_page_view_state(selected_page_override=active_uid)
         self.ui_state_manager.active_page_uid = active_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -4833,15 +4868,16 @@ class UIEventCoordinator:
         if not can_persist:
             return
         page_to_save = selected_page_override or page_uid or active_page_uid
-        if page_to_save:
-            if not self.project_data.get_page(page_to_save):
-                self._deferred_persistence.cancel_bid_selected_pages(
-                    bid_ref.file_path, [bid_ref.bid_uid]
-                )
-                return
-            self._deferred_persistence.schedule_bid_selected_page(
-                bid_ref.file_path, bid_ref.bid_uid, page_to_save
+        if not page_to_save or page_to_save == self._unpicked_fallback_page_uid:
+            return
+        if not self.project_data.get_page(page_to_save):
+            self._deferred_persistence.cancel_bid_selected_pages(
+                bid_ref.file_path, [bid_ref.bid_uid]
             )
+            return
+        self._deferred_persistence.schedule_bid_selected_page(
+            bid_ref.file_path, bid_ref.bid_uid, page_to_save
+        )
 
     def _flush_deferred_for_file(self, file_path: Optional[str]) -> bool:
         if not file_path:

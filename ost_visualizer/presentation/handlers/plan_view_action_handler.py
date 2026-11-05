@@ -3188,11 +3188,13 @@ class PlanViewActionHandler:
                 or not self._is_allowed(Feature.PLACE_ANNOTATIONS)
             ):
                 return
-            if result_code != QtWidgets.QDialog.DialogCode.Accepted:
-                return
-            result = dialog.result_data()
+            accepted = result_code == QtWidgets.QDialog.DialogCode.Accepted
+            result = dialog.result_data() if accepted else None
         finally:
             delete_later_if_valid(dialog)
+        if result is None:
+            self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_HOTLINK)
+            return
         if result.create_new:
             self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
             return

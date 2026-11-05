@@ -249,6 +249,7 @@ class TakeoffPlanView(
     hole_created = Signal(str, list, str, str)
     elements_deleted = Signal(list)
     takeoff_selection_changed = Signal(list)
+    page_selection_reset = Signal()
     takeoff_selection_command_applied = Signal(list)
     plan_item_selection_changed = Signal(list)
     geometry_edit_lease_requested = Signal(list)
@@ -5048,7 +5049,10 @@ class TakeoffPlanView(
         if project_changed or page_changed:
             self._clear_backout_state()
         saved_cursor = self._persistent_cursor_mode
-        preserve_place = not project_changed and self._place_session_uid is not None
+        preserve_place = not project_changed and (
+            self._place_session_uid is not None
+            or self._annotation_place_type is not None
+        )
         active_load_token = self._current_load_token
         self.clear(
             preserve_place_session=preserve_place,
@@ -5127,7 +5131,7 @@ class TakeoffPlanView(
             saved_pending_takeoffs,
             saved_pending_annotations,
         )
-        self.takeoff_selection_changed.emit([])
+        self.page_selection_reset.emit()
         if self._selected_uids or saved_selection:
             self.update_selection_visuals()
         if strategy.needs_async_loading:
@@ -6066,6 +6070,12 @@ class TakeoffPlanView(
         elif preserve_place_session and self._place_session_uid is not None:
             self.clear_place_preview()
             self._reset_place_session_state()
+        if preserve_place_session and self._annotation_place_type is not None:
+            self.clear_place_preview()
+            self._set_area_placement_in_progress(False)
+            self._annotation_place_points = []
+            self._annotation_place_dragging = False
+            self._annotation_area_rect_dragging = False
         if not preserve_place_session:
             self._clear_backout_state()
             self._exit_annotation_place_mode()
