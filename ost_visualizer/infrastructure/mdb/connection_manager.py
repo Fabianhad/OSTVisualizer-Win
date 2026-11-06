@@ -185,15 +185,16 @@ class MdbConnectionManager:
                                 self._unhealthy_connection_ids.add(id(conn))
                                 self._deferred_eviction_ids.add(id(conn))
                         else:
-                            self._unhealthy_connection_ids.add(id(conn))
                             self._deferred_eviction_ids.discard(id(conn))
-                            try:
-                                self._close_single(pool, abs_path)
-                            except pyodbc.Error as close_error:
-                                operation_error.add_note(
-                                    "The invalid MDB connection could not be closed: "
-                                    f"{close_error}"
-                                )
+                            if pool.get(abs_path) is conn:
+                                self._unhealthy_connection_ids.add(id(conn))
+                                try:
+                                    self._close_single(pool, abs_path)
+                                except pyodbc.Error as close_error:
+                                    operation_error.add_note(
+                                        "The invalid MDB connection could not be "
+                                        f"closed: {close_error}"
+                                    )
                 raise
             finally:
                 with self._lock:
