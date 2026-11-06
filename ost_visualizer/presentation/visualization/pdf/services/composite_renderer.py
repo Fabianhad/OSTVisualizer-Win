@@ -286,7 +286,7 @@ class CompositeRenderer:
             rect_h / overlay.height(),
         )
         painter.save()
-        painter.setTransform(transform)
+        painter.setTransform(transform, True)
         painter.drawImage(0, 0, overlay)
         painter.restore()
 
