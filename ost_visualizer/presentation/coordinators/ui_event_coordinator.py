@@ -114,8 +114,6 @@ MeshRenderBuffers = Tuple[
 class _TakeoffPageChoice(NamedTuple):
     page_uids: List[str]
     active_uid: Optional[str]
-    # True when nothing remembered the page (no staged restore, session
-    # selection or saved page) and the first page was picked instead.
     is_fallback: bool = False
 
 
@@ -1529,8 +1527,6 @@ class UIEventCoordinator:
             self._selection_projected_condition_uids = set()
         return projection_changed
 
-    # The fallback page shown for the bid. It is never persisted as the bid's
-    # selected page until the user picks a page themselves.
     _unpicked_fallback_page_uid: Optional[str] = None
     _SOURCE_2D = "2d"
     _SOURCE_3D = "3d_embedded"
