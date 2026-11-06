@@ -158,6 +158,7 @@ class PageComboBox(TreePopupComboBoxBase):
         self._page_delegate = _PageComboItemDelegate(self._tree)
         self._tree.setItemDelegate(self._page_delegate)
         self._model.itemChanged.connect(self._on_item_changed)
+        self._model.dataChanged.connect(self._on_model_data_changed)
         self._tree.viewport().installEventFilter(self)
 
     def _scroll_popup_to_current_item(self) -> None:
@@ -315,6 +316,11 @@ class PageComboBox(TreePopupComboBoxBase):
         self._update_display_text()
         if selection_changed:
             self.page_selection_changed.emit(list(self._selected_uids))
+
+    def _on_model_data_changed(self, *_args) -> None:
+        if self._block_signals or self._page_items is None:
+            return
+        self._update_display_text()
 
     def _apply_folder_check_state(self, folder: QtGui.QStandardItem) -> None:
         """Check or uncheck every page under a folder in one selection change."""
@@ -521,6 +527,10 @@ class PageComboBox(TreePopupComboBoxBase):
             return
         try:
             self._model.itemChanged.disconnect(self._on_item_changed)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            self._model.dataChanged.disconnect(self._on_model_data_changed)
         except (TypeError, RuntimeError):
             pass
         if self._tree is not None:
