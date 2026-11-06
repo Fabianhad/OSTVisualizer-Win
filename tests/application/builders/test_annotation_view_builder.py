@@ -119,3 +119,87 @@ class AnnotationViewBuilderTests(unittest.TestCase):
         self.assertIs(use_case.view_manager, managers["annotation"])
         self.assertIs(use_case.view_window_manager, managers["view"])
         self.assertIs(use_case.main_view_manager, managers["main"])
+
+
+class AnnotationViewBuilderLoggingAndFallbackTests(unittest.TestCase):
+    def build(self, with_main_window):
+        import logging
+
+        services = {
+            "project_data_service": object(),
+            "config_model": object(),
+            "icon_provider": object(),
+            "ui_access_manager": object(),
+            "project_write_service": object(),
+            "annotation_write_service": object(),
+        }
+        if with_main_window:
+            services["main_window"] = object()
+        container = ServiceContainer()
+        for name, value in services.items():
+            container.register_instance(name, value)
+        calls = []
+        bus = EventBus()
+        parent = logging.getLogger("view-builder-test")
+        builder = AnnotationViewBuilder(
+            container=container,
+            event_bus=bus,
+            view_manager_factory=lambda **options: calls.append(options) or object(),
+            repository_factory=object,
+            logger=parent,
+        )
+        builder.build()
+        handler = container.get("annotation_view_event_handler")
+        self.addCleanup(handler.shutdown)
+        for name in ("annotation_view_manager", "view_window_manager", "main_hotlink_view_manager"):
+            container.get(name)
+        return container, calls, handler, parent
+
+    def test_children_are_given_named_child_loggers_of_the_builder_logger(self):
+        container, calls, handler, parent = self.build(True)
+        self.assertEqual({call["logger"].name for call in calls}, {"view-builder-test.ViewManager"})
+        self.assertEqual(handler.logger.name, "view-builder-test.AnnotationViewEventHandler")
+
+    def test_the_event_handler_is_started_and_registered_by_build(self):
+        container, _calls, handler, _parent = self.build(True)
+        self.assertIs(handler._subscribed, True)
+        self.assertIs(container.get("annotation_view_event_handler"), handler)
+
+    def test_without_a_main_window_the_managers_get_no_parent_window(self):
+        _container, calls, _handler, _parent = self.build(False)
+        self.assertEqual(len(calls), 3)
+        for options in calls:
+            self.assertIsNone(options["parent_window"])
+
+    def test_the_default_logger_is_the_module_logger(self):
+        builder = AnnotationViewBuilder(
+            container=ServiceContainer(),
+            event_bus=EventBus(),
+            view_manager_factory=lambda **_options: object(),
+            repository_factory=object,
+        )
+        self.assertEqual(builder.logger.name, "ost_visualizer.application.builders.annotation_view_builder")
+
+
+class AnnotationViewBuilderHotlinkWiringTests(unittest.TestCase):
+    def test_a_hotlink_click_resolves_the_registered_open_view_use_case_at_click_time(self):
+        from ost_visualizer.application.events.app_events import AppEvents
+
+        container = ServiceContainer()
+        bus = EventBus()
+        builder = AnnotationViewBuilder(
+            container=container,
+            event_bus=bus,
+            view_manager_factory=lambda **_options: object(),
+            repository_factory=object,
+        )
+        builder.build()
+        handler = container.get("annotation_view_event_handler")
+        self.addCleanup(handler.shutdown)
+        received = []
+        container.register_instance(
+            "open_annotation_view_use_case",
+            SimpleNamespace(execute_from_hotlink=received.append),
+        )
+        bus.publish(AppEvents.HOTLINK_CLICKED, hotlink_uid="h", bid_page_uid="p", target_view_uid="v")
+        self.assertEqual([e.hotlink_uid for e in received], ["h"])

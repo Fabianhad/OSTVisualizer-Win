@@ -785,5 +785,79 @@ class McpUntrustedTextEdgeTests(unittest.TestCase):
         self.assertEqual(twice, once)
 
 
+TEXT_KEYS = (
+    "name",
+    "display_name",
+    "basename",
+    "description",
+    "estimator",
+    "job_id",
+    "project_name",
+    "bid_name",
+    "page_name",
+    "sheet_no",
+    "sheet_name",
+    "page_label",
+    "condition_name",
+    "old_condition_name",
+    "new_condition_name",
+    "area_name",
+    "selected_area_name",
+    "cdn_type_name",
+    "type_name",
+    "notes",
+    "snippet",
+    "text",
+    "text_snippet",
+    "label",
+    "root_label",
+    "page",
+    "area",
+    "target_named_view_name",
+    "target_page_name",
+    "image_basename",
+    "overlay_basename",
+    "source_file_name",
+    "file_basename",
+    "selected_file_basename",
+)
+TEXT_LIST_KEYS = ("folder_path", "condition_names", "affected_pages", "warnings")
+
+
+class McpUntrustedKeyContractTests(unittest.TestCase):
+    """Which fields carry client-controlled text is a security contract."""
+
+    def test_the_text_valued_keys_are_exactly_the_documented_set(self):
+        from ost_visualizer.mcp_server import serializers
+
+        self.assertEqual(set(serializers.UNTRUSTED_TEXT_KEYS), set(TEXT_KEYS))
+        self.assertEqual(set(serializers.UNTRUSTED_TEXT_LIST_KEYS), set(TEXT_LIST_KEYS))
+
+    def test_every_text_valued_key_wraps_its_string(self):
+        for key in TEXT_KEYS:
+            with self.subTest(key=key):
+                wrapped = ok({key: "Slab"})["data"][key]
+                self.assertEqual(
+                    wrapped, {"value": "Slab", "untrusted": True, "truncated": False}
+                )
+
+    def test_every_text_list_key_wraps_each_string_entry(self):
+        for key in TEXT_LIST_KEYS:
+            with self.subTest(key=key):
+                wrapped = ok({key: ["A", {"name": "B"}]})["data"][key]
+                self.assertEqual(
+                    wrapped[0], {"value": "A", "untrusted": True, "truncated": False}
+                )
+                self.assertEqual(wrapped[1]["name"]["value"], "B")
+
+    def test_lists_under_other_keys_and_text_list_keys_without_a_list_stay_plain(self):
+        data = ok({"ids": ["a", "b"], "warnings": "not a list", "folder_path": None})[
+            "data"
+        ]
+        self.assertEqual(data["ids"], ["a", "b"])
+        self.assertEqual(data["warnings"], "not a list")
+        self.assertIsNone(data["folder_path"])
+
+
 if __name__ == "__main__":
     unittest.main()

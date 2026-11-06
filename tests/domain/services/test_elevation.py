@@ -355,3 +355,153 @@ class StripRawConditionElevationsTests(unittest.TestCase):
             row.get("Name", "") for row in _raw_bid_data().bid_tables["BidConditions"]
         ]
         self.assertEqual(elevation_name_collisions(names), [("Wall", 2)])
+
+
+class ParseElevationTableTests(unittest.TestCase):
+    def parsed(self, name):
+        parts = parse_elevation(name)
+        return parts.base_name, parts.type, parts.value
+
+    def test_each_marker_form_splits_into_base_type_and_value(self):
+        table = (
+            ("Wall @T 10'", ("Wall", 0, "10'")),
+            ("Wall @B 10'", ("Wall", 1, "10'")),
+            ("Wall @T10'", ("Wall", 0, "10'")),
+            ("Wall @B10'", ("Wall", 1, "10'")),
+            ("Wall @T", ("Wall", 0, "")),
+            ("Wall @B", ("Wall", 1, "")),
+            ("Wall @T ", ("Wall", 0, "")),
+            ("Wall @ 2'", ("Wall", 1, "2'")),
+            ("Wall @2'", ("Wall", 1, "2'")),
+            ("Wall @", ("Wall", 1, "")),
+            ("Wall @ ", ("Wall", 1, "")),
+            ("Wall", ("Wall", 0, "")),
+            ("", ("", 0, "")),
+            ("@T 5'", ("@T 5'", 0, "")),
+            (" @T 5'", ("", 0, "5'")),
+        )
+        for name, expected in table:
+            with self.subTest(name=name):
+                self.assertEqual(self.parsed(name), expected)
+
+    def test_the_marker_that_appears_last_wins_and_an_explicit_marker_beats_the_legacy_one(self):
+        self.assertEqual(self.parsed("A @B 1' @T 2'"), ("A @B 1'", 0, "2'"))
+        self.assertEqual(self.parsed("A @T 1' @B 2'"), ("A @T 1'", 1, "2'"))
+        self.assertEqual(self.parsed("A @ 1' @T 2'"), ("A @ 1'", 0, "2'"))
+        self.assertEqual(self.parsed("A @T 2' @ 3'"), ("A", 0, "2' @ 3'"))
+        self.assertEqual(self.parsed("A @ 2' @x"), ("A", 1, "2' @x"))
+
+    def test_only_one_separating_space_after_the_marker_is_dropped(self):
+        self.assertEqual(self.parsed("A @T  2'"), ("A", 0, " 2'"))
+        self.assertEqual(self.parsed("A @B   x"), ("A", 1, "  x"))
+
+    def test_elevation_parts_default_to_an_empty_top_elevation(self):
+        from ost_visualizer.domain.services.elevation import ElevationParts
+
+        parts = ElevationParts()
+        self.assertEqual((parts.base_name, parts.type, parts.value), ("", 0, ""))
+
+    def test_reassembly_uses_the_marker_for_the_type_and_trims_the_value(self):
+        self.assertEqual(reassemble_elevation("Wall", 0, "10'"), "Wall @T 10'")
+        self.assertEqual(reassemble_elevation("Wall", 1, "10'"), "Wall @B 10'")
+        self.assertEqual(reassemble_elevation("Wall", 5, "10'"), "Wall @B 10'")
+        self.assertEqual(reassemble_elevation("Wall", 0, "  "), "Wall")
+        self.assertEqual(reassemble_elevation("", 0, "1'"), " @T 1'")
+        name = reassemble_elevation("Wall", 0, " 10' 3\" ")
+        self.assertEqual(parse_elevation(name).value, "10' 3\"")
+
+
+class FormatStructuralElevationTableTests(unittest.TestCase):
+    def test_values_are_shown_as_feet_dash_inches_with_a_sign_and_eighths(self):
+        for value, text in (
+            (12, "1' - 0\""),
+            (13, "1' - 1\""),
+            (18, "1' - 6\""),
+            (24.5, "2' - 0 1/2\""),
+            (30.125, "2' - 6 1/8\""),
+            (-12, "-1' - 0\""),
+            (-13.5, "-1' - 1 1/2\""),
+            (5, "0' - 5\""),
+            (5.5, "0' - 5 1/2\""),
+            (0.125, "0' - 1/8\""),
+            (-0.5, "-0' - 1/2\""),
+            (0.0, "0' - 0\""),
+            (0.01, "0' - 0\""),
+            (745 * 12, "745' - 0\""),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(format_structural_elevation(value), text)
+
+
+class ResolveBoundsDetailTests(unittest.TestCase):
+    def condition(self, **changes):
+        base = dict(
+            uid="c",
+            name="Wall @T 10'",
+            condition_type=Condition.TYPE_LINEAR,
+            z_value=100.0,
+            height=20.0,
+            thickness=5.0,
+            is_top=True,
+        )
+        base.update(changes)
+        return Condition(**base)
+
+    def test_top_marker_measures_down_and_bottom_marker_measures_up_from_the_reference(self):
+        top = resolve_condition_elevation_bounds(self.condition())
+        self.assertEqual((top.base_name, top.top, top.bottom), ("Wall", 100.0, 80.0))
+        bottom = resolve_condition_elevation_bounds(
+            self.condition(name="Wall @B 10'", is_top=False)
+        )
+        self.assertEqual((bottom.base_name, bottom.top, bottom.bottom), ("Wall", 120.0, 100.0))
+
+    def test_base_name_is_trimmed_and_blank_values_give_no_bounds(self):
+        bounds = resolve_condition_elevation_bounds(self.condition(name="  Wall   @T 10'"))
+        self.assertEqual(bounds.base_name, "Wall")
+        for name in ("Wall", "Wall @T", "Wall @T   ", ""):
+            with self.subTest(name=name):
+                self.assertIsNone(resolve_condition_elevation_bounds(self.condition(name=name)))
+
+    def test_count_and_attachment_conditions_use_height_and_area_uses_thickness(self):
+        for condition_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT, Condition.TYPE_LINEAR):
+            bounds = resolve_condition_elevation_bounds(self.condition(condition_type=condition_type))
+            self.assertEqual(bounds.bottom, 80.0)
+        area = resolve_condition_elevation_bounds(self.condition(condition_type=Condition.TYPE_AREA))
+        self.assertEqual(area.bottom, 95.0)
+
+    def test_non_finite_reference_and_tiny_positive_sizes(self):
+        for reference in (float("nan"), float("inf"), float("-inf")):
+            self.assertIsNone(
+                resolve_condition_elevation_bounds(self.condition(z_value=reference))
+            )
+        bounds = resolve_condition_elevation_bounds(self.condition(height=0.5))
+        self.assertEqual((bounds.top, bounds.bottom), (100.0, 99.5))
+        self.assertIsNone(resolve_condition_elevation_bounds(self.condition(height=0.0)))
+
+    def test_a_truthy_is_top_flag_selects_the_top_marker(self):
+        self.assertIsNotNone(resolve_condition_elevation_bounds(self.condition(is_top=1)))
+        self.assertIsNone(resolve_condition_elevation_bounds(self.condition(is_top=0)))
+
+
+class StripElevationEscapeDepthTests(unittest.TestCase):
+    def test_escapes_are_decoded_at_most_twice_when_judging_the_elevation_text(self):
+        # &amp;apos; is decoded twice and is feet; one more level is plain text.
+        self.assertEqual(strip_elevation_suffix("Wall @T 5&amp;apos;"), "Wall")
+        triple = "Wall @T 5&amp;amp;apos;"
+        self.assertEqual(strip_elevation_suffix(triple), triple)
+
+    def test_a_name_that_starts_with_the_marker_keeps_its_text(self):
+        for name in ("@T 5'", "@B 5'"):
+            self.assertEqual(strip_elevation_suffix(name), name)
+        self.assertEqual(strip_elevation_suffix(" @T 5'"), " @T 5'")
+
+
+class ElevationBoundsValueTests(unittest.TestCase):
+    def test_bounds_are_immutable_values(self):
+        from dataclasses import FrozenInstanceError
+        from ost_visualizer.domain.services.elevation import ConditionElevationBounds
+
+        bounds = ConditionElevationBounds("Wall", 10.0, 2.0)
+        with self.assertRaises(FrozenInstanceError):
+            bounds.top = 11.0
+        self.assertEqual(bounds, ConditionElevationBounds("Wall", 10.0, 2.0))

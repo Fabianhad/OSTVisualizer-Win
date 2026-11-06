@@ -52,3 +52,18 @@ class RawTextEncodingFailureTests(unittest.TestCase):
             serialize_value(b"legacy\xff")
         with self.assertRaises(UnicodeDecodeError):
             serialize_row((b"legacy\xff",), [("Notes", bytes)], table="BidTexts")
+
+
+class AnnotationTableNameEncodingTests(unittest.TestCase):
+    def test_every_annotation_text_table_reads_its_name_column_as_latin1(self):
+        description = [("Name", bytes)]
+        for table in ("BidTexts", "BidCallOuts"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    serialize_row((b"caf\xe9",), description, table=table),
+                    {"Name": "caf\u00e9"},
+                )
+        for table in ("BidComments", "BidHighlights", ""):
+            with self.subTest(table=table):
+                with self.assertRaises(UnicodeDecodeError):
+                    serialize_row((b"caf\xe9",), description, table=table)

@@ -549,6 +549,9 @@ class OstMcpServerUnitTests(unittest.TestCase):
             return {}
 
         self.assertEqual(bare(), {})
+        self.assertEqual(called(), {})
+        self.assertEqual(prompted(), "p")
+        self.assertEqual(resourced(), {})
         self.assertEqual([t["name"] for t in server.list_tools()], ["bare", "called"])
         self.assertEqual(server.list_tools()[0]["description"], "Bare tool.")
         self.assertEqual([p["name"] for p in server.list_prompts()], ["prompted"])
@@ -608,6 +611,37 @@ class OstMcpServerUnitTests(unittest.TestCase):
             self.server.run_stdio()
         return stdout.getvalue()
 
+    def test_every_response_line_is_flushed_to_the_client(self):
+        class RecordingStdout(io.StringIO):
+            flushes = 0
+
+            def flush(self):
+                RecordingStdout.flushes += 1
+                super().flush()
+
+        stdout = RecordingStdout()
+        with patch.object(
+            sys,
+            "stdin",
+            io.StringIO(
+                '{"jsonrpc": "2.0", "id": 1, "method": "ping"}\n'
+                '{"jsonrpc": "2.0", "id": 2, "method": "ping"}\n'
+            ),
+        ), patch.object(sys, "stdout", stdout):
+            self.server.run_stdio()
+        self.assertEqual(RecordingStdout.flushes, 2)
+
+    def test_unknown_names_are_reported_without_the_keyerror_quotes(self):
+        for method, params, message in (
+            ("tools/call", {"name": "TOOLX"}, "Unknown tool: TOOLX"),
+            ("prompts/get", {"name": "PROMPTX"}, "Unknown prompt: PROMPTX"),
+            ("resources/read", {"uri": "ost://nowhereX"}, "Unknown resource: ost://nowhereX"),
+        ):
+            with self.subTest(method=method):
+                self.assertEqual(
+                    self.error_of(self.request(method, params)), (-32601, message)
+                )
+
     def test_stdio_loop_answers_requests_skips_blanks_and_notifications(self):
         output = self.run_stdio(
             "\n"
@@ -657,3 +691,32 @@ class OstMcpServerSchemaHelperTests(unittest.TestCase):
                 imported.add(node.module.split(".")[0])
         self.assertIn("json", imported)
         self.assertEqual(imported - set(sys.stdlib_module_names), set())
+
+
+class OstMcpServerValueContractTests(unittest.TestCase):
+    def test_defaults_and_immutable_values(self):
+        import dataclasses
+
+        self.assertEqual(OstMcpServer().name, "ost-visualizer")
+        handler = internal_server._Handler("n", print, {})
+        resource = internal_server._ResourceHandler("ost://x", print, "x")
+        inline = internal_server._InlineFormattedOutput("text", {})
+        self.assertEqual((handler.description, resource.description), ("", ""))
+        self.assertEqual(resource.mime_type, "application/json")
+        for target, field in ((handler, "name"), (resource, "name"), (inline, "text")):
+            with self.subTest(type=type(target).__name__):
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    setattr(target, field, "changed")
+
+    def test_error_responses_are_complete_json_rpc_objects(self):
+        self.assertEqual(
+            internal_server._error_response("r1", -32601, "nope"),
+            {
+                "jsonrpc": "2.0",
+                "id": "r1",
+                "error": {"code": -32601, "message": "nope"},
+            },
+        )
+        self.assertEqual(
+            internal_server._error_response(None, -32700, "x")["id"], None
+        )

@@ -7,9 +7,6 @@ from tests.helpers.mdb.operations import (
     _SqliteSchema,
 )
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
-from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
-    ACCESS_BULK_CHUNK_SIZE,
-)
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
     TakeoffOperationsMixin,
@@ -40,6 +37,8 @@ from ost_visualizer.infrastructure.mdb.components.bid_operations import (
 )
 import unittest
 import sqlite3
+import tempfile
+import threading
 import logging
 import contextlib
 import json
@@ -65,6 +64,12 @@ from tests.helpers.sql.cleanup_support import (
 )
 from types import SimpleNamespace
 from contextlib import contextmanager
+from ost_visualizer.application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
+)
+from ost_visualizer.infrastructure.mdb.schema_compatibility import (
+    UnsupportedMdbSchemaError,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ConcurrencyToken,
     DatabaseMutationResult,
@@ -148,15 +153,17 @@ class MdbWriterSqlCleanupTests(unittest.TestCase):
             "_connection",
             side_effect=AssertionError("invalid UIDs must not open a connection"),
         ) as connection:
-            self.assertFalse(writer.delete_takeoffs("example.mdb", ["not-a-uid"]))
-            self.assertFalse(writer.save_takeoffs_area("example.mdb", ["10"], "bad"))
-            self.assertFalse(
-                writer.save_takeoffs_condition("example.mdb", ["10"], "bad")
+            self.assertIs(writer.delete_takeoffs("example.mdb", ["not-a-uid"]), False)
+            self.assertIs(
+                writer.save_takeoffs_area("example.mdb", ["10"], "bad"), False
             )
-            self.assertFalse(
-                writer.save_takeoffs_area("example.mdb", ["not-a-uid"], "20")
+            self.assertIs(
+                writer.save_takeoffs_condition("example.mdb", ["10"], "bad"), False
             )
-            self.assertTrue(writer.delete_takeoffs("example.mdb", []))
+            self.assertIs(
+                writer.save_takeoffs_area("example.mdb", ["not-a-uid"], "20"), False
+            )
+            self.assertIs(writer.delete_takeoffs("example.mdb", []), True)
         connection.assert_not_called()
 
     def test_access_annotation_row_error_rolls_back_the_batch(self):
@@ -214,11 +221,11 @@ class MdbWriterSqlCleanupTests(unittest.TestCase):
             ],
         ) as update:
             result = writer.save_takeoffs_area("example.mdb", ["10"], "20")
-        self.assertTrue(result)
+        self.assertIs(result, True)
         self.assertEqual(
             [call.args for call in update.call_args_list],
             [
-                ("example.mdb", [10], "BidAreaUID", 20, ACCESS_BULK_CHUNK_SIZE),
+                ("example.mdb", [10], "BidAreaUID", 20, 50),
                 ("example.mdb", [10], "BidAreaUID", 20, 1),
             ],
         )
@@ -232,7 +239,7 @@ class MdbWriterSqlCleanupTests(unittest.TestCase):
             "_run_selected_takeoffs_value_update",
             side_effect=pyodbc.Error("42000", "syntax error"),
         ) as update:
-            self.assertFalse(writer.save_takeoffs_area("example.mdb", ["10"], "20"))
+            self.assertIs(writer.save_takeoffs_area("example.mdb", ["10"], "20"), False)
         self.assertEqual(update.call_count, 1)
         with patch.object(
             writer,
@@ -242,7 +249,7 @@ class MdbWriterSqlCleanupTests(unittest.TestCase):
                 pyodbc.Error("HY001", "System resource exceeded"),
             ],
         ) as update:
-            self.assertFalse(writer.save_takeoffs_area("example.mdb", ["10"], "20"))
+            self.assertIs(writer.save_takeoffs_area("example.mdb", ["10"], "20"), False)
         self.assertEqual(update.call_count, 2)
 
 
@@ -326,15 +333,18 @@ class MdbWriterTransactionTests(unittest.TestCase):
 
     def test_the_first_swallowed_failure_is_the_one_reported(self):
         writer, events = self.writer()
-        with self.assertRaisesRegex(ValueError, "first"):
+        failures = {message: ValueError(message) for message in ("first", "second")}
+        with self.assertRaises(ValueError) as raised:
             with writer._connection("a.mdb"):
-                for message in ("first", "second"):
+                for failure in failures.values():
                     try:
                         with writer._connection("a.mdb"):
-                            raise ValueError(message)
+                            raise failure
                     except ValueError:
                         pass
+        self.assertIs(raised.exception, failures["first"])
         self.assertEqual(events.count("rollback"), 1)
+        self.assertNotIn("commit", events)
 
     def test_a_failure_in_the_outermost_block_rolls_back_and_is_not_masked(self):
         writer, events = self.writer()
@@ -465,17 +475,19 @@ class MdbWriterPlanPreflightTests(unittest.TestCase):
 
     def test_an_annotation_whose_table_is_gone_is_reported_as_changed(self):
         ops = self.ops("CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);")
-        with self.assertRaisesRegex(
-            MissingBidOwnedUidError, "annotation changed or was deleted"
-        ):
+        with self.assertRaises(MissingBidOwnedUidError) as raised:
             self.verify(ops, annotations=(("30", "rect"),))
+        self.assertEqual(
+            str(raised.exception),
+            "An annotation changed or was deleted before the Plan mutation started.",
+        )
 
     def test_annotation_tables_need_a_bid_column_to_be_scoped(self):
         ops = self.ops(
             "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
             "CREATE TABLE BidAnnotationRects (UID INTEGER); INSERT INTO BidAnnotationRects VALUES (30);"
         )
-        with self.assertRaisesRegex(RuntimeError, "Missing BidAnnotationRects.BidUID"):
+        with self.assertRaisesRegex(RuntimeError, r"^Missing BidAnnotationRects\.BidUID$"):
             self.verify(ops, annotations=(("30", "rect"),))
 
 
@@ -646,13 +658,14 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
 
     def test_old_selection_only_preflight_reproduces_exact_error_before_writes(self):
         before = self.snapshot()
-        with self.assertRaisesRegex(
-            MissingBidOwnedUidError,
-            "relationship graph changed before the Plan mutation",
-        ):
+        with self.assertRaises(MissingBidOwnedUidError) as raised:
             MdbWriter.verify_plan_items_exist(
                 self.ops, "database.mdb", "7", ("10", "11", "12"), ()
             )
+        self.assertEqual(
+            str(raised.exception),
+            "The takeoff relationship graph changed before the Plan mutation started.",
+        )
         self.assertEqual(self.snapshot(), before)
 
     def test_preflight_accepts_selection_that_includes_the_child_takeoff(self):
@@ -675,3 +688,538 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
                 "SELECT UID,BidPageUID,BidConditionUID,BidAreaUID,ParentUID FROM BidTakeoffs"
             )
         ]
+
+
+class _TxCursor(_SqliteCursorWrapper):
+    """sqlite cursor that accepts pyodbc's single-list parameter form."""
+
+    def __init__(self, connection, statements):
+        super().__init__(connection)
+        self._statements = statements
+
+    def execute(self, query, *params):
+        if len(params) == 1 and isinstance(params[0], (list, tuple)):
+            params = tuple(params[0])
+        self._statements.append((query, params))
+        return super().execute(query, *params)
+
+
+class _TxConnection:
+    def __init__(
+        self, database, statements, events, commit_error=None, rollback_error=None
+    ):
+        self._database = database
+        self._statements = statements
+        self._events = events
+        self._commit_error = commit_error
+        self._rollback_error = rollback_error
+
+    def cursor(self):
+        return _TxCursor(self._database, self._statements)
+
+    def commit(self):
+        self._events.append("commit")
+        if self._commit_error is not None:
+            raise self._commit_error
+        self._database.commit()
+
+    def rollback(self):
+        self._events.append("rollback")
+        if self._rollback_error is not None:
+            raise self._rollback_error
+        self._database.rollback()
+
+
+class _SqliteWriteSchema(_SqliteSchema):
+    """sqlite schema with the require_table/skip-report surface of the real one."""
+
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.skips = []
+
+    def require_table(self, table):
+        if self.optional_table_missing(table):
+            raise RuntimeError(f"Missing table {table}")
+
+    def log_optional_write_skip(self, table, column, operation):
+        self.skips.append((table, column, operation))
+
+
+class _SqliteWriteManager:
+    def __init__(self, database, commit_error=None, rollback_error=None):
+        self.database = database
+        self.statements = []
+        self.events = []
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
+
+    @contextmanager
+    def connection(self, db_path, autocommit=True):
+        self.events.append(("open", db_path, autocommit))
+        try:
+            yield _TxConnection(
+                self.database,
+                self.statements,
+                self.events,
+                self.commit_error,
+                self.rollback_error,
+            )
+        finally:
+            self.events.append("close")
+
+    def use_committed_writer_for_reads(self, db_path):
+        self.events.append(("reads", db_path))
+
+
+class _SqliteWriterCase(unittest.TestCase):
+    """Runs the production MdbWriter against a real sqlite database."""
+
+    def writer_for(
+        self, *ddl, commit_error=None, rollback_error=None, path=":memory:"
+    ):
+        database = sqlite3.connect(path)
+        self.addCleanup(database.close)
+        for statement in ddl:
+            database.execute(statement)
+        database.commit()
+        manager = _SqliteWriteManager(database, commit_error, rollback_error)
+        writer = MdbWriter(conn_manager=manager)
+        schema = _SqliteWriteSchema(database)
+        writer._schema = lambda _connection: schema
+        return writer, database, manager, schema
+
+
+class MdbWriterSqliteTransactionTests(_SqliteWriterCase):
+    DDL = "CREATE TABLE Items (UID INTEGER PRIMARY KEY, Name TEXT)"
+
+    def insert(self, connection, uid, name):
+        connection.cursor().execute("INSERT INTO Items VALUES (?, ?)", uid, name)
+
+    def rows(self, database):
+        return database.execute("SELECT UID, Name FROM Items ORDER BY UID").fetchall()
+
+    def test_a_committed_transaction_is_visible_to_an_independent_connection(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = os.path.join(folder.name, "tx.sqlite")
+        writer, database, manager, _schema = self.writer_for(self.DDL, path=path)
+        with writer._connection("x.mdb") as connection:
+            self.insert(connection, 1, "one")
+            self.insert(connection, 2, "two")
+        other = sqlite3.connect(path)
+        self.addCleanup(other.close)
+        self.assertEqual(self.rows(other), [(1, "one"), (2, "two")])
+        self.assertEqual(manager.events[-2:], ["close", ("reads", "x.mdb")])
+
+    def test_a_failure_after_writes_leaves_the_database_unchanged(self):
+        writer, database, manager, _schema = self.writer_for(self.DDL)
+        database.execute("INSERT INTO Items VALUES (1, 'kept')")
+        database.commit()
+        with self.assertRaisesRegex(ValueError, "mid-batch"):
+            with writer._connection("x.mdb") as connection:
+                self.insert(connection, 2, "lost")
+                self.insert(connection, 3, "lost too")
+                raise ValueError("mid-batch")
+        self.assertEqual(self.rows(database), [(1, "kept")])
+        self.assertNotIn(("reads", "x.mdb"), manager.events)
+        self.assertNotIn("commit", manager.events)
+
+    def test_a_swallowed_database_error_in_a_nested_block_discards_every_write(self):
+        writer, database, manager, _schema = self.writer_for(self.DDL)
+        failure = pyodbc.Error("23000", "duplicate key")
+        with self.assertRaises(pyodbc.Error) as raised:
+            with writer._connection("x.mdb") as connection:
+                self.insert(connection, 1, "outer write")
+                try:
+                    with writer._connection("x.mdb"):
+                        self.insert(connection, 2, "inner write")
+                        raise failure
+                except pyodbc.Error:
+                    pass
+                self.insert(connection, 3, "after the swallowed error")
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(self.rows(database), [])
+        self.assertEqual(manager.events.count("rollback"), 1)
+        self.assertEqual(manager.events.count("commit"), 0)
+
+    def test_a_failing_commit_rolls_back_and_never_switches_reads(self):
+        commit_error = pyodbc.Error("40001", "commit failed")
+        writer, database, manager, _schema = self.writer_for(
+            self.DDL, commit_error=commit_error
+        )
+        with self.assertRaises(pyodbc.Error) as raised:
+            with writer._connection("x.mdb") as connection:
+                self.insert(connection, 1, "never committed")
+        self.assertIs(raised.exception, commit_error)
+        self.assertEqual(self.rows(database), [])
+        self.assertEqual(manager.events.count("commit"), 1)
+        self.assertEqual(manager.events.count("rollback"), 1)
+        self.assertNotIn(("reads", "x.mdb"), manager.events)
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+
+    def test_an_interrupt_neither_commits_nor_switches_reads_and_resets_the_depth(
+        self,
+    ):
+        writer, database, manager, _schema = self.writer_for(self.DDL)
+        with self.assertRaises(KeyboardInterrupt):
+            with writer._connection("x.mdb") as connection:
+                self.insert(connection, 1, "interrupted")
+                raise KeyboardInterrupt()
+        self.assertNotIn("commit", manager.events)
+        self.assertNotIn(("reads", "x.mdb"), manager.events)
+        self.assertEqual(manager.events[-1], "close")
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+        self.assertIsNone(writer._access_transaction_error.get())
+        database.rollback()
+        self.assertEqual(self.rows(database), [])
+
+    def test_a_non_database_rollback_error_replaces_the_failure_but_resets_state(self):
+        writer, database, manager, _schema = self.writer_for(
+            self.DDL, rollback_error=RuntimeError("rollback broke")
+        )
+        with self.assertRaisesRegex(RuntimeError, "rollback broke") as raised:
+            with writer._connection("x.mdb"):
+                raise ValueError("original")
+        self.assertIsInstance(raised.exception.__context__, ValueError)
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+        self.assertIsNone(writer._access_transaction_error.get())
+        self.assertNotIn(("reads", "x.mdb"), manager.events)
+
+    def test_each_thread_has_its_own_transaction_state(self):
+        writer, database, manager, _schema = self.writer_for(self.DDL)
+        seen = []
+
+        def other_thread():
+            seen.append(writer._access_transaction_depth.get())
+            seen.append(writer._access_transaction_error.get())
+
+        with writer._connection("x.mdb"):
+            writer._access_transaction_error.set(RuntimeError("only this thread"))
+            worker = threading.Thread(target=other_thread)
+            worker.start()
+            worker.join()
+            writer._access_transaction_error.set(None)
+        self.assertEqual(seen, [0, None])
+
+    def test_a_nested_database_error_is_recorded_for_the_outer_commit_decision(self):
+        writer, _database, _manager, _schema = self.writer_for(self.DDL)
+        failure = pyodbc.Error("HY000", "nested")
+        with self.assertRaises(pyodbc.Error):
+            with writer._connection("x.mdb"):
+                with self.assertRaises(pyodbc.Error):
+                    with writer._connection("x.mdb"):
+                        raise failure
+                self.assertIs(writer._access_transaction_error.get(), failure)
+
+
+class MdbWriterReassignmentPreflightTests(_SqliteWriterCase):
+    DDL = (
+        "CREATE TABLE Bids (UID INTEGER)",
+        "INSERT INTO Bids VALUES (1)",
+        "INSERT INTO Bids VALUES (2)",
+        "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        "INSERT INTO BidPages VALUES (5, 1)",
+        "INSERT INTO BidPages VALUES (6, 1)",
+        "INSERT INTO BidPages VALUES (50, 2)",
+        "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)",
+        "INSERT INTO BidConditions VALUES (7, 1)",
+        "INSERT INTO BidConditions VALUES (8, 1)",
+        "INSERT INTO BidConditions VALUES (70, 2)",
+        "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, "
+        "BidPageUID INTEGER, BidConditionUID INTEGER)",
+        "INSERT INTO BidTakeoffs VALUES (10, 1, 5, 7)",
+        "INSERT INTO BidTakeoffs VALUES (11, 1, 5, 7)",
+        "INSERT INTO BidTakeoffs VALUES (12, 1, 6, 7)",
+        "INSERT INTO BidTakeoffs VALUES (13, 1, 5, 8)",
+        "INSERT INTO BidTakeoffs VALUES (20, 2, 5, 7)",
+    )
+
+    def verify(self, *, condition="7", page="5", takeoffs=("10", "11"), ddl=None):
+        writer, database, manager, _schema = self.writer_for(*(ddl or self.DDL))
+        before = database.execute("SELECT * FROM BidTakeoffs ORDER BY rowid").fetchall()
+        writer.verify_takeoff_reassignment(
+            "x.mdb", "1", ConditionTakeoffReassignment(condition, page, takeoffs)
+        )
+        self.assertEqual(
+            database.execute("SELECT * FROM BidTakeoffs ORDER BY rowid").fetchall(),
+            before,
+        )
+        return manager
+
+    def test_a_matching_snapshot_passes_inside_one_committed_read_transaction(self):
+        manager = self.verify()
+        self.assertEqual(
+            manager.events,
+            [("open", "x.mdb", False), "commit", "close", ("reads", "x.mdb")],
+        )
+
+    def test_a_page_or_condition_of_another_bid_is_rejected_by_name(self):
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError,
+            r"^BidPages\.UID=50 does not belong to Bids\.UID=1\.$",
+        ):
+            self.verify(page="50", takeoffs=("20",))
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError,
+            r"^BidConditions\.UID=70 does not belong to Bids\.UID=1\.$",
+        ):
+            self.verify(condition="70")
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, r"^BidPages has no row for UID 999;"
+        ):
+            self.verify(page="999")
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, r"^BidConditions has no row for UID 999;"
+        ):
+            self.verify(condition="999")
+
+    def test_a_takeoff_moved_to_another_page_or_condition_is_reported(self):
+        message = "A Takeoff changed Page or Condition before reassignment started."
+        with self.assertRaises(MissingBidOwnedUidError) as moved_page:
+            self.verify(takeoffs=("10", "12"))
+        self.assertEqual(str(moved_page.exception), message)
+        with self.assertRaises(MissingBidOwnedUidError) as moved_condition:
+            self.verify(takeoffs=("10", "13"))
+        self.assertEqual(str(moved_condition.exception), message)
+
+    def test_a_deleted_or_foreign_takeoff_is_reported_as_deleted_or_replaced(self):
+        message = "A Takeoff was deleted or replaced before reassignment started."
+        with self.assertRaises(MissingBidOwnedUidError) as deleted:
+            self.verify(takeoffs=("10", "99"))
+        self.assertEqual(str(deleted.exception), message)
+        with self.assertRaises(MissingBidOwnedUidError) as foreign:
+            self.verify(takeoffs=("10", "20"))
+        self.assertEqual(str(foreign.exception), message)
+
+    def test_a_failed_preflight_rolls_back_without_switching_reads(self):
+        writer, _database, manager, _schema = self.writer_for(*self.DDL)
+        with self.assertRaises(MissingBidOwnedUidError):
+            writer.verify_takeoff_reassignment(
+                "x.mdb", "1", ConditionTakeoffReassignment("7", "5", ("10", "99"))
+            )
+        self.assertEqual(
+            manager.events, [("open", "x.mdb", False), "rollback", "close"]
+        )
+
+    def test_each_required_takeoff_column_is_checked(self):
+        for column in ("UID", "BidUID", "BidPageUID", "BidConditionUID"):
+            with self.subTest(column=column):
+                columns = [
+                    name
+                    for name in ("UID", "BidUID", "BidPageUID", "BidConditionUID")
+                    if name != column
+                ]
+                ddl = [
+                    statement
+                    for statement in self.DDL
+                    if "BidTakeoffs" not in statement
+                ] + [f"CREATE TABLE BidTakeoffs ({', '.join(columns)})"]
+                with self.assertRaisesRegex(
+                    RuntimeError, rf"^Missing BidTakeoffs\.{column}$"
+                ):
+                    self.verify(ddl=ddl)
+
+    def test_takeoffs_beyond_one_query_chunk_are_all_verified_in_bounded_queries(self):
+        rows = [f"INSERT INTO BidTakeoffs VALUES ({uid}, 1, 5, 7)" for uid in range(100, 220)]
+        ddl = list(self.DDL) + rows
+        uids = tuple(str(uid) for uid in range(100, 220))
+        writer, database, manager, _schema = self.writer_for(*ddl)
+        writer.verify_takeoff_reassignment(
+            "x.mdb", "1", ConditionTakeoffReassignment("7", "5", uids)
+        )
+        takeoff_selects = [
+            params
+            for sql, params in manager.statements
+            if sql.startswith("SELECT [UID], [BidPageUID]")
+        ]
+        self.assertEqual([len(params) for params in takeoff_selects], [51, 51, 21])
+        self.assertEqual(
+            [params[0] for params in takeoff_selects], [1, 1, 1]
+        )
+        self.assertEqual(
+            [uid for params in takeoff_selects for uid in params[1:]],
+            list(range(100, 220)),
+        )
+        database.execute("DELETE FROM BidTakeoffs WHERE UID = 219")
+        with self.assertRaisesRegex(MissingBidOwnedUidError, "deleted or replaced"):
+            writer.verify_takeoff_reassignment(
+                "x.mdb", "1", ConditionTakeoffReassignment("7", "5", uids)
+            )
+        database.execute("UPDATE BidTakeoffs SET BidPageUID = 6 WHERE UID = 150")
+        database.execute("INSERT INTO BidTakeoffs VALUES (219, 1, 5, 7)")
+        with self.assertRaisesRegex(MissingBidOwnedUidError, "changed Page or Condition"):
+            writer.verify_takeoff_reassignment(
+                "x.mdb", "1", ConditionTakeoffReassignment("7", "5", uids)
+            )
+
+
+class MdbWriterWriteContractTests(_SqliteWriterCase):
+    DDL = "CREATE TABLE Items (UID INTEGER, BidUID INTEGER, Name TEXT, Extra TEXT)"
+
+    def test_inserts_keep_only_existing_columns_and_report_each_skipped_one(self):
+        writer, database, manager, schema = self.writer_for(self.DDL)
+        statements = []
+        cursor = _TxCursor(database, statements)
+        result = writer._execute_insert_values(
+            cursor,
+            schema,
+            "Items",
+            {"UID": 4, "BidUID": 1, "Name": "n", "Ghost": "x", "Phantom": "y"},
+            ("UID", "BidUID"),
+            "ghost insert",
+        )
+        self.assertIsNone(result)
+        self.assertEqual(
+            statements,
+            [("INSERT INTO [Items] ([UID], [BidUID], [Name]) VALUES (?, ?, ?)", (4, 1, "n"))],
+        )
+        self.assertEqual(
+            schema.skips,
+            [("Items", "Ghost", "ghost insert"), ("Items", "Phantom", "ghost insert")],
+        )
+        self.assertEqual(
+            database.execute("SELECT UID, BidUID, Name, Extra FROM Items").fetchall(),
+            [(4, 1, "n", None)],
+        )
+
+    def test_insert_needs_its_required_columns_in_the_schema_the_table_and_the_values(
+        self,
+    ):
+        writer, database, _manager, schema = self.writer_for(self.DDL)
+        cursor = _TxCursor(database, [])
+        with self.assertRaisesRegex(RuntimeError, r"^Missing table Nope$"):
+            writer._execute_insert_values(
+                cursor, schema, "Nope", {"UID": 1}, ("UID",), "op"
+            )
+        with self.assertRaisesRegex(RuntimeError, r"^Missing Items\.Required$"):
+            writer._execute_insert_values(
+                cursor, schema, "Items", {"UID": 1}, ("UID", "Required"), "op"
+            )
+        with self.assertRaises(UnsupportedMdbSchemaError) as missing:
+            writer._execute_insert_values(
+                cursor,
+                schema,
+                "Items",
+                {"UID": 1, "Name": "n"},
+                ("UID", "BidUID", "Extra"),
+                "add item",
+            )
+        self.assertEqual(
+            str(missing.exception),
+            "This OST database is missing required writable columns "
+            "Items.BidUID, Extra for add item.",
+        )
+        with self.assertRaises(UnsupportedMdbSchemaError) as empty:
+            writer._execute_insert_values(
+                cursor, schema, "Items", {"Ghost": 1}, (), "add ghost"
+            )
+        self.assertEqual(
+            str(empty.exception),
+            "This OST database has no writable columns for add ghost.",
+        )
+        self.assertEqual(database.execute("SELECT COUNT(*) FROM Items").fetchone(), (0,))
+
+    def test_an_optional_value_for_a_missing_column_is_skipped_not_fatal(self):
+        writer, database, _manager, schema = self.writer_for(self.DDL)
+        filtered = writer._filter_existing_write_values(
+            schema, "Items", {"UID": 1, "Ghost": 2, "Name": "n"}, ("UID",), "op"
+        )
+        self.assertEqual(filtered, {"UID": 1, "Name": "n"})
+        self.assertEqual(schema.skips, [("Items", "Ghost", "op")])
+
+    def test_a_required_column_that_vanishes_after_the_precheck_is_not_skipped(self):
+        class FlappingSchema:
+            def __init__(self):
+                self.calls = []
+
+            def require_table(self, table):
+                self.calls.append(("table", table))
+
+            def require_column(self, table, column):
+                self.calls.append(("column", table, column))
+                if len([c for c in self.calls if c == ("column", table, column)]) > 1:
+                    raise RuntimeError(f"Missing {table}.{column}")
+
+            def column_exists(self, table, column):
+                return column != "UID"
+
+            def log_optional_write_skip(self, table, column, operation):
+                self.calls.append(("skip", table, column, operation))
+
+        writer = MdbWriter(conn_manager=object())
+        schema = FlappingSchema()
+        with self.assertRaisesRegex(RuntimeError, r"^Missing Items\.UID$"):
+            writer._filter_existing_write_values(
+                schema, "Items", {"UID": 1}, ("UID",), "op"
+            )
+        self.assertEqual(
+            schema.calls,
+            [("table", "Items"), ("column", "Items", "UID"), ("column", "Items", "UID")],
+        )
+
+    def test_updates_set_only_existing_columns_with_parameters_in_clause_order(self):
+        writer, database, _manager, schema = self.writer_for(
+            self.DDL,
+            "INSERT INTO Items VALUES (1, 1, 'old', 'keep')",
+            "INSERT INTO Items VALUES (2, 1, 'other', 'keep')",
+        )
+        statements = []
+        cursor = _TxCursor(database, statements)
+        changed = writer._execute_update_values(
+            cursor,
+            schema,
+            "Items",
+            {"Name": "new", "Extra": "set", "Ghost": "x"},
+            ("UID",),
+            "[UID]=? AND [BidUID]=?",
+            [1, 1],
+            "rename",
+        )
+        self.assertIs(changed, True)
+        self.assertEqual(
+            statements,
+            [
+                (
+                    "UPDATE [Items] SET [Name]=?, [Extra]=? WHERE [UID]=? AND [BidUID]=?",
+                    ("new", "set", 1, 1),
+                )
+            ],
+        )
+        self.assertEqual(schema.skips, [("Items", "Ghost", "rename")])
+        self.assertEqual(
+            database.execute("SELECT UID, Name, Extra FROM Items ORDER BY UID").fetchall(),
+            [(1, "new", "set"), (2, "other", "keep")],
+        )
+
+    def test_an_update_with_no_writable_column_is_refused_unless_empty_is_allowed(
+        self,
+    ):
+        writer, database, _manager, schema = self.writer_for(
+            self.DDL, "INSERT INTO Items VALUES (1, 1, 'old', 'keep')"
+        )
+        statements = []
+        cursor = _TxCursor(database, statements)
+        with self.assertRaises(UnsupportedMdbSchemaError) as refused:
+            writer._execute_update_values(
+                cursor, schema, "Items", {"Ghost": 1}, (), "[UID]=?", [1], "retag"
+            )
+        self.assertEqual(
+            str(refused.exception),
+            "This OST database has no writable columns for retag.",
+        )
+        refused_again = writer._execute_update_values(
+            cursor,
+            schema,
+            "Items",
+            {"Ghost": 1},
+            (),
+            "[UID]=?",
+            [1],
+            "retag",
+            allow_empty=True,
+        )
+        self.assertIs(refused_again, False)
+        self.assertEqual(statements, [])
+        self.assertEqual(
+            database.execute("SELECT Name FROM Items").fetchall(), [("old",)]
+        )

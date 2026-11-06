@@ -35054,3 +35054,76 @@ class Sp3a5jRenameLeaseOrderTests(unittest.TestCase):
         helper._open(coordinator, log)
         (dialog,) = _Sp3a5hRenameDialog.instances
         self.assertEqual(bound_at_exec, [[dialog]])
+
+
+class A3SecondPassMutationGapTests(unittest.TestCase):
+    """Second-pass (A3) tests for survivors of a full ui_event_coordinator mutation sweep.
+
+    Each test pins a negative path or state transition that no earlier test
+    observed: the 2D selection reset that keeps ownership but not the
+    highlight, the first no-bid selection, a missing page with a pending
+    fallback choice, and the annotation-only plan refresh for a stale page.
+    """
+
+    def test_selection_owned_highlight_is_forgotten_but_kept_when_release_is_off(self):
+        coordinator = Sp3a5cSelectionProjectionTests._coordinator(
+            highlighted={"c1"}, projected={"c1"}
+        )
+        result = coordinator._project_takeoff_selection_conditions(
+            set(), selection_changed=True, release_projection=False
+        )
+        self.assertIs(result, False)
+        # the sidebar keeps showing the Condition, but the takeoff no longer owns it
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [])
+        self.assertEqual(coordinator.ui_state_manager.highlighted_condition_uids, {"c1"})
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+
+    def test_the_first_no_bid_selection_still_clears_the_workspace(self):
+        coordinator = navigation_status_coordinator()
+        self.assertIsNone(coordinator.ui_state_manager.get_selected_bid_ref())
+        coordinator.handle_bid_selection(None)
+        self.assertEqual(coordinator._viewer.clears, 1)
+        self.assertEqual(coordinator.main_window.title_refreshes, 1)
+        self.assertIsNone(coordinator.ui_state_manager.selected_file_path)
+
+    def test_a_bid_selected_again_without_force_is_ignored_but_force_reloads(self):
+        coordinator = navigation_status_coordinator()
+        bid_ref = BidRef("sql-database", "bid-1")
+        coordinator.ui_state_manager.bid_ref = bid_ref
+        saves = []
+        coordinator._save_current_page_view_state = lambda: saves.append("save")
+        coordinator.handle_bid_selection(bid_ref)
+        self.assertEqual(saves, [])
+        coordinator.handle_bid_selection(bid_ref, force=True)
+        self.assertEqual(saves, ["save"])
+
+    def test_no_page_to_save_never_cancels_the_selected_page_write_for_a_fallback(self):
+        coordinator, _pages = DeferredPersistenceCoordinatorTests._make_view_state_coordinator(
+            None
+        )
+        coordinator.plan_view = SimpleNamespace(
+            current_page_uid=None, is_view_state_stable=True, get_view_state=lambda: (1, 0, 0)
+        )
+        coordinator.ui_state_manager.active_page_uid = None
+        coordinator._unpicked_fallback_page_uid = "p1"
+        coordinator._save_current_page_view_state()
+        persistence = coordinator._deferred_persistence
+        self.assertEqual(persistence.cancel_bid_selected_pages_calls, [])
+        self.assertEqual(persistence.selected_page_calls, [])
+        self.assertEqual(persistence.page_view_calls, [])
+
+    def test_annotation_refresh_targets_the_active_page_unless_it_names_another(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid="p9")
+        coordinator._viewer = FakeViewer()
+        focus = []
+        coordinator._apply_pending_hotlink_named_view_focus = lambda require_stable: (
+            focus.append(require_stable)
+        )
+        coordinator._update_plan_view_annotations(None, ["a1"], ["rect"])
+        coordinator._update_plan_view_annotations("p9", ["a2"], None)
+        coordinator._update_plan_view_annotations("other", ["a3"], ["text"])
+        self.assertEqual(coordinator._viewer.plan_pages, ["p9", "p9"])
+        self.assertEqual(coordinator._viewer.changed_annotation_uids, [["a1"], ["a2"]])
+        self.assertEqual(coordinator._viewer.changed_annotation_types, [["rect"], None])
+        self.assertEqual(focus, [True, True])

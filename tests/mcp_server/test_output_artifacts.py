@@ -351,3 +351,97 @@ class McpOutputArtifactTests(unittest.TestCase):
             },
         )
         self.assertEqual(listing["format"], "json")
+
+
+class McpOutputContractTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.output_dir = Path(self.tmp.name) / "outputs"
+        self.clock = lambda: datetime(2026, 7, 7, 12, 30, 45, 123456)
+
+    def formatter(self, **options):
+        options.setdefault("nonce_factory", lambda: "fixed-id")
+        return McpOutputFormatter(self.output_dir, clock=self.clock, **options)
+
+    def test_module_defaults(self):
+        self.assertEqual(output_module.DEFAULT_PREVIEW_MAX_LINES, 40)
+        self.assertEqual(MCP_OUTPUT_DIR_NAME, "mcp_outputs")
+        self.assertEqual(output_module.MAX_UNIQUE_FILENAME_ATTEMPTS, 1000)
+
+    def test_the_default_nonce_is_eight_hex_characters(self):
+        formatter = McpOutputFormatter(
+            self.output_dir, inline_max_chars=10, clock=self.clock
+        )
+        names = {
+            Path(formatter.format_result("tool-x", "y" * 50).artifact.path).name
+            for _ in range(2)
+        }
+        self.assertEqual(len(names), 2)
+        for name in names:
+            self.assertRegex(name, r"^20260707_123045_123456_tool-x_[0-9a-f]{8}\.txt$")
+
+    def test_results_and_artifacts_are_immutable_values(self):
+        import dataclasses
+
+        formatted = self.formatter(inline_max_chars=10).format_result(
+            "tool-x", "y" * 50
+        )
+        for target, field in (
+            (formatted, "text"),
+            (formatted.artifact, "path"),
+            (output_module._SerializedOutput("a", "b", ".x", "f", "m"), "suffix"),
+        ):
+            with self.subTest(type=type(target).__name__):
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    setattr(target, field, "changed")
+
+    def test_the_last_numbered_name_is_still_available(self):
+        formatter = self.formatter(inline_max_chars=10)
+        self.output_dir.mkdir(parents=True)
+        base = "20260707_123045_123456_tool-x_fixed-id"
+        for attempt in range(999):
+            name = f"{base}.txt" if attempt == 0 else f"{base}_{attempt}.txt"
+            (self.output_dir / name).write_text("", encoding="utf-8")
+        formatted = formatter.format_result("tool-x", "y" * 50)
+        self.assertIsNotNone(formatted.artifact)
+        self.assertEqual(Path(formatted.artifact.path).name, f"{base}_999.txt")
+
+    def test_the_default_preview_keeps_forty_lines(self):
+        formatter = self.formatter(inline_max_chars=10, preview_max_chars=100000)
+        text = "\n".join(f"line {number}" for number in range(60))
+        formatted = formatter.format_result("tool-x", text)
+        preview = formatted.structured_content["preview"]
+        self.assertEqual(preview.splitlines(), [f"line {n}" for n in range(40)])
+
+    def test_a_zero_line_limit_still_previews_one_line(self):
+        formatter = self.formatter(inline_max_chars=10, preview_max_lines=0)
+        formatted = formatter.format_result("tool-x", "first\nsecond\nthird")
+        self.assertEqual(formatted.structured_content["preview"], "first")
+
+    def test_a_preview_stops_once_its_characters_are_used_up_even_before_blank_lines(self):
+        formatter = self.formatter(inline_max_chars=10, preview_max_chars=10)
+        formatted = formatter.format_result("tool-x", "abcdefghi\n\nsecond line here")
+        self.assertEqual(formatted.structured_content["preview"], "abcdefghi")
+
+    def test_a_saved_summary_describes_its_file_completely(self):
+        formatted = self.formatter(inline_max_chars=10).format_result(
+            "tool-x", {"data": "y" * 50}
+        )
+        artifact = formatted.artifact
+        self.assertEqual(
+            formatted.structured_content["full_output"],
+            {
+                "path": artifact.path,
+                "format": "json",
+                "mime_type": "application/json",
+                "size_bytes": Path(artifact.path).stat().st_size,
+            },
+        )
+
+    def test_names_are_trimmed_of_leading_and_trailing_separators_only(self):
+        from ost_visualizer.mcp_server.output_artifacts import _sanitize_filename_part
+
+        self.assertEqual(_sanitize_filename_part("._-ab-_."), "ab")
+        self.assertEqual(_sanitize_filename_part("XabX"), "XabX")
+        self.assertEqual(_sanitize_filename_part("a b"), "a-b")

@@ -7,6 +7,9 @@ from tests.helpers.mdb.operations import (
     _SqliteSchema,
 )
 import logging
+import pyodbc
+from tests.helpers.mdb.real_write_contract import RealContractOps, contract_db
+from ost_visualizer.infrastructure.mdb.components.serialization import encode_text_blob
 import unittest
 import sqlite3
 import os
@@ -14,10 +17,16 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.services.uom_service import (
     CALC_COUNT,
+    CALC_LINEAR_BOTH_SIDES,
     CALC_LINEAR_LENGTH,
+    CALC_VOLUME,
+    UOM_CUBIC_FEET,
     UOM_EACH,
     UOM_LINEAR_FEET,
     UOM_M,
+    UOM_M2,
+    UOM_M3,
+    UOM_SQUARE_FEET,
 )
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from types import MappingProxyType, SimpleNamespace
@@ -4124,3 +4133,2647 @@ class SettingsOperationsCoverSheetPathTests(unittest.TestCase):
         self.assertTrue(
             all(len(args) <= 51 for _query, args in ops.conn.cursor_obj.calls)
         )
+
+
+_RealContractOps = RealContractOps
+_contract_db = contract_db
+
+
+def _rows(conn, sql):
+    return conn.execute(sql).fetchall()
+
+
+class MasterDataWriteContractTests(unittest.TestCase):
+    def test_new_job_status_writes_every_column_with_documented_defaults(self):
+        conn = _contract_db(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked INTEGER, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (4, 'Existing', 0, 1)",
+        )
+        ops = _RealContractOps(conn)
+        result = ops.save_job_statuses(
+            "x.mdb",
+            {
+                "new": [
+                    {"uid": "t1", "name": "Won", "locked": True, "sequence": 7},
+                    {"uid": "t2"},
+                ]
+            },
+        )
+        self.assertEqual(result, {"t1": "5", "t2": "6"})
+        self.assertEqual(
+            conn.execute("SELECT * FROM JobStatuses ORDER BY UID").fetchall(),
+            [(4, "Existing", 0, 1), (5, "Won", -1, 7), (6, "New Status", 0, 0)],
+        )
+        self.assertEqual(ops.skips, [])
+
+    def test_updated_job_status_writes_every_column_with_documented_defaults(self):
+        conn = _contract_db(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked INTEGER, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (4, 'A', 0, 1)",
+            "INSERT INTO JobStatuses VALUES (5, 'B', -1, 2)",
+            "INSERT INTO JobStatuses VALUES (6, 'C', -1, 3)",
+        )
+        ops = _RealContractOps(conn)
+        result = ops.save_job_statuses(
+            "x.mdb",
+            {
+                "updated": [
+                    {"uid": 4, "name": "Renamed", "locked": True, "sequence": 9},
+                    {"uid": "5"},
+                    {"name": "No uid is ignored"},
+                ]
+            },
+        )
+        self.assertEqual(result, {})
+        self.assertEqual(
+            conn.execute("SELECT * FROM JobStatuses ORDER BY UID").fetchall(),
+            [(4, "Renamed", -1, 9), (5, "", 0, 0), (6, "C", -1, 3)],
+        )
+
+    def test_job_status_inserts_report_each_skipped_optional_column_by_label(self):
+        conn = _contract_db("CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)")
+        ops = _RealContractOps(conn)
+        ops.save_job_statuses("x.mdb", {"new": [{"uid": "t", "name": "N"}]})
+        self.assertEqual(
+            ops.skips,
+            [
+                ("JobStatuses", "Locked", "save_job_status_new"),
+                ("JobStatuses", "Sequence", "save_job_status_new"),
+            ],
+        )
+        conn.execute("INSERT INTO JobStatuses VALUES (9, 'Old')")
+        ops = _RealContractOps(conn)
+        ops.save_job_statuses("x.mdb", {"updated": [{"uid": 9, "name": "N"}]})
+        self.assertEqual(
+            ops.skips,
+            [
+                ("JobStatuses", "Locked", "save_job_status"),
+                ("JobStatuses", "Sequence", "save_job_status"),
+            ],
+        )
+
+    def test_job_status_saves_need_their_name_column(self):
+        conn = _contract_db("CREATE TABLE JobStatuses (UID INTEGER)")
+        conn.execute("INSERT INTO JobStatuses VALUES (1)")
+        ops = _RealContractOps(conn)
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIsNone(
+                ops.save_job_statuses("x.mdb", {"updated": [{"uid": 1, "name": "N"}]})
+            )
+        self.assertIn("Failed to save job statuses", logs.records[0].getMessage())
+        self.assertIn("Missing JobStatuses.Name", str(logs.records[0].exc_info[1]))
+        with self.assertLogs("test", "ERROR"):
+            self.assertIsNone(
+                ops.save_job_statuses("x.mdb", {"new": [{"uid": "t", "name": "N"}]})
+            )
+        self.assertEqual(conn.execute("SELECT UID FROM JobStatuses").fetchall(), [(1,)])
+
+    def test_pay_class_saves_write_names_with_documented_defaults(self):
+        conn = _contract_db(
+            "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+            "INSERT INTO PayClasses VALUES (3, 'A')",
+            "INSERT INTO PayClasses VALUES (4, 'B')",
+        )
+        ops = _RealContractOps(conn)
+        result = ops.save_pay_classes(
+            "x.mdb",
+            {
+                "updated": [{"uid": 3, "name": "Renamed"}, {"uid": 4}],
+                "new": [{"uid": "n1", "name": "Fresh"}, {"uid": "n2"}],
+            },
+        )
+        self.assertEqual(result, {"n1": "5", "n2": "6"})
+        self.assertEqual(
+            conn.execute("SELECT * FROM PayClasses ORDER BY UID").fetchall(),
+            [(3, "Renamed"), (4, ""), (5, "Fresh"), (6, "New Pay Class")],
+        )
+        self.assertEqual(ops.skips, [])
+
+    def test_pay_class_saves_need_their_name_column(self):
+        conn = _contract_db("CREATE TABLE PayClasses (UID INTEGER)")
+        conn.execute("INSERT INTO PayClasses VALUES (1)")
+        for changes in ({"updated": [{"uid": 1, "name": "N"}]}, {"new": [{"uid": "t"}]}):
+            with self.subTest(changes=changes):
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertIsNone(_RealContractOps(conn).save_pay_classes("x.mdb", changes))
+                self.assertIn("Failed to save pay classes", logs.records[0].getMessage())
+        self.assertEqual(conn.execute("SELECT UID FROM PayClasses").fetchall(), [(1,)])
+
+    def test_condition_type_saves_write_names_with_documented_defaults(self):
+        conn = _contract_db(
+            "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)",
+            "INSERT INTO CdnTypes VALUES (3, 'A')",
+            "INSERT INTO CdnTypes VALUES (4, 'B')",
+        )
+        ops = _RealContractOps(conn)
+        result = ops.save_condition_types(
+            "x.mdb",
+            {
+                "updated": [{"uid": 3, "name": "Renamed"}, {"uid": 4}],
+                "new": [{"uid": "n1", "name": "Fresh"}, {"uid": "n2"}],
+            },
+        )
+        self.assertEqual(result, {"n1": "5", "n2": "6"})
+        self.assertEqual(
+            conn.execute("SELECT * FROM CdnTypes ORDER BY UID").fetchall(),
+            [(3, "Renamed"), (4, ""), (5, "Fresh"), (6, "New Condition Type")],
+        )
+        self.assertEqual(ops.skips, [])
+
+    def test_condition_type_saves_need_their_name_column(self):
+        conn = _contract_db("CREATE TABLE CdnTypes (UID INTEGER)")
+        conn.execute("INSERT INTO CdnTypes VALUES (1)")
+        for changes in ({"updated": [{"uid": 1, "name": "N"}]}, {"new": [{"uid": "t"}]}):
+            with self.subTest(changes=changes):
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertIsNone(
+                        _RealContractOps(conn).save_condition_types("x.mdb", changes)
+                    )
+                self.assertIn(
+                    "Failed to save condition types", logs.records[0].getMessage()
+                )
+        self.assertEqual(conn.execute("SELECT UID FROM CdnTypes").fetchall(), [(1,)])
+
+    def test_bid_job_status_update_needs_its_status_column(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER)",
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "INSERT INTO Bids VALUES (1)",
+            "INSERT INTO JobStatuses VALUES (5, 'Open')",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(
+                _RealContractOps(conn).update_bid_job_status("x.mdb", "1", "5"), False
+            )
+        self.assertIn("Missing Bids.JobStatusUID", str(logs.records[0].exc_info[1]))
+
+    def test_bid_job_status_update_writes_and_clears_the_status(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER)",
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "INSERT INTO Bids VALUES (1, NULL)",
+            "INSERT INTO Bids VALUES (2, 5)",
+            "INSERT INTO JobStatuses VALUES (5, 'Open')",
+        )
+        ops = _RealContractOps(conn)
+        self.assertIs(ops.update_bid_job_status("x.mdb", "1", "5"), True)
+        self.assertIs(ops.update_bid_job_status("x.mdb", "2", None), True)
+        self.assertEqual(
+            conn.execute("SELECT * FROM Bids ORDER BY UID").fetchall(),
+            [(1, 5), (2, None)],
+        )
+
+
+class CoverSheetBidColumnContractTests(unittest.TestCase):
+    _BIDS = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT, Notes BLOB, BidDate TEXT, "
+        "BidNo INTEGER, JobID TEXT, MeasureBase INTEGER, TakeoffIncrements REAL, "
+        "ScaleStyle INTEGER, ScaleFactor1 REAL, ScaleFactor2 REAL, PageWidth REAL, "
+        "PageHeight REAL, JobStatusUID INTEGER, EstimatorUID INTEGER)"
+    )
+    _SELECT = (
+        "SELECT JobName, Notes, BidDate, BidNo, JobID, MeasureBase, TakeoffIncrements, "
+        "ScaleStyle, ScaleFactor1, ScaleFactor2, PageWidth, PageHeight, "
+        "JobStatusUID, EstimatorUID FROM Bids WHERE UID = {uid}"
+    )
+
+    def _db(self):
+        return _contract_db(
+            self._BIDS,
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "CREATE TABLE Employees (UID INTEGER)",
+            "INSERT INTO JobStatuses VALUES (5, 'Open')",
+            "INSERT INTO Employees VALUES (8)",
+            "INSERT INTO Bids VALUES (1, 'Old', NULL, '2020-01-01', 3, 'OLD', 0, "
+            "9.0, 9, 9.0, 9.0, 9.0, 9.0, NULL, NULL)",
+            "INSERT INTO Bids VALUES (2, 'Other', NULL, NULL, NULL, 'O', 0, "
+            "9.0, 9, 9.0, 9.0, 9.0, 9.0, NULL, NULL)",
+        )
+
+    def test_every_bid_field_of_the_cover_sheet_reaches_its_own_column(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        self.assertIs(
+            ops.save_cover_sheet(
+                "x.mdb",
+                "1",
+                {
+                    "job_name": "Job",
+                    "notes": "memo",
+                    "bid_date": "2026-01-02",
+                    "bid_no": "12",
+                    "job_id": "J-9",
+                    "measure_base": 0,
+                    "takeoff_increments": 2.5,
+                    "scale_style": 3,
+                    "scale_factor1": 0.5,
+                    "scale_factor2": 24.0,
+                    "page_width": 36.0,
+                    "page_height": 24.0,
+                    "job_status_uid": "5",
+                    "estimator_uid": "8",
+                },
+            ),
+            True,
+        )
+        row = conn.execute(self._SELECT.format(uid=1)).fetchone()
+        self.assertEqual(
+            (row[0], row[2], row[3], row[4], *row[5:]),
+            ("Job", "2026-01-02", 12, "J-9", 0, 2.5, 3, 0.5, 24.0, 36.0, 24.0, 5, 8),
+        )
+        self.assertEqual(row[1], encode_text_blob("memo"))
+        self.assertEqual(
+            conn.execute(self._SELECT.format(uid=2)).fetchone()[0], "Other"
+        )
+
+    def test_a_bare_cover_sheet_update_writes_the_documented_defaults(self):
+        conn = self._db()
+        self.assertIs(_RealContractOps(conn).save_cover_sheet("x.mdb", "1", {}), True)
+        row = conn.execute(self._SELECT.format(uid=1)).fetchone()
+        self.assertEqual(
+            (row[0], row[2], row[3], row[4], *row[5:]),
+            ("", None, None, "", 0, 1.0, 1, 0.25, 12.0, 42.0, 30.0, None, None),
+        )
+        self.assertEqual(row[1], encode_text_blob(""))
+        self.assertEqual(
+            conn.execute(self._SELECT.format(uid=2)).fetchone()[4], "O"
+        )
+
+    def test_an_empty_bid_date_clears_the_date_and_none_notes_clear_the_notes(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        self.assertIs(
+            ops.save_cover_sheet("x.mdb", "1", {"bid_date": "", "notes": None}), True
+        )
+        row = conn.execute(self._SELECT.format(uid=1)).fetchone()
+        self.assertIsNone(row[2])
+        self.assertEqual(row[1], encode_text_blob(""))
+
+    def test_the_cover_sheet_bid_update_needs_the_uid_and_job_name_columns(self):
+        for dropped in ("UID", "JobName"):
+            with self.subTest(missing=dropped):
+                conn = _contract_db(
+                    f"CREATE TABLE Bids ({'JobName TEXT' if dropped == 'UID' else 'UID INTEGER'})"
+                )
+                if dropped == "JobName":
+                    conn.execute("INSERT INTO Bids VALUES (1)")
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertIs(
+                        _RealContractOps(conn).save_cover_sheet("x.mdb", "1", {}), False
+                    )
+                self.assertIn(f"Missing Bids.{dropped}", str(logs.records[0].exc_info[1]))
+
+    def test_a_job_status_needs_the_status_table(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT, JobStatusUID INTEGER)",
+            "INSERT INTO Bids VALUES (1, 'Old', NULL)",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(
+                _RealContractOps(conn).save_cover_sheet(
+                    "x.mdb", "1", {"job_status_uid": "5"}
+                ),
+                False,
+            )
+        self.assertIn("JobStatuses is unavailable", str(logs.records[0].exc_info[1]))
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet("x.mdb", "1", {"job_name": "Kept"}),
+            True,
+        )
+        self.assertEqual(
+            conn.execute("SELECT JobName, JobStatusUID FROM Bids").fetchall(),
+            [("Kept", None)],
+        )
+
+    def test_an_estimator_needs_the_employee_table(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT, EstimatorUID INTEGER)",
+            "INSERT INTO Bids VALUES (1, 'Old', NULL)",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(
+                _RealContractOps(conn).save_cover_sheet(
+                    "x.mdb", "1", {"estimator_uid": "8"}
+                ),
+                False,
+            )
+        self.assertIn("Employees is unavailable", str(logs.records[0].exc_info[1]))
+
+
+class _PyodbcTranslatingCursor(_SqliteCursorWrapper):
+    """Access reports statement failures as pyodbc.Error, not sqlite3 errors."""
+
+    def execute(self, query, *params):
+        if len(params) == 1 and isinstance(params[0], (list, tuple)):
+            params = tuple(params[0])
+        try:
+            return super().execute(query, *params)
+        except sqlite3.Error as exc:
+            raise pyodbc.Error("23000", str(exc)) from exc
+
+
+class _PyodbcTranslatingConnection(_SqliteConnectionWrapper):
+    def cursor(self):
+        return _PyodbcTranslatingCursor(self._connection)
+
+
+class _TolerantPyodbcOps(RealContractOps):
+    def _connection(self, _db_path):
+        return _PyodbcTranslatingConnection(self._connection_ref)
+
+
+class _StrictPyodbcOps(_TolerantPyodbcOps):
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return True
+
+
+_POISON_TRIGGER = (
+    "CREATE TRIGGER poison BEFORE {event} ON {table} WHEN NEW.Name = 'poison' "
+    "BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+)
+
+
+class MasterDataWriteFailurePolicyTests(unittest.TestCase):
+    """A failing row write is skipped under the tolerant policy and raised under the strict one."""
+
+    def _case(self, table, columns, rows, event="UPDATE"):
+        conn = _contract_db(
+            f"CREATE TABLE {table} ({columns})",
+            *[f"INSERT INTO {table} VALUES {row}" for row in rows],
+            _POISON_TRIGGER.format(event=event, table=table),
+        )
+        return conn
+
+    def test_a_failing_job_status_update_is_skipped_but_later_updates_still_run(self):
+        for ops_class, raises in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+            with self.subTest(strict=raises):
+                conn = self._case(
+                    "JobStatuses", "UID INTEGER, Name TEXT", ["(1, 'a')", "(2, 'b')"]
+                )
+                changes = {
+                    "updated": [
+                        {"uid": 1, "name": "poison"},
+                        {"uid": 2, "name": "fine"},
+                    ]
+                }
+                if raises:
+                    with self.assertRaises(pyodbc.Error):
+                        ops_class(conn).save_job_statuses("x.mdb", changes)
+                else:
+                    self.assertEqual(
+                        ops_class(conn).save_job_statuses("x.mdb", changes), {}
+                    )
+                    self.assertEqual(
+                        _rows(conn, "SELECT UID, Name FROM JobStatuses ORDER BY UID"),
+                        [(1, "a"), (2, "fine")],
+                    )
+
+    def test_a_failing_job_status_insert_is_skipped_and_left_out_of_the_uid_map(self):
+        for ops_class, raises in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+            with self.subTest(strict=raises):
+                conn = self._case(
+                    "JobStatuses", "UID INTEGER, Name TEXT", [], event="INSERT"
+                )
+                changes = {
+                    "new": [
+                        {"uid": "t1", "name": "poison"},
+                        {"uid": "t2", "name": "fine"},
+                    ]
+                }
+                if raises:
+                    with self.assertRaises(pyodbc.Error):
+                        ops_class(conn).save_job_statuses("x.mdb", changes)
+                else:
+                    self.assertEqual(
+                        ops_class(conn).save_job_statuses("x.mdb", changes), {"t2": "2"}
+                    )
+                    self.assertEqual(
+                        _rows(conn, "SELECT UID, Name FROM JobStatuses"), [(2, "fine")]
+                    )
+
+    def test_a_failing_pay_class_write_follows_the_same_policy(self):
+        for event, key, changes in (
+            ("UPDATE", "updated", {"updated": [{"uid": 1, "name": "poison"}, {"uid": 2, "name": "fine"}]}),
+            ("INSERT", "new", {"new": [{"uid": "t1", "name": "poison"}, {"uid": "t2", "name": "fine"}]}),
+        ):
+            for ops_class, raises in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+                with self.subTest(event=event, strict=raises):
+                    rows = ["(1, 'a')", "(2, 'b')"] if event == "UPDATE" else []
+                    conn = self._case(
+                        "PayClasses", "UID INTEGER, Name TEXT", rows, event=event
+                    )
+                    if raises:
+                        with self.assertRaises(pyodbc.Error):
+                            ops_class(conn).save_pay_classes("x.mdb", changes)
+                    else:
+                        result = ops_class(conn).save_pay_classes("x.mdb", changes)
+                        if key == "new":
+                            self.assertEqual(result, {"t2": "2"})
+                            self.assertEqual(
+                                _rows(conn, "SELECT UID, Name FROM PayClasses"),
+                                [(2, "fine")],
+                            )
+                        else:
+                            self.assertEqual(result, {})
+                            self.assertEqual(
+                                _rows(conn, "SELECT UID, Name FROM PayClasses ORDER BY UID"),
+                                [(1, "a"), (2, "fine")],
+                            )
+
+    def test_a_failing_condition_type_write_follows_the_same_policy(self):
+        for event, key, changes in (
+            ("UPDATE", "updated", {"updated": [{"uid": 1, "name": "poison"}, {"uid": 2, "name": "fine"}]}),
+            ("INSERT", "new", {"new": [{"uid": "t1", "name": "poison"}, {"uid": "t2", "name": "fine"}]}),
+        ):
+            for ops_class, raises in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+                with self.subTest(event=event, strict=raises):
+                    rows = ["(1, 'a')", "(2, 'b')"] if event == "UPDATE" else []
+                    conn = self._case(
+                        "CdnTypes", "UID INTEGER, Name TEXT", rows, event=event
+                    )
+                    if raises:
+                        with self.assertRaises(pyodbc.Error):
+                            ops_class(conn).save_condition_types("x.mdb", changes)
+                    else:
+                        result = ops_class(conn).save_condition_types("x.mdb", changes)
+                        if key == "new":
+                            self.assertEqual(result, {"t2": "2"})
+                        else:
+                            self.assertEqual(result, {})
+                            self.assertEqual(
+                                _rows(conn, "SELECT UID, Name FROM CdnTypes ORDER BY UID"),
+                                [(1, "a"), (2, "fine")],
+                            )
+
+
+class CoverSheetPageAndFolderContractTests(unittest.TestCase):
+    _DDL = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+        "INSERT INTO Bids VALUES (1, 'Job')",
+        "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID INTEGER)",
+        "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, SheetNo TEXT, Name TEXT, "
+        "Width REAL, Height REAL, ScaleFactor1 REAL, ScaleFactor2 REAL, Show INTEGER, "
+        "RasterDrawMethod INTEGER, ScaleStyle INTEGER, GUID TEXT, Index1 INTEGER, "
+        "Sequence INTEGER, MultiPageCount INTEGER, ImagePath TEXT, OverlayImagePath TEXT, "
+        "BidPageFolderUID INTEGER)",
+    )
+    _PAGE = (
+        "SELECT SheetNo, Name, Width, Height, ScaleFactor1, ScaleFactor2, Show, "
+        "RasterDrawMethod, ScaleStyle, Index1, Sequence, MultiPageCount, ImagePath, "
+        "OverlayImagePath, BidPageFolderUID FROM BidPages WHERE {where}"
+    )
+
+    def _db(self):
+        return _contract_db(*self._DDL)
+
+    def test_a_new_cover_sheet_page_persists_every_field_and_normalizes_paths(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        self.assertIs(
+            ops.save_cover_sheet(
+                "x.mdb",
+                "1",
+                {
+                    "new_folders": [{"local_uid": "f", "name": "Folder"}],
+                    "pages": [
+                        {
+                            "width": 42.0, "height": 30.0, "scale_factor1": 0.25,
+                            "scale_factor2": 12.0, "show_mode": 2, "sheet_no": "S-1",
+                            "name": "Plan", "index": 7, "sequence": 9,
+                            "multi_page_count": 5, "image_path": "dir/a.pdf",
+                            "overlay_path": "dir/o.pdf", "folder_uid": "f",
+                        }
+                    ],
+                },
+            ),
+            True,
+        )
+        folder_uid = conn.execute("SELECT UID FROM BidPageFolders").fetchone()[0]
+        self.assertEqual(
+            conn.execute(self._PAGE.format(where="BidUID = 1")).fetchone(),
+            ("S-1", "Plan", 42.0, 30.0, 0.25, 12.0, 2, 1, 1, 7, 9, 5,
+             "dir\\a.pdf", "dir\\o.pdf", folder_uid),
+        )
+        guid = conn.execute("SELECT GUID FROM BidPages").fetchone()[0]
+        self.assertRegex(guid, r"^\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\}$")
+
+    def test_a_new_cover_sheet_page_uses_documented_defaults_for_blank_fields(self):
+        conn = self._db()
+        _RealContractOps(conn).save_cover_sheet(
+            "x.mdb",
+            "1",
+            {
+                "pages": [
+                    {
+                        "width": 1.0, "height": 2.0, "scale_factor1": 1.0,
+                        "scale_factor2": 4.0, "show_mode": 0, "sheet_no": None,
+                        "name": None, "index": 0, "sequence": 0,
+                        "multi_page_count": None, "image_path": None,
+                        "overlay_path": None, "folder_uid": "",
+                    }
+                ]
+            },
+        )
+        self.assertEqual(
+            conn.execute(self._PAGE.format(where="BidUID = 1")).fetchone(),
+            ("", "", 1.0, 2.0, 1.0, 4.0, 0, 1, 1, 1, 1, 0, "", "", None),
+        )
+
+    def test_pages_without_a_width_are_ignored(self):
+        conn = self._db()
+        _RealContractOps(conn).save_cover_sheet(
+            "x.mdb", "1", {"pages": [{"name": "No width", "height": 1.0}]}
+        )
+        self.assertEqual(_rows(conn, "SELECT COUNT(*) FROM BidPages"), [(0,)])
+
+    def test_an_existing_cover_sheet_page_updates_every_field(self):
+        conn = self._db()
+        conn.execute(
+            "INSERT INTO BidPages VALUES (20, 1, 'old', 'Old', 1.0, 1.0, 0.25, 12.0, 0, 1, 1, "
+            "'{KEEP}', 1, 1, 0, 'old.pdf', 'old-overlay.pdf', NULL)"
+        )
+        conn.execute("INSERT INTO BidPageFolders VALUES (5, 1, 'F', NULL)")
+        ops = _RealContractOps(conn)
+        self.assertIs(
+            ops.save_cover_sheet(
+                "x.mdb",
+                "1",
+                {
+                    "pages": [
+                        {
+                            "uid": 20, "width": 42.0, "height": 30.0,
+                            "scale_factor1": 0.25, "scale_factor2": 12.0,
+                            "show_mode": 2, "sheet_no": "S-2", "name": "Renamed",
+                            "index": 4, "sequence": 8, "image_path": "n/img.pdf",
+                            "overlay_path": "old-overlay.pdf", "folder_uid": "5",
+                        }
+                    ]
+                },
+            ),
+            True,
+        )
+        row = conn.execute(
+            "SELECT SheetNo, Name, Width, Height, Show, Index1, Sequence, ImagePath, "
+            "OverlayImagePath, BidPageFolderUID, GUID, BidUID, MultiPageCount "
+            "FROM BidPages WHERE UID = 20"
+        ).fetchone()
+        self.assertEqual(
+            row,
+            ("S-2", "Renamed", 42.0, 30.0, 2, 4, 8, "n\\img.pdf", "old-overlay.pdf", 5,
+             "{KEEP}", 1, 0),
+        )
+
+    def test_an_existing_cover_sheet_page_with_blank_fields_uses_the_defaults(self):
+        conn = self._db()
+        conn.execute(
+            "INSERT INTO BidPages VALUES (20, 1, 'old', 'Old', 1.0, 1.0, 0.25, 12.0, 0, 1, 1, "
+            "'{KEEP}', 5, 5, 0, 'old.pdf', NULL, 3)"
+        )
+        _RealContractOps(conn).save_cover_sheet(
+            "x.mdb",
+            "1",
+            {
+                "pages": [
+                    {
+                        "uid": 20, "width": 1.0, "height": 1.0, "scale_factor1": 0.25,
+                        "scale_factor2": 12.0, "show_mode": 0, "sheet_no": None,
+                        "name": None, "index": None, "sequence": None,
+                        "image_path": None, "overlay_path": None, "folder_uid": None,
+                    }
+                ]
+            },
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT SheetNo, Name, Index1, Sequence, ImagePath, OverlayImagePath, "
+                "BidPageFolderUID FROM BidPages WHERE UID = 20"
+            ).fetchone(),
+            ("", "", 1, 1, "", "", None),
+        )
+
+    def test_updating_a_page_of_another_bid_is_refused(self):
+        conn = self._db()
+        conn.execute(
+            "INSERT INTO BidPages VALUES (20, 2, 'o', 'Other', 1.0, 1.0, 0.25, 12.0, 0, 1, 1, "
+            "'{G}', 1, 1, 0, '', '', NULL)"
+        )
+        with self.assertLogs("test", "ERROR"):
+            self.assertIs(
+                _RealContractOps(conn).save_cover_sheet(
+                    "x.mdb",
+                    "1",
+                    {
+                        "pages": [
+                            {
+                                "uid": 20, "width": 9.0, "height": 9.0,
+                                "scale_factor1": 0.25, "scale_factor2": 12.0,
+                                "show_mode": 0, "name": "Hijack",
+                            }
+                        ]
+                    },
+                ),
+                False,
+            )
+        self.assertEqual(_rows(conn, "SELECT Name FROM BidPages"), [("Other",)])
+
+    def test_new_folders_use_a_default_name_and_link_parents_by_new_uid(self):
+        conn = self._db()
+        _RealContractOps(conn).save_cover_sheet(
+            "x.mdb",
+            "1",
+            {
+                "new_folders": [
+                    {"local_uid": "child", "name": "Child", "parent_uid": "root"},
+                    {"local_uid": "root", "name": ""},
+                ]
+            },
+        )
+        rows = {
+            n: (u, p)
+            for u, n, p in _rows(conn, "SELECT UID, Name, ParentUID FROM BidPageFolders")
+        }
+        self.assertEqual(set(rows), {"Child", "New Folder"})
+        self.assertIsNone(rows["New Folder"][1])
+        self.assertEqual(rows["Child"][1], rows["New Folder"][0])
+
+    def test_an_existing_folder_update_with_a_blank_name_is_skipped(self):
+        conn = self._db()
+        conn.execute("INSERT INTO BidPageFolders VALUES (5, 1, 'Keep', NULL)")
+        conn.execute("INSERT INTO BidPageFolders VALUES (6, 1, 'Rename me', NULL)")
+        conn.execute("INSERT INTO BidPageFolders VALUES (7, 1, 'Parent', NULL)")
+        _RealContractOps(conn).save_cover_sheet(
+            "x.mdb",
+            "1",
+            {
+                "folders": [
+                    {"uid": 5, "name": ""},
+                    {"uid": 6, "name": "Renamed", "parent_uid": 7},
+                ]
+            },
+        )
+        self.assertEqual(
+            _rows(conn, "SELECT UID, Name, ParentUID FROM BidPageFolders ORDER BY UID"),
+            [(5, "Keep", None), (6, "Renamed", 7), (7, "Parent", None)],
+        )
+
+    def test_deleting_folders_unassigns_their_pages_and_children(self):
+        conn = self._db()
+        conn.execute("INSERT INTO BidPageFolders VALUES (5, 1, 'Gone', NULL)")
+        conn.execute("INSERT INTO BidPageFolders VALUES (6, 1, 'Child', 5)")
+        conn.execute("INSERT INTO BidPageFolders VALUES (7, 1, 'Stays', NULL)")
+        conn.execute(
+            "INSERT INTO BidPages VALUES (20, 1, '', 'A', 1.0, 1.0, 0.25, 12.0, 0, 1, 1, "
+            "'{G}', 1, 1, 0, '', '', 5)"
+        )
+        conn.execute(
+            "INSERT INTO BidPages VALUES (21, 1, '', 'B', 1.0, 1.0, 0.25, 12.0, 0, 1, 1, "
+            "'{H}', 1, 2, 0, '', '', 7)"
+        )
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"deleted_folder_uids": ["5"]}
+            ),
+            True,
+        )
+        self.assertEqual(
+            _rows(conn, "SELECT UID, ParentUID FROM BidPageFolders ORDER BY UID"),
+            [(6, None), (7, None)],
+        )
+        self.assertEqual(
+            _rows(conn, "SELECT UID, BidPageFolderUID FROM BidPages ORDER BY UID"),
+            [(20, None), (21, 7)],
+        )
+
+    def test_deleting_a_folder_of_another_bid_is_refused(self):
+        conn = self._db()
+        conn.execute("INSERT INTO BidPageFolders VALUES (5, 2, 'Other', NULL)")
+        with self.assertLogs("test", "ERROR"):
+            self.assertIs(
+                _RealContractOps(conn).save_cover_sheet(
+                    "x.mdb", "1", {"deleted_folder_uids": ["5"]}
+                ),
+                False,
+            )
+        self.assertEqual(_rows(conn, "SELECT UID FROM BidPageFolders"), [(5,)])
+
+
+class CoverSheetOperationLabelTests(unittest.TestCase):
+    """A skipped optional column is reported with the operation that skipped it."""
+
+    _PAGE_COLS = (
+        "UID INTEGER, BidUID INTEGER, Width REAL, Height REAL, ScaleFactor1 REAL, "
+        "ScaleFactor2 REAL, Show INTEGER, Name TEXT"
+    )
+
+    def _db(self, extra=""):
+        return _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+            "INSERT INTO Bids VALUES (1, 'Job')",
+            "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT)",
+            f"CREATE TABLE BidPages ({self._PAGE_COLS})",
+            *([extra] if extra else []),
+        )
+
+    def test_the_bid_update_reports_each_missing_optional_bid_column(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        self.assertIs(ops.save_cover_sheet("x.mdb", "1", {"job_name": "N"}), True)
+        self.assertIn(("Bids", "PageHeight", "save_cover_sheet_bid"), ops.skips)
+        self.assertEqual({op for _t, _c, op in ops.skips}, {"save_cover_sheet_bid"})
+
+    def test_a_new_folder_reports_the_missing_parent_column_with_its_label(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        ops.save_cover_sheet(
+            "x.mdb", "1", {"new_folders": [{"local_uid": "a", "name": "A"}]}
+        )
+        self.assertIn(
+            ("BidPageFolders", "ParentUID", "save_cover_sheet_new_folder"), ops.skips
+        )
+
+    def test_an_updated_folder_reports_the_missing_parent_column_with_its_label(self):
+        conn = self._db("INSERT INTO BidPageFolders VALUES (5, 1, 'F')")
+        ops = _RealContractOps(conn)
+        self.assertIs(
+            ops.save_cover_sheet("x.mdb", "1", {"folders": [{"uid": 5, "name": "G"}]}),
+            True,
+        )
+        self.assertIn(
+            ("BidPageFolders", "ParentUID", "save_cover_sheet_folder"), ops.skips
+        )
+        self.assertEqual(_rows(conn, "SELECT Name FROM BidPageFolders"), [("G",)])
+
+    def test_a_new_page_reports_missing_optional_page_columns_with_its_label(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        ops.save_cover_sheet(
+            "x.mdb",
+            "1",
+            {
+                "pages": [
+                    {"width": 1.0, "height": 1.0, "scale_factor1": 1.0,
+                     "scale_factor2": 4.0, "show_mode": 0}
+                ]
+            },
+        )
+        labels = {op for table, _c, op in ops.skips if table == "BidPages"}
+        self.assertEqual(labels, {"save_cover_sheet_new_page"})
+
+    def test_an_updated_page_reports_missing_optional_page_columns_with_its_label(self):
+        conn = self._db()
+        conn.execute("ALTER TABLE BidPages ADD COLUMN OverlayImagePath TEXT")
+        conn.execute(
+            "INSERT INTO BidPages (UID, BidUID, Width, Height, ScaleFactor1, ScaleFactor2, "
+            "Show, Name, OverlayImagePath) VALUES (20, 1, 1.0, 1.0, 1.0, 4.0, 0, 'Old', '')"
+        )
+        ops = _RealContractOps(conn)
+        ops.save_cover_sheet(
+            "x.mdb",
+            "1",
+            {
+                "pages": [
+                    {"uid": 20, "width": 2.0, "height": 2.0, "scale_factor1": 1.0,
+                     "scale_factor2": 4.0, "show_mode": 1, "name": "New"}
+                ]
+            },
+        )
+        labels = {op for table, _c, op in ops.skips if table == "BidPages"}
+        self.assertEqual(labels, {"save_cover_sheet_page"})
+        self.assertIn(("BidPages", "SheetNo", "save_cover_sheet_page"), ops.skips)
+        self.assertEqual(
+            _rows(conn, "SELECT Name, Width, Show FROM BidPages"), [("New", 2.0, 1)]
+        )
+
+    def test_the_selected_page_save_needs_both_page_identity_columns(self):
+        for dropped, remaining in (("UID", "BidUID"), ("BidUID", "UID")):
+            with self.subTest(missing=dropped):
+                conn = _contract_db(f"CREATE TABLE BidPages ({remaining} INTEGER)")
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertIs(
+                        _RealContractOps(conn).save_bid_selected_page("x.mdb", "1", "2"),
+                        False,
+                    )
+                self.assertIn(
+                    "does not support selected page persistence",
+                    str(logs.records[0].exc_info[1]),
+                )
+
+
+def _employee(uid, **overrides):
+    values = dict(
+        uid=uid, employee_no="E", first_name="First", last_name="Last", address1="A1",
+        address2="A2", city="City", state="ST", zip="12345", home_phone="H",
+        mobile_phone="M", email="e@x", pay_class_uid="",
+    )
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+_EMP_COLUMNS = (
+    "UID INTEGER, EmployeeNo TEXT, FirstName TEXT, LastName TEXT, Address1 TEXT, "
+    "Address2 TEXT, City TEXT, State TEXT, Zip TEXT, HomePhone TEXT, MobilePhone TEXT, "
+    "EMail TEXT, PayClassUID INTEGER"
+)
+_EMP_SELECT = (
+    "SELECT UID, EmployeeNo, FirstName, LastName, Address1, Address2, City, State, Zip, "
+    "HomePhone, MobilePhone, EMail, PayClassUID FROM Employees ORDER BY UID"
+)
+
+
+class EmployeeSaveContractTests(unittest.TestCase):
+    def _db(self, *extra):
+        return _contract_db(
+            f"CREATE TABLE Employees ({_EMP_COLUMNS})",
+            "INSERT INTO Employees VALUES (1, 'old', 'Old', 'Name', 'o1', 'o2', 'oc', 'os', "
+            "'oz', 'oh', 'om', 'oe', NULL)",
+            "INSERT INTO Employees VALUES (2, 'two', 'Two', 'Name', '', '', '', '', '', '', "
+            "'', '', NULL)",
+            "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+            "INSERT INTO PayClasses VALUES (5, 'Hourly')",
+            *extra,
+        )
+
+    def test_updated_and_new_employees_persist_every_field_and_pay_class(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        result = ops.save_employees(
+            "x.mdb",
+            {
+                "updated": [
+                    _employee(1, employee_no="E1", first_name="Ann", last_name="Lee",
+                              address1="a1", address2="a2", city="c", state="s", zip="z",
+                              home_phone="hp", mobile_phone="mp", email="mail",
+                              pay_class_uid="5"),
+                ],
+                "new": [
+                    _employee("tmp-a", first_name="Bob", pay_class_uid="5"),
+                    _employee("tmp-b", first_name="Cy", pay_class_uid="new_pc"),
+                    _employee("tmp-c", first_name="Di", pay_class_uid=""),
+                ],
+            },
+        )
+        self.assertEqual(result, {"tmp-a": "3", "tmp-b": "4", "tmp-c": "5"})
+        self.assertEqual(ops.skips, [])
+        rows = conn.execute(_EMP_SELECT).fetchall()
+        self.assertEqual(
+            rows[0],
+            (1, "E1", "Ann", "Lee", "a1", "a2", "c", "s", "z", "hp", "mp", "mail", 5),
+        )
+        self.assertEqual(rows[1][:4], (2, "two", "Two", "Name"))
+        self.assertEqual(
+            rows[2], (3, "E", "Bob", "Last", "A1", "A2", "City", "ST", "12345", "H", "M", "e@x", 5)
+        )
+        self.assertEqual((rows[3][2], rows[3][12]), ("Cy", None))
+        self.assertEqual((rows[4][2], rows[4][12]), ("Di", None))
+
+    def test_updated_employees_with_a_blank_uid_are_skipped(self):
+        conn = self._db()
+        self.assertEqual(
+            _RealContractOps(conn).save_employees(
+                "x.mdb", {"updated": [_employee(None, first_name="Ghost")]}
+            ),
+            {},
+        )
+        self.assertEqual(
+            [r[0] for r in conn.execute("SELECT FirstName FROM Employees ORDER BY UID")],
+            ["Old", "Two"],
+        )
+
+    def test_an_unknown_pay_class_on_an_update_or_a_new_employee_rejects_the_whole_save(
+        self,
+    ):
+        for changes in (
+            {"updated": [_employee(1, first_name="X", pay_class_uid="99")]},
+            {"new": [_employee("t", first_name="X", pay_class_uid="99")]},
+        ):
+            with self.subTest(changes=list(changes)):
+                conn = self._db()
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertIsNone(_RealContractOps(conn).save_employees("x.mdb", changes))
+                self.assertIn("PayClasses", str(logs.records[0].exc_info[1]))
+                self.assertEqual(
+                    conn.execute("SELECT FirstName FROM Employees WHERE UID = 1").fetchone()[0],
+                    "Old",
+                )
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM Employees").fetchone()[0], 2)
+
+    def test_employee_saves_need_the_uid_column_and_report_optional_columns_by_label(self):
+        conn = _contract_db("CREATE TABLE Employees (FirstName TEXT)")
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIsNone(_RealContractOps(conn).save_employees("x.mdb", {"new": []}))
+        self.assertIn("Missing Employees.UID", str(logs.records[0].exc_info[1]))
+        conn = _contract_db(
+            "CREATE TABLE Employees (UID INTEGER, FirstName TEXT)",
+            "INSERT INTO Employees VALUES (1, 'x')",
+        )
+        ops = _RealContractOps(conn)
+        self.assertEqual(
+            ops.save_employees(
+                "x.mdb", {"updated": [_employee(1)], "new": [_employee("t")]}
+            ),
+            {"t": "2"},
+        )
+        labels = {op for _t, _c, op in ops.skips}
+        self.assertEqual(labels, {"save_employee", "save_employee_new"})
+        self.assertIn(("Employees", "LastName", "save_employee"), ops.skips)
+        self.assertIn(("Employees", "LastName", "save_employee_new"), ops.skips)
+        self.assertNotIn(("Employees", "FirstName", "save_employee"), ops.skips)
+
+    def test_an_invalid_deleted_uid_is_rejected_with_the_table_label(self):
+        conn = self._db()
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIsNone(
+                _RealContractOps(conn).save_employees("x.mdb", {"deleted_uids": ["abc"]})
+            )
+        self.assertIn("Invalid Employees UID: 'abc'", str(logs.records[0].exc_info[1]))
+
+    def test_deleting_employees_clears_every_dependent_table_and_keeps_the_rest(self):
+        conn = self._db(
+            "CREATE TABLE Bids (UID INTEGER, EstimatorUID INTEGER, PrManagerUID INTEGER, "
+            "JobSiteManagerUID INTEGER)",
+            "INSERT INTO Bids VALUES (10, 1, 2, 1)",
+            "INSERT INTO Bids VALUES (11, 2, 1, 2)",
+            "CREATE TABLE BidDPCSubscribers (UID INTEGER, BidEmployeeUID INTEGER)",
+            "INSERT INTO BidDPCSubscribers VALUES (1, 1)",
+            "INSERT INTO BidDPCSubscribers VALUES (2, 2)",
+            "CREATE TABLE BidEmployees (UID INTEGER, EmployeeUID INTEGER)",
+            "INSERT INTO BidEmployees VALUES (100, 1)",
+            "INSERT INTO BidEmployees VALUES (200, 2)",
+            "CREATE TABLE BidTimeCards (UID INTEGER, BidEmployeeUID INTEGER)",
+            "INSERT INTO BidTimeCards VALUES (1, 100)",
+            "INSERT INTO BidTimeCards VALUES (2, 200)",
+            "CREATE TABLE ConditionSets (UID INTEGER, EmployeeUID INTEGER)",
+            "INSERT INTO ConditionSets VALUES (1, 1)",
+            "INSERT INTO ConditionSets VALUES (2, 2)",
+        )
+        self.assertEqual(
+            _RealContractOps(conn).save_employees("x.mdb", {"deleted_uids": ["1"]}), {}
+        )
+        q = lambda sql: conn.execute(sql).fetchall()
+        self.assertEqual(q("SELECT UID FROM Employees"), [(2,)])
+        self.assertEqual(
+            q("SELECT UID, EstimatorUID, PrManagerUID, JobSiteManagerUID FROM Bids ORDER BY UID"),
+            [(10, None, 2, None), (11, 2, None, 2)],
+        )
+        self.assertEqual(q("SELECT UID FROM BidDPCSubscribers"), [(2,)])
+        self.assertEqual(q("SELECT UID FROM BidEmployees"), [(200,)])
+        self.assertEqual(q("SELECT UID FROM BidTimeCards"), [(2,)])
+        self.assertEqual(
+            q("SELECT UID, EmployeeUID FROM ConditionSets ORDER BY UID"), [(1, None), (2, 2)]
+        )
+
+    def test_a_failed_condition_set_clear_warns_and_still_deletes_unless_strict(self):
+        for ops_class, strict in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+            with self.subTest(strict=strict):
+                conn = self._db(
+                    "CREATE TABLE ConditionSets (UID INTEGER, EmployeeUID INTEGER)",
+                    "INSERT INTO ConditionSets VALUES (1, 1)",
+                    "CREATE TRIGGER block BEFORE UPDATE ON ConditionSets "
+                    "BEGIN SELECT RAISE(ABORT, 'blocked'); END",
+                )
+                if strict:
+                    with self.assertRaises(pyodbc.Error):
+                        ops_class(conn).save_employees("x.mdb", {"deleted_uids": ["1"]})
+                    continue
+                with self.assertLogs("test", "WARNING") as logs:
+                    self.assertEqual(
+                        ops_class(conn).save_employees("x.mdb", {"deleted_uids": ["1"]}), {}
+                    )
+                message = logs.records[0].getMessage()
+                self.assertIn("Failed to clear ConditionSets.EmployeeUID", message)
+                self.assertIn("[1]", message)
+                self.assertEqual(conn.execute("SELECT UID FROM Employees").fetchall(), [(2,)])
+
+    def test_a_failing_employee_row_write_is_skipped_unless_the_policy_is_strict(self):
+        for event, key in (("UPDATE", "updated"), ("INSERT", "new")):
+            for ops_class, strict in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+                with self.subTest(event=event, strict=strict):
+                    conn = self._db(
+                        f"CREATE TRIGGER poison BEFORE {event} ON Employees "
+                        "WHEN NEW.FirstName = 'poison' "
+                        "BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+                    )
+                    if key == "updated":
+                        changes = {"updated": [_employee(1, first_name="poison"), _employee(2, first_name="fine")]}
+                    else:
+                        changes = {"new": [_employee("a", first_name="poison"), _employee("b", first_name="fine")]}
+                    if strict:
+                        with self.assertRaises(pyodbc.Error):
+                            ops_class(conn).save_employees("x.mdb", changes)
+                        continue
+                    result = ops_class(conn).save_employees("x.mdb", changes)
+                    names = [r[0] for r in conn.execute("SELECT FirstName FROM Employees ORDER BY UID")]
+                    if key == "updated":
+                        self.assertEqual(result, {})
+                        self.assertEqual(names, ["Old", "fine"])
+                    else:
+                        self.assertEqual(result, {"b": "4"})
+                        self.assertEqual(names, ["Old", "Two", "fine"])
+
+
+class _AreaFixture:
+    DDL = (
+        "CREATE TABLE Bids (UID INTEGER)",
+        "INSERT INTO Bids VALUES (1)",
+        "INSERT INTO Bids VALUES (2)",
+        "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT, "
+        "Sequence INTEGER, WasSent INTEGER, GUID TEXT)",
+        "INSERT INTO BidAreas VALUES (10, 1, NULL, 'Root', 1, 1, '{R}')",
+        "INSERT INTO BidAreas VALUES (11, 1, 10, 'Child', 2, 1, '{C}')",
+        "INSERT INTO BidAreas VALUES (12, 1, NULL, 'Other', 3, 1, '{O}')",
+        "INSERT INTO BidAreas VALUES (20, 2, NULL, 'Foreign', 1, 1, '{F}')",
+    )
+
+    @staticmethod
+    def area(uid, name, parent="", sequence=0):
+        return BidArea(uid=str(uid), bid_uid="1", parent_uid=str(parent), name=name, sequence=sequence)
+
+    @staticmethod
+    def changes(new=(), updated=(), deleted=()):
+        return BidAreaChangeset(new=list(new), updated=list(updated), deleted_uids=list(deleted))
+
+    def db(self, *extra):
+        return _contract_db(*self.DDL, *extra)
+
+
+class BidAreaSaveContractTests(unittest.TestCase, _AreaFixture):
+    def test_new_areas_persist_every_column_with_a_fresh_guid_and_local_parent_links(self):
+        conn = self.db()
+        ops = _RealContractOps(conn)
+        result = ops.save_bid_areas(
+            "x.mdb",
+            "1",
+            self.changes(
+                new=[
+                    self.area("kid", "Kid", parent="mom", sequence=5),
+                    self.area("mom", "Mom", sequence=4),
+                    self.area("under", "Under root", parent=10, sequence=6),
+                ]
+            ),
+        )
+        self.assertEqual(set(result), {"kid", "mom", "under"})
+        self.assertEqual(ops.skips, [])
+        rows = {
+            n: (u, p, s, w, g)
+            for u, p, n, s, w, g in conn.execute(
+                "SELECT UID, ParentUID, Name, Sequence, WasSent, GUID FROM BidAreas WHERE UID > 20"
+            )
+        }
+        self.assertEqual(set(rows), {"Kid", "Mom", "Under root"})
+        self.assertEqual(rows["Mom"][1], None)
+        self.assertEqual(rows["Kid"][1], rows["Mom"][0])
+        self.assertEqual(rows["Under root"][1], 10)
+        self.assertEqual((rows["Kid"][2], rows["Mom"][2], rows["Under root"][2]), (5, 4, 6))
+        for _uid, _parent, _seq, was_sent, guid in rows.values():
+            self.assertEqual(was_sent, 0)
+            self.assertRegex(guid, r"^\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\}$")
+        self.assertEqual({result[k] for k in result}, {str(rows[n][0]) for n in rows})
+        self.assertEqual(
+            conn.execute("SELECT BidUID FROM BidAreas WHERE UID > 20").fetchall(), [(1,)] * 3
+        )
+
+    def test_updated_areas_rewrite_name_parent_and_sequence_only(self):
+        conn = self.db()
+        self.assertEqual(
+            _RealContractOps(conn).save_bid_areas(
+                "x.mdb",
+                "1",
+                self.changes(
+                    updated=[
+                        self.area(11, "Renamed", parent=12, sequence=9),
+                        self.area(10, "Root again", sequence=1),
+                    ]
+                ),
+            ),
+            {},
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, ParentUID, Name, Sequence, GUID, WasSent FROM BidAreas "
+                "WHERE UID IN (10, 11, 12) ORDER BY UID"
+            ).fetchall(),
+            [
+                (10, None, "Root again", 1, "{R}", 1),
+                (11, 12, "Renamed", 9, "{C}", 1),
+                (12, None, "Other", 3, "{O}", 1),
+            ],
+        )
+
+    def test_deleting_an_area_removes_every_reference_to_it(self):
+        conn = self.db(
+            "CREATE TABLE BidPageSettings (UID INTEGER, BidAreaUID INTEGER)",
+            "INSERT INTO BidPageSettings VALUES (1, 12)",
+            "INSERT INTO BidPageSettings VALUES (2, 20)",
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidAreaUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (1, 12)",
+            "INSERT INTO BidTakeoffs VALUES (2, 20)",
+            "CREATE TABLE BidAreaTranslations (UID INTEGER, MasterAreaUID INTEGER, TranslateAreaUID INTEGER)",
+            "INSERT INTO BidAreaTranslations VALUES (1, 12, 20)",
+            "INSERT INTO BidAreaTranslations VALUES (2, 20, 12)",
+            "INSERT INTO BidAreaTranslations VALUES (3, 20, 20)",
+            "CREATE TABLE BidTakeoffTotals (UID INTEGER, BidAreaUID INTEGER)",
+            "CREATE TABLE BidLaborCostCodeTotals (UID INTEGER, BidAreaUID INTEGER)",
+            "CREATE TABLE BidTypicalGroupTotals (UID INTEGER, BidAreaUID INTEGER)",
+            "INSERT INTO BidTakeoffTotals VALUES (1, 12)",
+            "INSERT INTO BidTakeoffTotals VALUES (2, 20)",
+            "INSERT INTO BidLaborCostCodeTotals VALUES (1, 12)",
+            "INSERT INTO BidLaborCostCodeTotals VALUES (2, 20)",
+            "INSERT INTO BidTypicalGroupTotals VALUES (1, 12)",
+            "INSERT INTO BidTypicalGroupTotals VALUES (2, 20)",
+            "CREATE TABLE BidTimeCards (UID INTEGER, BidAreaUID INTEGER)",
+            "INSERT INTO BidTimeCards VALUES (1, 12)",
+            "INSERT INTO BidTimeCards VALUES (2, 20)",
+            "CREATE TABLE BidTypAreaCounts (UID INTEGER, BidAreaUID INTEGER)",
+            "INSERT INTO BidTypAreaCounts VALUES (1, 12)",
+            "INSERT INTO BidTypAreaCounts VALUES (2, 20)",
+        )
+        self.assertEqual(
+            _RealContractOps(conn).save_bid_areas("x.mdb", "1", self.changes(deleted=["12"])), {}
+        )
+        q = lambda sql: conn.execute(sql).fetchall()
+        self.assertEqual(q("SELECT UID FROM BidAreas WHERE UID = 12"), [])
+        self.assertEqual(q("SELECT COUNT(*) FROM BidAreas"), [(3,)])
+        self.assertEqual(
+            q("SELECT UID, BidAreaUID FROM BidPageSettings ORDER BY UID"), [(1, None), (2, 20)]
+        )
+        self.assertEqual(
+            q("SELECT UID, BidAreaUID FROM BidTakeoffs ORDER BY UID"), [(1, None), (2, 20)]
+        )
+        self.assertEqual(q("SELECT UID FROM BidAreaTranslations"), [(3,)])
+        for table in (
+            "BidTakeoffTotals", "BidLaborCostCodeTotals", "BidTypicalGroupTotals",
+            "BidTimeCards", "BidTypAreaCounts",
+        ):
+            self.assertEqual(q(f"SELECT UID FROM {table}"), [(2,)], table)
+
+    def test_area_changes_are_validated_with_exact_messages_before_any_write(self):
+        cases = (
+            (self.changes(updated=[self.area(10, "X")], deleted=["10"]),
+             "BidAreas.UID=10 cannot be updated and deleted in one save."),
+            (self.changes(updated=[self.area(20, "X")]),
+             "BidAreas.UID=20 does not belong to Bids.UID=1."),
+            (self.changes(deleted=["20"]), "BidAreas.UID=20 does not belong to Bids.UID=1."),
+            (self.changes(new=[self.area("n", "A"), self.area("n", "B")]),
+             "New BidAreas correlation UID n must be present and unique within one save."),
+            (self.changes(new=[self.area("10", "Clash")]),
+             "BidAreas contains duplicate pending identity 10."),
+            (self.changes(new=[self.area("n", "A", parent=99)]),
+             "BidAreas.UID=n references missing BidAreas.UID=99 through ParentUID."),
+            (self.changes(new=[self.area("n", "A", parent="zz")]),
+             "BidAreas.UID=n has a non-authoritative ParentUID zz"),
+            (self.changes(updated=[self.area(10, "Root", parent=11)]),
+             "BidAreas.UID=10 participates in a ParentUID cycle."),
+            (self.changes(new=[self.area("a", "A", parent="b"), self.area("b", "B", parent="a")]),
+             "participates in a ParentUID cycle"),
+            (self.changes(deleted=["10"]),
+             "BidAreas.UID=11 references missing BidAreas.UID=10 through ParentUID."),
+        )
+        for changes, expected in cases:
+            with self.subTest(expected=expected):
+                conn = self.db()
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertEqual(
+                        _RealContractOps(conn).save_bid_areas("x.mdb", "1", changes), {}
+                    )
+                self.assertIn(expected, str(logs.records[0].exc_info[1]))
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*), SUM(Sequence) FROM BidAreas").fetchone(),
+                    (4, 7),
+                )
+
+    def test_a_schema_without_a_parent_column_cannot_store_a_hierarchy(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER)", "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, Name TEXT)",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertEqual(
+                _RealContractOps(conn).save_bid_areas(
+                    "x.mdb", "1", self.changes(new=[self.area("a", "A"), self.area("b", "B", parent="a")])
+                ),
+                {},
+            )
+        self.assertIn(
+            "does not support Bid Area hierarchy persistence",
+            str(logs.records[0].exc_info[1]),
+        )
+        flat = _RealContractOps(conn).save_bid_areas(
+            "x.mdb", "1", self.changes(new=[self.area("a", "A")])
+        )
+        self.assertEqual(list(flat), ["a"])
+
+    def test_an_unknown_bid_or_a_missing_table_is_rejected(self):
+        conn = self.db()
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertEqual(
+                _RealContractOps(conn).save_bid_areas("x.mdb", "9", self.changes()), {}
+            )
+        self.assertIn("Bids has no row for UID 9", str(logs.records[0].exc_info[1]))
+        conn = _contract_db("CREATE TABLE Bids (UID INTEGER)")
+        with self.assertLogs("test", "ERROR") as logs:
+            _RealContractOps(conn).save_bid_areas("x.mdb", "1", self.changes())
+        self.assertIn("does not support bid areas", str(logs.records[0].exc_info[1]))
+
+    def test_area_saves_need_their_identity_columns_and_report_optional_ones_by_label(self):
+        for dropped in ("UID", "BidUID"):
+            with self.subTest(missing=dropped):
+                conn = self.db()
+                conn.execute(f"ALTER TABLE BidAreas DROP COLUMN {dropped}")
+                with self.assertLogs("test", "ERROR") as logs:
+                    _RealContractOps(conn).save_bid_areas("x.mdb", "1", self.changes())
+                self.assertIn(f"Missing BidAreas.{dropped}", str(logs.records[0].exc_info[1]))
+        conn = self.db()
+        conn.execute("ALTER TABLE BidAreas DROP COLUMN Name")
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertEqual(
+                _RealContractOps(conn).save_bid_areas(
+                    "x.mdb", "1", self.changes(new=[self.area("n", "A")])
+                ),
+                {},
+            )
+        self.assertIn("Missing BidAreas.Name", str(logs.records[0].exc_info[1]))
+        conn = self.db()
+        for column in ("Sequence", "WasSent", "GUID"):
+            conn.execute(f"ALTER TABLE BidAreas DROP COLUMN {column}")
+        ops = _RealContractOps(conn)
+        ops.save_bid_areas(
+            "x.mdb", "1",
+            self.changes(new=[self.area("n", "New")], updated=[self.area(10, "Upd")]),
+        )
+        self.assertIn(("BidAreas", "Sequence", "save_bid_area_new"), ops.skips)
+        self.assertIn(("BidAreas", "WasSent", "save_bid_area_new"), ops.skips)
+        self.assertIn(("BidAreas", "GUID", "save_bid_area_new"), ops.skips)
+        self.assertIn(("BidAreas", "Sequence", "save_bid_area"), ops.skips)
+
+    def test_a_failing_area_write_is_skipped_unless_the_policy_is_strict(self):
+        scenarios = (
+            ("INSERT", "new", "BidAreas"),
+            ("UPDATE", "updated", "BidAreas"),
+            ("DELETE", "deleted", "BidAreas"),
+            ("DELETE", "deleted", "BidTimeCards"),
+            ("DELETE", "deleted", "BidTypAreaCounts"),
+        )
+        for event, kind, table in scenarios:
+            for ops_class, strict in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+                with self.subTest(event=event, table=table, strict=strict):
+                    extra = [
+                        "CREATE TABLE BidTimeCards (UID INTEGER, BidAreaUID INTEGER)",
+                        "CREATE TABLE BidTypAreaCounts (UID INTEGER, BidAreaUID INTEGER)",
+                    ]
+                    when = {
+                        ("INSERT", "BidAreas"): "WHEN NEW.Name = 'poison'",
+                        ("UPDATE", "BidAreas"): "WHEN NEW.Name = 'poison'",
+                        ("DELETE", "BidAreas"): "WHEN OLD.UID = 12",
+                        ("DELETE", "BidTimeCards"): "",
+                        ("DELETE", "BidTypAreaCounts"): "",
+                    }[(event, table)]
+                    extra.append(
+                        f"CREATE TRIGGER block BEFORE {event} ON {table} {when} "
+                        "BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+                    )
+                    extra += [
+                        "INSERT INTO BidTimeCards VALUES (1, 12)",
+                        "INSERT INTO BidTypAreaCounts VALUES (1, 12)",
+                    ]
+                    conn = self.db(*extra)
+                    if kind == "new":
+                        changes = self.changes(new=[self.area("a", "poison"), self.area("b", "fine")])
+                    elif kind == "updated":
+                        changes = self.changes(updated=[self.area(10, "poison"), self.area(12, "fine")])
+                    else:
+                        changes = self.changes(deleted=["12"])
+                    if strict:
+                        with self.assertRaises(pyodbc.Error):
+                            ops_class(conn).save_bid_areas("x.mdb", "1", changes)
+                        continue
+                    result = ops_class(conn).save_bid_areas("x.mdb", "1", changes)
+                    names = [r[0] for r in conn.execute("SELECT Name FROM BidAreas WHERE BidUID = 1 ORDER BY UID")]
+                    if kind == "new":
+                        self.assertEqual(list(result), ["a", "b"])
+                        self.assertIn("fine", names)
+                        self.assertNotIn("poison", names)
+                    elif kind == "updated":
+                        self.assertEqual(result, {})
+                        self.assertEqual(names, ["Root", "Child", "fine"])
+                    elif table == "BidAreas":
+                        self.assertIn("Other", names)
+                    else:
+                        self.assertNotIn("Other", names)
+
+
+class SelectedPageSaveContractTests(unittest.TestCase):
+    def _db(self, *extra):
+        return _contract_db(
+            "CREATE TABLE Bids (UID INTEGER)",
+            "INSERT INTO Bids VALUES (1)",
+            "INSERT INTO Bids VALUES (2)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidPages VALUES (10, 1)",
+            "INSERT INTO BidPages VALUES (20, 2)",
+            "CREATE TABLE BidSettings (UID INTEGER, BidUID INTEGER, BidPageSelectedUID INTEGER)",
+            "INSERT INTO BidSettings VALUES (1, 1, NULL)",
+            *extra,
+        )
+
+    def test_an_existing_settings_row_is_updated_and_cleared(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        self.assertIs(ops.save_bid_selected_page("x.mdb", "1", "10"), True)
+        self.assertEqual(conn.execute("SELECT BidPageSelectedUID FROM BidSettings").fetchall(), [(10,)])
+        for blank in ("", None):
+            conn.execute("UPDATE BidSettings SET BidPageSelectedUID = 10")
+            self.assertIs(ops.save_bid_selected_page("x.mdb", "1", blank), True)
+            self.assertEqual(
+                conn.execute("SELECT BidPageSelectedUID FROM BidSettings").fetchall(), [(None,)]
+            )
+        conn.execute("UPDATE BidSettings SET BidPageSelectedUID = 10")
+        self.assertIs(ops.save_bid_selected_page("x.mdb", "1", "not-a-number"), True)
+        self.assertEqual(
+            conn.execute("SELECT BidPageSelectedUID FROM BidSettings").fetchall(), [(None,)]
+        )
+
+    def test_a_page_of_another_bid_or_a_missing_page_is_refused_with_false(self):
+        conn = self._db()
+        ops = _RealContractOps(conn)
+        self.assertIs(ops.save_bid_selected_page("x.mdb", "1", "20"), False)
+        self.assertIs(ops.save_bid_selected_page("x.mdb", "1", "99"), False)
+        self.assertEqual(conn.execute("SELECT BidPageSelectedUID FROM BidSettings").fetchall(), [(None,)])
+
+    def test_a_bid_without_a_settings_row_gets_one_inserted(self):
+        conn = self._db("DELETE FROM BidSettings")
+        ops = _RealContractOps(conn)
+        self.assertIs(ops.save_bid_selected_page("x.mdb", "2", "20"), True)
+        self.assertEqual(
+            conn.execute("SELECT BidUID, BidPageSelectedUID FROM BidSettings").fetchall(),
+            [(2, 20)],
+        )
+        self.assertEqual(ops.skips, [])
+
+
+    def test_two_settings_rows_or_a_missing_bid_or_columns_fail_with_false(self):
+        for extra, message in (
+            ("INSERT INTO BidSettings VALUES (2, 1, NULL)", "BidSettings has multiple rows"),
+        ):
+            conn = self._db(extra)
+            with self.assertLogs("test", "ERROR") as logs:
+                self.assertIs(_RealContractOps(conn).save_bid_selected_page("x.mdb", "1", "10"), False)
+            self.assertIn(message, str(logs.records[0].exc_info[1]))
+        conn = self._db()
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(_RealContractOps(conn).save_bid_selected_page("x.mdb", "9", "10"), False)
+        self.assertIn("Bids has no row for UID 9", str(logs.records[0].exc_info[1]))
+        for dropped in ("BidUID", "BidPageSelectedUID"):
+            conn = self._db()
+            conn.execute(f"ALTER TABLE BidSettings DROP COLUMN {dropped}")
+            with self.assertLogs("test", "ERROR") as logs:
+                self.assertIs(_RealContractOps(conn).save_bid_selected_page("x.mdb", "1", "10"), False)
+            self.assertIn(f"Missing BidSettings.{dropped}", str(logs.records[0].exc_info[1]))
+        conn = self._db()
+        conn.execute("ALTER TABLE BidPages DROP COLUMN BidUID")
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(_RealContractOps(conn).save_bid_selected_page("x.mdb", "1", "10"), False)
+        self.assertIn("Missing BidPages.BidUID", str(logs.records[0].exc_info[1]))
+        conn = self._db("DROP TABLE BidSettings")
+        with self.assertLogs("test", "ERROR"):
+            self.assertIs(_RealContractOps(conn).save_bid_selected_page("x.mdb", "1", "10"), False)
+
+
+class MeasureBaseNormalizationTests(unittest.TestCase):
+    """Switching a bid's measure system rewrites only the condition values that change."""
+
+    _DDL = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT, MeasureBase INTEGER)",
+        "INSERT INTO Bids VALUES (1, 'Job', 0)",
+        "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, Name TEXT, UOM1 INTEGER, "
+        "UOM2 INTEGER, UOM3 INTEGER, Quantity1 INTEGER, Quantity2 INTEGER, Quantity3 INTEGER)",
+        "CREATE TABLE WriteLog (Col TEXT, UID INTEGER)",
+        "CREATE TRIGGER log_uom1 AFTER UPDATE OF UOM1 ON BidConditions "
+        "BEGIN INSERT INTO WriteLog VALUES ('UOM1', NEW.UID); END",
+        "CREATE TRIGGER log_uom2 AFTER UPDATE OF UOM2 ON BidConditions "
+        "BEGIN INSERT INTO WriteLog VALUES ('UOM2', NEW.UID); END",
+        "CREATE TRIGGER log_uom3 AFTER UPDATE OF UOM3 ON BidConditions "
+        "BEGIN INSERT INTO WriteLog VALUES ('UOM3', NEW.UID); END",
+        "CREATE TRIGGER log_name AFTER UPDATE OF Name ON BidConditions "
+        "BEGIN INSERT INTO WriteLog VALUES ('Name', NEW.UID); END",
+    )
+
+    def _db(self, *rows):
+        conn = _contract_db(*self._DDL)
+        for row in rows:
+            conn.execute("INSERT INTO BidConditions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+        return conn
+
+    def _change(self, conn, measure_base):
+        return _RealContractOps(conn).save_cover_sheet(
+            "x.mdb", "1", {"job_name": "Job", "measure_base": measure_base}
+        )
+
+    def test_switching_to_metric_converts_units_and_elevation_names_of_the_bid_only(self):
+        conn = self._db(
+            (1, 1, "Wall @T 9' 6\"", UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET,
+             CALC_LINEAR_LENGTH, CALC_LINEAR_BOTH_SIDES, CALC_VOLUME),
+            (2, 2, "Other @T 9' 6\"", UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+        )
+        self.assertIs(self._change(conn, 1), True)
+        self.assertEqual(
+            conn.execute(
+                "SELECT Name, UOM1, UOM2, UOM3 FROM BidConditions WHERE UID = 1"
+            ).fetchone(),
+            ("Wall @T 289.56 cm", UOM_M, UOM_M2, UOM_M3),
+        )
+        self.assertEqual(
+            conn.execute("SELECT Name, UOM1 FROM BidConditions WHERE UID = 2").fetchone(),
+            ("Other @T 9' 6\"", UOM_LINEAR_FEET),
+        )
+        self.assertEqual(
+            conn.execute("SELECT MeasureBase FROM Bids").fetchone(), (1,)
+        )
+
+    def test_switching_back_to_imperial_converts_metric_values(self):
+        conn = self._db(
+            (1, 1, "Wall @T 285 cm", UOM_M, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+        )
+        conn.execute("UPDATE Bids SET MeasureBase = 1")
+        self.assertIs(self._change(conn, 0), True)
+        self.assertEqual(
+            conn.execute("SELECT Name, UOM1 FROM BidConditions").fetchone(),
+            ("Wall @T 9' 4 1/4\"", UOM_LINEAR_FEET),
+        )
+
+    def test_only_the_values_that_change_are_written(self):
+        conn = self._db(
+            (1, 1, "Plain", UOM_M, UOM_SQUARE_FEET, UOM_M3, CALC_LINEAR_LENGTH,
+             CALC_LINEAR_BOTH_SIDES, CALC_VOLUME),
+            (2, 1, "Unchanged", UOM_M, UOM_M2, UOM_M3, CALC_LINEAR_LENGTH,
+             CALC_LINEAR_BOTH_SIDES, CALC_VOLUME),
+            (3, 1, "Name only @T 9' 6\"", UOM_M, UOM_M2, UOM_M3, CALC_LINEAR_LENGTH,
+             CALC_LINEAR_BOTH_SIDES, CALC_VOLUME),
+        )
+        self.assertIs(self._change(conn, 1), True)
+        self.assertEqual(
+            sorted(conn.execute("SELECT Col, UID FROM WriteLog").fetchall()),
+            [("Name", 3), ("UOM2", 1)],
+        )
+
+    def test_a_same_system_save_never_touches_conditions(self):
+        conn = self._db(
+            (1, 1, "Wall @T 9' 6\"", UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+        )
+        self.assertIs(self._change(conn, 0), True)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM WriteLog").fetchone(), (0,))
+
+    def test_conditions_without_quantity_columns_are_normalized_from_their_units(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT, MeasureBase INTEGER)",
+            "INSERT INTO Bids VALUES (1, 'Job', 0)",
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, Name TEXT, UOM1 INTEGER)",
+            "INSERT INTO BidConditions VALUES (1, 1, 'Plain', ?)".replace("?", str(UOM_LINEAR_FEET)),
+        )
+        self.assertIs(self._change(conn, 1), True)
+        self.assertEqual(conn.execute("SELECT UOM1 FROM BidConditions").fetchone(), (UOM_M,))
+
+    def test_a_condition_table_without_the_identity_columns_is_left_alone(self):
+        for dropped in ("UID", "BidUID", "Name"):
+            with self.subTest(missing=dropped):
+                columns = [c for c in ("UID INTEGER", "BidUID INTEGER", "Name TEXT") if not c.startswith(dropped + " ")]
+                conn = _contract_db(
+                    "CREATE TABLE Bids (UID INTEGER, JobName TEXT, MeasureBase INTEGER)",
+                    "INSERT INTO Bids VALUES (1, 'Job', 0)",
+                    f"CREATE TABLE BidConditions ({', '.join(columns)}, UOM1 INTEGER)",
+                )
+                self.assertIs(self._change(conn, 1), True)
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT, MeasureBase INTEGER)",
+            "INSERT INTO Bids VALUES (1, 'Job', 0)",
+        )
+        self.assertIs(self._change(conn, 1), True)
+
+
+class CoverSheetValidationMessageTests(unittest.TestCase):
+    _DDL = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT, JobStatusUID INTEGER, EstimatorUID INTEGER)",
+        "INSERT INTO Bids VALUES (1, 'Job', NULL, NULL)",
+        "INSERT INTO Bids VALUES (2, 'Other', NULL, NULL)",
+        "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+        "INSERT INTO JobStatuses VALUES (5, 'Open')",
+        "CREATE TABLE Employees (UID INTEGER)",
+        "INSERT INTO Employees VALUES (8)",
+        "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID INTEGER)",
+        "INSERT INTO BidPageFolders VALUES (5, 1, 'Root', NULL)",
+        "INSERT INTO BidPageFolders VALUES (6, 1, 'Child', 5)",
+        "INSERT INTO BidPageFolders VALUES (9, 2, 'Foreign', NULL)",
+        "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, BidPageFolderUID INTEGER)",
+        "INSERT INTO BidPages VALUES (10, 1, 'P', 6)",
+        "INSERT INTO BidPages VALUES (20, 2, 'Foreign page', NULL)",
+    )
+
+    def _fail(self, updates, ddl=None, expected=""):
+        conn = _contract_db(*(ddl or self._DDL))
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(_RealContractOps(conn).save_cover_sheet("x.mdb", "1", updates), False)
+        self.assertIn(expected, str(logs.records[0].exc_info[1]))
+        return conn
+
+    def test_unknown_master_references_are_rejected_by_table(self):
+        self._fail({"job_status_uid": 99}, expected="JobStatuses")
+        self._fail({"estimator_uid": 99}, expected="Employees")
+
+    def test_known_master_references_are_stored(self):
+        conn = _contract_db(*self._DDL)
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_status_uid": 5, "estimator_uid": 8}
+            ),
+            True,
+        )
+        self.assertEqual(
+            conn.execute("SELECT JobStatusUID, EstimatorUID FROM Bids WHERE UID = 1").fetchone(),
+            (5, 8),
+        )
+
+    def test_pages_and_folders_of_another_bid_are_rejected_with_the_table_label(self):
+        self._fail(
+            {"deleted_page_uids": [20]},
+            expected="BidPages.UID=20 does not belong to Bids.UID=1",
+        )
+        self._fail(
+            {"pages": [{"uid": 20, "width": 1.0, "height": 1.0}]},
+            expected="BidPages.UID=20 does not belong to Bids.UID=1",
+        )
+        self._fail(
+            {"deleted_folder_uids": [9]},
+            expected="BidPageFolders.UID=9 does not belong to Bids.UID=1.",
+        )
+        self._fail(
+            {"folders": [{"uid": 9, "name": "Hijack"}]},
+            expected="BidPageFolders.UID=9 does not belong to Bids.UID=1.",
+        )
+
+    def test_invalid_deleted_identifiers_are_rejected_with_the_table_label(self):
+        self._fail({"deleted_page_uids": ["x"]}, expected="BidPages contains malformed UID x")
+        self._fail(
+            {"deleted_folder_uids": ["y"]},
+            expected="BidPageFolders contains malformed UID y",
+        )
+
+    def test_folder_hierarchy_edits_are_validated_against_the_resulting_graph(self):
+        self._fail(
+            {"folders": [{"uid": 5, "name": "Root", "parent_uid": 6}]},
+            expected="BidPageFolders.UID=5 participates in a ParentUID cycle.",
+        )
+        self._fail(
+            {"folders": [{"uid": 6, "name": "Child", "parent_uid": "zz"}]},
+            expected="BidPageFolders parent zz is not authoritative.",
+        )
+        self._fail(
+            {"folders": [{"uid": 6, "name": "Child", "parent_uid": 77}]},
+            expected="BidPageFolders.UID=77 does not belong to Bids.UID=1.",
+        )
+        self._fail(
+            {"new_folders": [{"local_uid": "5", "name": "Dup"}]},
+            expected="BidPageFolders contains duplicate pending identity 5.",
+        )
+        self._fail(
+            {"new_folders": [{"local_uid": "a", "name": "A"}, {"local_uid": "a", "name": "B"}]},
+            expected="duplicate pending identity a",
+        )
+        self._fail(
+            {"pages": [{"uid": 10, "width": 1.0, "height": 1.0, "folder_uid": 88}]},
+            expected="BidPageFolders.UID=88 does not belong to Bids.UID=1.",
+        )
+
+    def test_a_deleted_parent_folder_orphans_its_children_instead_of_dangling(self):
+        conn = _contract_db(*self._DDL)
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"deleted_folder_uids": [5]}
+            ),
+            True,
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, ParentUID FROM BidPageFolders WHERE BidUID = 1").fetchall(),
+            [(6, None)],
+        )
+        self.assertEqual(
+            conn.execute("SELECT BidPageFolderUID FROM BidPages WHERE UID = 10").fetchone(), (6,)
+        )
+
+    def test_a_reparent_into_a_deleted_folder_is_rejected(self):
+        self._fail(
+            {
+                "deleted_folder_uids": [5],
+                "folders": [{"uid": 6, "name": "Child", "parent_uid": 5}],
+            },
+            expected="BidPageFolders.UID=5 does not belong to Bids.UID=1.",
+        )
+
+    def test_folder_edits_need_a_folder_table_and_hierarchy_support(self):
+        no_table = tuple(s for s in self._DDL if "BidPageFolders" not in s and "BidPages" not in s)
+        self._fail(
+            {"new_folders": [{"local_uid": "a", "name": "A"}]},
+            ddl=no_table,
+            expected="does not support page-folder persistence",
+        )
+        flat = tuple(
+            s.replace(", ParentUID INTEGER)", ")").replace(", 5)", ")").replace(", NULL)", ")")
+            if "BidPageFolders" in s
+            else s
+            for s in self._DDL
+        )
+        flat = tuple(s for s in flat if not s.startswith("INSERT INTO BidPageFolders"))
+        flat += (
+            "INSERT INTO BidPageFolders VALUES (5, 1, 'Root')",
+            "INSERT INTO BidPageFolders VALUES (6, 1, 'Child')",
+        )
+        self._fail(
+            {"new_folders": [{"local_uid": "a", "name": "A", "parent_uid": 5}]},
+            ddl=flat,
+            expected="does not support page-folder hierarchy persistence",
+        )
+        conn = _contract_db(*flat)
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"new_folders": [{"local_uid": "a", "name": "A", "parent_uid": 0}]}
+            ),
+            True,
+        )
+
+    def test_a_failing_page_child_delete_warns_and_continues_unless_strict(self):
+        for ops_class, strict in ((_TolerantPyodbcOps, False), (_StrictPyodbcOps, True)):
+            with self.subTest(strict=strict):
+                conn = _contract_db(
+                    *self._DDL,
+                    "CREATE TABLE BidLegends (UID INTEGER, BidPageUID INTEGER)",
+                    "INSERT INTO BidLegends VALUES (1, 10)",
+                    "CREATE TRIGGER block BEFORE DELETE ON BidLegends "
+                    "BEGIN SELECT RAISE(ABORT, 'blocked'); END",
+                )
+                if strict:
+                    with self.assertRaises(pyodbc.Error):
+                        ops_class(conn).delete_pages("x.mdb", ["10"])
+                    continue
+                with self.assertLogs("test", "WARNING") as logs:
+                    self.assertIs(ops_class(conn).delete_pages("x.mdb", ["10"]), True)
+                message = logs.records[0].getMessage()
+                self.assertIn("Failed to delete from BidLegends for pages [10]", message)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages WHERE UID = 10").fetchone(), (0,))
+
+
+class _RecordingCursor(_SqliteCursorWrapper):
+    def __init__(self, connection, queries):
+        super().__init__(connection)
+        self._queries = queries
+
+    def execute(self, query, *params):
+        self._queries.append(" ".join(query.split()))
+        if len(params) == 1 and isinstance(params[0], (list, tuple)):
+            params = tuple(params[0])
+        return super().execute(query, *params)
+
+
+class _RecordingConnection(_SqliteConnectionWrapper):
+    def __init__(self, connection, queries):
+        super().__init__(connection)
+        self._queries = queries
+
+    def cursor(self):
+        return _RecordingCursor(self._connection, self._queries)
+
+
+class _RecordingOps(RealContractOps):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.queries = []
+
+    def _connection(self, _db_path):
+        return _RecordingConnection(self._connection_ref, self.queries)
+
+
+class _FailingSelectCursor(_PyodbcTranslatingCursor):
+    def execute(self, query, *params):
+        if query.lstrip().upper().startswith("SELECT") and "[BidConditions]" in query:
+            raise pyodbc.Error("HY000", "usage lookup failed")
+        return super().execute(query, *params)
+
+
+class _FailingSelectConnection(_SqliteConnectionWrapper):
+    def cursor(self):
+        return _FailingSelectCursor(self._connection)
+
+
+class _FailingUsageOps(RealContractOps):
+    def _connection(self, _db_path):
+        return _FailingSelectConnection(self._connection_ref)
+
+
+class _StrictFailingUsageOps(_FailingUsageOps):
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return True
+
+
+class CoverSheetFolderEdgeContractTests(unittest.TestCase):
+    _DDL = CoverSheetValidationMessageTests._DDL
+
+    def _db(self, *extra, ddl=None):
+        return _contract_db(*(ddl or self._DDL), *extra)
+
+    def _save(self, conn, updates, ops=None):
+        return (ops or _RealContractOps(conn)).save_cover_sheet("x.mdb", "1", updates)
+
+    def test_a_folder_uid_that_exists_twice_in_the_table_cannot_be_updated(self):
+        conn = self._db("INSERT INTO BidPageFolders VALUES (5, 2, 'Twin', NULL)")
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(self._save(conn, {"folders": [{"uid": 5, "name": "Renamed"}]}), False)
+        self.assertIn("BidPageFolders contains duplicate UID 5", str(logs.records[0].exc_info[1]))
+        self.assertEqual(
+            conn.execute("SELECT Name FROM BidPageFolders WHERE UID = 5 AND BidUID = 1").fetchone(),
+            ("Root",),
+        )
+
+    def test_deleting_a_folder_without_a_folder_table_is_refused_by_the_schema_check(self):
+        no_folders = tuple(s for s in self._DDL if "BidPageFolders" not in s)
+        no_folders = tuple(s for s in no_folders if "BidPages" not in s)
+        conn = _contract_db(*no_folders)
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(self._save(conn, {"deleted_folder_uids": [5]}), False)
+        self.assertIn("does not support page-folder persistence", str(logs.records[0].exc_info[1]))
+
+    def test_deleting_folders_works_when_pages_cannot_store_a_folder(self):
+        conn = self._db(
+            "DROP TABLE BidPages",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT)",
+            "INSERT INTO BidPages VALUES (10, 1, 'P')",
+        )
+        self.assertIs(self._save(conn, {"deleted_folder_uids": [6]}), True)
+        self.assertEqual(conn.execute("SELECT UID FROM BidPageFolders WHERE BidUID = 1").fetchall(), [(5,)])
+
+    def test_folder_tables_need_their_identity_columns_for_any_folder_edit(self):
+        for dropped in ("UID", "BidUID"):
+            with self.subTest(missing=dropped):
+                conn = self._db(f"ALTER TABLE BidPageFolders DROP COLUMN {dropped}")
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertIs(
+                        self._save(conn, {"new_folders": [{"local_uid": "a", "name": "A"}]}), False
+                    )
+                self.assertIn(
+                    f"Missing BidPageFolders.{dropped}", str(logs.records[0].exc_info[1])
+                )
+
+    def test_blank_folder_spellings_never_require_a_folder_table(self):
+        no_folders = tuple(
+            s for s in self._DDL if "BidPageFolders" not in s and "BidPages" not in s
+        ) + (
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, Width REAL, Height REAL, "
+            "ScaleFactor1 REAL, ScaleFactor2 REAL, Show INTEGER, OverlayImagePath TEXT)",
+            "INSERT INTO BidPages VALUES (10, 1, 'P', 1.0, 1.0, 0.25, 12.0, 0, '')",
+        )
+        for blank in ("", 0, "0", None):
+            with self.subTest(folder=blank):
+                conn = _contract_db(*no_folders)
+                page = {"uid": 10, "width": 1.0, "height": 1.0, "scale_factor1": 0.25,
+                        "scale_factor2": 12.0, "show_mode": 0, "folder_uid": blank}
+                self.assertIs(self._save(conn, {"pages": [page]}), True)
+
+    def test_blank_parent_spellings_never_require_hierarchy_support(self):
+        flat = tuple(
+            s.replace(", ParentUID INTEGER)", ")") if "CREATE TABLE BidPageFolders" in s else s
+            for s in self._DDL
+            if not s.startswith("INSERT INTO BidPageFolders")
+        ) + (
+            "INSERT INTO BidPageFolders VALUES (5, 1, 'Root')",
+            "INSERT INTO BidPageFolders VALUES (6, 1, 'Child')",
+        )
+        flat = tuple(s.replace("BidPageFolderUID INTEGER)", "BidPageFolderUID INTEGER)") for s in flat)
+        for blank in ("", 0, "0", None):
+            with self.subTest(parent=blank):
+                conn = _contract_db(*flat)
+                folder = {"uid": 6, "name": "Child"}
+                if blank is not None:
+                    folder["parent_uid"] = blank
+                self.assertIs(self._save(conn, {"folders": [folder]}), True)
+
+    def test_a_folder_update_may_clear_its_parent_with_any_blank_spelling(self):
+        for blank in ("", 0, "0", None):
+            with self.subTest(parent=blank):
+                conn = self._db()
+                folder = {"uid": 6, "name": "Child"}
+                if blank is not None:
+                    folder["parent_uid"] = blank
+                self.assertIs(self._save(conn, {"folders": [folder]}), True)
+                self.assertEqual(
+                    conn.execute("SELECT ParentUID FROM BidPageFolders WHERE UID = 6").fetchone()[0] in (None, 0),
+                    True,
+                )
+
+    def test_a_stored_blank_parent_text_is_not_mistaken_for_a_deleted_folder(self):
+        conn = self._db("UPDATE BidPageFolders SET ParentUID = '' WHERE UID = 6")
+        self.assertIs(self._save(conn, {"deleted_folder_uids": [5]}), True)
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidPageFolders WHERE BidUID = 1").fetchall(), [(6,)]
+        )
+
+    def test_a_page_update_without_an_original_image_shows_a_replacement_overlay_alone(self):
+        columns = ("UID INTEGER, BidUID INTEGER, Name TEXT, Width REAL, Height REAL, "
+                   "ScaleFactor1 REAL, ScaleFactor2 REAL, Show INTEGER, ImagePath TEXT, "
+                   "OverlayImagePath TEXT, OverlayRect TEXT, Sequence INTEGER")
+        for image, expected in ((None, 1), ("", 1), ("p.pdf", 0)):
+            with self.subTest(image=image):
+                conn = _contract_db(
+                    "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+                    "INSERT INTO Bids VALUES (1, 'Job')",
+                    f"CREATE TABLE BidPages ({columns})",
+                    "INSERT INTO BidPages VALUES (10, 1, 'P', 4.0, 3.0, 0.25, 12.0, 0, '', '', '', 1)",
+                )
+                page = {"uid": 10, "width": 4.0, "height": 3.0, "scale_factor1": 0.25,
+                        "scale_factor2": 12.0, "show_mode": 0, "overlay_path": "new/o.pdf",
+                        "image_path": image}
+                self.assertIs(self._save(conn, {"pages": [page]}), True)
+                row = conn.execute("SELECT Show, OverlayImagePath, OverlayRect FROM BidPages").fetchone()
+                self.assertEqual(row[0], expected)
+                self.assertEqual(row[1], "new\\o.pdf")
+                self.assertNotEqual(row[2], "")
+
+    def test_a_new_page_with_only_an_overlay_is_shown_alone(self):
+        columns = ("UID INTEGER, BidUID INTEGER, Width REAL, Height REAL, ScaleFactor1 REAL, "
+                   "ScaleFactor2 REAL, Show INTEGER, ImagePath TEXT, OverlayImagePath TEXT, "
+                   "OverlayRect TEXT")
+        for image, expected in ((None, 1), ("p.pdf", 3)):
+            with self.subTest(image=image):
+                conn = _contract_db(
+                    "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+                    "INSERT INTO Bids VALUES (1, 'Job')",
+                    f"CREATE TABLE BidPages ({columns})",
+                )
+                page = {"width": 4.0, "height": 3.0, "scale_factor1": 0.25, "scale_factor2": 12.0,
+                        "show_mode": 3, "overlay_path": "o.pdf", "image_path": image}
+                self.assertIs(self._save(conn, {"pages": [page]}), True)
+                self.assertEqual(conn.execute("SELECT Show FROM BidPages").fetchone(), (expected,))
+
+    def test_an_updated_page_rewrites_its_scale_factors_and_rescales_positions(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+            "INSERT INTO Bids VALUES (1, 'Job')",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Width REAL, Height REAL, "
+            "ScaleFactor1 REAL, ScaleFactor2 REAL, Show INTEGER, OverlayImagePath TEXT)",
+            "INSERT INTO BidPages VALUES (10, 1, 4.0, 3.0, 0.25, 12.0, 0, '')",
+        )
+        page = {"uid": 10, "width": 4.0, "height": 3.0, "scale_factor1": 0.5, "scale_factor2": 24.0,
+                "show_mode": 0}
+        self.assertIs(self._save(conn, {"pages": [page]}), True)
+        self.assertEqual(
+            conn.execute("SELECT ScaleFactor1, ScaleFactor2, Width, Height FROM BidPages").fetchone(),
+            (0.5, 24.0, 4.0, 3.0),
+        )
+
+    def test_page_delete_labels_invalid_identifiers_by_table(self):
+        conn = self._db()
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(_RealContractOps(conn).delete_pages("x.mdb", ["x"]), False)
+        self.assertIn("Invalid BidPages UID: 'x'", str(logs.records[0].exc_info[1]))
+
+    def test_master_data_deletes_label_invalid_identifiers_by_table(self):
+        conn = _contract_db(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+            "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)",
+        )
+        for call, label in (
+            (lambda o: o.save_job_statuses("x.mdb", {"deleted_uids": ["bad"]}), "JobStatuses"),
+            (lambda o: o.save_pay_classes("x.mdb", {"deleted_uids": ["bad"]}), "PayClasses"),
+            (lambda o: o.save_condition_types("x.mdb", {"deleted_uids": ["bad"]}), "CdnTypes"),
+        ):
+            with self.subTest(label=label):
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertIsNone(call(_RealContractOps(conn)))
+                self.assertIn(f"Invalid {label} UID: 'bad'", str(logs.records[0].exc_info[1]))
+
+    def test_page_cascade_rejects_duplicate_comment_and_takeoff_uids_with_table_labels(self):
+        base = (
+            "CREATE TABLE Bids (UID INTEGER)", "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)", "INSERT INTO BidPages VALUES (10, 1)",
+        )
+        conn = _contract_db(
+            *base,
+            "CREATE TABLE BidComments (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER, ParentCommentUID INTEGER)",
+            "INSERT INTO BidComments VALUES (7, 1, 10, NULL)",
+            "INSERT INTO BidComments VALUES (7, 1, 10, NULL)",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(_RealContractOps(conn).delete_pages("x.mdb", ["10"]), False)
+        self.assertIn("BidComments contains duplicate UID 7", str(logs.records[0].exc_info[1]))
+        conn = _contract_db(
+            *base,
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (8, 1, 10)",
+            "INSERT INTO BidTakeoffs VALUES (8, 1, 10)",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(_RealContractOps(conn).delete_pages("x.mdb", ["10"]), False)
+        self.assertIn("BidTakeoffs contains duplicate UID 8", str(logs.records[0].exc_info[1]))
+
+    def test_page_cascade_skips_percent_and_annotation_tables_that_lack_the_takeoff_columns(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER)", "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)", "INSERT INTO BidPages VALUES (10, 1)",
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (8, 1, 10)",
+            "CREATE TABLE BidPercents (UID INTEGER)", "INSERT INTO BidPercents VALUES (1)",
+            "CREATE TABLE BidDimensions (UID INTEGER, BidPageUID INTEGER)",
+            "INSERT INTO BidDimensions VALUES (1, 99)",
+            "CREATE TABLE BidALines (UID INTEGER, BidTakeoffFromUID INTEGER)",
+            "INSERT INTO BidALines VALUES (1, 8)",
+        )
+        with self.assertNoLogs("test", "ERROR"):
+            self.assertIs(_RealContractOps(conn).delete_pages("x.mdb", ["10"]), True)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPercents").fetchone(), (1,))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidDimensions").fetchone(), (1,))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidALines").fetchone(), (0,))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages").fetchone(), (0,))
+
+
+class MeasureBaseColumnSemanticsTests(unittest.TestCase):
+    def _run(self, rows, metric_target=1, columns=None):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT, MeasureBase INTEGER)",
+            "INSERT INTO Bids VALUES (1, 'Job', %d)" % (1 - metric_target),
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, Name TEXT, UOM1 INTEGER, "
+            "UOM2 INTEGER, UOM3 INTEGER, Quantity1 INTEGER, Quantity2 INTEGER, Quantity3 INTEGER)",
+            "CREATE TABLE WriteLog (Col TEXT, UID INTEGER)",
+            *[
+                f"CREATE TRIGGER log_{c} AFTER UPDATE OF {c} ON BidConditions "
+                f"BEGIN INSERT INTO WriteLog VALUES ('{c}', NEW.UID); END"
+                for c in ("UOM1", "UOM2", "UOM3", "Name")
+            ],
+        )
+        for row in rows:
+            conn.execute("INSERT INTO BidConditions VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)", row)
+        _RealContractOps(conn).save_cover_sheet(
+            "x.mdb", "1", {"job_name": "Job", "measure_base": metric_target}
+        )
+        return conn
+
+    def test_each_quantity_column_drives_the_unit_of_its_own_slot(self):
+        conn = self._run(
+            [
+                (1, "A", UOM_SQUARE_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+                (2, "B", 0, UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_BOTH_SIDES, 0),
+                (3, "C", 0, 0, UOM_LINEAR_FEET, 0, 0, CALC_VOLUME),
+            ]
+        )
+        rows = conn.execute("SELECT UID, UOM1, UOM2, UOM3 FROM BidConditions ORDER BY UID").fetchall()
+        self.assertEqual(rows[0][1], UOM_M)
+        self.assertEqual(rows[1][2], UOM_M2)
+        self.assertEqual(rows[2][3], UOM_M3)
+
+    def test_conditions_with_no_units_or_quantities_are_not_written(self):
+        conn = self._run([(1, None, None, None, None, None, None, None)])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM WriteLog").fetchone(), (0,))
+        conn = self._run([(1, "Plain", None, None, None, None, None, None)])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM WriteLog").fetchone(), (0,))
+
+
+class MoreSettingsPolicyTests(unittest.TestCase):
+    def test_updated_employees_and_master_rows_without_a_uid_are_skipped_not_fatal(self):
+        conn = _contract_db(
+            "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+            "INSERT INTO PayClasses VALUES (1, 'A')",
+            "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)",
+            "INSERT INTO CdnTypes VALUES (1, 'A')",
+        )
+        ops = _RealContractOps(conn)
+        self.assertEqual(
+            ops.save_pay_classes("x.mdb", {"updated": [{"name": "ghost"}, {"uid": 1, "name": "B"}]}), {}
+        )
+        self.assertEqual(
+            ops.save_condition_types("x.mdb", {"updated": [{"name": "ghost"}, {"uid": 1, "name": "B"}]}), {}
+        )
+        self.assertEqual(conn.execute("SELECT Name FROM PayClasses").fetchall(), [("B",)])
+        self.assertEqual(conn.execute("SELECT Name FROM CdnTypes").fetchall(), [("B",)])
+
+    def test_an_updated_employee_with_a_pending_pay_class_keeps_its_other_fields_and_no_pay_class(self):
+        conn = _contract_db(
+            f"CREATE TABLE Employees ({_EMP_COLUMNS})",
+            "INSERT INTO Employees VALUES (1, 'old', 'Old', 'Name', '', '', '', '', '', '', '', '', 5)",
+            "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+            "INSERT INTO PayClasses VALUES (5, 'Hourly')",
+        )
+        self.assertEqual(
+            _RealContractOps(conn).save_employees(
+                "x.mdb", {"updated": [_employee(1, first_name="Renamed", pay_class_uid="new_pc")]}
+            ),
+            {},
+        )
+        self.assertEqual(
+            conn.execute("SELECT FirstName, PayClassUID FROM Employees").fetchone(),
+            ("Renamed", None),
+        )
+
+    def test_a_failing_condition_type_usage_lookup_refuses_the_delete_unless_strict(self):
+        for ops_class, strict in ((_FailingUsageOps, False), (_StrictFailingUsageOps, True)):
+            with self.subTest(strict=strict):
+                conn = _contract_db(
+                    "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)",
+                    "INSERT INTO CdnTypes VALUES (1, 'A')",
+                    "CREATE TABLE BidConditions (UID INTEGER, CdnTypeUID INTEGER)",
+                )
+                if strict:
+                    with self.assertRaises(pyodbc.Error):
+                        ops_class(conn).save_condition_types("x.mdb", {"deleted_uids": [1]})
+                    continue
+                with self.assertLogs("test", "WARNING") as logs:
+                    self.assertIsNone(ops_class(conn).save_condition_types("x.mdb", {"deleted_uids": [1]}))
+                self.assertIn("Failed to validate condition type usage for [1]", logs.records[0].getMessage())
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM CdnTypes").fetchone(), (1,))
+
+    def test_area_and_folder_sql_selects_the_parent_column_only_when_it_exists(self):
+        for parent_column, expected in ((", ParentUID INTEGER", "[ParentUID]"), ("", "NULL AS [ParentUID]")):
+            with self.subTest(table="BidAreas", parent=bool(parent_column)):
+                conn = _contract_db(
+                    "CREATE TABLE Bids (UID INTEGER)", "INSERT INTO Bids VALUES (1)",
+                    f"CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, Name TEXT{parent_column})",
+                )
+                ops = _RecordingOps(conn)
+                ops.save_bid_areas("x.mdb", "1", BidAreaChangeset(new=[], updated=[], deleted_uids=[]))
+                self.assertIn(f"SELECT [UID], {expected} FROM [BidAreas] WHERE [BidUID]=?", ops.queries)
+        for parent_column, expected in ((", ParentUID INTEGER", "[ParentUID]"), ("", "NULL AS [ParentUID]")):
+            with self.subTest(table="BidPageFolders", parent=bool(parent_column)):
+                conn = _contract_db(
+                    "CREATE TABLE Bids (UID INTEGER, JobName TEXT)", "INSERT INTO Bids VALUES (1, 'J')",
+                    "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+                    f"CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT{parent_column})",
+                )
+                ops = _RecordingOps(conn)
+                ops.save_cover_sheet("x.mdb", "1", {"new_folders": [{"local_uid": "a", "name": "A"}]})
+                self.assertIn(
+                    f"SELECT [UID], {expected} FROM [BidPageFolders] WHERE [BidUID]=?", ops.queries
+                )
+
+    def _areas_db(self, *extra):
+        return _contract_db(*_AreaFixture.DDL, *extra)
+
+    def test_area_rows_with_duplicate_uids_in_the_bid_block_every_area_save(self):
+        conn = self._areas_db("INSERT INTO BidAreas VALUES (12, 1, NULL, 'Dup', 9, 1, '{D}')")
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertEqual(
+                _RealContractOps(conn).save_bid_areas(
+                    "x.mdb", "1",
+                    BidAreaChangeset(new=[], updated=[BidArea(uid="10", bid_uid="1", parent_uid="", name="X", sequence=1)], deleted_uids=[]),
+                ),
+                {},
+            )
+        self.assertIn("BidAreas contains duplicate UID 12", str(logs.records[0].exc_info[1]))
+
+    def test_malformed_area_identifiers_are_rejected_by_table(self):
+        for changes, expected in (
+            (BidAreaChangeset(new=[], updated=[], deleted_uids=["zz"]), "BidAreas contains malformed UID zz"),
+            (
+                BidAreaChangeset(
+                    new=[], updated=[BidArea(uid="yy", bid_uid="1", parent_uid="", name="X", sequence=1)],
+                    deleted_uids=[],
+                ),
+                "BidAreas contains malformed UID yy",
+            ),
+        ):
+            with self.subTest(expected=expected):
+                conn = self._areas_db()
+                with self.assertLogs("test", "ERROR") as logs:
+                    self.assertEqual(_RealContractOps(conn).save_bid_areas("x.mdb", "1", changes), {})
+                self.assertIn(expected, str(logs.records[0].exc_info[1]))
+
+    def test_an_updated_area_whose_uid_exists_in_another_bid_too_is_refused(self):
+        conn = self._areas_db("INSERT INTO BidAreas VALUES (10, 2, NULL, 'Twin', 1, 1, '{T}')")
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertEqual(
+                _RealContractOps(conn).save_bid_areas(
+                    "x.mdb", "1",
+                    BidAreaChangeset(new=[], updated=[BidArea(uid="10", bid_uid="1", parent_uid="", name="X", sequence=1)], deleted_uids=[]),
+                ),
+                {},
+            )
+        self.assertIn("BidAreas contains duplicate UID 10", str(logs.records[0].exc_info[1]))
+
+    def test_new_and_updated_areas_treat_every_blank_parent_spelling_as_root(self):
+        for blank in ("", 0, "0", None):
+            with self.subTest(parent=blank):
+                conn = self._areas_db()
+                result = _RealContractOps(conn).save_bid_areas(
+                    "x.mdb", "1",
+                    BidAreaChangeset(
+                        new=[BidArea(uid="n", bid_uid="1", parent_uid=blank, name="New", sequence=7)],
+                        updated=[BidArea(uid="11", bid_uid="1", parent_uid=blank, name="Upd", sequence=2)],
+                        deleted_uids=[],
+                    ),
+                )
+                self.assertEqual(list(result), ["n"])
+                # The string "0" is stored as the integer 0 (truthy text), the other
+                # spellings as NULL; every reader treats both as the root.
+                (stored,) = conn.execute("SELECT ParentUID FROM BidAreas WHERE UID = 11").fetchone()
+                self.assertIn(stored, (None, 0) if blank == "0" else (None,))
+
+    def test_stored_blank_area_parents_are_roots_when_other_areas_change(self):
+        conn = self._areas_db("UPDATE BidAreas SET ParentUID = '' WHERE UID = 12")
+        self.assertEqual(
+            _RealContractOps(conn).save_bid_areas(
+                "x.mdb", "1",
+                BidAreaChangeset(new=[], updated=[], deleted_uids=["10", "11"]),
+            ),
+            {},
+        )
+        self.assertEqual(conn.execute("SELECT UID FROM BidAreas WHERE BidUID = 1").fetchall(), [(12,)])
+
+
+class SettingsFolderResolutionTests(unittest.TestCase):
+    """_resolve_folder_uid turns whatever the page dialog sent into an Access Long."""
+
+    resolve = staticmethod(_RealContractOps._resolve_folder_uid)
+
+    def test_a_pending_folder_resolves_to_the_integer_it_was_assigned(self):
+        for assigned in (7, "7"):
+            with self.subTest(assigned=assigned):
+                result = self.resolve("local", {"local": assigned}, invalid_as_none=False)
+                self.assertEqual(result, 7)
+                self.assertIs(type(result), int)
+
+    def test_a_blank_reference_is_no_folder(self):
+        for blank in (None, "", 0):
+            self.assertIsNone(self.resolve(blank, {}, invalid_as_none=False))
+
+    def test_an_unusable_reference_is_none_only_when_the_caller_allows_it(self):
+        self.assertIsNone(self.resolve("abc", {}, invalid_as_none=True))
+        with self.assertRaises(ValueError):
+            self.resolve("abc", {}, invalid_as_none=False)
+        self.assertEqual(self.resolve("12", {}, invalid_as_none=False), 12)
+
+
+class CoverSheetInputShapeTests(unittest.TestCase):
+    """The save reads the dialog's update dict without taking ownership of its lists."""
+
+    _DDL = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+        "INSERT INTO Bids VALUES (1, 'Job')",
+        "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        "INSERT INTO BidPages VALUES (10, 1)",
+        "INSERT INTO BidPages VALUES (11, 1)",
+        "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT)",
+    )
+
+    def test_the_callers_deleted_page_list_is_not_extended_by_the_save(self):
+        conn = _contract_db(*self._DDL)
+        deleted = [10]
+        updates = {"deleted_page_uids": deleted, "pages": [{"uid": 11, "width": None}]}
+        self.assertIs(_RealContractOps(conn).save_cover_sheet("x.mdb", "1", updates), True)
+        self.assertEqual(deleted, [10])
+        self.assertEqual(_rows(conn, "SELECT UID FROM BidPages"), [(11,)])
+
+    def test_the_callers_deleted_folder_list_is_not_extended_by_the_save(self):
+        conn = _contract_db(
+            *self._DDL,
+            "INSERT INTO BidPageFolders VALUES (5, 1, NULL, 'Gone')",
+            "INSERT INTO BidPageFolders VALUES (6, 1, NULL, 'Kept')",
+        )
+        deleted = [5]
+        updates = {"deleted_folder_uids": deleted, "folders": [{"uid": 6, "name": "Kept"}]}
+        self.assertIs(_RealContractOps(conn).save_cover_sheet("x.mdb", "1", updates), True)
+        self.assertEqual(deleted, [5])
+        self.assertEqual(_rows(conn, "SELECT UID FROM BidPageFolders"), [(6,)])
+
+    def test_tuples_are_accepted_for_the_deleted_page_uids(self):
+        conn = _contract_db(*self._DDL)
+        updates = {"deleted_page_uids": (10,), "pages": [{"uid": 11, "width": None}]}
+        self.assertIs(_RealContractOps(conn).save_cover_sheet("x.mdb", "1", updates), True)
+        self.assertEqual(_rows(conn, "SELECT UID FROM BidPages"), [(11,)])
+
+    def test_a_page_without_a_width_is_ignored_even_when_it_names_an_existing_page(self):
+        conn = _contract_db(*self._DDL, "ALTER TABLE BidPages ADD COLUMN Name TEXT")
+        conn.execute("UPDATE BidPages SET Name = 'Old'")
+        ops = _RealContractOps(conn)
+        self.assertIs(
+            ops.save_cover_sheet(
+                "x.mdb", "1", {"pages": [{"uid": 10, "width": None, "name": "Changed"}]}
+            ),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT Name FROM BidPages ORDER BY UID"), [("Old",), ("Old",)])
+
+    def test_a_folder_table_without_a_uid_column_does_not_block_a_save_that_touches_no_folder(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+            "INSERT INTO Bids VALUES (1, 'Job')",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "CREATE TABLE BidPageFolders (BidUID INTEGER, Name TEXT)",
+        )
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet("x.mdb", "1", {"job_name": "Renamed"}),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT JobName FROM Bids"), [("Renamed",)])
+
+    def test_new_folders_without_a_parent_are_inserted_in_the_order_given(self):
+        conn = _contract_db(*self._DDL)
+        new_folders = [
+            {"local_uid": "f", "name": "First"},
+            {"local_uid": "x", "name": "Second"},
+            {"name": "Third"},
+        ]
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet("x.mdb", "1", {"new_folders": new_folders}),
+            True,
+        )
+        self.assertEqual(
+            _rows(conn, "SELECT Name FROM BidPageFolders ORDER BY rowid"),
+            [("First",), ("Second",), ("Third",)],
+        )
+
+    def test_a_duplicated_folder_uid_in_the_table_blocks_any_folder_save_with_its_table_label(self):
+        conn = _contract_db(
+            *self._DDL,
+            "INSERT INTO BidPageFolders VALUES (5, 1, NULL, 'A')",
+            "INSERT INTO BidPageFolders VALUES (5, 1, NULL, 'B')",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(
+                _RealContractOps(conn).save_cover_sheet(
+                    "x.mdb", "1", {"new_folders": [{"local_uid": "n", "name": "N"}]}
+                ),
+                False,
+            )
+        self.assertRegex(str(logs.records[0].exc_info[1]), r"^BidPageFolders contains duplicate UID 5;")
+        self.assertEqual(_rows(conn, "SELECT COUNT(*) FROM BidPageFolders"), [(2,)])
+
+    def test_a_malformed_folder_uid_in_the_table_blocks_any_folder_save(self):
+        conn = _contract_db(
+            *self._DDL,
+            "INSERT INTO BidPageFolders VALUES (0, 1, NULL, 'Zero')",
+        )
+        with self.assertLogs("test", "ERROR") as logs:
+            self.assertIs(
+                _RealContractOps(conn).save_cover_sheet(
+                    "x.mdb", "1", {"new_folders": [{"local_uid": "n", "name": "N"}]}
+                ),
+                False,
+            )
+        self.assertRegex(str(logs.records[0].exc_info[1]), r"^BidPageFolders contains malformed UID 0;")
+
+
+class _ValidatorHarness:
+    """Run a static validator against a real sqlite table through the writer's cursor shape."""
+
+    @staticmethod
+    def call_validator(ddl, validator, *args):
+        conn = _contract_db(*ddl)
+        ops = _RealContractOps(conn)
+        with ops._connection("x.mdb") as connection:
+            return validator(connection.cursor(), ops._schema(connection), 1, *args)
+
+
+class MasterDataIterableInputTests(unittest.TestCase):
+    """The new-row collections of the settings dialogs may be any iterable, read once."""
+
+    def test_new_job_statuses_may_be_a_generator(self):
+        conn = _contract_db(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked INTEGER, Sequence INTEGER)"
+        )
+        rows = ({"uid": f"t{i}", "name": f"S{i}"} for i in range(2))
+        self.assertEqual(
+            _RealContractOps(conn).save_job_statuses("x.mdb", {"new": rows}), {"t0": "1", "t1": "2"}
+        )
+        self.assertEqual(_rows(conn, "SELECT Name FROM JobStatuses ORDER BY UID"), [("S0",), ("S1",)])
+
+    def test_new_pay_classes_may_be_a_generator(self):
+        conn = _contract_db("CREATE TABLE PayClasses (UID INTEGER, Name TEXT)")
+        rows = ({"uid": f"t{i}", "name": f"P{i}"} for i in range(2))
+        self.assertEqual(
+            _RealContractOps(conn).save_pay_classes("x.mdb", {"new": rows}), {"t0": "1", "t1": "2"}
+        )
+        self.assertEqual(_rows(conn, "SELECT Name FROM PayClasses ORDER BY UID"), [("P0",), ("P1",)])
+
+    def test_new_condition_types_may_be_a_generator(self):
+        conn = _contract_db("CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)")
+        rows = ({"uid": f"t{i}", "name": f"C{i}"} for i in range(2))
+        self.assertEqual(
+            _RealContractOps(conn).save_condition_types("x.mdb", {"new": rows}), {"t0": "1", "t1": "2"}
+        )
+        self.assertEqual(_rows(conn, "SELECT Name FROM CdnTypes ORDER BY UID"), [("C0",), ("C1",)])
+
+    def test_new_employees_may_be_a_generator(self):
+        conn = _contract_db(f"CREATE TABLE Employees ({_EMP_COLUMNS})")
+        rows = (_employee(f"t{i}", first_name=f"F{i}") for i in range(2))
+        self.assertEqual(
+            _RealContractOps(conn).save_employees("x.mdb", {"new": rows}), {"t0": "1", "t1": "2"}
+        )
+        self.assertEqual(
+            _rows(conn, "SELECT FirstName FROM Employees ORDER BY UID"), [("F0",), ("F1",)]
+        )
+
+
+class FolderValidatorCanonicalUidTests(unittest.TestCase, _ValidatorHarness):
+    """Folder uids are compared by their integer value, however the cell or the dialog spells them."""
+
+    validate = staticmethod(_RealContractOps._require_valid_cover_sheet_folder_updates)
+
+    _TYPED = (
+        "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT)",
+        "INSERT INTO BidPageFolders VALUES (11, 1, NULL, 'Mom')",
+        "INSERT INTO BidPageFolders VALUES (12, 1, 11, 'Kid')",
+    )
+    _TEXT = (
+        "CREATE TABLE BidPageFolders (UID, BidUID INTEGER, ParentUID, Name TEXT)",
+        "INSERT INTO BidPageFolders VALUES ('011', 1, NULL, 'Mom')",
+        "INSERT INTO BidPageFolders VALUES ('012', 1, '011', 'Kid')",
+    )
+
+    def test_a_deleted_uid_with_leading_zeros_names_the_same_folder(self):
+        self.call_validator(self._TYPED, self.validate, {"deleted_folder_uids": ["011"]})
+
+    def test_a_folder_stored_with_a_text_uid_is_deleted_by_its_integer_value(self):
+        self.call_validator(self._TEXT, self.validate, {"deleted_folder_uids": [11]})
+
+    def test_an_updated_uid_with_leading_zeros_names_the_same_folder(self):
+        self.call_validator(self._TYPED, self.validate, {"folders": [{"uid": "012", "name": "Kid"}]})
+
+    def test_an_unknown_folder_is_still_refused(self):
+        from ost_visualizer.infrastructure.database.bid_owned_identity import MissingBidOwnedUidError
+
+        with self.assertRaises(MissingBidOwnedUidError):
+            self.call_validator(self._TYPED, self.validate, {"folders": [{"uid": "13", "name": "Nope"}]})
+        with self.assertRaises(MissingBidOwnedUidError):
+            self.call_validator(self._TYPED, self.validate, {"deleted_folder_uids": ["13"]})
+
+
+class AreaValidatorCanonicalUidTests(unittest.TestCase, _ValidatorHarness, _AreaFixture):
+    """Area uids are compared by integer value; a parent pointer is a reference, never a root marker."""
+
+    validate = staticmethod(_RealContractOps._require_valid_bid_area_changes)
+
+    def check(self, changes, extra=(), ddl=None):
+        return self.call_validator(ddl or (*self.DDL, *extra), self.validate, changes)
+
+    def test_a_deleted_uid_with_leading_zeros_names_the_same_area(self):
+        self.check(self.changes(deleted=["012"]))
+
+    def test_an_updated_uid_with_leading_zeros_names_the_same_area(self):
+        self.check(self.changes(updated=[self.area("012", "Other again")]))
+
+    def test_an_updated_area_with_leading_zeros_closes_a_parent_cycle_by_integer_value(self):
+        from ost_visualizer.infrastructure.database.bid_owned_identity import CyclicBidOwnedReferenceError
+
+        with self.assertRaises(CyclicBidOwnedReferenceError):
+            self.check(self.changes(updated=[self.area("010", "Root", parent=11)]))
+
+    def test_an_area_stored_with_a_text_uid_is_updated_by_its_integer_value(self):
+        ddl = (
+            "CREATE TABLE Bids (UID INTEGER)",
+            "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidAreas (UID, BidUID INTEGER, ParentUID, Name TEXT)",
+            "INSERT INTO BidAreas VALUES ('011', 1, NULL, 'Root')",
+        )
+        self.check(self.changes(updated=[self.area("11", "Renamed")]), ddl=ddl)
+
+    def test_a_parent_pointer_to_area_one_is_a_reference_that_can_dangle(self):
+        from ost_visualizer.infrastructure.database.bid_owned_identity import DanglingBidOwnedReferenceError
+
+        with self.assertRaisesRegex(
+            DanglingBidOwnedReferenceError,
+            r"^BidAreas\.UID=13 references missing BidAreas\.UID=1 through ParentUID\.$",
+        ):
+            self.check(self.changes(), extra=("INSERT INTO BidAreas VALUES (13, 1, 1, 'Lost', 4, 1, '{L}')",))
+
+    def test_new_areas_that_form_a_parent_cycle_cannot_be_ordered_for_insert(self):
+        areas = [self.area("a", "A", parent="b"), self.area("b", "B", parent="a")]
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            _RealContractOps._order_new_bid_areas_for_insert(areas)
+
+    def test_new_areas_are_ordered_parents_first_and_otherwise_as_given(self):
+        areas = [
+            self.area("kid", "K", parent="mom"),
+            self.area("solo", "S"),
+            self.area("mom", "M"),
+        ]
+        ordered = _RealContractOps._order_new_bid_areas_for_insert(areas)
+        self.assertEqual([a.uid for a in ordered], ["mom", "kid", "solo"])
+
+
+class MeasureBaseValueShapeTests(unittest.TestCase):
+    """The measure system arrives as text from the dialog and may be stored as text by older files."""
+
+    _DDL = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT, MeasureBase)",
+        "INSERT INTO Bids VALUES (1, 'Job', 0)",
+        "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, Name TEXT, UOM1 INTEGER)",
+    )
+
+    def _db(self):
+        conn = _contract_db(*self._DDL)
+        conn.execute("INSERT INTO BidConditions VALUES (1, 1, 'Wall', ?)", (UOM_LINEAR_FEET,))
+        return conn
+
+    def test_a_textual_measure_base_switches_the_system_and_is_stored_as_a_number(self):
+        conn = self._db()
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_name": "Job", "measure_base": "1"}
+            ),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT UOM1 FROM BidConditions"), [(UOM_M,)])
+        self.assertEqual(
+            _rows(conn, "SELECT MeasureBase, typeof(MeasureBase) FROM Bids"), [(1, "integer")]
+        )
+
+    def test_a_stored_text_measure_base_equal_to_the_requested_one_changes_nothing(self):
+        conn = self._db()
+        conn.execute("UPDATE Bids SET MeasureBase = '1'")
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_name": "Job", "measure_base": 1}
+            ),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT UOM1 FROM BidConditions"), [(UOM_LINEAR_FEET,)])
+
+    def test_a_null_stored_measure_base_counts_as_imperial(self):
+        conn = self._db()
+        conn.execute("UPDATE Bids SET MeasureBase = NULL")
+        _RealContractOps(conn).save_cover_sheet("x.mdb", "1", {"job_name": "Job", "measure_base": 0})
+        self.assertEqual(_rows(conn, "SELECT UOM1 FROM BidConditions"), [(UOM_LINEAR_FEET,)])
+        _RealContractOps(conn).save_cover_sheet("x.mdb", "1", {"job_name": "Job", "measure_base": 1})
+        self.assertEqual(_rows(conn, "SELECT UOM1 FROM BidConditions"), [(UOM_M,)])
+
+
+class ConditionValueShapeTests(unittest.TestCase):
+    """Unit and calculation codes read back from a loosely typed file are compared as integers."""
+
+    _DDL = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT, MeasureBase INTEGER)",
+        "INSERT INTO Bids VALUES (1, 'Job', 0)",
+        "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, Name TEXT, UOM1, UOM2, UOM3, "
+        "Quantity1, Quantity2, Quantity3)",
+        "CREATE TABLE WriteLog (Col TEXT, UID INTEGER)",
+        "CREATE TRIGGER log_uom1 AFTER UPDATE OF UOM1 ON BidConditions "
+        "BEGIN INSERT INTO WriteLog VALUES ('UOM1', NEW.UID); END",
+        "CREATE TRIGGER log_uom2 AFTER UPDATE OF UOM2 ON BidConditions "
+        "BEGIN INSERT INTO WriteLog VALUES ('UOM2', NEW.UID); END",
+        "CREATE TRIGGER log_uom3 AFTER UPDATE OF UOM3 ON BidConditions "
+        "BEGIN INSERT INTO WriteLog VALUES ('UOM3', NEW.UID); END",
+    )
+
+    def test_text_coded_conditions_are_converted_exactly_as_integer_coded_ones(self):
+        conn = _contract_db(*self._DDL)
+        conn.execute(
+            "INSERT INTO BidConditions VALUES (1, 1, 'Plain', ?, ?, ?, ?, ?, ?)",
+            tuple(
+                str(value)
+                for value in (
+                    UOM_M, UOM_SQUARE_FEET, UOM_M3,
+                    CALC_LINEAR_LENGTH, CALC_LINEAR_BOTH_SIDES, CALC_VOLUME,
+                )
+            ),
+        )
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_name": "Job", "measure_base": 1}
+            ),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT Col, UID FROM WriteLog"), [("UOM2", 1)])
+        self.assertEqual(
+            _rows(conn, "SELECT CAST(UOM2 AS INTEGER) FROM BidConditions"), [(UOM_M2,)]
+        )
+
+    def test_text_coded_imperial_conditions_convert_every_unit_and_leave_metric_ones_alone(self):
+        conn = _contract_db(*self._DDL)
+        for uid, units in (
+            (1, (UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET)),
+            (2, (UOM_M, UOM_M2, UOM_M3)),
+        ):
+            conn.execute(
+                "INSERT INTO BidConditions VALUES (?, 1, 'Row', ?, ?, ?, ?, ?, ?)",
+                (uid, *(str(u) for u in units),
+                 *(str(c) for c in (CALC_LINEAR_LENGTH, CALC_LINEAR_BOTH_SIDES, CALC_VOLUME))),
+            )
+        conn.execute("INSERT INTO BidConditions VALUES (3, 1, 'Uncalculated', '0', '0', '0', '0', '0', '0')")
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_name": "Job", "measure_base": 1}
+            ),
+            True,
+        )
+        self.assertEqual(
+            sorted(_rows(conn, "SELECT Col, UID FROM WriteLog")),
+            [("UOM1", 1), ("UOM2", 1), ("UOM3", 1)],
+        )
+        self.assertEqual(
+            _rows(conn, "SELECT CAST(UOM1 AS INTEGER), CAST(UOM2 AS INTEGER), CAST(UOM3 AS INTEGER) "
+                        "FROM BidConditions WHERE UID = 1"),
+            [(UOM_M, UOM_M2, UOM_M3)],
+        )
+
+    def test_blank_codes_are_zero(self):
+        conn = _contract_db(*self._DDL)
+        conn.execute("INSERT INTO BidConditions VALUES (1, 1, 'Blank', NULL, '', NULL, NULL, '', NULL)")
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_name": "Job", "measure_base": 1}
+            ),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT COUNT(*) FROM WriteLog"), [(0,)])
+
+
+class PageDeleteTextUidTests(unittest.TestCase):
+    """Deleting a page re-points the comment and takeoff links of other pages by integer uid."""
+
+    _DDL = (
+        "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+        "INSERT INTO Bids VALUES (1, 'Job')",
+        "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        "INSERT INTO BidPages VALUES (10, 1)",
+        "INSERT INTO BidPages VALUES (11, 1)",
+        "CREATE TABLE BidComments (UID, BidUID INTEGER, BidPageUID INTEGER, ParentCommentUID INTEGER)",
+        "INSERT INTO BidComments VALUES ('31', 1, 10, NULL)",
+        "INSERT INTO BidComments VALUES (32, 1, 11, 31)",
+        "CREATE TABLE BidTakeoffs (UID, BidUID INTEGER, BidPageUID INTEGER, ParentUID INTEGER)",
+        "INSERT INTO BidTakeoffs VALUES ('41', 1, 10, NULL)",
+        "INSERT INTO BidTakeoffs VALUES (42, 1, 11, 41)",
+    )
+
+    def test_links_to_comments_and_takeoffs_of_the_deleted_page_are_cleared(self):
+        conn = _contract_db(*self._DDL)
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_name": "Job", "deleted_page_uids": [10]}
+            ),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT ParentCommentUID FROM BidComments WHERE UID = 32"), [(None,)])
+        self.assertEqual(_rows(conn, "SELECT ParentUID FROM BidTakeoffs WHERE UID = 42"), [(None,)])
+        self.assertEqual(_rows(conn, "SELECT UID FROM BidPages"), [(11,)])
+
+    def test_a_takeoff_table_with_only_some_reference_columns_is_cleared_for_those_only(self):
+        conn = _contract_db(
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+            "INSERT INTO Bids VALUES (1, 'Job')",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidPages VALUES (10, 1)",
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (41, 1, 10)",
+        )
+        self.assertIs(
+            _RealContractOps(conn).save_cover_sheet(
+                "x.mdb", "1", {"job_name": "Job", "deleted_page_uids": [10]}
+            ),
+            True,
+        )
+        self.assertEqual(_rows(conn, "SELECT COUNT(*) FROM BidPages"), [(0,)])
+
+
+# ---------------------------------------------------------------------------
+# Strict identifier binding for the whole module.
+#
+# Every UID / BidUID this mixin sends to the database is an integer: the Access
+# columns are Long, and Access criteria on a Long column do not take numeric
+# text.  sqlite's INTEGER affinity silently coerces '5' to 5, so without this
+# patch a dropped int() on a bound identifier is invisible.  Parameters that go
+# into the Employees Text columns (EmployeeNo, postal code, phone numbers...) are
+# exempt because they legitimately hold digit strings; the identifier columns of
+# the same statement (UID, PayClassUID) stay strict.
+# ---------------------------------------------------------------------------
+_ORIGINAL_CURSOR_EXECUTE = None
+_EMPLOYEE_TEXT_COLUMNS = frozenset(
+    {
+        "EmployeeNo", "FirstName", "LastName", "Address1", "Address2", "City",
+        "State", "Zip", "HomePhone", "MobilePhone", "EMail",
+    }
+)
+
+
+def _bound_column_names(query):
+    import re as _re
+
+    if query.lstrip().upper().startswith("UPDATE"):
+        return _re.findall(r"\[(\w+)\]\s*=\s*\?", query)
+    match = _re.search(r"\(([^)]*)\)\s*VALUES", query, _re.IGNORECASE)
+    return _re.findall(r"\[(\w+)\]", match.group(1)) if match else []
+
+
+def _strict_identifier_execute(self, query, *params):
+    flat = params[0] if len(params) == 1 and isinstance(params[0], (list, tuple)) else params
+    names = _bound_column_names(query) if "[Employees]" in query else []
+    for index, parameter in enumerate(flat):
+        if names and index < len(names) and names[index] in _EMPLOYEE_TEXT_COLUMNS:
+            continue
+        if isinstance(parameter, str) and parameter.strip().lstrip("-").isdigit():
+            raise AssertionError(f"numeric text bound as a parameter: {parameter!r} in {query[:80]}")
+    return _ORIGINAL_CURSOR_EXECUTE(self, query, *params)
+
+
+def setUpModule():
+    global _ORIGINAL_CURSOR_EXECUTE
+    _ORIGINAL_CURSOR_EXECUTE = _SqliteCursorWrapper.execute
+    _SqliteCursorWrapper.execute = _strict_identifier_execute
+
+
+def tearDownModule():
+    _SqliteCursorWrapper.execute = _ORIGINAL_CURSOR_EXECUTE

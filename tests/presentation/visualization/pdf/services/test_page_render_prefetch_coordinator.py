@@ -564,3 +564,107 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator._active_request_ids, {request_id})
         rendering.complete(request_id)
         self.assertEqual(coordinator._active_request_ids, set())
+
+
+class PrefetchWithScriptedStrategyTests(unittest.TestCase):
+    """Prefetch decisions driven by explicit load strategies (no page files)."""
+
+    class Strategies:
+        def __init__(self, **flags):
+            self.values = dict(
+                needs_async_loading=True,
+                load_composite=False,
+                load_main=False,
+                load_overlay=False,
+                pdf_width_pts=612.0,
+                pdf_height_pts=792.0,
+                main_scale=INTERACTIVE_PDF_RENDER_SCALE,
+            )
+            self.values.update(flags)
+
+        def determine_load_strategy(self, _page):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(**self.values)
+
+    def run_prefetch(self, strategy, *, cache=None, **page_overrides):
+        rendering = FakeRenderingService()
+        coordinator = PageRenderPrefetchCoordinator(
+            rendering, strategy, cache or FakeCache()
+        )
+        values = {"uid": "p1", "name": "p1", "image_path": "p1.pdf"}
+        values.update(page_overrides)
+        neighbour = Page(**values)
+        current = Page(uid="p2", name="p2", image_path="p2.pdf")
+        coordinator.prefetch_nearby_pages(current, [neighbour, current], None)
+        return rendering, coordinator
+
+    def test_a_page_is_prefetched_only_when_it_needs_loading_and_is_visible(self):
+        for needs, visible, expected in (
+            (True, True, 1),
+            (True, False, 0),
+            (False, True, 0),
+            (False, False, 0),
+        ):
+            with self.subTest(needs_async_loading=needs, layer_visible=visible):
+                rendering, _coordinator = self.run_prefetch(
+                    self.Strategies(needs_async_loading=needs, load_main=True),
+                    layer_visible=visible,
+                )
+                self.assertEqual(len(rendering.calls), expected)
+
+    def test_a_strategy_that_loads_nothing_leaves_no_request_to_track_or_cancel(self):
+        rendering, coordinator = self.run_prefetch(self.Strategies())
+        self.assertEqual(rendering.calls, [])
+        self.assertEqual(rendering.cancelled, [])
+        self.assertEqual(coordinator._active_request_ids, set())
+
+    def test_an_overlay_is_prefetched_only_when_selected_and_present(self):
+        for load_overlay, path in ((False, "o.pdf"), (True, ""), (True, None)):
+            with self.subTest(load_overlay=load_overlay, path=path):
+                rendering, _coordinator = self.run_prefetch(
+                    self.Strategies(load_overlay=load_overlay),
+                    overlay_image_path=path,
+                )
+                self.assertEqual(rendering.calls, [])
+        rendering, _coordinator = self.run_prefetch(
+            self.Strategies(load_overlay=True), overlay_image_path="o.pdf"
+        )
+        self.assertEqual([call[0] for call in rendering.calls], ["overlay"])
+
+    def test_composite_prefetch_renders_the_unrotated_page(self):
+        rendering, _coordinator = self.run_prefetch(
+            self.Strategies(load_composite=True), rotation=90
+        )
+        (call,) = rendering.calls
+        self.assertEqual(call[0], "composite")
+        self.assertEqual(call[2]["rotation"], 0)
+
+    def test_main_prefetch_renders_the_unrotated_page_index_of_the_page(self):
+        rendering, _coordinator = self.run_prefetch(
+            self.Strategies(load_main=True), rotation=90, page_index=4
+        )
+        (call,) = rendering.calls
+        self.assertEqual((call[2]["rotation"], call[2]["page_index"]), (0, 4))
+
+    def test_a_raster_overlay_without_width_or_height_is_not_prefetched(self):
+        for size in ((0.0, 10.0), (10.0, 0.0), (0.0, 0.0), (-1.0, 10.0), (10.0, -1.0)):
+            with self.subTest(size=size):
+                cache = FakeCache(sizes={("o.tif", 0): size})
+                rendering, _coordinator = self.run_prefetch(
+                    self.Strategies(load_overlay=True),
+                    cache=cache,
+                    overlay_image_path="o.tif",
+                )
+                self.assertEqual(rendering.calls, [])
+                self.assertEqual(cache.render_checks, [])
+        cache = FakeCache(sizes={("o.tif", 0): (1.0, 1.0)})
+        rendering, _coordinator = self.run_prefetch(
+            self.Strategies(load_overlay=True),
+            cache=cache,
+            overlay_image_path="o.tif",
+        )
+        self.assertEqual(
+            [call[2]["render_scale"] for call in rendering.calls],
+            [RASTER_NATIVE_RENDER_SCALE],
+        )

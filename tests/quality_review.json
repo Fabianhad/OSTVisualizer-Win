@@ -1,7 +1,7 @@
 {
   "campaign": "Repository-wide test-quality audit",
   "baseline_commit": "6e53a5b",
-  "status": "complete: 519/519 modules reviewed (2026-10-01); every defined test has a specific per-test note. Single review pass per test; no second independent fresh pass was performed. | second pass (SQL/runtime): complete for the 101 selected modules (2026-10-03), see second_pass_campaign; decisions resolved through S4 except OPEN-1/OPEN-2 (untouched by instruction) | targeted second pass of 12 further modules (2026-10-16): see second_pass_campaign.round10_2026-10-16_targeted_first_pass_modules | targeted second pass round 2 (2026-10-16): 13 further modules, see second_pass_campaign.round11_2026-10-16_remaining_first_pass_modules",
+  "status": "WIP checkpoint 2026-11-06: second-pass audit INCOMPLETE (see audit_2026-11-05_checkpoint). Earlier history: complete: 519/519 modules reviewed (2026-10-01); every defined test has a specific per-test note. Single review pass per test; no second independent fresh pass was performed. | second pass (SQL/runtime): complete for the 101 selected modules (2026-10-03), see second_pass_campaign; decisions resolved through S4 except OPEN-1/OPEN-2 (untouched by instruction) | targeted second pass of 12 further modules (2026-10-16): see second_pass_campaign.round10_2026-10-16_targeted_first_pass_modules | targeted second pass round 2 (2026-10-16): 13 further modules, see second_pass_campaign.round11_2026-10-16_remaining_first_pass_modules",
   "baseline": {
     "modules": 519,
     "defined_methods": 5000,
@@ -10,7 +10,9 @@
     "defined_methods_at_reconciliation": 5239,
     "defined_methods_at_completion": 8676,
     "last_full_run_at_completion": 8669,
-    "skips_at_completion": 30
+    "skips_at_completion": 30,
+    "modules_at_checkpoint_2026-11-06": 597,
+    "defined_methods_at_checkpoint_2026-11-06": 17134
   },
   "review_policy": "Each listed test was read alongside its target and fixtures. Unlisted tests remain pending. Static flags and successful execution do not establish review. No subsystem is complete before its fresh review and affected sweep.",
   "production_fixes": [
@@ -41266,6 +41268,42 @@
         "ProductionPackageLayoutTests.test_the_production_tree_is_namespace_packages_only": "Added (failing first): the real tree has no __init__.py and no layout violation.",
         "ProductionPackageLayoutTests.test_the_full_scan_reports_the_package_layout_category": "Added (failing first): main() returns 0 and prints Package layout: PASS."
       }
+    },
+    "tests/infrastructure/mdb/components/test_legend_position.py": {
+      "status": "new module, not part of the first-pass ledger; NOT reviewed in this ledger",
+      "added": "2026-11-05/06 (second-pass audit)",
+      "audit_status": "Awaiting Verification",
+      "see": "audit_2026-11-05_checkpoint.modules"
+    },
+    "tests/infrastructure/mdb/components/test_sql_helpers.py": {
+      "status": "new module, not part of the first-pass ledger; NOT reviewed in this ledger",
+      "added": "2026-11-05/06 (second-pass audit)",
+      "audit_status": "Awaiting Verification",
+      "see": "audit_2026-11-05_checkpoint.modules"
+    },
+    "tests/infrastructure/mdb/test_bid_settings_contract.py": {
+      "status": "new module, not part of the first-pass ledger; NOT reviewed in this ledger",
+      "added": "2026-11-05/06 (second-pass audit)",
+      "audit_status": "Awaiting Verification",
+      "see": "audit_2026-11-05_checkpoint.modules"
+    },
+    "tests/infrastructure/mdb/test_reference_schema_metadata.py": {
+      "status": "new module, not part of the first-pass ledger; NOT reviewed in this ledger",
+      "added": "2026-11-05/06 (second-pass audit)",
+      "audit_status": "Awaiting Verification",
+      "see": "audit_2026-11-05_checkpoint.modules"
+    },
+    "tests/infrastructure/mdb/test_reference_validation.py": {
+      "status": "new module, not part of the first-pass ledger; NOT reviewed in this ledger",
+      "added": "2026-11-05/06 (second-pass audit)",
+      "audit_status": "Awaiting Verification",
+      "see": "audit_2026-11-05_checkpoint.modules"
+    },
+    "tests/integration/navigation/test_bid_switch_last_page.py": {
+      "status": "new module, not part of the first-pass ledger; NOT reviewed in this ledger",
+      "added": "2026-11-05/06 (second-pass audit)",
+      "audit_status": "In Progress",
+      "see": "audit_2026-11-05_checkpoint.modules"
     }
   },
   "subsystems": {
@@ -41356,8 +41394,8 @@
     }
   ],
   "next_review": {
-    "scope": "none pending",
-    "notes": "See pending_findings for open decisions and limitations."
+    "scope": "resume the second-pass audit; see audit_2026-11-05_checkpoint (modules, owner_decisions_needed) and tests/AUDIT_HANDOFF_2026-11-06.md",
+    "notes": "Only modules marked Verified in audit_2026-11-05_checkpoint.modules were independently approved."
   },
   "latest_validation": {
     "full_suite": {
@@ -43149,5 +43187,1994 @@
         "remaining first-pass-only modules outside the top 15 (layer_operations, bid_data_reader, ai_planar_regions and others)"
       ]
     }
+  },
+  "audit_2026-11-05_checkpoint": {
+    "date": "2026-11-06",
+    "nature": "WIP checkpoint. The owner switched computers; agents were stopped at safe checkpoints. NOT a completed audit.",
+    "rule": "Only \"Verified\" entries were approved by a verifier agent separate from the auditor. Everything else is unfinished or unverified and must not be counted as second-passed.",
+    "agents": {
+      "auditors": {
+        "A1": "SQL writer/schema/dialogs",
+        "A2": "file operation handler, deferred persistence manager, project write service",
+        "A3": "UI coordinator, main window, window, page combo, plan view",
+        "A4": "AI takeoff / MCP modules",
+        "A4b": "AI corpus + corpus worker (handed over from A4)",
+        "A5": "MDB readers/operations, planar regions",
+        "A5b": "remaining MDB modules (importers, exporter, creator, integrity, schema, five new modules)",
+        "A6": "PDF export/render modules",
+        "A6b": "15 blocked PDF modules: NEVER STARTED",
+        "A7": "domain/DTO/orchestrator/builder modules, integration modules, OPEN-1"
+      },
+      "verifiers": {
+        "V1": "A1",
+        "V2": "A2",
+        "V3": "A3",
+        "V4": "A4",
+        "V5": "A5 (six modules)",
+        "V6": "A6",
+        "V7": "A7 (30 submitted modules)"
+      },
+      "state": "All agents were stopped at their own checkpoint. Their full reports are tests/_audit_progress/*.json (kept locally, OneDrive-synced, not committed)."
+    },
+    "module_counts": {
+      "Verified": 54,
+      "Awaiting Verification": 53,
+      "In Progress": 27,
+      "Partial": 1,
+      "Blocked": 23,
+      "Verification Failed": 1,
+      "Merged into test_pdf_exporter.py": 1,
+      "Merged into test_schema_validator.py": 1,
+      "Merged into test_server.py": 1
+    },
+    "modules": {
+      "tests/infrastructure/sql/test_writer.py": {
+        "auditor": "A1",
+        "status": "Verified",
+        "verifier": "V1",
+        "mutation": {
+          "total": 1400,
+          "killed": 1351,
+          "survived": 49,
+          "equivalent": 42,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/sql/test_schema_definition.py": {
+        "auditor": "A1",
+        "status": "Verified",
+        "verifier": "V1",
+        "mutation": {
+          "total": 624,
+          "killed": 624,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/dialogs/test_sql_connection_dialog.py": {
+        "auditor": "A1",
+        "status": "Verified",
+        "verifier": "V1",
+        "mutation": {
+          "total": 221,
+          "killed": 213,
+          "survived": 8,
+          "equivalent": 8,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/dialogs/test_sql_database_dialog.py": {
+        "auditor": "A1",
+        "status": "Verified",
+        "verifier": "V1",
+        "mutation": {
+          "total": 225,
+          "killed": 221,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/sql/test_schema_validator.py": {
+        "auditor": "A1",
+        "status": "Verified",
+        "verifier": "V1"
+      },
+      "tests/presentation/managers/test_deferred_persistence_manager.py": {
+        "auditor": "A2",
+        "status": "Awaiting Verification",
+        "note": "V2 failed first pass (#397 hash-seed-dependent, #638 misclassified); A2 added V2s two tests, V2 must re-run multi-seed sweep",
+        "outstanding": "Four hang-only mutants (connected-states closure loop) have no assertion-based kill.; Equivalence of #503, #511, #659 rests on arguments plus differential chaos evidence, not on a machine proof.; SQL fidelity: the SQL path is the queue_page_setting_if_sql boundary of a fake; nothing proves server behaviour.; Full multi-seed (PYTHONHASHSEED) mutation re-sweep of deferred_persistence_manager.py incomplete: stopped at 700/855 for seeds 2, 5, 6; the 15-17 load timeouts per seed (240 s limit) and the 4 true hang mutants were not re-run. Authoritative per-seed survivor list therefore not produced; V",
+        "mutation": {
+          "total": 855,
+          "killed": 815,
+          "survived": 36,
+          "equivalent": 36,
+          "excluded": 0,
+          "timeouts": 4
+        }
+      },
+      "tests/presentation/handlers/test_file_operation_handler.py": {
+        "auditor": "A2",
+        "status": "Verified",
+        "verifier": "V2",
+        "mutation": {
+          "total": 545,
+          "killed": 542,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/services/test_project_write_service.py": {
+        "auditor": "A2",
+        "status": "Verified",
+        "verifier": "V2",
+        "mutation": {
+          "total": 2992,
+          "killed": 2984,
+          "survived": 7,
+          "equivalent": 7,
+          "excluded": 0,
+          "timeouts": 1
+        }
+      },
+      "tests/presentation/components/test_page_combo.py": {
+        "auditor": "A3",
+        "status": "Verified",
+        "verifier": "V3",
+        "mutation": {
+          "total": 550,
+          "killed": 507,
+          "survived": 43,
+          "equivalent": 42,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/coordinators/test_ui_event_coordinator.py": {
+        "auditor": "A3",
+        "status": "Verified",
+        "verifier": "V3",
+        "mutation": {
+          "total": 4338,
+          "killed": 4318,
+          "survived": 20,
+          "equivalent": 18,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/windows/components/test_window.py": {
+        "auditor": "A3",
+        "status": "Verified",
+        "verifier": "V3",
+        "mutation": {
+          "total": 1923,
+          "killed": 1900,
+          "survived": 23,
+          "equivalent": 22,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/test_main_window.py": {
+        "auditor": "A3",
+        "status": "Awaiting Verification",
+        "note": "V3 failed first pass; all V3 corrections applied by A3, not yet re-verified",
+        "outstanding": "The 158 older tests were not re-read individually in this pass; mutation evidence only.; Survivors are classified equivalent with per-line arguments (28); V3 should re-check the arguments, especially those for guards that only matter against a real Qt object.",
+        "mutation": {
+          "total": 1758,
+          "killed": 1730,
+          "survived": 28,
+          "equivalent": 28,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/handlers/test_plan_view_action_handler.py": {
+        "auditor": "A3",
+        "status": "Awaiting Verification",
+        "outstanding": "The 577 older tests were not re-read whole; fakes' contract and survivors were reviewed. Awaiting verification.",
+        "mutation": {
+          "total": 2116,
+          "killed": 2060,
+          "survived": 44,
+          "equivalent": 24,
+          "excluded": 12,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/components/plan_view/test_view.py": {
+        "auditor": "A3",
+        "status": "In Progress",
+        "outstanding": "NOT DONE: patch show_warning in test_cold_composite_first_move_keeps_one_overlay_through_stale_frame (wrap view._commit_overlay_move() in patch('...plan_view.view.show_warning') and assert not called), then rerun the 6 hanging mutants (L3391/3393/3432 timeouts) to confirm they become assertion kills.; NOT DONE: second-pass per-test notes for the 1048 older test_view.py tests. The kill matrix (stride-4 sample of 1306 covered mutants) was started and STOPPED at the checkpoint, so no per-test attribution exists. Only the 37 A3-added tests have notes (no attribution measured). Older tests were mut",
+        "mutation": {
+          "total": 5231,
+          "killed": 5105,
+          "survived": 109,
+          "equivalent": 108,
+          "excluded": 10,
+          "timeouts": 7
+        }
+      },
+      "tests/tools/test_ai_takeoff_corpus.py": {
+        "auditor": "A4 then A4b",
+        "status": "In Progress",
+        "verifier": "V4 (first pass: Partial; not re-verified after A4b)",
+        "outstanding": "1) Re-run the final test file against the 48 non-killed mutants (ids in scratchpad A4b/ids_c3.txt; rc_3 got 12 of 48) and confirm the mutants listed as genuine test gap (lines 925, 1258, 1276, 1297, 1322, 1331; one of them was killed in the partial rc_3) are killed. 2) Optionally a final full 1446 sweep with --sync. 3) Decide on the line-208 defect."
+      },
+      "tests/tools/test_ai_takeoff_corpus_worker.py": {
+        "auditor": "A4 then A4b",
+        "status": "In Progress",
+        "verifier": "V4 (first pass: Partial; not re-verified after A4b)",
+        "outstanding": "1) Full 689-mutant sweep against the final tests (scratchpad A4b/m2.py with cov_worker2.json/time_worker2.json; it needs about 70 s per mutant under load with 10 workers, roughly 80 minutes) and a re-run of the timeouts with a larger limit. 2) Triage whatever survives; the pre-change survivor list above shows what to expect. 3) Re-verify that moving to the shared bid did not weaken a test (assertions are unchanged; only the setup changed)."
+      },
+      "tests/application/services/test_ai_takeoff_proposal_service.py": {
+        "auditor": "A4",
+        "status": "Partial: 14 genuine gaps left, 5 more mutants (:1670/:1671) killable",
+        "verifier": "V4",
+        "outstanding": "43 survivors (see survivors; genuine gaps: float-tie boundaries at 451/763/1761/1767/1895, fixtures needing a sub-point gap or special opening geometry at 217/754/1734/1869) and 6 non-terminating mutants.",
+        "mutation": {
+          "total": 1139,
+          "killed": 1090,
+          "survived": 43,
+          "equivalent": 29,
+          "excluded": 0,
+          "timeouts": 6
+        }
+      },
+      "tests/application/services/test_ai_changeset_store.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 121,
+          "killed": 121,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/services/test_ai_takeoff_bridge.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 261,
+          "killed": 247,
+          "survived": 10,
+          "equivalent": 10,
+          "excluded": 0,
+          "timeouts": 4
+        }
+      },
+      "tests/mcp_takeoff/test_pipe_client.py": {
+        "auditor": "A4",
+        "status": "Verified",
+        "verifier": "V4",
+        "mutation": {
+          "total": 120,
+          "killed": 120,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_takeoff/test_protocol.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 129,
+          "killed": 128,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_takeoff/test_proxy.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4"
+      },
+      "tests/mcp_takeoff/test_tool_catalog.py": {
+        "auditor": "A4",
+        "status": "Verified",
+        "verifier": "V4",
+        "mutation": {
+          "total": 358,
+          "killed": 358,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_server/test_bridge_client.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 84,
+          "killed": 83,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_server/test_main.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 40,
+          "killed": 39,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_server/test_output_artifacts.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 112,
+          "killed": 108,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_server/test_registry.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 98,
+          "killed": 96,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_server/test_serializers.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 94,
+          "killed": 94,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_server/test_internal_server.py": {
+        "auditor": "A4",
+        "status": "Verified",
+        "verifier": "V4",
+        "mutation": {
+          "total": 331,
+          "killed": 330,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/mcp_server/test_server.py": {
+        "auditor": "A4",
+        "status": "Verified",
+        "verifier": "V4",
+        "mutation": {
+          "total": 315,
+          "killed": 315,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_ai_takeoff_dtos.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 257,
+          "killed": 257,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/services/test_ai_takeoff_tokens.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 57,
+          "killed": 57,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/services/test_ai_takeoff_sidecar_service.py": {
+        "auditor": "A4",
+        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "verifier": "V4",
+        "mutation": {
+          "total": 65,
+          "killed": 61,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_layer_operations.py": {
+        "auditor": "A5",
+        "status": "Awaiting Verification",
+        "note": "V5 failed first pass; reworked, not re-verified",
+        "outstanding": "Per-test notes: layer notes cover 83 tests; the rework classes (LayerParameterTypingTests, LayerTextRowTests) and one note that referenced a nonexistent test id need refreshing. 5 survivors listed (equivalent/unreachable).",
+        "mutation": {
+          "total": 377,
+          "killed": 372,
+          "survived": 5,
+          "equivalent": 5,
+          "excluded": 31,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_bid_data_reader.py": {
+        "auditor": "A5",
+        "status": "Awaiting Verification",
+        "note": "V5 failed first pass; reworked, not re-verified",
+        "outstanding": "Per-test notes cover 125 of 136 tests; the rework classes ReaderNullAndCoercionTests/ReaderTextValueTests lack notes. 17 survivors listed (equivalent/unreachable).",
+        "mutation": {
+          "total": 976,
+          "killed": 959,
+          "survived": 17,
+          "equivalent": 16,
+          "excluded": 58,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_bid_operations.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "Per-test notes exist for 95 of 191 tests (61 pre-existing + 34 earlier new); the ~96 tests added in the later rounds (rich duplicate fixture, helper contracts, round 3-5) have no notes yet.; One survivor (line 425) is an accepted low-value gap.",
+        "mutation": {
+          "total": 1127,
+          "killed": 1095,
+          "survived": 32,
+          "equivalent": 31,
+          "excluded": 138,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_settings_operations.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "Per-test notes exist for 139 of 234 tests (103 pre-existing + 36); about 95 later tests lack notes.; Survivors are individually argued; equivalent classifications rely on the family arguments in the justification text and have not been independently verified.",
+        "mutation": {
+          "total": 1307,
+          "killed": 1259,
+          "survived": 47,
+          "equivalent": 47,
+          "excluded": 91,
+          "timeouts": 1
+        }
+      },
+      "tests/domain/services/test_ai_planar_regions.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "Round-5 tests unswept; 178 baseline survivors mostly unclassified individually (grid/cell arithmetic argued at family level only).; The 97 pre-existing tests were not re-read; no per-test notes written.; Unkilled candidates needing geometry work: neck-ratio and 15-degree boundary constants, along[-1] vs along[-2] in jamb_pair, pairing work caps (4096), facing-cosine multipliers (735/736).",
+        "mutation": {
+          "total": 975,
+          "killed": 794,
+          "survived": 178,
+          "equivalent": 88,
+          "excluded": 5,
+          "timeouts": 3
+        }
+      },
+      "tests/infrastructure/mdb/components/test_overlay_rect.py": {
+        "auditor": "A5",
+        "status": "Awaiting Verification",
+        "note": "V5 failed first pass; reworked, not re-verified",
+        "outstanding": "Notes cover the 6 earlier new tests; the 5 pre-existing tests and the 0.5-inch test have no independent note.",
+        "mutation": {
+          "total": 91,
+          "killed": 91,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 8,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_identity_allocation.py": {
+        "auditor": "A5",
+        "status": "Awaiting Verification",
+        "note": "V5 failed first pass; reworked, not re-verified",
+        "outstanding": "Notes cover 5 tests; 3 pre-existing tests and the new text-uid/edge classes lack independent notes.",
+        "mutation": {
+          "total": 49,
+          "killed": 45,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 5,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_serialization.py": {
+        "auditor": "A5",
+        "status": "Verified",
+        "verifier": "V5",
+        "mutation": {
+          "total": 61,
+          "killed": 57,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 1,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/parsers/test_ost_serializer.py": {
+        "auditor": "A5",
+        "status": "Verified",
+        "verifier": "V5",
+        "mutation": {
+          "total": 45,
+          "killed": 39,
+          "survived": 6,
+          "equivalent": 6,
+          "excluded": 6,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_project_operations.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "Mutation complete (0 survivors). Per-test notes not written for the 10 old and 14 new tests.",
+        "mutation": {
+          "total": 131,
+          "killed": 131,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 8,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_condition_folder_operations.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "Mutation complete (0 survivors). Per-test notes not written.",
+        "mutation": {
+          "total": 80,
+          "killed": 80,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 7,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_condition_operations.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "187 survivors untriaged; battery drafted not applied; per-test notes not written.",
+        "mutation": {
+          "total": 566,
+          "killed": 379,
+          "survived": 187,
+          "equivalent": 0,
+          "excluded": 47,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_bulk_write_helpers.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "Mutation complete (0 survivors). Per-test notes not written.",
+        "mutation": {
+          "total": 55,
+          "killed": 55,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 22,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/parsers/test_position_parser.py": {
+        "auditor": "A5",
+        "status": "Blocked",
+        "outstanding": "Mutation triaged (17 argued survivors). Per-test notes not written.",
+        "mutation": {
+          "total": 184,
+          "killed": 167,
+          "survived": 17,
+          "equivalent": 17,
+          "excluded": 3,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/importers/test_ost_importer.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 7 survivors listed (all argued equivalent/unreachable).",
+        "mutation": {
+          "total": 273,
+          "killed": 266,
+          "survived": 7,
+          "equivalent": 7,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/importers/test_osp_importer.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 8 survivors listed (all argued equivalent/unreachable).",
+        "mutation": {
+          "total": 250,
+          "killed": 242,
+          "survived": 8,
+          "equivalent": 8,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_import_operations.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 32 survivors listed (all argued equivalent/unreachable).",
+        "mutation": {
+          "total": 433,
+          "killed": 401,
+          "survived": 32,
+          "equivalent": 32,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/exporters/test_ost_exporter.py": {
+        "auditor": "A5b",
+        "status": "In Progress",
+        "outstanding": "Final full sweep (exp2: 986 mutants) ran before the last edit: one extra case ('page without UID') was added to test_rows_without_the_required_condition_reference_or_uid_fail_the_export to support the argument for survivor #916 (and its per-test note). Re-run the full ost_exporter sweep (about 35 min with 5 workers) to refresh numbers; expect 916 to remain unreachable or be killed.; The 30 survivors listed are argued, but the arguments for UID-less-takeoff defaults (lines 775, 837) rest on data-domain invariants (UID primary key), not on a code guard.",
+        "mutation": {
+          "total": 986,
+          "killed": 956,
+          "survived": 30,
+          "equivalent": 30,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_annotation_operations.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 4 survivors listed (all argued equivalent).",
+        "mutation": {
+          "total": 482,
+          "killed": 478,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_annotation_reader.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 0 survivors (219/219 killed).",
+        "mutation": {
+          "total": 219,
+          "killed": 219,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/mappers/test_annotation_mapper.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None.",
+        "mutation": {
+          "total": 2,
+          "killed": 2,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_mdb_writer.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 3 survivors listed (2 ContextVar debug names and 1 depth>0 vs >=0 comparison, all argued equivalent)",
+        "mutation": {
+          "total": 127,
+          "killed": 124,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_database_creator.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None (all 225 mutants killed in the final sweep)",
+        "mutation": {
+          "total": 225,
+          "killed": 225,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_database_maintenance.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 3 survivors listed (ReplaceFileW flags 0->1 and removal of argtypes/restype declarations, argued equivalent)",
+        "mutation": {
+          "total": 148,
+          "killed": 145,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_connection_manager.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 1 survivor(s) listed (classified equivalent mutant, justified)",
+        "mutation": {
+          "total": 181,
+          "killed": 180,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_mdb_reader.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None (all 31 mutants killed)",
+        "mutation": {
+          "total": 31,
+          "killed": 31,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_raw_bid_integrity.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 15 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 783,
+          "killed": 752,
+          "survived": 15,
+          "equivalent": 15,
+          "excluded": 10,
+          "timeouts": 6
+        }
+      },
+      "tests/infrastructure/mdb/test_schema_compatibility.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 47,
+          "killed": 47,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_schema_contract.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 1 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 77,
+          "killed": 74,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 2,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_constants.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 115,
+          "killed": 109,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 6,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_reference_schema_metadata.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 1187,
+          "killed": 1187,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_reference_validation.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 5,
+          "killed": 5,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/test_bid_settings_contract.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 7,
+          "killed": 7,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_legend_position.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 2 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 26,
+          "killed": 24,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_sql_helpers.py": {
+        "auditor": "A5b",
+        "status": "Awaiting Verification",
+        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "mutation": {
+          "total": 4,
+          "killed": 4,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_page_operations.py": {
+        "auditor": "A5b",
+        "status": "In Progress",
+        "outstanding": "Re-run a full sweep of page_operations against the final tests and confirm survivor #192 is now killed (tests added: test_overlay_rect_without_any_overlay_columns_has_nothing_to_write, test_overlay_rect_reports_the_translation_columns_it_had_to_skip).; Then change status to Awaiting Verification; survivors #86, #170, #226 are argued unreachable/equivalent in the list.",
+        "mutation": {
+          "total": 333,
+          "killed": 329,
+          "survived": 4,
+          "equivalent": 3,
+          "excluded": 1,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_takeoff_operations.py": {
+        "auditor": "A5b",
+        "status": "In Progress",
+        "outstanding": "Run the full takeoff_operations sweep against the final tests; expect only #122, #287, #288 as argued survivors.; Add 'TypGroupMarkerUID' to TakeoffInsertPersistenceTests._EXTRAS and its expectation in test_raw_extras_from_another_bid_drop_bid_scoped_references_only (survivor #15).; Re-classify any survivor that remains after the re-sweep individually; then change status to Awaiting Verification.",
+        "mutation": {
+          "total": 344,
+          "killed": 316,
+          "survived": 28,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_hierarchy_reader.py": {
+        "auditor": "A5b",
+        "status": "In Progress",
+        "outstanding": "Write a test with two pages of equal Sequence and Name but different UIDs inserted in reverse order (survivor #179).; Decide #180 (ORDER BY fallback of the page query when BidPages lacks Sequence, Name and UID): test with such a table via a direct _get_bid_folder_page_structure call or argue unreachability.; Run the full hierarchy_reader sweep against the final tests, classify what remains, then set Awaiting Verification.",
+        "mutation": {
+          "total": 244,
+          "killed": 233,
+          "survived": 11,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/mdb/components/test_settings_reader.py": {
+        "auditor": "A5b",
+        "status": "In Progress",
+        "outstanding": "Run the full settings_reader sweep against the final tests; expect only #94, #95, #147, #208 as argued survivors.; Then set Awaiting Verification.",
+        "mutation": {
+          "total": 394,
+          "killed": 386,
+          "survived": 8,
+          "equivalent": 4,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/visualization/exporters/test_pdf_exporter.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 694,
+          "killed": 659,
+          "survived": 35,
+          "equivalent": 31,
+          "excluded": 10,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/visualization/exporters/test_osp_exporter.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 160,
+          "killed": 153,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 11,
+          "timeouts": 3
+        }
+      },
+      "tests/presentation/visualization/pdf/services/test_pdf_rendering_service.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 212,
+          "killed": 207,
+          "survived": 3,
+          "equivalent": 1,
+          "excluded": 6,
+          "timeouts": 2
+        }
+      },
+      "tests/presentation/visualization/pdf/test_page_cache.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 319,
+          "killed": 312,
+          "survived": 7,
+          "equivalent": 7,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/infrastructure/test_pdf_metadata_provider.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 143,
+          "killed": 139,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 4,
+          "timeouts": 1
+        }
+      },
+      "tests/presentation/visualization/pdf/renderers/test_page_renderer.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 133,
+          "killed": 131,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 9,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/visualization/pdf/renderers/test_pattern_renderer.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 385,
+          "killed": 369,
+          "survived": 10,
+          "equivalent": 10,
+          "excluded": 0,
+          "timeouts": 6
+        }
+      },
+      "tests/presentation/visualization/pdf/services/test_page_render_prefetch_coordinator.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 93,
+          "killed": 87,
+          "survived": 6,
+          "equivalent": 6,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/visualization/pdf/test_pdf_visible_origin.py": {
+        "auditor": "A6",
+        "status": "Verified",
+        "verifier": "V6",
+        "mutation": {
+          "total": 13,
+          "killed": 13,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 1,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/visualization/pdf/services/test_composite_renderer.py": {
+        "auditor": "A6",
+        "status": "Verification Failed (22 more genuine gaps; V6 scratch killers in tests/_audit_progress/harness_and_probes)",
+        "verifier": "V6",
+        "outstanding": "See mutation block for any survivors; PDF-overlay frame fallback paths that need a failing native renderer are only covered through the fake page cache.",
+        "mutation": {
+          "total": 359,
+          "killed": 307,
+          "survived": 52,
+          "equivalent": 45,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/presentation/visualization/pdf/renderers/test_annotation_renderer.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Only swept, not strengthened. annotation_renderer.py: 686 mutants, 179 killed / 152 survived / 350 never executed by its 7 local tests (pre-pass sweep only, not strengthened). Highlight quads, cloud geometry, dimension segments, calculate_annotation_geometry and bezier helpers have almost no local assertions (other suites exercise them indirectly, e.g. tests/integration/rendering/test_pdf_export_geometry.py)."
+      },
+      "tests/presentation/visualization/pdf/renderers/test_annotation_item_renderer.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached: no sweep, no new assertions."
+      },
+      "tests/presentation/visualization/pdf/renderers/test_takeoff_renderer.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached: no sweep, no new assertions."
+      },
+      "tests/presentation/services/test_ai_takeoff_pdf_source.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached."
+      },
+      "tests/integration/native/test_pdf_writer.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached; native C++ (ost_pdf_writer) cannot be mutated with the AST harness."
+      },
+      "tests/integration/native/test_pdf_annotation_output.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached; native C++ output."
+      },
+      "tests/integration/native/test_pdf_renderer.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached; native C++ (ost_pdf)."
+      },
+      "tests/integration/native/test_pdf_path_items.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached; native C++."
+      },
+      "tests/integration/native/test_pdf_page_reuse.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached; native C++."
+      },
+      "tests/integration/native/test_pdfium_lock_coverage.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached; native C++."
+      },
+      "tests/integration/native/test_pdf_elevation_callout.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached; native C++."
+      },
+      "tests/integration/rendering/test_pdf_export_geometry.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached (used here only as a safety net: it still passes with the composite_renderer change)."
+      },
+      "tests/integration/rendering/test_pdf_physical_geometry.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached."
+      },
+      "tests/integration/geometry/test_overlay_pdf_calibration.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached (still passes after the composite_renderer change)."
+      },
+      "tests/integration/preferences/test_pdf_annotation_captions.py": {
+        "auditor": "A6",
+        "status": "Blocked",
+        "outstanding": "Not reached."
+      },
+      "tests/domain/aggregates/test_config_aggregate.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 339,
+          "killed": 336,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 13,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/aggregates/test_file_state_aggregate.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 19,
+          "killed": 19,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 3,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/aggregates/test_license_aggregate.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 180,
+          "killed": 175,
+          "survived": 5,
+          "equivalent": 5,
+          "excluded": 8,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_condition.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 52,
+          "killed": 52,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_elevation_callout.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 14,
+          "killed": 13,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_file_extensions.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 31,
+          "killed": 30,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_file_state.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 98,
+          "killed": 96,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_hotlink.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 20,
+          "killed": 20,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_layer.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 51,
+          "killed": 51,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_pattern.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 56,
+          "killed": 43,
+          "survived": 13,
+          "equivalent": 13,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_bid.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 22,
+          "killed": 22,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_project_factory.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 49,
+          "killed": 47,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_coordinate_transformation_service.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 200,
+          "killed": 197,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_dimension_format_service.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 302,
+          "killed": 299,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_hardware_identity.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 61,
+          "killed": 61,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_takeoff_domain_service.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 118,
+          "killed": 118,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_page_selection_service.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 65,
+          "killed": 65,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_page_image_plane_transform.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 55,
+          "killed": 54,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_shape.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 135,
+          "killed": 135,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_config.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 405,
+          "killed": 405,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_database_descriptor.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 237,
+          "killed": 233,
+          "survived": 4,
+          "equivalent": 4,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_page.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 203,
+          "killed": 200,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/entities/test_takeoff.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 127,
+          "killed": 124,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 0,
+          "timeouts": 1
+        }
+      },
+      "tests/domain/entities/test_workspace_state.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 343,
+          "killed": 343,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_condition_quantity_service.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 91,
+          "killed": 84,
+          "survived": 7,
+          "equivalent": 7,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_elevation.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 179,
+          "killed": 170,
+          "survived": 9,
+          "equivalent": 9,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_elevation_callout_service.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 44,
+          "killed": 44,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_page_scale_transform.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 58,
+          "killed": 55,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_takeoff_summary_service.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 17,
+          "killed": 17,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_uom_service.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 1044,
+          "killed": 1014,
+          "survived": 30,
+          "equivalent": 30,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/domain/services/test_project_data_service.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 810,
+          "killed": 805,
+          "survived": 5,
+          "equivalent": 5,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/test_condition_change_impact.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 87,
+          "killed": 71,
+          "survived": 16,
+          "equivalent": 16,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/test_layer_change_impact.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 39,
+          "killed": 38,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/test_render_quality.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 33,
+          "killed": 33,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_annotation_caption_dto.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 31,
+          "killed": 31,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_annotation_creation_factory.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 12,
+          "killed": 12,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_file_import_args.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 28,
+          "killed": 28,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_license_activation_identity_dto.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 61,
+          "killed": 60,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_collaboration_dtos.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "45 surviving mutants not killed/argued (see survivors).; Original tests of this module were not all individually re-read in this pass (see per_test_notes).",
+        "mutation": {
+          "total": 698,
+          "killed": 646,
+          "survived": 52,
+          "equivalent": 14,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_collaboration_resource_catalog.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 212,
+          "killed": 210,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_mesh_geometry_dto.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 7,
+          "killed": 7,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_page_view_dto.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 10,
+          "killed": 10,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_paste_ref_remap_dto.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 37,
+          "killed": 37,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_plan_items_paste.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 32,
+          "killed": 31,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_remote_projection_dtos.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 81,
+          "killed": 74,
+          "survived": 7,
+          "equivalent": 7,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/dtos/test_scene_data_dto.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 0,
+          "killed": 0,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/builders/test_service_builder.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "mutation": {
+          "total": 86,
+          "killed": 86,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/builders/test_annotation_view_builder.py": {
+        "auditor": "A7",
+        "status": "Verified",
+        "verifier": "V7",
+        "mutation": {
+          "total": 82,
+          "killed": 81,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/utils/test_quantity_display.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 18,
+          "killed": 18,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/orchestrators/test_lifecycle_orchestrator.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 25,
+          "killed": 25,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 3,
+          "timeouts": 0
+        }
+      },
+      "tests/application/orchestrators/test_visualization_orchestrator.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 7,
+          "killed": 7,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/orchestrators/test_license_event_publisher.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 25,
+          "killed": 25,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/orchestrators/test_license_thread_manager.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 50,
+          "killed": 49,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/orchestrators/test_license_orchestrator.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 191,
+          "killed": 189,
+          "survived": 2,
+          "equivalent": 2,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/services/test_annotation_view_event_handler.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 26,
+          "killed": 26,
+          "survived": 0,
+          "equivalent": 0,
+          "excluded": 1,
+          "timeouts": 0
+        }
+      },
+      "tests/application/services/test_working_directory_service.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 75,
+          "killed": 74,
+          "survived": 1,
+          "equivalent": 1,
+          "excluded": 0,
+          "timeouts": 0
+        }
+      },
+      "tests/application/services/test_update_check_service.py": {
+        "auditor": "A7",
+        "status": "Awaiting Verification",
+        "mutation": {
+          "total": 87,
+          "killed": 80,
+          "survived": 3,
+          "equivalent": 3,
+          "excluded": 4,
+          "timeouts": 4
+        }
+      },
+      "tests/integration/navigation/test_bid_switch_last_page.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "Mutation sweeps were line-range limited to the production code changed by commit 0e0224d; 17 of 26 reader mutants and 12 of 17 save-guard mutants killed; the rest are listed as survivors (several belong to behaviour owned by other suites).; Region 1057-1090 (page choice resolver) was swept too: 4 of 52 killed, 9 timeouts: this module does not own that logic (resolver tests live with the coordinator)."
+      },
+      "tests/integration/placement/test_page_switch_tools.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "9 of 17 load-path and 8 of 25 clear() mutants killed; survivors: condition place-session branch, area-rectangle drag flags and set_area_placement_in_progress (need an Area annotation tool test), redundant preview/backout calls, and And/Or variants of preserve_place that are equivalent without a project change (a two-bid test would be needed for project_changed).; The two older tests were not re-read."
+      },
+      "tests/integration/selection/test_condition_objects.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "view.py 5130-5136 survivors (pending overlay identities, update_selection_visuals) not killed; 1600 survivors are the _placement/_nav None guards (defensive).; 26 original tests not individually re-read."
+      },
+      "tests/integration/surfaces/test_presentation.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "Whole module review and mutation sweep not performed (out of time)."
+      },
+      "tests/integration/cursor/test_hotlink_lifecycle.py": {
+        "auditor": "A7",
+        "status": "In Progress",
+        "outstanding": "Rest of the module not re-read.; window.py hotlink-cancel mutation sweep not completed (baseline flaky under the windows platform inside the harness)."
+      },
+      "tests/presentation/visualization/exporters/test_pdf_raster_background.py": {
+        "auditor": "A6",
+        "status": "Merged into test_pdf_exporter.py (file deleted)",
+        "verifier": "V6"
+      },
+      "tests/infrastructure/sql/test_schema_validator_scope.py": {
+        "auditor": "A1",
+        "status": "Merged into test_schema_validator.py (file deleted)",
+        "verifier": "V1"
+      },
+      "tests/mcp_server/test_server_surface_golden.py": {
+        "auditor": "A4",
+        "status": "Merged into test_server.py (file deleted)",
+        "verifier": "V4"
+      }
+    },
+    "not_started": {
+      "A6b": "15 PDF modules (test_annotation_renderer, test_annotation_item_renderer, test_takeoff_renderer, test_ai_takeoff_pdf_source, test_pdf_writer, test_pdf_annotation_output, test_pdf_renderer, test_pdf_path_items, test_pdf_page_reuse, test_pdfium_lock_coverage, test_pdf_elevation_callout, test_pdf_export_geometry, test_pdf_physical_geometry, test_overlay_pdf_calibration, test_pdf_annotation_captions)",
+      "other": "AI modules never reached by A4: test_ai_takeoff_read_service, ai_* presentation services, audit-log/sidecar-repository persistence tests, domain ai_* tests, integration ai_takeoff tests, architecture/mcp setup-config tests"
+    },
+    "production_changes": {
+      "ost_visualizer/presentation/visualization/pdf/services/composite_renderer.py": "A6: _draw_overlay_image uses setTransform(transform, True). V6 VERIFIED (reproduced without the fix: 3 tests fail).",
+      "ost_visualizer/presentation/components/page_combo.py": "A3: _on_model_data_changed connected to model.dataChanged, disconnected in cleanup(). V3 VERIFIED. The file also carries the owner's own IDE edits (user-authored, excluded from the audit).",
+      "ost_visualizer/presentation/coordinators/ui_event_coordinator.py": "USER edit: three comments removed (is_fallback comment, _unpicked_fallback_page_uid comment). Not an agent change; not audited.",
+      "ost_visualizer/infrastructure/mdb/connection_manager.py": "Pool-eviction guard `if pool.get(abs_path) is conn` in MdbConnectionManager.connection(). Made by A5b sub-worker g4a (per the A5b report); fixes a stale unhealthy-flag / id() reuse defect. V5 confirmed it is justified (its regression test fails on HEAD) but checked only the production diff and that one test; test_connection_manager.py is Awaiting Verification, NOT Verified."
+    },
+    "owner_decisions_needed": {
+      "OPEN-1": "Annotation preflight conflict (status 3 / unmapped type) is currently a SESSION conflict that blocks the whole database. Option A: optimistic conflict scoped to the Bid's annotations_collection (pin with a test_writer test: kind OPTIMISTIC_CONCURRENCY, resource annotations_collection/<bid>; publisher blocks_database False). Option B: keep and document in AGENTS.md (pin kind SESSION on database/<id>, blocks_database True). Nothing implemented. Evidence: tests/_audit_progress/A7.json (open1_decision).",
+      "OPEN-2": "Schema validator scope. NO restriction is implemented and none may be without an explicit product decision. Evidence (A1, analysis verified by V1): OUTPUT INSERTED.[UID] without INTO appears in five statements (three writer inserts, two collaboration_store updates) and fails with error 334 only on a table with an enabled trigger for that DML action; the inspector does not read is_disabled/event type/INSTEAD OF. Alternatives that reject no database: (1) change the five statements to OUTPUT ... INTO @table, (2) warn-only check with extended inspector metadata, (3) document the limitation. Not confirmable without a live SQL Server. Evidence: tests/_audit_progress/A1.json (open2_decision); the comment at tests/infrastructure/sql/test_schema_validator.py ~line 1170 points there.",
+      "curved_linear_area_sf": "pdf_exporter computes a curved linear takeoff's area_sf from the straight chord, not the arc (understates the Bluebeam measurement). Smallest fix: public wrapper in uom_service around _calc_linear_length, used for the curved branch only. Not changed.",
+      "uom_arc_orientation": "(cross1+cross2)<0 heuristic picks the minor arc for sweeps >180 deg (arc 0/250/251 at r=100 measures 190.2, not 438.1); the same heuristic is in cpp_extensions/src/linear_geom/linear_geom.cpp. Pinned by two expectedFailure tests plus a test of today's values. Needs a decision on OST compatibility.",
+      "other_findings_not_changed": [
+        "ai_takeoff_corpus.py:208 parse_scales accepts a zero-denominator fraction with a whole part (smallest fix: _fraction_value returns None when float(denominator)==0)",
+        "deferred_persistence_manager.cancel_pages reads key[2]/key[3] before the len(key)>2 guard (unreachable through the typed schedule_* entry points)",
+        "position_parser.py:67 replace(\" \",\" \") is a no-op (likely a lost no-break space)",
+        "update_layer_name returns True when no row matched",
+        "OpenAnnotationViewUseCase logger argument unused",
+        "build_loaded_files does not set Project.file_path",
+        "SQL identity \"|\" join collision (practically unreachable)",
+        "is_canonical_hwid(None) raises TypeError",
+        "Takeoff.is_hole treats parent \"None\" as a hole while compute_page_quantities treats it as root",
+        "create_rhombus_points ignores half_depth",
+        "DatabaseMutationRequest accepts the .value string but rejects enum members",
+        "NULL JobStatuses.Sequence makes get_job_statuses return []"
+      ],
+      "agents_md_documentation": "A4 proposed AGENTS.md text for the golden files, their regeneration policy and OSTV_SLOW_TESTS (tests/_audit_progress/A4.json proposed_docs). NOT applied; needs review."
+    },
+    "tests": {
+      "defined_before": 14641,
+      "defined_now": 17134,
+      "net_added": 2493,
+      "golden_files": [
+        "tests/infrastructure/mdb/access_reference_ddl_golden.json",
+        "tests/mcp_server/server_surface_golden.json",
+        "tests/mcp_takeoff/tool_catalog_golden.json"
+      ],
+      "golden_note": "Generated from production: change detectors, not independent specs. The two mcp goldens regenerate only with an explicit flag (python -m tests.mcp_server.test_server --regenerate-surface-golden; python -m tests.mcp_takeoff.test_tool_catalog --regenerate-tool-catalog-golden).",
+      "new_helpers": [
+        "tests/helpers/mdb/annotation_write_support.py",
+        "tests/helpers/mdb/ost_attribute_order_golden.py",
+        "tests/helpers/mdb/real_write_contract.py"
+      ],
+      "deleted_files_merged": [
+        "tests/infrastructure/sql/test_schema_validator_scope.py -> test_schema_validator.py",
+        "tests/mcp_server/test_server_surface_golden.py -> test_server.py",
+        "tests/presentation/visualization/exporters/test_pdf_raster_background.py -> test_pdf_exporter.py"
+      ]
+    },
+    "full_suite": {
+      "tests_run": 17116,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 44,
+      "expected_failures": 2,
+      "seconds": 463.4,
+      "result": "OK",
+      "command": "QT_QPA_PLATFORM=offscreen .\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t .",
+      "run_at": "2026-11-06 about 10:00 EST, after all agents had stopped, on the tree being committed",
+      "note": "A green suite is NOT approval of the changes. The 2 expected failures are A7's uom_service arc tests pinning a known limitation (owner decision). The 44 skips include OSTV_* gated live-SQL/slow/firmware tests. Discovery: 17134 defined, 17140 discovered (6 inherited by the gated FullSizeSeededSegmentCapTests); the run count is lower than discovered, probably because class-level skips count once (not verified). An earlier run the same day, before the agents were stopped, failed 2 tests and 1 error from half-finished agent edits and misplaced new test files; the agents fixed those before their checkpoint."
+    },
+    "layout_rule": "tests.architecture.test_test_layout: tests/<dir>/test_<x>.py must mirror ost_visualizer/<dir>/<x>.py (exemptions only under tests/helpers, tests/architecture, tests/integration). New test files must follow it.",
+    "not_committed": [
+      "base_ai.json.cov",
+      "base_tk.json.cov (origin unknown: line-coverage dumps, no agent claims them)",
+      "_audit_snapshots/",
+      "tests/_audit_backup_2026-11-05/",
+      "tests/_audit_progress/ (local, OneDrive-synced)"
+    ],
+    "resume": "See tests/AUDIT_HANDOFF_2026-11-06.md"
   }
 }

@@ -1,5 +1,6 @@
 import os
 import re
+from pathlib import Path
 import tempfile
 import unittest
 import zlib
@@ -41,8 +42,10 @@ from tests.presentation.visualization.exporters.overlay_export_support import (
     _export_single_page as _overlay_export_support__export_single_page,
     _make_exporter as _overlay_export_support__make_exporter,
     _page as _overlay_export_support__page,
+    _near as _overlay_export_support__near,
     _read_pdf_stream_text as _overlay_export_support__read_pdf_stream_text,
     _read_pdf_text as _overlay_export_support__read_pdf_text,
+    _render_pdf_page as _overlay_export_support__render_pdf_page,
 )
 import math
 from ost_visualizer.domain.entities.annotation import (
@@ -82,6 +85,7 @@ from tests.integration.rendering.pdf_geometry_support import (
     _ColorService as _pdf_geometry_support__ColorService,
     _TakeoffService as _pdf_geometry_support__TakeoffService,
     _UomService as _pdf_geometry_support__UomService,
+    _write_pdf as _pdf_geometry_support__write_pdf,
 )
 from unittest import mock
 from ost_visualizer.application.dtos.page_export_data_dto import PageExportData
@@ -243,6 +247,8 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(calls, [(64.0, 0.0, 544.0, 704.0)])
         self.assertTrue(exported_page.source_pdf.endswith("moved-overlay.pdf"))
         self.assertEqual(exported_page.page_index, 0)
+        # A rasterized background is a real source page, never the blank fallback.
+        self.assertFalse(exported_page.is_blank)
 
     def test_overlay_only_pdf_export_rasterizes_rotated_overlay_rect(self):
         writer = _overlay_export_support__FakeWriter()
@@ -265,6 +271,7 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(calls, [0.01])
         self.assertTrue(exported_page.source_pdf.endswith("rotated-overlay.pdf"))
         self.assertEqual(exported_page.page_index, 0)
+        self.assertFalse(exported_page.is_blank)
 
     def test_positioned_overlay_export_clips_to_page_size(self):
         writer = _overlay_export_support__FakeWriter()
@@ -524,6 +531,7 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(calls, [("overlay.tif", 0, "overlay")])
         self.assertTrue(exported_page.source_pdf.endswith("overlay-image.pdf"))
         self.assertEqual(exported_page.page_index, 0)
+        self.assertFalse(exported_page.is_blank)
 
     def test_overlay_only_raster_export_does_not_use_comparison_rendering(self):
         writer = _overlay_export_support__FakeWriter()
@@ -978,12 +986,123 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(composite_renderer.clear_calls, 1)
         self.assertEqual(page_cache.clear_calls, 1)
-        self.assertTrue(
-            any(
-                "Failed to clear PDF export composite renderer cache" in message
-                for message in captured.output
+        self.assertEqual(
+            [record.getMessage() for record in captured.records],
+            ["Failed to clear PDF export composite renderer cache"],
+        )
+
+    def test_page_cache_cleanup_failure_is_logged_by_name_and_does_not_stop_the_rest(
+        self,
+    ):
+        exporter = _overlay_export_support__make_exporter(
+            _overlay_export_support__FakeWriter()
+        )
+        page_cache = _overlay_export_support__FailingClearable()
+        composite_renderer = _overlay_export_support__Clearable()
+        exporter._export_page_cache = page_cache
+        exporter._export_composite_renderer = composite_renderer
+        with self.assertLogs(
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
+            level="ERROR",
+        ) as captured:
+            result = _overlay_export_support__export_single_page(
+                exporter, _overlay_export_support__page()
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(
+            (composite_renderer.clear_calls, page_cache.clear_calls), (1, 1)
+        )
+        self.assertEqual(
+            [record.getMessage() for record in captured.records],
+            ["Failed to clear PDF export page cache"],
+        )
+
+    def test_every_export_outcome_reports_the_pdf_format_name(self):
+        logger_name = (
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter"
+        )
+        outcomes = []
+        writer = _overlay_export_support__FakeWriter()
+        exporter = _overlay_export_support__make_exporter(writer)
+        outcomes.append(
+            _overlay_export_support__export_single_page(
+                exporter, _overlay_export_support__page()
             )
         )
+        with self.assertLogs(logger_name, level="ERROR"):
+            outcomes.append(
+                exporter.export(
+                    [],
+                    "unused.pdf",
+                    display_mode="color",
+                    grayscale_enabled=False,
+                    caption_settings=_overlay_export_support__DISABLED_CAPTION_SETTINGS,
+                    elevation_callouts_enabled=False,
+                    inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                )
+            )
+        writer.merge_result = False
+        with self.assertLogs(logger_name, level="ERROR"):
+            outcomes.append(
+                _overlay_export_support__export_single_page(
+                    exporter, _overlay_export_support__page()
+                )
+            )
+        writer.get_page_geometries = lambda _path: []
+        with self.assertLogs(logger_name, level="ERROR"):
+            outcomes.append(
+                _overlay_export_support__export_single_page(
+                    exporter, _overlay_export_support__page()
+                )
+            )
+        self.assertEqual(
+            [outcome.success for outcome in outcomes], [True, False, False, False]
+        )
+        self.assertEqual({outcome.format_name for outcome in outcomes}, {"PDF"})
+
+    def test_the_temporary_export_directory_exists_only_during_the_export(self):
+        logger_name = (
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter"
+        )
+        for outcome in ("success", "merge failure", "exception"):
+            with self.subTest(outcome=outcome):
+                writer = _overlay_export_support__FakeWriter()
+                writer.merge_result = outcome != "merge failure"
+                if outcome == "exception":
+
+                    def exploding_merge(_pages, _output_path):
+                        raise OSError("writer exploded")
+
+                    writer.merge_pages_with_annotations = exploding_merge
+                exporter = _overlay_export_support__make_exporter(writer)
+                seen = []
+
+                def background(_data, _page, _info, temp_dir, seen=seen):
+                    seen.append(temp_dir)
+                    marker = os.path.join(temp_dir, "marker.pdf")
+                    with open(marker, "wb") as handle:
+                        handle.write(b"%PDF-")
+                    self.assertTrue(os.path.isdir(temp_dir))
+
+                exporter._configure_page_background = background
+                if outcome == "success":
+                    result = _overlay_export_support__export_single_page(
+                        exporter, _overlay_export_support__page()
+                    )
+                else:
+                    with self.assertLogs(logger_name, level="ERROR"):
+                        result = _overlay_export_support__export_single_page(
+                            exporter, _overlay_export_support__page()
+                        )
+                self.assertEqual(result.success, outcome == "success")
+                self.assertEqual(len(seen), 1)
+                self.assertRegex(
+                    os.path.basename(seen[0]), r"^ost_pdf_export_\w{8}$"
+                )
+                self.assertEqual(
+                    os.path.dirname(seen[0]), os.path.normpath(tempfile.gettempdir())
+                )
+                self.assertFalse(os.path.exists(seen[0]))
 
 
 class PdfOvalCollectionTests(unittest.TestCase):
@@ -1423,13 +1542,24 @@ class PdfExportQuantityDataTests(unittest.TestCase):
         )
 
     def collect(
-        self, takeoffs, conditions, *, captions=False, callouts=False, page_info=None
+        self,
+        takeoffs,
+        conditions,
+        *,
+        captions=False,
+        callouts=False,
+        page_info=None,
+        color_map=None,
+        area_selections=None,
+        inactive_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
     ):
         return self.exporter._collect_takeoffs(
             takeoffs,
             {condition.uid: condition for condition in conditions},
             page_info or self.PAGE_INFO,
-            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            color_map,
+            area_selections,
+            inactive_object_color=inactive_color,
             caption_settings=AnnotationCaptionSettingsDto(captions, ()),
             elevation_callouts_enabled=callouts,
         )
@@ -1635,6 +1765,446 @@ class PdfExportQuantityDataTests(unittest.TestCase):
             _polygons, callouts = self.collect(takeoffs, conditions, callouts=False)
         self.assertEqual(callouts, [])
         build.assert_not_called()
+
+    def test_triangles_are_the_smallest_exported_area_and_hole(self):
+        triangle = [0.0, 0.0, 12.0, 0.0, 6.0, 12.0]
+        parent = Takeoff(uid="a", condition_uid="c", position=self.square(120.0))
+        hole = Takeoff(
+            uid="h",
+            condition_uid="c",
+            position=triangle,
+            parent_uid="a",
+            is_negative=True,
+        )
+        for takeoffs, rings in (
+            ([Takeoff(uid="t", condition_uid="c", position=triangle)], None),
+            ([parent, hole], [3]),
+        ):
+            with self.subTest(takeoffs=len(takeoffs)):
+                polygons, _callouts = self.collect(takeoffs, [self.area_condition()])
+                self.assertEqual(len(polygons), 1)
+                self.assertEqual(
+                    len(polygons[0].vertices), 3 if rings is None else 4
+                )
+                if rings is not None:
+                    self.assertEqual([len(ring) for ring in polygons[0].holes], rings)
+        two_points = Takeoff(
+            uid="t", condition_uid="c", position=[0.0, 0.0, 12.0, 0.0, 6.0]
+        )
+        polygons, _callouts = self.collect([two_points], [self.area_condition()])
+        self.assertEqual(polygons, [])
+
+    def test_fractional_depths_and_thicknesses_are_not_rounded_away(self):
+        area = Takeoff(uid="a", condition_uid="c", position=self.square(12.0))
+        polygons, _callouts = self.collect([area], [self.area_condition(thickness=0.6)])
+        self.assertAlmostEqual(polygons[0].depth, 0.05)
+        line = Takeoff(
+            uid="t", condition_uid="c", position=[5.0, 7.0, 125.0, 7.0]
+        )
+        condition = Condition(
+            uid="c", condition_type=Condition.TYPE_LINEAR, thickness=0.5, height=0.6
+        )
+        polygons, _callouts = self.collect([line], [condition])
+        self.assertAlmostEqual(polygons[0].area_sf, 120.0 * 0.5 / 144.0)
+        self.assertAlmostEqual(polygons[0].depth, 0.05)
+
+    def test_linear_measurements_use_the_end_points_in_order(self):
+        condition = Condition(
+            uid="c", condition_type=Condition.TYPE_LINEAR, thickness=6.0
+        )
+        forward = Takeoff(uid="t", condition_uid="c", position=[5.0, 7.0, 35.0, 47.0])
+        reverse = Takeoff(uid="t", condition_uid="c", position=[35.0, 47.0, 5.0, 7.0])
+        for takeoff in (forward, reverse):
+            polygons, _callouts = self.collect([takeoff], [condition])
+            self.assertAlmostEqual(polygons[0].area_sf, 50.0 * 6.0 / 144.0)
+        polygons, _callouts = self.collect([forward], [condition])
+        # The outline is the 6 inch band (offset 2.4, 1.8 either side) between them.
+        expected = OSTCoordinateSystem.ost_to_pdf_coordinates(
+            [2.6, 8.8, 7.4, 5.2, 37.4, 45.2, 32.6, 48.8], self.PAGE_INFO
+        )
+        self.assertEqual(len(polygons[0].vertices), 4)
+        for actual, wanted in zip(polygons[0].vertices, expected):
+            self.assertAlmostEqual(actual[0], wanted[0], places=6)
+            self.assertAlmostEqual(actual[1], wanted[1], places=6)
+
+    def test_a_curved_linear_takeoff_exports_its_thick_arc_outline(self):
+        condition = Condition(
+            uid="c", condition_type=Condition.TYPE_LINEAR, thickness=6.0, height=12.0
+        )
+        control = [0.0, 0.0, 120.0, 0.0, 60.0, 40.0]
+        curved, _callouts = self.collect(
+            [Takeoff(uid="t", condition_uid="c", position=control, curve=0)],
+            [condition],
+        )
+        self.assertEqual(len(curved), 1)
+        # 25 sampled points on the inner and the outer edge of the arc.
+        self.assertEqual(len(curved[0].vertices), 50)
+        chord_y = OSTCoordinateSystem.ost_to_pdf_coordinates(
+            [0.0, 0.0], self.PAGE_INFO
+        )[0][1]
+        bulge = max(abs(vertex[1] - chord_y) for vertex in curved[0].vertices)
+        self.assertGreater(bulge, 50.0)
+        self.assertAlmostEqual(curved[0].depth, 1.0)
+        for curve, position in (
+            (-1, control),
+            (0, control[:4]),
+            (-1, control[:4]),
+        ):
+            with self.subTest(curve=curve, coordinates=len(position)):
+                straight, _callouts = self.collect(
+                    [
+                        Takeoff(
+                            uid="t",
+                            condition_uid="c",
+                            position=position,
+                            curve=curve,
+                        )
+                    ],
+                    [condition],
+                )
+                self.assertEqual(len(straight[0].vertices), 4)
+        other_curve, _callouts = self.collect(
+            [Takeoff(uid="t", condition_uid="c", position=control, curve=3)],
+            [condition],
+        )
+        self.assertEqual(len(other_curve[0].vertices), 50)
+
+    def test_a_curved_arc_starts_and_ends_at_the_end_points_and_passes_the_control(
+        self,
+    ):
+        condition = Condition(
+            uid="c", condition_type=Condition.TYPE_LINEAR, thickness=6.0
+        )
+
+        def centre_line(position):
+            polygons, _callouts = self.collect(
+                [Takeoff(uid="t", condition_uid="c", position=position, curve=0)],
+                [condition],
+            )
+            vertices = polygons[0].vertices
+            count = len(vertices) // 2
+            return [
+                (
+                    (vertices[i][0] + vertices[len(vertices) - 1 - i][0]) / 2.0,
+                    (vertices[i][1] + vertices[len(vertices) - 1 - i][1]) / 2.0,
+                )
+                for i in range(count)
+            ]
+
+        def pdf(x, y):
+            return OSTCoordinateSystem.ost_to_pdf_coordinates([x, y], self.PAGE_INFO)[0]
+
+        start, end = pdf(10.0, 20.0), pdf(130.0, 50.0)
+        # Six values: the sixth pair is a point the arc passes through.
+        line = centre_line([10.0, 20.0, 130.0, 50.0, 80.0, 90.0])
+        self.assertAlmostEqual(line[0][0], start[0], places=6)
+        self.assertAlmostEqual(line[0][1], start[1], places=6)
+        self.assertAlmostEqual(line[-1][0], end[0], places=6)
+        self.assertAlmostEqual(line[-1][1], end[1], places=6)
+        control = pdf(80.0, 90.0)
+        self.assertLess(
+            min(math.dist(point, control) for point in line), 3.0
+        )
+        # Seven values: the last one is a sagitta that replaces the control pair
+        # (junk control coordinates must not matter), measured to the left of the
+        # direction of travel: chord mid (70, 35), unit normal (-0.2425, 0.9701).
+        junk_a = centre_line([10.0, 20.0, 130.0, 50.0, 999.0, 999.0, 15.0])
+        junk_b = centre_line([10.0, 20.0, 130.0, 50.0, -5.0, 7.0, 15.0])
+        self.assertEqual(junk_a, junk_b)
+        apex = pdf(70.0 + 15.0 * 0.24253563, 35.0 - 15.0 * 0.97014250)
+        self.assertLess(min(math.dist(point, apex) for point in junk_a), 0.5)
+        opposite = centre_line([10.0, 20.0, 130.0, 50.0, -5.0, 7.0, -15.0])
+        mirrored = pdf(70.0 - 15.0 * 0.24253563, 35.0 + 15.0 * 0.97014250)
+        self.assertLess(min(math.dist(point, mirrored) for point in opposite), 0.5)
+
+    def test_triangular_count_markers_keep_all_three_vertices(self):
+        condition = Condition(
+            uid="c",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.TRIANGLE,
+            width=24.0,
+            depth=24.0,
+            display_size=100.0,
+        )
+        polygons, _callouts = self.collect(
+            [Takeoff(uid="t", condition_uid="c", position=[100.0, 200.0])],
+            [condition],
+        )
+        self.assertEqual([len(polygon.vertices) for polygon in polygons], [3])
+
+    def test_degenerate_linear_and_unsupported_takeoffs_are_left_out(self):
+        linear = Condition(uid="l", condition_type=Condition.TYPE_LINEAR, thickness=6.0)
+        count = Condition(
+            uid="n",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.SQUARE,
+            width=12.0,
+            display_size=100.0,
+        )
+        unsupported = [
+            Condition(uid=f"u{kind}", condition_type=kind, width=12.0)
+            for kind in (4, 5, -1)
+        ]
+        takeoffs = [
+            Takeoff(uid="zero", condition_uid="l", position=[5.0, 5.0, 5.0, 5.0]),
+            Takeoff(uid="point", condition_uid="n", position=[3.0]),
+            Takeoff(uid="line-point", condition_uid="l", position=[3.0, 4.0]),
+            Takeoff(uid="short-line", condition_uid="l", position=[3.0]),
+        ] + [
+            Takeoff(
+                uid=f"x{kind.condition_type}",
+                condition_uid=kind.uid,
+                position=[1.0, 2.0, 3.0, 4.0],
+            )
+            for kind in unsupported
+        ]
+        polygons, _callouts = self.collect(takeoffs, [linear, count] + unsupported)
+        self.assertEqual(polygons, [])
+
+    def test_a_count_takeoff_is_drawn_around_its_own_position(self):
+        condition = Condition(
+            uid="c",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.SQUARE,
+            width=24.0,
+            display_size=100.0,
+        )
+        for kind in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
+            with self.subTest(kind=kind):
+                condition.condition_type = kind
+                polygons, _callouts = self.collect(
+                    [Takeoff(uid="t", condition_uid="c", position=[100.0, 200.0])],
+                    [condition],
+                )
+                self.assertEqual(len(polygons), 1)
+                vertices = polygons[0].vertices
+                centre = OSTCoordinateSystem.ost_to_pdf_coordinates(
+                    [100.0, 200.0], self.PAGE_INFO
+                )[0]
+                self.assertAlmostEqual(
+                    sum(vertex[0] for vertex in vertices) / len(vertices), centre[0]
+                )
+                self.assertAlmostEqual(
+                    sum(vertex[1] for vertex in vertices) / len(vertices), centre[1]
+                )
+
+    def test_a_condition_without_a_type_is_a_linear_condition(self):
+        condition = Condition(uid="c", condition_type=None, thickness=6.0)
+        takeoff = Takeoff(
+            uid="t", condition_uid="c", position=[0.0, 0.0, 30.0, 40.0, 60.0, 80.0]
+        )
+        polygons, _callouts = self.collect([takeoff], [condition])
+        self.assertEqual(len(polygons), 1)
+        self.assertEqual(len(polygons[0].vertices), 4)
+        self.assertAlmostEqual(polygons[0].area_sf, 50.0 * 6.0 / 144.0)
+
+    def test_non_area_captions_carry_the_resolved_label(self):
+        takeoffs = {
+            "linear": Takeoff(uid="l", condition_uid="linear", position=[0.0, 0.0, 30.0, 40.0]),
+            "count": Takeoff(uid="n", condition_uid="count", position=[100.0, 200.0]),
+        }
+        for ref_no, name, label in (
+            ("R1", "Wall", "R1 - Wall"),
+            ("", "Wall", "Wall"),
+            ("R2", "", "R2 - Takeoff"),
+            ("", "", "Takeoff"),
+        ):
+            conditions = [
+                Condition(
+                    uid="linear",
+                    condition_type=Condition.TYPE_LINEAR,
+                    thickness=6.0,
+                    ref_no=ref_no,
+                    name=name,
+                ),
+                Condition(
+                    uid="count",
+                    condition_type=Condition.TYPE_COUNT,
+                    shape=shapes.SQUARE,
+                    width=12.0,
+                    display_size=100.0,
+                    ref_no=ref_no,
+                    name=name,
+                ),
+            ]
+            with self.subTest(label=label):
+                self.resolver.calls.clear()
+                polygons, _callouts = self.collect(
+                    list(takeoffs.values()), conditions, captions=True
+                )
+                self.assertEqual(
+                    self.resolver.calls,
+                    [("l", [], label), ("n", [], label)],
+                )
+                for polygon in polygons:
+                    self.assertEqual(
+                        (list(polygon.caption.lines), polygon.caption.label),
+                        ([f"line {label}"], label),
+                    )
+        self.resolver.calls.clear()
+        polygons, _callouts = self.collect(
+            list(takeoffs.values()), conditions, captions=False
+        )
+        self.assertEqual(self.resolver.calls, [])
+        self.assertEqual(len(polygons), 2)
+        self.assertEqual([list(p.caption.lines) for p in polygons], [[], []])
+
+    def test_takeoff_colours_come_from_the_colour_map_or_the_condition_fill(self):
+        condition = self.area_condition(color_fill=0x00FF0000)
+        takeoff = Takeoff(uid="a", condition_uid="c", position=self.square(12.0))
+        mapped = {"c": ColorWithOpacity("#336699", 0.25)}
+        polygons, _callouts = self.collect([takeoff], [condition], color_map=mapped)
+        self.assertEqual(polygons[0].color, [0x33, 0x66, 0x99])
+        self.assertEqual(polygons[0].fill_opacity, 0.25)
+        # The Condition's own fill (BGR integer) at the default 50 % opacity is
+        # the fallback when the map is absent, empty, or lacks the Condition.
+        for color_map in (
+            None,
+            {},
+            {"other": ColorWithOpacity("#336699", 0.25)},
+        ):
+            with self.subTest(color_map=color_map):
+                polygons, _callouts = self.collect(
+                    [takeoff], [condition], color_map=color_map
+                )
+                self.assertEqual(polygons[0].color, [0, 0, 255])
+                self.assertEqual(polygons[0].fill_opacity, 0.5)
+        linear = Condition(
+            uid="c",
+            condition_type=Condition.TYPE_LINEAR,
+            thickness=6.0,
+            color_fill=0x0000FF00,
+        )
+        line = Takeoff(uid="t", condition_uid="c", position=[0.0, 0.0, 30.0, 40.0])
+        polygons, _callouts = self.collect([line], [linear])
+        self.assertEqual((polygons[0].color, polygons[0].fill_opacity), ([0, 255, 0], 0.5))
+
+    def test_takeoffs_outside_the_selected_page_area_use_the_inactive_colour(self):
+        condition = self.area_condition(color_fill=0x00FF0000)
+        mapped = {"c": ColorWithOpacity("#336699", 0.25)}
+        inside = Takeoff(
+            uid="in",
+            condition_uid="c",
+            position=self.square(12.0),
+            page_uid="p",
+            area_uid="selected",
+        )
+        outside = Takeoff(
+            uid="out",
+            condition_uid="c",
+            position=self.square(12.0),
+            page_uid="p",
+            area_uid="other",
+        )
+        polygons, _callouts = self.collect(
+            [inside, outside],
+            [condition],
+            color_map=mapped,
+            area_selections={"p": "selected"},
+            inactive_color="#0a0b0c",
+        )
+        self.assertEqual(
+            [(polygon.color, polygon.fill_opacity) for polygon in polygons],
+            [([0x33, 0x66, 0x99], 0.25), ([0x0A, 0x0B, 0x0C], 0.25)],
+        )
+
+    def test_takeoffs_whose_outline_cannot_be_converted_are_left_out(self):
+        class NoCoordinates:
+            @staticmethod
+            def parse_position(position):
+                return list(position)
+
+            @staticmethod
+            def ost_to_pdf_coordinates(_position, _page_info):
+                return [(1.0, 1.0), (2.0, 2.0)]
+
+        self.exporter._coord_system = NoCoordinates()
+        conditions = [
+            self.area_condition(uid="a"),
+            Condition(uid="l", condition_type=Condition.TYPE_LINEAR, thickness=6.0),
+            Condition(
+                uid="n",
+                condition_type=Condition.TYPE_COUNT,
+                shape=shapes.SQUARE,
+                width=12.0,
+                display_size=100.0,
+            ),
+        ]
+        takeoffs = [
+            Takeoff(uid="a", condition_uid="a", position=self.square(12.0)),
+            Takeoff(uid="l", condition_uid="l", position=[0.0, 0.0, 30.0, 40.0]),
+            Takeoff(uid="n", condition_uid="n", position=[100.0, 200.0]),
+        ]
+        polygons, callouts = self.collect(takeoffs, conditions, callouts=True)
+        self.assertEqual((polygons, callouts), ([], []))
+        hole = Takeoff(
+            uid="h",
+            condition_uid="a",
+            position=self.square(3.0),
+            parent_uid="a",
+            is_negative=True,
+        )
+        polygons, _callouts = self.collect([takeoffs[0], hole], conditions[:1])
+        self.assertEqual(polygons, [])
+
+    def test_a_hole_whose_outline_comes_back_short_is_dropped_but_the_area_is_kept(
+        self,
+    ):
+        class ShortHoles:
+            @staticmethod
+            def parse_position(position):
+                return list(position)
+
+            @staticmethod
+            def ost_to_pdf_coordinates(position, _page_info):
+                points = [
+                    (position[i], position[i + 1]) for i in range(0, len(position), 2)
+                ]
+                return points[:2] if len(points) == 3 else points
+
+        self.exporter._coord_system = ShortHoles()
+        parent = Takeoff(uid="a", condition_uid="c", position=self.square(120.0))
+        hole = Takeoff(
+            uid="h",
+            condition_uid="c",
+            position=[10.0, 10.0, 30.0, 10.0, 20.0, 30.0],
+            parent_uid="a",
+            is_negative=True,
+        )
+        polygons, _callouts = self.collect([parent, hole], [self.area_condition()])
+        self.assertEqual(len(polygons), 1)
+        self.assertEqual(len(polygons[0].vertices), 4)
+        self.assertEqual(polygons[0].holes, [])
+
+    def test_the_elevation_callout_is_a_fixed_size_box_centred_on_the_takeoff(self):
+        exporter = self.exporter
+        condition = Condition(uid="c", condition_type=Condition.TYPE_AREA)
+        takeoff = Takeoff(uid="t", condition_uid="c", position=self.square(12.0))
+        resolved = SimpleNamespace(x=300.0, y=400.0, lines=("A", "B"))
+        with mock.patch(
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter."
+            "resolve_elevation_callout",
+            return_value=resolved,
+        ) as resolve:
+            box = exporter._build_elevation_callout_text(
+                condition, takeoff, [], [(0, 0), (4, 0), (4, 4)], color="#102030"
+            )
+        resolve.assert_called_once()
+        self.assertEqual((box.min_x, box.max_x), (210.0, 390.0))
+        self.assertEqual((box.min_y, box.max_y), (374.0, 426.0))
+        self.assertEqual(box.content, "A\nB")
+        self.assertEqual(box.color, [0x10, 0x20, 0x30])
+        self.assertEqual(box.font_size, 10.0)
+        with mock.patch(
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter."
+            "resolve_elevation_callout",
+            return_value=None,
+        ):
+            self.assertIsNone(
+                exporter._build_elevation_callout_text(
+                    condition, takeoff, [], [(0, 0), (4, 0), (4, 4)]
+                )
+            )
 
 
 class PdfExportOverlayPlacementTests(unittest.TestCase):
@@ -2438,6 +3008,182 @@ class PdfExportTextGeometryTests(unittest.TestCase):
         self.assertEqual(texts, [])
 
 
+class PdfExportAnnotationDegenerateInputTests(unittest.TestCase):
+    """Annotations that cannot produce native data are left out, not half-built."""
+
+    class Coordinates:
+        """Converter whose output length can be forced (default: pass-through)."""
+
+        def __init__(self, count=None):
+            self.count = count
+
+        def ost_to_pdf_coordinates(self, flat, _page_info):
+            points = [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+            return points if self.count is None else points[: self.count]
+
+    def exporter(self, count=None):
+        return PDFExporter(
+            self.Coordinates(count),
+            ColorService(),
+            TakeoffDomainService(),
+            UOMDomainService(),
+            object(),
+        )
+
+    @staticmethod
+    def annotation(kind, position, **properties):
+        return BidAnnotation(
+            uid="a",
+            annotation_type=kind,
+            page_uid="p",
+            position=position,
+            color="#102030",
+            width=2.0,
+            properties=properties,
+        )
+
+    # (collector, annotation type, valid position, converted points needed)
+    FAMILIES = (
+        ("_collect_arrows", ANNOTATION_TYPE_ARROW, [1.0, 2.0, 30.0, 40.0], 2),
+        ("_collect_lines", ANNOTATION_TYPE_LINE, [1.0, 2.0, 30.0, 40.0], 2),
+        ("_collect_rects", ANNOTATION_TYPE_RECT, [1.0, 2.0, 30.0, 40.0], 2),
+        ("_collect_dimensions", ANNOTATION_TYPE_DIMENSION, [0.0, 0.0, 30.0, 0.0], 2),
+        ("_collect_texts", ANNOTATION_TYPE_TEXT, [20.0, 20.0, 10.0, 10.0], 2),
+        ("_collect_ovals", ANNOTATION_TYPE_OVAL, [0.0, 0.0, 20.0, 10.0], 3),
+        (
+            "_collect_polygons",
+            ANNOTATION_TYPE_POLYGON,
+            [0.0, 0.0, 10.0, 0.0, 10.0, 10.0],
+            3,
+        ),
+        ("_collect_inks", ANNOTATION_TYPE_INK, [0.0, 0.0, 10.0, 10.0], 2),
+        ("_collect_highlights", ANNOTATION_TYPE_HIGHLIGHT, [0.0, 0.0, 40.0, 10.0], 4),
+    )
+
+    def test_a_coordinate_conversion_that_comes_up_short_drops_the_annotation(self):
+        for method, kind, position, needed in self.FAMILIES:
+            with self.subTest(method=method):
+                short = getattr(self.exporter(needed - 1), method)(
+                    "p", [self.annotation(kind, position)], {}
+                )
+                self.assertEqual(short, [])
+                enough = getattr(self.exporter(needed), method)(
+                    "p", [self.annotation(kind, position)], {}
+                )
+                self.assertEqual(len(enough), 1)
+
+    def test_annotations_with_too_few_coordinates_are_dropped(self):
+        for method, kind, position in (
+            ("_collect_arrows", ANNOTATION_TYPE_ARROW, [1.0, 2.0, 3.0]),
+            ("_collect_lines", ANNOTATION_TYPE_LINE, [1.0, 2.0, 3.0]),
+            ("_collect_rects", ANNOTATION_TYPE_RECT, [1.0, 2.0, 3.0]),
+            ("_collect_dimensions", ANNOTATION_TYPE_DIMENSION, [1.0, 2.0, 3.0]),
+            ("_collect_ovals", ANNOTATION_TYPE_OVAL, [1.0, 2.0, 3.0]),
+            (
+                "_collect_polygons",
+                ANNOTATION_TYPE_POLYGON,
+                [0.0, 0.0, 10.0, 0.0, 10.0],
+            ),
+            ("_collect_inks", ANNOTATION_TYPE_INK, [1.0, 2.0, 3.0]),
+            ("_collect_highlights", ANNOTATION_TYPE_HIGHLIGHT, [1.0, 2.0, 3.0]),
+        ):
+            with self.subTest(method=method):
+                self.assertEqual(
+                    getattr(self.exporter(), method)(
+                        "p", [self.annotation(kind, position)], {}
+                    ),
+                    [],
+                )
+
+    def test_a_dimension_too_short_to_label_is_dropped(self):
+        for length in (0.0, 1e-12, 0.01):
+            with self.subTest(length=length):
+                self.assertEqual(
+                    self.exporter()._collect_dimensions(
+                        "p",
+                        [
+                            self.annotation(
+                                ANNOTATION_TYPE_DIMENSION, [0.0, 0.0, length, 0.0]
+                            )
+                        ],
+                        {},
+                    ),
+                    [],
+                )
+        kept = self.exporter()._collect_dimensions(
+            "p",
+            [self.annotation(ANNOTATION_TYPE_DIMENSION, [0.0, 0.0, 0.5, 0.0])],
+            {},
+        )
+        self.assertEqual([dimension.content for dimension in kept], ['1/2"'])
+
+    def test_dimension_font_size_defaults_to_ten_and_follows_the_property(self):
+        for properties, expected in (
+            ({}, 10.0),
+            ({"FontSize": 0}, 10.0),
+            ({"FontSize": 14}, 14.0),
+            ({"FontSize": "9.5"}, 9.5),
+        ):
+            with self.subTest(properties=properties):
+                dimension = self.exporter()._collect_dimensions(
+                    "p",
+                    [
+                        self.annotation(
+                            ANNOTATION_TYPE_DIMENSION,
+                            [0.0, 0.0, 30.0, 0.0],
+                            **properties,
+                        )
+                    ],
+                    {"scale_factor1": 2.0, "scale_factor2": 5.0},
+                )[0]
+                self.assertEqual(dimension.font_size, expected)
+                self.assertEqual(
+                    (dimension.scale_factor1, dimension.scale_factor2), (2.0, 5.0)
+                )
+        missing_scale = self.exporter()._collect_dimensions(
+            "p",
+            [self.annotation(ANNOTATION_TYPE_DIMENSION, [0.0, 0.0, 30.0, 0.0])],
+            {},
+        )[0]
+        self.assertEqual(
+            (missing_scale.scale_factor1, missing_scale.scale_factor2), (0.0, 0.0)
+        )
+
+    def test_an_ink_with_an_odd_coordinate_count_ignores_its_leading_value(self):
+        ink = self.exporter()._collect_inks(
+            "p",
+            [self.annotation(ANNOTATION_TYPE_INK, [99.0, 1.0, 2.0, 3.0, 4.0])],
+            {},
+        )[0]
+        self.assertEqual(ink.strokes, [[[1.0, 2.0], [3.0, 4.0]]])
+        even = self.exporter()._collect_inks(
+            "p", [self.annotation(ANNOTATION_TYPE_INK, [1.0, 2.0, 3.0, 4.0])], {}
+        )[0]
+        self.assertEqual(even.strokes, [[[1.0, 2.0], [3.0, 4.0]]])
+
+    def test_a_rectangle_uses_the_extent_of_its_corners_and_orders_them(self):
+        rect = self.exporter()._collect_rects(
+            "p",
+            [self.annotation(ANNOTATION_TYPE_RECT, [50.0, 40.0, 10.0, 20.0])],
+            {},
+        )[0]
+        self.assertEqual(
+            (rect.min_x, rect.min_y, rect.max_x, rect.max_y), (10.0, 20.0, 50.0, 40.0)
+        )
+        self.assertEqual((rect.color, rect.width), ([0x10, 0x20, 0x30], 2.0))
+
+    def test_an_oval_with_an_invalid_stroke_is_dropped_but_zero_is_kept(self):
+        for width, kept in ((0.0, 1), (-1.0, 0), (math.inf, 0), (math.nan, 0)):
+            with self.subTest(width=width):
+                annotation = self.annotation(
+                    ANNOTATION_TYPE_OVAL, [0.0, 0.0, 20.0, 10.0]
+                )
+                annotation.width = width
+                self.assertEqual(
+                    len(self.exporter()._collect_ovals("p", [annotation], {})), kept
+                )
+
+
 class PdfExportAnnotationRoutingTests(unittest.TestCase):
     def test_export_routes_each_annotation_family_to_its_native_field(self):
         writer = _overlay_export_support__FakeWriter()
@@ -2537,3 +3283,657 @@ class PdfExportAnnotationRoutingTests(unittest.TestCase):
             [False] * 6 + [True],
         )
         self.assertEqual(exported.texts[0].content, "note")
+
+
+_RED = (255, 0, 0)
+_GREEN = (0, 255, 0)
+_BLUE = (0, 0, 255)
+_YELLOW = (255, 255, 0)
+_WHITE = (255, 255, 255)
+
+
+def _quadrant_image(width, height):
+    """Top-left red, top-right green, bottom-left blue, bottom-right yellow."""
+    image = QImage(width, height, QImage.Format.Format_ARGB32)
+    for x in range(width):
+        for y in range(height):
+            top = y < height // 2
+            left = x < width // 2
+            colour = (_RED if left else _GREEN) if top else (_BLUE if left else _YELLOW)
+            image.setPixelColor(x, y, QColor(*colour))
+    return image
+
+
+def _rgb(image, x, y):
+    colour = image.pixelColor(x, y)
+    return colour.red(), colour.green(), colour.blue()
+
+
+class PdfPositionedOverlayPixelTests(unittest.TestCase):
+    """Pixels of the raster overlay canvas (page cache faked, QPainter real).
+
+    The sheet is 72 pt square with a calibration of 64 overlay units per sheet
+    inch, so one overlay unit is 3.375 canvas pixels on the 216 px canvas.
+    """
+
+    def render(self, overlay, *, page_info=None, **page_overrides):
+        exporter = _overlay_export_support__make_exporter(_overlay_export_support__FakeWriter())
+        self.cache = _overlay_export_support__RecordingImageCache(overlay)
+        exporter._export_page_cache = self.cache
+        values = {
+            "overlay_image_path": "overlay.pdf",
+            "image_show_mode": SHOW_OVERLAY,
+            "width_pts": 72.0,
+            "height_pts": 72.0,
+        }
+        values.update(page_overrides)
+        return exporter._render_positioned_overlay_background(
+            _overlay_export_support__page(**values), page_info or {"width": 72.0, "height": 72.0}
+        )
+
+    def assertColours(self, image, expected):
+        for (x, y), colour in expected.items():
+            self.assertEqual(_rgb(image, x, y), colour, (x, y))
+
+    def test_a_non_square_overlay_is_stretched_into_its_rect_with_corners_in_place(
+        self,
+    ):
+        # Rect 16..48 x 16..32 units is canvas x 54..162, y 54..108.
+        image = self.render(
+            _quadrant_image(20, 10), overlay_rect=(16.0, 16.0, 32.0, 16.0)
+        )
+        self.assertColours(
+            image,
+            {
+                (56, 56): _RED,
+                (98, 56): _RED,
+                (118, 56): _GREEN,
+                (160, 56): _GREEN,
+                (56, 106): _BLUE,
+                (98, 106): _BLUE,
+                (118, 106): _YELLOW,
+                (160, 106): _YELLOW,
+                (56, 72): _RED,
+                (56, 90): _BLUE,
+                (53, 56): _WHITE,
+                (163, 56): _WHITE,
+                (56, 53): _WHITE,
+                (56, 109): _WHITE,
+                (100, 150): _WHITE,
+            },
+        )
+
+    def test_a_one_pixel_wide_or_tall_overlay_is_still_drawn(self):
+        # A 1 px wide overlay (red over blue) and a 2x1 one are not "empty".
+        tall = QImage(1, 2, QImage.Format.Format_ARGB32)
+        tall.setPixelColor(0, 0, QColor(*_RED))
+        tall.setPixelColor(0, 1, QColor(*_BLUE))
+        image = self.render(tall, overlay_rect=(16.0, 16.0, 32.0, 16.0))
+        self.assertEqual(_rgb(image, 100, 60), _RED)
+        self.assertEqual(_rgb(image, 100, 100), _BLUE)
+        wide = QImage(2, 1, QImage.Format.Format_ARGB32)
+        wide.setPixelColor(0, 0, QColor(*_RED))
+        wide.setPixelColor(1, 0, QColor(*_BLUE))
+        image = self.render(wide, overlay_rect=(16.0, 16.0, 32.0, 16.0))
+        self.assertEqual(_rgb(image, 60, 80), _RED)
+        self.assertEqual(_rgb(image, 160, 80), _BLUE)
+
+    def test_an_overlay_rotates_about_its_rect_origin(self):
+        # Quarter turn clockwise about canvas (135, 54): the image's x axis runs
+        # down the canvas and its y axis runs toward the left.
+        image = self.render(
+            _quadrant_image(20, 10),
+            overlay_rect=(40.0, 16.0, 32.0, 16.0),
+            overlay_rotation=math.pi / 2,
+        )
+        self.assertColours(
+            image,
+            {
+                (130, 60): _RED,
+                (130, 150): _GREEN,
+                (90, 60): _BLUE,
+                (90, 150): _YELLOW,
+                (140, 100): _WHITE,
+                (70, 100): _WHITE,
+                (130, 160): _GREEN,
+                (130, 165): _WHITE,
+            },
+        )
+
+    def test_a_half_turn_overlay_extends_up_and_left_of_the_rect_origin(self):
+        image = self.render(
+            _quadrant_image(20, 10),
+            overlay_rect=(48.0, 32.0, 32.0, 16.0),
+            overlay_rotation=math.pi,
+        )
+        # Origin canvas (162, 108): the rotated image covers x 54..162, y 54..108.
+        self.assertColours(
+            image,
+            {
+                (160, 106): _RED,
+                (56, 106): _GREEN,
+                (160, 56): _BLUE,
+                (56, 56): _YELLOW,
+                (164, 106): _WHITE,
+                (160, 110): _WHITE,
+            },
+        )
+
+    def test_deskew_rotation_adds_to_the_overlay_rotation(self):
+        quarter = self.render(
+            _quadrant_image(20, 10),
+            overlay_rect=(40.0, 16.0, 32.0, 16.0),
+            overlay_rotation=math.pi / 2,
+        )
+        for label, rotation, deskew in (
+            ("deskew only", 0.0, math.pi / 2),
+            ("split", math.pi / 4, math.pi / 4),
+        ):
+            with self.subTest(label):
+                image = self.render(
+                    _quadrant_image(20, 10),
+                    overlay_rect=(40.0, 16.0, 32.0, 16.0),
+                    overlay_rotation=rotation,
+                    deskew_rotation_overlay=deskew,
+                )
+                for x, y in ((130, 60), (130, 150), (90, 60), (90, 150), (140, 100)):
+                    self.assertEqual(_rgb(image, x, y), _rgb(quarter, x, y), (x, y))
+        # A quarter turn plus a quarter turn is a half turn, not a cancellation.
+        opposed = self.render(
+            _quadrant_image(20, 10),
+            overlay_rect=(48.0, 32.0, 32.0, 16.0),
+            overlay_rotation=math.pi / 2,
+            deskew_rotation_overlay=math.pi / 2,
+        )
+        self.assertEqual(_rgb(opposed, 160, 106), _RED)
+        self.assertEqual(_rgb(opposed, 56, 56), _YELLOW)
+
+    def test_a_rect_without_size_leaves_blank_paper_of_the_page_canvas(self):
+        white = QImage(216, 216, QImage.Format.Format_ARGB32)
+        white.fill(0xFFFFFFFF)
+        for rect in (
+            (0.0, 0.0, 0.0, 0.0),
+            (16.0, 16.0, 0.0, 16.0),
+            (16.0, 16.0, 16.0, 0.0),
+        ):
+            with self.subTest(rect=rect):
+                image = self.render(_quadrant_image(20, 10), overlay_rect=rect)
+                self.assertEqual((image.width(), image.height()), (216, 216))
+                self.assertEqual(image, white)
+
+    def test_the_canvas_follows_the_native_page_size_not_the_stored_dimensions(self):
+        for width, height, expected in (
+            (72.4, 10.0, (217, 30)),
+            (72.6, 10.0, (218, 30)),
+            (100.0, 40.0, (300, 120)),
+            (0.1, 0.1, (1, 1)),
+        ):
+            with self.subTest(width=width, height=height):
+                image = self.render(
+                    _quadrant_image(4, 4),
+                    page_info={"width": width, "height": height},
+                    width_pts=5.0,
+                    height_pts=5.0,
+                    rotation=90,
+                    overlay_rect=(0.0, 0.0, 64.0, 64.0),
+                )
+                self.assertEqual((image.width(), image.height()), expected)
+
+    def test_overlays_are_requested_at_the_scale_of_their_source_type(self):
+        self.render(_quadrant_image(4, 4), overlay_rect=(0.0, 0.0, 64.0, 64.0))
+        self.assertEqual(
+            self.cache.requests,
+            [("overlay.pdf", 0, INTERACTIVE_PDF_RENDER_SCALE, 0)],
+        )
+        self.render(
+            _quadrant_image(4, 4),
+            overlay_image_path="overlay.tif",
+            overlay_rect=(0.0, 0.0, 64.0, 64.0),
+        )
+        self.assertEqual(
+            self.cache.requests,
+            [("overlay.tif", 0, RASTER_NATIVE_RENDER_SCALE, 0)],
+        )
+
+    def test_a_null_or_missing_overlay_image_yields_no_canvas(self):
+        self.assertIsNone(self.render(QImage(), overlay_rect=(0.0, 0.0, 64.0, 64.0)))
+        self.assertIsNone(self.render(None, overlay_rect=(0.0, 0.0, 64.0, 64.0)))
+
+    def test_upscaled_overlay_pixels_are_smoothly_interpolated(self):
+        overlay = QImage(2, 1, QImage.Format.Format_ARGB32)
+        overlay.setPixelColor(0, 0, QColor(*_RED))
+        overlay.setPixelColor(1, 0, QColor(*_BLUE))
+        image = self.render(overlay, overlay_rect=(0.0, 0.0, 64.0, 64.0))
+        row = [_rgb(image, x, 100) for x in range(60, 160)]
+        blended = [(r, g, b) for r, g, b in row if 0 < r < 255 and 0 < b < 255]
+        self.assertGreater(len(blended), 20)
+        reds = [r for r, _g, _b in row]
+        self.assertEqual(reds, sorted(reds, reverse=True))
+        self.assertTrue(all(g == 0 for _r, g, _b in row))
+
+    def test_a_rotation_of_exactly_one_radian_is_applied(self):
+        # Local (27, 13.5) is the centre of the red quadrant of a 108 x 54 px
+        # placement at canvas (54, 54); one radian clockwise moves it to
+        # (57.2, 84.0), where an unrotated overlay would show the blue quadrant.
+        for rotation, deskew in ((1.0, 0.0), (0.0, 1.0), (0.5, 0.5)):
+            with self.subTest(rotation=rotation, deskew=deskew):
+                image = self.render(
+                    _quadrant_image(20, 10),
+                    overlay_rect=(16.0, 16.0, 32.0, 16.0),
+                    overlay_rotation=rotation,
+                    deskew_rotation_overlay=deskew,
+                )
+                self.assertEqual(_rgb(image, 57, 84), _RED)
+
+    def test_the_overlay_is_clipped_to_the_page_canvas_when_the_rect_overhangs(self):
+        image = self.render(
+            _quadrant_image(8, 8), overlay_rect=(-32.0, -32.0, 160.0, 160.0)
+        )
+        self.assertEqual((image.width(), image.height()), (216, 216))
+        # The rect spans -108..432 px, so its quadrant seams sit at canvas 162.
+        self.assertColours(
+            image,
+            {(5, 5): _RED, (120, 120): _RED, (210, 5): _GREEN, (5, 210): _BLUE, (210, 210): _YELLOW},
+        )
+
+
+class PdfRasterBackgroundFileTests(unittest.TestCase):
+    """The Qt-written raster background PDF, read back through PDFium."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.temp_dir = temp.name
+        self.exporter = _overlay_export_support__make_exporter(_overlay_export_support__FakeWriter())
+
+    def test_the_image_is_stretched_over_the_whole_page_without_flipping(self):
+        output = self.exporter._write_raster_background_pdf(
+            _quadrant_image(40, 20),
+            {"width": 144.0, "height": 72.0},
+            self.temp_dir,
+            "composite",
+        )
+        page = _overlay_export_support__render_pdf_page(output, 1.0)
+        self.assertEqual((page.width, page.height), (144, 72))
+        for (x, y), colour in {
+            (5, 5): _RED,
+            (60, 10): _RED,
+            (85, 10): _GREEN,
+            (138, 5): _GREEN,
+            (5, 66): _BLUE,
+            (60, 60): _BLUE,
+            (85, 60): _YELLOW,
+            (138, 66): _YELLOW,
+            (20, 24): _RED,
+            (20, 48): _BLUE,
+        }.items():
+            self.assertTrue(_overlay_export_support__near(page.rgb(x, y), colour), (x, y, page.rgb(x, y)))
+
+    def test_the_page_size_comes_from_the_page_info_not_the_pixel_count(self):
+        output = self.exporter._write_raster_background_pdf(
+            _quadrant_image(8, 8),
+            {"width": 100.0, "height": 50.0},
+            self.temp_dir,
+            "image",
+        )
+        page = _overlay_export_support__render_pdf_page(output, 2.0)
+        self.assertEqual((page.width, page.height), (200, 100))
+        self.assertTrue(_overlay_export_support__near(page.rgb(10, 10), _RED))
+        self.assertTrue(_overlay_export_support__near(page.rgb(190, 90), _YELLOW))
+
+    def test_the_file_is_created_in_the_given_directory_with_the_prefix(self):
+        output = self.exporter._write_raster_background_pdf(
+            _quadrant_image(4, 4),
+            {"width": 72.0, "height": 72.0},
+            self.temp_dir,
+            "overlay",
+        )
+        path = Path(output)
+        self.assertEqual(path.parent, Path(self.temp_dir))
+        self.assertTrue(path.name.startswith("overlay_"), path.name)
+        self.assertEqual(path.suffix, ".pdf")
+        self.assertTrue(path.read_bytes().startswith(b"%PDF-"))
+
+    def test_a_missing_or_null_image_writes_no_file(self):
+        for image in (None, QImage()):
+            with self.subTest(image=image):
+                self.assertIsNone(
+                    self.exporter._write_raster_background_pdf(
+                        image,
+                        {"width": 72.0, "height": 72.0},
+                        self.temp_dir,
+                        "image",
+                    )
+                )
+        self.assertEqual(os.listdir(self.temp_dir), [])
+
+    def test_an_inactive_pdf_painter_yields_no_background(self):
+        class InactivePainter:
+            def __init__(self, _target):
+                pass
+
+            @staticmethod
+            def isActive():
+                return False
+
+            def drawImage(self, *_args):
+                raise AssertionError("an inactive painter must not draw")
+
+            def end(self):
+                raise AssertionError("an inactive painter must not be ended")
+
+        with patch(
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter.QPainter",
+            InactivePainter,
+        ):
+            self.assertIsNone(
+                self.exporter._write_raster_background_pdf(
+                    _quadrant_image(4, 4),
+                    {"width": 72.0, "height": 72.0},
+                    self.temp_dir,
+                    "image",
+                )
+            )
+
+    def test_pixel_density_does_not_change_the_rendered_picture(self):
+        pages = []
+        for size in (8, 64):
+            output = self.exporter._write_raster_background_pdf(
+                _quadrant_image(size, size),
+                {"width": 72.0, "height": 72.0},
+                self.temp_dir,
+                f"density{size}",
+            )
+            self.assertIn(
+                "/MediaBox [0 0 72.000000 72.000000]", _overlay_export_support__read_pdf_text(output)
+            )
+            pages.append(_overlay_export_support__render_pdf_page(output, 1.0))
+        for x, y in ((10, 10), (60, 10), (10, 60), (60, 60)):
+            self.assertTrue(_overlay_export_support__near(pages[0].rgb(x, y), pages[1].rgb(x, y)), (x, y))
+
+
+class PdfRealExportRasterBackgroundTests(unittest.TestCase):
+    """Whole export: real PDFExporter, page cache, Qt writer and native merge.
+
+    The exported PDF is rendered back with PDFium and its pixels are checked.
+    The sheet is 144 x 72 pt at 1 overlay unit per point (scale 1 : 72), so an
+    overlay rect is expressed in points and a 2x render has 2 px per point.
+    """
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.dir = Path(temp.name)
+        self.exporter = PDFExporter(
+            OSTCoordinateSystem(),
+            ColorService(),
+            TakeoffDomainService(),
+            UOMDomainService(),
+            object(),
+        )
+        _pdf_geometry_support__write_pdf(self.dir / "main.pdf", 144, 72, content=b"0 0.5 0 rg 0 0 72 72 re f")
+        _quadrant_image(40, 20).save(str(self.dir / "main.tif"))
+        _quadrant_image(20, 10).save(str(self.dir / "overlay.tif"))
+
+    def export(self, **overrides):
+        values = {
+            "uid": "p",
+            "name": "A",
+            "width_pts": 144.0,
+            "height_pts": 72.0,
+            "scale_factor1": 1.0,
+            "scale_factor2": 72.0,
+        }
+        for key, value in overrides.items():
+            values[key] = str(self.dir / value) if key.endswith("_path") else value
+        output = self.dir / "out.pdf"
+        result = self.exporter.export(
+            [PageExportData(page=Page(**values))],
+            str(output),
+            display_mode="color",
+            grayscale_enabled=False,
+            caption_settings=_overlay_export_support__DISABLED_CAPTION_SETTINGS,
+            elevation_callouts_enabled=False,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        self.assertTrue(result.success, result.error_message)
+        return _overlay_export_support__render_pdf_page(output, 2.0)
+
+    def assertPixels(self, page, expected):
+        self.assertEqual((page.width, page.height), (288, 144))
+        for (x, y), colour in expected.items():
+            self.assertTrue(_overlay_export_support__near(page.rgb(x, y), colour), (x, y, page.rgb(x, y)))
+
+    def test_a_raster_main_image_is_exported_as_a_full_page_picture(self):
+        page = self.export(image_path="main.tif", image_show_mode=SHOW_ORIGINAL)
+        self.assertPixels(
+            page,
+            {
+                (20, 20): _RED,
+                (120, 30): _RED,
+                (170, 30): _GREEN,
+                (280, 20): _GREEN,
+                (20, 130): _BLUE,
+                (120, 110): _BLUE,
+                (170, 110): _YELLOW,
+                (280, 130): _YELLOW,
+            },
+        )
+
+    def test_a_moved_raster_overlay_lands_where_its_rect_places_it(self):
+        page = self.export(
+            image_path="main.pdf",
+            overlay_image_path="overlay.tif",
+            overlay_rect=(72.0, 0.0, 72.0, 72.0),
+            image_show_mode=SHOW_OVERLAY,
+        )
+        # Rect = right half of the sheet (x 144..288 px); the left half is paper.
+        self.assertPixels(
+            page,
+            {
+                (20, 20): _WHITE,
+                (100, 130): _WHITE,
+                (150, 10): _RED,
+                (180, 30): _RED,
+                (250, 30): _GREEN,
+                (280, 10): _GREEN,
+                (150, 135): _BLUE,
+                (180, 110): _BLUE,
+                (250, 110): _YELLOW,
+                (280, 135): _YELLOW,
+            },
+        )
+
+    def test_a_rotated_raster_overlay_is_exported_rotated_about_its_rect_origin(self):
+        page = self.export(
+            image_path="main.pdf",
+            overlay_image_path="overlay.tif",
+            overlay_rect=(72.0, 0.0, 72.0, 72.0),
+            overlay_rotation=math.pi / 2,
+            image_show_mode=SHOW_OVERLAY,
+        )
+        # Quarter turn about the rect origin (144 px, 0): the image fills
+        # x 72..144 px (its y axis runs left) and y 0..144 px (its x axis runs down).
+        self.assertPixels(
+            page,
+            {
+                (110, 30): _RED,
+                (110, 110): _GREEN,
+                (30, 30): _BLUE,
+                (30, 110): _YELLOW,
+                (200, 70): _WHITE,
+                (270, 130): _WHITE,
+            },
+        )
+
+    def test_main_and_overlay_are_flattened_into_one_tinted_picture(self):
+        page = self.export(
+            image_path="main.pdf",
+            overlay_image_path="overlay.tif",
+            overlay_rect=(72.0, 0.0, 72.0, 72.0),
+            image_show_mode=SHOW_BOTH,
+        )
+        self.assertEqual((page.width, page.height), (288, 144))
+        main_only = page.rgb(20, 20)
+        # The comparison tint is a pink for the main drawing, never the raw colour
+        # of either source, and the overlay area is distinguishable from it.
+        self.assertNotIn(main_only, (_WHITE, (0, 128, 0)))
+        self.assertGreater(main_only[0], main_only[2])
+        overlay_samples = [page.rgb(x, y) for x, y in ((180, 30), (250, 30), (180, 110), (250, 110))]
+        self.assertTrue(all(sample != main_only for sample in overlay_samples))
+        self.assertTrue(any(sample[2] > sample[0] for sample in overlay_samples))
+        # Orientation survives the flattening: the yellow quadrant is brighter
+        # than the blue one once tinted.
+        self.assertGreater(sum(page.rgb(250, 110)), sum(page.rgb(180, 110)))
+
+    def test_the_export_leaves_no_temporary_files_behind(self):
+        # A private temp root, so concurrent processes cannot disturb the listing.
+        private = self.dir / "private-temp"
+        private.mkdir()
+        with patch.object(tempfile, "tempdir", str(private)):
+            self.export(
+                image_path="main.pdf",
+                overlay_image_path="overlay.tif",
+                overlay_rect=(72.0, 0.0, 72.0, 72.0),
+                image_show_mode=SHOW_OVERLAY,
+            )
+        self.assertEqual(os.listdir(private), [])
+
+
+class PdfRasterBackgroundSourceTests(unittest.TestCase):
+    """Fallbacks of the single-source background helpers (faked page cache)."""
+
+    def setUp(self):
+        self.exporter = _overlay_export_support__make_exporter(_overlay_export_support__FakeWriter())
+        self.page_info = {"width": 72.0, "height": 72.0}
+
+    def test_an_absent_main_or_overlay_path_is_never_requested_from_the_cache(self):
+        cache = _overlay_export_support__RecordingImageCache(_quadrant_image(4, 4))
+        self.exporter._export_page_cache = cache
+        data = type("Data", (), {})()
+        self.assertFalse(
+            self.exporter._try_main_background(
+                data, _overlay_export_support__page(image_path=None), self.page_info, "unused"
+            )
+        )
+        # A calibrated overlay without a size yet counts as full page, which is
+        # the direct-source branch; an empty path must stop there.
+        self.assertFalse(
+            self.exporter._try_overlay_background(
+                data,
+                _overlay_export_support__page(overlay_image_path=None, overlay_rect=(0.0, 0.0, 0.0, 0.0)),
+                self.page_info,
+                "unused",
+            )
+        )
+        self.assertFalse(
+            self.exporter._try_overlay_background(
+                data,
+                _overlay_export_support__page(
+                    overlay_image_path=None,
+                    scale_factor1=0.0,
+                    overlay_rect=(0.0, 0.0, 1.0, 1.0),
+                ),
+                self.page_info,
+                "unused",
+            )
+        )
+        self.assertEqual(cache.requests, [])
+        self.assertFalse(hasattr(data, "source_pdf"))
+
+    def test_a_raster_source_that_cannot_be_drawn_is_not_used(self):
+        self.exporter._export_page_cache = _overlay_export_support__ImageCache(None)
+        data = type("Data", (), {})()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.assertFalse(
+                self.exporter._try_single_source_background(
+                    data, "main.tif", 0, self.page_info, temp_dir, "image"
+                )
+            )
+            self.assertEqual(os.listdir(temp_dir), [])
+        self.assertFalse(hasattr(data, "source_pdf"))
+
+    def test_raster_sources_are_written_with_their_role_as_file_prefix(self):
+        self.exporter._export_page_cache = _overlay_export_support__ImageCache(_quadrant_image(4, 4))
+        prefixes = []
+        self.exporter._write_raster_background_pdf = (
+            lambda _image, _page_info, temp_dir, prefix: prefixes.append(prefix)
+            or f"{temp_dir}/{prefix}.pdf"
+        )
+        data = type("Data", (), {})()
+        self.assertTrue(
+            self.exporter._try_main_background(
+                data, _overlay_export_support__page(image_path="main.tif"), self.page_info, "tmp"
+            )
+        )
+        self.assertEqual(data.source_pdf, "tmp/image.pdf")
+        self.assertTrue(
+            self.exporter._try_overlay_background(
+                data,
+                _overlay_export_support__page(overlay_image_path="overlay.tif", overlay_rect=(0.0, 0.0, 0.0, 0.0)),
+                self.page_info,
+                "tmp",
+            )
+        )
+        self.assertEqual(data.source_pdf, "tmp/overlay.pdf")
+        self.assertEqual(prefixes, ["image", "overlay"])
+
+    def test_a_pdf_source_is_used_directly_with_its_page_index(self):
+        cache = _overlay_export_support__RecordingImageCache(_quadrant_image(4, 4))
+        self.exporter._export_page_cache = cache
+        data = type("Data", (), {})()
+        self.assertTrue(
+            self.exporter._try_single_source_background(
+                data, "main.pdf", 3, self.page_info, "unused", "image"
+            )
+        )
+        self.assertEqual(
+            (data.source_pdf, data.page_index, data.is_blank), ("main.pdf", 3, False)
+        )
+        self.assertEqual(cache.requests, [])
+
+    def test_a_rasterized_overlay_is_written_with_the_overlay_prefix(self):
+        self.exporter._export_page_cache = _overlay_export_support__ImageCache(_quadrant_image(4, 4))
+        calls = []
+        self.exporter._write_raster_background_pdf = (
+            lambda image, page_info, temp_dir, prefix: calls.append(
+                (image.width(), image.height(), page_info, temp_dir, prefix)
+            )
+            or "written.pdf"
+        )
+        result = self.exporter._create_overlay_rect_background_pdf(
+            _overlay_export_support__page(
+                overlay_image_path="overlay.pdf",
+                image_show_mode=SHOW_OVERLAY,
+                width_pts=72.0,
+                height_pts=72.0,
+                overlay_rect=(16.0, 16.0, 32.0, 32.0),
+            ),
+            self.page_info,
+            "tmp",
+        )
+        self.assertEqual(result, "written.pdf")
+        self.assertEqual(calls, [(216, 216, self.page_info, "tmp", "overlay")])
+
+    def test_a_composite_background_is_written_with_the_composite_prefix(self):
+        prefixes = []
+        self.exporter._export_composite_renderer = type(
+            "Renderer",
+            (),
+            {
+                "render_composite": staticmethod(
+                    lambda *_a, **_k: QImage(4, 4, QImage.Format.Format_ARGB32)
+                )
+            },
+        )()
+        self.exporter._write_raster_background_pdf = (
+            lambda _image, _page_info, _temp_dir, prefix: prefixes.append(prefix)
+            or "composite.pdf"
+        )
+        self.assertEqual(
+            self.exporter._create_composite_background_pdf(
+                _overlay_export_support__page(), self.page_info, "tmp"
+            ),
+            "composite.pdf",
+        )
+        self.assertEqual(prefixes, ["composite"])

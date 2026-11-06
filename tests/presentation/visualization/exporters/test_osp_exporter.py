@@ -390,11 +390,10 @@ class OspExporterProgressTests(unittest.TestCase):
         )
         digest = hashlib.sha1(b"c:\\a\\plan.pdf").hexdigest()[:16]
         self.assertEqual(member, f"TempImages!.tmp\\p_1_{digest}_plan.pdf")
+        key_digest = hashlib.sha1(b"k").hexdigest()[:16]
         self.assertEqual(
-            exporter._collision_package_image_member_path("k", "x.pdf", "")[
-                len("TempImages!.tmp\\") :
-            ].split("_")[0],
-            "page",
+            exporter._collision_package_image_member_path("k", "x.pdf", ""),
+            f"TempImages!.tmp\\page_{key_digest}_x.pdf",
         )
 
     def test_image_file_names_lose_path_characters_and_default_to_image(self):
@@ -403,9 +402,10 @@ class OspExporterProgressTests(unittest.TestCase):
             exporter._package_image_member_path('a/b\\c:d*e?f"g<h>i|j.pdf'),
             "TempImages!.tmp\\a_b_c_d_e_f_g_h_i_j.pdf",
         )
-        self.assertEqual(
-            exporter._package_image_member_path(""), "TempImages!.tmp\\image"
-        )
+        for blank in ("", "   "):
+            self.assertEqual(
+                exporter._package_image_member_path(blank), "TempImages!.tmp\\image"
+            )
         self.assertEqual(
             exporter._safe_path_component("   ", default="fallback"), "fallback"
         )
@@ -478,6 +478,7 @@ class OspExporterProgressTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual(os.listdir(tmp), [])
         self.assertFalse(result.success)
+        self.assertEqual(result.format_name, "OSP")
         self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
         self.assertEqual(
             result.error_message,
@@ -638,6 +639,7 @@ class OspExporterProgressTests(unittest.TestCase):
                 ).export(RawBidData(), str(output))
             self.assertFalse(result.success)
             self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
+            self.assertEqual(result.format_name, "OSP")
             self.assertEqual(result.error_message, "Failed to create CAB archive")
             self.assertEqual(output.read_bytes(), b"existing archive")
             self.assertEqual(len(cab_outputs), 1)
@@ -674,6 +676,169 @@ class OspExporterProgressTests(unittest.TestCase):
             self.assertEqual(len(cab_outputs), 1)
             self.assertNotEqual(cab_outputs[0], output)
             self.assertEqual(os.listdir(tmp), ["existing.osp"])
+
+    class _OkOstExporter:
+        def export(self, _raw_data, output_path):
+            Path(output_path).write_text("ost", encoding="utf-8")
+            return ExportResultDto(success=True, format_name="OST")
+
+    def _export_capturing_cab(self, output, bid_name="Bid", raw_data=None):
+        calls = []
+
+        def record(source_files, archive_names, temp_output):
+            calls.append((list(source_files), list(archive_names), temp_output))
+            Path(temp_output).write_bytes(b"archive")
+            return True
+
+        with patch.object(
+            osp_exporter.ost_cab, "create_cab_with_names", side_effect=record
+        ):
+            result = self._make_osp_exporter(
+                lambda _uom_service: self._OkOstExporter()
+            ).export(raw_data or RawBidData(), str(output), bid_name)
+        return result, calls
+
+    def test_the_embedded_ost_is_named_after_a_sanitized_bid_name(self):
+        for bid_name, expected in (
+            ("", "Bid.ost"),
+            ("   ", "Bid.ost"),
+            ("xyz", "xyz.ost"),
+            ('a/b\\c:d*e?f"g<h>i|j', "a_b_c_d_e_f_g_h_i_j.ost"),
+            ("  Plan A  ", "Plan A.ost"),
+        ):
+            with self.subTest(bid_name=bid_name):
+                with tempfile.TemporaryDirectory() as tmp:
+                    result, calls = self._export_capturing_cab(
+                        Path(tmp) / "out.osp", bid_name
+                    )
+                self.assertTrue(result.success, result.error_message)
+                self.assertEqual(calls[0][1][0], expected)
+
+    def test_the_archive_is_built_in_a_hidden_temp_file_beside_the_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "out.osp"
+            result, calls = self._export_capturing_cab(output)
+            self.assertTrue(result.success, result.error_message)
+            temp_output = Path(calls[0][2])
+            self.assertEqual(temp_output.parent, output.resolve().parent)
+            self.assertRegex(temp_output.name, r"^\.osp-\w{8}\.tmp$")
+            self.assertEqual(output.read_bytes(), b"archive")
+            self.assertEqual(os.listdir(tmp), ["out.osp"])
+        self.assertEqual((result.format_name, result.error_message), ("OSP", None))
+
+    def test_a_failing_ost_exporter_aborts_the_export_with_its_message(self):
+        for message, expected in (
+            ("disk full", "disk full"),
+            (None, "Failed to generate .ost file"),
+            ("", "Failed to generate .ost file"),
+        ):
+            with self.subTest(message=message):
+
+                class FailingOstExporter:
+                    def export(self, _raw_data, _output_path, message=message):
+                        return ExportResultDto(
+                            success=False, format_name="OST", error_message=message
+                        )
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    output = Path(tmp) / "out.osp"
+                    with patch.object(
+                        osp_exporter.ost_cab, "create_cab_with_names"
+                    ) as cab:
+                        result = self._make_osp_exporter(
+                            lambda _uom_service: FailingOstExporter()
+                        ).export(RawBidData(), str(output))
+                    self.assertEqual(os.listdir(tmp), [])
+                cab.assert_not_called()
+                self.assertFalse(result.success)
+                self.assertEqual(result.format_name, "OSP")
+                self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
+                self.assertEqual(result.error_message, expected)
+
+    def test_an_unexpected_error_is_reported_and_leaves_no_files_behind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "existing.osp"
+            output.write_bytes(b"existing archive")
+            with patch.object(
+                osp_exporter.ost_cab,
+                "create_cab_with_names",
+                side_effect=OSError("cab exploded"),
+            ):
+                with self.assertLogs(osp_exporter.logger.name, "ERROR"):
+                    result = self._make_osp_exporter(
+                        lambda _uom_service: self._OkOstExporter()
+                    ).export(RawBidData(), str(output))
+            self.assertEqual(output.read_bytes(), b"existing archive")
+            self.assertEqual(os.listdir(tmp), ["existing.osp"])
+        self.assertFalse(result.success)
+        self.assertEqual(result.format_name, "OSP")
+        self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
+        self.assertEqual(result.error_message, "Export failed: cab exploded")
+
+    def test_a_failed_export_cleans_up_when_the_temp_archive_is_already_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "out.osp"
+
+            def vanish(_source_files, _archive_names, temp_output):
+                os.remove(temp_output)
+                return False
+
+            with patch.object(
+                osp_exporter.ost_cab, "create_cab_with_names", side_effect=vanish
+            ):
+                result = self._make_osp_exporter(
+                    lambda _uom_service: self._OkOstExporter()
+                ).export(RawBidData(), str(output))
+            self.assertEqual(os.listdir(tmp), [])
+        self.assertEqual(result.error_message, "Failed to create CAB archive")
+        self.assertEqual(result.format_name, "OSP")
+
+    def test_files_that_are_not_drawings_are_never_reported_missing(self):
+        raw_data = RawBidData(
+            bid_tables={
+                "BidPages": [
+                    {"UID": "1", "ImagePath": r"C:\missing\photo.jpg"},
+                    {"UID": "2", "OverlayImagePath": r"C:\missing\notes.txt"},
+                    {"UID": "3", "ImagePath": r"C:\missing\noextension"},
+                ]
+            }
+        )
+        package, sources, missing = self._make_osp_exporter()._prepare_package_data(
+            raw_data
+        )
+        self.assertEqual((sources, missing), ({}, []))
+        self.assertEqual(
+            [dict(row) for row in package.bid_tables["BidPages"]],
+            [dict(row) for row in raw_data.bid_tables["BidPages"]],
+        )
+
+    def test_colliding_drawings_on_pages_without_a_uid_are_named_by_page(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "a" / "sheet.pdf"
+            second = Path(tmp) / "b" / "sheet.pdf"
+            for path in (first, second):
+                path.parent.mkdir()
+                path.write_bytes(b"pdf")
+            raw_data = RawBidData(
+                bid_tables={
+                    "BidPages": [
+                        {"ImagePath": str(first)},
+                        {"UID": "", "ImagePath": str(second)},
+                    ]
+                }
+            )
+            _package, sources, missing = self._make_osp_exporter()._prepare_package_data(
+                raw_data
+            )
+            expected = {
+                f"TempImages!.tmp\\page_"
+                f"{hashlib.sha1(str(path.resolve()).casefold().encode()).hexdigest()[:16]}"
+                f"_sheet.pdf": str(path.resolve())
+                for path in (first, second)
+            }
+        self.assertEqual((sources, missing), (expected, []))
 
 
 class PresentationImportExportWorkflowTests(unittest.TestCase):

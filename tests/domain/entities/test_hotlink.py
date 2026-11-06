@@ -56,3 +56,11 @@ class BuildHotlinkFromAnnotationTests(unittest.TestCase):
         )
         self.assertEqual(first.properties, {"BidPageViewUID": "view"})
         self.assertEqual(second.properties, {})
+
+
+class HotlinkEntityTests(unittest.TestCase):
+    def test_hotlink_defaults_have_no_target_and_a_two_unit_stroke(self):
+        from ost_visualizer.domain.entities.hotlink import Hotlink
+
+        link = Hotlink("u", "page", None, 1.0, 2.0, "#fff")
+        self.assertEqual((link.target_view_uid, link.width), (None, 2.0))

@@ -1,8 +1,10 @@
 import json
 import logging
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from unittest.mock import create_autospec, patch
 from ost_visualizer.application.dtos.mcp_context_dtos import (
     MCP_BID_COMPARISON_DEFAULT_LIMIT,
@@ -392,7 +394,8 @@ class McpServerToolWiringTests(unittest.TestCase):
         self.assertEqual(
             result["structuredContent"]["error"]["message"], "disk exploded"
         )
-        self.assertIn("MCP read failed", logged.output[0])
+        self.assertEqual(logged.records[0].getMessage(), "MCP read failed")
+        self.assertEqual(logged.records[0].name, "test_mcp_server_wiring")
 
     def test_list_databases_reloads_checked_files_on_every_call(self):
         self.read_service.list_databases.return_value = McpLimitedList(
@@ -411,6 +414,86 @@ class McpServerToolWiringTests(unittest.TestCase):
         self.assertEqual(
             [(ref.display_name, ref.file_path) for ref in refs],
             [("demo", str(db_path.resolve()))],
+        )
+
+    def test_every_live_context_tool_reloads_the_checked_files_on_each_call(self):
+        for name in (
+            "get_current_context",
+            "get_selected_takeoffs_summary",
+            "get_selected_pages_summary",
+        ):
+            with self.subTest(tool=name):
+                self.read_service.set_databases.reset_mock()
+                (self.root / "file_state.json").write_text(
+                    json.dumps({"file_entries": []}), encoding="utf-8"
+                )
+                self.call(name)
+                self.assertEqual(self.read_service.set_databases.call_args.args[0], [])
+                db_path = self.register_database(f"{name}.mdb")
+                self.call(name)
+                refs = self.read_service.set_databases.call_args.args[0]
+                self.assertEqual(
+                    [ref.file_path for ref in refs], [str(db_path.resolve())]
+                )
+
+    def read_resource(self, uri):
+        with patch.object(server_module, "McpBridgeClient", return_value=FakeBridge()):
+            response = self.server._handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "resources/read",
+                    "params": {"uri": uri},
+                }
+            )
+        (content,) = response["result"]["contents"]
+        self.assertEqual(content["uri"], uri)
+        return json.loads(content["text"])
+
+    def test_each_resource_returns_its_tools_result_with_the_default_limit(self):
+        meta = McpResultMetaDto(limit=500, returned_count=1, total_count=1)
+        for method in (
+            "list_databases",
+            "get_hierarchy",
+            "list_pages",
+            "list_conditions",
+            "summarize_quantities",
+        ):
+            getattr(self.read_service, method).return_value = McpLimitedList(
+                [method], meta
+            )
+        expected = {
+            "ost://databases": ("list_databases", {}),
+            "ost://database/d1/hierarchy": ("get_hierarchy", {"database_id": "d1"}),
+            "ost://database/d1/bid/b1/pages": (
+                "list_pages",
+                {"database_id": "d1", "bid_uid": "b1"},
+            ),
+            "ost://database/d1/bid/b1/conditions": (
+                "list_conditions",
+                {"database_id": "d1", "bid_uid": "b1"},
+            ),
+            "ost://database/d1/bid/b1/quantities": (
+                "summarize_quantities",
+                {"database_id": "d1", "bid_uid": "b1"},
+            ),
+        }
+        for uri, (tool, arguments) in expected.items():
+            with self.subTest(uri=uri):
+                from_resource = self.read_resource(uri)
+                from_tool = (
+                    from_resource
+                    if tool == "get_hierarchy"
+                    else self.call(tool, arguments)["structuredContent"]
+                )
+                self.assertEqual(from_resource, from_tool)
+                self.assertEqual(from_resource["data"], [tool])
+                self.assertTrue(from_resource["success"])
+        self.assertEqual(
+            self.read_service.get_hierarchy.call_args_list[0].kwargs["limit"], 500
+        )
+        self.assertEqual(
+            self.read_service.list_pages.call_args_list[0].kwargs["limit"], 500
         )
 
     def test_live_context_is_redacted_and_resolved_to_database_ids(self):
@@ -453,17 +536,30 @@ class McpServerToolWiringTests(unittest.TestCase):
             "selected_bid_ref": {"file_path": str(db_path), "bid_uid": "b1"},
             "selected_area_uid": "area-1",
         }
+        self.read_service.resolve_area_name.return_value = "Slab area"
+        resolved = self.call("get_current_context", bridge=FakeBridge(live))[
+            "structuredContent"
+        ]["data"]
+        self.assertEqual(resolved["selected_area_name"], untrusted("Slab area"))
+        documented_keys = set(resolved)
+        self.read_service.resolve_area_name.return_value = None
         self.read_service.resolve_area_name.side_effect = McpReadError("Unknown area")
         data = self.call("get_current_context", bridge=FakeBridge(live))[
             "structuredContent"
         ]["data"]
         self.assertIsNone(data["selected_area_name"])
+        self.assertEqual(set(data), documented_keys)
         self.read_service.resolve_area_name.side_effect = RuntimeError("boom")
-        with self.assertLogs(self.logger, level="ERROR"):
+        with self.assertLogs(self.logger, level="ERROR") as logged:
             data = self.call("get_current_context", bridge=FakeBridge(live))[
                 "structuredContent"
             ]["data"]
         self.assertIsNone(data["selected_area_name"])
+        self.assertEqual(set(data), documented_keys)
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            ["Failed to resolve selected MCP area name"],
+        )
 
     def test_live_context_without_a_real_area_does_not_resolve_a_name(self):
         db_path = self.register_database()
@@ -521,6 +617,14 @@ class McpServerToolWiringTests(unittest.TestCase):
         self.read_service.get_current_page.side_effect = McpReadError("Unknown bid_uid")
         data = self.call("get_current_context")["structuredContent"]["data"]
         self.assertIsNone(data["selected_page_uid"])
+        self.read_service.get_current_page.side_effect = RuntimeError("boom")
+        with self.assertLogs(self.logger, level="ERROR") as logged:
+            data = self.call("get_current_context")["structuredContent"]["data"]
+        self.assertIsNone(data["selected_page_uid"])
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            ["Failed to resolve saved MCP current page"],
+        )
 
     def test_saved_context_without_checked_databases_says_so(self):
         data = self.call("get_current_context")["structuredContent"]
@@ -536,12 +640,18 @@ class McpServerToolWiringTests(unittest.TestCase):
             bridge=FakeBridge(None, status="malformed_bridge_payload"),
         )["structuredContent"]["data"]
         self.assertEqual(unavailable["status"], "malformed_bridge_payload")
-        self.assertIn("not running", unavailable["message"])
+        self.assertEqual(
+            unavailable["message"],
+            "OST Visualizer is not running or the live context bridge is unavailable.",
+        )
         no_bid = self.call(
             "get_selected_takeoffs_summary",
             bridge=FakeBridge({"selected_takeoff_uids": ["t1"]}),
         )["structuredContent"]["data"]
         self.assertEqual(no_bid["status"], "no_active_bid")
+        self.assertEqual(
+            no_bid["message"], "The live OST Visualizer context has no active bid."
+        )
         db_path = self.register_database()
         self.rebuild()
         database_id = self.registry.databases[0].database_id
@@ -555,6 +665,9 @@ class McpServerToolWiringTests(unittest.TestCase):
                     ),
                 )["structuredContent"]["data"]
                 self.assertEqual(none["status"], "no_selection")
+                self.assertEqual(
+                    none["message"], "No takeoffs are selected in OST Visualizer."
+                )
                 self.assertEqual(
                     (none["database_id"], none["bid_uid"]), (database_id, "b1")
                 )
@@ -603,11 +716,22 @@ class McpServerToolWiringTests(unittest.TestCase):
             bridge=FakeBridge(None, status="malformed_bridge_payload"),
         )["structuredContent"]["data"]
         self.assertEqual(unavailable["status"], "malformed_bridge_payload")
+        self.assertEqual(
+            unavailable["message"],
+            "OST Visualizer is not running or the live context bridge is unavailable.",
+        )
         no_bid = self.call(
             "get_selected_pages_summary",
             bridge=FakeBridge({"active_view": "3d", "active_page_uid": "pg1"}),
         )["structuredContent"]["data"]
         self.assertEqual(no_bid["status"], "no_active_bid")
+        self.assertEqual(
+            no_bid["message"], "The live OST Visualizer context has no active bid."
+        )
+        missing_view = self.call(
+            "get_selected_pages_summary", bridge=FakeBridge({"active_page_uid": "pg1"})
+        )["structuredContent"]["data"]
+        self.assertEqual(missing_view["active_view"], "")
         self.assertEqual(
             (no_bid["active_view"], no_bid["active_page_uid"]), ("3d", "pg1")
         )
@@ -619,7 +743,142 @@ class McpServerToolWiringTests(unittest.TestCase):
             bridge=FakeBridge({"selected_bid_ref": ref, "selected_page_uids": []}),
         )["structuredContent"]["data"]
         self.assertEqual(none["status"], "no_selection")
+        self.assertEqual(none["message"], "No pages are selected in OST Visualizer.")
         self.read_service.get_selected_pages_summary.assert_not_called()
+
+    def test_a_live_context_missing_either_the_database_or_the_bid_is_no_active_bid(self):
+        db_path = self.register_database()
+        self.rebuild()
+        for tool, key in (
+            ("get_selected_takeoffs_summary", "selected_takeoff_uids"),
+            ("get_selected_pages_summary", "selected_page_uids"),
+        ):
+            for label, context in (
+                ("database only", {"selected_bid_ref": {"file_path": str(db_path)}}),
+                ("bid only", {"selected_bid_ref": {"bid_uid": "b1"}}),
+            ):
+                with self.subTest(tool=tool, case=label):
+                    context = dict(context, **{key: ["x1"]})
+                    data = self.call(tool, bridge=FakeBridge(context))[
+                        "structuredContent"
+                    ]["data"]
+                    self.assertEqual(data["status"], "no_active_bid")
+        self.read_service.get_selected_takeoffs_summary.assert_not_called()
+        self.read_service.get_selected_pages_summary.assert_not_called()
+
+    def test_the_area_name_needs_a_real_area_a_database_and_a_bid(self):
+        db_path = self.register_database()
+        self.rebuild()
+        self.read_service.resolve_area_name.return_value = "Slab area"
+        full = {"file_path": str(db_path), "bid_uid": "b1"}
+        for label, context in (
+            ("no database", {"selected_bid_ref": {"bid_uid": "b1"}}),
+            ("no bid", {"selected_bid_ref": {"file_path": str(db_path)}}),
+        ):
+            with self.subTest(case=label):
+                self.read_service.resolve_area_name.reset_mock()
+                context = dict(context, selected_area_uid="area-1")
+                data = self.call("get_current_context", bridge=FakeBridge(context))[
+                    "structuredContent"
+                ]["data"]
+                self.assertIsNone(data["selected_area_name"])
+                self.read_service.resolve_area_name.assert_not_called()
+        resolved = self.call(
+            "get_current_context",
+            bridge=FakeBridge({"selected_bid_ref": full, "selected_area_uid": "area-1"}),
+        )["structuredContent"]["data"]
+        self.assertEqual(resolved["selected_area_name"], untrusted("Slab area"))
+
+    def test_the_saved_page_is_resolved_only_for_a_registered_database_and_a_bid(self):
+        db_path = self.register_database()
+        for label, node in (
+            ("bid without a registered database", {"file_path": "C:/other/x.mdb", "bid_uid": "b1"}),
+            ("database without a bid", {"file_path": str(db_path)}),
+        ):
+            with self.subTest(case=label):
+                (self.root / "workspace_state.json").write_text(
+                    json.dumps(
+                        {"project_workspace": {"selected_node": dict(node, kind="bid")}}
+                    ),
+                    encoding="utf-8",
+                )
+                self.rebuild()
+                data = self.call("get_current_context")["structuredContent"]["data"]
+                self.assertIsNone(data["selected_area_name"])
+                self.assertNotIn("selected_page_uid", data)
+                self.read_service.get_current_page.assert_not_called()
+
+    def test_the_factory_builds_a_real_read_service_and_stdio_serves_the_built_server(self):
+        registry = DatabaseRegistry(app_data_dir=self.root, logger=self.logger)
+        service = server_module.create_read_service(registry, self.logger)
+        self.assertIsInstance(service, McpReadService)
+        started = []
+
+        class FakeServer:
+            def run_stdio(self):
+                started.append(True)
+
+        with patch.object(server_module, "build_mcp_server", return_value=FakeServer()):
+            server_module.run_stdio_server(app_data_dir=self.root, logger=self.logger)
+        self.assertEqual(started, [True])
+
+    def test_the_read_service_loggers_are_children_of_the_supplied_logger(self):
+        registry = DatabaseRegistry(app_data_dir=self.root, logger=self.logger)
+        seen = {}
+
+        def recorder(name):
+            def build(*args, **kwargs):
+                seen[name] = kwargs.get("logger")
+                return mock.MagicMock()
+
+            return build
+
+        with patch.object(server_module, "MdbReader", recorder("reader")), patch.object(
+            server_module, "MdbFileParser", recorder("parser")
+        ), patch.object(
+            server_module, "FileProjectRepository", recorder("repository")
+        ), patch.object(
+            server_module, "NativePdfMetadataProvider", recorder("pdf")
+        ), patch.object(
+            server_module, "McpReadService", recorder("service")
+        ):
+            server_module.create_read_service(registry, self.logger)
+        names = {key: value.name for key, value in seen.items() if key != "service"}
+        self.assertEqual(
+            names,
+            {
+                "reader": "test_mcp_server_wiring.MdbReader",
+                "parser": "test_mcp_server_wiring.MdbReader.Parser",
+                "repository": "test_mcp_server_wiring.MdbReader.Repository",
+                "pdf": "test_mcp_server_wiring.PdfMetadataProvider",
+            },
+        )
+
+    def test_database_ids_are_added_for_both_bid_refs_and_the_selected_file(self):
+        db_path = self.register_database()
+        self.rebuild()
+        database_id = self.registry.databases[0].database_id
+        payload = server_module._with_database_ids(
+            {
+                "selected_file_path": str(db_path),
+                "current_bid_ref": {"file_path": str(db_path), "bid_uid": "b9"},
+                "selected_bid_ref": {"file_path": str(db_path), "bid_uid": "b1"},
+            },
+            self.registry,
+        )
+        self.assertEqual(payload["database_id"], database_id)
+        self.assertEqual(payload["selected_file_basename"], "demo.mdb")
+        self.assertEqual(
+            payload["current_bid_ref"]["database_id"], database_id
+        )
+        self.assertEqual(payload["current_bid_ref"]["bid_uid"], "b9")
+        self.assertEqual(payload["selected_bid_ref"]["bid_uid"], "b1")
+        self.assertNotIn("file_path", payload["current_bid_ref"])
+        only_file = server_module._with_database_ids(
+            {"selected_file_path": str(db_path)}, self.registry
+        )
+        self.assertEqual(only_file["database_id"], database_id)
+        self.assertNotIn("selected_file_path", only_file)
 
 
 class McpServerHelperTests(unittest.TestCase):
@@ -639,6 +898,8 @@ class McpServerHelperTests(unittest.TestCase):
         self.assertEqual(server_module._basename("C:\\plans\\demo.mdb"), "demo.mdb")
         self.assertEqual(server_module._basename("/srv/plans/demo.mdb"), "demo.mdb")
         self.assertEqual(server_module._basename("/srv/plans/"), "plans")
+        self.assertEqual(server_module._basename("C:\\plans\\"), "plans")
+        self.assertEqual(server_module._basename("/srv/plansXX/"), "plansXX")
 
     def test_tool_limit_is_clamped_and_falls_back_to_default(self):
         clean = server_module._clean_tool_limit
@@ -680,6 +941,71 @@ class McpServerHelperTests(unittest.TestCase):
         )
         self.assertIsNone(unknown["database_id"])
         self.assertNotIn("file_path", unknown)
+
+
+class McpResultEnvelopeHelperTests(unittest.TestCase):
+    SUMMARY_TYPES = (
+        "McpBidQuantitySummaryDto",
+        "McpAreaSummaryDto",
+        "McpHierarchyDto",
+        "McpPageMarkupsSummaryDto",
+        "McpPdfTextSearchSummaryDto",
+        "McpPdfTextSummaryDto",
+        "McpPdfVectorsSummaryDto",
+        "McpScopeGapSummaryDto",
+        "McpSelectedPagesSummaryDto",
+        "McpSelectedTakeoffsSummaryDto",
+        "McpDuplicateConditionSummaryDto",
+        "McpZeroQuantitySummaryDto",
+        "McpUnplacedTakeoffSummaryDto",
+    )
+
+    def summary(self, name, status="truncated", meta=None):
+        result = create_autospec(getattr(server_module, name), instance=True)
+        result.status = status
+        result.meta = meta or McpResultMetaDto(limit=3, returned_count=2, total_count=9)
+        return result
+
+    def test_exactly_the_summary_dtos_carry_their_own_meta_and_status(self):
+        for name in self.SUMMARY_TYPES:
+            with self.subTest(dto=name):
+                self.assertIs(
+                    server_module._has_summary_meta(self.summary(name)), True
+                )
+        for other in ({}, [], "text", None, McpResultMetaDto()):
+            with self.subTest(other=type(other).__name__):
+                self.assertIs(server_module._has_summary_meta(other), False)
+
+    def test_meta_comes_from_the_result_a_plain_list_or_nothing(self):
+        meta = McpResultMetaDto(limit=7, returned_count=1, total_count=1)
+        self.assertIs(server_module._result_meta(McpLimitedList(["a"], meta), 7), meta)
+        summary = self.summary("McpHierarchyDto", meta=meta)
+        self.assertIs(server_module._result_meta(summary, 7), meta)
+        listed = server_module._result_meta(["a", "b", "c"], 99999)
+        self.assertEqual(
+            listed,
+            McpResultMetaDto(
+                limit=5000,
+                returned_count=3,
+                total_count=3,
+                truncated=False,
+                has_more=False,
+            ),
+        )
+        self.assertEqual(server_module._result_meta({"k": 1}, 5), McpResultMetaDto())
+
+    def test_status_follows_the_result_then_truncation_then_emptiness(self):
+        status = server_module._result_status
+        limited = McpLimitedList([], McpResultMetaDto(limit=5))
+        limited.status = "custom"
+        self.assertEqual(status(limited, limited.meta), "custom")
+        summary = self.summary("McpAreaSummaryDto", status="partial")
+        self.assertEqual(status(summary, summary.meta), "partial")
+        self.assertEqual(
+            status([], McpResultMetaDto(truncated=True, returned_count=0)), "truncated"
+        )
+        self.assertEqual(status([], McpResultMetaDto(returned_count=0)), "empty")
+        self.assertEqual(status(["a"], McpResultMetaDto(returned_count=1)), "ok")
 
 
 class McpServerOutputRegressionTests(unittest.TestCase):
@@ -962,3 +1288,132 @@ class McpServerOutputRegressionTests(unittest.TestCase):
         self.assertIn(
             '"untrusted": true', summary["preview"].replace('":true', '": true')
         )
+
+
+SURFACE_GOLDEN_PATH = Path(__file__).with_name("server_surface_golden.json")
+REGENERATE_SURFACE_FLAG = "--regenerate-surface-golden"
+
+
+def advertised_surface(directory):
+    """Everything the read-only server advertises, with prompt texts rendered."""
+    logger = logging.getLogger("test_mcp_server_surface")
+    logger.handlers.clear()
+    logger.addHandler(logging.NullHandler())
+    logger.propagate = False
+    registry = DatabaseRegistry(app_data_dir=Path(directory), logger=logger)
+    server = build_mcp_server(registry, logger=logger)
+    prompt_texts = {}
+    for prompt in server.list_prompts():
+        required = {
+            argument["name"]: f"sample-{argument['name']}"
+            for argument in prompt["arguments"]
+            if argument.get("required")
+        }
+        everything = {
+            argument["name"]: f"sample-{argument['name']}"
+            for argument in prompt["arguments"]
+        }
+        prompt_texts[prompt["name"]] = {
+            variant: server._get_prompt(prompt["name"], arguments)["messages"][0][
+                "content"
+            ]["text"]
+            for variant, arguments in (("required", required), ("all", everything))
+        }
+    return {
+        "tools": server.list_tools(),
+        "prompts": server.list_prompts(),
+        "resources": server.list_resources(),
+        "resource_templates": server.list_resource_templates(),
+        "prompt_texts": prompt_texts,
+    }
+
+
+class ServerSurfaceGoldenTests(unittest.TestCase):
+    """What the read-only server advertises is pinned literally.
+
+    server_surface_golden.json holds the 38 tools with their schemas and
+    descriptions, the 7 prompts (arguments and the text each renders, with only
+    the required arguments and with all of them), the static resource and the 4
+    resource templates, exactly as a client receives them. An intentional change
+    to the public surface therefore appears as readable text in that file's diff.
+    The golden is generated from production: it detects drift, it is not an
+    independent specification.
+
+    A deliberate change is made in two steps, reviewed together: edit server.py,
+    then rewrite the golden with
+
+        .\\venv\\Scripts\\python.exe -m tests.mcp_server.test_server --regenerate-surface-golden
+
+    Nothing regenerates it implicitly; the command prints which entries changed.
+    Never regenerate to make a failing run pass without reading that diff.
+    """
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.surface = advertised_surface(directory.name)
+        self.golden = json.loads(SURFACE_GOLDEN_PATH.read_text(encoding="utf-8"))
+
+    def test_the_advertised_tools_match_the_pinned_client_contract(self):
+        self.assertEqual(
+            [tool["name"] for tool in self.surface["tools"]],
+            [tool["name"] for tool in self.golden["tools"]],
+        )
+        for current, expected in zip(self.surface["tools"], self.golden["tools"]):
+            with self.subTest(tool=expected["name"]):
+                self.assertEqual(current, expected)
+
+    def test_the_advertised_prompts_resources_and_templates_match(self):
+        for key in ("prompts", "resources", "resource_templates"):
+            with self.subTest(surface=key):
+                self.assertEqual(self.surface[key], self.golden[key])
+
+    def test_each_prompt_renders_the_pinned_text(self):
+        self.assertEqual(
+            list(self.surface["prompt_texts"]), list(self.golden["prompt_texts"])
+        )
+        for name, texts in self.golden["prompt_texts"].items():
+            with self.subTest(prompt=name):
+                self.assertEqual(self.surface["prompt_texts"][name], texts)
+
+    def test_the_golden_covers_the_documented_public_surface(self):
+        self.assertEqual(len(self.golden["tools"]), 38)
+        self.assertEqual(len(self.golden["prompts"]), 7)
+        self.assertEqual(len(self.golden["resources"]), 1)
+        self.assertEqual(len(self.golden["resource_templates"]), 4)
+        self.assertEqual(len(self.golden["prompt_texts"]), 7)
+
+
+def regenerate_surface_golden():
+    old = (
+        json.loads(SURFACE_GOLDEN_PATH.read_text(encoding="utf-8"))
+        if SURFACE_GOLDEN_PATH.exists()
+        else {}
+    )
+    with tempfile.TemporaryDirectory() as folder:
+        new = advertised_surface(folder)
+    SURFACE_GOLDEN_PATH.write_text(
+        json.dumps(new, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    changed = [
+        key for key in new if old.get(key) != new[key]
+    ]
+    detail = {}
+    for key in ("tools", "prompts", "resources", "resource_templates"):
+        before = {item.get("name"): item for item in old.get(key, [])}
+        detail[key] = [
+            item.get("name") for item in new[key] if before.get(item.get("name")) != item
+        ]
+    detail["prompt_texts"] = [
+        name
+        for name, texts in new["prompt_texts"].items()
+        if old.get("prompt_texts", {}).get(name) != texts
+    ]
+    print(f"wrote {SURFACE_GOLDEN_PATH}; sections changed: {changed}; entries: {detail}")
+
+
+if __name__ == "__main__":
+    if REGENERATE_SURFACE_FLAG in sys.argv:
+        regenerate_surface_golden()
+    else:
+        unittest.main()

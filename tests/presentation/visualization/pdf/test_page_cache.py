@@ -25,6 +25,47 @@ from ost_visualizer.presentation.visualization.utils.source_signature import (
 )
 
 
+import functools
+
+
+def _fail_instead_of_hanging(seconds=20.0):
+    """Class decorator: run each test body in a daemon thread with a deadline.
+
+    A regression that turns an eviction or wait loop into an endless loop then
+    fails the test instead of hanging the whole suite.
+    """
+
+    def decorate_class(cls):
+        for name in [n for n in vars(cls) if n.startswith("test")]:
+            original = vars(cls)[name]
+
+            @functools.wraps(original)
+            def guarded(self, *args, _original=original, **kwargs):
+                outcome = {}
+
+                def run():
+                    try:
+                        _original(self, *args, **kwargs)
+                    except BaseException as error:  # re-raised on the test thread
+                        outcome["error"] = error
+
+                worker = threading.Thread(target=run, daemon=True)
+                worker.start()
+                worker.join(seconds)
+                if worker.is_alive():
+                    self.fail(
+                        f"{_original.__name__} did not finish within {seconds} s "
+                        "(non-terminating loop?)"
+                    )
+                if "error" in outcome:
+                    raise outcome["error"]
+
+            setattr(cls, name, guarded)
+        return cls
+
+    return decorate_class
+
+
 class _FakeRenderer:
     def __init__(self):
         self.page_info_calls = []
@@ -154,6 +195,7 @@ class _ClosableRenderer:
             raise self.error
 
 
+@_fail_instead_of_hanging()
 class PageCacheLifecycleTests(unittest.TestCase):
     def test_cacheable_base_scale_keeps_heavy_pdf_under_cache_budget(self):
         scale = PageCache.cacheable_base_render_scale(
@@ -777,6 +819,7 @@ class PageCacheLifecycleTests(unittest.TestCase):
         self.assertEqual(len(cache._cache), 0)
 
 
+@_fail_instead_of_hanging()
 class PageCacheEvictionTests(unittest.TestCase):
     def new_cache(self, renderer, entries):
         cache = PageCache()
@@ -1056,7 +1099,192 @@ class PageCacheEvictionTests(unittest.TestCase):
                     1.913,
                 )
 
+@_fail_instead_of_hanging()
+class PageCacheShippedBudgetTests(unittest.TestCase):
+    """The shipped cache limits, driven through the public lookups.
 
+    Image sizes are faked (images stay 2x2) so no real 80 MiB buffers exist.
+    """
+
+    SHEET = 80 * 1024 * 1024
+    SINGLE_LIMIT = 96 * 1024 * 1024
+
+    def sized_cache(self, size):
+        cache = PageCache()
+        renderer = _FakeRenderer()
+        renderer.render = lambda *_args, **_kwargs: QImage(
+            2, 2, QImage.Format.Format_ARGB32
+        )
+        cache._get_renderer = lambda: renderer
+        cache._image_size_bytes = lambda _image: size
+        return cache, renderer
+
+    def test_frame_cache_keeps_eight_plan_sheets(self):
+        cache, _renderer = self.sized_cache(self.SHEET)
+        for index in range(9):
+            cache.get_frame(f"f{index}.pdf", 0, 1.0, 0.0, 0.0, 10.0, 10.0, 0)
+        self.assertEqual(
+            [key.file_path for key in cache._frame_cache],
+            [f"f{index}.pdf" for index in range(1, 9)],
+        )
+
+    def test_tinted_cache_keeps_eight_plan_sheets(self):
+        cache, _renderer = self.sized_cache(self.SHEET)
+        for index in range(9):
+            cache.get_tinted_page(f"t{index}.pdf", 0, 1.0, 0, (1, 2, 3))
+        self.assertEqual(
+            [key.file_path for key in cache._tinted_cache],
+            [f"t{index}.pdf" for index in range(1, 9)],
+        )
+
+    def test_composite_cache_keeps_eight_plan_sheets_or_ten_small_ones(self):
+        for size, expected in ((self.SHEET, 8), (1024 * 1024, 10)):
+            with self.subTest(size=size):
+                cache, _renderer = self.sized_cache(size)
+                for index in range(11):
+                    cache.get_composite(
+                        (index,),
+                        lambda: (QImage(2, 2, QImage.Format.Format_ARGB32), True),
+                        is_current=lambda: True,
+                    )
+                self.assertEqual(
+                    list(cache._composite_cache),
+                    [(index,) for index in range(11 - expected, 11)],
+                )
+
+    def test_every_image_cache_accepts_up_to_ninety_six_mebibytes_per_image(self):
+        for extra, expected in ((0, 1), (1, 0)):
+            with self.subTest(extra=extra):
+                cache, _renderer = self.sized_cache(self.SINGLE_LIMIT + extra)
+                cache.get_page("p.pdf", 0, 1.0, 0)
+                cache.get_frame("p.pdf", 0, 1.0, 0.0, 0.0, 10.0, 10.0, 0)
+                cache.get_tinted_page("p.pdf", 0, 1.0, 0, (1, 2, 3))
+                cache.get_composite(
+                    ("c",),
+                    lambda: (QImage(2, 2, QImage.Format.Format_ARGB32), True),
+                    is_current=lambda: True,
+                )
+                self.assertEqual(
+                    [
+                        len(cache._cache),
+                        len(cache._frame_cache),
+                        len(cache._tinted_cache),
+                        len(cache._composite_cache),
+                    ],
+                    [expected] * 4,
+                )
+
+    def test_documented_limits_are_exposed_unchanged(self):
+        self.assertEqual(PageCache.MAX_ENTRIES, 20)
+        self.assertEqual(PageCache.MAX_METADATA_ENTRIES, 512)
+        self.assertEqual(PageCache.BASE_RASTER_MAX_PIXELS, 20_000_000)
+        self.assertEqual(PageCache.REPRESENTATIVE_PLAN_SHEET_BYTES, 80 * 1024 * 1024)
+        self.assertEqual(PageCache.PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES, 96 * 1024 * 1024)
+
+    def test_metadata_caches_hold_exactly_the_documented_entries(self):
+        cache, _renderer = self.sized_cache(1)
+        renderer = _FakeRenderer()
+        cache._get_renderer = lambda: renderer
+        for index in range(513):
+            cache.get_page_size(f"s{index}.pdf", 0)
+        paths = [key[0] for key in cache._page_size_cache]
+        self.assertEqual((len(paths), paths[0]), (512, "s1.pdf"))
+
+    def test_storing_an_existing_key_again_makes_it_the_most_recent(self):
+        cache, _renderer = self.sized_cache(1)
+        image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        images = OrderedDict()
+        cache._store_cache_image(images, "a", image, 100, 100)
+        cache._store_cache_image(images, "b", image, 100, 100)
+        cache._store_cache_image(images, "a", image, 100, 100)
+        self.assertEqual(list(images), ["b", "a"])
+        metadata = OrderedDict()
+        cache._store_lru(metadata, "a", 1)
+        cache._store_lru(metadata, "b", 2)
+        cache._store_lru(metadata, "a", 3)
+        self.assertEqual(list(metadata.items()), [("b", 2), ("a", 3)])
+
+    def test_a_pixel_cap_of_one_pixel_forces_the_scale_floor(self):
+        self.assertEqual(
+            PageCache.cacheable_render_scale(612.0, 792.0, 3.0, max_pixels=1),
+            CONSTRAINED_RENDER_SCALE_FLOOR,
+        )
+
+    def test_base_scale_uses_the_tinted_limit_only_when_asked_to(self):
+        with patch.object(
+            page_cache_module, "_TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES", 1024 * 1024
+        ):
+            plain = PageCache.cacheable_base_render_scale(612.0, 792.0, 1.5)
+            default_scale = PageCache.cacheable_base_render_scale(612.0, 792.0, 1.5)
+            tinted = PageCache.cacheable_base_render_scale(
+                612.0, 792.0, 1.5, tinted=True
+            )
+        self.assertEqual(plain, 1.5)
+        self.assertEqual(default_scale, 1.5)
+        self.assertLess(tinted, 1.0)
+
+    def test_metadata_lookups_default_to_the_first_page(self):
+        renderer = _FakeRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        cache.get_page_size("doc.pdf")
+        cache.get_text_runs("doc.pdf")
+        cache.get_page_info("doc.pdf")
+        self.assertEqual(renderer.page_size_calls, [("doc.pdf", 0)])
+        self.assertEqual(renderer.text_run_calls, [("doc.pdf", 0)])
+        self.assertEqual(renderer.page_info_calls, [("doc.pdf", 0)])
+
+    def test_tinted_lookups_default_to_the_red_tint_and_to_waiting(self):
+        renderer = _BlockingPageRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        results = []
+        first = threading.Thread(
+            target=lambda: results.append(cache.get_page("p.pdf", 0, 1.0, 0))
+        )
+        first.start()
+        self.assertTrue(renderer.first_render_started.wait(timeout=2.0))
+        second = threading.Thread(
+            target=lambda: results.append(cache.get_tinted_page("p.pdf", 0, 1.0, 0))
+        )
+        second.start()
+        # The tinted lookup waits for the base render already in flight.
+        second.join(timeout=0.3)
+        self.assertTrue(second.is_alive())
+        renderer.release_first_render.set()
+        first.join(timeout=2.0)
+        second.join(timeout=2.0)
+        self.assertEqual(len(renderer.calls), 1)
+        self.assertEqual(len(results), 2)
+        (tinted_key,) = list(cache._tinted_cache)
+        self.assertEqual(
+            (tinted_key.tint_r, tinted_key.tint_g, tinted_key.tint_b), (255, 80, 80)
+        )
+
+    def test_each_thread_gets_its_own_registered_native_renderer(self):
+        created = []
+
+        class FakePageRenderer:
+            def __init__(self):
+                created.append(self)
+
+            def close(self):
+                pass
+
+        cache = PageCache()
+        with patch.object(page_cache_module, "PageRenderer", FakePageRenderer):
+            first = cache._get_renderer()
+            self.assertIs(cache._get_renderer(), first)
+            other = []
+            thread = threading.Thread(target=lambda: other.append(cache._get_renderer()))
+            thread.start()
+            thread.join(timeout=2.0)
+        self.assertIsNot(other[0], first)
+        self.assertEqual(created, [first, other[0]])
+        self.assertEqual(cache._renderers, [first, other[0]])
+
+
+@_fail_instead_of_hanging()
 class PageCacheLimitTests(unittest.TestCase):
     def test_a_document_without_pages_is_rendered_at_page_zero(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1104,6 +1332,7 @@ class _BlockingFrameRenderer:
         return QImage(16, 16, QImage.Format.Format_ARGB32)
 
 
+@_fail_instead_of_hanging()
 class PageCacheConcurrencyTests(unittest.TestCase):
     def start_frame_owner(self):
         renderer = _BlockingFrameRenderer()
@@ -1231,6 +1460,79 @@ class PageCacheConcurrencyTests(unittest.TestCase):
         self.assertEqual(renderer.page_count_calls, ["a", "b", "c", "b"])
 
 
+@_fail_instead_of_hanging()
+class PageCacheInterleavedStoreTests(unittest.TestCase):
+    """A waiter that wakes after another entry was stored keeps its key most recent."""
+
+    @staticmethod
+    def interleave_after_store(cache, table_name):
+        real_store = cache._store_cache_image
+
+        def store_then_interleave(table, key, image, *arguments):
+            real_store(table, key, image, *arguments)
+            if table is getattr(cache, table_name) and "interleaved" not in table:
+                table["interleaved"] = QImage(2, 2, QImage.Format.Format_ARGB32)
+
+        cache._store_cache_image = store_then_interleave
+
+    def test_a_page_waiter_moves_the_key_it_waited_for_to_the_most_recent_position(self):
+        renderer = _BlockingPageRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        self.interleave_after_store(cache, "_cache")
+        owner = threading.Thread(
+            target=lambda: cache.get_page("p.pdf", 0, 1.0, 0), daemon=True
+        )
+        owner.start()
+        self.assertTrue(renderer.first_render_started.wait(timeout=2.0))
+        results = []
+        waiter = threading.Thread(
+            target=lambda: results.append(cache.get_page("p.pdf", 0, 1.0, 0)), daemon=True
+        )
+        waiter.start()
+        waiter.join(0.3)
+        self.assertTrue(waiter.is_alive())
+        renderer.release_first_render.set()
+        owner.join(5.0)
+        waiter.join(5.0)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(len(renderer.calls), 1)
+        keys = list(cache._cache)
+        self.assertEqual(keys[-1].file_path, "p.pdf")
+        self.assertEqual(keys[0], "interleaved")
+
+    def test_a_frame_waiter_moves_the_key_it_waited_for_to_the_most_recent_position(self):
+        renderer = _BlockingFrameRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        self.interleave_after_store(cache, "_frame_cache")
+        owner = threading.Thread(
+            target=lambda: cache.get_frame("p.pdf", 0, 1.0, 0.0, 0.0, 30.0, 40.0, 0),
+            daemon=True,
+        )
+        owner.start()
+        self.assertTrue(renderer.started.wait(timeout=2.0))
+        results = []
+        waiter = threading.Thread(
+            target=lambda: results.append(
+                cache.get_frame("p.pdf", 0, 1.0, 0.0, 0.0, 30.0, 40.0, 0)
+            ),
+            daemon=True,
+        )
+        waiter.start()
+        waiter.join(0.3)
+        self.assertTrue(waiter.is_alive())
+        renderer.release.set()
+        owner.join(5.0)
+        waiter.join(5.0)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(len(renderer.calls), 1)
+        keys = list(cache._frame_cache)
+        self.assertEqual(keys[-1].file_path, "p.pdf")
+        self.assertEqual(keys[0], "interleaved")
+
+
+@_fail_instead_of_hanging()
 class PageCachePreferenceTests(unittest.TestCase):
     def test_page_cache_keeps_low_and_high_resolution_scales_separate(self):
         class FakeRenderer:

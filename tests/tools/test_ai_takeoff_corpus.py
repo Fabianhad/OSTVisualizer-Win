@@ -1,8 +1,16 @@
 """Corpus harness helpers on synthetic data only (no client drawings)."""
 
+import contextlib
 import csv
+import io
+import itertools
+import json
+import os
+import re
+import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1668,8 +1676,13 @@ class CommandLineDefaultsTests(unittest.TestCase):
             ]
         )
         self.assertEqual(code, 2)
-        self.assertIn("--out must be outside the repository", error)
-        self.assertIn("confidential", error)
+        self.assertTrue(
+            error.endswith(
+                "error: --out must be outside the repository "
+                "(the corpus is confidential)\n"
+            ),
+            error,
+        )
         self.assertFalse((corpus.REPO_ROOT / "corpus_out").exists())
 
     def test_the_output_folder_is_created_when_it_is_missing(self):
@@ -1947,8 +1960,1236 @@ class ReportTests(unittest.TestCase):
             )
         self.assertIn(
             "Not measured: hand_values.csv has no expected_sf rows for these pages.",
-            text,
+            text.splitlines(),
         )
+
+
+class RunCsvContractTests(unittest.TestCase):
+    """The run CSV header is what summary and compare read back by name."""
+
+    COLUMNS = (
+        "rel", "page", "status", "seconds",
+        "peak_mb", "pages_in_pdf", "width_pts", "height_pts",
+        "scale_used", "rotation", "visible_offset", "page_size_class",
+        "text_runs", "segments", "curves", "extraction_truncated",
+        "content", "outlined_text", "kind", "title",
+        "sheets_status", "sheet_number", "sheet_number_source", "sheet_number_legacy",
+        "text_extractable", "text_reason", "title_block_crop", "scale_status",
+        "scale_label", "scale_hits", "plan_scale_status", "plan_scale_label",
+        "scale_candidates", "scale_views", "kinds_wall", "kinds_dashed",
+        "kinds_thin", "kinds_symbol", "dash_arrays", "widths",
+        "heavy_threshold", "list_status", "list_seconds", "list_regions",
+        "list_leaks", "list_gaps", "list_suppressed", "list_excluded",
+        "list_min_width", "list_min_width_source", "list_extraction_scope", "box_quadrants_truncated",
+        "filtered_status", "filtered_seconds", "filtered_regions", "filtered_leaks",
+        "filtered_excluded", "filtered_gaps", "filtered_suppressed", "seed_source",
+        "seed_status", "seed_seconds", "seed_method", "seed_area_sf",
+        "seed_gaps", "seed_leak", "seed_unlocated", "proposal_status",
+        "proposal_assumptions", "proposal_subjects", "dominant_wall_width", "heaviest_long_width",
+        "long_width_histogram", "suggested_min_width", "suggestion_removes_dominant", "drawing_text_runs",
+        "callouts_as_lines", "default_status", "default_seconds", "default_min_width",
+        "default_found", "default_segments", "default_method", "default_area_sf",
+        "default_touches_edge", "default_box_ratio", "default_leak", "default_open_gaps",
+        "default_dashed_outline", "default_wall_failure", "zero_status", "zero_seconds",
+        "zero_min_width", "zero_found", "zero_segments", "zero_method",
+        "zero_area_sf", "zero_touches_edge", "zero_box_ratio", "zero_leak",
+        "zero_open_gaps", "zero_dashed_outline", "zero_wall_failure", "heavy_status",
+        "heavy_seconds", "heavy_min_width", "heavy_found", "heavy_segments",
+        "heavy_method", "heavy_area_sf", "heavy_touches_edge", "heavy_box_ratio",
+        "heavy_leak", "heavy_open_gaps", "heavy_dashed_outline", "heavy_wall_failure",
+        "proposal_outline_vertices", "proposal_hole_vertices", "proposal_area_change_pct", "proposal_holes_dropped",
+        "hand_expected_sf", "hand_error_pct", "error",
+    )
+
+    def test_the_run_csv_columns_and_their_order(self):
+        self.assertEqual(corpus.RUN_COLUMNS, self.COLUMNS)
+        self.assertEqual(len(set(corpus.RUN_COLUMNS)), len(corpus.RUN_COLUMNS))
+        self.assertEqual(corpus.HAND_VALUE_COLUMNS, ("pdf", "page", "seed_x", "seed_y", "expected_sf"))
+
+    def test_spread_keeps_the_ends_and_a_requested_count_in_order(self):
+        self.assertEqual(corpus.spread(list(range(5)), 5), [0, 1, 2, 3, 4])
+        self.assertEqual(corpus.spread(list(range(5)), 6), [0, 1, 2, 3, 4])
+        self.assertEqual(corpus.spread(list(range(10)), 1), [0])
+        self.assertEqual(corpus.spread(list(range(10)), 2), [0, 9])
+        self.assertEqual(corpus.spread(list(range(10)), 3), [0, 4, 9])
+        self.assertEqual(corpus.spread([], 3), [])
+
+
+class HarnessConstantTests(unittest.TestCase):
+    def test_reading_constants_and_kind_names(self):
+        self.assertEqual(corpus.YEARS, ("2023", "2024", "2025", "2026", "2027"))
+        self.assertEqual(corpus.TITLE_BLOCK_X, 0.70)
+        self.assertEqual(corpus.TITLE_BLOCK_Y, 0.75)
+        self.assertEqual(corpus.LINE_TOLERANCE_FRACTION, 0.5)
+        self.assertEqual(
+            (
+                corpus.KIND_PLAN,
+                corpus.KIND_SECTION,
+                corpus.KIND_DETAIL,
+                corpus.KIND_SCHEDULE,
+                corpus.KIND_NOTES,
+                corpus.KIND_ELEVATION,
+                corpus.KIND_UNKNOWN,
+            ),
+            (
+                "plan",
+                "section",
+                "detail",
+                "schedule",
+                "general_notes",
+                "elevation",
+                "unknown",
+            ),
+        )
+        self.assertEqual(
+            corpus.WIDTH_BUCKETS, (0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0)
+        )
+
+    def test_the_default_root_is_under_local_app_data_or_the_home_folder(self):
+        import os
+        import subprocess
+
+        from tests.paths import REPO_ROOT
+
+        def root_with(local_app_data):
+            environment = dict(os.environ, PYTHONUTF8="1")
+            environment.pop("LOCALAPPDATA", None)
+            if local_app_data is not None:
+                environment["LOCALAPPDATA"] = local_app_data
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from tools import ai_takeoff_corpus as c; print(c.DEFAULT_ROOT)",
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            return Path(completed.stdout.strip())
+
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(root_with(folder), Path(folder) / "ostv_corpus")
+        self.assertEqual(root_with(None), Path.home() / "ostv_corpus")
+
+    def test_values_are_immutable(self):
+        import dataclasses
+
+        for value, field in (
+            (TextRun("a", 0, 0, 1, 1), "text"),
+            (_line("A"), "text"),
+            (corpus.ScaleHit("x", 1.0, 12.0), "label"),
+        ):
+            with self.subTest(type=type(value).__name__):
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    setattr(value, field, "changed")
+
+    def test_the_ost_scale_needs_both_factors(self):
+        self.assertEqual(corpus.ScaleHit("a", 0.125, 12.0).ost_per_point, 12.0 / 9.0)
+        self.assertIsNone(corpus.ScaleHit("a", 0.125, None).ost_per_point)
+        self.assertIsNone(corpus.ScaleHit("a", None, 12.0).ost_per_point)
+        self.assertIsNone(corpus.ScaleHit("a", 0.0, 12.0).ost_per_point)
+        self.assertIsNone(corpus.ScaleHit("a", 0.125, 0.0).ost_per_point)
+
+
+class LineGroupingBoundaryTests(unittest.TestCase):
+    def run_at(self, middle, text, height=10.0, left=0.0):
+        return TextRun(text, left, middle - height / 2, left + 20, middle + height / 2)
+
+    def test_a_run_exactly_half_a_line_height_away_joins_the_line(self):
+        joined = text_lines([self.run_at(100.0, "A"), self.run_at(105.0, "B", left=30)])
+        self.assertEqual([line.text for line in joined], ["A B"])
+        apart = text_lines(
+            [self.run_at(100.0, "A"), self.run_at(105.5, "B", left=30)]
+        )
+        self.assertEqual([line.text for line in apart], ["A", "B"])
+
+    def test_the_line_position_is_the_mean_of_every_run_already_in_it(self):
+        runs = [
+            self.run_at(100.0, "A", left=0),
+            self.run_at(100.0, "B", left=30),
+            self.run_at(100.0, "C", left=60),
+            self.run_at(100.0, "D", left=90),
+        ]
+        self.assertEqual([line.text for line in text_lines(runs)], ["A B C D"])
+
+    def test_zero_height_runs_use_a_tiny_positive_tolerance(self):
+        flat = lambda middle, text, left: TextRun(text, left, middle, left + 5, middle)
+        near = text_lines([flat(10.0, "A", 0), flat(10.0 + 4e-7, "B", 10)])
+        self.assertEqual([line.text for line in near], ["A B"])
+        far = text_lines([flat(10.0, "A", 0), flat(10.0 + 6e-7, "B", 10)])
+        self.assertEqual([line.text for line in far], ["A", "B"])
+
+
+class TitleBlockBoundaryTests(unittest.TestCase):
+    def test_degenerate_pages_have_no_title_block(self):
+        line = _line("X", left=0.0, top=0.0)
+        for width, height in ((0.0, 100.0), (100.0, 0.0), (-50.0, 100.0), (100.0, -50.0)):
+            with self.subTest(width=width, height=height):
+                self.assertIs(corpus.in_title_block(line, width, height), False)
+        corner = _line("X", left=0.9, top=0.9)
+        self.assertIs(corpus.in_title_block(corner, 1.0, 1.0), True)
+
+    def test_the_right_and_bottom_bands_start_exactly_at_seventy_and_seventy_five_percent(
+        self,
+    ):
+        width, height = 100.0, 40.0
+        for left, top, expected in (
+            (70.0, 0.0, True),
+            (69.9, 0.0, False),
+            (0.0, 30.0, True),
+            (0.0, 29.9, False),
+            (70.0, 30.0, True),
+        ):
+            with self.subTest(left=left, top=top):
+                self.assertIs(
+                    corpus.in_title_block(_line("X", left=left, top=top), width, height),
+                    expected,
+                )
+
+
+class PageKindDecisionTests(unittest.TestCase):
+    def test_a_title_block_hit_counts_three_times_a_drawing_hit(self):
+        views = [_line("TYPICAL SECTION", top=100.0 + 40.0 * index) for index in range(2)]
+        title = _title("FRAMING PLAN")
+        self.assertEqual(classify_page(views + [title], WIDTH, HEIGHT)[0], KIND_PLAN)
+        more = [_line("TYPICAL SECTION", top=100.0 + 40.0 * index) for index in range(4)]
+        self.assertEqual(classify_page(more + [title], WIDTH, HEIGHT)[0], KIND_SECTION)
+
+    def test_a_tie_goes_to_the_earlier_kind(self):
+        lines = [_line("TYPICAL SECTION"), _line("FLOOR PLAN", top=300.0)]
+        self.assertEqual(classify_page(lines, WIDTH, HEIGHT)[0], KIND_PLAN)
+        self.assertEqual(classify_page(lines[::-1], WIDTH, HEIGHT)[0], KIND_PLAN)
+
+    def test_titles_are_kept_up_to_eighty_characters_and_the_first_of_equal_height(self):
+        eighty = "FOUNDATION PLAN " + "X" * 64
+        self.assertEqual(len(eighty), 80)
+        self.assertEqual(
+            classify_page([_title(eighty)], WIDTH, HEIGHT), (KIND_PLAN, eighty)
+        )
+        self.assertEqual(
+            classify_page([_title(eighty + "X")], WIDTH, HEIGHT), (KIND_PLAN, "")
+        )
+        first, second = _title("FIRST PLAN"), _title("SECOND PLAN")
+        self.assertEqual(
+            classify_page([first, second], WIDTH, HEIGHT), (KIND_PLAN, "FIRST PLAN")
+        )
+
+    def test_every_kind_has_its_own_vocabulary(self):
+        for text, kind in (
+            ("ROOF ELEVATION", corpus.KIND_ELEVATION),
+            ("NORTH ELEVATIONS", corpus.KIND_ELEVATION),
+            ("WALL SECTIONS", KIND_SECTION),
+            ("TYPICAL DETAILS", KIND_DETAIL),
+            ("COLUMN SCHEDULE", KIND_SCHEDULE),
+            ("GENERAL STRUCTURAL NOTES", KIND_NOTES),
+            ("COVER", KIND_UNKNOWN),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(classify_page([_title(text)], WIDTH, HEIGHT)[0], kind)
+
+
+class SheetNumberBoundaryTests(unittest.TestCase):
+    def test_a_reference_inside_a_line_of_up_to_24_characters_is_a_sheet_number(self):
+        short = "REFER TO S-101 PLEASE..."
+        self.assertEqual(len(short), 24)
+        self.assertEqual(sheet_number([_line(short)], WIDTH, HEIGHT), "S-101")
+        longer = short + "."
+        self.assertEqual(sheet_number([_line(longer)], WIDTH, HEIGHT), "")
+        self.assertEqual(sheet_number([_line("SHEET S-101")], WIDTH, HEIGHT), "S-101")
+
+    def test_a_long_line_made_only_of_the_number_is_still_a_sheet_number(self):
+        spaced = "S" + " " * 30 + "101"
+        self.assertEqual(sheet_number([_line(spaced)], WIDTH, HEIGHT), "S101")
+
+
+class ScaleParsingBoundaryTests(unittest.TestCase):
+    def test_a_one_foot_engineering_scale_is_a_scale(self):
+        labels = [hit.label for hit in parse_scales("1\" = 1'")]
+        self.assertIn("1\"=1'", labels)
+        self.assertEqual(parse_scales("1\" = 0'"), [])
+
+    def test_a_fraction_with_a_zero_denominator_is_not_a_scale(self):
+        self.assertEqual(parse_scales("1/0\" = 1'-0\""), [])
+
+
+class SamplingPolicyTests(unittest.TestCase):
+    NAMES = ("S-101.pdf", "S2.01.pdf", "Struct set.pdf")
+
+    def rows(self, extra=()):
+        rows = [
+            {"rel": _structural(year, f"{year}-P{number}", name), "size": "1000"}
+            for year in ("2023", "2024", "2025")
+            for number in range(8)
+            for name in self.NAMES
+        ]
+        return rows + [
+            {"rel": _structural("2025", project, name), "size": str(size)}
+            for project, name, size in extra
+        ]
+
+    BIG = (
+        ("BIG-A", "a.pdf", 90_000_000),
+        ("BIG-A", "a2.pdf", 85_000_000),
+        ("BIG-B", "b.pdf", 80_000_000),
+        ("BIG-C", "c.pdf", 70_000_000),
+    )
+
+    def sizes(self, chosen):
+        return [int(row["size"]) for row in chosen]
+
+    def test_the_default_seed_is_the_dated_one(self):
+        rows = self.rows()
+        default = corpus.stratified_sample(rows, 9)
+        self.assertEqual(default, corpus.stratified_sample(rows, 9, seed=20261008))
+        for other in (20261007, 20261009):
+            self.assertNotEqual(default, corpus.stratified_sample(rows, 9, seed=other))
+
+    def test_the_largest_set_of_each_project_comes_first_and_one_sixth_are_large(self):
+        rows = self.rows(self.BIG)
+        self.assertEqual(self.sizes(corpus.stratified_sample(rows, 5))[0], 90_000_000)
+        self.assertLess(self.sizes(corpus.stratified_sample(rows, 5))[1], 1_000_000)
+        twelve = self.sizes(corpus.stratified_sample(rows, 12))
+        self.assertEqual(twelve[:2], [90_000_000, 80_000_000])
+        self.assertLess(twelve[2], 1_000_000)
+
+    def test_the_number_of_large_sets_is_the_count_divided_by_six_rounded_down(self):
+        rows = self.rows(self.BIG)
+        seventeen = self.sizes(corpus.stratified_sample(rows, 17))
+        self.assertEqual(seventeen[:2], [90_000_000, 80_000_000])
+        self.assertLess(seventeen[2], 1_000_000)
+        eighteen = self.sizes(corpus.stratified_sample(rows, 18))
+        self.assertEqual(eighteen[:3], [90_000_000, 80_000_000, 70_000_000])
+        self.assertLess(eighteen[3], 1_000_000)
+
+    def test_every_requested_count_is_met_exactly(self):
+        rows = self.rows(self.BIG)
+        for count in range(1, 12):
+            with self.subTest(count=count):
+                chosen = corpus.stratified_sample(rows, count)
+                self.assertEqual(len(chosen), count)
+                self.assertEqual(len({row["rel"] for row in chosen}), count)
+
+    def test_the_seed_decides_which_projects_a_year_offers_first(self):
+        rows = self.rows()
+        first_2023_projects = set()
+        for seed in range(12):
+            chosen = corpus.stratified_sample(rows, 3, seed=seed)
+            first_2023_projects.add(Path(chosen[1]["rel"]).parts[1])
+        self.assertGreaterEqual(len(first_2023_projects), 3)
+
+
+
+class _FlushCounter(io.StringIO):
+    """A stdout stand-in that counts flush calls (progress lines must be flushed)."""
+
+    def __init__(self):
+        super().__init__()
+        self.flushes = 0
+
+    def flush(self):
+        self.flushes += 1
+        super().flush()
+
+
+STAMP = "20261106-101112"
+OK = {"status": "ok", "error": ""}
+
+
+def _fake_clock(step=0.126):
+    """Replaces corpus.time: a fixed run stamp and a clock that advances by `step` per reading."""
+    ticks = itertools.count()
+    return types.SimpleNamespace(
+        strftime=lambda fmt: STAMP if fmt == "%Y%m%d-%H%M%S" else "wrong-format",
+        perf_counter=lambda: next(ticks) * step,
+    )
+
+
+def _write_sample(out, rels, hand=()):
+    (out / "files").mkdir(exist_ok=True)
+    corpus.write_csv(
+        out / "sample.csv",
+        [{"rel": rel, "local": corpus.local_name(rel), "size": 1} for rel in rels],
+        ("rel", "local", "size"),
+    )
+    if hand:
+        corpus.write_csv(
+            out / "hand_values.csv",
+            [dict(zip(corpus.HAND_VALUE_COLUMNS, row)) for row in hand],
+            corpus.HAND_VALUE_COLUMNS,
+        )
+
+
+def _prepared(command, pages=2):
+    Path(command[6]).write_text(
+        json.dumps(
+            {
+                "db": "x.mdb",
+                "bid_uid": "b",
+                "pdf": "p.pdf",
+                "pages": [{"uid": f"u{i}", "index": i} for i in range(pages)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return OK
+
+
+def _write(path, payload):
+    Path(path).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _drive(out, handlers, cap=None):
+    """Run corpus.run against scripted worker steps; return (csv path, commands, stdout)."""
+    commands = []
+
+    def fake_child(command, timeout):
+        commands.append((list(command), timeout))
+        return handlers[command[3]](command)
+
+    printed = _FlushCounter()
+    with mock.patch.object(corpus, "_run_child", fake_child), mock.patch.object(
+        corpus, "time", _fake_clock()
+    ), contextlib.redirect_stdout(printed):
+        path = corpus.run(out, 7, "PY", max_plan_pages=cap)
+    return path, commands, printed
+
+
+class RunLoopContractTests(unittest.TestCase):
+    """corpus.run is the only code that stitches the worker steps together."""
+
+    REL = "2025\\P1\\a.pdf"
+
+    def test_every_worker_step_gets_its_exact_command_and_the_run_is_stamped(self):
+        stem = Path(corpus.local_name(self.REL)).stem
+        handlers = {
+            "prepare": _prepared,
+            "sheets": lambda c: _write(c[5], [{"index": 1, "sheet_number": "S-102"}])
+            or OK,
+            "page": lambda c: _write(c[7], {"status": "ok", "kind": "plan"}) or OK,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            _write_sample(
+                out, [self.REL], hand=[(self.REL, "2", "1.5", "2.5", "120.5")]
+            )
+            path, commands, printed = _drive(out, handlers)
+            work = out / "work" / STAMP
+            prepared = work / f"{stem}.json"
+            module = "tools.ai_takeoff_corpus_worker"
+            pdf = out / "files" / corpus.local_name(self.REL)
+            self.assertEqual(
+                [command for command, _timeout in commands],
+                [
+                    ["PY", "-m", module, "prepare", str(pdf), str(work), str(prepared)],
+                    [
+                        "PY", "-m", module, "sheets", str(prepared),
+                        str(work / f"{stem}_sheets.json"),
+                    ],
+                    [
+                        "PY", "-m", module, "page", str(prepared), "u0", "[]",
+                        str(work / f"{stem}_p1.json"),
+                    ],
+                    [
+                        "PY", "-m", module, "page", str(prepared), "u1",
+                        json.dumps([{"seed_pts": [1.5, 2.5], "expected_sf": 120.5}]),
+                        str(work / f"{stem}_p2.json"),
+                    ],
+                ],
+            )
+            self.assertEqual({timeout for _command, timeout in commands}, {7})
+            self.assertEqual(path, out / f"corpus_run_{STAMP}.csv")
+            self.assertEqual(
+                [
+                    (
+                        r["rel"], r["page"], r["pages_in_pdf"], r["status"], r["kind"],
+                        r["seconds"], r["sheet_number"], r["hand_expected_sf"],
+                    )
+                    for r in corpus.read_csv(path)
+                ],
+                [
+                    (self.REL, "1", "2", "ok", "plan", "0.13", "", ""),
+                    (self.REL, "2", "2", "ok", "plan", "0.13", "S-102", "120.5"),
+                ],
+            )
+            self.assertTrue((out / f"corpus_summary_{STAMP}.md").is_file())
+            self.assertEqual(
+                printed.getvalue().splitlines(),
+                [f"{self.REL} p1: ok", f"{self.REL} p2: ok"],
+            )
+            self.assertEqual(printed.flushes, 2)
+            # A second run in the same second reuses the work folder instead of failing.
+            again, _commands, _printed = _drive(out, handlers)
+            self.assertEqual(again, path)
+
+    def test_a_pdf_whose_prepare_step_failed_is_one_row_whatever_files_are_left_over(
+        self,
+    ):
+        first, second = "2025\\P1\\a.pdf", "2025\\P2\\b.pdf"
+        stale_stem = Path(corpus.local_name(first)).stem
+
+        def prepare(command):
+            if Path(command[4]).stem == stale_stem:
+                _prepared(command)  # a leftover prepared file next to a failed step
+                return {"status": "hang", "error": "timeout after 7 s"}
+            return OK  # the step claims success but wrote nothing
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            _write_sample(out, [first, second])
+            path, commands, _printed = _drive(out, {"prepare": prepare})
+            rows = corpus.read_csv(path)
+        self.assertEqual(
+            [command[3] for command, _t in commands], ["prepare", "prepare"]
+        )
+        self.assertEqual(
+            [(r["rel"], r["page"], r["status"], r["error"]) for r in rows],
+            [
+                (first, "", "prepare_hang", "timeout after 7 s"),
+                (second, "", "prepare_ok", ""),
+            ],
+        )
+
+    def test_sheet_hints_and_page_results_are_read_only_from_steps_that_succeeded(
+        self,
+    ):
+        rels = [f"2025\\P{i}\\a.pdf" for i in range(1, 5)]
+        stems = [Path(corpus.local_name(rel)).stem for rel in rels]
+
+        def sheets(command):
+            stem = Path(command[4]).stem
+            if stem == stems[0]:
+                _write(command[5], [{"index": 0, "sheet_number": "S-999"}])
+                return {"status": "hang", "error": "timeout after 7 s"}  # stale file
+            if stem == stems[1]:
+                return OK  # success without a hints file
+            _write(command[5], [])
+            return OK
+
+        def page(command):
+            stem = Path(command[4]).stem
+            if stem == stems[2]:
+                _write(command[7], {"status": "ok", "kind": "plan"})  # stale result
+                return {"status": "crash", "error": "exit 9: ValueError"}
+            if stem == stems[3]:
+                return OK  # success without a result file
+            _write(command[7], {"status": "ok", "kind": "plan"})
+            return OK
+
+        handlers = {
+            "prepare": lambda c: _prepared(c, pages=1),
+            "sheets": sheets,
+            "page": page,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            _write_sample(out, rels)
+            path, _commands, _printed = _drive(out, handlers)
+            rows = corpus.read_csv(path)
+        self.assertEqual(
+            [
+                (r["status"], r["error"], r["kind"], r["sheets_status"], r["sheet_number"])
+                for r in rows
+            ],
+            [
+                ("ok", "", "plan", "hang", ""),
+                ("ok", "", "plan", "ok", ""),
+                ("crash", "exit 9: ValueError", "", "ok", ""),
+                ("ok", "", "", "ok", ""),
+            ],
+        )
+
+    def test_a_plan_page_cap_still_measures_pages_with_a_hand_value_for_this_pdf(
+        self,
+    ):
+        measured = []
+        kinds = ["plan", "plan", "detail", "plan", "plan"]
+
+        def page(command):
+            measured.append((command[5], command[6]))
+            _write(command[7], {"status": "ok", "kind": "plan"})
+            return OK
+
+        handlers = {
+            "prepare": lambda c: _prepared(c, pages=5),
+            "sheets": lambda c: _write(
+                c[5], [{"index": i, "kind": kind} for i, kind in enumerate(kinds)]
+            )
+            or OK,
+            "page": page,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            _write_sample(
+                out,
+                [self.REL],
+                hand=[
+                    (self.REL, "4", "1", "2", "50"),
+                    ("2025\\P9\\other.pdf", "2", "3", "4", "60"),
+                ],
+            )
+            path, _commands, _printed = _drive(out, handlers, cap=1)
+            rows = corpus.read_csv(path)
+        self.assertEqual(
+            measured,
+            [
+                ("u0", "[]"),
+                ("u3", json.dumps([{"seed_pts": [1.0, 2.0], "expected_sf": 50.0}])),
+            ],
+        )
+        self.assertEqual(
+            [(r["page"], r["status"], r["hand_expected_sf"]) for r in rows],
+            [
+                ("1", "ok", ""),
+                ("2", "not_measured", ""),
+                ("3", "not_measured", ""),
+                ("4", "ok", "50.0"),
+                ("5", "not_measured", ""),
+            ],
+        )
+        self.assertEqual(
+            {(r["rel"], r["pages_in_pdf"]) for r in rows}, {(self.REL, "5")}
+        )
+
+
+class CopySampleContractTests(unittest.TestCase):
+    RELS = [_structural("2025", f"P{i}", "S-101.pdf") for i in range(3)]
+
+    def rows(self):
+        return [{"rel": rel, "size": str(10 + i)} for i, rel in enumerate(self.RELS)]
+
+    def share(self, directory, present):
+        source = Path(directory) / "share"
+        for index in present:
+            path = source / self.RELS[index]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"pdf body %d" % index)
+        return source
+
+    def test_files_are_copied_byte_for_byte_and_described_in_sample_csv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.share(directory, (0, 1, 2))
+            out = Path(directory) / "nested" / "out"  # neither folder exists yet
+            copied = corpus.copy_sample(source, out, self.rows(), 3, float("inf"))
+            self.assertEqual(
+                sorted(copied, key=lambda row: row["rel"]),
+                [
+                    {"rel": rel, "local": corpus.local_name(rel), "size": str(10 + i)}
+                    for i, rel in enumerate(self.RELS)
+                ],
+            )
+            for index, rel in enumerate(self.RELS):
+                self.assertEqual(
+                    (out / "files" / corpus.local_name(rel)).read_bytes(),
+                    b"pdf body %d" % index,
+                )
+            with open(out / "sample.csv", newline="", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                self.assertEqual(reader.fieldnames, ["rel", "local", "size"])
+                self.assertEqual(list(reader), copied)
+
+    def test_hand_values_that_exist_are_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.share(directory, (0, 1, 2))
+            out = Path(directory) / "out"
+            out.mkdir()
+            written = ",".join(corpus.HAND_VALUE_COLUMNS) + "\nrel,1,5,6,100.5\n"
+            (out / "hand_values.csv").write_text(written, encoding="utf-8")
+            corpus.copy_sample(source, out, self.rows(), 3, float("inf"))
+            self.assertEqual(
+                (out / "hand_values.csv").read_text(encoding="utf-8"), written
+            )
+
+    def test_a_file_already_copied_is_not_read_from_the_share_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.share(directory, (1, 2))  # the first file left the share
+            out = Path(directory) / "out"
+            (out / "files").mkdir(parents=True)
+            kept = out / "files" / corpus.local_name(self.RELS[0])
+            kept.write_bytes(b"copied on an earlier run")
+            copied = corpus.copy_sample(source, out, self.rows(), 3, float("inf"))
+            self.assertEqual(len(copied), 3)
+            self.assertEqual(kept.read_bytes(), b"copied on an earlier run")
+
+    def test_an_unreadable_file_is_reported_by_name_and_class_and_left_out(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.share(directory, (1, 2))
+            out = Path(directory) / "out"
+            printed = _FlushCounter()
+            with contextlib.redirect_stdout(printed):
+                copied = corpus.copy_sample(source, out, self.rows(), 3, float("inf"))
+        self.assertEqual(
+            printed.getvalue().splitlines(),
+            [f"skipped (unreadable: FileNotFoundError): {self.RELS[0]}"],
+        )
+        self.assertEqual(printed.flushes, 1)
+        self.assertEqual(sorted(row["rel"] for row in copied), sorted(self.RELS[1:]))
+
+
+class WriteCsvContractTests(unittest.TestCase):
+    def test_missing_folders_are_created_and_existing_ones_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "a" / "b" / "x.csv"
+            rows = [{"rel": "r", "page": "1", "ignored": "dropped"}]
+            corpus.write_csv(path, rows, ("rel", "page"))
+            corpus.write_csv(path, rows, ("rel", "page"))
+            self.assertEqual(
+                path.read_text(encoding="utf-8").splitlines(), ["rel,page", "r,1"]
+            )
+
+
+class SamplingFairnessTests(unittest.TestCase):
+    def test_once_every_project_has_given_a_set_the_projects_take_turns(self):
+        rows = [
+            {
+                "rel": _structural("2025", project, f"S-{number}0{index}.pdf"),
+                "size": str(size),
+            }
+            for project in ("A", "B")
+            for index, (number, size) in enumerate(((1, 5000), (2, 100), (3, 100)))
+        ]
+        chosen = corpus.stratified_sample(rows, 4)
+        self.assertEqual(
+            sorted(Path(row["rel"]).parts[1] for row in chosen), ["A", "A", "B", "B"]
+        )
+
+    def test_a_file_pattern_chosen_less_often_is_preferred_over_a_tie_break(self):
+        rows = [
+            {"rel": _structural("2023", "BIG1", "Struct big1.pdf"), "size": "90000000"},
+            {"rel": _structural("2024", "BIG2", "Struct big2.pdf"), "size": "80000000"},
+            {"rel": _structural("2025", "Q", "S-101.pdf"), "size": "1000"},
+            {"rel": _structural("2026", "R", "Struct r.pdf"), "size": "1000"},
+            {"rel": _structural("2026", "R", "S-102.pdf"), "size": "1000"},
+        ]
+        for seed in range(10):
+            with self.subTest(seed=seed):
+                chosen = corpus.stratified_sample(rows, 12, seed=seed)
+                self.assertEqual(
+                    [Path(row["rel"]).name for row in chosen[:4]],
+                    ["Struct big1.pdf", "Struct big2.pdf", "S-101.pdf", "S-102.pdf"],
+                )
+
+
+class ChildProcessContractTests(unittest.TestCase):
+    def run_code(self, code, timeout=60):
+        return corpus._run_child([sys.executable, "-c", code], timeout)
+
+    def test_a_timeout_names_its_limit(self):
+        self.assertEqual(
+            self.run_code("import time; time.sleep(30)", timeout=0.5),
+            {"status": "hang", "error": "timeout after 0.5 s"},
+        )
+
+    def test_exit_codes_up_to_255_are_errors_and_larger_ones_are_crashes(self):
+        for code, status in ((1, "error"), (255, "error"), (256, "crash")):
+            with self.subTest(code=code):
+                self.assertEqual(
+                    self.run_code(f"import os; os._exit({code})"),
+                    {"status": status, "error": f"exit {code}: no exception line"},
+                )
+        self.assertEqual(
+            self.run_code(NATIVE_CRASH),
+            {"status": "crash", "error": "exit 3221225477: no exception line"},
+        )
+
+    def test_the_last_non_blank_stderr_line_names_the_exception(self):
+        code = (
+            "import sys; sys.stderr.write('Traceback (most recent call last):\\n"
+            "  File x\\nValueError: secret text\\n\\n  \\n'); sys.exit(1)"
+        )
+        self.assertEqual(
+            self.run_code(code), {"status": "error", "error": "exit 1: ValueError"}
+        )
+
+    def test_stderr_that_is_not_utf8_does_not_break_the_classification(self):
+        code = "import sys; sys.stderr.buffer.write(b'\\xff\\xfe bad\\n'); sys.exit(3)"
+        self.assertEqual(
+            self.run_code(code),
+            {"status": "error", "error": "exit 3: no exception line"},
+        )
+
+    def test_children_always_get_the_offscreen_qt_platform(self):
+        with mock.patch.dict(os.environ, {"QT_QPA_PLATFORM": "windows"}):
+            done = self.run_code(
+                "import os, sys; "
+                "sys.exit(0 if os.environ.get('QT_QPA_PLATFORM') == 'offscreen' else 1)"
+            )
+        self.assertEqual(done, OK)
+
+    def test_exception_names_are_read_from_the_start_of_a_line(self):
+        for line, name in (
+            ("ValueError: x", "ValueError"),
+            ("ost.errors.CustomError: x", "ost.errors.CustomError"),
+            ("KeyboardInterrupt", "KeyboardInterrupt"),
+            ("SystemExit: 3", "SystemExit"),
+            ("  OSError: indented", "OSError"),
+            ("something went wrong", "no exception line"),
+            ("", "no exception line"),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(corpus._exception_name(line), name)
+
+
+class PathContainmentTests(unittest.TestCase):
+    def test_a_path_that_is_not_inside_the_root_is_the_boolean_false(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            root.mkdir()
+            self.assertIs(corpus.inside(Path(directory) / "other", root), False)
+            self.assertIs(
+                corpus.inside(Path(directory) / "other", root / "missing"), False
+            )
+            self.assertIs(corpus.inside(root / "x", root), True)
+
+    def test_a_filesystem_without_inode_numbers_cannot_match_by_ancestry(self):
+        with mock.patch.object(
+            corpus.os, "stat", return_value=types.SimpleNamespace(st_ino=0, st_dev=1)
+        ):
+            self.assertIs(corpus._has_root_as_ancestor(Path("a"), Path("b")), False)
+
+
+class ModuleEntryPointTests(unittest.TestCase):
+    def test_running_the_module_dispatches_to_main_and_returns_its_exit_code(self):
+        def run(*arguments):
+            return subprocess.run(
+                [sys.executable, "-m", "tools.ai_takeoff_corpus", *arguments],
+                cwd=corpus.REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = str(Path(directory) / "out")
+            done = run("inventory", "--out", out)
+            self.assertEqual(done.returncode, 2, done.stderr)
+            self.assertIn("inventory needs --source", done.stderr)
+            empty = Path(directory) / "share"
+            empty.mkdir()
+            done = run("inventory", "--source", str(empty), "--out", out)
+            self.assertEqual((done.returncode, done.stdout.strip()), (0, "0 PDFs"))
+
+
+def _plan_row(page, rel="2025\\A\\a.pdf", **values):
+    row = {
+        "rel": rel,
+        "page": str(page),
+        "status": "ok",
+        "kind": KIND_PLAN,
+        "text_runs": "10",
+        "segments": "10",
+    }
+    row.update({key: str(value) for key, value in values.items()})
+    return row
+
+
+def _report_lines(rows, columns=None):
+    with tempfile.TemporaryDirectory() as directory:
+        run_csv = Path(directory) / "corpus_run_x.csv"
+        corpus.write_csv(run_csv, rows, columns or corpus.RUN_COLUMNS)
+        return (
+            corpus.report(run_csv, Path(directory) / "s.md")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+
+
+def _fix_rows():
+    """Pages arranged so that each prioritized fix has a distinct, hand-countable size."""
+    truncated = dict(extraction_truncated=True)
+    failing = dict(default_wall_failure=True, **truncated)
+    other = "2025\\B\\b.pdf"
+    return [
+        _plan_row(
+            1, **failing, default_found=True, default_leak=False,
+            default_box_ratio=0.3, default_segments=5, default_seconds=2.0,
+            zero_found=True, zero_box_ratio=0.2, zero_segments=9, zero_seconds=3.0,
+            heavy_found=False, heavy_segments=0, heavy_seconds=4.0,
+            proposal_status="ok", proposal_subjects='{"closing_segment": 2}',
+            hand_expected_sf=100, seed_area_sf=100.2, hand_error_pct=0.2,
+            dominant_wall_width=2.0, dash_arrays=3,
+        ),
+        _plan_row(2, **failing, proposal_status="ok"),
+        _plan_row(3, **failing, suggestion_removes_dominant=False),
+        _plan_row(4, **truncated, proposal_status="changeset_too_large"),
+        _plan_row(5, proposal_status="invalid_argument", default_seconds=61),
+        _plan_row(6, proposal_status="ok", default_seconds=60),
+        _plan_row(7, proposal_status="", suggestion_removes_dominant=True),
+        {
+            "rel": "2025\\A\\a.pdf", "page": "8", "status": "ok", "kind": KIND_UNKNOWN,
+            "text_runs": "0", "segments": "5", "content": "vector",
+        },
+        _plan_row(9, callouts_as_lines=True, heavy_seconds=100),
+        _plan_row(
+            10, default_found=True, default_leak=False, default_touches_edge=True
+        ),
+        {"rel": other, "page": "1", "status": "crash", "error": "exit 3: x"},
+        {"rel": other, "page": "2", "status": "hang", "error": "timeout after 9 s"},
+        {"rel": other, "page": "3", "status": "error", "error": "exit 1: y"},
+        {"rel": other, "page": "4", "status": "not_measured"},
+    ]
+
+
+class PrioritizedFixListTests(unittest.TestCase):
+    def test_fixes_are_ranked_by_page_count_then_by_their_fixed_order(self):
+        lines = _report_lines(_fix_rows())
+        fixes = lines[lines.index("## Prioritized fix list") + 2 :]
+        self.assertEqual(
+            fixes,
+            [
+                "1. **Wall-width suggestion**: 4 page(s). Examples: P01 p1; P01 p2; P01 p3",
+                "2. **Extraction truncation**: 4 page(s). Examples: P01 p1; P01 p2; P01 p3",
+                "3. **Page crashes, hangs or errors**: 3 page(s). Examples: P02 p1; P02 p2; P02 p3",
+                "4. **Outlined-text fallback**: 2 page(s). Examples: P01 p8; P01 p9",
+                "5. **Proposal failures**: 2 page(s). Examples: P01 p4; P01 p5",
+                "6. **Seeded calls over half the proxy timeout**: 2 page(s). Examples: P01 p5; P01 p9",
+                "7. **Leak guard coverage**: 1 page(s). Examples: P01 p10",
+            ],
+        )
+
+    def test_a_run_with_nothing_to_fix_has_an_empty_list(self):
+        lines = _report_lines([_plan_row(1)])
+        self.assertEqual(lines[lines.index("## Prioritized fix list") + 1 :], [""])
+
+
+class PerProjectTableTests(unittest.TestCase):
+    def test_each_project_row_counts_its_own_pages_plans_and_failures(self):
+        rows = [
+            _plan_row(1, dominant_wall_width=2.0, dash_arrays=4, default_found=True,
+                      default_wall_failure=True, proposal_status="ok"),
+            _plan_row(2, dominant_wall_width=2.0, dash_arrays=1, default_found=True,
+                      default_wall_failure=False, proposal_status="changeset_too_large"),
+            _plan_row(3, dominant_wall_width=1.0, proposal_status="ok"),
+            {"rel": "2025\\A\\a.pdf", "page": "4", "status": "ok", "kind": KIND_UNKNOWN,
+             "dash_arrays": "3", "dominant_wall_width": "9.0"},
+            {"rel": "2025\\A\\a.pdf", "page": "5", "status": "crash"},
+            {"rel": "2025\\A\\a.pdf", "page": "6", "status": "not_measured"},
+            _plan_row(1, rel="2026\\B\\b.pdf"),
+            {"rel": "2026\\B\\b.pdf", "page": "2", "status": "ok", "kind": KIND_UNKNOWN,
+             "dominant_wall_width": "1.5"},
+        ]
+        lines = _report_lines(rows)
+        section = lines[lines.index("## Per project (firm proxy)") :]
+        self.assertEqual(
+            [line for line in section if line.startswith("| J")],
+            [
+                "| J01 | 6 | 3 | 2.0 | 8 | 1/6 (17%) | 1/2 (50%) | 1/3 (33%) |",
+                "| J02 | 2 | 1 | n/a | 0 | 0/2 (0%) | n/a | n/a |",
+            ],
+        )
+
+
+class ReportThresholdTests(unittest.TestCase):
+    def table_row(self, lines, heading, first_cell):
+        for line in lines[lines.index(heading) :]:
+            if line.startswith(f"| {first_cell} |"):
+                return [cell.strip() for cell in line.strip("|").split("|")]
+        self.fail(f"no {first_cell!r} row under {heading}")
+
+    def test_the_eighty_percent_box_limit_is_exclusive(self):
+        rows = [
+            _plan_row(1, default_found=True, default_box_ratio=0.8),
+            _plan_row(2, default_found=True, default_box_ratio=0.81),
+        ]
+        lines = _report_lines(rows)
+        self.assertIn("| Seeded region above 80% of the box | 1/2 (50%) |", lines)
+        row = self.table_row(lines, "## Seeded regions by width setting", "default")
+        self.assertEqual(row[1:3], ["2", "2"])
+        self.assertEqual(row[7], "1")  # Above 80% of box
+
+    def test_calls_are_slow_above_half_and_over_the_proxy_timeout_above_it(self):
+        rows = [
+            _plan_row(1, zero_seconds=60),
+            _plan_row(2, zero_seconds=120),
+            _plan_row(3, zero_seconds=121),
+        ]
+        heading = f"## Seeded call time vs the {corpus.PROXY_TIMEOUT_S:g} s proxy timeout"
+        row = self.table_row(_report_lines(rows), heading, "zero")
+        self.assertEqual(row[-2:], ["2", "1"])
+        self.assertEqual(row[3], "121.00")
+
+    def test_pass_rates_use_each_definitions_own_boundary(self):
+        def ok(page, **values):
+            return {
+                "rel": "a.pdf", "page": str(page), "status": "ok",
+                **{key: str(value) for key, value in values.items()},
+            }
+
+        rows = [
+            _plan_row(1, content="vector", filtered_regions=0),
+            _plan_row(2, content="vector_and_text", filtered_regions=1),
+            _plan_row(3, content="text_only", filtered_regions=3),
+            ok(4, text_runs=0, segments=1),
+            ok(5, text_runs=0, segments=0),
+            ok(6, text_runs=1, segments=5),
+        ]
+        lines = _report_lines(rows)
+        self.assertIn("| Vector content | 2/6 (33%) |", lines)
+        self.assertIn("| Plan: regions found with wall-width filter | 2/3 (67%) |", lines)
+        self.assertIn(
+            "| Vector pages without any text (outlined text) | 1/6 (17%) |", lines
+        )
+
+    def test_a_width_setting_without_seeded_pages_has_no_row(self):
+        lines = _report_lines([_plan_row(1, default_found=True, default_box_ratio=0.2)])
+        start = lines.index("## Seeded regions by width setting")
+        end = lines.index("## Outlined text")
+        names = [
+            line.split("|")[1].strip() for line in lines[start:end] if line.startswith("| ")
+        ]
+        self.assertEqual(names, ["Width", "---", "default"])
+
+    def test_old_run_files_without_a_column_show_it_as_blank(self):
+        rows = [
+            {"rel": "a.pdf", "page": "1", "status": "ok"},
+            {"rel": "a.pdf", "page": "2", "status": "ok"},
+        ]
+        lines = _report_lines(rows, columns=("rel", "page", "status"))
+        start = lines.index("## Page mix") + 2
+        self.assertEqual(
+            lines[start : start + 6],
+            [
+                f"- {name}: blank 2"
+                for name in (
+                    "kind", "content", "scale_status", "page_size_class",
+                    "rotation", "visible_offset",
+                )
+            ],
+        )
+
+
+class CompareContractTests(unittest.TestCase):
+    def test_the_comparison_is_a_titled_two_column_table_ending_in_one_newline(self):
+        rows = [_plan_row(1, sheet_number="S-1")]
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "corpus_run_a.csv"
+            second = Path(directory) / "corpus_run_b.csv"
+            corpus.write_csv(first, rows, corpus.RUN_COLUMNS)
+            corpus.write_csv(second, rows, corpus.RUN_COLUMNS)
+            text = corpus.compare(first, second, Path(directory) / "c.md").read_text(
+                encoding="utf-8"
+            )
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "# AI takeoff corpus: corpus_run_a vs corpus_run_b")
+        self.assertEqual(lines[1], "")
+        self.assertEqual(
+            lines[2], "Metrics only. Plan pages are the same page-kind guess in both runs."
+        )
+        self.assertEqual(lines[3], "")
+        self.assertEqual(lines[4], "| Metric | Before | After |")
+        self.assertEqual(lines[5], "| --- | --- | --- |")
+        self.assertEqual(len(lines[6:-1]), 11)
+        self.assertTrue(all(len(line.split(" | ")) == 3 for line in lines[6:-1]))
+        self.assertTrue(text.endswith("|\n") and not text.endswith("\n\n"))
+
+    def test_quarter_page_truncation_counts_any_positive_quadrant_count(self):
+        after = [
+            _plan_row(1, extraction_truncated=True, box_quadrants_truncated=2),
+            _plan_row(2, extraction_truncated=True, box_quadrants_truncated=1),
+            _plan_row(3, extraction_truncated=True, box_quadrants_truncated=0),
+        ]
+        table = {name: new for name, _old, new in corpus.compare_metrics([], after)}
+        self.assertEqual(
+            table["Truncated plan pages still truncated in a quarter-page box"],
+            "2/3 (67%)",
+        )
+
+
+class PlanScaleResolutionTests(unittest.TestCase):
+    def test_the_plan_scale_status_wins_and_the_page_scale_is_the_fallback(self):
+        resolved = corpus._plan_resolved
+        self.assertTrue(
+            resolved({"plan_scale_status": "resolved", "scale_status": "multiple"})
+        )
+        self.assertFalse(
+            resolved({"plan_scale_status": "ambiguous", "scale_status": "single"})
+        )
+        self.assertTrue(resolved({"scale_status": "single"}))
+        self.assertFalse(resolved({"scale_status": "multiple"}))
+        self.assertFalse(resolved({"plan_scale_status": "", "scale_status": "none"}))
+        self.assertFalse(resolved({}))
+
+
+class ReportMarkdownStructureTests(unittest.TestCase):
+    """The summary is read by people and pasted into documents: pin its skeleton.
+
+    Section names, table columns and block layout are the contract; the numbers inside
+    the tables are pinned by the semantic tests above.
+    """
+
+    HEADINGS = [
+        "## Pass rates",
+        "## Hand values",
+        "## Page mix",
+        "## Timing percentiles (seconds)",
+        "## Failure categories (most frequent first)",
+        "## Line kinds and widths by project (proxy for firm)",
+        "## Wall width (default suggestion)",
+        "## Seeded regions by width setting",
+        "## Outlined text",
+        f"## Seeded call time vs the {corpus.PROXY_TIMEOUT_S:g} s proxy timeout",
+        "## Proposal categories (auto-seeded rooms)",
+        "## Per project (firm proxy)",
+        "## Prioritized fix list",
+    ]
+    TABLES = [
+        ["Metric", "Rate"],
+        ["PDF", "Page", "Expected SF", "Measured SF", "Error %"],
+        ["Measure", "p50", "p90", "p99", "max"],
+        ["Project", "Pages", "wall", "dashed", "thin", "symbol", "width histogram"],
+        ["Metric", "Rate"],
+        [
+            "Width", "Seeded", "Found", "leak_risk", "Open gaps", "Dashed outline",
+            "Touches box edge", "Above 80% of box", "Wall-filter failure",
+            "Median area / box",
+        ],
+        ["Metric", "Rate"],
+        ["Width", "p50", "p90", "max", "Over half the timeout", "Over the timeout"],
+        ["Status", "Count"],
+        ["Assumption subject", "Count"],
+        [
+            "Project", "Pages", "Plans", "Dominant wall width", "Dash arrays",
+            "Page failures", "Wall-filter failures", "Proposal failures",
+        ],
+    ]
+    PROSE = (
+        re.compile(
+            r"^Metrics only: PDFs are P-ids and projects J-ids \(the key file next to "
+            r"this summary maps them\); no paths, titles, sheet numbers or drawing content\.$"
+        ),
+        re.compile(r"^PDFs: \d+; pages: \d+; plan-like pages: \d+\.$"),
+        re.compile(
+            r"^Width settings: default \(suggested\), zero \(min_width 0\), "
+            r"heavy \(heaviest long-line class\)\.$"
+        ),
+    )
+
+    @staticmethod
+    def cells(line):
+        return [cell.strip() for cell in line[1:-1].split("|")]
+
+    def test_a_full_report_has_the_documented_sections_tables_and_nothing_else(self):
+        lines = _report_lines(_fix_rows())
+        self.assertEqual(lines[0], "# AI takeoff corpus run corpus_run_x")
+        self.assertEqual(lines[1], "")
+        self.assertEqual([l for l in lines if l.startswith("## ")], self.HEADINGS)
+        tables = []
+        index = 2
+        while index < len(lines):
+            line = lines[index]
+            if line == "":
+                index += 1
+            elif line.startswith("## "):
+                self.assertEqual(lines[index - 1], "", line)
+                self.assertEqual(lines[index + 1], "", line)
+                index += 1
+            elif line.startswith("|"):
+                end = index
+                while end < len(lines) and lines[end].startswith("|"):
+                    end += 1
+                block = lines[index:end]
+                self.assertEqual(lines[index - 1], "", block[0])
+                self.assertTrue(end == len(lines) or lines[end] == "", block[0])
+                for row in block:
+                    self.assertTrue(row.startswith("| ") and row.endswith(" |"), row)
+                header, separator, *body = [self.cells(row) for row in block]
+                self.assertEqual(set(separator), {"---"}, block[1])
+                self.assertEqual(len(separator), len(header), block[0])
+                for row in body:
+                    self.assertEqual(len(row), len(header), row)
+                tables.append(header)
+                index = end
+            elif line.startswith("- ") or re.match(r"^\d+\. \*\*", line):
+                self.assertTrue(
+                    lines[index - 1] == "" or lines[index - 1][:2] == line[:2]
+                    or re.match(r"^\d+\. ", lines[index - 1]),
+                    line,
+                )
+                index += 1
+            else:
+                self.assertTrue(
+                    any(pattern.match(line) for pattern in self.PROSE), repr(line)
+                )
+                index += 1
+        self.assertEqual(tables, self.TABLES)
+
+    def test_the_hand_value_section_is_a_sentence_when_nothing_was_measured(self):
+        lines = _report_lines([_plan_row(1)])
+        start = lines.index("## Hand values")
+        self.assertEqual(
+            lines[start : start + 4],
+            [
+                "## Hand values",
+                "",
+                "Not measured: hand_values.csv has no expected_sf rows for these pages.",
+                "",
+            ],
+        )
+
+
+class CommandLineMessageTests(unittest.TestCase):
+    def run_main(self, arguments):
+        error = io.StringIO()
+        output = io.StringIO()
+        with contextlib.redirect_stderr(error), contextlib.redirect_stdout(output):
+            try:
+                code = corpus.main(arguments)
+            except SystemExit as exit_request:
+                code = exit_request.code
+        return code, output.getvalue(), error.getvalue()
+
+    def test_usage_errors_say_what_to_do(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "share"
+            source.mkdir()
+            code, _out, error = self.run_main(
+                ["sample", "--source", str(source), "--out", str(source / "corpus")]
+            )
+            self.assertEqual(code, 2)
+            self.assertTrue(
+                error.endswith(
+                    "error: --out must be outside --source (the source is read-only)\n"
+                ),
+                error,
+            )
+            code, _out, error = self.run_main(["run", "--out", str(Path(directory) / "out")])
+            self.assertEqual(code, 2)
+            self.assertTrue(
+                error.endswith(
+                    "error: run needs sample.csv in --out; "
+                    "run the sample command with --source first\n"
+                ),
+                error,
+            )
+
+    def test_help_describes_the_tool_with_the_first_line_of_the_module_text(self):
+        with mock.patch.dict(os.environ, {"COLUMNS": "200"}):
+            code, output, _error = self.run_main(["--help"])
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "Offline corpus harness for the AI takeoff tools (measurement only).", output
+        )
+        self.assertNotIn("Confidentiality", output)
+
+    def test_report_and_comparison_names_replace_only_the_first_run_marker(self):
+        rows = [_plan_row(1)]
+        with tempfile.TemporaryDirectory() as directory:
+            run_csv = Path(directory) / "corpus_run_run_1.csv"
+            corpus.write_csv(run_csv, rows, corpus.RUN_COLUMNS)
+            out = str(Path(directory) / "out")
+            code, printed, _error = self.run_main(
+                ["report", "--out", out, "--run", str(run_csv)]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(Path(printed.strip()), Path(directory) / "corpus_summary_run_1.md")
+            code, printed, _error = self.run_main(
+                ["compare", "--out", out, "--before", str(run_csv), "--run", str(run_csv)]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(Path(printed.strip()), Path(directory) / "corpus_compare_run_1.md")
 
 
 if __name__ == "__main__":

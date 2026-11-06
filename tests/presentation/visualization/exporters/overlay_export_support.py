@@ -222,3 +222,41 @@ def _read_pdf_stream_text(path):
             pass
         parts.append(stream_data.decode("latin-1", errors="ignore"))
     return "\n".join(parts)
+
+
+from ost_visualizer.presentation.visualization.pdf import ost_pdf as _ost_pdf
+
+
+class _RenderedPdfPage:
+    """Pixels of one PDF page rendered by the native PDFium renderer (BGRA)."""
+
+    def __init__(self, width, height, stride, data):
+        self.width = width
+        self.height = height
+        self._stride = stride
+        self._data = data
+
+    def rgb(self, x, y):
+        offset = y * self._stride + x * 4
+        blue, green, red = self._data[offset : offset + 3]
+        return red, green, blue
+
+
+def _render_pdf_page(path, scale=1.0, page_index=0):
+    """Render a PDF page with PDFium; the file handle is released before returning."""
+    renderer = _ost_pdf.PDFRenderer()
+    if not renderer.open(str(path)):
+        raise AssertionError(f"PDFium could not open {path}")
+    try:
+        page = renderer.render_page(page_index, scale, 0)
+        if page is None:
+            raise AssertionError(f"PDFium could not render page {page_index}")
+        return _RenderedPdfPage(
+            page.width, page.height, page.stride, bytes(page.to_bytes())
+        )
+    finally:
+        renderer.close()
+
+
+def _near(rgb, expected, tolerance=8):
+    return all(abs(a - b) <= tolerance for a, b in zip(rgb, expected))

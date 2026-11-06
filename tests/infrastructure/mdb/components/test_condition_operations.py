@@ -52,6 +52,10 @@ from tests.helpers.mdb.operations import (
     _SqliteRow,
     _SqliteSchema,
 )
+from tests.helpers.mdb.real_write_contract import RealContractOps
+
+_SqliteMdbOps = RealContractOps
+_SqliteDuplicateOps = RealContractOps
 
 
 class ConditionOperationsPersistenceTests(unittest.TestCase):

@@ -49,6 +49,7 @@ from ost_visualizer.presentation.dialogs.sql_database_dialog import (
     SqlDatabasePropertiesResult,
 )
 from PySide6 import QtCore, QtWidgets
+from PySide6.QtTest import QTest
 from shiboken6 import delete, isValid
 from tests.helpers.sql.database_foundation_support import (
     _Catalog as _database_foundation_support__Catalog,
@@ -176,7 +177,7 @@ class SqlDatabaseDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
             database_guid="00000000-0000-0000-0000-000000000123",
             state="ONLINE",
             is_compatible=True,
-            schema_version=SQL_SCHEMA_V1.version,
+            schema_version=7,
         )
         catalog = _database_foundation_support__Catalog([selected])
         connection = SqlConnectionDialogResult(
@@ -209,10 +210,12 @@ class SqlDatabaseDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
                         database=selected.name,
                         database_guid=selected.database_guid,
                     ),
-                    SQL_SCHEMA_V1.version,
+                    7,
                     password,
                 ),
             )
+            # the version is passed through from the catalog entry (not a bool/1)
+            self.assertIs(type(result.schema_version), int)
             self.assertEqual(
                 catalog.calls, [(connection.location, selected.name, password)]
             )
@@ -243,7 +246,7 @@ class SqlDatabaseDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
             state="ONLINE",
             is_compatible=False,
             compatibility_message="Schema version is not supported.",
-            schema_version=0,
+            schema_version=2,
         )
         vanished = SqlDatabaseCatalogEntry(
             name="OSTV_TEST_GONE",
@@ -269,6 +272,20 @@ class SqlDatabaseDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
                 "The selected database is no longer available to this login.",
             ),
             ("nothing listed", [], [], "Select a database."),
+            (
+                "blank name listed",
+                [],
+                [
+                    SqlDatabaseCatalogEntry(
+                        name="   ",
+                        database_guid="00000000-0000-0000-0000-000000000126",
+                        state="ONLINE",
+                        is_compatible=True,
+                        schema_version=SQL_SCHEMA_V1.version,
+                    )
+                ],
+                "Select a database.",
+            ),
         )
         for label, catalog_entries, listed, message in cases:
             with self.subTest(label):
@@ -841,9 +858,13 @@ class SqlDatabaseDialogCreationDialogIdentityTests(NoModalWarnings, unittest.Tes
             dialog._accept_if_valid()
         self.assertIsNone(dialog.result_data())
         self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
-        message = warning.call_args.args[2]
-        self.assertIn("SQL database setup failed unexpectedly", message)
-        self.assertNotIn("raw driver detail", message)
+        warning.assert_called_once_with(
+            dialog,
+            "SQL Server",
+            "SQL database setup failed unexpectedly. Inspect the server before "
+            "retrying; no connection was registered or database dropped.",
+        )
+        self.assertNotIn("raw driver detail", warning.call_args.args[2])
 
     def test_creation_requires_schema_permission_and_valid_name_before_prompting(self):
         cases = (
@@ -873,6 +894,8 @@ class SqlDatabaseDialogCreationDialogIdentityTests(NoModalWarnings, unittest.Tes
                 prompt.assert_not_called()
                 creator.create_database_for_client.assert_not_called()
                 warning.assert_called_once()
+                self.assertIs(warning.call_args.args[0], dialog)
+                self.assertEqual(warning.call_args.args[1], "SQL Server")
                 self.assertTrue(warning.call_args.args[2].startswith(message))
                 self.assertIsNone(dialog.result_data())
 
@@ -945,6 +968,8 @@ class SqlDatabaseDialogCreationReleaseBoundaryTests(NoModalWarnings, unittest.Te
         dialog.show()
         dialog._creation_in_progress = True
         self.assertFalse(dialog.close())
+        self.assertTrue(dialog.isVisible())
+        QTest.keyClick(dialog, QtCore.Qt.Key.Key_Escape)
         self.assertTrue(dialog.isVisible())
         self.assertIsNone(dialog.result_data())
         dialog._creation_in_progress = False
@@ -1363,6 +1388,63 @@ class SqlDatabasePropertiesDialogChromeTests(NoModalWarnings, unittest.TestCase)
         self.assertFalse(dialog.username_input.isEnabled())
         self.assertEqual(self.shown_warnings, [])
 
+    def test_cleanup_attempts_every_signal_even_when_a_disconnect_raises(self):
+        class _RaisingSignal:
+            def __init__(self, error, log, name):
+                self.error, self.log, self.name = error, log, name
+
+            def disconnect(self):
+                self.log.append(self.name)
+                raise self.error
+
+        class _Proxy:
+            """A real widget whose named signals raise when disconnected."""
+
+            def __init__(self, widget, signals):
+                self._widget, self._signals = widget, signals
+
+            def __getattr__(self, name):
+                if name in self._signals:
+                    return self._signals[name]
+                return getattr(self._widget, name)
+
+        for error in (TypeError("not connected"), RuntimeError("deleted")):
+            with self.subTest(error=type(error).__name__):
+                dialog = self.make(
+                    SqlDatabasePropertiesMode.OPEN,
+                    connection=self.connection(),
+                    databases=self.entries(),
+                )
+                log = []
+                for attribute, signal in (
+                    ("windows_auth_radio", "toggled"),
+                    ("sql_auth_radio", "toggled"),
+                    ("ok_button", "clicked"),
+                    ("cancel_button", "clicked"),
+                ):
+                    real = getattr(dialog, attribute)
+                    setattr(
+                        dialog,
+                        attribute,
+                        _Proxy(
+                            real,
+                            {signal: _RaisingSignal(error, log, f"{attribute}.{signal}")},
+                        ),
+                    )
+                dialog.password_input.setText("secret")
+                dialog.cleanup()
+                self.assertEqual(
+                    log,
+                    [
+                        "windows_auth_radio.toggled",
+                        "sql_auth_radio.toggled",
+                        "ok_button.clicked",
+                        "cancel_button.clicked",
+                    ],
+                )
+                self.assertEqual(dialog.password_input.text(), "")
+                self.assertIsNone(dialog.result_data())
+
     def test_the_result_secret_is_redacted_and_the_result_is_immutable(self):
         result = SqlDatabasePropertiesResult(
             SqlServerDatabaseLocation(server="s", database="d"), 1, "topsecret"
@@ -1643,6 +1725,42 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
                 inner.cleaned += 1
 
         return _Prompt
+
+    def test_creation_clears_a_stale_database_and_guid_of_the_supplied_connection(self):
+        stale = SqlConnectionDialogResult(
+            replace(
+                _creation_handoff_support__CREATOR,
+                database="Old",
+                database_guid="G-STALE",
+                authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+                username="runtime-user",
+            ),
+            "runtime-secret",
+        )
+        creator = _SpyCreator(self.created)
+        dialog = SqlDatabasePropertiesDialog(
+            RecordingIconProvider(),
+            SqlDatabasePropertiesMode.CREATE,
+            None,
+            creator,
+            connection=stale,
+            schema_change_allowed_fn=lambda: True,
+        )
+        self.addCleanup(delete_later_if_valid, dialog)
+        self.addCleanup(dialog.cleanup)
+        dialog.database_name_input.setText("New database")
+        prompted = []
+        dialog._request_creator_connection = lambda location: (
+            prompted.append(location) or self.creator_connection
+        )
+        dialog._accept_if_valid()
+        (location,) = prompted
+        self.assertEqual((location.database, location.database_guid), ("", ""))
+        (call,) = creator.calls
+        self.assertEqual(
+            (call["location"].database, call["location"].database_guid), ("", "")
+        )
+        self.assertEqual(call["location"].server, stale.location.server)
 
     def test_the_creator_prompt_receives_the_server_and_is_always_released(self):
         dialog = self.dialog(prompt=False)

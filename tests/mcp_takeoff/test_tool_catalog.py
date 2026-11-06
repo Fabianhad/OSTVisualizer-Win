@@ -1,5 +1,8 @@
 import dataclasses
+import json
+import sys
 import unittest
+from pathlib import Path
 from ost_visualizer.application.dtos.ai_takeoff_dtos import (
     AI_TAKEOFF_COMMAND_ARGUMENTS,
     AI_TAKEOFF_COMMANDS,
@@ -342,5 +345,68 @@ class ToolCatalogTests(unittest.TestCase):
         self.assertNotIn("injected", tool_items()[0]["inputSchema"]["properties"])
 
 
+GOLDEN_PATH = Path(__file__).with_name("tool_catalog_golden.json")
+REGENERATE_FLAG = "--regenerate-tool-catalog-golden"
+
+
+class ToolCatalogGoldenTests(unittest.TestCase):
+    """The complete tools/list payload an AI client receives is pinned literally.
+
+    tool_catalog_golden.json holds every tool name, description and input schema
+    exactly as a client gets them, so an intentional change to the public surface
+    shows up as readable text in the diff of that file. The golden is generated
+    from production: it detects drift, it is not an independent specification.
+
+    A deliberate change is made in two steps, reviewed together: edit
+    tool_catalog.py, then rewrite the golden with
+
+        .\\venv\\Scripts\\python.exe -m tests.mcp_takeoff.test_tool_catalog --regenerate-tool-catalog-golden
+
+    Nothing regenerates it implicitly; the command prints which tools changed.
+    Never regenerate to make a failing run pass without reading that diff.
+    """
+
+    def test_the_catalog_matches_the_pinned_client_contract(self):
+        golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+        current = tool_items()
+        self.assertEqual([item["name"] for item in current], [item["name"] for item in golden])
+        for now, expected in zip(current, golden):
+            with self.subTest(tool=expected["name"]):
+                self.assertEqual(
+                    now,
+                    expected,
+                    "tool changed; if intended run the regeneration command in this class docstring",
+                )
+
+    def test_the_golden_file_covers_every_tool_in_order(self):
+        golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [item["name"] for item in golden], [tool.name for tool in TOOLS]
+        )
+        self.assertEqual(len(golden), 15)
+
+    def test_every_tool_has_a_substantial_description(self):
+        for tool in tool_items():
+            with self.subTest(tool=tool["name"]):
+                self.assertGreater(len(tool["description"]), 40)
+
+
+def regenerate_golden():
+    old = json.loads(GOLDEN_PATH.read_text(encoding="utf-8")) if GOLDEN_PATH.exists() else []
+    old_by_name = {item["name"]: item for item in old}
+    current = tool_items()
+    GOLDEN_PATH.write_text(
+        json.dumps(current, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    changed = [
+        item["name"] for item in current if old_by_name.get(item["name"]) != item
+    ]
+    removed = sorted(set(old_by_name) - {item["name"] for item in current})
+    print(f"wrote {GOLDEN_PATH}; changed or new tools: {changed}; removed: {removed}")
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if REGENERATE_FLAG in sys.argv:
+        regenerate_golden()
+    else:
+        unittest.main()

@@ -101,6 +101,10 @@ class PipeClientTests(unittest.TestCase):
                 _client, result = self.call(response)
                 self.assertEqual(result["status"], "malformed_bridge_response")
                 self.assertNotIn("secret-token-1", json.dumps(result))
+                self.assertEqual(
+                    result["error"]["message"],
+                    "OST Visualizer returned an unreadable response.",
+                )
 
     def test_bridge_errors_pass_through(self):
         _client, result = self.call(
@@ -399,8 +403,10 @@ class RealPipeTests(unittest.TestCase):
         result = self.call_in_thread(client)
         elapsed = time.monotonic() - started
         self.assertEqual(result["status"], "busy")
-        self.assertIn("busy", result["error"]["message"])
-        self.assertNotIn("not running", result["error"]["message"])
+        self.assertEqual(
+            result["error"]["message"],
+            "OST Visualizer is busy with other AI takeoff requests. Try again in a moment.",
+        )
         self.assertGreaterEqual(elapsed, 0.5)
         self.assertLess(elapsed, 2.0)
 
@@ -569,15 +575,18 @@ class FakeClock:
 
 
 class ScriptedKernel32:
-    def __init__(self, waits=(), opens=(), writes=(), peeks=()):
+    def __init__(self, waits=(), opens=(), writes=(), peeks=(), reads=()):
         self.waits = list(waits)
         self.opens = list(opens)
         self.writes = list(writes)
         self.peeks = list(peeks)
+        self.reads = list(reads)
         self.wait_calls = []
         self.open_calls = []
         self.write_calls = []
+        self.read_calls = []
         self.peek_calls = 0
+        self.peek_arguments = []
 
     def WaitNamedPipeW(self, path, timeout_ms):
         import ctypes
@@ -604,8 +613,19 @@ class ScriptedKernel32:
         ctypes.set_last_error(error)
         return ok
 
+    def ReadFile(self, handle, buffer, size, read, overlapped):
+        import ctypes
+
+        ok, data, error = self.reads.pop(0)
+        self.read_calls.append((handle, len(buffer), size, overlapped))
+        buffer[: len(data)] = data
+        read._obj.value = len(data)
+        ctypes.set_last_error(error)
+        return ok
+
     def PeekNamedPipe(self, handle, buffer, size, read, available, left):
         self.peek_calls += 1
+        self.peek_arguments.append((handle, buffer, size, read, left))
         ok, count = self.peeks.pop(0) if self.peeks else (True, 0)
         available._obj.value = count
         return ok
@@ -682,7 +702,16 @@ class Win32WrapperTests(unittest.TestCase):
         with self.assertRaises(OSError) as raised:
             self.client()._open(kernel32, self.PIPE)
         self.assertEqual(raised.exception.errno, 2)
+        self.assertEqual(raised.exception.strerror, "Named pipe is unavailable")
         self.assertEqual(len(kernel32.wait_calls), 1)
+
+    def test_an_open_failure_other_than_busy_is_not_retried(self):
+        kernel32 = ScriptedKernel32(waits=[(True, 0)], opens=[(-1 & 0xFFFFFFFFFFFFFFFF, 5)])
+        with self.assertRaises(OSError) as raised:
+            self.client()._open(kernel32, self.PIPE)
+        self.assertEqual(raised.exception.errno, 5)
+        self.assertEqual(raised.exception.strerror, "Failed to open named pipe")
+        self.assertEqual(len(kernel32.open_calls), 1)
 
     def test_a_complete_write_sends_the_payload_once(self):
         kernel32 = ScriptedKernel32(writes=[(True, 4, 0)])
@@ -701,6 +730,9 @@ class Win32WrapperTests(unittest.TestCase):
                 with self.assertRaises(OSError) as raised:
                     pipe_client._write_all(kernel32, 9, b"abc\n")
                 self.assertEqual(raised.exception.errno, result[2])
+                self.assertEqual(
+                    raised.exception.strerror, "Failed to write named pipe"
+                )
 
     def test_waiting_for_data_polls_at_the_interval_instead_of_spinning(self):
         kernel32 = ScriptedKernel32(peeks=[(True, 0)] * 4 + [(True, 7)])
@@ -708,7 +740,7 @@ class Win32WrapperTests(unittest.TestCase):
         with patch.object(pipe_client, "time", clock):
             pipe_client._wait_for_data(kernel32, 1, deadline=10.0)
         self.assertEqual(kernel32.peek_calls, 5)
-        self.assertEqual(clock.sleeps, [pipe_client._POLL_INTERVAL_SECONDS] * 4)
+        self.assertEqual(clock.sleeps, [0.01] * 4)
 
     def test_waiting_for_data_checks_the_pipe_only_a_few_times_per_second(self):
         kernel32 = ScriptedKernel32()
@@ -726,6 +758,56 @@ class Win32WrapperTests(unittest.TestCase):
             with self.assertRaises(pipe_client.PipeReadTimeout):
                 pipe_client._wait_for_data(kernel32, 1, deadline=5.0)
         self.assertEqual((kernel32.peek_calls, clock.sleeps), (1, []))
+
+    def test_the_default_wait_for_a_pipe_instance_is_half_a_second(self):
+        client = TakeoffPipeClient(Path("unused.token"))
+        self.assertEqual(client._wait_timeout_ms, 500)
+        kernel32 = ScriptedKernel32(opens=[(77, 0)])
+        self.assertEqual(client._open(kernel32, self.PIPE), 77)
+        self.assertEqual(kernel32.wait_calls, [(self.PIPE, 500)])
+
+    def test_the_pipe_is_peeked_without_consuming_any_bytes(self):
+        kernel32 = ScriptedKernel32(peeks=[(True, 3)])
+        pipe_client._wait_for_data(kernel32, 12, deadline=10.0)
+        self.assertEqual(kernel32.peek_arguments, [(12, None, 0, None, None)])
+
+    def test_a_reply_is_read_in_64_kib_chunks_until_the_newline(self):
+        kernel32 = ScriptedKernel32(
+            peeks=[(True, 1)] * 3,
+            reads=[(True, b'{"a":', 0), (True, b"1}", 0), (True, b"\n", 0)],
+        )
+        line = pipe_client._read_line(kernel32, 5, deadline=10.0)
+        self.assertEqual(line, b'{"a":1}\n')
+        self.assertEqual(kernel32.read_calls, [(5, 65536, 65536, None)] * 3)
+
+    def test_a_message_larger_than_the_buffer_is_continued_not_failed(self):
+        kernel32 = ScriptedKernel32(
+            peeks=[(True, 1)] * 2,
+            reads=[(False, b'{"a":', 234), (True, b"1}\n", 0)],
+        )
+        line = pipe_client._read_line(kernel32, 5, deadline=10.0)
+        self.assertEqual(line, b'{"a":1}\n')
+        self.assertEqual(len(kernel32.read_calls), 2)
+
+    def test_a_broken_pipe_ends_the_reply_only_after_some_bytes_arrived(self):
+        kernel32 = ScriptedKernel32(
+            peeks=[(True, 1)] * 2, reads=[(True, b"abc", 0), (False, b"", 109)]
+        )
+        self.assertEqual(pipe_client._read_line(kernel32, 5, deadline=10.0), b"abc")
+        empty = ScriptedKernel32(peeks=[(True, 1)], reads=[(False, b"", 109)])
+        with self.assertRaises(OSError) as raised:
+            pipe_client._read_line(empty, 5, deadline=10.0)
+        self.assertEqual(raised.exception.errno, 109)
+        self.assertEqual(raised.exception.strerror, "Failed to read named pipe")
+
+    def test_any_other_read_error_fails_even_after_some_bytes(self):
+        kernel32 = ScriptedKernel32(
+            peeks=[(True, 1)] * 2, reads=[(True, b"abc", 0), (False, b"", 5)]
+        )
+        with self.assertRaises(OSError) as raised:
+            pipe_client._read_line(kernel32, 5, deadline=10.0)
+        self.assertEqual(raised.exception.errno, 5)
+        self.assertEqual(raised.exception.strerror, "Failed to read named pipe")
 
     def test_data_or_a_broken_pipe_ends_the_wait_without_sleeping(self):
         for label, peeks in {"data": [(True, 3)], "broken": [(False, 0)]}.items():

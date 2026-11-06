@@ -643,13 +643,27 @@ class WriterSqlCleanupTests(unittest.TestCase):
         self.assertIn(f"requested.[TableName]=N'{annotation_table}'", sql)
         self.assertNotIn("1=0", sql)
         for status, message, optimistic in (
-            (1, "takeoff changed or was deleted", True),
-            (2, "relationship graph changed", True),
-            (3, "annotation changed or was deleted", False),
+            (
+                1,
+                "A takeoff changed or was deleted before this operation started.",
+                True,
+            ),
+            (
+                2,
+                "The takeoff relationship graph changed before the Plan mutation "
+                "started.",
+                True,
+            ),
+            (
+                3,
+                "An annotation changed or was deleted before this operation started.",
+                False,
+            ),
         ):
             with self.subTest(status=status):
-                with self.assertRaisesRegex(SqlInfrastructureError, message) as raised:
+                with self.assertRaises(SqlInfrastructureError) as raised:
                     verify((status,))
+                self.assertEqual(str(raised.exception), message)
                 self.assertEqual(raised.exception.details.code, SqlErrorCode.CONFLICT)
                 self.assertEqual(
                     isinstance(raised.exception, _OptimisticConflict), optimistic
@@ -659,13 +673,21 @@ class WriterSqlCleanupTests(unittest.TestCase):
                         raised.exception.resource,
                         ResourceRef("takeoffs_collection", "8", 8),
                     )
-        with self.assertRaisesRegex(RuntimeError, "invalid result"):
+        with self.assertRaisesRegex(
+            RuntimeError, "^SQL plan-item validation returned an invalid result[.]$"
+        ):
             verify((4,))
-        with self.assertRaisesRegex(RuntimeError, "returned no result"):
+        with self.assertRaisesRegex(
+            RuntimeError, "^SQL plan-item validation returned no result[.]$"
+        ):
             verify(None)
         with self.assertRaises(SqlInfrastructureError) as raised:
             verify((0,), (("5", "not-an-annotation-type"),))
         self.assertEqual(raised.exception.details.code, SqlErrorCode.CONFLICT)
+        self.assertEqual(
+            str(raised.exception),
+            "An annotation changed or was deleted before this operation started.",
+        )
 
     def test_sql_property_preflight_checks_captured_ownership_after_graph_lock(self):
         from ost_visualizer.application.dtos.collaboration_dtos import (
@@ -1056,7 +1078,9 @@ class WriterSqlCleanupTests(unittest.TestCase):
             connection_manager=manager,
             session_registry=sessions,
         )
-        with self.assertRaisesRegex(RuntimeError, "did not record"):
+        with self.assertRaisesRegex(
+            RuntimeError, "^The SQL mutation did not record an affected resource[.]$"
+        ):
             writer.execute(
                 _cleanup_support_DatabaseMutationRequest(
                     database_id=descriptor.database_id,
@@ -1318,6 +1342,10 @@ class WriterSqlCleanupTests(unittest.TestCase):
         with self.assertRaises(SqlInfrastructureError) as raised:
             writer.create_project(descriptor.database_id, "Project")
         self.assertEqual(raised.exception.details.code, SqlErrorCode.SESSION_EXPIRED)
+        self.assertEqual(
+            str(raised.exception),
+            "SQL writes must run through a collaboration mutation transaction.",
+        )
 
     def test_inherited_sql_takeoff_validation_error_is_raised_not_returned_as_false(
         self,
@@ -2570,31 +2598,34 @@ class SqlWriterRecoveryIdentityTests(unittest.TestCase):
                 "mutation type",
                 (other_type, request.request_hash, 1, payload),
                 SqlInfrastructureError,
-                "reused with a different request",
+                "^A committed SQL operation ID was reused with a different "
+                "request[.]$",
             ),
             (
                 "request hash",
                 (request.mutation_type, "2" * 64, 1, payload),
                 SqlInfrastructureError,
-                "reused with a different request",
+                "^A committed SQL operation ID was reused with a different "
+                "request[.]$",
             ),
             (
                 "format version",
                 (request.mutation_type, request.request_hash, 2, payload),
                 SqlInfrastructureError,
-                "reused with a different request",
+                "^A committed SQL operation ID was reused with a different "
+                "request[.]$",
             ),
             (
                 "invalid json",
                 (request.mutation_type, request.request_hash, 1, "not json"),
                 RuntimeError,
-                "invalid result payload",
+                "^A committed SQL operation has an invalid result payload[.]$",
             ),
             (
                 "null payload",
                 (request.mutation_type, request.request_hash, 1, None),
                 RuntimeError,
-                "invalid result payload",
+                "^A committed SQL operation has an invalid result payload[.]$",
             ),
             (
                 "value unavailable",
@@ -2605,13 +2636,15 @@ class SqlWriterRecoveryIdentityTests(unittest.TestCase):
                     '{"value":true,"value_available":false}',
                 ),
                 RuntimeError,
-                "cannot reconstruct",
+                "^A committed SQL operation cannot reconstruct its result "
+                "payload[.]$",
             ),
             (
                 "missing availability flag",
                 (request.mutation_type, request.request_hash, 1, '{"value":true}'),
                 RuntimeError,
-                "cannot reconstruct",
+                "^A committed SQL operation cannot reconstruct its result "
+                "payload[.]$",
             ),
             (
                 "unexpected extra key",
@@ -2622,7 +2655,8 @@ class SqlWriterRecoveryIdentityTests(unittest.TestCase):
                     '{"value":true,"value_available":true,"extra":1}',
                 ),
                 RuntimeError,
-                "cannot reconstruct",
+                "^A committed SQL operation cannot reconstruct its result "
+                "payload[.]$",
             ),
         ):
             with self.subTest(label=label):
@@ -4905,7 +4939,8 @@ class WriterFinishResultValidationTests(unittest.TestCase):
     ):
         self.assertIsNone(outcome)
         self.assertIsInstance(error, kind)
-        self.assertRegex(str(error), text)
+        # exact text: a suffix or prefix change of the refusal message must fail
+        self.assertEqual(str(error), text)
         self.assertEqual(executed, [1])
         raw = server.connections[0]
         self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
@@ -4939,7 +4974,8 @@ class WriterFinishResultValidationTests(unittest.TestCase):
                 self._assert_refused_before_commit(
                     *self._run(rows, resources=2),
                     RuntimeError,
-                    "incomplete authoritative result",
+                    "The SQL version/feed batch returned an incomplete "
+                    "authoritative result.",
                 )
 
     def test_an_ordinal_outside_the_records_is_refused_before_commit(self):
@@ -4949,7 +4985,8 @@ class WriterFinishResultValidationTests(unittest.TestCase):
                 self._assert_refused_before_commit(
                     *self._run([(0, token), (ordinal, token)], resources=2),
                     RuntimeError,
-                    "invalid resource ordinal",
+                    "The SQL version/feed batch returned an invalid resource "
+                    "ordinal.",
                 )
 
     def test_the_last_valid_ordinal_is_accepted(self):
@@ -4965,20 +5002,25 @@ class WriterFinishResultValidationTests(unittest.TestCase):
         self._assert_refused_before_commit(
             *self._run([(1, token), (1, token)], resources=2),
             RuntimeError,
-            "duplicate resource ordinal",
+            "The SQL version/feed batch returned a duplicate resource ordinal.",
         )
 
     def test_an_answer_that_is_not_a_rowversion_is_refused_before_commit(self):
-        for label, token in (
-            ("text", "0000000000000001"),
-            ("none", None),
-            ("seven bytes", b"\x00" * 7),
+        invalid = "SQL Server returned an invalid rowversion token"
+        for label, token, text in (
+            ("text", "0000000000000001", invalid),
+            ("none", None, invalid),
+            (
+                "seven bytes",
+                b"\x00" * 7,
+                "SQL Server rowversion tokens must contain 8 bytes",
+            ),
         ):
             with self.subTest(token=label):
                 self._assert_refused_before_commit(
                     *self._run([(0, token)]),
                     ValueError,
-                    "rowversion",
+                    text,
                 )
 
 
@@ -5053,7 +5095,10 @@ class WriterConnectionLeaseRuleTests(unittest.TestCase):
             resources=(resource,),
         )
         with server.patched():
-            with self.assertRaisesRegex(RuntimeError, "cannot switch databases"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "^A SQL mutation cannot switch databases inside its transaction[.]$",
+            ):
                 writer.execute(request, operation)
         raw = server.connections[0]
         self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
@@ -5249,11 +5294,12 @@ class WriterDeferredIdentityTests(unittest.TestCase):
     def test_a_placeholder_has_no_value_until_the_server_identity_is_bound(self):
         writer = _plain_writer()
         placeholder = writer._next_uid(None, "BidLayers")
-        with self.assertRaisesRegex(RuntimeError, "has not been generated yet"):
+        unbound = "^SQL identity has not been generated yet$"
+        with self.assertRaisesRegex(RuntimeError, unbound):
             int(placeholder)
-        with self.assertRaisesRegex(RuntimeError, "has not been generated yet"):
+        with self.assertRaisesRegex(RuntimeError, unbound):
             str(placeholder)
-        with self.assertRaisesRegex(RuntimeError, "has not been generated yet"):
+        with self.assertRaisesRegex(RuntimeError, unbound):
             SqlProjectWriter._resolve_deferred(placeholder)
         placeholder.bind("205")
         self.assertEqual(int(placeholder), 205)
@@ -5640,26 +5686,42 @@ class WriterImportConversionTests(unittest.TestCase):
                 converted = convert(value, type_name)
                 self.assertEqual(converted, expected)
                 self.assertIs(type(converted), type(expected))
+        # non-ASCII: latin-1 (annotation text) and utf-8 (blob) must differ
+        word = "café"
+        self.assertNotEqual(encode_annotation_text(word), encode_text_blob(word))
         self.assertEqual(
-            convert("hello", "varbinary", table="BidTexts", column="Name"),
-            encode_annotation_text("hello"),
+            convert(word, "varbinary", table="BidTexts", column="Name"),
+            encode_annotation_text(word),
         )
         self.assertEqual(
-            convert("hello", "varbinary", table="BidLayers", column="Name"),
-            encode_text_blob("hello"),
+            convert(word, "varbinary", table="BidLayers", column="Name"),
+            encode_text_blob(word),
         )
 
     def test_values_that_cannot_convert_are_refused_loudly(self):
         writer = _plain_writer()
         convert = writer._convert_sql_import_value
+        # The two Imported-value messages and the unsupported-type message are
+        # operator-visible import errors: they are compared exactly (including the
+        # type name that follows the colon) so no suffix or prefix drift passes.
         for value, type_name, error, text in (
-            ("not a date", "datetime2", ValueError, "date value is invalid"),
-            ("2024 13 40 1 1 1", "datetime2", ValueError, "date value is invalid"),
+            ("not a date", "datetime2", ValueError, "^Imported date value is invalid$"),
+            (
+                "2024 13 40 1 1 1",
+                "datetime2",
+                ValueError,
+                "^Imported date value is invalid$",
+            ),
             ("abc", "int", ValueError, "invalid literal"),
             ("abc", "float", ValueError, "could not convert"),
-            ("maybe", "bit", ValueError, "Boolean value is invalid"),
-            ("x", "uniqueidentifier", RuntimeError, "Unsupported SQL import type"),
-            ("x", "", RuntimeError, "Unsupported SQL import type"),
+            ("maybe", "bit", ValueError, "^Imported Boolean value is invalid$"),
+            (
+                "x",
+                "uniqueidentifier",
+                RuntimeError,
+                "^Unsupported SQL import type: uniqueidentifier$",
+            ),
+            ("x", "", RuntimeError, "^Unsupported SQL import type: $"),
         ):
             with self.subTest(value=value, type=type_name):
                 with self.assertRaisesRegex(error, text):
@@ -6176,7 +6238,7 @@ class WriterSchemaRequirementTests(unittest.TestCase):
         cursor = _ScriptedCursor(lambda _sql, _params: [])
         writer = self._writer(_MissingColumnSchema(), cursor)
         with self.assertRaisesRegex(
-            RuntimeError, "takeoff deletion returned no result"
+            RuntimeError, "^SQL takeoff deletion returned no result[.]$"
         ):
             writer._run_delete_takeoffs("database", [7], 100)
         self.assertEqual(cursor.close_count, 1)
@@ -6283,7 +6345,11 @@ class WriterPrepareAndValidationEdgeTests(unittest.TestCase):
 
         for ordinal in (-1, 1, 2):
             with self.subTest(ordinal=ordinal):
-                with self.assertRaisesRegex(RuntimeError, "invalid ordinal"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "^The SQL rowversion validation batch returned an invalid "
+                    "ordinal[.]$",
+                ):
                     SqlProjectWriter._validate_mutation_locks(
                         state,
                         strict_cursor(_Cursor(("rowversion", None, ordinal, None))),
@@ -6428,7 +6494,11 @@ class WriterRecoveredPayloadShapeTests(unittest.TestCase):
             ("availability is a string", '{"value":1,"value_available":"true"}'),
         ):
             with self.subTest(payload=label):
-                with self.assertRaisesRegex(RuntimeError, "cannot reconstruct"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "^A committed SQL operation cannot reconstruct its result "
+                    "payload[.]$",
+                ):
                     SqlProjectWriter._recovered_operation_result(
                         state,
                         (request.mutation_type, request.request_hash, 1, payload),
@@ -7817,3 +7887,639 @@ class WriterLockValidationTokenIsolationTests(unittest.TestCase):
             database, [self.TAKEOFF], required_lock_tokens=(self.TOKEN,)
         )
         self._assert_committed(result, server, executed)
+
+
+class WriterSecondPassSurvivorTests(unittest.TestCase):
+    """Behaviours that the second-pass mutation sweep of writer.py found unpinned:
+    exact operator-visible texts, the two-token consumed-lock payload, the Employees
+    business-key columns, the import identity-map keys and the per-table cache."""
+
+    def _request(self, descriptor, **kwargs):
+        return _DatabaseMutationRequest(
+            database_id=descriptor.database_id,
+            session_id=kwargs.pop("session_id", "session-1"),
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
+            request_hash="a" * 64,
+            **kwargs,
+        )
+
+    def test_the_default_optimistic_conflict_reason_and_a_custom_one(self):
+        resource = ResourceRef("takeoff", "10", 8)
+        default = _OptimisticConflict(resource, None, None)
+        self.assertEqual(
+            str(default),
+            "This SQL item changed in another session. Reload it before saving.",
+        )
+        self.assertEqual(default.details.code, SqlErrorCode.CONFLICT)
+        custom = _OptimisticConflict(resource, None, None, message="Custom reason.")
+        self.assertEqual(str(custom), "Custom reason.")
+
+    def test_a_request_from_a_replaced_session_is_refused_with_the_session_text(self):
+        writer, descriptor, server = _strict_writer()
+        executed = []
+        with server.patched():
+            result = writer.execute(
+                self._request(
+                    descriptor,
+                    session_id="session-2",
+                    resources=(ResourceRef("database", descriptor.database_id),),
+                ),
+                lambda recorder: executed.append(1),
+            )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.CONFLICT)
+        self.assertEqual(result.conflict.kind, SynchronizationConflictKind.SESSION)
+        self.assertEqual(
+            result.conflict.reason,
+            "The SQL collaboration session changed before the write.",
+        )
+        self.assertEqual(executed, [])
+        self.assertEqual(server.connections, [])
+
+    def test_consumed_lock_tokens_travel_as_a_sorted_lowercase_json_list(self):
+        writer, descriptor, server = _strict_writer()
+        resource, mutate = _record_database_update(descriptor)
+        tokens = (
+            "BBBBBBBB-0000-0000-0000-000000000002",
+            "aaaaaaaa-0000-0000-0000-000000000001",
+        )
+        request = self._request(
+            descriptor, resources=(resource,), required_lock_tokens=tokens
+        )
+        with server.patched():
+            result = writer.execute(request, mutate)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertTrue(result.commit_attempted)
+        self.assertEqual(result.consumed_lock_tokens, tokens)
+        expected = (
+            '["aaaaaaaa-0000-0000-0000-000000000001",'
+            '"bbbbbbbb-0000-0000-0000-000000000002"]'
+        )
+        finish = next(
+            params
+            for connection in server.connections
+            for cursor in connection.cursors
+            for sql, params in cursor.executed
+            if "DECLARE @Changes TABLE" in sql
+        )
+        validation = next(
+            params
+            for connection in server.connections
+            for cursor in connection.cursors
+            for sql, params in cursor.executed
+            if "DECLARE @MutationResources TABLE" in sql
+        )
+        # the same canonical list is validated before and consumed by the commit
+        self.assertEqual(validation[1], expected)
+        self.assertEqual(finish[5], expected)
+        self.assertEqual(len(finish), 14)
+
+    def test_insert_refusals_name_every_missing_column_and_the_operation(self):
+        schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+        connection = _ScriptedConnection()
+        with self.assertRaises(SqlInfrastructureError) as raised:
+            _plain_writer()._execute_insert_values(
+                connection.cursor(),
+                schema,
+                "BidLayers",
+                {"UID": 1},
+                ("UID", "BidUID", "Name"),
+                "insert_layer",
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "This OST database is missing required writable columns "
+            "BidLayers.BidUID, Name for insert_layer.",
+        )
+        with self.assertRaises(SqlInfrastructureError) as raised:
+            _plain_writer()._execute_insert_values(
+                connection.cursor(),
+                schema,
+                "BidLayers",
+                {"UID": 5},
+                ("UID",),
+                "insert_layer",
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "This OST database has no writable columns for insert_layer.",
+        )
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
+        self.assertEqual(connection.executed, [])
+
+    def _resolve_employees(self, incoming, existing=(), maps=({}, {})):
+        writer = _plain_writer()
+        connection = _ScriptedConnection(lambda _sql, _params: list(existing))
+        raw = RawBidData(bid_row={"UID": "1"}, global_tables={"Employees": incoming})
+        inserted = []
+
+        def fake_insert(_connection, table, row, _info):
+            inserted.append((table, dict(row)))
+            return 700 + len(inserted)
+
+        with patch.object(writer, "_insert_identity_raw", side_effect=fake_insert):
+            result = writer._resolve_sql_employees(connection, raw, *maps)
+        return result, inserted, connection
+
+    def test_an_existing_employee_is_matched_by_first_last_name_and_email(self):
+        existing = [(60, "", "Alice", "One", "A@X.COM"), (61, "", "Alice", "One", "")]
+        result, inserted, connection = self._resolve_employees(
+            [
+                {
+                    "UID": "95",
+                    "FirstName": " alice ",
+                    "LastName": "ONE",
+                    "EMail": "a@x.com",
+                }
+            ],
+            existing,
+        )
+        self.assertEqual(result, {"95": "60"})
+        self.assertEqual(inserted, [])
+        connection.assert_every_cursor_closed_once(self)
+        # a differing e-mail is a different person: nothing is reused
+        result, inserted, _connection = self._resolve_employees(
+            [
+                {
+                    "UID": "96",
+                    "FirstName": "Alice",
+                    "LastName": "One",
+                    "EMail": "other@x.com",
+                }
+            ],
+            existing,
+        )
+        self.assertEqual(result, {"96": "701"})
+        self.assertEqual(len(inserted), 1)
+
+    def test_a_new_employee_maps_both_references_even_when_the_first_is_empty(self):
+        pay, access = {"7": "70"}, {"8": "80"}
+        for pay_value in (None, "", "0", "NULL"):
+            with self.subTest(pay_class=pay_value):
+                result, inserted, _connection = self._resolve_employees(
+                    [
+                        {
+                            "UID": "95",
+                            "EmployeeNo": "E1",
+                            "PayClassUID": pay_value,
+                            "AccessLevelUID": "8",
+                        }
+                    ],
+                    maps=(pay, access),
+                )
+                self.assertEqual(result, {"95": "701"})
+                ((table, row),) = inserted
+                self.assertEqual(table, "Employees")
+                self.assertIsNone(row["PayClassUID"])
+                self.assertEqual(row["AccessLevelUID"], "80")
+        for access_value in (None, "", "0", "NULL"):
+            with self.subTest(access_level=access_value):
+                _result, inserted, _connection = self._resolve_employees(
+                    [
+                        {
+                            "UID": "95",
+                            "EmployeeNo": "E1",
+                            "PayClassUID": "7",
+                            "AccessLevelUID": access_value,
+                        }
+                    ],
+                    maps=(pay, access),
+                )
+                self.assertEqual(inserted[0][1]["PayClassUID"], "70")
+                self.assertIsNone(inserted[0][1]["AccessLevelUID"])
+
+    def test_an_employee_reference_that_was_not_imported_is_refused_by_column(self):
+        for column, maps in (
+            ("PayClassUID", ({}, {"8": "80"})),
+            ("AccessLevelUID", ({"7": "70"}, {})),
+        ):
+            with self.subTest(column=column):
+                row = {
+                    "UID": "95",
+                    "EmployeeNo": "E1",
+                    "PayClassUID": "7",
+                    "AccessLevelUID": "8",
+                }
+                with self.assertRaises(RuntimeError) as raised:
+                    self._resolve_employees([row], maps=maps)
+                self.assertEqual(
+                    str(raised.exception),
+                    f"Imported employee references an unknown {column}.",
+                )
+
+    def test_identity_ambiguity_errors_name_the_table_and_the_business_key(self):
+        with self.assertRaises(RuntimeError) as raised:
+            self._resolve_employees(
+                [
+                    {"UID": "95", "EmployeeNo": "E1"},
+                    {"UID": "96", "EmployeeNo": "e1"},
+                ]
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "Imported master-data identity is ambiguous for Employees business key: "
+            "matching UIDs 95, 96.",
+        )
+        with self.assertRaises(RuntimeError) as raised:
+            self._resolve_employees(
+                [{"UID": "95", "EmployeeNo": "E9"}],
+                existing=[(60, "E1", "", "", ""), (60, "E2", "", "", "")],
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "Employees contains duplicate UID 60; authoritative master-data UIDs "
+            "must be unique.",
+        )
+        with self.assertRaises(RuntimeError) as raised:
+            self._resolve_employees(
+                [{"UID": "95", "EmployeeNo": "E1"}],
+                existing=[(60, "E1", "", "", ""), (61, "e1", "", "", "")],
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "Imported master-data identity is ambiguous for Employees business key: "
+            "matching UIDs 60, 61.",
+        )
+
+    def test_the_import_result_maps_every_identity_family_by_its_own_table(self):
+        writer = _plain_writer()
+        table_uid_maps = {
+            "Bids": {"1": "500"},
+            "BidPages": {"2": "501"},
+            "BidConditions": {"3": "502"},
+            "BidLayers": {"4": "503"},
+            "BidAreas": {"5": "504"},
+            "BidTakeoffs": {"6": "505"},
+        }
+        with (
+            patch.object(
+                writer, "_connection", return_value=contextlib.nullcontext(object())
+            ),
+            patch.object(writer, "_resolve_global_by_column", return_value={}),
+            patch.object(writer, "_resolve_sql_employees", return_value={}),
+            patch.object(writer, "_assign_next_bid_no"),
+            patch.object(
+                writer, "_write_remapped_identity_graph", return_value=table_uid_maps
+            ),
+        ):
+            result = writer.import_ost_data(
+                "database", RawBidData(bid_row={"UID": "1"}), lambda data, *_maps: data
+            )
+        self.assertEqual(result["bid_uids"], {"1": "500"})
+        self.assertEqual(result["page_uids"], {"2": "501"})
+        self.assertEqual(result["condition_uids"], {"3": "502"})
+        self.assertEqual(result["layer_uids"], {"4": "503"})
+        self.assertEqual(result["area_uids"], {"5": "504"})
+        self.assertEqual(result["takeoff_uids"], {"6": "505"})
+        self.assertEqual(result["annotation_uids"], {})
+        self.assertEqual(result["project_uids"], {})
+        self.assertEqual(
+            set(result),
+            {
+                "project_uids",
+                "bid_uids",
+                "page_uids",
+                "condition_uids",
+                "layer_uids",
+                "area_uids",
+                "takeoff_uids",
+                "annotation_uids",
+                "table_uid_maps",
+                "global_uid_maps",
+            },
+        )
+
+    def test_table_info_is_read_once_per_table_of_an_imported_graph(self):
+        writer = _plain_writer()
+        connection = _ScriptedConnection()
+        raw = RawBidData(
+            bid_row={"UID": "1", "Name": "B"},
+            bid_tables={
+                "BidLayers": [
+                    {"UID": "5", "BidUID": "1", "Name": "L1"},
+                    {"UID": "6", "BidUID": "1", "Name": "L2"},
+                    {"UID": "7", "BidUID": "1", "Name": "L3"},
+                ]
+            },
+        )
+        lookups = []
+
+        def table_info(_connection, table):
+            lookups.append(table)
+            return {"UID", "Name", "BidUID"}, {}
+
+        counter = iter(range(100, 200))
+        with (
+            patch.object(writer, "_get_table_info", side_effect=table_info),
+            patch.object(
+                writer,
+                "_insert_identity_raw",
+                side_effect=lambda *_args: next(counter),
+            ),
+        ):
+            writer._write_remapped_identity_graph(connection, raw)
+        self.assertEqual(lookups, ["Bids", "BidLayers"])
+
+
+class WriterVerifierReworkTests(unittest.TestCase):
+    """Gaps found by the independent verifier (V1) after the second-pass sweep:
+    the real recorder, a failing session-context clear, lock acquisition order,
+    non-ASCII blob encodings, CdnTypes incoming ambiguity and two order-sensitive
+    refusal texts."""
+
+    def _request(self, descriptor, **kwargs):
+        return _DatabaseMutationRequest(
+            database_id=descriptor.database_id,
+            session_id="session-1",
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
+            request_hash="a" * 64,
+            **kwargs,
+        )
+
+    def test_the_real_recorder_forwards_changed_fields_and_payload_to_the_feed(self):
+        writer, descriptor, server = _strict_writer()
+        resource = ResourceRef("database", descriptor.database_id)
+
+        def mutate(recorder):
+            recorder.record(
+                resource,
+                ChangeOperation.UPDATE,
+                changed_fields=("Name",),
+                payload='{"k":1}',
+            )
+            return True
+
+        with server.patched():
+            result = writer.execute(self._request(descriptor, resources=(resource,)), mutate)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        finish = next(
+            params
+            for connection in server.connections
+            for cursor in connection.cursors
+            for sql, params in cursor.executed
+            if "DECLARE @Changes TABLE" in sql
+        )
+        (change,) = json.loads(finish[0])
+        self.assertEqual(change["changed_fields"], '["Name"]')
+        self.assertEqual(change["payload"], '{"k":1}')
+        self.assertEqual(change["operation"], "update")
+        self.assertTrue(change["is_feed"])
+
+    def test_a_failing_session_context_clear_never_masks_a_committed_write(self):
+        for label, error in (
+            ("driver error", pyodbc.Error("08S01", "link failure")),
+            ("runtime error", RuntimeError("lease is gone")),
+        ):
+            with self.subTest(label):
+                writer, descriptor, server = _strict_writer()
+
+                def failing_clear(_call, error=error):
+                    raise error
+
+                server.rules.insert(
+                    0,
+                    (
+                        lambda sql: "@key=N'ostv_session_id', @value=NULL" in sql,
+                        failing_clear,
+                    ),
+                )
+                resource, mutate = _record_database_update(descriptor)
+                with server.patched():
+                    result = writer.execute(
+                        self._request(descriptor, resources=(resource,)), mutate
+                    )
+                self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+                raw = server.connections[0]
+                self.assertEqual((raw.commits, raw.rollbacks), (1, 0))
+                self.assertIn(
+                    "@value=NULL", " ".join(server.statements(raw.number))
+                )
+
+    def test_resource_locks_are_requested_bids_first_then_by_type_and_id(self):
+        from ost_visualizer.infrastructure.sql import writer as writer_module
+
+        writer, descriptor, server = _strict_writer()
+        annotation = ResourceRef("annotation", "1", 8)
+        bid = ResourceRef("bid", "8", 8)
+        page = ResourceRef("page", "3", 8)
+        other_bid_page = ResourceRef("page", "4", 3)
+        request = self._request(
+            descriptor, resources=(page, other_bid_page, annotation, bid)
+        )
+        _resource, mutate = _record_database_update(descriptor)
+        seen = []
+        real = writer_module.acquire_resource_transaction_locks
+
+        def spy(cursor, ordered_locks):
+            seen.append(tuple(ordered_locks))
+            return real(cursor, ordered_locks)
+
+        with patch.object(writer_module, "acquire_resource_transaction_locks", spy):
+            with server.patched():
+                result = writer.execute(request, mutate)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            seen,
+            [
+                (
+                    (ResourceRef("bid", "3", 3), "Shared"),
+                    (bid, "Exclusive"),
+                    (annotation, "Exclusive"),
+                    (page, "Exclusive"),
+                    (other_bid_page, "Exclusive"),
+                )
+            ],
+        )
+
+    def test_blob_values_use_the_encoding_of_their_own_table_and_column(self):
+        from ost_visualizer.infrastructure.mdb.components.serialization import (
+            encode_annotation_text,
+            encode_text_blob,
+        )
+
+        word = "café"
+        self.assertNotEqual(encode_annotation_text(word), encode_text_blob(word))
+        writer = _plain_writer()
+        convert = writer._convert_sql_import_value
+        for table in ("BidTexts", "BidCallOuts"):
+            self.assertEqual(
+                convert(word, "varbinary", table=table, column="Name"),
+                b"caf\xe9",
+            )
+        for table, column in (
+            ("BidTexts", "Other"),
+            ("BidLayers", "Name"),
+            ("BidConditions", "Notes"),
+        ):
+            self.assertEqual(
+                convert(word, "varbinary", table=table, column=column),
+                b"caf\xc3\xa9",
+                (table, column),
+            )
+        schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+        for table, column, expected in (
+            ("BidTexts", "Name", b"caf\xe9"),
+            ("BidCallOuts", "Name", b"caf\xe9"),
+            ("BidConditions", "Notes", b"caf\xc3\xa9"),
+        ):
+            with self.subTest(table=table, column=column):
+                connection = _ScriptedConnection(lambda _sql, _params: [(41,)])
+                writer._insert_identity_raw(
+                    connection, table, {"UID": "5", column: word}, schema.table_info(table)
+                )
+                ((sql, params),) = connection.executed
+                self.assertEqual(
+                    sql,
+                    f"INSERT INTO [dbo].[{table}] ([{column}]) "
+                    "OUTPUT INSERTED.[UID] VALUES (?)",
+                )
+                self.assertEqual(params, (expected,))
+
+    def test_incoming_cdn_type_names_that_differ_only_by_case_and_space_are_ambiguous(
+        self,
+    ):
+        writer = _plain_writer()
+        connection = _ScriptedConnection()
+        raw = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "CdnTypes": [
+                    {"UID": "1", "Name": " Wall "},
+                    {"UID": "2", "Name": "wall"},
+                ]
+            },
+        )
+        with patch.object(writer, "_insert_identity_raw") as insert:
+            with self.assertRaises(RuntimeError) as raised:
+                writer._resolve_global_by_column(connection, raw, "CdnTypes", "Name")
+        self.assertEqual(
+            str(raised.exception),
+            "Imported master-data identity is ambiguous for CdnTypes.Name: "
+            "matching UIDs 1, 2.",
+        )
+        insert.assert_not_called()
+        self.assertEqual(connection.cursors, [])
+        # other master tables compare names exactly (no folding): no ambiguity
+        other = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "JobStatuses": [
+                    {"UID": "1", "Name": " Open "},
+                    {"UID": "2", "Name": "open"},
+                ]
+            },
+        )
+        counter = iter((101, 102))
+        with patch.object(
+            writer, "_insert_identity_raw", side_effect=lambda *_a: next(counter)
+        ):
+            result = writer._resolve_global_by_column(
+                _ScriptedConnection(), other, "JobStatuses", "Name"
+            )
+        self.assertEqual(result, {"1": "101", "2": "102"})
+
+    def test_employee_with_both_references_unmapped_names_the_pay_class_first(self):
+        with self.assertRaises(RuntimeError) as raised:
+            WriterSecondPassSurvivorTests._resolve_employees(
+                self,
+                [
+                    {
+                        "UID": "95",
+                        "EmployeeNo": "E1",
+                        "PayClassUID": "7",
+                        "AccessLevelUID": "8",
+                    }
+                ],
+            )
+        self.assertEqual(
+            str(raised.exception), "Imported employee references an unknown PayClassUID."
+        )
+
+    def test_create_project_requires_uid_then_name_before_inserting(self):
+        schema = _MissingColumnSchema()
+        cursor = _ScriptedCursor(lambda _sql, _params: [(5,)])
+        writer = WriterSchemaRequirementTests._writer(self, schema, cursor)
+        self.assertEqual(writer.create_project("database", "P"), "5")
+        self.assertEqual(
+            schema.required, [("BidProjects", "UID"), ("BidProjects", "Name")]
+        )
+        self.assertEqual(
+            cursor.executed,
+            [
+                (
+                    "INSERT INTO [dbo].[BidProjects] ([Name]) "
+                    "OUTPUT INSERTED.[UID] VALUES (?)",
+                    ("P",),
+                )
+            ],
+        )
+        for missing in (("BidProjects", "UID"), ("BidProjects", "Name")):
+            with self.subTest(missing=missing):
+                cursor = _ScriptedCursor(lambda _sql, _params: [(5,)])
+                writer = WriterSchemaRequirementTests._writer(
+                    self, _MissingColumnSchema(missing), cursor
+                )
+                with self.assertRaises(SqlInfrastructureError) as raised:
+                    writer.create_project("database", "P")
+                self.assertIn(f"dbo.{missing[0]}.{missing[1]}", str(raised.exception))
+                self.assertEqual(cursor.executed, [])
+
+    def test_session_failures_carry_the_session_expired_code_and_flag(self):
+        from ost_visualizer.infrastructure.sql.writer import _BidLockedRefusal
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            BID_LOCKED_MESSAGE,
+        )
+
+        refusal = _BidLockedRefusal()
+        self.assertEqual(refusal.details.code, SqlErrorCode.LOCKED)
+        self.assertEqual(str(refusal), BID_LOCKED_MESSAGE)
+        # no registered session
+        writer, descriptor, _server = _strict_writer()
+        writer._session_registry.remove(descriptor.database_id)
+        with self.assertRaises(SqlInfrastructureError) as raised:
+            writer._require_active_session(descriptor.database_id)
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SESSION_EXPIRED)
+        self.assertTrue(raised.exception.session_expired)
+        # a different session than the registered one
+        writer, descriptor, server = _strict_writer()
+        resource, mutate = _record_database_update(descriptor)
+        request = _DatabaseMutationRequest(
+            database_id=descriptor.database_id,
+            session_id="session-2",
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
+            request_hash="a" * 64,
+            resources=(resource,),
+        )
+        with server.patched():
+            with self.assertRaises(SqlInfrastructureError) as raised:
+                writer._execute_mutation_transaction(request, mutate)
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SESSION_EXPIRED)
+        self.assertTrue(raised.exception.session_expired)
+        self.assertEqual(
+            str(raised.exception),
+            "The SQL collaboration session changed before the write.",
+        )
+        # the server reports the registered session as expired
+        writer, descriptor, server = _strict_writer(
+            _StrictMutationServer(session_alive=0)
+        )
+        resource, mutate = _record_database_update(descriptor)
+        request = _DatabaseMutationRequest(
+            database_id=descriptor.database_id,
+            session_id="session-1",
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
+            request_hash="a" * 64,
+            resources=(resource,),
+        )
+        with server.patched():
+            with self.assertRaises(SqlInfrastructureError) as raised:
+                writer._execute_mutation_transaction(request, mutate)
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SESSION_EXPIRED)
+        self.assertTrue(raised.exception.session_expired)
+        self.assertEqual(
+            str(raised.exception),
+            "The SQL collaboration session expired before the write.",
+        )

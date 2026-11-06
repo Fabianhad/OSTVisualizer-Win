@@ -4673,3 +4673,269 @@ class FileOperationHandlerSqlCreationSecretAndIdentityTests(_FlowFixture):
             sorted(self.store.passwords),
             sorted(credential_target_for(entry.database_id) for entry in entries),
         )
+
+
+class FileOperationHandlerEveryEntryIsProcessedTests(_FlowFixture):
+    """Loop-continuation contracts: one entry's outcome never stops the others."""
+
+    def test_every_entry_with_a_failed_sql_drain_is_restored_and_reported(self):
+        first, second = _sql_entry("FIRST"), _sql_entry("SECOND")
+        self.loaded.update({first.runtime_locator, second.runtime_locator})
+        state = _FlowState([first, second])
+        handler = self.handler(state)
+        self.open_files(
+            handler,
+            _flow_dialog([first.with_checked(False), second.with_checked(False)]),
+        )
+        done = dict(self.drains)
+        done[first.database_id](False, "first failed")
+        done[second.database_id](False, "second failed")
+        # The unload set has no defined order: both failures are handled either way.
+        self.assertEqual(
+            sorted(self.warnings),
+            [("Unload File", "first failed"), ("Unload File", "second failed")],
+        )
+        self.assertEqual(self.unloads, [])
+        self.assertEqual(
+            state.saves[-1], [(first.database_id, True), (second.database_id, True)]
+        )
+        self.assertEqual(self.capability.disconnected, [])
+
+    def test_every_access_entry_whose_flush_fails_stays_checked_and_loaded(self):
+        first = FileEntry("C:/projects/a.mdb")
+        second = FileEntry("C:/projects/b.mdb")
+        self.loaded.update({first.runtime_locator, second.runtime_locator})
+        self.deferred.flush_for_file.side_effect = (
+            lambda locator: self.log.append(("flush", locator)) or False
+        )
+        state = _FlowState([first, second])
+        handler = self.handler(state)
+        self.open_files(
+            handler,
+            _flow_dialog([first.with_checked(False), second.with_checked(False)]),
+        )
+        self.assertEqual(
+            sorted(item for item in self.log if isinstance(item, tuple)),
+            sorted(
+                [("flush", first.runtime_locator), ("flush", second.runtime_locator)]
+            ),
+        )
+        self.assertEqual(self.unloads, [])
+        self.assertEqual(
+            state.saves,
+            [
+                [(first.database_id, False), (second.database_id, False)],
+                [(first.database_id, True), (second.database_id, True)],
+            ],
+        )
+        self.assertEqual(self.warnings, [])
+        self.assertEqual(self.capability.disconnected, [])
+
+    def test_every_unchecked_offline_sql_entry_is_detached_locally(self):
+        first, second = _sql_entry("FIRST"), _sql_entry("SECOND")
+        state = _FlowState([first, second])
+        handler = self.handler(state)
+        self.open_files(
+            handler,
+            _flow_dialog([first.with_checked(False), second.with_checked(False)]),
+        )
+        expected = sorted([first.database_id, second.database_id])
+        self.assertEqual(
+            sorted((database_id, reason) for database_id, reason, _cb in self.stops),
+            sorted((database_id, "unchecked") for database_id in expected),
+        )
+        self.assertEqual(
+            sorted(item for item in self.log if isinstance(item, tuple)),
+            sorted(
+                [("cancel", first.runtime_locator), ("cancel", second.runtime_locator)]
+            ),
+        )
+        self.assertEqual(sorted(self.capability.disconnected), expected)
+        self.assertEqual(self.unloads, [])
+        self.assertEqual(self.drains, [])
+
+    def test_every_newly_checked_entry_is_loaded_or_started(self):
+        first, second = _sql_entry("FIRST"), _sql_entry("SECOND")
+        access = FileEntry("C:/projects/new.mdb")
+        state = _FlowState([])
+        handler = self.handler(state)
+        self.open_files(handler, _flow_dialog([first, second, access]))
+        self.assertEqual(
+            sorted((database_id, reason) for database_id, reason, _cb in self.stops),
+            sorted(
+                (database_id, "reconfigured")
+                for database_id in (first.database_id, second.database_id)
+            ),
+        )
+        self.files.load_file.assert_called_once_with(access.runtime_locator)
+        self.assertEqual(
+            self.published,
+            [(AppEvents.FILE_OPENED, {"file_path": access.runtime_locator})],
+        )
+        # Nothing failed to load, so the dialog's save is the only save.
+        self.assertEqual(
+            state.saves,
+            [
+                [
+                    (first.database_id, True),
+                    (second.database_id, True),
+                    (access.database_id, True),
+                ]
+            ],
+        )
+        self.assertEqual(self.warnings, [])
+
+    def test_every_removed_entry_is_cleaned_up_after_a_retained_one(self):
+        kept = FileEntry("C:/projects/kept.mdb")
+        removed_access = FileEntry("C:/projects/removed.mdb")
+        removed_sql = _sql_entry("REMOVED")
+        state = _FlowState([kept, removed_access, removed_sql])
+        handler = self.handler(state)
+        self.open_files(handler, _flow_dialog([kept]))
+        self.assertEqual(self.registry.resolve(kept.database_id), kept.descriptor)
+        self.assertIsNone(self.registry.resolve(removed_access.database_id))
+        self.assertEqual(
+            self.registry.resolve(removed_sql.database_id), removed_sql.descriptor
+        )
+        self.assertEqual(
+            [(database_id, reason) for database_id, reason, _cb in self.stops],
+            [(removed_sql.database_id, "connection-removed")],
+        )
+
+    def test_a_failed_critical_flush_is_the_only_recorded_drain_failure(self):
+        entry = _sql_entry("LOADED")
+        self.loaded.add(entry.runtime_locator)
+        self.deferred.flush_for_file.side_effect = lambda _locator: False
+        state = _FlowState([entry])
+        handler = self.handler(state)
+        with patch.object(
+            handler,
+            "_apply_open_files_changes",
+            wraps=handler._apply_open_files_changes,
+        ) as apply:
+            self.open_files(handler, _flow_dialog([entry.with_checked(False)]))
+        apply.assert_called_once()
+        # No stray placeholder key: only the entry whose flush failed.
+        self.assertEqual(
+            apply.call_args.args[4],
+            {
+                entry.database_id: "A critical database setting could not be "
+                "submitted before unload."
+            },
+        )
+        self.assertEqual(self.drains, [])
+        self.assertFalse(handler._file_operation_pending)
+
+    def test_drain_failures_handed_to_the_apply_step_are_exactly_the_failed_ones(
+        self,
+    ):
+        failing, passing = _sql_entry("FAILING"), _sql_entry("PASSING")
+        self.loaded.update({failing.runtime_locator, passing.runtime_locator})
+        state = _FlowState([failing, passing])
+        handler = self.handler(state)
+        with patch.object(
+            handler,
+            "_apply_open_files_changes",
+            wraps=handler._apply_open_files_changes,
+        ) as apply:
+            self.open_files(
+                handler,
+                _flow_dialog(
+                    [failing.with_checked(False), passing.with_checked(False)]
+                ),
+            )
+            done = dict(self.drains)
+            apply.assert_not_called()
+            done[failing.database_id](False, "")
+            apply.assert_not_called()
+            done[passing.database_id](True, "")
+        apply.assert_called_once()
+        self.assertEqual(
+            apply.call_args.args[4],
+            {
+                failing.database_id: "A critical database setting could not be "
+                "saved before unload."
+            },
+        )
+
+    def test_no_drain_failures_are_recorded_when_every_drain_succeeds(self):
+        entry = _sql_entry("LOADED")
+        self.loaded.add(entry.runtime_locator)
+        state = _FlowState([entry])
+        handler = self.handler(state)
+        with patch.object(
+            handler,
+            "_apply_open_files_changes",
+            wraps=handler._apply_open_files_changes,
+        ) as apply:
+            self.open_files(handler, _flow_dialog([entry.with_checked(False)]))
+            ((_database_id, done),) = self.drains
+            done(True, "")
+        apply.assert_called_once()
+        self.assertEqual(apply.call_args.args[4], {})
+        self.assertEqual(self.unloads, [entry.runtime_locator])
+
+
+class FileOperationHandlerOpenWaitWorkerTests(_FlowFixture):
+    """The worker given to the progress dialog reports the coordinator outcome."""
+
+    def created(self):
+        return FileEntry.for_descriptor(
+            DatabaseDescriptor.for_sql_server(
+                SqlServerDatabaseLocation(server="localhost", database="CREATED"),
+                schema_version=1,
+            )
+        )
+
+    def test_the_progress_worker_returns_the_reported_open_outcome(self):
+        for ready, message in ((True, "opened"), (False, "login failed")):
+            with self.subTest(ready=ready):
+                self.setUp()
+                entry = self.created()
+
+                def start(database_id, *, retry_initial_failure, on_initial_open):
+                    self.assertEqual(database_id, entry.database_id)
+                    self.assertIs(retry_initial_failure, False)
+                    on_initial_open(ready, message)
+                    return True
+
+                self.collab.start_database.side_effect = start
+                handler = self.handler(_FlowState([]))
+                _RecordingProgress.instances = []
+                _RecordingProgress.on_exec = None
+                with patch(f"{_FOH}.ProgressDialog", _RecordingProgress):
+                    outcome = handler._open_created_sql_database(entry)
+                (progress,) = _RecordingProgress.instances
+                self.assertIsNone(progress.error)
+                # A real tuple (ready, detail), exactly as reported.
+                self.assertEqual(progress.result, (ready, message))
+                self.assertIsInstance(progress.result, tuple)
+                self.assertIs(outcome, ready)
+                if ready:
+                    self.assertEqual(self.warnings, [])
+                else:
+                    self.assertEqual(
+                        self.warnings,
+                        [("SQL database not ready", _not_ready_message(message))],
+                    )
+
+    def test_a_completion_flag_without_a_report_fails_closed(self):
+        # Defensive default: if the flag were set without any outcome being
+        # reported, the database is not treated as ready.
+        entry = self.created()
+        handler = self.handler(_FlowState([]))
+        completed = create_autospec(threading.Event, instance=True)
+        completed.is_set.return_value = True
+        completed.wait.return_value = True
+        _RecordingProgress.instances = []
+        _RecordingProgress.on_exec = None
+        with (
+            patch(f"{_FOH}.threading.Event", return_value=completed),
+            patch(f"{_FOH}.ProgressDialog", _RecordingProgress),
+        ):
+            self.assertIs(handler._open_created_sql_database(entry), False)
+        self.assertEqual(
+            self.warnings, [("SQL database not ready", _not_ready_message(""))]
+        )
+        (progress,) = _RecordingProgress.instances
+        self.assertEqual(progress.result, (False, ""))

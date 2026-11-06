@@ -339,3 +339,54 @@ class RemoteProjectionBarrierContractTests(unittest.TestCase):
                     thread.join(10.0)
                     self.assertFalse(thread.is_alive())
                 self.assertEqual(results, [success])
+
+
+class RemoteProjectionBarrierMessageTests(unittest.TestCase):
+    def test_registration_and_completion_errors_state_the_violated_rule(self):
+        results = []
+        barrier = _barrier(results.append)
+        other = _barrier(results.append)
+        with self.assertRaisesRegex(ValueError, "^A remote projection surface ID is required$"):
+            barrier.register("")
+        token = barrier.register("main")
+        with self.assertRaisesRegex(ValueError, "^Remote projection surface is already registered: main$"):
+            barrier.register("main")
+        with self.assertRaisesRegex(ValueError, "^The projection token belongs to another barrier$"):
+            other.complete(token, True)
+        barrier.seal()
+        with self.assertRaisesRegex(RuntimeError, "^Remote projection registration is already sealed$"):
+            barrier.register("detached")
+        token.complete(True)
+        self.assertEqual(results, [True])
+
+    def test_failure_before_sealing_without_any_surface_reports_failure_once(self):
+        results = []
+        barrier = _barrier(results.append)
+        barrier.fail()
+        barrier.seal()
+        barrier.seal()
+        self.assertEqual(results, [False])
+
+    def test_a_failure_after_completion_cannot_change_a_delivered_result(self):
+        results = []
+        barrier = _barrier(results.append)
+        token = barrier.register("main")
+        barrier.seal()
+        token.complete(True)
+        barrier.fail()
+        token.complete(False)
+        self.assertEqual(results, [True])
+        self.assertIs(barrier._failed, False)
+
+    def test_sealing_with_pending_surfaces_publishes_nothing_until_the_last_one_completes(self):
+        results = []
+        barrier = _barrier(results.append)
+        first = barrier.register("a")
+        second = barrier.register("b")
+        barrier.seal()
+        self.assertEqual(results, [])
+        first.complete(True)
+        self.assertEqual(results, [])
+        second.complete(True)
+        self.assertEqual(results, [True])
+        self.assertIs(barrier._completed, True)

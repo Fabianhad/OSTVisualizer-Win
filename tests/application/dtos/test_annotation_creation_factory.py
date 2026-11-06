@@ -53,5 +53,23 @@ class AnnotationCreationFactoryTests(unittest.TestCase):
             self.assertEqual(third, _spec("annotation-layer"))
 
 
+
+class AnnotationCreationFactoryEmptyDefaultTests(unittest.TestCase):
+    def test_without_an_annotation_layer_the_spec_layer_stays_unset(self):
+        for factory_layer in (None, ""):
+            spec = _spec()
+            spec.layer_uid = None
+            AnnotationCreationFactory(factory_layer).assign_default_layer(spec)
+            self.assertIsNone(spec.layer_uid)
+        spec = _spec()
+        AnnotationCreationFactory(None).assign_default_layer(spec)
+        self.assertEqual(spec.layer_uid, "")
+
+    def test_a_numeric_layer_uid_is_stored_as_text(self):
+        spec = _spec()
+        AnnotationCreationFactory(12).assign_default_layer(spec)
+        self.assertEqual(spec.layer_uid, "12")
+
+
 if __name__ == "__main__":
     unittest.main()

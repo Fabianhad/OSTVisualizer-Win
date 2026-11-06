@@ -41,6 +41,7 @@ class FakeKernel32:
         self.written = b""
         self.closed = []
         self.last_error = 0
+        self.create_flags = None
 
     def WaitNamedPipeW(self, path, timeout_ms):
         self.calls.append(("wait", path, timeout_ms))
@@ -48,6 +49,7 @@ class FakeKernel32:
 
     def CreateFileW(self, path, access, share, security, disposition, flags, template):
         self.calls.append(("create", path, access, share, disposition))
+        self.create_flags = flags
         return self.handle
 
     def WriteFile(self, handle, buffer, size, written_ref, overlapped):
@@ -236,6 +238,85 @@ class McpBridgePipeTransportTests(unittest.TestCase):
         data = McpBridgeClient._read_pipe(kernel32, 77)
         self.assertEqual(data, FULL_READ_CHUNK + b"tail")
         self.assertEqual(len(kernel32.reads), 1)
+
+
+class McpBridgeWin32ContractTests(unittest.TestCase):
+    def test_win32_constants_match_the_platform_definitions(self):
+        import win32con
+        import winerror
+
+        expected = {
+            "_GENERIC_READ": win32con.GENERIC_READ & 0xFFFFFFFF,
+            "_GENERIC_WRITE": win32con.GENERIC_WRITE & 0xFFFFFFFF,
+            "_OPEN_EXISTING": win32con.OPEN_EXISTING,
+            "_FILE_ATTRIBUTE_NORMAL": win32con.FILE_ATTRIBUTE_NORMAL,
+            "_ERROR_BROKEN_PIPE": winerror.ERROR_BROKEN_PIPE,
+            "_INVALID_HANDLE_VALUE": ctypes.c_void_p(-1).value,
+        }
+        for name, value in expected.items():
+            with self.subTest(constant=name):
+                self.assertEqual(getattr(bridge_module, name), value)
+
+    def test_the_pipe_is_created_with_normal_file_attributes(self):
+        import win32con
+
+        kernel32 = FakeKernel32(reads=[(True, b"{}", 0)])
+        with patch.object(
+            McpBridgeClient, "_kernel32", staticmethod(lambda: kernel32)
+        ):
+            McpBridgeClient(server_name="OstBridge")._request_windows_pipe(b"x\n")
+        self.assertEqual(kernel32.create_flags, win32con.FILE_ATTRIBUTE_NORMAL)
+
+    def test_defaults_are_a_short_wait_a_module_logger_and_an_unavailable_status(self):
+        import logging
+
+        client = McpBridgeClient()
+        self.assertEqual(client._timeout_ms, 150)
+        self.assertIs(client._logger, logging.getLogger(bridge_module.__name__))
+        self.assertEqual(client.last_status, "bridge_unavailable")
+        own = logging.getLogger("custom-bridge-logger")
+        self.assertIs(McpBridgeClient(logger=own)._logger, own)
+
+    def test_the_real_kernel32_reports_the_last_error_of_a_missing_pipe(self):
+        import uuid
+
+        kernel32 = McpBridgeClient._kernel32()
+        missing = "\\\\.\\pipe\\ostv-missing-" + uuid.uuid4().hex
+        self.assertFalse(kernel32.WaitNamedPipeW(missing, 1))
+        self.assertEqual(ctypes.get_last_error(), 2)
+
+    def test_pipe_failures_carry_their_operation_in_the_message(self):
+        waiting = FakeKernel32(wait_ok=False)
+        with patch.object(
+            McpBridgeClient, "_kernel32", staticmethod(lambda: waiting)
+        ):
+            with self.assertRaises(OSError) as raised:
+                McpBridgeClient(server_name="OstBridge")._request_windows_pipe(b"x")
+        self.assertEqual(raised.exception.strerror, "Named pipe is unavailable")
+        refused = FakeKernel32(handle=INVALID_HANDLE)
+        with patch.object(
+            McpBridgeClient, "_kernel32", staticmethod(lambda: refused)
+        ):
+            with self.assertRaises(OSError) as raised:
+                McpBridgeClient(server_name="OstBridge")._request_windows_pipe(b"x")
+        self.assertEqual(raised.exception.strerror, "Failed to open named pipe")
+        with self.assertRaises(OSError) as raised:
+            McpBridgeClient._write_pipe(FakeKernel32(write_ok=False), 77, b"abc")
+        self.assertEqual(raised.exception.strerror, "Failed to write named pipe")
+        with self.assertRaises(OSError) as raised:
+            McpBridgeClient._read_pipe(FakeKernel32(reads=[(False, b"", 5)]), 77)
+        self.assertEqual(raised.exception.strerror, "Failed to read named pipe")
+
+    def test_a_one_byte_reply_is_kept_and_an_empty_read_ends_the_reply(self):
+        self.assertEqual(
+            McpBridgeClient._read_pipe(FakeKernel32(reads=[(True, b"x", 0)]), 77), b"x"
+        )
+        self.assertEqual(
+            McpBridgeClient._read_pipe(
+                FakeKernel32(reads=[(True, FULL_READ_CHUNK, 0), (True, b"", 0)]), 77
+            ),
+            FULL_READ_CHUNK,
+        )
 
 
 if __name__ == "__main__":

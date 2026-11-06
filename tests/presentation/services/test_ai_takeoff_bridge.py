@@ -35,6 +35,7 @@ class FakeReadService:
     def __init__(self):
         self.calls = []
         self.threads = {}
+        self.received = {}
 
     def _record(self, name, **kwargs):
         self.calls.append((name, kwargs))
@@ -42,6 +43,9 @@ class FakeReadService:
 
     def list_sheets(self, bid_uid=None, cursor=None, limit=None, text_hints=None):
         self._record("list_sheets", bid_uid=bid_uid, cursor=cursor, limit=limit)
+        self.received["list_sheets"] = dict(
+            bid_uid=bid_uid, cursor=cursor, limit=limit, text_hints=text_hints
+        )
         if text_hints:
             return ok_result({"sheets": [{"page_uid": "p1"}, {"page_uid": "raster"}]})
         return ok_result({"sheets": []})
@@ -60,6 +64,7 @@ class FakeReadService:
 
     def get_quantities(self, bid_uid=None, group_by="condition"):
         self._record("get_quantities", bid_uid=bid_uid, group_by=group_by)
+        self.received["get_quantities"] = dict(bid_uid=bid_uid, group_by=group_by)
         if group_by == "level":
             raise AiTakeoffRequestError(
                 "invalid_argument", "group_by must be condition or page"
@@ -68,10 +73,12 @@ class FakeReadService:
 
     def list_levels(self, bid_uid=None):
         self._record("list_levels", bid_uid=bid_uid)
+        self.received["list_levels"] = dict(bid_uid=bid_uid)
         return ok_result({"sidecar_status": "empty", "levels": []})
 
     def list_assumptions(self, bid_uid=None, status=None):
         self._record("list_assumptions", bid_uid=bid_uid, status=status)
+        self.received["list_assumptions"] = dict(bid_uid=bid_uid, status=status)
         return ok_result({"sidecar_status": "empty", "assumptions": []})
 
     def page_snapshot(self, page_uid):
@@ -84,6 +91,9 @@ class FakeReadService:
 
     def plan_crop(self, snapshot, crop_pts=None, dpi=None):
         self._record("plan_crop", crop_pts=crop_pts, dpi=dpi)
+        self.received["plan_crop"] = dict(
+            page_uid=snapshot.uid, crop_pts=crop_pts, dpi=dpi
+        )
         return CropPlan(
             snapshot.uid,
             "C:/p.pdf",
@@ -96,18 +106,32 @@ class FakeReadService:
             (0.5, 0.0, 0.0, 0.5, 0.0, 0.0),
         )
 
-    @staticmethod
-    def overlay_status(overlay_ids):
+    def overlay_status(self, overlay_ids):
+        self.received["overlay_status"] = dict(overlay_ids=overlay_ids)
         return None if overlay_ids is None else "not_supported_until_m1b"
 
     def list_text(self, snapshot, bbox_pts=None, query=None, cursor=None, limit=None):
         self._record("list_text", page_uid=snapshot.uid, query=query)
+        self.received["list_text"] = dict(
+            page_uid=snapshot.uid,
+            bbox_pts=bbox_pts,
+            query=query,
+            cursor=cursor,
+            limit=limit,
+        )
         return ok_result({"runs": []})
 
     def list_segments(
         self, snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None
     ):
         self._record("list_segments", page_uid=snapshot.uid, kinds=kinds)
+        self.received["list_segments"] = dict(
+            page_uid=snapshot.uid,
+            bbox_pts=bbox_pts,
+            cursor=cursor,
+            limit=limit,
+            kinds=kinds,
+        )
         return ok_result({"segments": []})
 
 
@@ -123,6 +147,7 @@ class FakePdfSource:
 
 
 WORKER_THREAD = "AiTakeoffBridgeWorker"
+BUSY_TEXT = "OST Visualizer is busy with other AI takeoff requests. Try again shortly."
 
 
 class BridgeTestCase(unittest.TestCase):
@@ -168,6 +193,7 @@ class BridgeTestCase(unittest.TestCase):
             token_path or self.token_path,
             server_name=self.server_name,
             wait_timeout_ms=500,
+            read_timeout_s=20,
         )
 
     def run_threaded(self, function):
@@ -420,6 +446,161 @@ class BridgeProtocolTests(BridgeTestCase):
         )
 
 
+class BridgeArgumentForwardingTests(BridgeTestCase):
+    """Every declared argument reaches the read service under its own name."""
+
+    FULL_ARGUMENTS = {
+        "list_sheets": {
+            "bid_uid": "bid-9",
+            "cursor": "c:7",
+            "limit": 3,
+            "text_hints": False,
+        },
+        "get_quantities": {"bid_uid": "bid-9", "group_by": "page"},
+        "list_levels": {"bid_uid": "bid-9"},
+        "list_assumptions": {"bid_uid": "bid-9", "status": "accepted"},
+        "list_text": {
+            "page_uid": "p1",
+            "bbox_pts": [1.0, 2.0, 30.0, 40.0],
+            "query": "slab",
+            "cursor": "c:2",
+            "limit": 4,
+        },
+        "list_segments": {
+            "page_uid": "p1",
+            "bbox_pts": [5.0, 6.0, 70.0, 80.0],
+            "kinds": ["wall", "dashed"],
+            "cursor": "c:3",
+            "limit": 6,
+        },
+    }
+
+    def test_every_read_command_forwards_each_argument_it_declares(self):
+        for command, arguments in self.FULL_ARGUMENTS.items():
+            with self.subTest(command=command):
+                self.assertTrue(self.call(command, arguments)["success"])
+                self.assertEqual(self.service.received[command], arguments)
+
+    def test_a_render_forwards_the_page_crop_dpi_and_overlays(self):
+        arguments = {
+            "page_uid": "p1",
+            "crop_pts": [0.0, 0.0, 20.0, 10.0],
+            "dpi": 96,
+            "overlay_ids": ["r1"],
+        }
+        self.assertTrue(self.call("render_sheet", arguments)["success"])
+        self.assertEqual(
+            self.service.received["plan_crop"],
+            {"page_uid": "p1", "crop_pts": [0.0, 0.0, 20.0, 10.0], "dpi": 96},
+        )
+        self.assertEqual(
+            self.service.received["overlay_status"], {"overlay_ids": ["r1"]}
+        )
+
+    def test_omitted_arguments_arrive_as_none_except_the_quantity_grouping(self):
+        for command in ("list_sheets", "list_levels", "list_assumptions"):
+            with self.subTest(command=command):
+                self.assertTrue(self.call(command)["success"])
+                self.assertEqual(set(self.service.received[command].values()), {None})
+        self.assertTrue(self.call("get_quantities")["success"])
+        self.assertEqual(
+            self.service.received["get_quantities"],
+            {"bid_uid": None, "group_by": "condition"},
+        )
+
+    def test_a_pdf_render_answers_ok_and_a_raster_page_answers_not_pdf_with_its_page(
+        self,
+    ):
+        rendered = self.call("render_sheet", {"page_uid": "p1", "overlay_ids": []})
+        self.assertEqual(rendered["status"], "ok")
+        self.assertEqual(rendered["data"]["overlay_status"], "not_supported_until_m1b")
+        raster = self.call("render_sheet", {"page_uid": "raster", "overlay_ids": []})
+        self.assertEqual(raster["status"], "not_pdf")
+        self.assertEqual(
+            raster["data"],
+            {
+                "page_uid": "raster",
+                "image": None,
+                "overlay_status": "not_supported_until_m1b",
+            },
+        )
+        plain = self.call("render_sheet", {"page_uid": "raster"})
+        self.assertIsNone(plain["data"]["overlay_status"])
+
+    def test_an_audit_outcome_is_empty_when_a_result_carries_no_status(self):
+        audited = []
+        self.capped_bridge(audit=lambda *entry: audited.append(entry))
+        self.service.list_levels = lambda bid_uid=None: {"success": True}
+        self.assertTrue(self.call("list_levels", {"bid_uid": "b1"})["success"])
+        self.assertEqual(audited, [("list_levels", {"bid_uid": "b1"}, "")])
+
+
+class BridgeRefusalTextTests(BridgeTestCase):
+    """The exact text an AI client reads for each kind of refusal."""
+
+    def test_each_refusal_carries_its_own_message_and_never_reaches_the_service(self):
+        def request(**fields):
+            body = {"token": "token-0", "command": "list_sheets", "arguments": {}}
+            body.update(fields)
+            return json.dumps(body).encode() + b"\n"
+
+        cases = {
+            "wrong token": (
+                request(token="nope"),
+                "unauthorized",
+                "Session token rejected.",
+            ),
+            "missing token": (
+                json.dumps({"command": "list_sheets"}).encode() + b"\n",
+                "unauthorized",
+                "Session token rejected.",
+            ),
+            "unknown command": (
+                request(command="apply_it"),
+                "unknown_command",
+                "This command is not available.",
+            ),
+            "undeclared argument": (
+                request(arguments={"approve": True}),
+                "invalid_argument",
+                "Unknown or malformed arguments.",
+            ),
+            "arguments that are not an object": (
+                request(arguments=[1]),
+                "invalid_argument",
+                "Unknown or malformed arguments.",
+            ),
+            "not json": (b"{nope\n", "invalid_argument", "Malformed request."),
+        }
+        for label, (payload, status, message) in cases.items():
+            with self.subTest(label=label):
+                response = self.raw(payload)
+                self.assertEqual(response["status"], status)
+                self.assertEqual(response["error"]["message"], message)
+        self.assertEqual(self.service.calls, [])
+
+    def test_a_denied_feature_says_how_to_enable_it(self):
+        self.allowed = False
+        response = self.call("list_sheets")
+        self.assertEqual(response["status"], "feature_denied")
+        self.assertEqual(
+            response["error"]["message"],
+            "AI takeoff is not enabled or not available for the open bid.",
+        )
+
+    def test_cleanup_closes_the_listening_server_itself(self):
+        server = self.bridge._server
+        self.assertTrue(server.isListening())
+        self.bridge.cleanup()
+        self.assertFalse(server.isListening())
+
+    def test_the_idle_timeout_has_a_floor_of_one_millisecond(self):
+        bridge = self.capped_bridge(idle_timeout_ms=0)
+        self.assertEqual(bridge._idle_timeout_ms, 1)
+        self.assertEqual(self.capped_bridge(idle_timeout_ms=-5)._idle_timeout_ms, 1)
+        self.assertEqual(self.capped_bridge(idle_timeout_ms=250)._idle_timeout_ms, 250)
+
+
 class BridgeCapacityTests(BridgeTestCase):
     def test_requests_beyond_the_worker_cap_get_busy_and_capacity_returns(self):
         self.capped_bridge(max_workers=2)
@@ -447,6 +628,7 @@ class BridgeCapacityTests(BridgeTestCase):
         self.pump_until(lambda: len(started) == 2)
         busy = self.call("list_segments", {"page_uid": "p9"})
         self.assertEqual(busy["status"], "busy")
+        self.assertEqual(busy["error"]["message"], BUSY_TEXT)
         self.assertEqual(sorted(started), ["p0", "p1"])
         self.assertTrue(self.call("list_sheets")["success"])
         release.set()
@@ -461,11 +643,29 @@ class BridgeCapacityTests(BridgeTestCase):
         bridge = self.capped_bridge(max_connections=2, idle_timeout_ms=60000)
         idle = [self.open_raw(), self.open_raw()]
         self.pump_until(lambda: len(bridge._open_sockets) == 2)
-        self.assertEqual(self.call("list_sheets")["status"], "busy")
+        refused = self.call("list_sheets")
+        self.assertEqual(refused["status"], "busy")
+        self.assertEqual(refused["error"]["message"], BUSY_TEXT)
         idle[0].Close()
         self.pump_until(lambda: len(bridge._open_sockets) == 1)
         self.assertTrue(self.call("list_sheets")["success"])
         idle[1].Close()
+
+    def test_a_refused_connection_is_never_read_even_if_it_sent_a_request(self):
+        bridge = self.capped_bridge(max_connections=1, idle_timeout_ms=60000)
+        idle = self.open_raw()
+        self.addCleanup(idle.Close)
+        self.pump_until(lambda: len(bridge._open_sockets) == 1)
+        extra = self.open_raw()
+        self.addCleanup(extra.Close)
+        response = self.read_raw(
+            extra,
+            first_write=b'{"token": "capped-token", "command": "list_levels"}' + b"\n",
+        )
+        self.assertEqual(response["status"], "busy")
+        self.pump_until(lambda: len(bridge._open_sockets) == 1)
+        self.assertEqual(len(bridge._buffers), 1)
+        self.assertEqual(self.service.calls, [])
 
     def test_a_connection_that_never_finishes_its_request_is_closed(self):
         bridge = self.capped_bridge(idle_timeout_ms=200)
@@ -476,7 +676,9 @@ class BridgeCapacityTests(BridgeTestCase):
         )
         handle.Close()
         self.assertEqual(response["status"], "invalid_argument")
-        self.assertIn("in time", response["error"]["message"])
+        self.assertEqual(
+            response["error"]["message"], "No complete request was received in time."
+        )
         self.pump_until(lambda: not bridge._open_sockets)
         self.assertEqual(self.service.calls, [])
 
@@ -790,8 +992,10 @@ class BridgeStartupTests(BridgeTestCase):
         ) as captured:
             self.assertIs(bridge.start(), False)
         self.assertEqual(len(captured.output), 1)
-        self.assertIn(
-            "Failed to write the AI takeoff session token", captured.output[0]
+        self.assertEqual(
+            captured.output[0],
+            "WARNING:ost_visualizer.presentation.services.ai_takeoff_bridge:"
+            "Failed to write the AI takeoff session token: FileExistsError",
         )
         self.assertNotIn("blocked-token", captured.output[0])
         self.server_name = name
@@ -978,7 +1182,11 @@ class BridgeRequestEdgeTests(BridgeTestCase):
             response = self.call("list_sheets")
         self.assertEqual(response["status"], "unexpected_error")
         self.assertEqual(response["error"]["message"], "The command failed.")
-        self.assertIn("AI takeoff command failed: ValueError", captured.output[0])
+        self.assertEqual(
+            captured.output[0].splitlines()[0],
+            "ERROR:ost_visualizer.presentation.services.ai_takeoff_bridge:"
+            "AI takeoff command failed: ValueError",
+        )
 
     def test_worker_failures_are_logged_and_answered(self):
         def broken(snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None):
@@ -990,7 +1198,12 @@ class BridgeRequestEdgeTests(BridgeTestCase):
         ) as captured:
             response = self.call("list_segments", {"page_uid": "p1"})
         self.assertEqual(response["status"], "unexpected_error")
-        self.assertIn("AI takeoff worker job failed: ValueError", captured.output[0])
+        self.assertEqual(response["error"]["message"], "The command failed.")
+        self.assertEqual(
+            captured.output[0].splitlines()[0],
+            "ERROR:ost_visualizer.presentation.services.ai_takeoff_bridge:"
+            "AI takeoff worker job failed: ValueError",
+        )
 
     def test_worker_request_errors_keep_their_code(self):
         def missing(snapshot, bbox_pts=None, cursor=None, limit=None, kinds=None):

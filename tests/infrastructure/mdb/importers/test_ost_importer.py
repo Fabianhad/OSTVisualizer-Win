@@ -20,6 +20,9 @@ from ost_visualizer.infrastructure.mdb.components.import_operations import (
 from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.importers import (
+    ost_importer as ost_importer_module,
+)
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.raw_bid_integrity import (
     RAW_BID_RELATIONSHIPS,
@@ -1461,3 +1464,591 @@ class OstImporterRelationshipTests(unittest.TestCase):
             and row.get("BidPageUID") in (None, "", "NULL")
         ]
         self.assertEqual([row["UID"] for row in no_page], [uid_map["32"]])
+
+
+_OST_LOGGER = "ost_visualizer.infrastructure.mdb.importers.ost_importer"
+
+
+class _RecordingImportWriter:
+    def __init__(self, result=True, error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def import_ost_data(self, target_db_path, raw_data, transform, project_uid):
+        self.calls.append((target_db_path, raw_data, transform, project_uid))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _bare_recorder():
+    return OstImporterRelationshipTests._mutation_recorder()
+
+
+class OstImporterFailurePathTests(unittest.TestCase):
+    def _write(self, text, name="source.ost"):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / name
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def test_import_ost_reports_exact_booleans_for_writer_results(self):
+        source = self._write('<XML_ROOT><Bid UID="1" JobName="J"/></XML_ROOT>')
+        for result, expected in (
+            (True, True),
+            ({"bid_uids": {"1": "2"}}, True),
+            (False, False),
+            (None, False),
+            (0, False),
+            ({}, False),
+        ):
+            with self.subTest(result=result):
+                writer = _RecordingImportWriter(result=result)
+                with self.assertNoLogs(_OST_LOGGER, level="WARNING"):
+                    outcome = OstImporter(writer).import_ost(source, "t.mdb", "9")
+                self.assertIs(outcome, expected)
+                self.assertEqual(len(writer.calls), 1)
+                target, raw_data, transform, project_uid = writer.calls[0]
+                self.assertEqual((target, project_uid), ("t.mdb", "9"))
+                self.assertEqual(raw_data.bid_row, {"UID": "1", "JobName": "J"})
+                self.assertEqual(transform.__func__, OstImporter._transform)
+
+    def test_import_ost_without_project_uid_passes_none_to_the_writer(self):
+        source = self._write('<XML_ROOT><Bid UID="1"/></XML_ROOT>')
+        writer = _RecordingImportWriter()
+        self.assertIs(OstImporter(writer).import_ost(source, "t.mdb"), True)
+        self.assertIsNone(writer.calls[0][3])
+
+    def test_import_ost_logs_and_swallows_writer_exceptions(self):
+        source = self._write('<XML_ROOT><Bid UID="1"/></XML_ROOT>')
+        writer = _RecordingImportWriter(error=RuntimeError("disk full"))
+        with self.assertLogs(_OST_LOGGER, level="ERROR") as logs:
+            outcome = OstImporter(writer).import_ost(source, "t.mdb")
+        self.assertIs(outcome, False)
+        self.assertEqual(len(writer.calls), 1)
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(
+            logs.records[0].getMessage(), f"Failed to import OST file {source}"
+        )
+        self.assertIs(logs.records[0].exc_info[0], RuntimeError)
+
+    def test_import_ost_rejects_unreadable_or_malformed_files_before_the_writer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            missing = str(Path(folder) / "missing.ost")
+        cases = (
+            ("missing file", missing, FileNotFoundError),
+            ("empty file", self._write(""), ET.ParseError),
+            ("truncated xml", self._write('<XML_ROOT><Bid UID="1">'), ET.ParseError),
+            ("not xml", self._write("MDB\x00binary garbage"), ET.ParseError),
+            ("no bid", self._write("<XML_ROOT/>"), ValueError),
+        )
+        for label, source, error_type in cases:
+            with self.subTest(case=label):
+                writer = _RecordingImportWriter()
+                with self.assertLogs(_OST_LOGGER, level="ERROR") as logs:
+                    outcome = OstImporter(writer).import_ost(source, "t.mdb")
+                self.assertIs(outcome, False)
+                self.assertEqual(writer.calls, [])
+                self.assertEqual(
+                    logs.records[0].getMessage(), f"Failed to import OST file {source}"
+                )
+                self.assertIs(logs.records[0].exc_info[0], error_type)
+
+    def test_import_ost_mutation_propagates_validation_failures_untouched(self):
+        takeoff_xml = """
+        <XML_ROOT>
+          <Bid UID="1">
+            <BidConditions><BidCondition UID="10" BidUID="1"/></BidConditions>
+            <BidPages>
+              <BidPage UID="20" BidUID="1">
+                <BidTakeoffs>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20" BidConditionUID="10"/>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20" BidConditionUID="10"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        dangling_xml = """
+        <XML_ROOT>
+          <Bid UID="1">
+            <BidPages><BidPage UID="20" BidUID="1"/></BidPages>
+            <BidSettings>
+              <BidSetting UID="30" BidUID="1" BidPageSelectedUID="not-a-uid"/>
+            </BidSettings>
+          </Bid>
+        </XML_ROOT>
+        """
+        cases = (
+            (
+                "no bid",
+                "<XML_ROOT/>",
+                ValueError,
+                "^No Bid element found in OST file$",
+                False,
+            ),
+            (
+                "truncated",
+                '<XML_ROOT><Bid UID="1">',
+                ET.ParseError,
+                "no element found",
+                False,
+            ),
+            (
+                "duplicate takeoff",
+                takeoff_xml,
+                ValueError,
+                "^The imported takeoff graph is invalid: "
+                "BidTakeoffs.UID=30 occurs 2 times$",
+                False,
+            ),
+            (
+                "dangling reference",
+                dangling_xml,
+                ValueError,
+                "^The imported project contains invalid references[.]$",
+                True,
+            ),
+        )
+        for label, xml, error_type, pattern, logs_error in cases:
+            with self.subTest(case=label):
+                writer = _RecordingImportWriter()
+                recorder, records = _bare_recorder()
+                with self.assertRaisesRegex(error_type, pattern):
+                    if logs_error:
+                        with self.assertLogs(_OST_LOGGER, level="ERROR"):
+                            OstImporter(writer).import_ost_mutation(
+                                self._write(xml), "database", "9", recorder
+                            )
+                    else:
+                        OstImporter(writer).import_ost_mutation(
+                            self._write(xml), "database", "9", recorder
+                        )
+                self.assertEqual(writer.calls, [])
+                self.assertEqual(records, [])
+
+    def test_import_ost_mutation_propagates_writer_failures_without_records(self):
+        source = self._write('<XML_ROOT><Bid UID="1"/></XML_ROOT>')
+        writer = _RecordingImportWriter(error=RuntimeError("sql write failed"))
+        recorder, records = _bare_recorder()
+        with self.assertRaisesRegex(RuntimeError, "^sql write failed$"):
+            OstImporter(writer).import_ost_mutation(source, "db", "9", recorder)
+        self.assertEqual(records, [])
+
+    def test_import_ost_mutation_rejects_non_numeric_bid_uid_before_recording(self):
+        source = self._write('<XML_ROOT><Bid UID="1"/></XML_ROOT>')
+        writer = _RecordingImportWriter(result={"bid_uids": {"1": "abc"}})
+        recorder, records = _bare_recorder()
+        with self.assertRaises(ValueError):
+            OstImporter(writer).import_ost_mutation(source, "db", "9", recorder)
+        self.assertEqual(records, [])
+
+    def test_import_ost_mutation_formats_the_bid_uid_as_text_and_number(self):
+        source = self._write('<XML_ROOT><Bid UID="1"/></XML_ROOT>')
+        writer = _RecordingImportWriter(result={"bid_uids": {"1": 42}})
+        recorder, records = _bare_recorder()
+        OstImporter(writer).import_ost_mutation(source, "db", "9", recorder)
+        bid_ref, operation = records[0]
+        self.assertIs(operation, ChangeOperation.CREATE)
+        self.assertEqual(
+            (bid_ref.resource_type, bid_ref.resource_id, bid_ref.bid_uid),
+            ("bid", "42", 42),
+        )
+        self.assertIs(type(bid_ref.resource_id), str)
+
+    def test_import_ost_mutation_bad_writer_results_use_exact_messages(self):
+        source = self._write('<XML_ROOT><Bid UID="1"/></XML_ROOT>')
+        for result, message in (
+            (True, "The SQL import writer did not return authoritative identities."),
+            ({}, "The SQL import writer did not return exactly one imported bid."),
+            (
+                {"bid_uids": {}},
+                "The SQL import writer did not return exactly one imported bid.",
+            ),
+        ):
+            with self.subTest(result=result):
+                writer = _RecordingImportWriter(result=result)
+                with self.assertRaises(RuntimeError) as caught:
+                    OstImporter(writer).import_ost_mutation(
+                        source, "db", "9", _bare_recorder()[0]
+                    )
+                self.assertEqual(str(caught.exception), message)
+
+
+class OstImporterParsingAndRemapContractTests(unittest.TestCase):
+    def _parse(self, xml):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / "source.ost"
+        path.write_text(xml, encoding="utf-8")
+        return OstImporter(None)._parse_ost_xml(str(path))
+
+    def _validated(self, xml):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / "source.ost"
+        path.write_text(xml, encoding="utf-8")
+        return OstImporter(None)._validated_raw_data(str(path))
+
+    def test_section_children_match_the_singular_or_plural_minus_s_tag(self):
+        matches = ost_importer_module._matches_section_child
+        for section, tag, expected in (
+            ("BidAreas", "BidArea", True),
+            ("BidAreas", "BidAreas", False),
+            ("BidAreas", "BidLayer", False),
+            ("JobStatuses", "JobStatuse", True),
+            ("JobStatuses", "JobStatus", False),
+            ("JobStatuses", "JobStatuses", False),
+            ("PayClasses", "PayClass", True),
+            ("PayClasses", "PayClasse", True),
+            ("BidConditionUser", "BidConditionUser", True),
+            ("BidConditionUser", "BidConditionUse", False),
+            ("BidConditionUser", "BidConditionUsers", False),
+            ("OCRProps", "OCRProp", True),
+            ("BidAreas", "", False),
+        ):
+            with self.subTest(section=section, tag=tag):
+                self.assertIs(matches(section, tag), expected)
+
+    def test_parse_reads_each_section_family_from_its_own_container_only(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" CopyTimestamp="2026 1 2 3 4 5">
+            <BidAreas>
+              <BidArea UID="10" Name="Area A"/>
+              <BidLayer UID="11" Name="Wrong tag"/>
+              <BidArea UID="12" Name="Area B"/>
+            </BidAreas>
+            <BidConditionUser><BidConditionUser UID="13"/><Other UID="99"/></BidConditionUser>
+            <BidTakeoffs><BidTakeoff UID="500"/></BidTakeoffs>
+            <BidPages>
+              <Stray UID="900"/>
+              <BidPage UID="20" Name="P1" CopyTimestamp="2026 1 2 3 4 5">
+                <BidTakeoffs>
+                  <BidTakeoff UID="30"/>
+                  <BidArea UID="98"/>
+                </BidTakeoffs>
+                <BidComments><BidComment UID="40"/></BidComments>
+                <BidAreas><BidArea UID="97"/></BidAreas>
+              </BidPage>
+              <Stray UID="901"/>
+              <BidPage UID="21" Name="P2">
+                <BidTakeoffs><BidTakeoff UID="31"/></BidTakeoffs>
+              </BidPage>
+            </BidPages>
+            <BidNamedViews><BidNamedView UID="50"/></BidNamedViews>
+            <BidHotLinks><BidHotLink UID="60"/><BidHotLinks UID="61"/></BidHotLinks>
+            <Employees><Employee UID="999"/></Employees>
+          </Bid>
+          <Employees><Employee UID="7"/></Employees>
+          <PayClasses>
+            <PayClass UID="3"/>
+            <PayClasse UID="4"/>
+            <PayClasses UID="5"/>
+          </PayClasses>
+          <JobStatuses>
+            <JobStatuse UID="8"/>
+            <JobStatus UID="9"/>
+            <Other UID="10"/>
+          </JobStatuses>
+          <CdnTypes><CdnType UID="11" Name="C"/></CdnTypes>
+        </XML_ROOT>
+        """
+        raw = self._parse(xml)
+        self.assertEqual(raw.bid_row, {"UID": "1", "CopyTimeStamp": "2026 1 2 3 4 5"})
+        self.assertEqual(
+            [row["UID"] for row in raw.bid_tables["BidAreas"]], ["10", "12"]
+        )
+        self.assertEqual(
+            [row["UID"] for row in raw.bid_tables["BidConditionUser"]], ["13"]
+        )
+        self.assertEqual(
+            raw.bid_tables["BidPages"],
+            [
+                {"UID": "20", "Name": "P1", "CopyTimeStamp": "2026 1 2 3 4 5"},
+                {"UID": "21", "Name": "P2"},
+            ],
+        )
+        self.assertEqual(
+            [row["UID"] for row in raw.bid_tables["BidNamedViews"]], ["50"]
+        )
+        self.assertEqual(
+            [row["UID"] for row in raw.bid_tables["BidHotLinks"]], ["60"]
+        )
+        self.assertNotIn("BidTakeoffs", raw.bid_tables)
+        self.assertEqual(
+            {name: [row["UID"] for row in rows] for name, rows in raw.page_tables.items()},
+            {"BidTakeoffs": ["30", "31"], "BidComments": ["40"]},
+        )
+        self.assertEqual(
+            {name: [row["UID"] for row in rows] for name, rows in raw.global_tables.items()},
+            {
+                "Employees": ["7"],
+                "PayClasses": ["3", "4"],
+                "AccessLevels": [],
+                "CdnTypes": ["11"],
+                "JobStatuses": ["8"],
+            },
+        )
+
+    def test_parse_always_provides_every_bid_and_tail_section_key(self):
+        raw = self._parse('<XML_ROOT><Bid UID="1"/></XML_ROOT>')
+        self.assertEqual(
+            sorted(raw.bid_tables),
+            sorted(
+                [
+                    "BidPlanRooms",
+                    "BidAreas",
+                    "BidTypAreas",
+                    "BidConditionFolders",
+                    "BidPageFolders",
+                    "BidSettings",
+                    "BidEmployees",
+                    "BidLayers",
+                    "BidTypAreaCounts",
+                    "BidConditions",
+                    "UserMasterConditions",
+                    "BidConditionUser",
+                    "BidZones",
+                    "BidTypGroupViews",
+                    "OCRProps",
+                    "BidPages",
+                    "BidNamedViews",
+                    "BidHotLinks",
+                ]
+            ),
+        )
+        self.assertTrue(all(rows == [] for rows in raw.bid_tables.values()))
+        self.assertEqual(raw.page_tables, {})
+        self.assertEqual(
+            sorted(raw.global_tables),
+            ["AccessLevels", "CdnTypes", "Employees", "JobStatuses", "PayClasses"],
+        )
+
+    def test_remap_prefixes_name_every_reference_field_family_per_field(self):
+        importer = OstImporter(None)
+        uid_map = {"5": "105"}
+        zero_fields = (
+            "BidProjectUID",
+            "ParentBidUID",
+            "OrigBidProjectUID",
+            "OrigParentBidUID",
+            "SourceBidUID",
+            "OCRUID",
+            "CoverSheetSelItemUID",
+        )
+        employee_fields = (
+            "EstimatorUID",
+            "PrManagerUID",
+            "JobSiteManagerUID",
+            "EmployeeUID",
+        )
+        internal_fields = (
+            "UID",
+            "BidUID",
+            "BidPageUID",
+            "BidConditionUID",
+            "BidLayerUID",
+            "BidZoneUID",
+            "BidAreaUID",
+            "BidTypAreaUID",
+            "ParentUID",
+            "ParentCommentUID",
+            "MasterPageUID",
+            "MasterAreaUID",
+            "TranslateAreaUID",
+            "BidConditionFolderUID",
+            "BidPageFolderUID",
+            "BidTakeoffFromUID",
+            "BidTakeoffToUID",
+            "BidPageViewUID",
+            "TypGroupTakeoffUID",
+            "TypPageTakeoffUID",
+            "TypGroupMarkerUID",
+            "TypGroupUID",
+        )
+
+        def remap(field, value, employees=None):
+            return importer._remap_uid_value(
+                field, value, uid_map, {}, {}, {}, employees or {}, {}
+            )
+
+        for field in zero_fields:
+            with self.subTest(family="source-database", field=field):
+                self.assertEqual(remap(field, "5"), "NULL")
+                self.assertEqual(remap(field, "77"), "NULL")
+        for field in employee_fields:
+            with self.subTest(family="employee", field=field):
+                self.assertEqual(remap(field, "5", {"5": "605"}), "605")
+                self.assertEqual(remap(field, "5", {"6": "606"}), "NULL")
+        for field in internal_fields:
+            with self.subTest(family="bid-internal", field=field):
+                self.assertEqual(remap(field, "5"), "105")
+                self.assertEqual(remap(field, "77"), "77")
+        for field in (*zero_fields, *employee_fields, *internal_fields):
+            with self.subTest(family="zero", field=field):
+                self.assertEqual(remap(field, "0"), "NULL")
+        for field in ("Name", "Sequence", "SomethingElseUID"):
+            with self.subTest(family="untouched", field=field):
+                self.assertEqual(remap(field, "5"), "5")
+        self.assertEqual(remap("Sequence", "0"), "0")
+        self.assertEqual(remap("SomethingElseUID", "0"), "NULL")
+
+    def test_uid_assignment_skips_rows_without_a_usable_uid_without_gaps(self):
+        importer = OstImporter(None)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={
+                "BidAreas": [
+                    {"Name": "no uid"},
+                    {"UID": "", "Name": "blank"},
+                    {"UID": "0", "Name": "zero"},
+                    {"UID": "10"},
+                    {"UID": "10", "Name": "repeat"},
+                ],
+                "BidPages": [{"UID": "20"}, {"BidUID": "1"}],
+            },
+            page_tables={"BidTakeoffs": [{"Name": "no uid"}, {"UID": "30"}]},
+        )
+        self.assertEqual(
+            importer._build_uid_map(raw_data, 100),
+            {"1": "101", "10": "102", "20": "103", "30": "104"},
+        )
+        self.assertEqual(
+            importer._build_uid_map(RawBidData(bid_row={"Name": "no uid"}), 5), {}
+        )
+        self.assertEqual(
+            importer._build_uid_map(
+                RawBidData(
+                    bid_row={"Name": "no uid"},
+                    bid_tables={"BidAreas": [{"UID": "7"}]},
+                ),
+                5,
+            ),
+            {"7": "6"},
+        )
+
+    def test_page_uid_map_ignores_pages_without_a_mapped_uid(self):
+        importer = OstImporter(None)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={
+                "BidPages": [
+                    {"Name": "no uid"},
+                    {"UID": " 7 "},
+                    {"UID": "8"},
+                    {"UID": "9"},
+                ]
+            },
+        )
+        self.assertEqual(
+            importer._build_page_uid_map(raw_data, {"7": "17", "9": "19"}),
+            {"7": "17", "9": "19"},
+        )
+
+    def test_validate_page_references_returns_exact_booleans_and_logs_issues(self):
+        importer = OstImporter(None)
+        good = RawBidData(
+            bid_row={"UID": "1"}, bid_tables={"BidPages": [{"UID": "20", "BidUID": "1"}]}
+        )
+        with self.assertNoLogs(_OST_LOGGER, level="ERROR"):
+            self.assertIs(importer._validate_page_references(good), True)
+        bad = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={"BidPages": [{"UID": "20", "BidUID": "1", "MasterPageUID": "99"}]},
+        )
+        with self.assertLogs(_OST_LOGGER, level="ERROR") as logs:
+            self.assertIs(importer._validate_page_references(bad), False)
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            "Rejecting OST import because it contains invalid database references: "
+            "BidPages.UID=20 MasterPageUID=99 missing BidPages.UID",
+        )
+
+    def test_skipped_takeoff_warning_lists_roots_and_only_then_descendants(self):
+        def xml(rows):
+            return (
+                '<XML_ROOT><Bid UID="1"><BidConditions>'
+                '<BidCondition UID="10" BidUID="1"/></BidConditions>'
+                '<BidPages><BidPage UID="20" BidUID="1"><BidTakeoffs>'
+                f"{rows}</BidTakeoffs></BidPage></BidPages></Bid></XML_ROOT>"
+            )
+
+        def takeoff(uid, parent):
+            return (
+                f'<BidTakeoff UID="{uid}" BidUID="1" BidPageUID="20" '
+                f'BidConditionUID="10" ParentUID="{parent}"/>'
+            )
+
+        with self.assertLogs(_OST_LOGGER, level="WARNING") as logs:
+            self._validated(xml(takeoff("32", "999")))
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Skipping 1 invalid takeoff(s) during OST import; missing-parent "
+                "roots: BidTakeoffs.UID=32 ParentUID=999 missing BidTakeoffs.UID"
+            ],
+        )
+        with self.assertLogs(_OST_LOGGER, level="WARNING") as logs:
+            self._validated(xml(takeoff("32", "999") + takeoff("33", "32")))
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Skipping 2 invalid takeoff(s) during OST import; missing-parent "
+                "roots: BidTakeoffs.UID=32 ParentUID=999 missing BidTakeoffs.UID; "
+                "skipped dependent descendants: "
+                "BidTakeoffs.UID=33 ParentUID=32 missing BidTakeoffs.UID"
+            ],
+        )
+
+    def test_non_ascii_or_uidless_named_view_references_are_never_discarded(self):
+        def xml(view_attributes):
+            return (
+                '<XML_ROOT><Bid UID="1"><BidPages><BidPage UID="20" BidUID="1"/>'
+                f"</BidPages><BidNamedViews><BidNamedView {view_attributes}/>"
+                "</BidNamedViews></Bid></XML_ROOT>"
+            )
+
+        for label, attributes, diagnostic in (
+            (
+                "non-ascii digits",
+                'UID="30" BidUID="1" BidPageUID="٢٣"',
+                "BidNamedViews.UID=30 BidPageUID=٢٣ missing BidPages.UID",
+            ),
+            (
+                "row without uid",
+                'BidUID="1" BidPageUID="99"',
+                "BidNamedViews.UID=<no UID> has malformed UID=<missing>",
+            ),
+        ):
+            with self.subTest(case=label):
+                with self.assertLogs(_OST_LOGGER, level="ERROR") as logs:
+                    with self.assertRaisesRegex(
+                        ValueError, "^The imported project contains invalid references[.]$"
+                    ):
+                        self._validated(xml(attributes))
+                self.assertEqual(len(logs.records), 1)
+                self.assertIn(diagnostic, logs.records[0].getMessage())
+
+    def test_a_named_view_for_missing_page_one_is_discarded_as_stale(self):
+        xml = (
+            '<XML_ROOT><Bid UID="1"><BidPages><BidPage UID="20" BidUID="1"/>'
+            '</BidPages><BidNamedViews>'
+            '<BidNamedView UID="30" BidUID="1" BidPageUID="1"/>'
+            '<BidNamedView UID="31" BidUID="1" BidPageUID="20"/>'
+            "</BidNamedViews></Bid></XML_ROOT>"
+        )
+        with self.assertLogs(_OST_LOGGER, level="WARNING") as logs:
+            raw = self._validated(xml)
+        self.assertEqual([row["UID"] for row in raw.bid_tables["BidNamedViews"]], ["31"])
+        self.assertIn(
+            "Discarded 1 stale Named View(s) and 0 dependent Hot Link(s)",
+            logs.records[0].getMessage(),
+        )
+        self.assertIn(
+            "BidNamedViews.UID=30 BidPageUID=1 missing BidPages.UID",
+            logs.records[0].getMessage(),
+        )

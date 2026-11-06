@@ -973,11 +973,13 @@ class ConnectionMaintenanceExclusionTests(unittest.TestCase):
                         self.fail("active lease compacted")
         conn = manager._read_conns[path]
         conn.close.side_effect = pyodbc.Error("close failed")
-        with self.assertRaises(pyodbc.Error):
+        with self.assertRaisesRegex(pyodbc.Error, "close failed"):
             with manager.maintenance(path):
                 self.fail("failed close permitted maintenance")
+        conn.close.assert_called_once_with()
         self.assertIs(manager._read_conns[path], conn)
         self.assertFalse(manager._maintenance_paths)
+        self.assertEqual(manager._active_leases, {})
 
 
 class MdbConnectionManagerHandleHealthTests(unittest.TestCase):
@@ -2039,6 +2041,288 @@ class MdbConnectionManagerNestedLeaseFailureTests(unittest.TestCase):
         self.assertEqual(manager._unhealthy_connection_ids, set())
         manager.close()
         self.assert_all_resources_released()
+
+
+class _TextOnlyExhaustionError(pyodbc.OperationalError):
+    """An error whose marker text lives only in str(), not in its args."""
+
+    def __str__(self) -> str:
+        return "[08004] Too many client tasks"
+
+
+class MdbConnectionManagerMessageAndNoteContractTests(unittest.TestCase):
+    """Second pass: user-facing messages, annotations and shutdown bookkeeping."""
+
+    EXHAUSTED_MESSAGE = (
+        "Microsoft Access cannot open another database connection in this OST "
+        "Visualizer session. Save any work in other applications, restart OST "
+        "Visualizer, and try again."
+    )
+    UNUSABLE_MESSAGE = (
+        "The shared MDB connection is unusable after a cursor cleanup failed, a "
+        "connection error or a failed health probe; it is closed when the "
+        "outermost lease ends"
+    )
+    PROBE_MESSAGE = (
+        "The shared MDB connection failed its health probe for a nested lease; "
+        "it is unusable after a cursor cleanup failed, a connection error or a "
+        "failed health probe and is closed when the outermost lease ends"
+    )
+
+    def setUp(self) -> None:
+        self.connect = _FakeConnect()
+        self.connect_patch = patch(
+            "ost_visualizer.infrastructure.mdb.connection_manager.pyodbc.connect",
+            self.connect,
+        )
+        self.connect_patch.start()
+
+    def tearDown(self) -> None:
+        self.connect_patch.stop()
+
+    def assert_all_resources_released(self) -> None:
+        counts = self.connect.counts
+        self.assertEqual(counts.connections_opened, counts.connections_closed)
+        self.assertEqual(counts.active_connections, 0)
+        self.assertEqual(counts.cursors_created, counts.cursors_closed)
+
+    @staticmethod
+    def _failing_close(connection, error):
+        def close():
+            raise error
+
+        connection.close = close
+
+    def test_client_task_exhaustion_message_is_the_exact_user_guidance(self):
+        self.connect.max_opens = 0
+        manager = MdbConnectionManager()
+        with self.assertRaises(DatabaseConnectionUnavailableError) as raised:
+            with manager.connection("exhausted-text.mdb"):
+                self.fail("lease granted")
+        self.assertEqual(str(raised.exception), self.EXHAUSTED_MESSAGE)
+        self.assertIsInstance(raised.exception.__cause__, pyodbc.OperationalError)
+
+    def test_maintenance_is_refused_while_writes_are_blocked_and_changes_nothing(self):
+        manager = MdbConnectionManager()
+        path_key = os.path.normcase(os.path.abspath("blocked-maintenance.mdb"))
+        with manager.connection("blocked-maintenance.mdb"):
+            pass
+        reader = manager._read_conns[path_key]
+        manager.set_write_blocked(True)
+        with self.assertRaises(WriteBlockedError) as raised:
+            with manager.maintenance("blocked-maintenance.mdb"):
+                self.fail("maintenance granted while writes are blocked")
+        self.assertEqual(
+            str(raised.exception),
+            "Close On-Screen Takeoff before database maintenance.",
+        )
+        self.assertEqual(manager._maintenance_paths, set())
+        self.assertFalse(reader.closed)
+        self.assertIs(manager._read_conns[path_key], reader)
+        manager.set_write_blocked(False)
+        with manager.maintenance("blocked-maintenance.mdb"):
+            self.assertTrue(reader.closed)
+        self.assertEqual(manager._maintenance_paths, set())
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_maintenance_refusals_and_lease_refusals_carry_exact_messages(self):
+        manager = MdbConnectionManager()
+        busy = "The database has active operations; try again when they finish."
+        with manager.connection("messages.mdb"):
+            with self.assertRaises(RuntimeError) as active:
+                with manager.maintenance("messages.mdb"):
+                    self.fail("maintenance granted under an active lease")
+            self.assertEqual(str(active.exception), busy)
+            with self.assertRaises(RuntimeError) as mixed:
+                with manager.connection("messages.mdb", autocommit=False):
+                    self.fail("mixed-mode nested lease granted")
+            self.assertEqual(
+                str(mixed.exception),
+                "Nested MDB connection leases must use the same mode",
+            )
+        self.assertEqual(manager._maintenance_paths, set())
+        with manager.maintenance("messages.mdb"):
+            with self.assertRaises(RuntimeError) as overlap:
+                with manager.maintenance("messages.mdb"):
+                    self.fail("overlapping maintenance granted")
+            self.assertEqual(str(overlap.exception), busy)
+            with self.assertRaises(RuntimeError) as closed:
+                with manager.connection("messages.mdb"):
+                    self.fail("lease granted during maintenance")
+            self.assertEqual(
+                str(closed.exception),
+                "The database is temporarily closed for maintenance.",
+            )
+        manager.set_write_blocked(True)
+        with self.assertRaises(WriteBlockedError) as blocked:
+            with manager.connection("messages.mdb", autocommit=False):
+                self.fail("writer lease granted while writes are blocked")
+        self.assertEqual(
+            str(blocked.exception), "Database writes are blocked while OST is active"
+        )
+        self.assertEqual(manager._active_leases, {})
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_nested_refusals_on_a_condemned_handle_carry_exact_messages(self):
+        manager = MdbConnectionManager()
+        with manager.connection("condemned-text.mdb") as outer:
+            shared = outer._conn
+            with manager.connection("condemned-text.mdb") as inner:
+                inner._conn.fail_next_cursor_close = True
+                inner.cursor().execute("SELECT")
+            with self.assertRaises(RuntimeError) as unusable:
+                with manager.connection("condemned-text.mdb"):
+                    self.fail("nested lease granted on a condemned handle")
+            self.assertEqual(str(unusable.exception), self.UNUSABLE_MESSAGE)
+            self.assertFalse(shared.closed)
+        self.assertTrue(shared.closed)
+        with manager.connection("probe-text.mdb") as outer:
+            outer._conn.fail_cursor_open_once = True
+            with self.assertRaises(RuntimeError) as probe:
+                with manager.connection("probe-text.mdb"):
+                    self.fail("nested lease granted on a handle that failed its probe")
+            self.assertEqual(str(probe.exception), self.PROBE_MESSAGE)
+            self.assertIsInstance(probe.exception.__cause__, pyodbc.OperationalError)
+            self.assertEqual(
+                probe.exception.__cause__.args, ("HY000", "cursor could not be opened")
+            )
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_aggregated_close_failures_use_the_documented_group_message(self):
+        manager = MdbConnectionManager()
+        for path in ("group-a.mdb", "group-b.mdb"):
+            with manager.connection(path):
+                pass
+        errors = [
+            pyodbc.OperationalError("HY000", "close a failed"),
+            pyodbc.OperationalError("HY000", "close b failed"),
+        ]
+        handles = list(manager._read_conns.values())
+        for handle, error in zip(handles, errors):
+            self._failing_close(handle, error)
+        with self.assertRaises(ExceptionGroup) as raised:
+            manager.close()
+        self.assertEqual(raised.exception.message, "Failed to close MDB connections")
+        self.assertCountEqual(raised.exception.exceptions, errors)
+        for handle in handles:
+            del handle.close
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_failed_close_after_failed_cursor_cleanup_annotates_the_cursor_error(self):
+        captured = []
+        original_close_cursors = ConnectionWrapper.close_cursors
+
+        def spying_close_cursors(wrapper):
+            errors = original_close_cursors(wrapper)
+            captured.append(errors)
+            return errors
+
+        manager = MdbConnectionManager()
+        with patch.object(ConnectionWrapper, "close_cursors", spying_close_cursors):
+            with manager.connection("annotated.mdb") as lease:
+                first = lease._conn
+                self._failing_close(
+                    first, pyodbc.OperationalError("HY000", "connection close failed")
+                )
+                first.fail_next_cursor_close = True
+                lease.cursor().execute("SELECT")
+        # The lease itself succeeded; the swallowed cleanup error carries the note.
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(len(captured[0]), 1)
+        self.assertEqual(
+            captured[0][0].__notes__,
+            [
+                "The MDB connection with an unclosed cursor could not be closed: "
+                "('HY000', 'connection close failed')"
+            ],
+        )
+        self.assertFalse(first.closed)
+        del first.close
+        # Positive control: a close that works leaves the cleanup error unannotated.
+        captured.clear()
+        with patch.object(ConnectionWrapper, "close_cursors", spying_close_cursors):
+            with manager.connection("annotated.mdb") as lease:
+                lease._conn.fail_next_cursor_close = True
+                lease.cursor().execute("SELECT")
+        self.assertEqual(len(captured[0]), 1)
+        self.assertFalse(hasattr(captured[0][0], "__notes__"))
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_shutdown_discards_health_flags_of_handles_no_longer_owned(self):
+        manager = MdbConnectionManager()
+        with manager.connection("flag-reset.mdb"):
+            pass
+        manager._unhealthy_connection_ids.update({111, 222})
+        manager.close()
+        self.assertEqual(manager._unhealthy_connection_ids, set())
+        self.assertEqual(manager._read_conns, {})
+        self.assert_all_resources_released()
+
+    def test_connection_error_after_the_handle_was_closed_by_someone_else_flags_nothing(
+        self,
+    ):
+        for replaced in (False, True):
+            with self.subTest(replaced_by_a_new_handle=replaced):
+                self.connect.counts = _LifecycleCounts()
+                manager = MdbConnectionManager()
+                path_key = os.path.normcase(os.path.abspath("unowned-outer.mdb"))
+                replacement = None
+                with self.assertRaisesRegex(pyodbc.OperationalError, "communication"):
+                    with manager.connection("unowned-outer.mdb") as lease:
+                        shared = lease._conn
+                        manager.close_database("unowned-outer.mdb")
+                        self.assertTrue(shared.closed)
+                        if replaced:
+                            with manager.connection("unowned-outer.mdb") as nested:
+                                replacement = nested._conn
+                        raise pyodbc.OperationalError("08S01", "communication link")
+                self.assertEqual(manager._unhealthy_connection_ids, set())
+                self.assertEqual(manager._deferred_eviction_ids, set())
+                self.assertEqual(manager._active_leases, {})
+                if replaced:
+                    # The error concerned the old handle only: the replacement
+                    # opened meanwhile stays open, owned and unflagged.
+                    self.assertFalse(replacement.closed)
+                    self.assertIs(manager._read_conns[path_key], replacement)
+                else:
+                    self.assertEqual(manager._read_conns, {})
+                manager.close()
+                self.assert_all_resources_released()
+
+    def test_client_task_exhaustion_text_is_matched_across_args_and_str(self):
+        split_args = pyodbc.OperationalError("08004", "Too many", "client tasks")
+        self.assertIs(MdbConnectionManager._is_client_task_exhaustion(split_args), True)
+        self.assertIs(
+            MdbConnectionManager._is_client_task_exhaustion(
+                _TextOnlyExhaustionError("opaque")
+            ),
+            True,
+        )
+        for negative in (
+            pyodbc.OperationalError("08004", "Too many", "tasks"),
+            pyodbc.OperationalError("HY000", "Too many client tasks"),
+            pyodbc.OperationalError("08004"),
+        ):
+            with self.subTest(negative=negative.args):
+                self.assertIs(
+                    MdbConnectionManager._is_client_task_exhaustion(negative), False
+                )
+
+    def test_replacement_check_returns_a_strict_boolean_for_each_signal(self):
+        healthy = Mock()
+        dead = Mock()
+        dead.cursor.side_effect = pyodbc.OperationalError("HY000", "gone")
+        check = MdbConnectionManager._connection_requires_replacement
+        self.assertIs(check(healthy, pyodbc.OperationalError("HY000", "x")), False)
+        healthy.cursor.return_value.close.assert_called_once_with()
+        self.assertIs(check(healthy, pyodbc.OperationalError(" 08s01 ", "x")), True)
+        self.assertIs(check(dead, pyodbc.OperationalError("HY000", "x")), True)
+        self.assertIs(check(healthy, pyodbc.OperationalError("HY000")), False)
 
 
 class _RecordingRawCursor:

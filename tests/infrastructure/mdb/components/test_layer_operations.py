@@ -26,8 +26,12 @@ from ost_visualizer.infrastructure.mdb.components.project_operations import (
 from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.components.constants import (
+    LAYER_REFERENCE_TABLES,
+)
 from ost_visualizer.infrastructure.mdb.components.layer_operations import (
     LayerOperationsMixin,
+    _default_layer_update_matched,
 )
 from ost_visualizer.infrastructure.mdb.components.condition_operations import (
     ConditionOperationsMixin,
@@ -43,9 +47,20 @@ from ost_visualizer.infrastructure.mdb.components.bid_operations import (
 )
 import unittest
 import sqlite3
+from tests.helpers.mdb.real_write_contract import RealContractOps
 import logging
 from collections import namedtuple
 from contextlib import contextmanager
+
+
+class _StrictTestCase(unittest.TestCase):
+    """Boolean results are exact: None or 0 must not pass for True/False."""
+
+    def assertIsTrue(self, value, msg=None):
+        self.assertIs(value, True, msg)
+
+    def assertIsFalse(self, value, msg=None):
+        self.assertIs(value, False, msg)
 
 
 class _Cursor:
@@ -121,7 +136,7 @@ class _LayerOperations(LayerOperationsMixin):
             schema.require_column(table, column)
 
 
-class LayerOperationsPersistenceTests(unittest.TestCase):
+class LayerOperationsPersistenceTests(_StrictTestCase):
     def test_delete_layer_clears_indexed_annotation_shape_layer_refs(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -157,7 +172,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
         conn.execute(
             "INSERT INTO BidAnnotationRects (UID, BidLayerUID) VALUES (20, 30)"
         )
-        self.assertTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "30"))
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "30"))
         self.assertIsNone(
             conn.execute(
                 "SELECT BidLayerUID FROM BidAnnotationRects WHERE UID = 20"
@@ -190,8 +205,8 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
         conn.execute("INSERT INTO BidAnnotationRects VALUES (20, 30)")
         conn.execute("INSERT INTO BidAnnotationRects VALUES (21, 31)")
         ops = _SqliteMdbOps(conn)
-        self.assertFalse(ops.delete_layer("bid.mdb", "30"))
-        self.assertFalse(ops.delete_layer("bid.mdb", "31"))
+        self.assertIsFalse(ops.delete_layer("bid.mdb", "30"))
+        self.assertIsFalse(ops.delete_layer("bid.mdb", "31"))
         self.assertEqual(
             conn.execute("SELECT UID, Sequence FROM BidLayers ORDER BY UID").fetchall(),
             [(30, 1), (31, 2), (32, 3)],
@@ -280,7 +295,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
             ],
         )
         ops = _SqliteDuplicateOps(conn)
-        self.assertTrue(
+        self.assertIsTrue(
             ops.update_all_layers_show("fixture.mdb", "7", False, ["101", "102"])
         )
         self.assertEqual(
@@ -300,7 +315,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
             [(10, 7, 1), (11, 7, 2), (12, 7, 3), (20, 8, 1)],
         )
         ops = _SqliteMdbOps(conn)
-        self.assertTrue(ops.swap_layer_sequence("bid.mdb", "10", "12"))
+        self.assertIsTrue(ops.swap_layer_sequence("bid.mdb", "10", "12"))
         self.assertEqual(
             conn.execute("SELECT UID, Sequence FROM BidLayers ORDER BY UID").fetchall(),
             [(10, 3), (11, 2), (12, 1), (20, 1)],
@@ -332,7 +347,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
                 (201, 8, "Other bid", -1, 0, 0),
             ],
         )
-        self.assertTrue(
+        self.assertIsTrue(
             _SqliteDuplicateOps(conn).update_all_layers_show(
                 "fixture.mdb", "7", False, ["100", "101"]
             )
@@ -360,7 +375,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
                 (202, 8, "Bid 8 template only", -1, -1, 0),
             ],
         )
-        self.assertTrue(
+        self.assertIsTrue(
             _SqliteDuplicateOps(conn).update_all_layers_show("fixture.mdb", "7", False)
         )
         self.assertEqual(
@@ -385,7 +400,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
             ],
         )
         ops = _SqliteDuplicateOps(conn)
-        self.assertFalse(
+        self.assertIsFalse(
             ops.update_all_layers_show("fixture.mdb", "7", False, ["101", "201"])
         )
         self.assertEqual(
@@ -411,7 +426,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
         )
         conn.execute("INSERT INTO BidLayers VALUES (2000, 8, -1, 0, 0)")
         captured = [str(uid) for uid in own_uids] + ["2000"]
-        self.assertFalse(
+        self.assertIsFalse(
             _SqliteDuplicateOps(conn).update_all_layers_show(
                 "fixture.mdb", "7", False, captured
             )
@@ -435,7 +450,7 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
             "INSERT INTO BidLayers VALUES (?, 7, -1, 0, 0)",
             ((uid,) for uid in layer_uids),
         )
-        self.assertTrue(
+        self.assertIsTrue(
             _ParameterLimitedSqliteOps(conn, max_parameters=55).update_all_layers_show(
                 "large.mdb", "7", False, [str(uid) for uid in layer_uids]
             )
@@ -446,10 +461,10 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
         )
 
 
-class LayerOperationsTests(unittest.TestCase):
+class LayerOperationsTests(_StrictTestCase):
     def test_bulk_bid_layer_visibility_uses_one_set_based_update(self):
         operations = _LayerOperations()
-        self.assertTrue(operations.update_all_layers_show("bid.mdb", "7", False))
+        self.assertIsTrue(operations.update_all_layers_show("bid.mdb", "7", False))
         updates = [
             execution
             for execution in operations.cursor.executions
@@ -468,7 +483,7 @@ class LayerOperationsTests(unittest.TestCase):
 
     def test_captured_bulk_layer_visibility_uses_one_exact_set_based_update(self):
         operations = _LayerOperations()
-        self.assertTrue(
+        self.assertIsTrue(
             operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
         )
         updates = [
@@ -500,7 +515,7 @@ class LayerOperationsTests(unittest.TestCase):
     def test_captured_bulk_visibility_accepts_sql_nocount_rowcount(self):
         operations = _LayerOperations()
         operations.cursor.forced_update_rowcount = -1
-        self.assertTrue(
+        self.assertIsTrue(
             operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
         )
 
@@ -517,10 +532,10 @@ class LayerOperationsTests(unittest.TestCase):
     def test_captured_bulk_visibility_rejects_duplicate_persisted_uid(self):
         operations = _LayerOperations()
         operations.cursor.forced_preflight_uids = (10, 10, 11)
-        self.assertFalse(
+        self.assertIsFalse(
             operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
         )
-        self.assertFalse(
+        self.assertIsFalse(
             any(
                 sql.startswith("UPDATE [BidLayers] SET [Show]")
                 for sql, _parameters in operations.cursor.executions
@@ -529,7 +544,7 @@ class LayerOperationsTests(unittest.TestCase):
 
     def test_bid_layer_swap_updates_non_template_rows(self):
         operations = _LayerOperations()
-        self.assertTrue(operations.swap_layer_sequence("bid.mdb", "10", "11"))
+        self.assertIsTrue(operations.swap_layer_sequence("bid.mdb", "10", "11"))
         updates = [
             execution
             for execution in operations.cursor.executions
@@ -547,4 +562,1202 @@ class LayerOperationsTests(unittest.TestCase):
                     (1, 11),
                 ),
             ],
+        )
+
+
+_LAYER_COLUMNS = (
+    "UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER, "
+    "Sequence INTEGER, IsTemplate INTEGER, IsLocked INTEGER"
+)
+
+
+def _layer_db(layers, columns=_LAYER_COLUMNS, bids=(7, 8)):
+    """sqlite stand-in: Bids plus BidLayers rows given as full tuples."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE Bids (UID INTEGER)")
+    conn.executemany("INSERT INTO Bids VALUES (?)", [(uid,) for uid in bids])
+    conn.execute(f"CREATE TABLE BidLayers ({columns})")
+    width = len(columns.split(","))
+    conn.executemany(f"INSERT INTO BidLayers VALUES ({', '.join('?' * width)})", layers)
+    return conn
+
+
+def _layer_rows(conn, columns="UID, Show, Sequence, Name"):
+    return conn.execute(f"SELECT {columns} FROM BidLayers ORDER BY UID").fetchall()
+
+
+class _RaisingMutationErrorOps(_SqliteDuplicateOps):
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return True
+
+
+class _MatchCursor:
+    """Cursor double for the SQL Server no-count fallback of default layers."""
+
+    def __init__(self, rowcount, fetched):
+        self.rowcount = rowcount
+        self._fetched = fetched
+        self.executions = []
+
+    def execute(self, sql, *parameters):
+        self.executions.append((" ".join(sql.split()), parameters))
+
+    def fetchone(self):
+        return self._fetched
+
+
+class LayerShowAndNameSemanticsTests(_StrictTestCase):
+    def test_bid_layer_show_writes_access_boolean_for_the_target_layer_only(self):
+        conn = _layer_db(
+            [
+                (10, 7, "A", 0, 1, 0, 0),
+                (11, 7, "B", 0, 2, 0, 0),
+                (20, 8, "C", -1, 1, 0, 0),
+            ]
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertIsTrue(ops.update_layer_show("bid.mdb", "10", True))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, -1), (11, 0), (20, -1)])
+        self.assertIsTrue(ops.update_layer_show("bid.mdb", "20", False))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, -1), (11, 0), (20, 0)])
+
+    def test_bid_layer_show_rejects_missing_and_unowned_layers_without_writing(self):
+        conn = _layer_db([(10, 7, "A", 0, 1, 0, 0), (30, None, "Shared", 0, 1, -1, -1)])
+        ops = _SqliteMdbOps(conn)
+        with self.assertRaisesRegex(RuntimeError, "BidLayers has no row for UID 99"):
+            ops.update_layer_show("bid.mdb", "99", True)
+        with self.assertRaises(IncoherentBidOwnedScopeError):
+            ops.update_layer_show("bid.mdb", "30", True)
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, 0), (30, 0)])
+
+    def test_default_layer_show_updates_only_template_layers(self):
+        conn = _layer_db(
+            [
+                (30, None, "T1", 0, 1, -1, -1),
+                (31, None, "T2", 0, 2, -1, -1),
+                (10, 7, "Bid layer", 0, 1, 0, 0),
+            ]
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertIsTrue(ops.update_default_layer_show("bid.mdb", "30", True))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, 0), (30, -1), (31, 0)])
+        self.assertIsTrue(ops.update_default_layer_show("bid.mdb", "30", False))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, 0), (30, 0), (31, 0)])
+
+    def test_default_layer_show_refuses_a_bid_layer_and_a_missing_uid(self):
+        conn = _layer_db([(10, 7, "Bid layer", 0, 1, 0, 0)])
+        ops = _SqliteMdbOps(conn)
+        self.assertIsFalse(ops.update_default_layer_show("bid.mdb", "10", True))
+        self.assertIsFalse(ops.update_default_layer_show("bid.mdb", "99", True))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, 0)])
+
+    def test_default_layer_show_rejects_a_duplicated_physical_uid(self):
+        conn = _layer_db(
+            [(30, None, "T1", 0, 1, -1, -1), (30, None, "T1 copy", 0, 2, -1, -1)]
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "BidLayers contains duplicate UID 30"
+        ):
+            _SqliteMdbOps(conn).update_default_layer_show("bid.mdb", "30", True)
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(30, 0), (30, 0)])
+
+    def test_all_default_layers_show_leaves_bid_layers_alone(self):
+        conn = _layer_db(
+            [
+                (30, None, "T1", 0, 1, -1, -1),
+                (31, None, "T2", -1, 2, -1, -1),
+                (10, 7, "Bid layer", -1, 1, 0, 0),
+            ]
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertIsTrue(ops.update_all_default_layers_show("bid.mdb", False))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, -1), (30, 0), (31, 0)])
+        self.assertIsTrue(ops.update_all_default_layers_show("bid.mdb", True))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(10, -1), (30, -1), (31, -1)])
+
+    def test_bid_layer_rename_changes_only_unlocked_non_template_layers(self):
+        conn = _layer_db(
+            [
+                (10, 7, "A", -1, 1, 0, 0),
+                (11, 7, "B", -1, 2, 0, -1),
+                (12, 7, "C", -1, 3, -1, 0),
+                (20, 8, "D", -1, 1, 0, 0),
+            ]
+        )
+        ops = _SqliteMdbOps(conn)
+        ops.update_layer_name("bid.mdb", "10", "Renamed")
+        ops.update_layer_name("bid.mdb", "11", "Locked rename")
+        ops.update_layer_name("bid.mdb", "12", "Template rename")
+        self.assertEqual(
+            _layer_rows(conn, "UID, Name"),
+            [(10, "Renamed"), (11, "B"), (12, "C"), (20, "D")],
+        )
+
+    def test_bid_layer_rename_without_template_columns_still_scopes_to_the_uid(self):
+        conn = _layer_db(
+            [(10, 7, "A"), (11, 7, "B")],
+            columns="UID INTEGER, BidUID INTEGER, Name TEXT",
+        )
+        self.assertIsTrue(_SqliteMdbOps(conn).update_layer_name("bid.mdb", "10", "X"))
+        self.assertEqual(_layer_rows(conn, "UID, Name"), [(10, "X"), (11, "B")])
+
+    def test_bid_layer_rename_rejects_duplicate_uid_and_unowned_layer(self):
+        conn = _layer_db(
+            [
+                (10, 7, "A", -1, 1, 0, 0),
+                (10, 8, "A2", -1, 1, 0, 0),
+                (30, None, "Shared", -1, 1, -1, -1),
+            ]
+        )
+        ops = _SqliteMdbOps(conn)
+        with self.assertRaisesRegex(
+            RuntimeError, "BidLayers contains duplicate UID 10"
+        ):
+            ops.update_layer_name("bid.mdb", "10", "X")
+        with self.assertRaises(IncoherentBidOwnedScopeError):
+            ops.update_layer_name("bid.mdb", "30", "X")
+        self.assertEqual(
+            _layer_rows(conn, "UID, Name"), [(10, "A"), (10, "A2"), (30, "Shared")]
+        )
+
+    def test_default_layer_rename_changes_only_template_layers(self):
+        conn = _layer_db(
+            [
+                (30, None, "T1", -1, 1, -1, -1),
+                (31, None, "T2", -1, 2, -1, -1),
+                (10, 7, "Bid layer", -1, 1, 0, 0),
+            ]
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertIsTrue(ops.update_default_layer_name("bid.mdb", "30", "Renamed"))
+        self.assertIsFalse(ops.update_default_layer_name("bid.mdb", "10", "Nope"))
+        self.assertIsFalse(ops.update_default_layer_name("bid.mdb", "99", "Nope"))
+        self.assertEqual(
+            _layer_rows(conn, "UID, Name"),
+            [(10, "Bid layer"), (30, "Renamed"), (31, "T2")],
+        )
+
+    def test_default_layer_rename_rejects_duplicate_physical_uid(self):
+        conn = _layer_db(
+            [(30, None, "T1", -1, 1, -1, -1), (30, None, "T1b", -1, 2, -1, -1)]
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "BidLayers contains duplicate UID 30"
+        ):
+            _SqliteMdbOps(conn).update_default_layer_name("bid.mdb", "30", "X")
+        self.assertEqual(_layer_rows(conn, "UID, Name"), [(30, "T1"), (30, "T1b")])
+
+
+class DefaultLayerUpdateMatchTests(_StrictTestCase):
+    def test_a_non_negative_rowcount_decides_without_another_query(self):
+        for rowcount, expected in ((0, False), (1, True), (3, True)):
+            cursor = _MatchCursor(rowcount, fetched=("row",))
+            self.assertIs(
+                _default_layer_update_matched(cursor, "[Show] = ?", -1, 30),
+                expected,
+                rowcount,
+            )
+            self.assertEqual(cursor.executions, [])
+
+    def test_an_unknown_rowcount_verifies_the_stored_value_of_the_template_layer(self):
+        cursor = _MatchCursor(-1, fetched=("row",))
+        self.assertIs(
+            _default_layer_update_matched(cursor, "[Name] = ?", "N", 30), True
+        )
+        self.assertEqual(
+            cursor.executions,
+            [
+                (
+                    "SELECT [UID] FROM [BidLayers] WHERE [UID] = ? AND "
+                    "[IsTemplate] <> 0 AND [Name] = ?",
+                    (30, "N"),
+                )
+            ],
+        )
+        self.assertIs(
+            _default_layer_update_matched(
+                _MatchCursor(-1, fetched=None), "[Name] = ?", "N", 30
+            ),
+            False,
+        )
+
+
+class LayerInsertAndDeleteSemanticsTests(_StrictTestCase):
+    def test_bid_layer_insert_shifts_only_later_layers_of_that_bid(self):
+        conn = _layer_db(
+            [
+                (1, 7, "A", -1, 1, 0, 0),
+                (2, 7, "B", -1, 2, 0, 0),
+                (3, 7, "C", -1, 3, 0, 0),
+                (4, 8, "Other", -1, 3, 0, 0),
+            ]
+        )
+        new_uid = _SqliteDuplicateOps(conn).insert_layer("bid.mdb", "7", "New", 2)
+        self.assertEqual(new_uid, "5")
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidUID, Name, Show, Sequence, IsTemplate, IsLocked "
+                "FROM BidLayers ORDER BY UID"
+            ).fetchall(),
+            [
+                (1, 7, "A", -1, 1, 0, 0),
+                (2, 7, "B", -1, 2, 0, 0),
+                (3, 7, "C", -1, 4, 0, 0),
+                (4, 8, "Other", -1, 3, 0, 0),
+                (5, 7, "New", -1, 3, 0, 0),
+            ],
+        )
+
+    def test_bid_layer_insert_without_a_sequence_column_only_appends_the_row(self):
+        conn = _layer_db(
+            [(1, 7, "A", -1), (2, 8, "B", -1)],
+            columns="UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER",
+        )
+        self.assertEqual(
+            _SqliteDuplicateOps(conn).insert_layer("bid.mdb", "7", "New", 5), "3"
+        )
+        self.assertEqual(
+            conn.execute("SELECT * FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, 7, "A", -1), (2, 8, "B", -1), (3, 7, "New", -1)],
+        )
+
+    def test_bid_layer_insert_for_a_missing_bid_raises_and_writes_nothing(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0)])
+        with self.assertRaisesRegex(RuntimeError, "Bids has no row for UID 99"):
+            _SqliteDuplicateOps(conn).insert_layer("bid.mdb", "99", "New", 0)
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1)])
+
+    def test_default_layer_insert_shifts_only_later_template_layers(self):
+        conn = _layer_db(
+            [
+                (1, None, "T1", -1, 1, -1, -1),
+                (2, None, "T2", -1, 2, -1, -1),
+                (3, None, "T3", -1, 3, -1, -1),
+                (4, 7, "Bid layer", -1, 3, 0, 0),
+            ]
+        )
+        new_uid = _SqliteDuplicateOps(conn).insert_default_layer("bid.mdb", "New", 2)
+        self.assertEqual(new_uid, "5")
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidUID, Name, Show, Sequence, IsTemplate, IsLocked "
+                "FROM BidLayers ORDER BY UID"
+            ).fetchall(),
+            [
+                (1, None, "T1", -1, 1, -1, -1),
+                (2, None, "T2", -1, 2, -1, -1),
+                (3, None, "T3", -1, 4, -1, -1),
+                (4, 7, "Bid layer", -1, 3, 0, 0),
+                (5, None, "New", -1, 3, -1, -1),
+            ],
+        )
+
+    def test_default_layer_insert_without_a_sequence_column_only_appends_the_row(self):
+        conn = _layer_db(
+            [(1, "T1", -1)], columns="UID INTEGER, Name TEXT, IsTemplate INTEGER"
+        )
+        self.assertEqual(
+            _SqliteDuplicateOps(conn).insert_default_layer("bid.mdb", "New", 0), "2"
+        )
+        self.assertEqual(
+            conn.execute("SELECT * FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, "T1", -1), (2, "New", -1)],
+        )
+
+    def test_default_layer_delete_renumbers_only_later_template_layers(self):
+        conn = _layer_db(
+            [
+                (1, None, "T1", -1, 1, -1, -1),
+                (2, None, "T2", -1, 2, -1, -1),
+                (3, None, "T3", -1, 3, -1, -1),
+                (4, 7, "Bid layer", -1, 3, 0, 0),
+            ]
+        )
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "2"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (3, 2), (4, 3)])
+
+    def test_default_layer_delete_without_sequence_column_deletes_the_row_only(self):
+        conn = _layer_db(
+            [(1, "T1", -1), (2, "T2", -1)],
+            columns="UID INTEGER, Name TEXT, IsTemplate INTEGER",
+        )
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "1"))
+        self.assertEqual(
+            conn.execute("SELECT UID, Name FROM BidLayers").fetchall(), [(2, "T2")]
+        )
+
+    def test_default_layer_delete_refuses_bid_layers_and_unknown_uids(self):
+        conn = _layer_db(
+            [(1, None, "T1", -1, 1, -1, -1), (4, 7, "Bid layer", -1, 1, 0, 0)]
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertIsFalse(ops.delete_default_layer("bid.mdb", "4"))
+        self.assertIsFalse(ops.delete_default_layer("bid.mdb", "99"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (4, 1)])
+
+    def test_default_layer_delete_rejects_a_duplicated_physical_uid(self):
+        conn = _layer_db(
+            [(1, None, "T1", -1, 1, -1, -1), (1, None, "T1b", -1, 2, -1, -1)]
+        )
+        with self.assertRaisesRegex(RuntimeError, "BidLayers contains duplicate UID 1"):
+            _SqliteMdbOps(conn).delete_default_layer("bid.mdb", "1")
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (1, 2)])
+
+    def test_bid_layer_delete_clears_every_layer_reference_table_and_scopes_renumbering(
+        self,
+    ):
+        conn = _layer_db(
+            [
+                (1, 7, "A", -1, 1, 0, 0),
+                (2, 7, "B", -1, 2, 0, 0),
+                (3, 7, "C", -1, 3, 0, 0),
+                (4, 8, "Other", -1, 3, 0, 0),
+            ]
+        )
+        for table in LAYER_REFERENCE_TABLES:
+            conn.execute(f"CREATE TABLE {table} (UID INTEGER, BidLayerUID INTEGER)")
+            conn.executemany(
+                f"INSERT INTO {table} VALUES (?, ?)", [(100, 2), (101, 3), (102, 4)]
+            )
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "2"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (3, 2), (4, 3)])
+        for table in LAYER_REFERENCE_TABLES:
+            self.assertEqual(
+                conn.execute(
+                    f"SELECT UID, BidLayerUID FROM {table} ORDER BY UID"
+                ).fetchall(),
+                [(100, None), (101, 3), (102, 4)],
+                table,
+            )
+
+    def test_bid_layer_delete_skips_missing_and_columnless_reference_tables(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
+        conn.execute("CREATE TABLE BidTexts (UID INTEGER)")
+        conn.execute("INSERT INTO BidTexts VALUES (5)")
+        conn.execute("CREATE TABLE BidComments (UID INTEGER, BidLayerUID INTEGER)")
+        conn.execute("INSERT INTO BidComments VALUES (6, 1)")
+        with self.assertNoLogs("test", "WARNING"):
+            self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "1"))
+        self.assertEqual(conn.execute("SELECT UID FROM BidTexts").fetchall(), [(5,)])
+        self.assertEqual(
+            conn.execute("SELECT UID, BidLayerUID FROM BidComments").fetchall(),
+            [(6, None)],
+        )
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(2, 1)])
+
+    def test_bid_layer_delete_needs_the_bid_scope_column_before_touching_anything(
+        self,
+    ):
+        conn = _layer_db([(1, "A"), (2, "B")], columns="UID INTEGER, Name TEXT")
+        with self.assertRaises(sqlite3.OperationalError):
+            _SqliteMdbOps(conn).delete_layer("bid.mdb", "1")
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidLayers").fetchall(), [(1,), (2,)]
+        )
+
+    def test_bid_layer_delete_unknown_layer_is_a_missing_owner_error(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0)])
+        with self.assertRaisesRegex(RuntimeError, "BidLayers has no row for UID 5"):
+            _SqliteMdbOps(conn).delete_layer("bid.mdb", "5")
+        self.assertEqual(_layer_rows(conn, "UID"), [(1,)])
+
+    def test_bid_layer_delete_survives_a_failed_reference_clear_with_a_warning(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
+        conn.execute("CREATE TABLE BidTexts (UID INTEGER, BidLayerUID INTEGER)")
+        conn.execute(
+            "CREATE TRIGGER block_clear BEFORE UPDATE ON BidTexts "
+            "BEGIN SELECT RAISE(ABORT, 'clear blocked'); END"
+        )
+        conn.execute("CREATE TABLE BidComments (UID INTEGER, BidLayerUID INTEGER)")
+        conn.execute("INSERT INTO BidTexts VALUES (5, 1)")
+        conn.execute("INSERT INTO BidComments VALUES (6, 1)")
+        with self.assertLogs("test", "WARNING") as logs:
+            self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "1"))
+        self.assertEqual(len(logs.records), 1)
+        message = logs.records[0].getMessage()
+        self.assertIn("BidTexts", message)
+        self.assertIn("layer 1", message)
+        self.assertIn("clear blocked", message)
+        self.assertEqual(
+            conn.execute("SELECT BidLayerUID FROM BidTexts").fetchall(), [(1,)]
+        )
+        self.assertEqual(
+            conn.execute("SELECT BidLayerUID FROM BidComments").fetchall(), [(None,)]
+        )
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(2, 1)])
+
+    def test_bid_layer_delete_reraises_a_failed_clear_when_the_error_is_fatal(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
+        conn.execute("CREATE TABLE BidTexts (UID INTEGER, BidLayerUID INTEGER)")
+        conn.execute(
+            "CREATE TRIGGER block_clear BEFORE UPDATE ON BidTexts "
+            "BEGIN SELECT RAISE(ABORT, 'clear blocked'); END"
+        )
+        conn.execute("INSERT INTO BidTexts VALUES (5, 1)")
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "clear blocked"):
+            _RaisingMutationErrorOps(conn).delete_layer("bid.mdb", "1")
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, 2)])
+
+    def test_bid_layer_delete_without_template_columns_deletes_the_layer(self):
+        conn = _layer_db(
+            [(1, 7, "A", 1), (2, 7, "B", 2)],
+            columns="UID INTEGER, BidUID INTEGER, Name TEXT, Sequence INTEGER",
+        )
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "1"))
+        self.assertEqual(
+            conn.execute("SELECT UID, Sequence FROM BidLayers").fetchall(), [(2, 1)]
+        )
+
+    def test_bid_layer_delete_without_a_sequence_column_leaves_other_rows_alone(self):
+        conn = _layer_db(
+            [(1, 7, "A", 0, 0), (2, 7, "B", 0, 0)],
+            columns="UID INTEGER, BidUID INTEGER, Name TEXT, IsTemplate INTEGER, "
+            "IsLocked INTEGER",
+        )
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "1"))
+        self.assertEqual(
+            conn.execute("SELECT UID, Name FROM BidLayers").fetchall(), [(2, "B")]
+        )
+
+    def test_bid_layer_delete_does_not_renumber_when_the_layer_has_no_sequence(self):
+        conn = _layer_db(
+            [(1, 7, "A", -1, None, 0, 0), (2, 7, "B", -1, 1, 0, 0)]
+        )
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "1"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(2, 1)])
+
+    def test_bid_layer_delete_refuses_a_locked_layer(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, -1)])
+        self.assertIsFalse(_SqliteMdbOps(conn).delete_layer("bid.mdb", "1"))
+        self.assertEqual(_layer_rows(conn, "UID"), [(1,)])
+
+
+class LayerSwapSemanticsTests(_StrictTestCase):
+    def test_default_layer_swap_exchanges_template_sequences_only(self):
+        conn = _layer_db(
+            [
+                (1, None, "T1", -1, 1, -1, -1),
+                (2, None, "T2", -1, 2, -1, -1),
+                (3, None, "T3", -1, 3, -1, -1),
+                (4, 7, "Bid layer", -1, 1, 0, 0),
+            ]
+        )
+        self.assertIsTrue(
+            _SqliteMdbOps(conn).swap_default_layer_sequence("bid.mdb", "1", "3")
+        )
+        self.assertEqual(
+            _layer_rows(conn, "UID, Sequence"), [(1, 3), (2, 2), (3, 1), (4, 1)]
+        )
+
+    def test_default_layer_swap_refuses_a_pair_that_includes_a_bid_layer(self):
+        conn = _layer_db(
+            [(1, None, "T1", -1, 1, -1, -1), (4, 7, "Bid layer", -1, 2, 0, 0)]
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertIsFalse(ops.swap_default_layer_sequence("bid.mdb", "1", "4"))
+        self.assertIsFalse(ops.swap_default_layer_sequence("bid.mdb", "1", "99"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (4, 2)])
+
+    def test_default_layer_swap_refuses_a_pair_with_an_unset_sequence(self):
+        conn = _layer_db(
+            [(1, None, "T1", -1, 1, -1, -1), (2, None, "T2", -1, None, -1, -1)]
+        )
+        self.assertIsFalse(
+            _SqliteMdbOps(conn).swap_default_layer_sequence("bid.mdb", "1", "2")
+        )
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, None)])
+
+    def test_default_layer_swap_rejects_a_duplicated_physical_uid(self):
+        conn = _layer_db(
+            [
+                (1, None, "T1", -1, 1, -1, -1),
+                (1, None, "T1b", -1, 5, -1, -1),
+                (2, None, "T2", -1, 2, -1, -1),
+            ]
+        )
+        with self.assertRaisesRegex(RuntimeError, "BidLayers contains duplicate UID 1"):
+            _SqliteMdbOps(conn).swap_default_layer_sequence("bid.mdb", "1", "2")
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (1, 5), (2, 2)])
+
+    def test_bid_layer_swap_refuses_a_pair_with_an_unset_sequence(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, None, 0, 0)])
+        self.assertIsFalse(_SqliteMdbOps(conn).swap_layer_sequence("bid.mdb", "1", "2"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, None)])
+
+    def test_swapping_a_bid_layer_with_itself_is_refused_without_writing(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
+        self.assertIsFalse(_SqliteMdbOps(conn).swap_layer_sequence("bid.mdb", "1", "1"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, 2)])
+
+    def test_bid_layer_swap_of_a_missing_layer_is_a_missing_owner_error(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0)])
+        with self.assertRaisesRegex(RuntimeError, "BidLayers has no row for UID 9"):
+            _SqliteMdbOps(conn).swap_layer_sequence("bid.mdb", "1", "9")
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1)])
+
+
+class BulkLayerVisibilitySemanticsTests(_StrictTestCase):
+    def test_uncaptured_bulk_visibility_without_template_columns_only_touches_the_bid(
+        self,
+    ):
+        conn = _layer_db(
+            [(1, 7, -1), (2, None, -1), (3, 8, -1)],
+            columns="UID INTEGER, BidUID INTEGER, Show INTEGER",
+        )
+        self.assertIsTrue(
+            _SqliteDuplicateOps(conn).update_all_layers_show("bid.mdb", "7", False)
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, 0), (2, -1), (3, -1)],
+        )
+
+    def test_captured_bulk_visibility_without_template_columns_rejects_shared_layers(
+        self,
+    ):
+        conn = _layer_db(
+            [(1, 7, -1), (2, None, -1)],
+            columns="UID INTEGER, BidUID INTEGER, Show INTEGER",
+        )
+        self.assertIsFalse(
+            _SqliteDuplicateOps(conn).update_all_layers_show(
+                "bid.mdb", "7", False, ["1", "2"]
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, -1), (2, -1)],
+        )
+
+    def test_captured_bulk_visibility_shows_layers_and_repeats_are_ignored(self):
+        conn = _layer_db(
+            [
+                (1, 7, "A", 0, 1, 0, 0),
+                (2, 7, "B", 0, 2, 0, 0),
+                (3, 7, "C", 0, 3, 0, 0),
+            ]
+        )
+        self.assertIsTrue(
+            _SqliteDuplicateOps(conn).update_all_layers_show(
+                "bid.mdb", "7", True, ["1", "1", "02", "2"]
+            )
+        )
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(1, -1), (2, -1), (3, 0)])
+
+    def test_an_empty_capture_is_a_validated_no_op_for_an_existing_bid(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0)])
+        ops = _SqliteDuplicateOps(conn)
+        self.assertIsTrue(ops.update_all_layers_show("bid.mdb", "7", False, []))
+        self.assertEqual(_layer_rows(conn, "UID, Show"), [(1, -1)])
+        with self.assertRaisesRegex(RuntimeError, "Bids has no row for UID 99"):
+            ops.update_all_layers_show("bid.mdb", "99", False, [])
+        with self.assertRaisesRegex(RuntimeError, "Bids has no row for UID 99"):
+            ops.update_all_layers_show("bid.mdb", "99", False)
+
+    def test_a_capture_of_exactly_one_chunk_is_validated_and_written_in_one_pass(self):
+        size = BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE
+        conn = _layer_db([(uid, 7, "L", -1, uid, 0, 0) for uid in range(1, size + 3)])
+        ops = _ParameterLimitedSqliteOps(conn, max_parameters=size + 2)
+        self.assertIsTrue(
+            ops.update_all_layers_show(
+                "bid.mdb", "7", False, [str(uid) for uid in range(1, size + 1)]
+            )
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID FROM BidLayers WHERE Show = 0 ORDER BY UID"
+            ).fetchall(),
+            [(uid,) for uid in range(1, size + 1)],
+        )
+
+    def test_a_capture_one_over_a_chunk_spills_exactly_one_uid_into_a_second_chunk(
+        self,
+    ):
+        size = BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE
+        conn = _layer_db([(uid, 7, "L", -1, uid, 0, 0) for uid in range(1, size + 3)])
+        ops = _ParameterLimitedSqliteOps(conn, max_parameters=size + 2)
+        self.assertIsTrue(
+            ops.update_all_layers_show(
+                "bid.mdb", "7", False, [str(uid) for uid in range(1, size + 2)]
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidLayers WHERE Show = 0").fetchone()[0],
+            size + 1,
+        )
+
+    def test_an_update_that_affects_a_different_count_than_captured_is_an_error(self):
+        operations = _LayerOperations()
+        operations.cursor.forced_update_rowcount = 3
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"bulk Layer visibility update affected 3 of 2 captured Layers in a "
+            r"2-Layer operation",
+        ):
+            operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
+
+    def test_a_zero_affected_count_is_rejected_not_treated_as_unknown(self):
+        operations = _LayerOperations()
+        operations.cursor.forced_update_rowcount = 0
+        with self.assertRaisesRegex(RuntimeError, "affected 0 of 2 captured Layers"):
+            operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
+
+    def test_unknown_count_verification_checks_the_written_value_and_scope(self):
+        operations = _LayerOperations()
+        operations.cursor.forced_update_rowcount = -1
+        self.assertIsTrue(
+            operations.update_all_layers_show("sql-db", "7", True, ["10", "11"])
+        )
+        verification = [
+            execution
+            for execution in operations.cursor.executions
+            if execution[0].startswith("SELECT [UID] FROM [BidLayers]")
+            and "[Show] = ?" in execution[0]
+        ]
+        self.assertEqual(
+            verification,
+            [
+                (
+                    "SELECT [UID] FROM [BidLayers] WHERE [UID] IN (?, ?) AND "
+                    "[Show] = ? AND ([BidUID] = ? OR ([IsTemplate] <> 0 AND "
+                    "[IsLocked] <> 0))",
+                    (10, 11, -1, 7),
+                )
+            ],
+        )
+
+    def test_unknown_count_verification_reports_a_wrong_uid_set_of_the_right_size(
+        self,
+    ):
+        operations = _LayerOperations()
+        operations.cursor.forced_update_rowcount = -1
+        operations.cursor.forced_postupdate_uids = (10, 12)
+        with self.assertRaisesRegex(
+            RuntimeError, "could verify only 2 of 2 captured Layers"
+        ):
+            operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
+
+    def test_a_preflight_that_returns_a_wrong_uid_set_of_the_right_size_is_refused(
+        self,
+    ):
+        operations = _LayerOperations()
+        operations.cursor.forced_preflight_uids = (10, 12)
+        self.assertIsFalse(
+            operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
+        )
+        self.assertIsFalse(
+            any(
+                sql.startswith("UPDATE [BidLayers] SET [Show]")
+                for sql, _parameters in operations.cursor.executions
+            )
+        )
+
+    def test_a_preflight_that_returns_too_few_uids_is_refused(self):
+        operations = _LayerOperations()
+        operations.cursor.forced_preflight_uids = (10,)
+        self.assertIsFalse(
+            operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
+        )
+
+
+class _RecordingSchema(_SqliteSchema):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.skips = []
+
+    def log_optional_write_skip(self, table, column, operation):
+        self.skips.append((table, column, operation))
+
+
+class _InsertRecordingOps(_SqliteDuplicateOps):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self._schema_ref = _RecordingSchema(connection)
+        self.inserts = []
+
+    def _execute_insert_values(self, cursor, schema, table, values, required, operation):
+        self.inserts.append((table, tuple(required), operation))
+        super()._execute_insert_values(
+            cursor, schema, table, values, required, operation
+        )
+
+
+class _SqlLoggingCursor(_SqliteCursorWrapper):
+    def __init__(self, connection, log):
+        super().__init__(connection)
+        self._log = log
+
+    def execute(self, query, *params):
+        self._log.append((" ".join(query.split()), params))
+        return super().execute(query, *params)
+
+
+class _SqlLoggingConnection(_SqliteConnectionWrapper):
+    def __init__(self, connection, log):
+        super().__init__(connection)
+        self._log = log
+
+    def cursor(self):
+        return _SqlLoggingCursor(self._connection, self._log)
+
+
+class _SqlLoggingOps(_SqliteDuplicateOps):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.sql = []
+
+    def _connection(self, _db_path):
+        return _SqlLoggingConnection(self._connection_ref, self.sql)
+
+    def statements(self, prefix):
+        return [item for item in self.sql if item[0].startswith(prefix)]
+
+
+class _NoCountCursor:
+    """SQL Server style cursor: UPDATE reports rowcount -1, preflights find rows."""
+
+    rowcount = -1
+
+    def __init__(self, verify_row):
+        self._verify_row = verify_row
+        self.executions = []
+        self._last = ""
+
+    def execute(self, sql, *parameters):
+        self._last = " ".join(sql.split())
+        self.executions.append((self._last, parameters))
+
+    def fetchall(self):
+        return [(parameter,) for parameter in self.executions[-1][1]]
+
+    def fetchone(self):
+        return self._verify_row
+
+
+class _NoCountOps(LayerOperationsMixin):
+    def __init__(self, verify_row):
+        self.cursor = _NoCountCursor(verify_row)
+
+    @contextmanager
+    def _connection(self, _db_path):
+        yield _Connection(self.cursor)
+
+    def _schema(self, _connection):
+        return _Schema()
+
+    def _require_write_columns(self, schema, table, columns):
+        pass
+
+
+_FULL_LAYER_FIXTURE = [
+    (1, 7, "A", -1, 1, 0, 0),
+    (2, 7, "B", -1, 2, 0, 0),
+    (30, None, "T1", -1, 1, -1, -1),
+    (31, None, "T2", -1, 2, -1, -1),
+]
+_ALL_LAYER_COLUMN_NAMES = (
+    "UID",
+    "BidUID",
+    "Name",
+    "Show",
+    "Sequence",
+    "IsTemplate",
+    "IsLocked",
+)
+# (operation, call, required BidLayers columns)
+_LAYER_OPERATION_CONTRACTS = (
+    ("update_layer_show", lambda o: o.update_layer_show("db", "1", True), ("UID", "Show")),
+    (
+        "update_default_layer_show",
+        lambda o: o.update_default_layer_show("db", "30", True),
+        ("UID", "Show", "IsTemplate"),
+    ),
+    (
+        "insert_layer",
+        lambda o: o.insert_layer("db", "7", "N", 1),
+        ("UID", "BidUID", "Name"),
+    ),
+    (
+        "insert_default_layer",
+        lambda o: o.insert_default_layer("db", "N", 1),
+        ("UID", "Name", "IsTemplate"),
+    ),
+    ("delete_layer", lambda o: o.delete_layer("db", "1"), ("UID",)),
+    (
+        "delete_default_layer",
+        lambda o: o.delete_default_layer("db", "30"),
+        ("UID", "IsTemplate"),
+    ),
+    (
+        "update_all_layers_show",
+        lambda o: o.update_all_layers_show("db", "7", False),
+        ("BidUID", "Show"),
+    ),
+    (
+        "update_all_default_layers_show",
+        lambda o: o.update_all_default_layers_show("db", False),
+        ("Show", "IsTemplate"),
+    ),
+    ("update_layer_name", lambda o: o.update_layer_name("db", "1", "X"), ("UID", "Name")),
+    (
+        "update_default_layer_name",
+        lambda o: o.update_default_layer_name("db", "30", "X"),
+        ("UID", "Name", "IsTemplate"),
+    ),
+    (
+        "swap_layer_sequence",
+        lambda o: o.swap_layer_sequence("db", "1", "2"),
+        ("UID", "Sequence"),
+    ),
+    (
+        "swap_default_layer_sequence",
+        lambda o: o.swap_default_layer_sequence("db", "30", "31"),
+        ("UID", "Sequence", "IsTemplate"),
+    ),
+)
+
+
+class LayerWriteColumnContractTests(_StrictTestCase):
+    def test_every_operation_succeeds_when_its_declared_columns_exist(self):
+        for name, call, _required in _LAYER_OPERATION_CONTRACTS:
+            with self.subTest(operation=name):
+                conn = _layer_db(_FULL_LAYER_FIXTURE)
+                self.assertIsNotNone(call(RealContractOps(conn)))
+
+    def test_every_operation_refuses_to_start_without_each_declared_column(self):
+        for name, call, required in _LAYER_OPERATION_CONTRACTS:
+            for dropped in required:
+                with self.subTest(operation=name, missing=dropped):
+                    keep = [c for c in _ALL_LAYER_COLUMN_NAMES if c != dropped]
+                    conn = sqlite3.connect(":memory:")
+                    conn.execute("CREATE TABLE Bids (UID INTEGER)")
+                    conn.execute("INSERT INTO Bids VALUES (7)")
+                    conn.execute(f"CREATE TABLE BidLayers ({', '.join(keep)})")
+                    marks = ", ".join("?" for _c in keep)
+                    for row in _FULL_LAYER_FIXTURE:
+                        values = [
+                            v
+                            for c, v in zip(_ALL_LAYER_COLUMN_NAMES, row)
+                            if c != dropped
+                        ]
+                        conn.execute(f"INSERT INTO BidLayers VALUES ({marks})", values)
+                    before = conn.execute("SELECT * FROM BidLayers").fetchall()
+                    with self.assertRaisesRegex(
+                        RuntimeError, f"Missing BidLayers.{dropped}$"
+                    ):
+                        call(RealContractOps(conn))
+                    self.assertEqual(
+                        conn.execute("SELECT * FROM BidLayers").fetchall(), before
+                    )
+
+
+class LayerInsertContractTests(_StrictTestCase):
+    def test_bid_layer_insert_declares_its_required_columns_and_operation_name(self):
+        conn = _layer_db(_FULL_LAYER_FIXTURE)
+        ops = _InsertRecordingOps(conn)
+        ops.insert_layer("db", "7", "N", 1)
+        self.assertEqual(
+            ops.inserts,
+            [("BidLayers", ("UID", "BidUID", "Name"), "insert_layer")],
+        )
+        self.assertEqual(ops._schema_ref.skips, [])
+
+    def test_default_layer_insert_declares_its_required_columns_and_operation_name(
+        self,
+    ):
+        conn = _layer_db(_FULL_LAYER_FIXTURE)
+        ops = _InsertRecordingOps(conn)
+        ops.insert_default_layer("db", "N", 1)
+        self.assertEqual(
+            ops.inserts,
+            [("BidLayers", ("UID", "Name", "IsTemplate"), "insert_default_layer")],
+        )
+        self.assertEqual(ops._schema_ref.skips, [])
+
+    def test_inserts_without_a_sequence_column_report_the_skipped_renumbering(self):
+        columns = "UID INTEGER, BidUID INTEGER, Name TEXT, IsTemplate INTEGER"
+        conn = _layer_db([(1, 7, "A", 0)], columns=columns)
+        ops = _InsertRecordingOps(conn)
+        ops.insert_layer("db", "7", "N", 1)
+        ops.insert_default_layer("db", "D", 1)
+        self.assertEqual(
+            ops._schema_ref.skips,
+            [
+                ("BidLayers", "Sequence", "insert_layer"),
+                ("BidLayers", "Sequence", "insert_default_layer"),
+            ],
+        )
+
+
+class LayerSqlContractTests(_StrictTestCase):
+    def test_bid_layer_delete_selects_the_identity_and_ordering_of_an_unlocked_layer(
+        self,
+    ):
+        conn = _layer_db(_FULL_LAYER_FIXTURE)
+        ops = _SqlLoggingOps(conn)
+        self.assertIs(ops.delete_layer("db", "1"), True)
+        self.assertEqual(
+            ops.statements("SELECT [UID], [Sequence]"),
+            [
+                (
+                    "SELECT [UID], [Sequence], [BidUID] FROM [BidLayers] WHERE "
+                    "[UID] = ? AND [IsTemplate] = 0 AND [IsLocked] = 0",
+                    (1,),
+                )
+            ],
+        )
+        self.assertEqual(
+            ops.statements("UPDATE [BidLayers] SET [Sequence]"),
+            [
+                (
+                    "UPDATE [BidLayers] SET [Sequence] = [Sequence] - 1 WHERE "
+                    "[BidUID] = ? AND [Sequence] > ?",
+                    (7, 1),
+                )
+            ],
+        )
+
+    def test_default_layer_delete_selects_a_template_layer_and_renumbers_templates(
+        self,
+    ):
+        conn = _layer_db(_FULL_LAYER_FIXTURE)
+        ops = _SqlLoggingOps(conn)
+        self.assertIs(ops.delete_default_layer("db", "30"), True)
+        self.assertEqual(
+            ops.statements("SELECT [UID], [Sequence]"),
+            [
+                (
+                    "SELECT [UID], [Sequence] FROM [BidLayers] WHERE [UID] = ? AND "
+                    "[IsTemplate] <> 0",
+                    (30,),
+                )
+            ],
+        )
+        self.assertEqual(
+            ops.statements("UPDATE [BidLayers] SET [Sequence]"),
+            [
+                (
+                    "UPDATE [BidLayers] SET [Sequence] = [Sequence] - 1 WHERE "
+                    "[Sequence] > ? AND [IsTemplate] <> 0",
+                    (1,),
+                )
+            ],
+        )
+
+    def test_a_deleted_layer_without_a_sequence_value_issues_no_renumbering(self):
+        for delete, uid in (("delete_layer", "1"), ("delete_default_layer", "30")):
+            with self.subTest(delete=delete):
+                conn = _layer_db(
+                    [
+                        (1, 7, "A", -1, None, 0, 0),
+                        (2, 7, "B", -1, 5, 0, 0),
+                        (30, None, "T1", -1, None, -1, -1),
+                        (31, None, "T2", -1, 5, -1, -1),
+                    ]
+                )
+                ops = _SqlLoggingOps(conn)
+                self.assertIs(getattr(ops, delete)("db", uid), True)
+                self.assertEqual(
+                    ops.statements("UPDATE [BidLayers] SET [Sequence]"), []
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT Sequence FROM BidLayers WHERE UID IN (2, 31) "
+                        "ORDER BY UID"
+                    ).fetchall(),
+                    [(5,), (5,)],
+                )
+
+    def test_bid_layer_delete_without_a_sequence_column_issues_no_renumbering(self):
+        columns = "UID INTEGER, BidUID INTEGER, IsTemplate INTEGER, IsLocked INTEGER"
+        conn = _layer_db([(1, 7, 0, 0), (2, 7, 0, 0)], columns=columns)
+        ops = _SqlLoggingOps(conn)
+        self.assertIs(ops.delete_layer("db", "1"), True)
+        self.assertEqual(
+            ops.statements("SELECT [UID]")[-1][0],
+            "SELECT [UID], NULL AS [Sequence], [BidUID] FROM [BidLayers] WHERE "
+            "[UID] = ? AND [IsTemplate] = 0 AND [IsLocked] = 0",
+        )
+        self.assertEqual(ops.statements("UPDATE [BidLayers] SET [Sequence]"), [])
+
+    def test_default_layer_delete_without_a_sequence_column_selects_a_null_sequence(
+        self,
+    ):
+        columns = "UID INTEGER, IsTemplate INTEGER"
+        conn = _layer_db([(30, -1), (31, -1)], columns=columns)
+        ops = _SqlLoggingOps(conn)
+        self.assertIs(ops.delete_default_layer("db", "30"), True)
+        self.assertEqual(
+            ops.statements("SELECT [UID], NULL")[-1],
+            (
+                "SELECT [UID], NULL AS [Sequence] FROM [BidLayers] WHERE "
+                "[UID] = ? AND [IsTemplate] <> 0",
+                (30,),
+            ),
+        )
+
+
+class DefaultLayerNoCountFallbackTests(_StrictTestCase):
+    def test_show_update_with_an_unknown_rowcount_verifies_the_show_value(self):
+        ops = _NoCountOps(("row",))
+        self.assertIs(ops.update_default_layer_show("db", "30", True), True)
+        self.assertEqual(
+            ops.cursor.executions[-1],
+            (
+                "SELECT [UID] FROM [BidLayers] WHERE [UID] = ? AND "
+                "[IsTemplate] <> 0 AND [Show] = ?",
+                (30, -1),
+            ),
+        )
+
+    def test_name_update_with_an_unknown_rowcount_verifies_the_name(self):
+        ops = _NoCountOps(("row",))
+        self.assertIs(ops.update_default_layer_name("db", "30", "Name"), True)
+        self.assertEqual(
+            ops.cursor.executions[-1],
+            (
+                "SELECT [UID] FROM [BidLayers] WHERE [UID] = ? AND "
+                "[IsTemplate] <> 0 AND [Name] = ?",
+                (30, "Name"),
+            ),
+        )
+
+    def test_unverified_unknown_rowcount_updates_report_no_match(self):
+        self.assertIs(
+            _NoCountOps(None).update_default_layer_show("db", "30", False), False
+        )
+        self.assertIs(
+            _NoCountOps(None).update_default_layer_name("db", "30", "N"), False
+        )
+
+
+class BulkVisibilityPartialTemplateSchemaTests(_StrictTestCase):
+    def test_a_schema_with_only_one_template_marker_never_widens_the_scope(self):
+        conn = _layer_db(
+            [(1, 7, -1, 0), (2, None, -1, -1), (3, 8, -1, 0)],
+            columns="UID INTEGER, BidUID INTEGER, Show INTEGER, IsTemplate INTEGER",
+        )
+        ops = _SqlLoggingOps(conn)
+        self.assertIs(ops.update_all_layers_show("db", "7", False), True)
+        self.assertEqual(
+            ops.statements("UPDATE [BidLayers] SET [Show]"),
+            [("UPDATE [BidLayers] SET [Show] = ? WHERE [BidUID] = ?", (0, 7))],
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, 0), (2, -1), (3, -1)],
+        )
+        conn = _layer_db(
+            [(1, 7, -1, 0), (2, None, -1, -1)],
+            columns="UID INTEGER, BidUID INTEGER, Show INTEGER, IsLocked INTEGER",
+        )
+        self.assertIs(
+            _SqlLoggingOps(conn).update_all_layers_show("db", "7", False, ["1"]), True
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, 0), (2, -1)],
+        )
+
+
+class _NumericTextRejectingCursor(_SqliteCursorWrapper):
+    """Access rejects text criteria against Long columns; sqlite silently coerces them."""
+
+    def execute(self, query, *params):
+        for parameter in params:
+            if isinstance(parameter, str) and parameter.strip().lstrip("-").isdigit():
+                raise AssertionError(f"numeric text parameter {parameter!r} in {query}")
+        return super().execute(query, *params)
+
+
+class _NumericTextRejectingConnection(_SqliteConnectionWrapper):
+    def cursor(self):
+        return _NumericTextRejectingCursor(self._connection)
+
+
+class _StrictParameterOps(_SqliteDuplicateOps):
+    def _connection(self, _db_path):
+        return _NumericTextRejectingConnection(self._connection_ref)
+
+
+class LayerParameterTypingTests(_StrictTestCase):
+    """The uid/bid arguments arrive as text; every operation must bind them as integers."""
+
+    def _db(self):
+        conn = _layer_db(
+            [
+                (1, 7, "A", -1, 1, 0, 0),
+                (2, 7, "B", -1, 2, 0, 0),
+                (3, 7, "C", -1, 3, 0, 0),
+                (30, None, "T1", -1, 1, -1, -1),
+                (31, None, "T2", -1, 2, -1, -1),
+                (32, None, "T3", -1, 3, -1, -1),
+            ]
+        )
+        conn.execute("CREATE TABLE BidComments (UID INTEGER, BidLayerUID INTEGER)")
+        conn.execute("INSERT INTO BidComments VALUES (1, 2)")
+        return conn
+
+    def test_every_operation_binds_text_identifiers_as_integers(self):
+        ops = _StrictParameterOps(self._db())
+        calls = (
+            lambda: ops.update_layer_show("d", "1", True),
+            lambda: ops.update_default_layer_show("d", "30", True),
+            lambda: ops.insert_layer("d", "7", "N", 1),
+            lambda: ops.insert_default_layer("d", "N", 1),
+            lambda: ops.delete_layer("d", "2"),
+            lambda: ops.delete_default_layer("d", "32"),
+            lambda: ops.update_all_layers_show("d", "7", False),
+            lambda: ops.update_all_layers_show("d", "7", False, ["1", "3"]),
+            lambda: ops.update_all_default_layers_show("d", False),
+            lambda: ops.update_layer_name("d", "1", "X"),
+            lambda: ops.update_default_layer_name("d", "30", "X"),
+            lambda: ops.swap_layer_sequence("d", "1", "3"),
+            lambda: ops.swap_default_layer_sequence("d", "30", "31"),
+        )
+        for index, call in enumerate(calls):
+            with self.subTest(call=index):
+                self.assertIsNotNone(call())
+
+    def test_swap_default_layer_sequence_rejects_a_duplicated_uid_on_either_side(self):
+        for duplicate in ("30", "31"):
+            with self.subTest(duplicate=duplicate):
+                conn = self._db()
+                conn.execute(f"INSERT INTO BidLayers VALUES ({duplicate}, NULL, 'dup', -1, 9, -1, -1)")
+                before = _layer_rows(conn, "UID, Sequence")
+                with self.assertRaisesRegex(
+                    RuntimeError, f"BidLayers contains duplicate UID {duplicate}"
+                ):
+                    _SqliteMdbOps(conn).swap_default_layer_sequence("bid.mdb", "30", "31")
+                self.assertEqual(_layer_rows(conn, "UID, Sequence"), before)
+
+    def test_swap_layer_sequence_rejects_a_duplicated_uid_on_either_side(self):
+        for duplicate in ("1", "3"):
+            with self.subTest(duplicate=duplicate):
+                conn = self._db()
+                conn.execute(f"INSERT INTO BidLayers VALUES ({duplicate}, 7, 'dup', -1, 9, 0, 0)")
+                before = _layer_rows(conn, "UID, Sequence")
+                with self.assertRaisesRegex(
+                    RuntimeError, f"BidLayers contains duplicate UID {duplicate}"
+                ):
+                    _SqliteMdbOps(conn).swap_layer_sequence("bid.mdb", "1", "3")
+                self.assertEqual(_layer_rows(conn, "UID, Sequence"), before)
+
+
+class LayerTextRowTests(_StrictTestCase):
+    """Drivers may report identifier columns as text; comparisons must still hold."""
+
+    def test_captured_visibility_accepts_identifiers_reported_as_text(self):
+        operations = _LayerOperations()
+        operations.cursor.forced_preflight_uids = ("10", "11")
+        self.assertIsTrue(
+            operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
+        )
+        operations = _LayerOperations()
+        operations.cursor.forced_update_rowcount = -1
+        operations.cursor.forced_preflight_uids = ("10", "11")
+        operations.cursor.forced_postupdate_uids = ("10", "11")
+        self.assertIsTrue(
+            operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
         )

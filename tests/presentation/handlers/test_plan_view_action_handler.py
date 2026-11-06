@@ -19746,3 +19746,306 @@ class PlanViewActionHandlerNoSelectedBidFlushTests(_PlanViewActionHandlerFixture
                     [None, None],
                 )
                 self.assertEqual(undo.forward_mutations, [])
+
+
+class PlanViewActionHandlerA3GapTests(_PlanViewActionHandlerFixture):
+    """Second-pass (A3) tests for survivors of a full plan_view_action_handler.py
+    mutation sweep: loop `continue`s, lease bookkeeping seeded with a stale request
+    id, the preparation-failure unwind and the committed-completion marker."""
+
+    def _data(self, *uids):
+        data = FakeProjectData()
+        for uid in uids:
+            data.takeoffs[uid] = Takeoff(
+                uid=uid,
+                condition_uid="c1",
+                page_uid="p1",
+                position=[0.0, 0.0, 10.0, 0.0],
+            )
+        return data
+
+    def _handler(self, data, write=None):
+        return self._paste_handler(
+            plan_view=FakePlanView(data), write=write or FakeWriteService(), data=data
+        )
+
+    def test_plan_identities_keep_scanning_after_a_takeoff(self):
+        data = self._data("t1")
+        handler = self._handler(data)
+        handler._plan_view.annotations["a1"] = BidAnnotation(
+            uid="a1", annotation_type="text", page_uid="p1"
+        )
+        # a list keeps the takeoff first, so a `break` would drop the annotation
+        takeoffs, annotations = handler._plan_identities_for_keys(["t1", "a1", "gone"])
+        self.assertEqual(takeoffs, {"t1"})
+        self.assertEqual(annotations, {("a1", "text")})
+
+    def test_named_view_choices_skip_other_annotations_and_continue(self):
+        data = self._data()
+        data.annotations = [
+            _rect_annotation("r1"),
+            _named_view_annotation("nv1", "First"),
+            _rect_annotation("r2"),
+            _named_view_annotation("nv2", "Second"),
+        ]
+        data.page_names = {"p1": "Page One"}
+        handler = self._handler(data)
+        self.assertEqual(
+            [(choice[0], choice[3]) for choice in handler._collect_named_view_choices()],
+            [("nv1", "First"), ("nv2", "Second")],
+        )
+
+    def test_reassign_condition_and_curve_skip_unknown_takeoffs_listed_first(self):
+        data = self._data("t1", "t2")
+        write = FakeWriteService()
+        handler = self._handler(data, write)
+        handler.on_reassign_condition(["missing", "t1", "t2"], "42")
+        self.assertEqual(write.condition_calls, [("bid.mdb", ["t1", "t2"], "42", False)])
+        handler.on_set_curved(["missing", "t1", "t2"], True)
+        self.assertEqual([call[1] for call in write.curve_calls], ["t1", "t2"])
+
+    def test_a_completion_only_counts_as_applied_when_it_committed_that_operation(self):
+        handler = self._handler(self._data())
+
+        def result(status, operation_id):
+            return QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=operation_id,
+                outcome_status=status,
+            )
+
+        operation_id = str(uuid.uuid4())
+        committed = result(MutationOutcomeStatus.COMMITTED, operation_id)
+        self.assertFalse(handler._sql_completion_was_applied(committed))
+        handler._mark_sql_completion_applied(committed)
+        self.assertTrue(handler._sql_completion_was_applied(committed))
+        self.assertFalse(
+            handler._sql_completion_was_applied(
+                result(MutationOutcomeStatus.COMMITTED, str(uuid.uuid4()))
+            )
+        )
+        self.assertFalse(
+            handler._sql_completion_was_applied(
+                result(MutationOutcomeStatus.CONFLICT, operation_id)
+            )
+        )
+        other = str(uuid.uuid4())
+        handler._mark_sql_completion_applied(result(MutationOutcomeStatus.CONFLICT, other))
+        self.assertNotIn(other, handler._completed_sql_mutation_ids)
+
+    def test_a_lease_loss_clears_the_pending_request_id(self):
+        handler, plan_view, write, data, handle = (
+            PlanViewActionHandlerGeometryWriteLeaseTests._handler(self)
+        )
+        handler._geometry_edit_lease_request_id = "pending-request"
+        handler.on_edit_lease_lost(
+            EditLeaseLoss(
+                database_id=handle.database_id,
+                draft_id=handle.draft_id,
+                runtime_generation=handle.runtime_generation,
+                operation_id=handle.operation_id,
+                owning_surface=handle.owning_surface,
+                resources=handle.resources,
+                reason="trust-lost",
+            )
+        )
+        self.assertEqual(handler._geometry_edit_lease_request_id, "")
+        self.assertIsNone(handler._geometry_edit_lease_handle)
+        self.assertEqual(handler._geometry_edit_lease_selection, set())
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+
+    def test_a_consumed_geometry_lease_clears_a_stale_request_id(self):
+        handler, plan_view, write, data, handle = (
+            PlanViewActionHandlerGeometryWriteLeaseTests._handler(self)
+        )
+        handler._geometry_edit_lease_request_id = "stale-request"
+        handler.on_positions_flushed([("t1", [0.0, 0.0], [5.0, 6.0])], [])
+        self.assertIs(write.queued_geometry[0][2]["edit_lease_handle"], handle)
+        self.assertEqual(handler._geometry_edit_lease_request_id, "")
+
+    def test_a_failure_while_preparing_a_sql_property_write_frees_the_plan_state(self):
+        data = self._data("t1")
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        bid = handler._ui_state.get_selected_bid_ref()
+
+        def explode():
+            raise RuntimeError("selection boom")
+
+        plan_view.begin_deferred_selection = explode
+        with self.assertRaisesRegex(RuntimeError, "selection boom"):
+            handler.prepare_sql_property_completion(
+                bid,
+                "takeoff_area",
+                [("t1", "a2")],
+                plan_uids={"t1"},
+                takeoff_uids={"t1"},
+            )
+        self.assertEqual(handler._pending_plan_takeoff_uids_by_bid.get(bid, set()), set())
+        self.assertEqual(handler._undo_svc.forward_mutations, [])
+
+    def test_the_preparation_unwind_runs_every_step_even_when_one_fails(self):
+        data = self._data("t1")
+        handler = self._handler(data)
+        bid = handler._ui_state.get_selected_bid_ref()
+        token = handler._undo_svc.begin_forward_mutation(bid)
+        original = handler._set_plan_items_pending
+
+        def failing(*args, **kwargs):
+            if args[3] is False:
+                raise RuntimeError("pending release failed")
+            return original(*args, **kwargs)
+
+        handler._set_plan_items_pending = failing
+        with self.assertLogs(
+            "ost_visualizer.presentation.handlers.plan_view_action_handler",
+            level="ERROR",
+        ) as logged:
+            handler._unwind_failed_preparation(bid, {"t1"}, {"t1"}, set(), token)
+        self.assertIn("Failed to release plan state", logged.output[0])
+        self.assertEqual(handler._undo_svc.forward_mutations, [])
+
+    def _scale_capture_handler(self, sql):
+        data = self._data("t1")
+        data.annotations = [
+            BidAnnotation(
+                uid="a1", annotation_type="text", page_uid="p1", position=[0.0, 0.0]
+            )
+        ]
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = sql
+        handler = self._handler(data, write)
+        handler._plan_view.annotation_key_map[("a1", "text")] = "a1"
+        captured = {"takeoffs": [], "annotations": []}
+        handler._capture_takeoff_scales = lambda positions: (
+            captured["takeoffs"].append(list(positions)) or {}
+        )
+        handler._capture_annotation_scales = lambda positions: (
+            captured["annotations"].append(list(positions)) or {}
+        )
+        return handler, captured
+
+    def test_history_scales_come_from_the_old_positions_else_the_new_ones(self):
+        for sql, missing in ((False, []), (True, None)):
+            with self.subTest(sql=sql):
+                handler, captured = self._scale_capture_handler(sql)
+                handler.on_positions_flushed(
+                    [("t1", missing, [5.0, 6.0])], [("a1", "text", missing, [1.0, 2.0])]
+                )
+                handler.on_positions_flushed(
+                    [("t1", [0.0, 0.0], [5.0, 6.0])],
+                    [("a1", "text", [3.0, 3.0], [1.0, 2.0])],
+                )
+                self.assertEqual(
+                    captured["takeoffs"], [[("t1", [5.0, 6.0])], [("t1", [0.0, 0.0])]]
+                )
+                self.assertEqual(
+                    captured["annotations"],
+                    [[("a1", "text", [1.0, 2.0])], [("a1", "text", [3.0, 3.0])]],
+                )
+
+    def test_group_rotation_scales_come_from_the_old_positions_else_the_new_ones(self):
+        for sql, missing in ((False, []), (True, None)):
+            with self.subTest(sql=sql):
+                handler, captured = self._scale_capture_handler(sql)
+                handler.on_group_rotation_flushed(
+                    [("t1", missing, [5.0, 6.0])],
+                    [("a1", "text", missing, [1.0, 2.0])],
+                    [("t1", 0.0, 90.0)],
+                )
+                handler.on_group_rotation_flushed(
+                    [("t1", [0.0, 0.0], [5.0, 6.0])],
+                    [("a1", "text", [3.0, 3.0], [1.0, 2.0])],
+                    [("t1", 0.0, 90.0)],
+                )
+                self.assertEqual(
+                    captured["takeoffs"], [[("t1", [5.0, 6.0])], [("t1", [0.0, 0.0])]]
+                )
+                self.assertEqual(
+                    captured["annotations"],
+                    [[("a1", "text", [1.0, 2.0])], [("a1", "text", [3.0, 3.0])]],
+                )
+
+    def test_reassigning_only_unknown_takeoffs_writes_nothing(self):
+        write = FakeWriteService()
+        handler = self._handler(self._data("t1"), write)
+        handler.on_reassign_condition(["missing"], "42")
+        handler.on_reassign_condition([], "42")
+        self.assertEqual(write.condition_calls, [])
+        handler.on_set_curved(["missing"], True)
+        self.assertEqual(write.curve_calls, [])
+
+    def test_selection_is_restored_without_a_revision_and_only_for_the_current_one(self):
+        data = self._data("t1")
+        handler = self._handler(data)
+        bid = handler._ui_state.get_selected_bid_ref()
+        plan_view = handler._plan_view
+        handler._restore_plan_selection_if_current(bid, ("p1",), {"t1"})
+        self.assertEqual(plan_view.selected, {"t1"})
+        plan_view.selected = set()
+        handler._restore_plan_selection_if_current(
+            bid, ("p1",), {"t1"}, selection_revision=plan_view.selection_revision
+        )
+        self.assertEqual(plan_view.selected, {"t1"})
+        plan_view.selected = set()
+        handler._restore_plan_selection_if_current(
+            bid, ("p1",), {"t1"}, selection_revision=plan_view.selection_revision + 1
+        )
+        self.assertEqual(plan_view.selected, set())
+        handler._restore_plan_selection_if_current(bid, ("p1",), set())
+        self.assertEqual(plan_view.selected, set())
+
+    def test_deleting_a_pending_placement_item_skips_operations_that_already_deleted_it(
+        self,
+    ):
+        data = self._data()
+        write = FakeWriteService()
+        handler = self._handler(data, write)
+
+        def spec():
+            return InsertTakeoffSpec(
+                condition_uid="c1",
+                page_uid="p1",
+                area_uid="0",
+                position=[0.0, 0.0, 1.0, 1.0],
+            )
+
+        def pending(uids, deleted=()):
+            return dataclasses.replace(
+                handler_module._PendingTakeoffPlacement(
+                    database_id="bid.mdb",
+                    bid_uid="7",
+                    pending_uids=tuple(uids),
+                    specs=tuple(spec() for _uid in uids),
+                    page_identities=(),
+                    page_scales={},
+                    selection_revision=0,
+                    tool_revision=0,
+                    runtime_generation=1,
+                ),
+                deleted_pending_uids=frozenset(deleted),
+            )
+
+        handler._pending_takeoff_placements = {
+            "op-1": pending(["x1"], deleted=["x1"]),
+            "op-2": pending(["x1", "x2"]),
+        }
+        removed = []
+        data.remove_takeoffs = lambda uids: removed.append(set(uids))
+        remaining = handler._request_pending_takeoff_deletions(["x1", "keep"])
+        self.assertEqual(remaining, ["keep"])
+        # op-1 had already deleted x1 (skipped), op-2 must still be processed
+        self.assertEqual(removed, [{"x1"}])
+        self.assertEqual(
+            handler._pending_takeoff_placements["op-1"].deleted_pending_uids,
+            frozenset({"x1"}),
+        )
+        self.assertEqual(
+            handler._pending_takeoff_placements["op-2"].deleted_pending_uids,
+            frozenset({"x1"}),
+        )
+        # op-2 still has x2 pending, so the whole operation is not cancelled
+        self.assertEqual(write.cancelled_mutations, [])

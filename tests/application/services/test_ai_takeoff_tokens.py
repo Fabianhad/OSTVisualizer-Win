@@ -146,6 +146,19 @@ class ProjectDataTokenReaderTests(unittest.TestCase):
         self.project.conditions["c2"] = Condition(uid="c2", name="Other")
         self.assertEqual(self.read(), before)
 
+    def test_no_open_bid_or_another_database_or_another_bid_reads_every_resource_closed(
+        self,
+    ):
+        wanted = set(self.RESOURCES)
+        self.project.bid_ref = None
+        self.assertEqual(self.read(), {name: "closed" for name in wanted})
+        self.project.bid_ref = BidRef("C:/jobs/other.mdb", "7")
+        self.assertEqual(self.read(), {name: "closed" for name in wanted})
+        self.project.bid_ref = BidRef("C:/jobs/a.mdb", "8")
+        self.assertEqual(self.read(), {name: "closed" for name in wanted})
+        self.project.bid_ref = BidRef("C:/jobs/a.mdb", "7")
+        self.assertNotIn("closed", set(self.read().values()))
+
     def test_another_open_bid_or_missing_objects_never_match(self):
         before = self.read()
         self.project.bid_ref = BidRef("C:/jobs/a.mdb", "8")

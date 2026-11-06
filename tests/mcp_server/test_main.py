@@ -121,5 +121,81 @@ class McpMainTests(unittest.TestCase):
         self.assertTrue((self.app_data_dir / "mcp_server.log").exists())
 
 
+class McpLoggingContractTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(McpMainTests.close_handlers)
+        self.app_data_dir = Path(self.tmp.name) / "nested" / "app_data"
+
+    def test_every_documented_level_is_accepted_and_mapped_in_either_case(self):
+        expected = {
+            "DEBUG": logging.DEBUG,
+            "INFO": logging.INFO,
+            "WARNING": logging.WARNING,
+            "ERROR": logging.ERROR,
+            "CRITICAL": logging.CRITICAL,
+        }
+        for name, level in expected.items():
+            for spelling in (name, name.lower()):
+                with self.subTest(level=spelling):
+                    self.assertEqual(_parse_args(["--log-level", name]).log_level, name)
+                    McpMainTests.close_handlers()
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        logger = _configure_logging(self.app_data_dir, spelling)
+                    self.assertEqual(logger.level, level)
+                    self.assertEqual({h.level for h in logger.handlers}, {level})
+
+    def test_the_log_folder_is_created_with_its_parents(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            _configure_logging(self.app_data_dir, "INFO")
+        self.assertTrue((self.app_data_dir / "mcp_server.log").exists())
+
+    def test_both_handlers_use_the_timestamped_level_name_message_format(self):
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            logger = _configure_logging(self.app_data_dir, "INFO")
+        logger.warning("recorded")
+        for handler in logger.handlers:
+            handler.flush()
+        pattern = (
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} "
+            r"WARNING ost_visualizer\.mcp: recorded$"
+        )
+        self.assertRegex(captured.getvalue().strip(), pattern)
+        file_text = (self.app_data_dir / "mcp_server.log").read_text(encoding="utf-8")
+        self.assertRegex(file_text.strip(), pattern)
+
+    def test_the_parser_describes_itself_and_its_only_option(self):
+        import os
+
+        stdout = io.StringIO()
+        with patch.dict(os.environ, {"COLUMNS": "300"}), contextlib.redirect_stdout(
+            stdout
+        ), self.assertRaises(SystemExit):
+            _parse_args(["--help"])
+        lines = [line.strip() for line in stdout.getvalue().splitlines()]
+        self.assertIn("Run the OST Visualizer read-only MCP stdio server.", lines)
+        self.assertIn("--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}", lines)
+        self.assertIn(
+            "Logging level. Logs go to stderr and the app data log file.", lines
+        )
+
+    def test_running_the_module_as_a_script_parses_its_arguments(self):
+        import subprocess
+
+        from tests.paths import REPO_ROOT
+
+        completed = subprocess.run(
+            [sys.executable, "-m", "ost_visualizer.mcp_server.main", "--help"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("--log-level", completed.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

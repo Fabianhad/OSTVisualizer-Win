@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import unittest
 from types import SimpleNamespace
 import pyodbc
@@ -18,6 +19,10 @@ from PySide6.QtWidgets import (
     QGraphicsPathItem,
     QGraphicsScene,
     QGraphicsTextItem,
+)
+from tests.helpers.mdb.operations import (
+    _SqliteConnectionWrapper,
+    _SqliteSchema,
 )
 from tests.integration.annotations.dimension_support import (
     _FakeConnection as _dimension_support__FakeConnection,
@@ -515,6 +520,46 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 schema,
             )
 
+    def test_failure_of_each_annotation_table_is_isolated_or_reraised_per_table(self):
+        rect = SimpleNamespace(
+            UID=13,
+            BidPageUID=3,
+            BidLayerUID=None,
+            Position=encode_position([1.0, 2.0, 13.0, 14.0]),
+            Color=255,
+            Width=2,
+        )
+        hotlink = SimpleNamespace(
+            UID=68459,
+            BidPageUID=133230,
+            BidPageViewUID=0,
+            BidLayerUID=None,
+            Color=255,
+            Position=encode_position([1.0, 2.0]),
+        )
+        rows_by_table = {"BidAnnotationRects": [rect], "BidHotLinks": [hotlink]}
+        schema = _dimension_support__annotation_reader_schema()
+        for table in sorted(ANNOTATION_TABLES):
+            with self.subTest(table=table):
+                annotations = _dimension_support__Reader()._parse_bid_annotations_for_bid(
+                    _RecordingConnection(rows_by_table, failing_table=table),
+                    "1",
+                    {},
+                    schema,
+                )
+                expected_uids = {"13", "68459"} - {
+                    {"BidAnnotationRects": "13", "BidHotLinks": "68459"}.get(table)
+                }
+                self.assertEqual({ann.uid for ann in annotations}, expected_uids)
+                with self.assertRaises(pyodbc.Error) as raised:
+                    _StrictReader()._parse_bid_annotations_for_bid(
+                        _RecordingConnection(rows_by_table, failing_table=table),
+                        "1",
+                        {},
+                        schema,
+                    )
+                self.assertIn(table, str(raised.exception))
+
     def test_rows_without_a_usable_position_are_not_loaded(self):
         def rect(uid, position):
             return SimpleNamespace(
@@ -840,3 +885,427 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertTrue(loaded.visible)
         self.assertEqual(loaded.page_uid, "133230")
         self.assertEqual(loaded.position, [1719.334, 283.375])
+
+
+_SQLITE_READER_DDL = {
+    "BidAnnotationClouds": "UID, BidUID, BidPageUID, BidLayerUID, Color, Position, Width",
+    "BidAnnotationOvals": "UID, BidUID, BidPageUID, BidLayerUID, Color, Position, Width",
+    "BidAnnotationPolygons": "UID, BidUID, BidPageUID, BidLayerUID, Color, Position, Width",
+    "BidAnnotationRects": "UID, BidUID, BidPageUID, BidLayerUID, Color, Position, Width",
+    "BidAnnoInk": "UID, BidUID, BidPageUID, Color, Position, Width",
+    "BidALines": (
+        "UID, BidUID, BidPageUID, BidTakeoffFromUID, BidTakeoffToUID, Position, "
+        "Color, Width"
+    ),
+    "BidDimensions": (
+        "UID, BidUID, BidPageUID, BidTakeoffFromUID, BidTakeoffToUID, Position, "
+        "FontName, FontColor, FontSize, FontBold, FontItalic, FontUnderline"
+    ),
+    "BidArrows": (
+        "UID, BidUID, BidPageUID, BidTakeoffFromUID, BidTakeoffToUID, Position, "
+        "Color, Width"
+    ),
+    "BidTexts": (
+        "UID, BidUID, BidPageUID, BidLayerUID, Name, FontName, FontColor, FontSize, "
+        "FontBold, FontItalic, FontUnderline, TextAlign, Position"
+    ),
+    "BidHighlights": "UID, BidUID, BidPageUID, BidLayerUID, Color, Position",
+    "BidNamedViews": "UID, BidUID, BidPageUID, Name, Color, Position",
+    "BidHotLinks": (
+        "UID, BidUID, BidPageUID, BidPageViewUID, BidLayerUID, Color, Position"
+    ),
+    "BidCallOuts": (
+        "UID, BidUID, BidPageUID, BidLayerUID, Name, FontName, FontColor, FontSize, "
+        "FontBold, FontItalic, FontUnderline, TextAlign, Position, Color, Width"
+    ),
+}
+
+
+class SqliteBackedAnnotationReaderTests(unittest.TestCase):
+    """Reads real sqlite tables that carry exactly the columns the reader selects.
+
+    A wrong table name, a selected column that does not exist, or a missing
+    ``BidUID`` filter changes what comes back, unlike the fake-cursor tests above.
+    """
+
+    LAYERS = {
+        "99": Layer(uid="99", name="Annotation", visible=False),
+        "50": Layer(uid="50", name="Custom", visible=True),
+    }
+
+    def _database(self):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        for table, columns in _SQLITE_READER_DDL.items():
+            typed_columns = ", ".join(
+                f"{column} INTEGER" if column.endswith("UID") else column
+                for column in columns.split(", ")
+            )
+            conn.execute(f"CREATE TABLE {table} ({typed_columns})")
+        return conn
+
+    @staticmethod
+    def _insert(conn, table, **values):
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _value in values)
+        conn.execute(
+            f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+            tuple(values.values()),
+        )
+
+    def _read(self, conn, bid_uid="1"):
+        annotations = _dimension_support__Reader()._parse_bid_annotations_for_bid(
+            _SqliteConnectionWrapper(conn),
+            bid_uid,
+            self.LAYERS,
+            _SqliteSchema(conn),
+        )
+        return {ann.uid: ann for ann in annotations}
+
+    def test_every_table_is_read_with_its_own_columns_and_only_for_the_requested_bid(
+        self,
+    ):
+        conn = self._database()
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        shape_tables = {
+            "BidAnnotationClouds": 101,
+            "BidAnnotationOvals": 102,
+            "BidAnnotationPolygons": 103,
+            "BidAnnotationRects": 104,
+        }
+        for table, uid in shape_tables.items():
+            self._insert(
+                conn,
+                table,
+                UID=uid,
+                BidUID=1,
+                BidPageUID=7,
+                BidLayerUID=50,
+                Color=0x00FF00,
+                Position=position,
+                Width=5,
+            )
+            self._insert(
+                conn,
+                table,
+                UID=uid + 800,
+                BidUID=2,
+                BidPageUID=7,
+                BidLayerUID=50,
+                Color=0,
+                Position=position,
+                Width=1,
+            )
+        self._insert(
+            conn,
+            "BidAnnoInk",
+            UID=105,
+            BidUID=1,
+            BidPageUID=7,
+            Color="#123456",
+            Position=position,
+            Width=4,
+        )
+        for table, uid in (("BidALines", 106), ("BidArrows", 108)):
+            self._insert(
+                conn,
+                table,
+                UID=uid,
+                BidUID=1,
+                BidPageUID=7,
+                BidTakeoffFromUID=11,
+                BidTakeoffToUID=12,
+                Position=position,
+                Color=0x0000FF,
+                Width=3,
+            )
+        self._insert(
+            conn,
+            "BidDimensions",
+            UID=107,
+            BidUID=1,
+            BidPageUID=7,
+            BidTakeoffFromUID=21,
+            BidTakeoffToUID=22,
+            Position=position,
+            FontName="Cambria",
+            FontColor=0xFF0000,
+            FontSize=14,
+            FontBold=1,
+            FontItalic=0,
+            FontUnderline=1,
+        )
+        for table, uid in (("BidTexts", 109), ("BidCallOuts", 110)):
+            extra = {"Color": 0x00FFFF, "Width": 6} if table == "BidCallOuts" else {}
+            self._insert(
+                conn,
+                table,
+                UID=uid,
+                BidUID=1,
+                BidPageUID=7,
+                BidLayerUID=50,
+                Name=b"Hello\r\nWorld\x00",
+                FontName="Cambria",
+                FontColor=0x0000FF,
+                FontSize=14,
+                FontBold=0,
+                FontItalic=1,
+                FontUnderline=0,
+                TextAlign=2,
+                Position=position,
+                **extra,
+            )
+        self._insert(
+            conn,
+            "BidHighlights",
+            UID=111,
+            BidUID=1,
+            BidPageUID=7,
+            BidLayerUID=50,
+            Color=0x00FFFF,
+            Position=position,
+        )
+        self._insert(
+            conn,
+            "BidNamedViews",
+            UID=112,
+            BidUID=1,
+            BidPageUID=7,
+            Name="  View A  ",
+            Color=0x00AA00,
+            Position=position,
+        )
+        self._insert(
+            conn,
+            "BidHotLinks",
+            UID=113,
+            BidUID=1,
+            BidPageUID=7,
+            BidPageViewUID=112,
+            BidLayerUID=50,
+            Color=0x0000FF,
+            Position=position,
+        )
+        by_uid = self._read(conn)
+        text_properties = {
+            "Text": "Hello\nWorld",
+            "FontColor": 0x0000FF,
+            "FontName": "Cambria",
+            "FontSize": 14,
+            "FontBold": False,
+            "FontItalic": True,
+            "FontUnderline": False,
+            "TextAlign": 2,
+        }
+        takeoff_properties = {"BidTakeoffFromUID": "11", "BidTakeoffToUID": "12"}
+        # uid -> (type, layer, visible, color, width, properties)
+        expected = {
+            "101": ("cloud", "50", True, "#00ff00", 5.0, {}),
+            "102": ("oval", "50", True, "#00ff00", 5.0, {}),
+            "103": ("polygon", "50", True, "#00ff00", 5.0, {}),
+            "104": ("rect", "50", True, "#00ff00", 5.0, {}),
+            "105": ("ink", "99", False, "#123456", 4.0, {}),
+            "106": ("line", "99", False, "#ff0000", 3.0, takeoff_properties),
+            "107": (
+                "dimension",
+                "99",
+                False,
+                "#0000ff",
+                1.0,
+                {
+                    "FontName": "Cambria",
+                    "FontColor": 0xFF0000,
+                    "FontSize": 14,
+                    "FontBold": True,
+                    "FontItalic": False,
+                    "FontUnderline": True,
+                    "BidTakeoffFromUID": "21",
+                    "BidTakeoffToUID": "22",
+                },
+            ),
+            "108": ("arrow", "99", False, "#ff0000", 3.0, takeoff_properties),
+            "109": ("text", "50", True, "#ff0000", 0.0, text_properties),
+            "110": ("callout", "50", True, "#ffff00", 6.0, text_properties),
+            "111": ("highlight", "50", True, "#ffff00", 0.0, {}),
+            "112": ("namedview", "99", False, "#00aa00", 2.0, {"Text": "View A"}),
+            "113": ("hotlink", "50", True, "#ff0000", 2.0, {"BidPageViewUID": "112"}),
+        }
+        self.assertEqual(set(by_uid), set(expected))
+        for uid, (kind, layer, visible, color, width, props) in expected.items():
+            with self.subTest(uid=uid, annotation_type=kind):
+                annotation = by_uid[uid]
+                self.assertEqual(annotation.annotation_type, kind)
+                self.assertEqual(annotation.page_uid, "7")
+                self.assertEqual(annotation.layer_uid, layer)
+                self.assertIs(annotation.visible, visible)
+                self.assertEqual(annotation.color, color)
+                self.assertEqual(annotation.width, width)
+                self.assertEqual(annotation.properties, props)
+                self.assertEqual(annotation.position, [0.0, 0.0, 10.0, 10.0])
+        self.assertEqual(set(self._read(conn, "2")), {"901", "902", "903", "904"})
+
+    def test_malformed_uid_error_names_the_table_it_was_read_from(self):
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        for table in _SQLITE_READER_DDL:
+            with self.subTest(table=table):
+                conn = self._database()
+                values = {"UID": 0, "BidUID": 1, "Position": position}
+                self._insert(conn, table, **values)
+                with self.assertRaisesRegex(
+                    RuntimeError, f"^{table} contains malformed UID 0;"
+                ):
+                    self._read(conn)
+
+    def test_unset_columns_fall_back_to_documented_defaults_in_every_table(self):
+        conn = self._database()
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        for uid, table in enumerate(
+            (
+                "BidAnnotationClouds",
+                "BidAnnotationOvals",
+                "BidAnnotationPolygons",
+                "BidAnnotationRects",
+            ),
+            start=1,
+        ):
+            self._insert(
+                conn,
+                table,
+                UID=uid,
+                BidUID=1,
+                BidPageUID=0,
+                BidLayerUID=None,
+                Color=None,
+                Position=position,
+                Width=0,
+            )
+        self._insert(
+            conn,
+            "BidAnnoInk",
+            UID=5,
+            BidUID=1,
+            BidPageUID=None,
+            Color=None,
+            Position=position,
+            Width=None,
+        )
+        for table, uid in (("BidALines", 6), ("BidArrows", 8)):
+            self._insert(
+                conn,
+                table,
+                UID=uid,
+                BidUID=1,
+                BidPageUID=0,
+                BidTakeoffFromUID=None,
+                BidTakeoffToUID=None,
+                Position=position,
+                Color=None,
+                Width=None,
+            )
+        self._insert(
+            conn,
+            "BidDimensions",
+            UID=7,
+            BidUID=1,
+            BidPageUID=None,
+            BidTakeoffFromUID=None,
+            BidTakeoffToUID=None,
+            Position=position,
+            FontName=None,
+            FontColor=None,
+            FontSize=None,
+            FontBold=None,
+            FontItalic=None,
+            FontUnderline=None,
+        )
+        for table, uid in (("BidTexts", 9), ("BidCallOuts", 10)):
+            extra = {"Color": None, "Width": None} if table == "BidCallOuts" else {}
+            self._insert(
+                conn,
+                table,
+                UID=uid,
+                BidUID=1,
+                BidPageUID=0,
+                BidLayerUID=None,
+                Name=None,
+                FontName=None,
+                FontColor=None,
+                FontSize=None,
+                FontBold=None,
+                FontItalic=None,
+                FontUnderline=None,
+                TextAlign=None,
+                Position=position,
+                **extra,
+            )
+        self._insert(
+            conn,
+            "BidHighlights",
+            UID=11,
+            BidUID=1,
+            BidPageUID=None,
+            BidLayerUID=None,
+            Color=None,
+            Position=position,
+        )
+        self._insert(
+            conn,
+            "BidNamedViews",
+            UID=12,
+            BidUID=1,
+            BidPageUID=0,
+            Name=None,
+            Color=None,
+            Position=position,
+        )
+        self._insert(
+            conn,
+            "BidHotLinks",
+            UID=13,
+            BidUID=1,
+            BidPageUID=0,
+            BidPageViewUID=None,
+            BidLayerUID=None,
+            Color=None,
+            Position=position,
+        )
+        by_uid = self._read(conn)
+        self.assertEqual(sorted(by_uid, key=int), [str(uid) for uid in range(1, 14)])
+        font_flags = {"FontBold": False, "FontItalic": False, "FontUnderline": False}
+        text_defaults = {
+            "Text": "",
+            "FontColor": None,
+            "FontName": "Arial",
+            "FontSize": 12,
+            "TextAlign": 0,
+            **font_flags,
+        }
+        # uid -> (width, color, properties)
+        expected = {
+            "1": (2.0, "#FF0000", {}),
+            "2": (2.0, "#FF0000", {}),
+            "3": (2.0, "#FF0000", {}),
+            "4": (2.0, "#FF0000", {}),
+            "5": (2.0, "#FF0000", {}),
+            "6": (2.0, "#FF0000", {}),
+            "7": (
+                1.0,
+                "#FF0000",
+                {"FontName": "Arial", "FontColor": None, "FontSize": 10, **font_flags},
+            ),
+            "8": (2.0, "#FF0000", {}),
+            "9": (0.0, "#FF0000", text_defaults),
+            "10": (2.0, "#FF0000", text_defaults),
+            "11": (0.0, "#FF0000", {}),
+            "12": (2.0, "#008000", {"Text": ""}),
+            "13": (2.0, "#FF0000", {"BidPageViewUID": None}),
+        }
+        for uid, (width, color, props) in expected.items():
+            with self.subTest(uid=uid):
+                annotation = by_uid[uid]
+                self.assertEqual(annotation.page_uid, "")
+                self.assertEqual(annotation.width, width)
+                self.assertEqual(annotation.color, color)
+                self.assertEqual(annotation.properties, props)
+                self.assertEqual(annotation.layer_uid, "99")
+                self.assertIs(annotation.visible, False)

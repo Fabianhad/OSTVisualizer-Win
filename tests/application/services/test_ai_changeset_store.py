@@ -187,6 +187,7 @@ class ProposalTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.proposals.get("missing")
         self.assertEqual(raised.exception.code, "not_found")
+        self.assertEqual(raised.exception.message, "Unknown changeset_id")
 
     def test_discard_closes_an_open_changeset_only(self):
         added = self.add()
@@ -216,6 +217,10 @@ class FreshnessTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.store.approve(added.uid)
         self.assertEqual(raised.exception.code, "stale_changeset")
+        self.assertEqual(
+            raised.exception.message,
+            "A page or condition this changeset touches changed. Propose it again.",
+        )
         self.assertEqual(self.proposals.get(added.uid).status, STATUS_STALE)
 
     def test_an_apply_request_on_a_touched_change_is_stale(self):
@@ -257,6 +262,10 @@ class ApprovalTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.store.approve(added.uid, expected_revision=shown)
         self.assertEqual(raised.exception.code, "changed_during_review")
+        self.assertEqual(
+            raised.exception.message,
+            "The AI changed this changeset while you were reviewing it. Check it again.",
+        )
         current = self.proposals.get(added.uid)
         self.assertEqual(current.status, STATUS_PENDING_APPROVAL)
         self.assertEqual(current.revision, shown + 1)
@@ -273,6 +282,10 @@ class ApprovalTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.store.approve(added.uid)
         self.assertEqual(raised.exception.code, "stale_changeset")
+        self.assertEqual(
+            raised.exception.message,
+            "The changeset expired or the objects it touches changed. Propose it again.",
+        )
         self.assertEqual(self.proposals.get(added.uid).status, STATUS_EXPIRED)
 
     def test_closed_changesets_cannot_be_approved(self):
@@ -281,6 +294,9 @@ class ApprovalTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.store.approve(added.uid)
         self.assertEqual(raised.exception.code, "invalid_state")
+        self.assertEqual(
+            raised.exception.message, "The changeset is discarded and cannot do that"
+        )
 
     def scale_changeset(self, scale, assumptions=()):
         return AiChangeset(
@@ -329,6 +345,9 @@ class ApprovalTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.store.approve(added.uid)
         self.assertEqual(raised.exception.code, "approval_required")
+        self.assertEqual(
+            raised.exception.message, "The AI has not asked to apply this changeset"
+        )
 
     def test_accept_and_reject(self):
         added = self.add(_changeset(assumptions=(_assumption("a1"),)))
@@ -399,6 +418,7 @@ class AssumptionEditTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.proposals.add_assumption(added.uid, "colour", "c1", "red", "x", "S-1")
         self.assertEqual(raised.exception.code, "invalid_state")
+        self.assertEqual(raised.exception.message, "Unknown assumption subject")
         self.assertEqual(self.proposals.get(added.uid).assumptions, ())
         self.assertEqual(self.proposals.get(added.uid).revision, 0)
 
@@ -416,6 +436,7 @@ class AssumptionEditTests(StoreTestCase):
                 with self.assertRaises(ChangesetError) as raised:
                     action()
                 self.assertEqual(raised.exception.code, "not_found")
+                self.assertEqual(raised.exception.message, "Unknown assumption_id")
                 current = self.proposals.get(added.uid)
                 self.assertEqual(current.revision, 0)
                 self.assertEqual(current.assumptions, (_assumption("a1"),))

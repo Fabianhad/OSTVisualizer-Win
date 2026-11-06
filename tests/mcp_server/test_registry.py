@@ -423,6 +423,66 @@ class DatabaseRegistryValidationTests(unittest.TestCase):
         )
         self.assertEqual(self.registry().workspace_selection, McpWorkspaceSelection())
 
+    def test_legacy_file_entries_skip_values_that_are_not_objects(self):
+        db = self.make_db()
+        self.write_state(
+            "file_state.json",
+            {
+                "file_entries": [
+                    "not-an-object",
+                    7,
+                    None,
+                    {"file_path": str(db), "is_checked": True},
+                ]
+            },
+        )
+        self.assertEqual(
+            [item.display_name for item in self.registry().databases], ["demo"]
+        )
+
+    def test_an_invalid_descriptor_before_any_valid_one_is_skipped(self):
+        db = self.make_db("later.mdb")
+        self.write_state(
+            "file_state.json",
+            {
+                "version": 2,
+                "database_entries": [
+                    {"descriptor": {"backend": "access"}, "is_checked": True},
+                    self.access_entry(db),
+                ],
+            },
+        )
+        self.assertEqual(
+            [item.display_name for item in self.registry().databases], ["later"]
+        )
+
+    def test_read_json_returns_an_empty_object_for_missing_or_unreadable_files(self):
+        missing = self.root / "absent.json"
+        self.assertEqual(DatabaseRegistry._read_json(missing), {})
+        broken = self.root / "broken.json"
+        broken.write_text("{nope", encoding="utf-8")
+        self.assertEqual(DatabaseRegistry._read_json(broken), {})
+        listing = self.root / "list.json"
+        listing.write_text("[1]", encoding="utf-8")
+        self.assertEqual(DatabaseRegistry._read_json(listing), {})
+        folder = self.root / "folder.json"
+        folder.mkdir()
+        self.assertEqual(DatabaseRegistry._read_json(folder), {})
+
+    def test_a_path_that_cannot_be_resolved_is_logged_and_ignored(self):
+        self.write_state(
+            "file_state.json",
+            {"file_entries": [{"file_path": "C:/odd/path.mdb", "is_checked": True}]},
+        )
+        with patch.object(Path, "resolve", side_effect=OSError("bad path")):
+            with self.assertLogs(self.logger, level="WARNING") as logged:
+                registry = self.registry()
+        self.assertEqual(registry.databases, [])
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            ["Ignoring invalid configured database path"],
+        )
+
     def test_output_artifacts_dir_lives_under_the_app_data_dir(self):
         self.assertEqual(
             self.registry().output_artifacts_dir, self.root / MCP_OUTPUT_DIR_NAME

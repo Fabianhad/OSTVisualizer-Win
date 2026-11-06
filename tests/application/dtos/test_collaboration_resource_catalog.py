@@ -349,3 +349,18 @@ class CollaborationResourceCatalogContractTests(unittest.TestCase):
                     resource_families_affect_page(("takeoffs",), affected, page),
                     expected,
                 )
+
+
+class AnnotationResourceIdentityMessageTests(unittest.TestCase):
+    def test_malformed_identities_use_the_exact_identity_message(self):
+        message = "^Invalid annotation collaboration resource identity$"
+        for bad in ("", "rect", "rect/", "/7", "/", None, 7):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(ValueError, message):
+                    parse_annotation_resource_id(bad)
+        for bad_type, bad_uid in (("", "7"), ("rect", ""), (None, "7"), ("rect", None), ("", "")):
+            with self.subTest(type=bad_type, uid=bad_uid):
+                with self.assertRaisesRegex(ValueError, message):
+                    annotation_resource_id(bad_type, bad_uid)
+        self.assertEqual(annotation_resource_id(5, 6), "5/6")
+        self.assertEqual(parse_annotation_resource_id(annotation_resource_id("rect", "a/b")), ("rect", "a/b"))

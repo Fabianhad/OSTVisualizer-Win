@@ -135,3 +135,87 @@ class LifecycleOrchestratorTests(unittest.TestCase):
         self.assertEqual(calls, ["close"])
         lifecycle.shutdown()
         self.assertEqual(calls, ["close", "cleanup"])
+
+
+class LifecycleShutdownDetailTests(unittest.TestCase):
+    class _Logger:
+        def __init__(self):
+            self.messages = []
+
+        def exception(self, message, *args):
+            self.messages.append(message % args)
+
+    def orchestrator(self, container, controller=None):
+        logger = self._Logger()
+        orchestrator = LifecycleOrchestrator(container, object(), object(), logger)
+        if controller is not None:
+            orchestrator.set_app_controller(controller)
+        return orchestrator, logger
+
+    def test_each_shutdown_failure_is_logged_with_its_message_and_does_not_stop_the_rest(self):
+        class Participant:
+            def __init__(self, name, error=None):
+                self.name, self.error, self.stopped = name, error, False
+
+            def shutdown(self):
+                self.stopped = True
+                if self.error:
+                    raise self.error
+
+            def __repr__(self):
+                return self.name
+
+        class Container:
+            def __init__(self, participants):
+                self.participants = participants
+
+            def get_by_interface(self, interface):
+                return self.participants
+
+        class Controller:
+            cleaned = False
+
+            def cleanup(self):
+                Controller.cleaned = True
+                raise RuntimeError("cleanup boom")
+
+        bad = Participant("bad", RuntimeError("boom"))
+        good = Participant("good")
+        orchestrator, logger = self.orchestrator(Container([bad, good]), Controller())
+        orchestrator.shutdown()
+        self.assertTrue(bad.stopped and good.stopped and Controller.cleaned)
+        self.assertEqual(
+            logger.messages,
+            ["Error shutting down bad: boom", "Error cleaning up application controller: cleanup boom"],
+        )
+
+    def test_a_failed_participant_discovery_is_logged_and_shutdown_still_completes_once(self):
+        class Container:
+            calls = 0
+
+            def get_by_interface(self, interface):
+                Container.calls += 1
+                raise RuntimeError("discovery boom")
+
+        orchestrator, logger = self.orchestrator(Container())
+        orchestrator.shutdown()
+        orchestrator.shutdown()
+        self.assertEqual(Container.calls, 1)
+        self.assertEqual(logger.messages, ["Error discovering shutdown participants: discovery boom"])
+        self.assertIs(orchestrator._shutdown_performed, True)
+
+    def test_shutdown_releases_every_reference_and_the_event_bus_is_exposed_until_then(self):
+        class Container:
+            def get_by_interface(self, interface):
+                return []
+
+        bus = object()
+        orchestrator = LifecycleOrchestrator(Container(), object(), bus, self._Logger())
+        self.assertIs(orchestrator.event_bus, bus)
+        self.assertIsNone(orchestrator._app_controller)
+        orchestrator.set_app_controller(object())
+        orchestrator.shutdown()
+        self.assertIsNone(orchestrator.event_bus)
+        self.assertIsNone(orchestrator._container)
+        self.assertIsNone(orchestrator._viz_orchestrator)
+        self.assertIsNone(orchestrator._app_controller)

@@ -1,6 +1,10 @@
 import logging
 import sqlite3
 import unittest
+from tests.helpers.mdb.real_write_contract import RealContractOps, contract_db
+from ost_visualizer.infrastructure.database.bid_owned_identity import (
+    DuplicateBidOwnedUidError,
+)
 from ost_visualizer.infrastructure.mdb.components.bid_operations import (
     BidOperationsMixin,
 )
@@ -237,3 +241,185 @@ class ProjectOperationsPersistenceTests(unittest.TestCase):
             ).fetchall(),
             [(12, 1), (12, 5)],
         )
+
+
+class _StrictPolicyOps(RealContractOps):
+    """The strict error policy re-raises what the tolerant one swallows."""
+
+    def _record_caught_mutation_error(self, exc):
+        return True
+
+
+def _project_db(*extra, bids="UID INTEGER, BidProjectUID INTEGER, OrigBidProjectUID INTEGER",
+                projects="UID INTEGER, Name TEXT"):
+    conn = contract_db(
+        f"CREATE TABLE Bids ({bids})",
+        f"CREATE TABLE BidProjects ({projects})",
+    )
+    # A table that lacks the UID column simply starts empty.
+    for statement in (
+        "INSERT INTO BidProjects (UID) VALUES (1)",
+        "INSERT INTO BidProjects (UID) VALUES (2)",
+        "INSERT INTO Bids (UID) VALUES (10)",
+        "INSERT INTO Bids (UID) VALUES (11)",
+        *extra,
+    ):
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError:
+            pass
+    return conn
+
+
+def _bids(conn, columns="UID, BidProjectUID, OrigBidProjectUID"):
+    return conn.execute(f"SELECT {columns} FROM Bids ORDER BY UID").fetchall()
+
+
+class ProjectOperationContractTests(unittest.TestCase):
+    def test_empty_uid_lists_succeed_without_touching_the_database(self):
+        ops = RealContractOps(contract_db())
+        self.assertIs(ops.move_bids_to_project("x.mdb", [], "1"), True)
+        self.assertIs(ops.orphan_bids("x.mdb", []), True)
+        self.assertIs(ops.delete_projects("x.mdb", []), True)
+
+    def test_unusable_uid_lists_are_refused_with_the_table_named_when_the_policy_is_strict(self):
+        for call, label in (
+            (lambda ops: ops.move_bids_to_project("x.mdb", ["x"], "1"), "Bids"),
+            (lambda ops: ops.orphan_bids("x.mdb", ["x"]), "Bids"),
+            (lambda ops: ops.delete_projects("x.mdb", ["x"]), "BidProjects"),
+        ):
+            with self.subTest(label=label):
+                conn = _project_db()
+                with self.assertLogs("test", "WARNING"):
+                    self.assertIs(call(RealContractOps(conn)), False)
+                with self.assertRaisesRegex(ValueError, "^Invalid " + label + " UID: 'x'$"):
+                    call(_StrictPolicyOps(conn))
+
+    def test_move_assigns_the_project_and_the_restore_project(self):
+        conn = _project_db()
+        ops = RealContractOps(conn)
+        self.assertIs(ops.move_bids_to_project("x.mdb", ["10"], "2", "1"), True)
+        self.assertEqual(_bids(conn), [(10, 2, 1), (11, None, None)])
+        self.assertEqual(ops.skips, [])
+
+    def test_move_without_a_restore_project_leaves_the_restore_column_alone(self):
+        conn = _project_db()
+        conn.execute("UPDATE Bids SET OrigBidProjectUID = 7")
+        ops = RealContractOps(conn)
+        self.assertIs(ops.move_bids_to_project("x.mdb", ["10"], "2"), True)
+        self.assertEqual(_bids(conn), [(10, 2, 7), (11, None, 7)])
+        self.assertEqual(ops.skips, [])
+
+    def test_a_missing_restore_column_is_reported_only_when_a_restore_project_is_given(self):
+        for restore, expected in (
+            ("1", [("Bids", "OrigBidProjectUID", "move_bids_to_project")]),
+            (None, []),
+        ):
+            with self.subTest(restore=restore):
+                conn = _project_db(bids="UID INTEGER, BidProjectUID INTEGER")
+                ops = RealContractOps(conn)
+                self.assertIs(ops.move_bids_to_project("x.mdb", ["10"], "2", restore), True)
+                self.assertEqual(ops.skips, expected)
+                self.assertEqual(_bids(conn, "UID, BidProjectUID"), [(10, 2), (11, None)])
+
+    def test_orphaning_clears_the_project_only(self):
+        conn = _project_db()
+        conn.execute("UPDATE Bids SET BidProjectUID = 1, OrigBidProjectUID = 7")
+        self.assertIs(RealContractOps(conn).orphan_bids("x.mdb", ["11"]), True)
+        self.assertEqual(_bids(conn), [(10, 1, 7), (11, None, 7)])
+
+    def test_a_project_is_created_with_the_next_uid_and_its_name(self):
+        conn = _project_db()
+        self.assertEqual(RealContractOps(conn).create_project("x.mdb", "Three"), "3")
+        self.assertEqual(
+            conn.execute("SELECT UID, Name FROM BidProjects ORDER BY UID").fetchall(),
+            [(1, None), (2, None), (3, "Three")],
+        )
+
+    def test_renaming_changes_the_name_of_the_target_project_only(self):
+        conn = _project_db()
+        self.assertIs(RealContractOps(conn).rename_project("x.mdb", "2", "Renamed"), True)
+        self.assertEqual(
+            conn.execute("SELECT UID, Name FROM BidProjects ORDER BY UID").fetchall(),
+            [(1, None), (2, "Renamed")],
+        )
+
+    def test_deleting_projects_detaches_their_bids_and_restore_references(self):
+        conn = _project_db()
+        conn.execute("UPDATE Bids SET BidProjectUID = 1, OrigBidProjectUID = 1 WHERE UID = 10")
+        conn.execute("UPDATE Bids SET BidProjectUID = 2, OrigBidProjectUID = 1 WHERE UID = 11")
+        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["1"]), True)
+        self.assertEqual(_bids(conn), [(10, None, None), (11, 2, None)])
+        self.assertEqual(conn.execute("SELECT UID FROM BidProjects").fetchall(), [(2,)])
+
+    def test_deleting_projects_tolerates_a_bid_table_without_project_columns(self):
+        for bids in (
+            "UID INTEGER",
+            "UID INTEGER, BidProjectUID INTEGER",
+            "UID INTEGER, OrigBidProjectUID INTEGER",
+        ):
+            with self.subTest(bids=bids):
+                conn = _project_db(bids=bids)
+                self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["1"]), True)
+                self.assertEqual(conn.execute("SELECT UID FROM BidProjects").fetchall(), [(2,)])
+
+    def test_deleting_projects_without_a_bid_table_still_deletes_them(self):
+        conn = contract_db(
+            "CREATE TABLE BidProjects (UID INTEGER, Name TEXT)",
+            "INSERT INTO BidProjects VALUES (1, 'One')",
+        )
+        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["1"]), True)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidProjects").fetchall(), [(0,)])
+
+    def test_a_duplicated_project_uid_blocks_the_delete(self):
+        conn = _project_db("INSERT INTO BidProjects (UID) VALUES (2)")
+        with self.assertLogs("test", "ERROR"):
+            self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["2"]), False)
+        with self.assertRaises(DuplicateBidOwnedUidError):
+            _StrictPolicyOps(conn).delete_projects("x.mdb", ["2"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidProjects").fetchall(), [(3,)])
+
+    def test_failures_return_the_documented_value_and_follow_the_error_policy(self):
+        cases = (
+            ("move", lambda ops: ops.move_bids_to_project("x.mdb", ["10"], "2"), False, {"bids": "UID INTEGER"}),
+            ("orphan", lambda ops: ops.orphan_bids("x.mdb", ["10"]), False, {"bids": "UID INTEGER"}),
+            ("create", lambda ops: ops.create_project("x.mdb", "N"), None, {"projects": "UID INTEGER"}),
+            ("rename", lambda ops: ops.rename_project("x.mdb", "1", "N"), False, {"projects": "UID INTEGER"}),
+            ("delete", lambda ops: ops.delete_projects("x.mdb", ["1"]), False, {"projects": "Name TEXT"}),
+        )
+        for name, call, expected, broken in cases:
+            with self.subTest(op=name):
+                conn = _project_db(**broken)
+                with self.assertLogs("test", "ERROR"):
+                    result = call(RealContractOps(conn))
+                self.assertIs(result, expected)
+                with self.assertRaises(Exception):
+                    call(_StrictPolicyOps(conn))
+
+    def test_a_missing_destination_project_blocks_the_move(self):
+        conn = _project_db()
+        with self.assertLogs("test", "ERROR"):
+            self.assertIs(RealContractOps(conn).move_bids_to_project("x.mdb", ["10"], "99"), False)
+        self.assertEqual(_bids(conn, "UID, BidProjectUID"), [(10, None), (11, None)])
+
+    def test_each_write_names_the_missing_column_it_needs(self):
+        cases = (
+            (lambda ops: ops.move_bids_to_project("x.mdb", ["10"], "2"), {"bids": "UID INTEGER"}, "BidProjectUID"),
+            (lambda ops: ops.move_bids_to_project("x.mdb", ["10"], "2"), {"bids": "BidProjectUID INTEGER"}, "UID"),
+            (lambda ops: ops.orphan_bids("x.mdb", ["10"]), {"bids": "UID INTEGER"}, "BidProjectUID"),
+            (lambda ops: ops.orphan_bids("x.mdb", ["10"]), {"bids": "BidProjectUID INTEGER"}, "UID"),
+            (lambda ops: ops.create_project("x.mdb", "N"), {"projects": "UID INTEGER"}, "Name"),
+            (lambda ops: ops.create_project("x.mdb", "N"), {"projects": "Name TEXT"}, "UID"),
+            (lambda ops: ops.rename_project("x.mdb", "1", "N"), {"projects": "UID INTEGER"}, "Name"),
+            (lambda ops: ops.rename_project("x.mdb", "1", "N"), {"projects": "Name TEXT"}, "UID"),
+            (lambda ops: ops.delete_projects("x.mdb", ["1"]), {"projects": "Name TEXT"}, "UID"),
+        )
+        for call, kwargs, column in cases:
+            with self.subTest(column=column, tables=kwargs):
+                conn = _project_db(**kwargs)
+                with self.assertRaises(Exception) as caught:
+                    call(_StrictPolicyOps(conn))
+                self.assertIn(column, str(caught.exception))
+                # The guard reports the schema gap itself; a raw database error would mean the
+                # write was attempted against a table that cannot take it.
+                self.assertNotIsInstance(caught.exception, sqlite3.OperationalError)

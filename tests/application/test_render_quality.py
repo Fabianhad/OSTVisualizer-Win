@@ -52,5 +52,23 @@ class RenderQualityContractTests(unittest.TestCase):
         self.assertEqual(quantize_render_frame_coordinate(4.1236), 4.124)
 
 
+
+class RenderFrameAlignmentTests(unittest.TestCase):
+    def test_frame_origins_snap_to_the_render_pixel_grid_for_any_positive_scale(self):
+        from ost_visualizer.application import render_quality as rq
+
+        self.assertEqual(rq.align_rendered_frame_origin(3.0, 0.5), 4.0)
+        self.assertEqual(rq.align_rendered_frame_origin(2.9, 0.5), 2.0)
+        self.assertEqual(rq.align_rendered_frame_origin(3.0, 2.0), 3.0)
+        self.assertAlmostEqual(rq.align_rendered_frame_origin(3.3, 2.0), 3.5)
+        self.assertEqual(rq.align_rendered_frame_origin(-3.0, 0.5), -2.0)
+
+    def test_a_non_positive_scale_leaves_the_origin_untouched(self):
+        from ost_visualizer.application import render_quality as rq
+
+        for scale in (0.0, -1.0, -0.5):
+            self.assertEqual(rq.align_rendered_frame_origin(3.3, scale), 3.3)
+
+
 if __name__ == "__main__":
     unittest.main()

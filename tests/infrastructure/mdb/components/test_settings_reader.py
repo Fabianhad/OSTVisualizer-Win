@@ -1,4 +1,14 @@
-from ost_visualizer.domain.entities.cover_sheet import CoverSheetPage
+import pyodbc
+from ost_visualizer.domain.entities.area import BidArea
+from ost_visualizer.domain.entities.cover_sheet import (
+    CoverSheetData,
+    CoverSheetPage,
+    JobStatus,
+)
+from ost_visualizer.domain.entities.employee import Employee, PayClass
+from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
+    BidDataReaderMixin,
+)
 from ost_visualizer.infrastructure.mdb.schema_compatibility import MdbSchemaInspector
 from types import SimpleNamespace
 from contextlib import contextmanager
@@ -690,4 +700,782 @@ class SettingsReaderCompatibilityTests(unittest.TestCase):
                 "takeoff_increments": 0.5,
                 "next_bid_no": 15,
             },
+        )
+
+
+class _SqliteSettingsReader(SettingsReaderMixin, BidDataReaderMixin, _SqliteMdbOps):
+    @staticmethod
+    def _record_caught_read_error(_exc, _locator=None):
+        return False
+
+
+class _FatalReadErrors(_SqliteSettingsReader):
+    @staticmethod
+    def _record_caught_read_error(_exc, _locator=None):
+        return True
+
+
+class _FailingOpen(_SqliteSettingsReader):
+    error = RuntimeError("boom")
+
+    def _connection(self, _db_path):
+        raise self.error
+
+
+class _FailingOpenFatal(_FailingOpen, _FatalReadErrors):
+    pass
+
+
+class _FailingCursor(_SqliteCursorWrapper):
+    def execute(self, query, *params):
+        raise pyodbc.Error("HY000", "driver failure")
+
+
+class _FailingConnection(_SqliteConnectionWrapper):
+    def cursor(self):
+        return _FailingCursor(self._connection)
+
+
+class SettingsReaderRealSchemaTests(unittest.TestCase):
+    def database(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        for statement in statements:
+            connection.execute(statement)
+        return connection
+
+    def test_used_job_status_uids_are_distinct_and_skip_nulls_and_missing_schema(self):
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER)",
+            "INSERT INTO Bids VALUES (1, 5)",
+            "INSERT INTO Bids VALUES (2, 5)",
+            "INSERT INTO Bids VALUES (3, 6)",
+            "INSERT INTO Bids VALUES (4, NULL)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "job_statuses"), {"5", "6"}
+        )
+        connection.execute("DROP TABLE Bids")
+        connection.execute("CREATE TABLE Bids (UID INTEGER)")
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "job_statuses"), set()
+        )
+        connection.execute("DROP TABLE Bids")
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "job_statuses"), set()
+        )
+
+    def test_master_data_usage_kinds_cover_employees_statuses_and_pay_classes(self):
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER, EstimatorUID INTEGER)",
+            "INSERT INTO Bids VALUES (1, 5, 10)",
+            "CREATE TABLE Employees (UID INTEGER, PayClassUID INTEGER)",
+            "INSERT INTO Employees VALUES (10, 3)",
+            "INSERT INTO Employees VALUES (11, 3)",
+            "INSERT INTO Employees VALUES (12, 4)",
+            "INSERT INTO Employees VALUES (13, NULL)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        self.assertEqual(reader.get_master_data_uids_in_use("x.mdb", "employees"), {"10"})
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "job_statuses"), {"5"}
+        )
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), {"3", "4"}
+        )
+        self.assertEqual(reader.get_employee_uids_in_use("x.mdb"), {"10"})
+        connection.execute("DROP TABLE Employees")
+        self.assertEqual(reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), set())
+        connection.execute("CREATE TABLE Employees (UID INTEGER)")
+        self.assertEqual(reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), set())
+        for kind in ("bids", "", "Employees"):
+            with self.subTest(kind=kind):
+                with self.assertRaisesRegex(
+                    ValueError, "^Unsupported master-data usage kind$"
+                ):
+                    reader.get_master_data_uids_in_use("x.mdb", kind)
+
+    def test_employee_usage_read_errors_are_downgraded_only_for_data_errors(self):
+        for error in (ValueError("v"), TypeError("t"), pyodbc.Error("HY000", "p")):
+            with self.subTest(error=type(error).__name__):
+
+                class Reader(_FailingOpen):
+                    pass
+
+                Reader.error = error
+                with self.assertLogs("test", level="WARNING") as logs:
+                    self.assertEqual(Reader(None).get_employee_uids_in_use("x.mdb"), set())
+                self.assertEqual(len(logs.records), 1)
+                self.assertIs(
+                    logs.records[0]
+                    .getMessage()
+                    .startswith("Could not query employee UIDs in use: "),
+                    True,
+                )
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            _FailingOpen(None).get_employee_uids_in_use("x.mdb")
+        fatal = type("F", (_FailingOpenFatal,), {"error": ValueError("v")})
+        with self.assertRaises(ValueError):
+            fatal(None).get_employee_uids_in_use("x.mdb")
+
+    def test_condition_type_uids_in_use_are_distinct_and_tolerate_old_schemas(self):
+        connection = self.database(
+            "CREATE TABLE BidConditions (UID INTEGER, CdnTypeUID INTEGER)",
+            "INSERT INTO BidConditions VALUES (1, 4)",
+            "INSERT INTO BidConditions VALUES (2, 4)",
+            "INSERT INTO BidConditions VALUES (3, 9)",
+            "INSERT INTO BidConditions VALUES (4, NULL)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        self.assertEqual(reader.get_condition_type_uids_in_use("x.mdb"), {"4", "9"})
+        connection.execute("DROP TABLE BidConditions")
+        connection.execute("CREATE TABLE BidConditions (UID INTEGER)")
+        self.assertEqual(reader.get_condition_type_uids_in_use("x.mdb"), set())
+        connection.execute("DROP TABLE BidConditions")
+        self.assertEqual(reader.get_condition_type_uids_in_use("x.mdb"), set())
+
+    def test_condition_type_and_layer_usage_errors_warn_or_propagate(self):
+        for method, args, message in (
+            (
+                "get_condition_type_uids_in_use",
+                ("x.mdb",),
+                "Could not query condition type UIDs in use: ",
+            ),
+            (
+                "get_layer_uids_in_use",
+                ("x.mdb", "1"),
+                "Could not query layer UIDs in use: ",
+            ),
+        ):
+            with self.subTest(method=method):
+                failing = type("R", (_FailingOpen,), {"error": ValueError("bad")})
+                with self.assertLogs("test", level="WARNING") as logs:
+                    self.assertEqual(getattr(failing(None), method)(*args), set())
+                self.assertEqual(logs.records[0].getMessage(), message + "bad")
+                fatal = type("F", (_FailingOpenFatal,), {"error": ValueError("bad")})
+                with self.assertRaisesRegex(ValueError, "bad"):
+                    getattr(fatal(None), method)(*args)
+                with self.assertRaisesRegex(RuntimeError, "boom"):
+                    getattr(_FailingOpen(None), method)(*args)
+
+    def test_layer_usage_filters_by_bid_when_the_table_has_one_and_skips_nulls(self):
+        connection = self.database(
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, BidLayerUID INTEGER)",
+            "INSERT INTO BidConditions VALUES (1, 7, 101)",
+            "INSERT INTO BidConditions VALUES (2, 7, 101)",
+            "INSERT INTO BidConditions VALUES (3, 8, 102)",
+            "INSERT INTO BidConditions VALUES (4, 7, NULL)",
+            "CREATE TABLE BidHotLinks (UID INTEGER, BidLayerUID INTEGER)",
+            "INSERT INTO BidHotLinks VALUES (1, 301)",
+            "INSERT INTO BidHotLinks VALUES (2, NULL)",
+            "CREATE TABLE BidTexts (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidTexts VALUES (1, 7)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        self.assertEqual(reader.get_layer_uids_in_use("x.mdb", "7"), {"101", "301"})
+        self.assertEqual(reader.get_layer_uids_in_use("x.mdb", "8"), {"102", "301"})
+        self.assertEqual(reader.get_layer_uids_in_use("x.mdb", "9"), {"301"})
+
+    def test_job_statuses_are_ordered_by_sequence_and_parse_their_flags(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (3, 'Lost', 1, 3)",
+            "INSERT INTO JobStatuses VALUES (1, 'Open', 0, 1)",
+            "INSERT INTO JobStatuses VALUES (2, NULL, 'False', 2)",
+            "INSERT INTO JobStatuses VALUES (4, 'Tie A', '', 2)",
+            "INSERT INTO JobStatuses VALUES (5, 'Zero', 'True', 0)",
+        )
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_job_statuses("x.mdb"),
+            [
+                JobStatus("5", "Zero", True, 0),
+                JobStatus("1", "Open", False, 1),
+                JobStatus("2", "", False, 2),
+                JobStatus("4", "Tie A", False, 2),
+                JobStatus("3", "Lost", True, 3),
+            ],
+        )
+
+    def test_job_statuses_default_missing_flag_and_sequence_columns(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "INSERT INTO JobStatuses VALUES (2, 'B')",
+            "INSERT INTO JobStatuses VALUES (1, 'A')",
+        )
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_job_statuses("x.mdb"),
+            [JobStatus("2", "B", False, 0), JobStatus("1", "A", False, 0)],
+        )
+        connection.execute("DROP TABLE JobStatuses")
+        self.assertEqual(_SqliteSettingsReader(connection).get_job_statuses("x.mdb"), [])
+
+    def test_job_status_read_failures_warn_or_propagate(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "INSERT INTO JobStatuses VALUES (7, 'A')",
+            "INSERT INTO JobStatuses VALUES (7, 'B')",
+        )
+        with self.assertLogs("test", level="WARNING") as logs:
+            self.assertEqual(_SqliteSettingsReader(connection).get_job_statuses("x.mdb"), [])
+        self.assertEqual(
+            logs.records[0].getMessage(), "Could not load job statuses from x.mdb"
+        )
+        with self.assertRaisesRegex(RuntimeError, "JobStatuses contains duplicate UID 7"):
+            _FatalReadErrors(connection).get_job_statuses("x.mdb")
+
+    def test_employees_and_pay_classes_map_every_column(self):
+        connection = self.database(
+            "CREATE TABLE Employees (UID INTEGER, EmployeeNo TEXT, FirstName TEXT, "
+            "LastName TEXT, Address1 TEXT, Address2 TEXT, City TEXT, State TEXT, "
+            "Zip TEXT, HomePhone TEXT, MobilePhone TEXT, EMail TEXT, PayClassUID INTEGER)",
+            "INSERT INTO Employees VALUES (7, 'E1', 'Ann', 'Lee', 'a1', 'a2', 'City', "
+            "'ST', '12345', 'hp', 'mp', 'ann@example.com', 4)",
+            "INSERT INTO Employees VALUES (8, NULL, NULL, NULL, NULL, NULL, NULL, NULL, "
+            "NULL, NULL, NULL, NULL, NULL)",
+            "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+            "INSERT INTO PayClasses VALUES (4, 'Journeyman')",
+            "INSERT INTO PayClasses VALUES (5, NULL)",
+        )
+        employees, pay_classes = _SqliteSettingsReader(
+            connection
+        ).get_employees_and_pay_classes("x.mdb")
+        self.assertEqual(
+            employees,
+            [
+                Employee(
+                    uid="7",
+                    employee_no="E1",
+                    first_name="Ann",
+                    last_name="Lee",
+                    address1="a1",
+                    address2="a2",
+                    city="City",
+                    state="ST",
+                    zip="12345",
+                    home_phone="hp",
+                    mobile_phone="mp",
+                    email="ann@example.com",
+                    pay_class_uid="4",
+                ),
+                Employee(uid="8"),
+            ],
+        )
+        self.assertEqual(
+            pay_classes, [PayClass("4", "Journeyman"), PayClass("5", "")]
+        )
+
+    def test_employee_read_failures_warn_with_empty_results_or_propagate(self):
+        connection = self.database(
+            "CREATE TABLE Employees (UID INTEGER)",
+            "INSERT INTO Employees VALUES (7)",
+            "INSERT INTO Employees VALUES (7)",
+        )
+        with self.assertLogs("test", level="WARNING") as logs:
+            self.assertEqual(
+                _SqliteSettingsReader(connection).get_employees_and_pay_classes("x.mdb"),
+                ([], []),
+            )
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            "Could not load employees/pay classes from x.mdb",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Employees contains duplicate UID 7"):
+            _FatalReadErrors(connection).get_employees_and_pay_classes("x.mdb")
+
+    def test_bid_areas_are_listed_for_the_bid_and_failures_warn_or_propagate(self):
+        connection = self.database(
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, ParentUID INTEGER, "
+            "Name TEXT, Sequence INTEGER, GUID TEXT)",
+            "INSERT INTO BidAreas VALUES (11, 7, 0, 'Second', 2, '{G2}')",
+            "INSERT INTO BidAreas VALUES (10, 7, NULL, 'First', 1, NULL)",
+            "INSERT INTO BidAreas VALUES (12, 8, NULL, 'Other', 1, NULL)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        self.assertEqual(
+            reader.get_bid_areas("x.mdb", "7"),
+            [
+                BidArea(uid="10", bid_uid="7", parent_uid="", name="First", sequence=1),
+                BidArea(
+                    uid="11",
+                    bid_uid="7",
+                    parent_uid="",
+                    name="Second",
+                    sequence=2,
+                    guid="{G2}",
+                ),
+            ],
+        )
+        connection.execute("INSERT INTO BidAreas VALUES (13, 7, 999, 'Dangling', 3, NULL)")
+        with self.assertLogs("test", level="WARNING") as logs:
+            self.assertEqual(reader.get_bid_areas("x.mdb", "7"), [])
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            "Could not load bid areas for bid 7 from x.mdb",
+        )
+        with self.assertRaisesRegex(RuntimeError, "BidAreas.UID=13 references missing"):
+            _FatalReadErrors(connection).get_bid_areas("x.mdb", "7")
+
+    def test_settings_defaults_come_from_the_single_settings_row(self):
+        connection = self.database(
+            "CREATE TABLE Settings (ScaleStyle INTEGER, ScaleFactor1 REAL, "
+            "ScaleFactor2 REAL, PageWidth REAL, PageHeight REAL, MeasureBase INTEGER, "
+            "TakeoffIncrements REAL, NextBidNo INTEGER)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        defaults = {
+            "scale_style": 1,
+            "scale_factor1": 0.125,
+            "scale_factor2": 12.0,
+            "page_width": 42.0,
+            "page_height": 30.0,
+            "measure_base": 0,
+            "takeoff_increments": 1.0,
+            "next_bid_no": 1,
+        }
+        self.assertEqual(reader.get_settings_defaults("x.mdb"), defaults)
+        connection.execute("INSERT INTO Settings VALUES (3, 0.5, 24, 36, 24, 2, 0.5, 15)")
+        self.assertEqual(
+            reader.get_settings_defaults("x.mdb"),
+            {
+                "scale_style": 3,
+                "scale_factor1": 0.5,
+                "scale_factor2": 24.0,
+                "page_width": 36.0,
+                "page_height": 24.0,
+                "measure_base": 2,
+                "takeoff_increments": 0.5,
+                "next_bid_no": 15,
+            },
+        )
+        connection.execute("DELETE FROM Settings")
+        connection.execute("INSERT INTO Settings VALUES (0, 0, 0, 0, 0, 0, 0, 0)")
+        self.assertEqual(reader.get_settings_defaults("x.mdb"), defaults)
+
+    def test_settings_defaults_fill_columns_missing_from_old_databases(self):
+        connection = self.database(
+            "CREATE TABLE Settings (ScaleStyle INTEGER, NextBidNo INTEGER)",
+            "INSERT INTO Settings VALUES (2, 40)",
+        )
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_settings_defaults("x.mdb"),
+            {
+                "scale_style": 2,
+                "scale_factor1": 0.125,
+                "scale_factor2": 12.0,
+                "page_width": 42.0,
+                "page_height": 30.0,
+                "measure_base": 0,
+                "takeoff_increments": 1.0,
+                "next_bid_no": 40,
+            },
+        )
+
+    def test_settings_defaults_survive_data_errors_but_not_fatal_ones(self):
+        expected = {
+            "scale_style": 1,
+            "scale_factor1": 0.125,
+            "scale_factor2": 12.0,
+            "page_width": 42.0,
+            "page_height": 30.0,
+            "measure_base": 0,
+            "takeoff_increments": 1.0,
+            "next_bid_no": 1,
+        }
+        for error in (pyodbc.Error("HY000", "p"), TypeError("t"), ValueError("v")):
+            with self.subTest(error=type(error).__name__):
+                failing = type("R", (_FailingOpen,), {"error": error})
+                self.assertEqual(failing(None).get_settings_defaults("x.mdb"), expected)
+                fatal = type("F", (_FailingOpenFatal,), {"error": error})
+                with self.assertRaises(type(error)):
+                    fatal(None).get_settings_defaults("x.mdb")
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            _FailingOpen(None).get_settings_defaults("x.mdb")
+
+
+class CoverSheetRealSchemaTests(unittest.TestCase):
+    _BID_COLUMNS = (
+        "UID INTEGER, JobStatusUID INTEGER, JobName TEXT, EstimatorUID INTEGER, "
+        "Notes TEXT, BidDate TEXT, BidNo INTEGER, JobID TEXT, MeasureBase INTEGER, "
+        "TakeoffIncrements REAL, ScaleStyle INTEGER, ScaleFactor1 REAL, "
+        "ScaleFactor2 REAL, PageWidth REAL, PageHeight REAL"
+    )
+
+    def database(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        for statement in statements:
+            connection.execute(statement)
+        return connection
+
+    def test_cover_sheet_maps_the_bid_row_and_reference_data(self):
+        connection = self.database(
+            f"CREATE TABLE Bids ({self._BID_COLUMNS})",
+            "INSERT INTO Bids VALUES (7, 2, 'Job', 3, 'Some notes', '2024-05-01', 12, "
+            "'J-1', 1, 0.5, 2, 0.5, 24, 36, 24)",
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (2, 'Won', 0, 1)",
+            "CREATE TABLE Employees (UID INTEGER, FirstName TEXT)",
+            "INSERT INTO Employees VALUES (3, 'Eve')",
+            "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+            "INSERT INTO PayClasses VALUES (1, 'Std')",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT)",
+            "INSERT INTO BidPages VALUES (20, 7, 'P')",
+        )
+        data = _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "7")
+        self.assertEqual(
+            data,
+            CoverSheetData(
+                bid_uid="7",
+                job_status_uid="2",
+                job_name="Job",
+                estimator_uid="3",
+                notes="Some notes",
+                bid_date="2024-05-01",
+                bid_no="12",
+                job_id="J-1",
+                measure_base=1,
+                takeoff_increments=0.5,
+                scale_style=2,
+                scale_factor1=0.5,
+                scale_factor2=24.0,
+                page_width=36.0,
+                page_height=24.0,
+                folders={},
+                pages_without_folder=[
+                    CoverSheetPage(
+                        uid="20",
+                        sheet_no="",
+                        name="P",
+                        width=0.0,
+                        height=0.0,
+                        scale_factor1=1.0,
+                        scale_factor2=1.0,
+                        image_path="",
+                        overlay_image_path="",
+                        index=1,
+                        show_mode=0,
+                        multi_page_count=0,
+                    )
+                ],
+                job_statuses=[JobStatus("2", "Won", False, 1)],
+                employees=[Employee(uid="3", first_name="Eve")],
+                pay_classes=[PayClass("1", "Std")],
+                used_job_status_uids={"2"},
+            ),
+        )
+
+    def test_cover_sheet_uses_documented_defaults_for_null_and_garbage_values(self):
+        connection = self.database(
+            f"CREATE TABLE Bids ({self._BID_COLUMNS})",
+            "INSERT INTO Bids VALUES (7, NULL, NULL, NULL, NULL, NULL, NULL, NULL, "
+            "'abc', 'x', 'y', NULL, 'z', NULL, '')",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        )
+        data = _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "7")
+        self.assertEqual(
+            (
+                data.job_status_uid,
+                data.job_name,
+                data.estimator_uid,
+                data.notes,
+                data.bid_date,
+                data.bid_no,
+                data.job_id,
+                data.measure_base,
+                data.takeoff_increments,
+                data.scale_style,
+                data.scale_factor1,
+                data.scale_factor2,
+                data.page_width,
+                data.page_height,
+            ),
+            ("", "", "", "", "", "", "", 0, 1.0, 1, 0.25, 12.0, 42.0, 30.0),
+        )
+        self.assertEqual(
+            (data.folders, data.pages_without_folder, data.job_statuses, data.employees),
+            ({}, [], [], []),
+        )
+        self.assertEqual(data.used_job_status_uids, set())
+
+    def test_cover_sheet_of_an_unknown_bid_is_none(self):
+        connection = self.database(
+            f"CREATE TABLE Bids ({self._BID_COLUMNS})",
+            "INSERT INTO Bids (UID) VALUES (7)",
+        )
+        self.assertIsNone(
+            _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "8")
+        )
+
+    def test_cover_sheet_page_tree_nests_folders_and_maps_page_columns(self):
+        connection = self.database(
+            "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "ParentUID INTEGER)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "SheetNo TEXT, Width REAL, Height REAL, ScaleFactor1 REAL, "
+            "ScaleFactor2 REAL, ImagePath TEXT, OverlayImagePath TEXT, Index1 INTEGER, "
+            "MultiPageCount INTEGER, [Show] INTEGER, BidPageFolderUID INTEGER, "
+            "Sequence INTEGER)",
+            "INSERT INTO BidPageFolders VALUES (10, 7, 'Zeta', NULL)",
+            "INSERT INTO BidPageFolders VALUES (11, 7, 'Alpha', 0)",
+            "INSERT INTO BidPageFolders VALUES (12, 7, NULL, 10)",
+            "INSERT INTO BidPageFolders VALUES (13, 7, 'Orphan', 999)",
+            "INSERT INTO BidPageFolders VALUES (14, 8, 'Other bid', NULL)",
+            "INSERT INTO BidPages VALUES (20, 7, 'P1', 'S1', 36.5, 24.5, 0.125, 12, "
+            "'a.pdf', 'o.pdf', 3, 7, 2, 12, 2)",
+            "INSERT INTO BidPages VALUES (21, 7, NULL, NULL, NULL, NULL, NULL, NULL, "
+            "NULL, NULL, NULL, NULL, NULL, 11, 1)",
+            "INSERT INTO BidPages VALUES (22, 7, 'Loose', '', 0, 0, 0, 0, '', '', 1, 0, "
+            "0, 0, 3)",
+            "INSERT INTO BidPages VALUES (23, 7, 'Gone', '', 0, 0, 0, 0, '', '', 1, 0, "
+            "0, 555, 4)",
+            "INSERT INTO BidPages VALUES (24, 8, 'Other', '', 0, 0, 0, 0, '', '', 1, 0, "
+            "0, 0, 1)",
+        )
+        folders, loose = _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+            _SqliteConnectionWrapper(connection), "7"
+        )
+        self.assertEqual(list(folders), ["11", "13", "10"])
+        self.assertEqual(
+            [(f.uid, f.name) for f in folders.values()],
+            [("11", "Alpha"), ("13", "Orphan"), ("10", "Zeta")],
+        )
+        self.assertEqual(list(folders["10"].subfolders), ["12"])
+        self.assertEqual(folders["10"].subfolders["12"].name, "12")
+        self.assertEqual(
+            folders["11"].pages,
+            [
+                CoverSheetPage(
+                    "21", "", "", 0.0, 0.0, 1.0, 1.0, "", "", 1, 0, 0
+                )
+            ],
+        )
+        self.assertEqual(folders["13"].pages, [])
+        self.assertEqual(
+            folders["10"].subfolders["12"].pages,
+            [
+                CoverSheetPage(
+                    "20", "S1", "P1", 36.5, 24.5, 0.125, 12.0, "a.pdf", "o.pdf", 3, 2, 7
+                )
+            ],
+        )
+        self.assertEqual([page.uid for page in loose], ["22", "23"])
+
+    def test_cover_sheet_pages_without_optional_tables_or_columns_use_uid_order(self):
+        connection = self.database(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidPages VALUES (31, 7)",
+            "INSERT INTO BidPages VALUES (30, 7)",
+        )
+        folders, loose = _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+            _SqliteConnectionWrapper(connection), "7"
+        )
+        self.assertEqual(folders, {})
+        self.assertEqual(
+            loose,
+            [
+                CoverSheetPage("30", "", "", 0.0, 0.0, 1.0, 1.0, "", "", 1, 0, 0),
+                CoverSheetPage("31", "", "", 0.0, 0.0, 1.0, 1.0, "", "", 1, 0, 0),
+            ],
+        )
+
+    def test_cover_sheet_structure_requires_page_and_folder_identity_columns(self):
+        for table, columns, missing in (
+            ("BidPages", "BidUID INTEGER", "UID"),
+            ("BidPages", "UID INTEGER", "BidUID"),
+        ):
+            with self.subTest(missing=missing):
+                connection = self.database(f"CREATE TABLE {table} ({columns})")
+                with self.assertRaisesRegex(RuntimeError, f"Missing {table}.{missing}"):
+                    _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+                        _SqliteConnectionWrapper(connection), "7"
+                    )
+        for present, missing in (
+            ("BidUID INTEGER, Name TEXT", "UID"),
+            ("UID INTEGER, Name TEXT", "BidUID"),
+            ("UID INTEGER, BidUID INTEGER", "Name"),
+        ):
+            with self.subTest(folder_missing=missing):
+                connection = self.database(
+                    "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+                    f"CREATE TABLE BidPageFolders ({present})",
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, f"Missing BidPageFolders.{missing}"
+                ):
+                    _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+                        _SqliteConnectionWrapper(connection), "7"
+                    )
+
+    def test_cover_sheet_rejects_duplicate_folder_and_page_uids(self):
+        for table, statements in (
+            (
+                "BidPageFolders",
+                (
+                    "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT)",
+                    "INSERT INTO BidPageFolders VALUES (5, 7, 'A')",
+                    "INSERT INTO BidPageFolders VALUES (5, 7, 'B')",
+                ),
+            ),
+            (
+                "BidPages",
+                ("INSERT INTO BidPages VALUES (5, 7)", "INSERT INTO BidPages VALUES (5, 7)"),
+            ),
+        ):
+            with self.subTest(table=table):
+                connection = self.database(
+                    "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)"
+                )
+                for statement in statements:
+                    connection.execute(statement)
+                with self.assertRaisesRegex(
+                    RuntimeError, f"{table} contains duplicate UID 5"
+                ):
+                    _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+                        _SqliteConnectionWrapper(connection), "7"
+                    )
+
+    def test_cover_sheet_driver_errors_return_empty_trees_unless_fatal(self):
+        connection = self.database("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        failing = _FailingConnection(connection)
+        self.assertEqual(
+            _SqliteSettingsReader(connection)._query_cover_sheet_pages(failing, "7"),
+            ({}, []),
+        )
+        with self.assertRaises(pyodbc.Error):
+            _FatalReadErrors(connection)._query_cover_sheet_pages(failing, "7")
+
+
+class SettingsReaderSparseSchemaTests(unittest.TestCase):
+    """Databases that only carry identity columns still read with blank fields."""
+
+    def database(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        for statement in statements:
+            connection.execute(statement)
+        return connection
+
+    def test_employees_pay_classes_and_statuses_without_optional_columns_are_blank(
+        self,
+    ):
+        connection = self.database(
+            "CREATE TABLE Employees (UID INTEGER)",
+            "INSERT INTO Employees VALUES (7)",
+            "CREATE TABLE PayClasses (UID INTEGER)",
+            "INSERT INTO PayClasses VALUES (4)",
+            "CREATE TABLE JobStatuses (UID INTEGER)",
+            "INSERT INTO JobStatuses VALUES (2)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        employees, pay_classes = reader.get_employees_and_pay_classes("x.mdb")
+        self.assertEqual(employees, [Employee(uid="7")])
+        self.assertEqual(pay_classes, [PayClass(uid="4", name="")])
+        self.assertEqual(
+            reader.get_job_statuses("x.mdb"), [JobStatus("2", "", False, 0)]
+        )
+
+    def test_cover_sheet_of_a_bid_with_only_a_uid_uses_blank_text_and_defaults(self):
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER)",
+            "INSERT INTO Bids VALUES (7)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        )
+        data = _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "7")
+        self.assertEqual(
+            data,
+            CoverSheetData(
+                bid_uid="7",
+                job_status_uid="",
+                job_name="",
+                estimator_uid="",
+                notes="",
+                bid_date="",
+                bid_no="",
+                job_id="",
+                measure_base=0,
+                takeoff_increments=1.0,
+                scale_style=1,
+                scale_factor1=0.25,
+                scale_factor2=12.0,
+                page_width=42.0,
+                page_height=30.0,
+            ),
+        )
+
+    def test_cover_sheet_integer_fields_fall_back_on_blank_null_and_garbage(self):
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER, MeasureBase, ScaleStyle)",
+            "INSERT INTO Bids VALUES (7, '', NULL)",
+            "INSERT INTO Bids VALUES (8, 'abc', '3')",
+            "INSERT INTO Bids VALUES (9, 2, 4)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        self.assertEqual(
+            [
+                (d.measure_base, d.scale_style)
+                for d in (
+                    reader.get_cover_sheet_data("x.mdb", uid) for uid in ("7", "8", "9")
+                )
+            ],
+            [(0, 1), (0, 3), (2, 4)],
+        )
+
+    def test_cover_sheet_pages_follow_sequence_and_folder_parents_of_one_nest(self):
+        connection = self.database(
+            "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "ParentUID INTEGER)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "BidPageFolderUID INTEGER, Sequence INTEGER)",
+            "INSERT INTO BidPageFolders VALUES (1, 7, 'Root', NULL)",
+            "INSERT INTO BidPageFolders VALUES (2, 7, 'Kid', 1)",
+            "INSERT INTO BidPages VALUES (40, 7, 'late', NULL, 2)",
+            "INSERT INTO BidPages VALUES (41, 7, 'early', NULL, 1)",
+            "INSERT INTO BidPages VALUES (42, 7, 'in kid', 2, 1)",
+        )
+        folders, loose = _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+            _SqliteConnectionWrapper(connection), "7"
+        )
+        self.assertEqual([page.uid for page in loose], ["41", "40"])
+        self.assertEqual(list(folders), ["1"])
+        self.assertEqual(list(folders["1"].subfolders), ["2"])
+        self.assertEqual(
+            [page.uid for page in folders["1"].subfolders["2"].pages], ["42"]
+        )
+
+    def test_settings_defaults_come_from_sql_defaults_when_columns_are_missing(self):
+        connection = self.database(
+            "CREATE TABLE Settings (PageWidth REAL)",
+            "INSERT INTO Settings VALUES (36)",
+        )
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_settings_defaults("x.mdb"),
+            {
+                "scale_style": 1,
+                "scale_factor1": 0.125,
+                "scale_factor2": 12.0,
+                "page_width": 36.0,
+                "page_height": 30.0,
+                "measure_base": 0,
+                "takeoff_increments": 1.0,
+                "next_bid_no": 1,
+            },
+        )
+
+    def test_master_data_tables_without_a_uid_column_yield_blank_uids(self):
+        connection = self.database(
+            "CREATE TABLE Employees (FirstName TEXT)",
+            "INSERT INTO Employees VALUES ('Ann')",
+            "CREATE TABLE PayClasses (Name TEXT)",
+            "INSERT INTO PayClasses VALUES ('Std')",
+            "CREATE TABLE JobStatuses (Name TEXT)",
+            "INSERT INTO JobStatuses VALUES ('Open')",
+        )
+        reader = _SqliteSettingsReader(connection)
+        employees, pay_classes = reader.get_employees_and_pay_classes("x.mdb")
+        self.assertEqual(employees, [Employee(uid="", first_name="Ann")])
+        self.assertEqual(pay_classes, [PayClass(uid="", name="Std")])
+        self.assertEqual(
+            reader.get_job_statuses("x.mdb"), [JobStatus("", "Open", False, 0)]
         )

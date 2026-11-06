@@ -45,3 +45,49 @@ class PageFolderOwnershipTests(unittest.TestCase):
         self.assertEqual(nested.pages, [])
         self.assertEqual(bid.pages_without_folder, [])
         self.assertEqual(bid.page_count, 0)
+
+
+class BidDefaultsAndFolderUidTests(unittest.TestCase):
+    def test_bid_defaults_describe_an_empty_unmeasured_bid_with_unit_increments(self):
+        bid = Bid(uid="1", name="N")
+        self.assertEqual(
+            (
+                bid.bid_no,
+                bid.bid_date,
+                bid.notes,
+                bid.job_id,
+                bid.status,
+                bid.status_uid,
+                bid.estimator,
+                bid.page_count,
+                bid.condition_count,
+                bid.measure_base,
+                bid.takeoff_increments,
+                bid.orig_bid_project_uid,
+                bid.copy_from_bid_no,
+                bid.copy_timestamp,
+            ),
+            (0, None, "", "", "", None, "", 0, 0, 0, 1.0, None, 0, None),
+        )
+        other = Bid(uid="2", name="M")
+        bid.folders["x"] = Folder(uid="x", name="X")
+        bid.pages_without_folder.append(Page(uid="p", name="P"))
+        self.assertEqual((other.folders, other.pages_without_folder), ({}, []))
+
+    def test_a_page_without_a_folder_is_never_assigned_to_a_folder_whose_uid_is_none_text(self):
+        folder = Folder(uid="None", name="Literal None")
+        bid = Bid(uid="1", name="N", folders={"None": folder})
+        unassigned = Page(uid="p1", name="Loose", folder_uid=None)
+        blank = Page(uid="p2", name="Blank", folder_uid="")
+        owned = Page(uid="p3", name="Owned", folder_uid="None")
+        bid.replace_pages([unassigned, blank, owned])
+        self.assertEqual(folder.pages, [owned])
+        self.assertEqual(bid.pages_without_folder, [unassigned, blank])
+        self.assertEqual(bid.page_count, 3)
+
+    def test_integer_folder_uids_match_string_page_folder_uids(self):
+        folder = Folder(uid=10, name="Numeric")
+        bid = Bid(uid="1", name="N", folders={10: folder})
+        page = Page(uid="p", name="P", folder_uid="10")
+        bid.replace_pages([page])
+        self.assertEqual(folder.pages, [page])

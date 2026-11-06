@@ -284,3 +284,113 @@ class LicenseThreadManagerTests(unittest.TestCase):
             self._join(cleanup_call)
         self.assertEqual(errors, [])
         self.assertEqual(order, ["operation", "cleanup"])
+
+
+class LicenseThreadManagerMessageTests(unittest.TestCase):
+    class _Logger:
+        def __init__(self):
+            self.records = []
+
+        def exception(self, message, *args):
+            self.records.append(("exception", message % args))
+
+        def warning(self, message, *args):
+            self.records.append(("warning", message % args))
+
+    class _Bridge:
+        def __init__(self, fail=None):
+            self.fail = fail
+            self.requests = []
+
+        def request_callback(self, callback, success, message):
+            if self.fail:
+                raise self.fail
+            self.requests.append((callback, success, message))
+
+    def manager(self):
+        import threading  # noqa: F401
+        from ost_visualizer.application.orchestrators.license_thread_manager import LicenseThreadManager
+
+        logger = self._Logger()
+        return LicenseThreadManager(logger), logger
+
+    def test_operation_failures_are_logged_with_the_prefix_and_reported_to_the_caller(self):
+        manager, logger = self.manager()
+        bridge = self._Bridge()
+        calls = []
+
+        def boom():
+            raise RuntimeError("kaput")
+
+        thread = manager.spawn_with_bridge(boom, bridge, lambda *a: calls.append(a))
+        thread.join(timeout=5)
+        self.assertEqual(logger.records, [("exception", "Error in Operation thread: kaput")])
+        callback, success, message = bridge.requests[0]
+        self.assertEqual((success, message), (False, "Operation failed: kaput"))
+        callback(success, message)
+        self.assertEqual(calls, [(False, "Operation failed: kaput", None)])
+        manager2, logger2 = self.manager()
+        thread = manager2.spawn_with_bridge(boom, self._Bridge(), lambda *a: None, error_prefix="Activation")
+        thread.join(timeout=5)
+        self.assertEqual(logger2.records, [("exception", "Error in Activation thread: kaput")])
+
+    def test_dispatch_failures_are_logged_and_the_thread_is_still_released(self):
+        manager, logger = self.manager()
+        thread = manager.spawn_with_bridge(lambda: (True, "ok", 1), self._Bridge(OSError("no ui")), lambda *a: None)
+        thread.join(timeout=5)
+        self.assertEqual(logger.records, [("exception", "Error dispatching thread callback: no ui")])
+        self.assertEqual(manager._active_threads, [])
+
+    def test_workers_are_daemon_threads_and_a_stopped_manager_refuses_new_work(self):
+        import threading
+
+        manager, _ = self.manager()
+        gate = threading.Event()
+        thread = manager.spawn_with_bridge(lambda: (gate.wait(5), "", None), self._Bridge(), lambda *a: None)
+        self.assertIs(thread.daemon, True)
+        gate.set()
+        thread.join(timeout=5)
+        manager.cleanup()
+        with self.assertRaisesRegex(RuntimeError, "^License operations have stopped$"):
+            manager.spawn_with_bridge(lambda: (True, "", None), self._Bridge(), lambda *a: None)
+
+    def test_a_worker_that_outlives_the_cleanup_timeout_is_reported_with_its_name_and_timeout(self):
+        import inspect
+        import threading
+        from ost_visualizer.application.orchestrators.license_thread_manager import LicenseThreadManager
+
+        self.assertEqual(inspect.signature(LicenseThreadManager.cleanup).parameters["timeout"].default, 2.0)
+        manager, logger = self.manager()
+        gate = threading.Event()
+        thread = manager.spawn_with_bridge(lambda: (gate.wait(5), "", None), self._Bridge(), lambda *a: None)
+        manager.cleanup(timeout=0.05)
+        gate.set()
+        thread.join(timeout=5)
+        self.assertEqual(logger.records, [("warning", f"Thread {thread.name} did not stop within 0.05s")])
+        self.assertEqual(manager._active_threads, [])
+
+    def test_cleanup_failures_are_reraised_singly_or_grouped_with_a_fixed_message(self):
+        manager, _ = self.manager()
+
+        class Stuck:
+            name = "stuck"
+
+            def __init__(self, error):
+                self.error = error
+
+            def is_alive(self):
+                return True
+
+            def join(self, timeout=None):
+                raise self.error
+
+        manager._active_threads = [Stuck(RuntimeError("one"))]
+        with self.assertRaisesRegex(RuntimeError, "^one$"):
+            manager.cleanup()
+        manager, _ = self.manager()
+        manager._active_threads = [Stuck(RuntimeError("one")), Stuck(ValueError("two"))]
+        with self.assertRaises(ExceptionGroup) as raised:
+            manager.cleanup()
+        self.assertEqual(raised.exception.message, "License worker cleanup failed")
+        self.assertEqual([type(e) for e in raised.exception.exceptions], [RuntimeError, ValueError])
+        manager.cleanup()

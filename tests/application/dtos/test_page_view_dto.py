@@ -26,5 +26,20 @@ class PageViewDtoTests(unittest.TestCase):
                 self.assertTrue(first.is_layer_visible(visible))
 
 
+
+class PageViewLayerVisibilityTests(unittest.TestCase):
+    def test_a_layer_literally_named_none_is_not_confused_with_an_unassigned_layer(self):
+        from ost_visualizer.application.dtos.page_view_dto import PageViewDto
+
+        view = PageViewDto(page=None, hidden_layer_uids={"None", 5})
+        self.assertIs(view.is_layer_visible(None), True)
+        self.assertIs(view.is_layer_visible(""), True)
+        self.assertIs(view.is_layer_visible("None"), False)
+        self.assertIs(view.is_layer_visible(5), False)
+        self.assertIs(view.is_layer_visible("5"), False)
+        self.assertIs(view.is_layer_visible("other"), True)
+        self.assertIs(PageViewDto(page=None).is_layer_visible("x"), True)
+
+
 if __name__ == "__main__":
     unittest.main()

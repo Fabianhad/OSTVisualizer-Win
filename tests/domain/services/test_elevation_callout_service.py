@@ -160,3 +160,44 @@ class ElevationCalloutResolverTests(unittest.TestCase):
             )
         self.assertIsNone(result)
         quantity.assert_not_called()
+
+
+class ElevationCalloutCenterTests(unittest.TestCase):
+    def resolve(self, ring):
+        return resolve_elevation_callout(
+            _elevation_support__area_condition(
+                name="F9 @T 410' 3\"", thickness=48.0, z_value=4923.0
+            ),
+            _elevation_support__area_takeoff(),
+            [],
+            tuple(ring),
+            ElevationCalloutSettings(
+                include_condition=True,
+                include_top=False,
+                include_bottom=False,
+                include_cubic_yards=False,
+            ),
+        )
+
+    def test_center_is_the_middle_of_the_bounding_box_of_the_finite_points_only(self):
+        nan, inf = float("nan"), float("inf")
+        result = self.resolve(
+            [(0, 0), (10, 20), (nan, 5), (5, nan), (inf, 3), (4, -inf), (-inf, -inf)]
+        )
+        self.assertEqual((result.x, result.y, result.lines), (5.0, 10.0, ("F9",)))
+
+    def test_center_uses_the_bounding_box_not_the_vertex_average(self):
+        result = self.resolve([(0, 0), (1, 0), (1, 1), (0, 1), (9, 5)])
+        self.assertEqual((result.x, result.y), (4.5, 2.5))
+        negative = self.resolve([(-10, -4), (-2, -8)])
+        self.assertEqual((negative.x, negative.y), (-6.0, -6.0))
+
+    def test_rings_without_any_finite_point_have_no_callout(self):
+        nan, inf = float("nan"), float("inf")
+        self.assertIsNone(self.resolve([(nan, 1), (1, inf), (inf, nan)]))
+        self.assertIsNone(self.resolve([]))
+
+    def test_a_single_finite_point_is_its_own_center_and_numeric_text_is_accepted(self):
+        result = self.resolve([(3, 4)])
+        self.assertEqual((result.x, result.y), (3.0, 4.0))
+        self.assertIsInstance(result.x, float)

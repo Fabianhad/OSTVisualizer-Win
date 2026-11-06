@@ -21,7 +21,7 @@ from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_SELECT,
     CURSOR_MODE_ZOOM,
 )
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtTest, QtWidgets
 from tests.integration.ai_takeoff import test_m1b_golden_end_to_end as m1b
 from tests.integration.ai_takeoff.access_app_support import (
     run_in_access_child,
@@ -148,6 +148,18 @@ class PageSwitchToolTests(unittest.TestCase):
                     self.pump(30)
                     self.assertEqual(plan.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
                     self.assertEqual(plan.annotation_place_type, spec.annotation_type)
+                    half_drawn = spec.annotation_type == ANNOTATION_TYPE_DIMENSION
+                    if half_drawn:
+                        # Start a two-point dimension: the first point is placed and
+                        # the drag is in progress when the page changes.
+                        QtTest.QTest.mousePress(
+                            plan.viewport(),
+                            QtCore.Qt.MouseButton.LeftButton,
+                            pos=plan.viewport().rect().center(),
+                        )
+                        self.pump(10)
+                        self.assertEqual(len(plan._annotation_place_points), 1)
+                        self.assertTrue(plan._annotation_place_dragging)
                     page = 1 - page
                     ui.handle_active_page_changed(page_uids[page])
                     self.pump()
@@ -155,6 +167,39 @@ class PageSwitchToolTests(unittest.TestCase):
                     self.assertEqual(plan.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
                     self.assertEqual(plan.annotation_place_type, spec.annotation_type)
                     self.assertEqual(self.checked_tools(win), [spec.action_key])
+                    if half_drawn:
+                        # The partial drawing belongs to the old page and is discarded;
+                        # only the tool itself carries over.
+                        self.assertEqual(plan._annotation_place_points, [])
+                        self.assertFalse(plan._annotation_place_dragging)
+            dimension = next(
+                spec for spec in PLAN_ANNOTATION_TOOL_SPECS
+                if spec.annotation_type == ANNOTATION_TYPE_DIMENSION
+            )
+            win._plan_tool_actions[dimension.action_key].trigger()
+            self.pump(30)
+            self.assertEqual(plan.annotation_place_type, ANNOTATION_TYPE_DIMENSION)
+            # A page load that does not go through the authoritative-refresh
+            # preparation still drops the half-drawn item but keeps the tool.
+            QtTest.QTest.mousePress(
+                plan.viewport(),
+                QtCore.Qt.MouseButton.LeftButton,
+                pos=plan.viewport().rect().center(),
+            )
+            self.pump(10)
+            self.assertEqual(len(plan._annotation_place_points), 1)
+            plan.clear(
+                preserve_place_session=True,
+                notify_page_cleared=False,
+                report_selection_cleared=False,
+            )
+            self.assertEqual(plan._annotation_place_points, [])
+            self.assertFalse(plan._annotation_place_dragging)
+            self.assertEqual(plan.annotation_place_type, ANNOTATION_TYPE_DIMENSION)
+            self.assertEqual(plan.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+            # Without the preserve flag the tool is left entirely.
+            plan.clear(notify_page_cleared=False, report_selection_cleared=False)
+            self.assertIsNone(plan.annotation_place_type)
 
     def test_pan_zoom_and_select_survive_a_page_switch_without_a_condition(self):
         if self.skip_body:

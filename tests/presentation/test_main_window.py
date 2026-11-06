@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ast
+import gc
 from ost_visualizer.presentation.config import MAIN_WINDOW_TITLE
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.bid import Bid
@@ -142,6 +143,17 @@ def _app():
     return app
 
 
+def _strict_service(expected_name, service):
+    """get_service double that serves exactly one registered name."""
+
+    def get_service(name):
+        if name != expected_name:
+            raise KeyError(name)
+        return service
+
+    return get_service
+
+
 def _attach_summary_header(tab):
     controller = PersistentHeaderController(
         tab.tree,
@@ -155,37 +167,6 @@ def _attach_summary_header(tab):
     tab.columns_about_to_change.connect(controller.begin_columns_update)
     tab.columns_changed.connect(controller.end_columns_update)
     return controller
-
-
-class MainWindowHandlerCompositionTests(unittest.TestCase):
-    def test_main_window_handler_factory_uses_owned_app_controller(self):
-        tree = ast.parse(
-            Path("ost_visualizer/presentation/main_window.py").read_text(
-                encoding="utf-8"
-            )
-        )
-        handler_factory = next(
-            node
-            for class_node in ast.walk(tree)
-            if isinstance(class_node, ast.ClassDef) and class_node.name == "MainWindow"
-            for node in class_node.body
-            if isinstance(node, ast.FunctionDef) and node.name == "_create_handlers"
-        )
-        bare_app_controller_names = [
-            node
-            for node in ast.walk(handler_factory)
-            if isinstance(node, ast.Name) and node.id == "app_controller"
-        ]
-        owned_app_controller_reads = [
-            node
-            for node in ast.walk(handler_factory)
-            if isinstance(node, ast.Attribute)
-            and node.attr == "app_controller"
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "self"
-        ]
-        self.assertEqual(bare_app_controller_names, [])
-        self.assertGreaterEqual(len(owned_app_controller_reads), 4)
 
 
 class MainWindowSummaryActionTests(unittest.TestCase):
@@ -505,15 +486,17 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         self.assertEqual(emitted, [{"version": "2.0"}])
 
     def _update_check_window(self, check_for_updates):
+        # The worker body swallows exceptions, so a ``self.fail`` raised from the
+        # emit hook would be logged and lost; record emissions and assert on them.
+        emitted = []
         window = SimpleNamespace(
+            emitted=emitted,
             _update_service=SimpleNamespace(check_for_updates=check_for_updates),
             _collaboration_shutdown_pending=False,
             _collaboration_shutdown_complete=False,
             _application_shutdown_finalized=False,
             _shutdown_deferred_callbacks={},
-            update_dialog_requested=SimpleNamespace(
-                emit=lambda info: self.fail(f"Unexpected update dialog: {info}")
-            ),
+            update_dialog_requested=SimpleNamespace(emit=lambda info: emitted.append(info)),
         )
         window._application_shutdown_terminal = lambda: (
             MainWindow._application_shutdown_terminal(window)
@@ -532,7 +515,11 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                     "ost_visualizer.presentation.main_window.threading.Thread"
                 ) as thread_factory:
                     MainWindow._check_for_updates(window)
-                thread_factory.call_args.kwargs["target"]()
+                with self.assertNoLogs(
+                    "ost_visualizer.presentation.main_window", level="ERROR"
+                ):
+                    thread_factory.call_args.kwargs["target"]()
+                self.assertEqual(window.emitted, [])
 
     def test_update_check_failure_is_logged_and_not_raised(self):
         def explode():
@@ -865,7 +852,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             )
         )
         window._deferred_persistence_manager = manager
-        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
         window.show = lambda: self.fail("A noncritical view-state failure reopened UI")
         with self.assertNoLogs("tests.close_pending_page_view", level="WARNING"):
             MainWindow._begin_application_shutdown(window)
@@ -933,7 +920,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             )
         )
         window._deferred_persistence_manager = manager
-        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
         window.show = lambda: None
         with patch("ost_visualizer.presentation.main_window.show_critical") as critical:
             MainWindow._begin_application_shutdown(window)
@@ -969,7 +956,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
-        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
         window.hide = lambda: calls.append("hide")
         window.show = lambda: calls.append("show")
         window.setEnabled = lambda _enabled: self.fail(
@@ -1010,7 +997,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
         window._flush_deferred_persistence_before_close = lambda: True
-        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
         window.show = lambda: self.fail("A healthy asynchronous drain must stay hidden")
         MainWindow._begin_application_shutdown(window)
         self.assertEqual(len(drain_callbacks), 1)
@@ -1184,7 +1171,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_pdf_source = SimpleNamespace(
             release=lambda: calls.append("ai_pdf_release")
         )
-        window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
+        window.app_controller = SimpleNamespace(get_service=_strict_service("lifecycle_orchestrator", lifecycle))
         first = FakeCloseEvent()
         second = FakeCloseEvent()
         with patch.object(
@@ -1267,7 +1254,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             cleanup=cleanup("ai_undo_notice_cleanup")
         )
         window._ai_pdf_source = SimpleNamespace(release=cleanup("ai_pdf_release"))
-        window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
+        window.app_controller = SimpleNamespace(get_service=_strict_service("lifecycle_orchestrator", lifecycle))
         event = FakeCloseEvent()
         with self.assertLogs(
             "ost_visualizer.presentation.main_window", level="ERROR"
@@ -1291,7 +1278,11 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             "shut down application lifecycle services",
         ):
             self.assertTrue(
-                any(description in line for line in captured.output), description
+                any(
+                    f"Failed to {description} during application shutdown" in line
+                    for line in captured.output
+                ),
+                description,
             )
         self.assertEqual(
             calls,
@@ -1318,6 +1309,75 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         self.assertEqual(window._shutdown_deferred_callbacks, {})
         self.assertEqual(window._shutdown_hidden_windows, ())
 
+    def test_every_failing_shutdown_step_is_logged_with_its_exact_description(self):
+        names = (
+            ("deferred_persistence", "clean up deferred persistence"),
+            ("workspace_flush", "flush workspace state"),
+            ("workspace_cleanup", "clean up workspace state"),
+            ("event_cleanup", "clean up event coordinator"),
+            ("ui_cleanup", "clean up UI event coordinator"),
+            ("license_cleanup", "clean up license coordinator"),
+            ("access_cleanup", "clean up UI access manager"),
+            ("mcp_cleanup", "clean up MCP context bridge"),
+            ("takeoff_cleanup", "clean up AI takeoff bridge"),
+            ("ai_review_cleanup", "clean up AI changeset review"),
+            ("ai_rebind_cleanup", "clean up AI sidecar prompt"),
+            ("ai_undo_notice_cleanup", "clean up AI undo notice"),
+            ("ai_pdf_release", "release AI takeoff PDF files"),
+            ("lifecycle", "shut down application lifecycle services"),
+        )
+
+        def failing(name):
+            def run():
+                raise RuntimeError(f"{name} failed")
+
+            return run
+
+        window = MainWindow.__new__(MainWindow)
+        window._application_shutdown_finalized = False
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = True
+        window._collaboration_shutdown_failed = False
+        window._shutdown_deferred_callbacks = {}
+        window._shutdown_hidden_windows = ()
+        window._deferred_persistence_manager = SimpleNamespace(
+            cleanup=failing("deferred_persistence")
+        )
+        window._workspace_state_coordinator = SimpleNamespace(
+            flush=failing("workspace_flush"), cleanup=failing("workspace_cleanup")
+        )
+        window.event_coordinator = SimpleNamespace(cleanup=failing("event_cleanup"))
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(cleanup=failing("ui_cleanup")),
+            file_ops=SimpleNamespace(maintenance_pending=False, sql_creation_pending=False),
+        )
+        window.license_coordinator = SimpleNamespace(cleanup=failing("license_cleanup"))
+        window.ui_access_manager = SimpleNamespace(cleanup=failing("access_cleanup"))
+        window._mcp_context_bridge = SimpleNamespace(cleanup=failing("mcp_cleanup"))
+        window._ai_takeoff_bridge = SimpleNamespace(cleanup=failing("takeoff_cleanup"))
+        window._ai_approval = SimpleNamespace(cleanup=failing("ai_review_cleanup"))
+        window._ai_rebind_prompt = SimpleNamespace(cleanup=failing("ai_rebind_cleanup"))
+        window._ai_undo_notice = SimpleNamespace(cleanup=failing("ai_undo_notice_cleanup"))
+        window._ai_pdf_source = SimpleNamespace(release=failing("ai_pdf_release"))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service(
+                "lifecycle_orchestrator", SimpleNamespace(shutdown=failing("lifecycle"))
+            )
+        )
+        with self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured, patch.object(
+            MainWindow.__mro__[1], "closeEvent"
+        ), patch.object(QtCore.QCoreApplication, "quit"):
+            MainWindow.closeEvent(window, FakeCloseEvent())
+        self.assertEqual(
+            [record.getMessage() for record in captured.records],
+            [
+                f"Failed to {description} during application shutdown"
+                for _name, description in names
+            ],
+        )
+
     def test_access_only_close_flushes_page_state_before_collaboration_shutdown(self):
         requests = []
         calls = []
@@ -1334,7 +1394,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
-        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
         window._deferred_persistence_manager = SimpleNamespace(
             begin_shutdown=lambda: calls.append("begin_shutdown"),
             cancel_for_file=lambda _database_id: calls.append("cancel"),
@@ -1442,7 +1502,7 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
                     )
                 )
             ),
-            app_controller=SimpleNamespace(get_service=lambda name: collaboration),
+            app_controller=SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration)),
             show=lambda: events.append("show"),
             close=lambda: events.append("close"),
             _resume_shutdown_deferred_callbacks=lambda: events.append("resume"),
@@ -2954,7 +3014,9 @@ class MainWindowStartupImportTests(unittest.TestCase):
 
             def exec(self):
                 delete(self)
-                return QtWidgets.QDialog.DialogCode.Rejected
+                # A dialog destroyed with its parent can still report Accepted;
+                # only the validity guard keeps that from creating a database.
+                return QtWidgets.QDialog.DialogCode.Accepted
 
         original_dialog = main_window_module.CreateDatabaseDialog
         try:
@@ -3958,30 +4020,6 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         cls.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
         cls.app.processEvents()
 
-    def test_named_view_timeout_callback_is_dropped_after_window_destruction(self):
-        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
-        QtWidgets.QMainWindow.__init__(window)
-        window._is_closing = False
-        calls = []
-        window._focus_on_named_view = lambda: calls.append("focus")
-        window._reveal_named_view_blank_canvas = lambda: calls.append("reveal")
-        delete(window)
-        DetachedPageViewWindow._focus_named_view_timeout_fallback(window)
-        self.assertEqual(calls, [])
-
-    def test_named_view_timeout_callback_runs_only_for_a_live_open_window(self):
-        for is_closing, expected in ((False, ["focus", "reveal"]), (True, [])):
-            with self.subTest(is_closing=is_closing):
-                window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
-                QtWidgets.QMainWindow.__init__(window)
-                self.addCleanup(window.deleteLater)
-                window._is_closing = is_closing
-                calls = []
-                window._focus_on_named_view = lambda: calls.append("focus")
-                window._reveal_named_view_blank_canvas = lambda: calls.append("reveal")
-                DetachedPageViewWindow._focus_named_view_timeout_fallback(window)
-                self.assertEqual(calls, expected)
-
     def test_projects_transition_cancels_an_inflight_detached_window_lifecycle(self):
         calls = []
 
@@ -4211,9 +4249,10 @@ class MainWindowAiTakeoffTests(unittest.TestCase):
         for enabled, allowed in ((False, (Feature.EDIT_PAGE_SETTINGS,)), (True, ())):
             with self.subTest(enabled=enabled):
                 window = self.ai_window(enabled, allowed)
-                self.assertIn(
-                    "Tools > Options > MCP Setup",
+                self.assertEqual(
                     window._ai_takeoff_write_denial(SimpleNamespace(kind="scale")),
+                    "AI takeoff is turned off or unavailable for the open bid. Turn "
+                    "it on in Tools > Options > MCP Setup.",
                 )
 
     def test_ai_takeoffs_go_to_the_selected_layer_then_default_then_none(self):
@@ -4327,3 +4366,3845 @@ class MainWindowAiTakeoffTests(unittest.TestCase):
             * 3,
         )
         self.assertFalse(self.audit_dir.exists())
+
+
+# ---------------------------------------------------------------------------
+# Second-pass (A3) additions: negative paths and state transitions that a full
+# in-memory mutation sweep of main_window.py showed no earlier test observed.
+# ---------------------------------------------------------------------------
+from PySide6.QtGui import QAction as _A3QAction
+from shiboken6 import delete as _a3_delete, isValid as _a3_is_valid
+from ost_visualizer.application.dtos.file_import_args import (
+    RejectedProjectFileArg as _A3Rejected,
+)
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyBidInfo as _A3HierarchyBidInfo,
+    HierarchyData as _A3HierarchyData,
+    HierarchyFileEntry as _A3HierarchyFileEntry,
+)
+from ost_visualizer.domain.entities.project_constants import (
+    DELETED_BIDS_PROJECT_UID as _A3_DELETED_UID,
+)
+from ost_visualizer.presentation.config import (
+    PAN_SIDEBAR_DEFAULT_HEIGHT as _A3_PAN_DEFAULT_HEIGHT,
+    SIDEBAR_MIN_WIDTH as _A3_SIDEBAR_MIN_WIDTH,
+)
+from ost_visualizer.presentation.services.bid_clipboard_service import (
+    BidClipboardService as _A3BidClipboardService,
+)
+from ost_visualizer.domain.entities.workspace_state import (
+    WORKSPACE_ACTIVE_VIEW_2D,
+    WORKSPACE_ACTIVE_VIEW_3D,
+)
+from ost_visualizer.presentation.config import (
+    MAIN_TOOLBAR_LABEL,
+    OVERLAY_TOOLS_TOOLBAR_LABEL,
+    PLAN_TOOLS_TOOLBAR_LABEL,
+    SHOW_TOOLBARS_MENU_TITLE,
+    VIEW_TOOLBAR_LABEL,
+)
+
+
+class _A3Access:
+    """UiAccessManager double: every query is recorded and answers are explicit."""
+
+    def __init__(self, allowed=(), *, delete_bids=True, delete_projects=True,
+                 clipboard=True):
+        self.allowed = set(allowed)
+        self.delete_bids = delete_bids
+        self.delete_projects = delete_projects
+        self.clipboard = clipboard
+        self.calls = []
+
+    def is_allowed(self, feature):
+        self.calls.append(("allowed", feature))
+        return feature in self.allowed
+
+    def can_delete_bids(self, bid_refs):
+        self.calls.append(("delete_bids", list(bid_refs)))
+        return self.delete_bids
+
+    def can_delete_projects(self, file_path, project_uids):
+        self.calls.append(("delete_projects", file_path, list(project_uids)))
+        return self.delete_projects
+
+    def is_project_bid_clipboard_allowed(self, feature, file_path, refs, target):
+        self.calls.append(("clipboard", feature, file_path, list(refs), target))
+        return self.clipboard
+
+
+class MainWindowA3EditCommandTests(unittest.TestCase):
+    """Copy / cut / paste / delete / duplicate / select-all routing per tab."""
+
+    A = BidRef("C:/jobs/a.mdb", "b1")
+    B = BidRef("C:/jobs/a.mdb", "b2")
+    OTHER = BidRef("C:/jobs/other.mdb", "b3")
+
+    def _window(self, tab=TAB_INDEX_PROJECTS, *, access=None, inline=None):
+        window = MainWindow.__new__(MainWindow)
+        log = []
+        window.log = log
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: tab)
+        window.ui_access_manager = access or _A3Access()
+        window._bid_clipboard = _A3BidClipboardService()
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_refs=lambda: [self.A, self.B],
+            selected_project_uids=[],
+            selected_project_file_path=None,
+        )
+
+        def record(name):
+            return lambda *args, **kwargs: log.append((name, args, kwargs))
+
+        window.plan_view = SimpleNamespace(
+            copy_selected=record("plan.copy"),
+            paste_clipboard=record("plan.paste"),
+            delete_selected=record("plan.delete"),
+            duplicate_selected=record("plan.duplicate"),
+            select_all=record("plan.select_all"),
+            is_text_annotation_inline_edit_active=lambda: inline is not None,
+            handle_inline_text_shortcut=lambda key: (
+                log.append(("inline", (key,), {})) or bool(inline)
+            ),
+        )
+        window._condition_summary_tab = SimpleNamespace(
+            copy_current_row=record("summary.copy"),
+            delete_current_row=record("summary.delete"),
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(refresh_toolbar=record("toolbar")),
+            delete=SimpleNamespace(
+                delete_selected=record("tree.delete"),
+                duplicate_selected=record("tree.duplicate"),
+                paste_bids=record("tree.paste"),
+            ),
+        )
+        window.project_view = SimpleNamespace(
+            get_delete_replacement_selection_state=lambda: "replacement"
+        )
+        return window
+
+    def test_copy_follows_the_tab_and_needs_the_matching_permission(self):
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
+        window._copy_selected()
+        self.assertEqual(window.log, [])
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS}))
+        window._copy_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["plan.copy"])
+        window = self._window(TAB_INDEX_SUMMARY)
+        window._copy_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["summary.copy"])
+        self.assertFalse(window._bid_clipboard.has_content())
+
+    def test_project_tree_copy_stores_same_database_bids_and_refreshes_the_toolbar(self):
+        window = self._window(access=_A3Access({Feature.COPY_BID}))
+        window._copy_selected()
+        self.assertEqual(window._bid_clipboard.bid_refs, [self.A, self.B])
+        self.assertFalse(window._bid_clipboard.is_cut)
+        self.assertEqual([entry[0] for entry in window.log], ["toolbar"])
+
+    def test_project_tree_copy_is_refused_without_access_or_across_databases(self):
+        denied = self._window(access=_A3Access())
+        denied._copy_selected()
+        self.assertFalse(denied._bid_clipboard.has_content())
+        mixed = self._window(access=_A3Access({Feature.COPY_BID}))
+        mixed.ui_state_manager.get_selected_bid_refs = lambda: [self.A, self.OTHER]
+        mixed._copy_selected()
+        empty = self._window(access=_A3Access({Feature.COPY_BID}))
+        empty.ui_state_manager.get_selected_bid_refs = lambda: []
+        empty._copy_selected()
+        for window in (denied, mixed, empty):
+            self.assertFalse(window._bid_clipboard.has_content())
+            self.assertEqual(window.log, [])
+
+    def test_copy_project_bids_obeys_the_same_rules_as_the_shortcut(self):
+        window = self._window(access=_A3Access())
+        window._copy_project_bids([self.A])
+        self.assertFalse(window._bid_clipboard.has_content())
+        window = self._window(access=_A3Access({Feature.COPY_BID}))
+        window._copy_project_bids([self.A, self.OTHER])
+        self.assertFalse(window._bid_clipboard.has_content())
+        window._copy_project_bids([self.A])
+        self.assertEqual(window._bid_clipboard.bid_refs, [self.A])
+        self.assertEqual([entry[0] for entry in window.log], ["toolbar"])
+
+    def test_cut_is_only_available_in_the_project_tree_with_delete_permission(self):
+        for tab in (TAB_INDEX_TAKEOFF, TAB_INDEX_SUMMARY):
+            window = self._window(tab)
+            window._cut_selected()
+            self.assertFalse(window._bid_clipboard.has_content())
+            self.assertEqual(window.log, [])
+        denied = self._window(access=_A3Access(delete_bids=False))
+        denied._cut_selected()
+        self.assertFalse(denied._bid_clipboard.has_content())
+        mixed = self._window()
+        mixed.ui_state_manager.get_selected_bid_refs = lambda: [self.A, self.OTHER]
+        mixed._cut_selected()
+        self.assertFalse(mixed._bid_clipboard.has_content())
+        window = self._window()
+        window._cut_selected()
+        self.assertTrue(window._bid_clipboard.is_cut)
+        self.assertEqual(window._bid_clipboard.bid_refs, [self.A, self.B])
+        self.assertEqual([entry[0] for entry in window.log], ["toolbar"])
+
+    def test_inline_text_editing_consumes_copy_cut_paste_and_delete(self):
+        for action, method in (
+            ("copy", "_copy_selected"),
+            ("cut", "_cut_selected"),
+            ("paste", "_paste_clipboard"),
+            ("delete", "_delete_selected"),
+        ):
+            with self.subTest(action=action):
+                window = self._window(
+                    TAB_INDEX_TAKEOFF,
+                    access=_A3Access(
+                        {Feature.SELECT_PLAN_ITEMS, Feature.EDIT_PLAN_ITEMS}
+                    ),
+                    inline=True,
+                )
+                getattr(window, method)()
+                self.assertEqual(window.log, [("inline", (action,), {})])
+        window = self._window(
+            TAB_INDEX_TAKEOFF,
+            access=_A3Access({Feature.SELECT_PLAN_ITEMS}),
+            inline=False,
+        )
+        window._copy_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["inline", "plan.copy"])
+
+    def test_inline_shortcut_needs_the_takeoff_tab_a_plan_view_and_an_active_edit(self):
+        window = self._window(TAB_INDEX_PROJECTS, inline=True)
+        self.assertIs(window._handle_inline_text_shortcut("copy"), False)
+        window = self._window(TAB_INDEX_TAKEOFF, inline=True)
+        self.assertIs(window._handle_inline_text_shortcut("copy"), True)
+        window.plan_view = None
+        self.assertIs(window._handle_inline_text_shortcut("copy"), False)
+        window = self._window(TAB_INDEX_TAKEOFF)
+        self.assertIs(window._handle_inline_text_shortcut("copy"), False)
+        self.assertEqual(window.log, [])
+
+    def test_select_all_only_acts_on_the_takeoff_tab_with_selection_access(self):
+        window = self._window(TAB_INDEX_PROJECTS, access=_A3Access({Feature.SELECT_PLAN_ITEMS}))
+        window._select_all()
+        self.assertEqual(window.log, [])
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
+        window._select_all()
+        self.assertEqual(window.log, [])
+        window = self._window(
+            TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS}), inline=True
+        )
+        window._select_all()
+        self.assertEqual(window.log, [("inline", ("select_all",), {})])
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS}))
+        window._select_all()
+        self.assertEqual([entry[0] for entry in window.log], ["plan.select_all", "toolbar"])
+
+    def test_delete_routes_by_tab_and_permission(self):
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
+        window._delete_selected()
+        self.assertEqual(window.log, [])
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.EDIT_PLAN_ITEMS}))
+        window._delete_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["plan.delete"])
+        window = self._window(TAB_INDEX_SUMMARY, access=_A3Access())
+        window._delete_selected()
+        self.assertEqual(window.log, [])
+        window = self._window(TAB_INDEX_SUMMARY, access=_A3Access({Feature.DELETE_CONDITION}))
+        window._delete_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["summary.delete"])
+
+    def test_project_tree_delete_requires_deletable_bids_or_projects(self):
+        window = self._window(access=_A3Access(delete_bids=False))
+        window._delete_selected()
+        self.assertEqual(window.log, [])
+        window = self._window()
+        window._delete_selected()
+        self.assertEqual(
+            window.log, [("tree.delete", ("replacement",), {})]
+        )
+        for path, allowed in ((None, True), ("C:/jobs/a.mdb", False)):
+            with self.subTest(path=path, allowed=allowed):
+                window = self._window(access=_A3Access(delete_projects=allowed))
+                window.ui_state_manager.get_selected_bid_refs = lambda: []
+                window.ui_state_manager.selected_project_uids = ["p1"]
+                window.ui_state_manager.selected_project_file_path = path
+                window._delete_selected()
+                self.assertEqual(window.log, [])
+        window = self._window()
+        window.ui_state_manager.get_selected_bid_refs = lambda: []
+        window.ui_state_manager.selected_project_uids = ["p1"]
+        window.ui_state_manager.selected_project_file_path = "C:/jobs/a.mdb"
+        window._delete_selected()
+        self.assertEqual(window.log, [("tree.delete", ("replacement",), {})])
+        self.assertIn(
+            ("delete_projects", "C:/jobs/a.mdb", ["p1"]), window.ui_access_manager.calls
+        )
+
+    def test_duplicate_routes_by_tab_and_permission(self):
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
+        window._duplicate_selected()
+        self.assertEqual(window.log, [])
+        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.EDIT_PLAN_ITEMS}))
+        window._duplicate_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["plan.duplicate"])
+        window = self._window(TAB_INDEX_SUMMARY, access=_A3Access(set(Feature)))
+        window._duplicate_selected()
+        self.assertEqual(window.log, [])
+        window = self._window(access=_A3Access())
+        window._duplicate_selected()
+        self.assertEqual(window.log, [])
+        window = self._window(access=_A3Access({Feature.DUPLICATE_BID}))
+        window._duplicate_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["tree.duplicate"])
+
+    def test_paste_routes_by_tab_and_resolves_the_project_tree_target(self):
+        window = self._window(TAB_INDEX_TAKEOFF)
+        window._paste_clipboard()
+        self.assertEqual([entry[0] for entry in window.log], ["plan.paste"])
+        window = self._window(TAB_INDEX_SUMMARY)
+        window._get_bid_paste_target = lambda: self.fail("summary never pastes")
+        window._paste_clipboard()
+        self.assertEqual(window.log, [])
+        window = self._window()
+        pasted = []
+        window._paste_project_bids = lambda *args: pasted.append(args)
+        window._get_bid_paste_target = lambda: None
+        window._paste_clipboard()
+        window._get_bid_paste_target = lambda: ("C:/jobs/a.mdb", "proj")
+        window._paste_clipboard()
+        self.assertEqual(pasted, [("C:/jobs/a.mdb", "proj")])
+
+    def _hierarchy(self, *bids):
+        return _A3HierarchyData(
+            loaded_files=[
+                _A3HierarchyFileEntry(
+                    file_path="C:/jobs/a.mdb",
+                    orphan_bids=[_A3HierarchyBidInfo(uid=uid) for uid in bids],
+                )
+            ]
+        )
+
+    def _paste_window(self, *, access=None, hierarchy=None):
+        window = self._window(access=access or _A3Access())
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: hierarchy or self._hierarchy("b1", "b2")
+        )
+        return window
+
+    def test_paste_permission_depends_on_the_clipboard_mode_and_source_database(self):
+        window = self._paste_window()
+        self.assertIs(window._can_paste_project_bids("C:/jobs/a.mdb", None), False)
+        window._bid_clipboard.copy([self.A])
+        self.assertIs(
+            window._can_paste_project_bids("C:/jobs/a.mdb", _A3_DELETED_UID), False
+        )
+        self.assertEqual(window.ui_access_manager.calls, [])
+        self.assertIs(window._can_paste_project_bids("C:/jobs/other.mdb", "proj"), False)
+        self.assertIs(window._can_paste_project_bids("", "proj"), False)
+        self.assertEqual(window.ui_access_manager.calls, [])
+        window.ui_access_manager.clipboard = False
+        self.assertIs(window._can_paste_project_bids("C:/jobs/a.mdb", "proj"), False)
+        window.ui_access_manager.clipboard = True
+        self.assertIs(window._can_paste_project_bids("C:/jobs/a.mdb", "proj"), True)
+        self.assertEqual(
+            window.ui_access_manager.calls[-1],
+            ("clipboard", Feature.DUPLICATE_BID, "C:/jobs/a.mdb", [self.A], "proj"),
+        )
+        window._bid_clipboard.cut([self.A])
+        window._can_paste_project_bids("C:/jobs/a.mdb", None)
+        self.assertEqual(
+            window.ui_access_manager.calls[-1],
+            ("clipboard", Feature.DELETE_BID, "C:/jobs/a.mdb", [self.A], None),
+        )
+
+    def test_paste_permission_drops_clipboard_bids_that_left_the_hierarchy(self):
+        window = self._paste_window(hierarchy=self._hierarchy("b2"))
+        window._bid_clipboard.copy([self.A])
+        self.assertIs(window._can_paste_project_bids("C:/jobs/a.mdb", "proj"), False)
+        self.assertFalse(window._bid_clipboard.has_content())
+        self.assertEqual(window.ui_access_manager.calls, [])
+
+    def test_a_copied_paste_duplicates_without_touching_the_clipboard(self):
+        window = self._paste_window()
+        window._bid_clipboard.copy([self.A, self.B])
+        window._paste_project_bids("C:/jobs/a.mdb", "proj")
+        self.assertEqual(
+            window.log,
+            [
+                ("tree.paste", ([self.A, self.B], "proj"), {"is_cut": False}),
+                ("toolbar", (), {}),
+            ],
+        )
+        self.assertEqual(window._bid_clipboard.bid_refs, [self.A, self.B])
+
+    def test_a_refused_paste_changes_nothing(self):
+        window = self._paste_window(access=_A3Access(clipboard=False))
+        window._bid_clipboard.copy([self.A])
+        window._paste_project_bids("C:/jobs/a.mdb", "proj")
+        self.assertEqual(window.log, [])
+
+    def test_a_cut_paste_commits_the_cut_only_for_the_clipboard_it_started_with(self):
+        window = self._paste_window()
+        window._bid_clipboard.cut([self.A, self.B])
+        window._paste_project_bids("C:/jobs/a.mdb", "proj")
+        (_name, args, kwargs), toolbar = window.log
+        self.assertEqual(args, ([self.A, self.B], "proj"))
+        self.assertTrue(kwargs["is_cut"])
+        self.assertEqual(toolbar[0], "toolbar")
+        window.log.clear()
+        kwargs["on_cut_committed"]()
+        self.assertFalse(window._bid_clipboard.has_content())
+        self.assertEqual([entry[0] for entry in window.log], ["toolbar"])
+        stale = self._paste_window()
+        stale._bid_clipboard.cut([self.A])
+        stale._paste_project_bids("C:/jobs/a.mdb", "proj")
+        callback = stale.log[0][2]["on_cut_committed"]
+        stale._bid_clipboard.cut([self.B])
+        stale.log.clear()
+        callback()
+        self.assertEqual(stale._bid_clipboard.bid_refs, [self.B])
+        self.assertEqual(stale.log, [])
+
+    def test_paste_target_needs_a_file_path_and_a_selected_bid_inside_the_selection(self):
+        window = MainWindow.__new__(MainWindow)
+        state = SimpleNamespace(
+            selected_project_uids=["p1"],
+            selected_project_file_path=None,
+            get_selected_bid_refs=lambda: [],
+            get_selected_bid_ref=lambda: None,
+            selected_file_path=None,
+        )
+        window.ui_state_manager = state
+        window._project_data_service = SimpleNamespace(
+            find_project_uid_for_bid=lambda ref: "proj"
+        )
+        self.assertIsNone(window._get_bid_paste_target())
+        state.selected_project_uids = []
+        self.assertIsNone(window._get_bid_paste_target())
+        state.selected_file_path = "C:/jobs/a.mdb"
+        self.assertEqual(window._get_bid_paste_target(), ("C:/jobs/a.mdb", None))
+        state.get_selected_bid_ref = lambda: self.A
+        self.assertEqual(window._get_bid_paste_target(), ("C:/jobs/a.mdb", None))
+        state.get_selected_bid_refs = lambda: [self.A]
+        self.assertEqual(window._get_bid_paste_target(), ("C:/jobs/a.mdb", "proj"))
+        state.selected_project_uids = ["p1", "p2"]
+        self.assertIsNone(window._get_bid_paste_target())
+
+
+class MainWindowA3ProjectTreeCommandTests(unittest.TestCase):
+    def _window(self, access):
+        window = MainWindow.__new__(MainWindow)
+        calls = []
+        window.calls = calls
+        window.ui_access_manager = access
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(
+                duplicate_bid=lambda ref: calls.append(("duplicate", ref)),
+                update_bid_job_status=lambda ref, uid: calls.append(("status", ref, uid)),
+                restore_bids=lambda refs: calls.append(("restore", refs)),
+                move_bids=lambda refs, target: calls.append(("move", refs, target)),
+            )
+        )
+        return window
+
+    def test_context_commands_are_dispatched_only_when_the_exact_permission_holds(self):
+        ref = BidRef("C:/jobs/a.mdb", "b1")
+        allowed = SimpleNamespace(
+            can_duplicate_bid=lambda r: True,
+            can_edit_bid_job_status=lambda r: True,
+            can_edit_bid_structure=lambda refs: True,
+            can_create_bid=lambda path, project: True,
+        )
+        denied = SimpleNamespace(
+            can_duplicate_bid=lambda r: False,
+            can_edit_bid_job_status=lambda r: False,
+            can_edit_bid_structure=lambda refs: False,
+            can_create_bid=lambda path, project: False,
+        )
+        window = self._window(allowed)
+        window._duplicate_project_tree_bid(ref)
+        window._update_project_tree_bid_job_status(ref, "js1")
+        window._restore_project_bids([ref])
+        window._move_project_bids([ref], "proj")
+        self.assertEqual(
+            window.calls,
+            [
+                ("duplicate", ref),
+                ("status", ref, "js1"),
+                ("restore", [ref]),
+                ("move", [ref], "proj"),
+            ],
+        )
+        window = self._window(denied)
+        window._duplicate_project_tree_bid(ref)
+        window._update_project_tree_bid_job_status(ref, "js1")
+        window._restore_project_bids([ref])
+        window._move_project_bids([ref], "proj")
+        self.assertEqual(window.calls, [])
+
+    def test_a_move_needs_bids_one_database_structure_access_and_a_creatable_target(self):
+        ref = BidRef("C:/jobs/a.mdb", "b1")
+        other = BidRef("C:/jobs/other.mdb", "b2")
+        created = []
+
+        def make(structure=True, create=True):
+            window = MainWindow.__new__(MainWindow)
+            window.ui_access_manager = SimpleNamespace(
+                can_edit_bid_structure=lambda refs: structure,
+                can_create_bid=lambda path, project: created.append((path, project))
+                or create,
+            )
+            return window
+
+        self.assertIs(make()._can_move_project_bids([], "proj"), False)
+        self.assertIs(make(structure=False)._can_move_project_bids([ref], "proj"), False)
+        self.assertIs(make()._can_move_project_bids([ref, other], "proj"), False)
+        created.clear()
+        self.assertIs(make(create=False)._can_move_project_bids([ref], "proj"), False)
+        self.assertEqual(created, [("C:/jobs/a.mdb", "proj")])
+        self.assertIs(make()._can_move_project_bids([ref], "proj"), True)
+
+    def test_menu_commands_without_a_controller_do_nothing_and_report_disabled(self):
+        window = MainWindow.__new__(MainWindow)
+        window.menu_controller = None
+        window._trigger_project_tree_menu_command("copy")
+        window._create_project_tree_bid("C:/jobs/a.mdb", None)
+        window._create_project_tree_project("C:/jobs/a.mdb")
+        self.assertIs(window._is_project_tree_menu_command_enabled("copy"), False)
+        self.assertEqual(window._project_tree_export_formats(), [])
+        log = []
+        window.menu_controller = SimpleNamespace(
+            trigger_menu_action=lambda key: log.append(("trigger", key)),
+            new_project_at=lambda path, project: log.append(("bid", path, project)),
+            new_folder_in=lambda path: log.append(("folder", path)),
+            is_context_command_enabled=lambda key: key == "copy",
+            get_export_formats=lambda: ["csv"],
+        )
+        window._trigger_project_tree_menu_command("copy")
+        window._create_project_tree_bid("C:/jobs/a.mdb", "proj")
+        window._create_project_tree_project("C:/jobs/a.mdb")
+        self.assertIs(window._is_project_tree_menu_command_enabled("copy"), True)
+        self.assertIs(window._is_project_tree_menu_command_enabled("cut"), False)
+        self.assertEqual(window._project_tree_export_formats(), ["csv"])
+        self.assertEqual(
+            log,
+            [
+                ("trigger", "copy"),
+                ("bid", "C:/jobs/a.mdb", "proj"),
+                ("folder", "C:/jobs/a.mdb"),
+            ],
+        )
+
+    def test_multi_selection_is_stored_and_the_toolbar_refreshed(self):
+        window = MainWindow.__new__(MainWindow)
+        log = []
+        window.ui_state_manager = SimpleNamespace(
+            set_bid_multi_selection=lambda refs: log.append(("bids", refs)),
+            set_project_multi_selection=lambda uids, path: log.append(("projects", uids, path)),
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(refresh_toolbar=lambda: log.append(("toolbar",)))
+        )
+        window._on_project_multi_selection(["ref"], ["p1"], "C:/jobs/a.mdb")
+        self.assertEqual(
+            log, [("bids", ["ref"]), ("projects", ["p1"], "C:/jobs/a.mdb"), ("toolbar",)]
+        )
+
+    def test_the_context_bid_owns_the_active_bid_only_when_uid_and_path_all_match(self):
+        selected = BidRef("C:/Jobs/A.mdb", "b1")
+        current = BidRef("c:\\jobs\\a.mdb", "b1")
+        window = MainWindow.__new__(MainWindow)
+        window.ui_state_manager = SimpleNamespace(get_selected_bid_ref=lambda: selected)
+        window._project_data_service = SimpleNamespace(get_current_bid_ref=lambda: current)
+        self.assertIs(
+            window._project_tree_context_owns_active_bid(BidRef("C:/jobs/a.mdb", "b1")),
+            True,
+        )
+        self.assertIs(
+            window._project_tree_context_owns_active_bid(BidRef("C:/jobs/a.mdb", "b2")),
+            False,
+        )
+        self.assertIs(
+            window._project_tree_context_owns_active_bid(BidRef("C:/jobs/z.mdb", "b1")),
+            False,
+        )
+        window._project_data_service = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("C:/jobs/z.mdb", "b1")
+        )
+        self.assertIs(
+            window._project_tree_context_owns_active_bid(BidRef("C:/jobs/a.mdb", "b1")),
+            False,
+        )
+        window._project_data_service = SimpleNamespace(get_current_bid_ref=lambda: None)
+        self.assertIs(
+            window._project_tree_context_owns_active_bid(BidRef("C:/jobs/a.mdb", "b1")),
+            False,
+        )
+        window.ui_state_manager = SimpleNamespace(get_selected_bid_ref=lambda: None)
+        window._project_data_service = SimpleNamespace(get_current_bid_ref=lambda: current)
+        self.assertIs(
+            window._project_tree_context_owns_active_bid(BidRef("C:/jobs/a.mdb", "b1")),
+            False,
+        )
+
+
+class MainWindowA3ImportProgressDialogTests(unittest.TestCase):
+    """The project-import progress dialog: modality, ownership and cleanup."""
+
+    def setUp(self):
+        _startup_import_FakeStartupProgressDialog.instances = []
+        _startup_import_FakeStartupProgressDialog.result_code = (
+            QtWidgets.QDialog.DialogCode.Accepted
+        )
+        self.addCleanup(
+            setattr,
+            _startup_import_FakeStartupProgressDialog,
+            "result_code",
+            QtWidgets.QDialog.DialogCode.Accepted,
+        )
+
+    def _window(self, executed, *, flush=True, result=None):
+        window = _startup_import__startup_import_window()
+        self.target = import_args_use_case.ProjectImportTarget("target.mdb")
+        self.flushed = []
+        window._current_project_import_target = lambda: None
+        window._deferred_persistence_manager = SimpleNamespace(
+            flush_for_file=lambda path: self.flushed.append(path) or flush
+        )
+        window._import_project_files_from_args = SimpleNamespace(
+            resolve_target=lambda current: self.target,
+            uses_async_import=lambda target: False,
+            execute_imports=lambda args, target, refresh_after_import=True: (
+                executed.append((args, target, refresh_after_import))
+                or (
+                    result
+                    if result is not None
+                    else import_args_use_case.ProjectFileImportBatchResult(
+                        target_db_path=target.file_path
+                    )
+                )
+            ),
+            build_no_target_result=lambda args: "no-target",
+            build_flush_failure_result=lambda args, target: ("flush-failure", target),
+            queue_imports=lambda args, target, completed: self.queued.append(
+                (args, target, completed)
+            ),
+        )
+        self.queued = []
+        return window
+
+    def _args(self, *names):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name in names:
+                path = Path(tmp) / name
+                path.write_text("x")
+                paths.append(path)
+            return _startup_import__project_file_args(*paths)
+
+    def _run(self, window, args):
+        with patch.object(
+            main_window_module, "ProgressDialog", _startup_import_FakeStartupProgressDialog
+        ):
+            return MainWindow._import_project_files_with_progress(window, args)
+
+    def test_the_dialog_is_application_modal_owned_by_the_window_and_released(self):
+        executed = []
+        window = self._window(executed)
+        args = self._args("one.ost")
+        result = self._run(window, args)
+        (dialog,) = _startup_import_FakeStartupProgressDialog.instances
+        self.assertIs(
+            dialog.window_modality, QtCore.Qt.WindowModality.ApplicationModal
+        )
+        self.assertIs(dialog.parent, window)
+        self.assertEqual(dialog.cleanup_calls, 1)
+        self.assertEqual(dialog.delete_later_calls, 1)
+        self.assertEqual(dialog.filename, args.files[0].path)
+        self.assertEqual(len(executed), 1)
+        self.assertFalse(executed[0][2])
+        self.assertIs(result, dialog.result)
+        self.assertEqual(self.flushed, ["target.mdb"])
+
+    def test_a_rejected_dialog_reports_every_file_as_failed_and_is_still_released(self):
+        executed = []
+        window = self._window(executed)
+        _startup_import_FakeStartupProgressDialog.result_code = (
+            QtWidgets.QDialog.DialogCode.Rejected
+        )
+        args = self._args("one.ost", "two.osp")
+        result = self._run(window, args)
+        (dialog,) = _startup_import_FakeStartupProgressDialog.instances
+        self.assertEqual(dialog.cleanup_calls, 1)
+        self.assertEqual(dialog.delete_later_calls, 1)
+        self.assertEqual(dialog.filename, "2 project files")
+        self.assertEqual(
+            [(item.source_path, item.success, item.message) for item in result.results],
+            [
+                (item.path, False, "The file could not be imported.")
+                for item in args.files
+            ],
+        )
+        self.assertEqual(result.target_db_path, "target.mdb")
+
+    def test_an_accepted_dialog_without_a_batch_result_is_a_failure_and_logs_the_error(self):
+        executed = []
+        window = self._window(executed)
+
+        class NoResult(_startup_import_FakeStartupProgressDialog):
+            def exec(self):
+                self.result = True
+                self.error = RuntimeError("worker boom")
+                return self.result_code
+
+        args = self._args("one.ost")
+        with patch.object(main_window_module, "ProgressDialog", NoResult), self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured:
+            result = MainWindow._import_project_files_with_progress(window, args)
+        self.assertIn("worker boom", captured.output[0])
+        self.assertEqual([item.success for item in result.results], [False])
+        _startup_import_FakeStartupProgressDialog.result_code = (
+            QtWidgets.QDialog.DialogCode.Rejected
+        )
+        with self.assertNoLogs("ost_visualizer.presentation.main_window", level="ERROR"):
+            quiet = self._run(self._window(executed), args)
+        self.assertEqual([item.success for item in quiet.results], [False])
+
+    def test_a_dialog_that_raises_while_running_is_still_released(self):
+        window = self._window([])
+
+        class Exploding(_startup_import_FakeStartupProgressDialog):
+            def exec(self):
+                raise RuntimeError("exec failed")
+
+        args = self._args("one.ost")
+        with patch.object(main_window_module, "ProgressDialog", Exploding):
+            with self.assertRaisesRegex(RuntimeError, "exec failed"):
+                MainWindow._import_project_files_with_progress(window, args)
+        (dialog,) = Exploding.instances[-1:]
+        self.assertEqual(dialog.cleanup_calls, 1)
+        self.assertEqual(dialog.delete_later_calls, 1)
+
+    def test_every_early_exit_returns_before_a_dialog_is_created(self):
+        executed = []
+        window = self._window(executed)
+        rejected = [_A3Rejected(value="bad.txt", reason="Unsupported file type.")]
+        empty = import_args_use_case.ProjectFileArgs(files=[], rejected=rejected)
+        result = self._run(window, empty)
+        self.assertEqual(result.rejected, rejected)
+        self.assertEqual(result.results, [])
+        args = self._args("one.ost")
+        window.ui_access_manager = SimpleNamespace(is_allowed=lambda feature: False)
+        denied = self._run(window, args)
+        self.assertEqual(
+            [(item.success, item.message) for item in denied.results],
+            [(False, "Import is not available for the selected database.")],
+        )
+        window = self._window(executed)
+        window._import_project_files_from_args.resolve_target = lambda current: None
+        self.assertEqual(self._run(window, args), "no-target")
+        window = self._window(executed, flush=False)
+        self.assertEqual(self._run(window, args), ("flush-failure", self.target))
+        window = self._window(executed)
+        window._import_project_files_from_args.uses_async_import = lambda target: True
+        self.assertIsNone(self._run(window, args))
+        self.assertEqual(len(self.queued), 1)
+        self.assertEqual(self.queued[0][2], window._complete_async_project_file_imports)
+        self.assertEqual(_startup_import_FakeStartupProgressDialog.instances, [])
+        self.assertEqual(executed, [])
+
+    def test_the_create_database_dialog_result_needs_both_acceptance_and_a_path(self):
+        class Controller:
+            def __init__(self, path):
+                self.path = path
+
+            def create_new_database(self, name=None, progress_callback=None):
+                return self.path
+
+        cases = (
+            (QtWidgets.QDialog.DialogCode.Accepted, "created.mdb", "created.mdb"),
+            (QtWidgets.QDialog.DialogCode.Rejected, "created.mdb", None),
+            (QtWidgets.QDialog.DialogCode.Accepted, "", None),
+            (QtWidgets.QDialog.DialogCode.Accepted, None, None),
+        )
+        for code, path, expected in cases:
+            with self.subTest(code=code, path=path):
+                window = MainWindow.__new__(MainWindow)
+                window.app_controller = Controller(path)
+
+                class Dialog(_dialog_lifecycle_support_FakeProgressDialog):
+                    result_code = code
+
+                with patch.object(main_window_module, "ProgressDialog", Dialog):
+                    self.assertEqual(
+                        MainWindow._create_database_with_progress(window), expected
+                    )
+
+
+class MainWindowA3ImportCompletionTests(unittest.TestCase):
+    def _result(self, **kwargs):
+        return import_args_use_case.ProjectFileImportBatchResult(**kwargs)
+
+    def _recorders(self):
+        calls = []
+        patchers = [
+            patch.object(
+                main_window_module,
+                name,
+                lambda parent, title, details, level=level: calls.append(
+                    (level, title, details)
+                ),
+            )
+            for name, level in (
+                ("show_info", "info"),
+                ("show_warning", "warning"),
+                ("show_critical", "critical"),
+            )
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return calls
+
+    def test_rejected_only_batches_are_reported_as_errors(self):
+        calls = self._recorders()
+        window = _startup_import__startup_import_window()
+        MainWindow._show_project_file_import_result(
+            window,
+            self._result(rejected=[_A3Rejected(value="bad.txt", reason="Unsupported.")]),
+        )
+        self.assertEqual(calls, [("critical", "Import Error", "bad.txt: Unsupported.")])
+
+    def test_a_committed_import_whose_projection_failed_is_a_warning_not_a_success(self):
+        calls = self._recorders()
+        window = _startup_import__startup_import_window()
+        item = import_args_use_case.ProjectFileImportResult(
+            source_path="a.ost",
+            success=True,
+            message="Imported but the view could not refresh.",
+            outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        )
+        MainWindow._show_project_file_import_result(
+            window, self._result(results=[item], target_db_path="t.mdb")
+        )
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "warning",
+                    "Import Complete",
+                    "Successfully imported 'a.ost' into the database.\n"
+                    "a.ost: Imported but the view could not refresh.",
+                )
+            ],
+        )
+
+    def test_selection_after_an_import_needs_a_loaded_bid_or_the_matching_target(self):
+        window = _startup_import__startup_import_window()
+        log = []
+        window.project_view = SimpleNamespace(
+            restore_bid_selection=lambda ref: log.append(("bid", ref)),
+            restore_project_selection=lambda uid, path: log.append(("project", uid, path)),
+            restore_file_selection=lambda path: log.append(("file", path)),
+        )
+        selected = {"ref": None, "loaded": True}
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: selected["ref"]
+        )
+        window._project_data_service = SimpleNamespace(
+            get_bid=lambda ref: (
+                self.fail("a missing selection must not be looked up")
+                if ref is None
+                else selected["loaded"]
+            )
+        )
+        select = lambda result: MainWindow._select_project_file_import_result(window, result)
+        select(self._result(selected_project_uid="p1", target_db_path="t.mdb"))
+        select(self._result(selected_project_uid="p1"))
+        select(self._result(selected_project_uid=None, target_db_path="t.mdb"))
+        select(self._result())
+        self.assertEqual(
+            log, [("project", "p1", "t.mdb"), ("file", "t.mdb")]
+        )
+        log.clear()
+        selected["ref"] = BidRef("t.mdb", "b1")
+        select(self._result(selected_project_uid="p1", target_db_path="t.mdb"))
+        self.assertEqual(log, [("bid", selected["ref"])])
+        log.clear()
+        selected["loaded"] = None
+        select(self._result(selected_project_uid="p1", target_db_path="t.mdb"))
+        self.assertEqual(log, [("project", "p1", "t.mdb")])
+
+    def test_import_scheduling_waits_for_load_ready_and_no_other_import(self):
+        window = _startup_import__startup_import_window()
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, callback: scheduled.append((delay, callback)),
+        ):
+            window._schedule_pending_project_file_imports()
+            self.assertEqual(scheduled, [])
+            window._pending_project_file_args = [object()]
+            for loaded, ready, running, flag in (
+                (False, True, False, False),
+                (True, False, False, False),
+                (True, True, True, False),
+                (True, True, False, True),
+            ):
+                window._startup_load_complete = loaded
+                window._main_window_ready = ready
+                window._project_file_import_running = running
+                window._project_file_import_scheduled = flag
+                window._schedule_pending_project_file_imports()
+                self.assertEqual(scheduled, [], (loaded, ready, running, flag))
+            window._project_file_import_scheduled = False
+            window._project_file_import_running = False
+            window._schedule_pending_project_file_imports()
+            self.assertEqual(
+                scheduled, [(0, window._run_pending_project_file_imports)]
+            )
+            self.assertTrue(window._project_file_import_scheduled)
+
+    def test_a_pending_run_reschedules_instead_of_overlapping_a_running_import(self):
+        window = _startup_import__startup_import_window()
+        window._startup_load_complete = True
+        window._main_window_ready = True
+        window._pending_project_file_args = [object()]
+        window._project_file_import_running = True
+        window._project_file_import_scheduled = True
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer, "singleShot", side_effect=lambda delay, cb: scheduled.append(delay)
+        ):
+            window._run_pending_project_file_imports()
+        self.assertFalse(window._project_file_import_scheduled)
+        self.assertEqual(scheduled, [])
+        self.assertEqual(len(window._pending_project_file_args), 1)
+
+    def test_arguments_queued_during_an_import_are_scheduled_after_it_finishes(self):
+        window = _startup_import__startup_import_window()
+        window._startup_load_complete = True
+        window._main_window_ready = True
+        window._pending_project_file_args = [
+            import_args_use_case.ProjectFileArgs(files=[], rejected=[])
+        ]
+        queued = import_args_use_case.ProjectFileArgs(files=[], rejected=[])
+
+        def import_and_enqueue(args):
+            window._pending_project_file_args.append(queued)
+            return self._result()
+
+        window._import_project_files_with_progress = import_and_enqueue
+        window._select_project_file_import_result = lambda result: None
+        window._show_project_file_import_result = lambda result: None
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, callback: scheduled.append((delay, callback)),
+        ):
+            window._run_pending_project_file_imports()
+        self.assertEqual(scheduled, [(0, window._run_pending_project_file_imports)])
+        self.assertEqual(window._pending_project_file_args, [queued])
+        self.assertTrue(window._project_file_import_scheduled)
+        self.assertFalse(window._project_file_import_running)
+
+    def test_a_synchronous_run_marks_itself_running_until_the_projection_finished(self):
+        window = _startup_import__startup_import_window()
+        window._startup_load_complete = True
+        window._main_window_ready = True
+        window._pending_project_file_args = [
+            import_args_use_case.ProjectFileArgs(files=[], rejected=[])
+        ]
+        seen = []
+        result = self._result()
+        window._import_project_files_with_progress = lambda args: result
+        window._select_project_file_import_result = lambda r: seen.append(
+            ("select", window._project_file_import_running)
+        )
+        window._show_project_file_import_result = lambda r: seen.append(
+            ("show", window._project_file_import_running)
+        )
+        window._run_pending_project_file_imports()
+        self.assertEqual(seen, [("select", True), ("show", True)])
+        self.assertFalse(window._project_file_import_running)
+        self.assertEqual(window._pending_project_file_args, [])
+        # an asynchronous batch keeps the running flag until its completion callback
+        window._pending_project_file_args = [
+            import_args_use_case.ProjectFileArgs(files=[], rejected=[])
+        ]
+        window._import_project_files_with_progress = lambda args: None
+        window._run_pending_project_file_imports()
+        self.assertTrue(window._project_file_import_running)
+        _app()
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        window._select_project_file_import_result = lambda r: None
+        window._show_project_file_import_result = lambda r: None
+        with patch.object(QtCore.QTimer, "singleShot"):
+            window._complete_async_project_file_imports(result)
+        self.assertFalse(window._project_file_import_running)
+
+    def test_import_steps_deferred_by_a_shutdown_are_keyed_by_their_own_names(self):
+        window = _startup_import__startup_import_window()
+        window._startup_load_complete = True
+        window._main_window_ready = True
+        window._pending_project_file_args = [
+            import_args_use_case.ProjectFileArgs(files=[], rejected=[])
+        ]
+        window._collaboration_shutdown_pending = True
+        window._schedule_pending_project_file_imports()
+        self.assertEqual(list(window._shutdown_deferred_callbacks), ["schedule_project_file_imports"])
+        window._shutdown_deferred_callbacks.clear()
+        window._run_pending_project_file_imports()
+        self.assertEqual(list(window._shutdown_deferred_callbacks), ["run_project_file_imports"])
+        window._shutdown_deferred_callbacks.clear()
+        window._collaboration_shutdown_pending = False
+        result = self._result()
+
+        def import_then_start_shutdown(args):
+            window._collaboration_shutdown_pending = True
+            return result
+
+        window._import_project_files_with_progress = import_then_start_shutdown
+        window._run_pending_project_file_imports()
+        self.assertIn("complete_project_file_imports", window._shutdown_deferred_callbacks)
+        window._shutdown_deferred_callbacks.clear()
+        window._collaboration_shutdown_pending = False
+        refreshing = import_args_use_case.ProjectFileImportBatchResult(refresh_pending=True)
+        window._pending_project_file_args = [
+            import_args_use_case.ProjectFileArgs(files=[], rejected=[])
+        ]
+        window._import_project_files_with_progress = lambda args: refreshing
+
+        def refresh(result):
+            window._collaboration_shutdown_pending = True
+            return result
+
+        window._import_project_files_from_args = SimpleNamespace(refresh_import_result=refresh)
+        window._run_pending_project_file_imports()
+        self.assertIn("complete_project_file_imports", window._shutdown_deferred_callbacks)
+
+    def test_an_async_completion_deferred_by_a_shutdown_is_keyed_by_its_name(self):
+        _app()
+        window = _startup_import__startup_import_window()
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        window._collaboration_shutdown_pending = True
+        window._project_file_import_running = True
+        window._complete_async_project_file_imports(self._result())
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["complete_project_file_imports"]
+        )
+        self.assertIs(window._project_file_import_running, False)
+
+    def test_a_refresh_that_starts_a_shutdown_defers_the_async_completion_under_its_name(
+        self,
+    ):
+        _app()
+        window = _startup_import__startup_import_window()
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+
+        def refresh(result):
+            window._collaboration_shutdown_pending = True
+            return result
+
+        window._import_project_files_from_args = SimpleNamespace(refresh_import_result=refresh)
+        window._complete_async_project_file_imports(
+            import_args_use_case.ProjectFileImportBatchResult(refresh_pending=True)
+        )
+        self.assertIn("complete_project_file_imports", window._shutdown_deferred_callbacks)
+
+    def test_config_load_projects_a_loaded_catalog_or_asks_for_a_first_database(self):
+        for loaded, has_databases, prompt in (
+            (True, True, False),
+            (False, True, False),
+            (False, False, True),
+        ):
+            with self.subTest(loaded=loaded, has_databases=has_databases):
+                window = _startup_import__startup_import_window()
+                window._needs_create_database_prompt = False
+                synced = []
+                window.app_controller = SimpleNamespace(
+                    load_files_from_config=lambda loaded=loaded: loaded,
+                    has_any_databases=lambda has=has_databases: has,
+                )
+                window.handlers = SimpleNamespace(
+                    ui_event=SimpleNamespace(
+                        sync_after_startup_load=lambda: synced.append(True)
+                    )
+                )
+                timers = []
+                window._schedule_pending_project_file_imports = lambda: timers.append(
+                    "schedule"
+                )
+                with patch.object(
+                    QtCore.QTimer,
+                    "singleShot",
+                    side_effect=lambda delay, cb: timers.append((delay, cb)),
+                ):
+                    window._load_files_from_config()
+                self.assertEqual(synced, [True] if loaded else [])
+                self.assertIs(window._needs_create_database_prompt, prompt)
+                self.assertTrue(window._startup_load_complete)
+                self.assertEqual(
+                    timers, [(0, window._restore_deferred_workspace_state), "schedule"]
+                )
+
+    def test_showing_the_main_window_schedules_update_check_and_first_database_prompt(self):
+        window = _startup_import__startup_import_window()
+        log = []
+        window._workspace_state_coordinator = SimpleNamespace(
+            show_main_window=lambda: log.append("show")
+        )
+        window.raise_ = lambda: log.append("raise")
+        window.activateWindow = lambda: log.append("activate")
+        window._update_service = object()
+        window._needs_create_database_prompt = True
+        timers = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, cb: timers.append((delay, cb)),
+        ):
+            window._show_main_window()
+        self.assertEqual(log, ["show", "raise", "activate"])
+        self.assertEqual(
+            timers, [(0, window._check_for_updates), (0, window._prompt_create_database)]
+        )
+        self.assertFalse(window._needs_create_database_prompt)
+        window._update_service = None
+        timers.clear()
+        with patch.object(
+            QtCore.QTimer, "singleShot", side_effect=lambda delay, cb: timers.append(cb)
+        ):
+            window._show_main_window()
+        self.assertEqual(timers, [])
+
+
+class MainWindowA3ShutdownBookkeepingTests(unittest.TestCase):
+    def _window(self, **flags):
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = flags.get("pending", False)
+        window._collaboration_shutdown_complete = flags.get("complete", False)
+        window._application_shutdown_finalized = flags.get("finalized", False)
+        window._shutdown_deferred_callbacks = {}
+        window._shutdown_hidden_windows = ()
+        return window
+
+    def test_the_shutdown_is_terminal_when_either_final_flag_is_set(self):
+        self.assertIs(self._window()._application_shutdown_terminal(), False)
+        self.assertIs(self._window(pending=True)._application_shutdown_terminal(), False)
+        self.assertIs(self._window(complete=True)._application_shutdown_terminal(), True)
+        self.assertIs(self._window(finalized=True)._application_shutdown_terminal(), True)
+
+    def test_callbacks_are_deferred_only_while_a_shutdown_is_in_progress(self):
+        callback = lambda: None
+        idle = self._window()
+        self.assertIs(idle._defer_during_application_shutdown("k", callback), False)
+        self.assertEqual(idle._shutdown_deferred_callbacks, {})
+        pending = self._window(pending=True)
+        self.assertIs(pending._defer_during_application_shutdown("k", callback), True)
+        self.assertEqual(pending._shutdown_deferred_callbacks, {"k": callback})
+        terminal = self._window(complete=True)
+        self.assertIs(terminal._defer_during_application_shutdown("k", callback), True)
+        self.assertEqual(terminal._shutdown_deferred_callbacks, {})
+
+    def test_resuming_after_an_abort_shows_hidden_windows_once_and_replays_with_zero_delay(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        owned = QtWidgets.QWidget()
+        stranger = QtWidgets.QWidget()
+        destroyed = QtWidgets.QWidget()
+        for widget in (owned, stranger):
+            self.addCleanup(widget.deleteLater)
+        window = self._window()
+        window._detached_plan_windows = lambda: (owned,)
+        window.get_mesh_window = lambda: None
+        shown = []
+        window._shutdown_hidden_windows = (owned, stranger, destroyed)
+        _a3_delete(destroyed)
+        owned.show = lambda: shown.append("owned")
+        stranger.show = lambda: shown.append("stranger")
+        calls = []
+        window._shutdown_deferred_callbacks = {
+            "other": lambda: calls.append("other"),
+            "show_main_window": lambda: calls.append("show"),
+            "load_files_from_config": lambda: calls.append("load"),
+        }
+        timers = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, cb: timers.append((delay, cb)),
+        ):
+            window._resume_shutdown_deferred_callbacks()
+            window._resume_shutdown_deferred_callbacks()
+        self.assertEqual(shown, ["owned"])
+        self.assertEqual(window._shutdown_hidden_windows, ())
+        self.assertEqual([delay for delay, _cb in timers], [0, 0, 0])
+        for _delay, callback in timers:
+            callback()
+        self.assertEqual(calls, ["load", "show", "other"])
+        app.processEvents()
+
+    def test_update_check_reports_only_available_updates_with_version_information(self):
+        for result, expected in (
+            ((False, {"version": "2.0"}), []),
+            ((True, None), []),
+            ((True, {}), []),
+            ((True, {"version": "2.0"}), [{"version": "2.0"}]),
+        ):
+            with self.subTest(result=result):
+                emitted = []
+                window = self._window()
+                window._update_service = SimpleNamespace(check_for_updates=lambda r=result: r)
+                window.update_dialog_requested = SimpleNamespace(emit=emitted.append)
+                with patch(
+                    "ost_visualizer.presentation.main_window.threading.Thread"
+                ) as thread_factory:
+                    window._check_for_updates()
+                with self.assertNoLogs(
+                    "ost_visualizer.presentation.main_window", level="ERROR"
+                ):
+                    thread_factory.call_args.kwargs["target"]()
+                self.assertEqual(emitted, expected)
+        # an update found after the shutdown became terminal is not reported
+        emitted = []
+        window = self._window()
+        window._update_service = SimpleNamespace(
+            check_for_updates=lambda: (True, {"version": "2.0"})
+        )
+        window.update_dialog_requested = SimpleNamespace(emit=emitted.append)
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread"
+        ) as thread_factory:
+            window._check_for_updates()
+        window._application_shutdown_finalized = True
+        thread_factory.call_args.kwargs["target"]()
+        self.assertEqual(emitted, [])
+
+    def test_close_ignores_windows_that_are_hidden_destroyed_or_missing(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        visible, hidden, destroyed = [QtWidgets.QWidget() for _ in range(3)]
+        for widget in (window, visible, hidden):
+            self.addCleanup(widget.deleteLater)
+        window.handlers = SimpleNamespace(
+            file_ops=SimpleNamespace(maintenance_pending=False, sql_creation_pending=False)
+        )
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window._application_shutdown_finalized = False
+        window._shutdown_deferred_callbacks = {}
+        window._shutdown_hidden_windows = ()
+        visible.show()
+        _a3_delete(destroyed)
+        window._detached_plan_windows = lambda: (visible, hidden, destroyed)
+        window.get_mesh_window = lambda: None
+        timers = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, cb: timers.append((delay, cb)),
+        ):
+            window.close()
+        self.assertEqual(window._shutdown_hidden_windows, (visible,))
+        self.assertFalse(visible.isVisible())
+        self.assertEqual([delay for delay, _cb in timers], [0])
+        self.assertTrue(window._collaboration_shutdown_pending)
+        app.processEvents()
+
+
+class MainWindowA3SplitterTests(unittest.TestCase):
+    """Real splitters: reading, restoring and re-opening collapsed panes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _splitter(self, orientation, sizes, extent=400):
+        splitter = QtWidgets.QSplitter(orientation)
+        splitter.setHandleWidth(0)
+        for _ in sizes:
+            splitter.addWidget(QtWidgets.QWidget())
+        splitter.resize(
+            extent if orientation == QtCore.Qt.Orientation.Horizontal else 200,
+            200 if orientation == QtCore.Qt.Orientation.Horizontal else extent,
+        )
+        splitter.setSizes(sizes)
+        self.addCleanup(splitter.deleteLater)
+        return splitter
+
+    def _window(self):
+        window = MainWindow.__new__(MainWindow)
+        window._last_takeoff_splitter_sizes = []
+        window._last_left_splitter_sizes = []
+        window._last_left_column_splitter_sizes = []
+        window._takeoff_splitter = self._splitter(
+            QtCore.Qt.Orientation.Horizontal, [100, 300], 400
+        )
+        window._left_splitter = self._splitter(
+            QtCore.Qt.Orientation.Vertical, [100, 300], 400
+        )
+        window._left_column_splitter = self._splitter(
+            QtCore.Qt.Orientation.Vertical, [100, 300], 400
+        )
+        return window
+
+    def test_takeoff_splitter_reports_sizes_and_remembers_only_a_visible_sidebar(self):
+        window = self._window()
+        self.assertEqual(window.get_takeoff_splitter_sizes(), [100, 300])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [100, 300])
+        window._takeoff_splitter.setSizes([0, 400])
+        self.assertEqual(window.get_takeoff_splitter_sizes(), [0, 400])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [100, 300])
+
+    def test_takeoff_splitter_restore_ignores_empty_and_all_zero_sizes(self):
+        window = self._window()
+        window.set_takeoff_splitter_sizes([])
+        window.set_takeoff_splitter_sizes([0, 0])
+        self.assertEqual(window._takeoff_splitter.sizes(), [100, 300])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [])
+        window.set_takeoff_splitter_sizes([-5, 200])
+        self.assertEqual(window._takeoff_splitter.sizes()[0], 0)
+        self.assertEqual(window._last_takeoff_splitter_sizes, [])
+        window.set_takeoff_splitter_sizes([150, 250])
+        self.assertEqual(window._takeoff_splitter.sizes(), [150, 250])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [150, 250])
+
+    def test_left_splitter_remembers_sizes_only_while_both_panes_are_visible(self):
+        window = self._window()
+        self.assertEqual(window.get_left_splitter_sizes(), [100, 300])
+        self.assertEqual(window._last_left_splitter_sizes, [100, 300])
+        window._left_splitter.setSizes([0, 400])
+        self.assertEqual(window.get_left_splitter_sizes(), [0, 400])
+        window._left_splitter.setSizes([400, 0])
+        self.assertEqual(window.get_left_splitter_sizes(), [400, 0])
+        self.assertEqual(window._last_left_splitter_sizes, [100, 300])
+
+    def test_left_splitter_restore_validates_both_panes_before_remembering(self):
+        window = self._window()
+        window.set_left_splitter_sizes([])
+        window.set_left_splitter_sizes([0, 0])
+        self.assertEqual(window._left_splitter.sizes(), [100, 300])
+        window.set_left_splitter_sizes([0, 200])
+        self.assertEqual(window._last_left_splitter_sizes, [])
+        window.set_left_splitter_sizes([200, 0])
+        self.assertEqual(window._last_left_splitter_sizes, [])
+        window.set_left_splitter_sizes([250, 150])
+        self.assertEqual(window._last_left_splitter_sizes, [250, 150])
+        self.assertEqual(window._left_splitter.sizes(), [250, 150])
+
+    def test_left_column_splitter_requires_exactly_two_visible_panes(self):
+        window = self._window()
+        self.assertEqual(window.get_left_column_splitter_sizes(), [100, 300])
+        self.assertEqual(window._last_left_column_splitter_sizes, [100, 300])
+        window._left_column_splitter.setSizes([0, 400])
+        window.get_left_column_splitter_sizes()
+        self.assertEqual(window._last_left_column_splitter_sizes, [100, 300])
+        window._last_left_column_splitter_sizes = []
+        window.set_left_column_splitter_sizes([100])
+        window.set_left_column_splitter_sizes([0, 0])
+        window.set_left_column_splitter_sizes([1, 2, 3])
+        self.assertEqual(window._left_column_splitter.sizes(), [0, 400])
+        window.set_left_column_splitter_sizes([120, 280])
+        self.assertEqual(window._left_column_splitter.sizes(), [120, 280])
+        self.assertEqual(window._last_left_column_splitter_sizes, [120, 280])
+        window.set_left_column_splitter_sizes([0, 400])
+        self.assertEqual(window._last_left_column_splitter_sizes, [120, 280])
+
+    def test_a_collapsed_left_pane_reopens_by_saved_ratio_or_half_the_height(self):
+        window = self._window()
+        window._left_splitter.setSizes([0, 400])
+        window._last_left_splitter_sizes = [100, 300]
+        window._ensure_left_splitter_pane_visible(0)
+        self.assertEqual(window._left_splitter.sizes(), [100, 300])
+        window._left_splitter.setSizes([400, 0])
+        window._last_left_splitter_sizes = [300, 100]
+        window._ensure_left_splitter_pane_visible(1)
+        self.assertEqual(window._left_splitter.sizes(), [300, 100])
+        window._left_splitter.setSizes([0, 400])
+        window._last_left_splitter_sizes = []
+        window._ensure_left_splitter_pane_visible(0)
+        self.assertEqual(window._left_splitter.sizes(), [200, 200])
+        window._left_splitter.setSizes([400, 0])
+        window._ensure_left_splitter_pane_visible(1)
+        self.assertEqual(window._left_splitter.sizes(), [200, 200])
+        before = window._left_splitter.sizes()
+        window._ensure_left_splitter_pane_visible(0)
+        self.assertEqual(window._left_splitter.sizes(), before)
+
+    def test_scaling_saved_left_sizes_keeps_each_pane_at_least_one_pixel(self):
+        scale = MainWindow._scale_left_splitter_sizes
+        self.assertEqual(scale([100, 300], 800), [200, 600])
+        self.assertEqual(scale([1, 999], 10), [1, 9])
+        self.assertEqual(scale([999, 1], 10), [9, 1])
+        self.assertEqual(scale([5, 5], 0), [1, 1])
+        self.assertEqual(scale([0, 0], 10), [1, 9])
+        self.assertTrue(MainWindow._has_valid_left_splitter_sizes([1, 1]))
+        self.assertFalse(MainWindow._has_valid_left_splitter_sizes([1]))
+        self.assertFalse(MainWindow._has_valid_left_splitter_sizes([0, 1]))
+        self.assertFalse(MainWindow._has_valid_left_splitter_sizes([1, 0]))
+
+    def test_a_collapsed_pan_pane_reopens_by_saved_ratio_or_the_default_height(self):
+        window = self._window()
+        window._left_column_splitter.setSizes([0, 400])
+        window._last_left_column_splitter_sizes = [100, 300]
+        window._ensure_pan_pane_visible()
+        self.assertEqual(window._left_column_splitter.sizes(), [100, 300])
+        window._left_column_splitter.setSizes([0, 400])
+        window._last_left_column_splitter_sizes = []
+        window._ensure_pan_pane_visible()
+        pan = min(max(1, _A3_PAN_DEFAULT_HEIGHT), 399)
+        self.assertEqual(window._left_column_splitter.sizes(), [pan, 400 - pan])
+        window._left_column_splitter.setSizes([0, 400])
+        window._last_left_column_splitter_sizes = [0, 300]
+        window._ensure_pan_pane_visible()
+        self.assertEqual(window._left_column_splitter.sizes(), [pan, 400 - pan])
+        before = window._left_column_splitter.sizes()
+        window._ensure_pan_pane_visible()
+        self.assertEqual(window._left_column_splitter.sizes(), before)
+
+    def test_a_collapsed_sidebar_column_reopens_at_its_saved_width_or_a_quarter(self):
+        window = self._window()
+        window._takeoff_splitter.setSizes([0, 400])
+        window._last_takeoff_splitter_sizes = [120, 280]
+        window._ensure_sidebar_column_visible()
+        self.assertEqual(window._takeoff_splitter.sizes(), [120, 280])
+        window._takeoff_splitter.setSizes([0, 400])
+        window._last_takeoff_splitter_sizes = [0, 400]
+        window._ensure_sidebar_column_visible()
+        expected = max(_A3_SIDEBAR_MIN_WIDTH, 400 // 4)
+        self.assertEqual(window._takeoff_splitter.sizes(), [expected, 400 - expected])
+        window._takeoff_splitter.setSizes([0, 400])
+        window._last_takeoff_splitter_sizes = [10_000, 1]
+        window._ensure_sidebar_column_visible()
+        self.assertEqual(window._takeoff_splitter.sizes(), [399, 1])
+        before = window._takeoff_splitter.sizes()
+        window._ensure_sidebar_column_visible()
+        self.assertEqual(window._takeoff_splitter.sizes(), before)
+
+    def test_a_sidebar_pane_request_opens_the_column_before_the_pane(self):
+        window = self._window()
+        order = []
+        window._ensure_sidebar_column_visible = lambda: order.append("column")
+        window._ensure_left_splitter_pane_visible = lambda index: order.append(index)
+        window._ensure_sidebar_pane_visible(1)
+        self.assertEqual(order, ["column", 1])
+
+
+class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
+    """Annotation / View window visibility, restore rules and action sync."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    BID = BidRef("C:/jobs/a.mdb", "b1")
+
+    def _window(self, *, takeoff=True, bid=True, page="p1", annotation_open=False,
+                view_open=False, view_lifecycle=False, annotation_lifecycle=False):
+        window = MainWindow.__new__(MainWindow)
+        self.log = []
+        log = self.log
+        window.tab_widget = SimpleNamespace(
+            currentIndex=lambda: TAB_INDEX_TAKEOFF if takeoff else TAB_INDEX_PROJECTS
+        )
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: self.BID if bid else None,
+            active_page_uid=page,
+        )
+        window.plan_view = None
+        window._project_data_service = SimpleNamespace(
+            get_page=lambda uid: object() if uid == "p1" else None
+        )
+        window._workspace_state_model = make_workspace_state_model()
+        window._annotation_window_action = _A3QAction("annotation")
+        window._view_window_action = _A3QAction("view")
+        for action in (window._annotation_window_action, window._view_window_action):
+            action.setCheckable(True)
+            action.toggled.connect(lambda checked: log.append(("toggled", checked)))
+        self.annotation_open = annotation_open
+        self.view_open = view_open
+        annotation_view = SimpleNamespace(
+            bid_ref=BidRef("C:/jobs/other.mdb", "b9"),
+            target_page_uid="p9",
+            target_named_view_uid="nv9",
+        )
+        window._annotation_view_manager = SimpleNamespace(
+            is_view_open=lambda: self.annotation_open,
+            get_window=lambda: "annotation-window",
+            has_active_view_lifecycle=lambda: annotation_lifecycle,
+            get_active_view=lambda: annotation_view,
+            open_view=lambda *args, **kwargs: log.append(("annotation.open", args, kwargs)),
+            close_view=lambda: log.append(("annotation.close",)),
+        )
+        window._view_window_manager = SimpleNamespace(
+            is_view_open=lambda: self.view_open,
+            get_window=lambda: "view-window",
+            has_active_view_lifecycle=lambda: view_lifecycle,
+            open_view=lambda *args, **kwargs: log.append(("view.open", args, kwargs)),
+            close_view=lambda: log.append(("view.close",)),
+        )
+        return window
+
+    def test_restore_and_open_rules_follow_bid_page_tab_and_open_windows(self):
+        window = self._window()
+        self.assertTrue(window.can_open_annotation_window())
+        self.assertTrue(window.can_restore_annotation_window())
+        self.assertFalse(window.can_open_view_window())
+        self.assertFalse(window.can_restore_view_window())
+        self.assertIs(window.is_annotation_window_open(), False)
+        self.assertIs(window.is_view_window_open(), False)
+        self.assertEqual(window.get_annotation_window(), "annotation-window")
+        self.assertEqual(window.get_view_window(), "view-window")
+        window = self._window(annotation_open=True, view_open=True)
+        self.assertIs(window.is_annotation_window_open(), True)
+        self.assertIs(window.is_view_window_open(), True)
+        self.assertTrue(window.can_open_view_window())
+        self.assertTrue(window.can_restore_view_window())
+        self.assertFalse(self._window(takeoff=False, annotation_open=True).can_restore_view_window())
+        self.assertFalse(self._window(takeoff=False).can_restore_annotation_window())
+        self.assertTrue(self._window(takeoff=False).can_open_annotation_window())
+        self.assertFalse(self._window(bid=False).can_open_annotation_window())
+        self.assertFalse(self._window(page=None).can_open_annotation_window())
+        self.assertFalse(self._window(page="missing").can_open_annotation_window())
+
+    def test_showing_a_window_that_cannot_be_restored_only_unchecks_its_action(self):
+        window = self._window(takeoff=False)
+        window._annotation_window_action.setChecked(True)
+        self.log.clear()
+        window.set_annotation_window_visible(True)
+        self.assertFalse(window._annotation_window_action.isChecked())
+        self.assertFalse(window._annotation_window_action.signalsBlocked())
+        self.assertEqual(self.log, [])
+        window = self._window(annotation_open=False)
+        window._view_window_action.setChecked(True)
+        self.log.clear()
+        window.set_view_window_visible(True)
+        self.assertFalse(window._view_window_action.isChecked())
+        self.assertFalse(window._view_window_action.signalsBlocked())
+        self.assertEqual(self.log, [])
+
+    def test_opening_the_annotation_window_checks_the_action_silently_and_opens_once(self):
+        window = self._window()
+        window.set_annotation_window_visible(True)
+        self.assertTrue(window._annotation_window_action.isChecked())
+        self.assertEqual(
+            self.log,
+            [
+                (
+                    "annotation.open",
+                    (self.BID, "p1", None),
+                    {
+                        "initial_geometry": None,
+                        "initial_is_maximized": False,
+                        "initial_is_fullscreen": False,
+                    },
+                )
+            ],
+        )
+        self.annotation_open = True
+        self.log.clear()
+        window.set_annotation_window_visible(True)
+        self.assertEqual(self.log, [])
+
+    def test_saved_detached_state_is_restored_only_when_no_explicit_state_is_given(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit):
+                window = self._window()
+                state = WorkspaceState()
+                saved = state.detached_windows.annotation_view
+                saved.geometry_b64 = _detached_support__encoded_geometry(b"saved")
+                saved.is_maximized = True
+                saved.is_fullscreen = True
+                window._workspace_state_model = SimpleNamespace(state=state)
+                if explicit:
+                    window.set_annotation_window_visible(
+                        True,
+                        initial_geometry=QtCore.QByteArray(b"explicit"),
+                        initial_is_maximized=False,
+                        initial_is_fullscreen=False,
+                    )
+                else:
+                    window.set_annotation_window_visible(True)
+                (_name, _args, kwargs) = self.log[0]
+                self.assertEqual(
+                    bytes(kwargs["initial_geometry"]),
+                    b"explicit" if explicit else b"saved",
+                )
+                self.assertIs(kwargs["initial_is_maximized"], not explicit)
+                self.assertIs(kwargs["initial_is_fullscreen"], not explicit)
+
+    def test_closing_the_annotation_window_closes_a_dependent_view_first(self):
+        window = self._window(annotation_open=True, view_lifecycle=True)
+        window._annotation_window_action.setChecked(True)
+        self.log.clear()
+        calls = []
+        window.set_view_window_visible = lambda visible: calls.append(
+            ("view.visible", visible)
+        )
+        window._annotation_view_manager.close_view = lambda: calls.append("annotation.close")
+        window.set_annotation_window_visible(False)
+        self.assertEqual(calls, [("view.visible", False), "annotation.close"])
+        self.assertFalse(window._annotation_window_action.isChecked())
+        window = self._window(annotation_open=True, view_lifecycle=False)
+        calls = []
+        window.set_view_window_visible = lambda visible: calls.append("never")
+        window._annotation_view_manager.close_view = lambda: calls.append("annotation.close")
+        window.set_annotation_window_visible(False)
+        self.assertEqual(calls, ["annotation.close"])
+
+    def test_opening_the_view_window_follows_the_annotation_window_target(self):
+        window = self._window(annotation_open=True)
+        window.set_view_window_visible(True)
+        self.assertTrue(window._view_window_action.isChecked())
+        self.assertEqual(
+            self.log,
+            [
+                (
+                    "view.open",
+                    (BidRef("C:/jobs/other.mdb", "b9"), "p9", "nv9"),
+                    {
+                        "initial_geometry": None,
+                        "initial_is_maximized": False,
+                        "initial_is_fullscreen": False,
+                    },
+                )
+            ],
+        )
+        self.view_open = True
+        self.log.clear()
+        window.set_view_window_visible(True)
+        self.assertEqual(self.log, [])
+        window.set_view_window_visible(False)
+        self.assertEqual(self.log, [("view.close",)])
+        self.assertFalse(window._view_window_action.isChecked())
+
+    def test_the_view_window_falls_back_to_the_selection_without_an_annotation_view(self):
+        window = self._window(annotation_open=True)
+        window._annotation_view_manager.get_active_view = lambda: None
+        window.set_view_window_visible(True)
+        (_name, args, _kwargs) = self.log[0]
+        self.assertEqual(args, (self.BID, "p1", None))
+        window = self._window(annotation_open=True)
+        window._annotation_view_manager.get_active_view = lambda: SimpleNamespace(
+            bid_ref=None, target_page_uid="p9", target_named_view_uid=None
+        )
+        window.set_view_window_visible(True)
+        (_name, args, _kwargs) = self.log[0]
+        self.assertEqual(args, (self.BID, "p9", None))
+
+    def test_the_action_state_mirrors_the_open_windows_without_emitting_toggles(self):
+        window = self._window(annotation_open=True, view_open=False)
+        window._sync_annotation_window_action()
+        window._sync_view_window_action()
+        self.assertTrue(window._annotation_window_action.isChecked())
+        self.assertTrue(window._view_window_action.isEnabled())
+        self.assertFalse(window._view_window_action.isChecked())
+        self.annotation_open = False
+        self.view_open = True
+        window._sync_annotation_window_action()
+        window._sync_view_window_action()
+        self.assertFalse(window._annotation_window_action.isChecked())
+        self.assertFalse(window._view_window_action.isEnabled())
+        self.assertTrue(window._view_window_action.isChecked())
+        self.assertEqual(self.log, [])
+
+
+class MainWindowA3TabChangeTests(unittest.TestCase):
+    def _window(self, *, view=False, annotation=False, mesh=None, menu=True):
+        window = MainWindow.__new__(MainWindow)
+        log = []
+        window.log = log
+        window._apply_workspace_toolbar_visibility = lambda: log.append("toolbar")
+        window._view_window_manager = SimpleNamespace(
+            has_active_view_lifecycle=lambda: view
+        )
+        window._annotation_view_manager = SimpleNamespace(
+            has_active_view_lifecycle=lambda: annotation
+        )
+        window.get_mesh_window = lambda: mesh
+        window.set_view_window_visible = lambda visible: log.append(("view", visible))
+        window.set_annotation_window_visible = lambda visible: log.append(
+            ("annotation", visible)
+        )
+        window.set_mesh_window_visible = lambda visible: log.append(("mesh", visible))
+        window._workspace_state_coordinator = SimpleNamespace(
+            request_view_restore=lambda: log.append("view-restore"),
+            request_annotation_restore=lambda: log.append("annotation-restore"),
+            request_mesh_restore=lambda: log.append("mesh-restore"),
+            on_main_tab_changed=lambda: log.append("tab-changed"),
+        )
+        window.menu_controller = (
+            SimpleNamespace(update_menu_states=lambda: log.append("menus")) if menu else None
+        )
+        return window
+
+    def test_leaving_the_takeoff_tab_closes_active_detached_windows_in_order(self):
+        window = self._window(view=True, annotation=True, mesh=object())
+        window._on_tab_changed(TAB_INDEX_PROJECTS)
+        self.assertEqual(
+            window.log,
+            [
+                "toolbar",
+                "view-restore",
+                ("view", False),
+                "annotation-restore",
+                ("annotation", False),
+                "mesh-restore",
+                ("mesh", False),
+                "tab-changed",
+                "menus",
+            ],
+        )
+
+    def test_idle_windows_and_the_takeoff_tab_leave_detached_windows_alone(self):
+        window = self._window()
+        window._on_tab_changed(TAB_INDEX_SUMMARY)
+        self.assertEqual(window.log, ["toolbar", "tab-changed", "menus"])
+        window = self._window(view=True, annotation=True, mesh=object(), menu=False)
+        window._on_tab_changed(TAB_INDEX_TAKEOFF)
+        self.assertEqual(window.log, ["toolbar", "tab-changed"])
+
+    def test_contextual_shell_sync_reapplies_the_current_tab(self):
+        window = self._window()
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_SUMMARY)
+        window.sync_contextual_shell_visibility()
+        self.assertEqual(window.log, ["toolbar", "tab-changed", "menus"])
+
+
+class MainWindowA3PassThroughAndStateTests(unittest.TestCase):
+    """Delegating accessors, popup-size persistence and the database context."""
+
+    def test_dropdown_popup_sizes_merge_every_open_surface_and_restore_to_each(self):
+        window = MainWindow.__new__(MainWindow)
+        restored = {}
+        window.takeoff_sidebar = SimpleNamespace(
+            get_popup_size=lambda: [300, 200],
+            set_popup_size=lambda size: restored.setdefault("main_page", size),
+        )
+        window._page_settings_bar = SimpleNamespace(
+            get_dropdown_popup_sizes=lambda: {"page_settings": [1, 2]},
+            set_dropdown_popup_sizes=lambda sizes: restored.setdefault("bar", dict(sizes)),
+        )
+
+        def detached(name, sizes):
+            return SimpleNamespace(
+                get_dropdown_popup_sizes=lambda: sizes,
+                set_dropdown_popup_sizes=lambda saved: restored.setdefault(
+                    name, dict(saved)
+                ),
+            )
+
+        windows = {"annotation": detached("annotation", {"annotation_named_views": [3, 4]})}
+        window.get_annotation_window = lambda: windows["annotation"]
+        window.get_view_window = lambda: None
+        self.assertEqual(
+            window.get_takeoff_dropdown_popup_sizes(),
+            {
+                "main_page": [300, 200],
+                "page_settings": [1, 2],
+                "annotation_named_views": [3, 4],
+            },
+        )
+        saved = {"main_page": [5, 6], "other": [7, 8]}
+        window.set_takeoff_dropdown_popup_sizes(saved)
+        self.assertEqual(restored["main_page"], [5, 6])
+        self.assertEqual(restored["bar"], saved)
+        self.assertEqual(restored["annotation"], saved)
+        restored.clear()
+        window.set_takeoff_dropdown_popup_sizes({})
+        self.assertEqual(restored["main_page"], [])
+
+    def test_the_database_context_is_the_selected_nodes_loaded_database(self):
+        window = MainWindow.__new__(MainWindow)
+        node = {"file_path": "C:/Jobs/A.mdb"}
+        window.project_view = SimpleNamespace(get_selected_node_state=lambda: node)
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: _A3HierarchyData(
+                loaded_files=[_A3HierarchyFileEntry(file_path="c:\\jobs\\a.mdb")]
+            )
+        )
+        self.assertEqual(window.get_selected_database_context_file_path(), "C:/Jobs/A.mdb")
+        node["file_path"] = "C:/Jobs/Other.mdb"
+        self.assertIsNone(window.get_selected_database_context_file_path())
+        node["file_path"] = ""
+        self.assertIsNone(window.get_selected_database_context_file_path())
+        window.project_view = SimpleNamespace(get_selected_node_state=lambda: None)
+        self.assertIsNone(window.get_selected_database_context_file_path())
+
+    def test_view_state_setters_forward_without_notifying(self):
+        window = MainWindow.__new__(MainWindow)
+        log = []
+        window.project_view = SimpleNamespace(
+            set_group_by_job_status=lambda enabled, notify: log.append(("job", enabled, notify))
+        )
+        window._conditions_sidebar = SimpleNamespace(
+            set_group_by_type=lambda enabled, notify: log.append(("type", enabled, notify))
+        )
+        window._condition_summary_tab = SimpleNamespace(
+            set_grouping=lambda grouping, notify: log.append(("summary", grouping, notify))
+        )
+        window.set_project_group_by_job_status(True)
+        window.set_conditions_group_by_type(False)
+        window.set_summary_grouping("by-type")
+        self.assertEqual(
+            log,
+            [("job", True, False), ("type", False, False), ("summary", "by-type", False)],
+        )
+
+    def test_detached_refreshes_reach_both_managers(self):
+        window = MainWindow.__new__(MainWindow)
+        log = []
+        for name in ("_annotation_view_manager", "_view_window_manager"):
+            setattr(
+                window,
+                name,
+                SimpleNamespace(
+                    refresh_active_view=lambda name=name: log.append((name, "view")),
+                    refresh_page_area_selection=lambda page, name=name: log.append(
+                        (name, page)
+                    ),
+                ),
+            )
+        window.refresh_detached_plan_views()
+        window.refresh_detached_plan_area_selection("p7")
+        self.assertEqual(
+            log,
+            [
+                ("_annotation_view_manager", "view"),
+                ("_view_window_manager", "view"),
+                ("_annotation_view_manager", "p7"),
+                ("_view_window_manager", "p7"),
+            ],
+        )
+
+    def test_palette_changes_rebuild_icons_but_other_changes_do_not(self):
+        _app()
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        with patch.object(main_window_module, "rebuild_all_icons") as rebuild:
+            window.changeEvent(QtCore.QEvent(QtCore.QEvent.Type.PaletteChange))
+            self.assertEqual(rebuild.call_count, 1)
+            window.changeEvent(QtCore.QEvent(QtCore.QEvent.Type.EnabledChange))
+            self.assertEqual(rebuild.call_count, 1)
+
+    def test_workspace_state_save_requests_reach_the_coordinator(self):
+        window = MainWindow.__new__(MainWindow)
+        log = []
+        window._workspace_state_coordinator = SimpleNamespace(
+            request_save=lambda: log.append("save"),
+            reset_to_defaults=lambda: log.append("reset"),
+            on_takeoff_workspace_activated=lambda: log.append("activated"),
+        )
+        window._request_workspace_state_save()
+        window.reset_workspace_state_to_defaults()
+        window.notify_takeoff_workspace_activated()
+        self.assertEqual(log, ["save", "reset", "activated"])
+
+
+class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def test_adding_a_page_from_the_takeoff_tab_needs_every_condition(self):
+        def make(allow=True, cover=True, locked=False, bid=True):
+            window = MainWindow.__new__(MainWindow)
+            window._config_model = SimpleNamespace(allow_add_page_from_takeoff_tab=allow)
+            window.ui_access_manager = SimpleNamespace(
+                is_allowed=lambda feature: cover and feature == Feature.COVER_SHEET
+            )
+            window._project_data_service = SimpleNamespace(
+                is_current_bid_locked=lambda: locked
+            )
+            window.ui_state_manager = SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("a.mdb", "b1") if bid else None
+            )
+            return window
+
+        self.assertTrue(make().can_add_page_from_takeoff_tab())
+        self.assertFalse(make(allow=False).can_add_page_from_takeoff_tab())
+        self.assertFalse(make(cover=False).can_add_page_from_takeoff_tab())
+        self.assertFalse(make(locked=True).can_add_page_from_takeoff_tab())
+        self.assertFalse(make(bid=False).can_add_page_from_takeoff_tab())
+
+    def test_the_active_takeoff_page_prefers_the_ui_state_over_the_plan_view(self):
+        window = MainWindow.__new__(MainWindow)
+        window._project_data_service = SimpleNamespace(
+            get_page=lambda uid: object() if uid in {"p1", "p2"} else None
+        )
+        window.plan_view = SimpleNamespace(current_page_uid="p2")
+        window.ui_state_manager = SimpleNamespace(active_page_uid="p1")
+        self.assertEqual(window.get_active_takeoff_page_uid(), "p1")
+        window.ui_state_manager.active_page_uid = None
+        self.assertEqual(window.get_active_takeoff_page_uid(), "p2")
+        window.plan_view = None
+        self.assertIsNone(window.get_active_takeoff_page_uid())
+        window.plan_view = SimpleNamespace(current_page_uid="gone")
+        self.assertIsNone(window.get_active_takeoff_page_uid())
+
+    def test_restoring_detached_windows_also_needs_a_bid_and_page(self):
+        window = MainWindow.__new__(MainWindow)
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_TAKEOFF)
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: None, active_page_uid="p1"
+        )
+        window._project_data_service = SimpleNamespace(get_page=lambda uid: object())
+        window.plan_view = None
+        window._annotation_view_manager = SimpleNamespace(is_view_open=lambda: True)
+        self.assertFalse(window.can_restore_annotation_window())
+        self.assertFalse(window.can_open_view_window())
+        self.assertFalse(window.can_restore_view_window())
+
+    def test_hiding_a_detached_window_works_even_when_it_cannot_be_restored(self):
+        proxy = MainWindowA3DetachedWindowActionTests(
+            "test_restore_and_open_rules_follow_bid_page_tab_and_open_windows"
+        )
+        window = MainWindowA3DetachedWindowActionTests._window(
+            proxy, takeoff=False, annotation_open=True, view_open=True
+        )
+        window._annotation_window_action.setChecked(True)
+        window._view_window_action.setChecked(True)
+        proxy.log.clear()
+        window.set_view_window_visible(False)
+        window.set_annotation_window_visible(False)
+        # the actions are unchecked silently: no toggled signal reaches handlers
+        self.assertEqual(proxy.log, [("view.close",), ("annotation.close",)])
+        self.assertFalse(window._annotation_window_action.isChecked())
+        self.assertFalse(window._view_window_action.isChecked())
+        self.assertFalse(window._annotation_window_action.signalsBlocked())
+        self.assertFalse(window._view_window_action.signalsBlocked())
+
+    def test_action_updates_never_leave_the_action_signals_blocked(self):
+        proxy = MainWindowA3DetachedWindowActionTests(
+            "test_restore_and_open_rules_follow_bid_page_tab_and_open_windows"
+        )
+        window = MainWindowA3DetachedWindowActionTests._window(
+            proxy, annotation_open=True
+        )
+        actions = (window._annotation_window_action, window._view_window_action)
+        window.set_annotation_window_visible(True)
+        proxy.annotation_open = True
+        window.set_view_window_visible(True)
+        window.set_view_window_visible(False)
+        window.set_annotation_window_visible(False)
+        window._sync_annotation_window_action()
+        window._sync_view_window_action()
+        for action in actions:
+            self.assertFalse(action.signalsBlocked())
+        proxy.log.clear()
+        for action in actions:
+            action.setChecked(not action.isChecked())
+        self.assertEqual(
+            len([entry for entry in proxy.log if entry[0] == "toggled"]), 2
+        )
+
+    def test_visibility_notifications_track_windows_and_resync_the_actions(self):
+        window = MainWindow.__new__(MainWindow)
+        log = []
+        window._sync_annotation_window_action = lambda: log.append("sync-annotation")
+        window._sync_view_window_action = lambda: log.append("sync-view")
+        window.set_view_window_visible = lambda visible: log.append(("view", visible))
+        window._workspace_state_coordinator = SimpleNamespace(
+            track_annotation_window=lambda: log.append("track-annotation"),
+            track_view_window=lambda: log.append("track-view"),
+        )
+        lifecycle = {"active": False}
+        window._view_window_manager = SimpleNamespace(
+            has_active_view_lifecycle=lambda: lifecycle["active"],
+            is_view_open=lambda: lifecycle["active"],
+        )
+        window._on_annotation_window_visibility_changed(True)
+        self.assertEqual(log, ["sync-annotation", "track-annotation", "sync-view"])
+        log.clear()
+        window._on_annotation_window_visibility_changed(False)
+        self.assertEqual(log, ["sync-annotation", "sync-view"])
+        lifecycle["active"] = True
+        log.clear()
+        window._on_annotation_window_visibility_changed(False)
+        self.assertEqual(log, ["sync-annotation", ("view", False)])
+        log.clear()
+        window._on_annotation_window_visibility_changed(True)
+        self.assertEqual(log, ["sync-annotation", "track-annotation", "sync-view"])
+        log.clear()
+        window._on_view_window_visibility_changed(True)
+        self.assertEqual(log, ["track-view", "sync-view"])
+        lifecycle["active"] = False
+        log.clear()
+        window._on_view_window_visibility_changed(False)
+        self.assertEqual(log, ["sync-view"])
+
+    def test_the_mesh_window_follows_the_takeoff_tab_and_saved_geometry(self):
+        window = MainWindow.__new__(MainWindow)
+        calls = []
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_PROJECTS)
+        window._mesh_window_action = _A3QAction("mesh")
+        window._mesh_window_action.setCheckable(True)
+        toggles = []
+        window._mesh_window_action.toggled.connect(toggles.append)
+        state = WorkspaceState()
+        saved = state.detached_windows.mesh_view
+        saved.geometry_b64 = _detached_support__encoded_geometry(b"saved")
+        saved.is_maximized = False
+        window._workspace_state_model = SimpleNamespace(state=state)
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(
+                set_mesh_window_visible=lambda visible, **kwargs: calls.append(
+                    (visible, kwargs)
+                )
+            )
+        )
+        window._mesh_window_action.setChecked(True)
+        toggles.clear()
+        window.set_mesh_window_visible(True)
+        self.assertEqual(calls, [])
+        self.assertFalse(window._mesh_window_action.isChecked())
+        self.assertFalse(window._mesh_window_action.signalsBlocked())
+        self.assertEqual(toggles, [])
+        window._mesh_window_action.setChecked(True)
+        window.set_mesh_window_visible(False)
+        self.assertEqual(
+            calls, [(False, {"initial_geometry": None, "initial_is_maximized": True})]
+        )
+        calls.clear()
+        toggles.clear()
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_TAKEOFF)
+        toggles.clear()
+        window.set_mesh_window_visible(True)
+        ((visible, kwargs),) = calls
+        self.assertTrue(visible)
+        self.assertEqual(bytes(kwargs["initial_geometry"]), b"saved")
+        self.assertIs(kwargs["initial_is_maximized"], False)
+        self.assertTrue(window._mesh_window_action.isChecked())
+        self.assertEqual(toggles, [])
+        self.assertFalse(window._mesh_window_action.signalsBlocked())
+        calls.clear()
+        window.set_mesh_window_visible(
+            True, initial_geometry=QtCore.QByteArray(b"explicit"), initial_is_maximized=True
+        )
+        self.assertEqual(bytes(calls[0][1]["initial_geometry"]), b"explicit")
+        self.assertIs(calls[0][1]["initial_is_maximized"], True)
+        calls.clear()
+        window.set_mesh_window_visible(False)
+        self.assertEqual(calls[0][0], False)
+        self.assertFalse(window._mesh_window_action.isChecked())
+
+    def _area_window(self, *, takeoff=True, plan_page="p1", area_uid="area-1"):
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        window.tab_widget = SimpleNamespace(
+            currentIndex=lambda: TAB_INDEX_TAKEOFF if takeoff else TAB_INDEX_PROJECTS
+        )
+        self.plan = QtWidgets.QWidget()
+        self.plan.current_page_uid = plan_page
+        self.bar = QtWidgets.QWidget()
+        self.bar.get_selected_area_uid = lambda: area_uid
+        for widget in (self.plan, self.bar):
+            self.addCleanup(
+                lambda w=widget: w.deleteLater() if _a3_is_valid(w) else None
+            )
+        window.plan_view = self.plan
+        window._page_settings_bar = self.bar
+        self.detached = []
+        window._annotation_view_manager = SimpleNamespace(
+            get_window=lambda: self.detached[0] if self.detached else None
+        )
+        window._view_window_manager = SimpleNamespace(get_window=lambda: None)
+        return window
+
+    def _resolve(self, window, *, focus=None, active=None):
+        with patch.object(
+            QtWidgets.QApplication, "focusWidget", return_value=focus
+        ), patch.object(QtWidgets.QApplication, "activeWindow", return_value=active):
+            return window.resolve_current_area_selection_context()
+
+    def test_the_area_context_is_the_main_plan_when_the_main_window_has_focus(self):
+        window = self._area_window()
+        context = self._resolve(window, active=window)
+        self.assertIs(context.parent, window)
+        self.assertIs(context.plan_view, self.plan)
+        self.assertEqual(context.area_uid, "area-1")
+        self.assertIsNone(self._resolve(self._area_window(area_uid=""), active=None).plan_view)
+        window = self._area_window(area_uid="")
+        self.assertIsNone(self._resolve(window, active=window).area_uid)
+
+    def test_the_area_context_has_no_plan_when_the_main_plan_is_not_current(self):
+        for kwargs in ({"takeoff": False}, {"plan_page": ""}, {"plan_page": None}):
+            with self.subTest(kwargs=kwargs):
+                window = self._area_window(**kwargs)
+                context = self._resolve(window, active=window)
+                self.assertIs(context.parent, window)
+                self.assertIsNone(context.plan_view)
+        window = self._area_window()
+        window.plan_view = None
+        self.assertIsNone(self._resolve(window, active=window).plan_view)
+        window = self._area_window()
+        window._page_settings_bar = None
+        self.assertIsNone(self._resolve(window, active=window).plan_view)
+        window = self._area_window()
+        _a3_delete(self.plan)
+        self.assertIsNone(self._resolve(window, active=window).plan_view)
+        window = self._area_window()
+        _a3_delete(self.bar)
+        self.assertIsNone(self._resolve(window, active=window).plan_view)
+
+    def test_the_area_context_ignores_an_unrelated_focus_owner(self):
+        window = self._area_window()
+        other = QtWidgets.QWidget()
+        self.addCleanup(other.deleteLater)
+        context = self._resolve(window, focus=other, active=window)
+        self.assertIs(context.parent, window)
+        self.assertIsNone(context.plan_view)
+
+    def test_a_detached_window_supplies_its_own_plan_and_area(self):
+        window = self._area_window()
+        detached = QtWidgets.QWidget()
+        self.addCleanup(detached.deleteLater)
+        target = {"value": (self.plan, "area-9")}
+        detached.current_area_selection_target = lambda: target["value"]
+        self.detached.append(detached)
+        context = self._resolve(window, active=detached)
+        self.assertIs(context.parent, detached)
+        self.assertIs(context.plan_view, self.plan)
+        self.assertEqual(context.area_uid, "area-9")
+        target["value"] = None
+        context = self._resolve(window, active=detached)
+        self.assertIs(context.parent, window)
+        self.assertIsNone(context.plan_view)
+
+    def test_a_menu_focus_resolves_to_the_window_that_owns_the_menu_chain(self):
+        window = self._area_window()
+        outer = QtWidgets.QMenu(window)
+        inner = QtWidgets.QMenu(outer)
+        for menu in (outer, inner):
+            self.addCleanup(menu.deleteLater)
+        context = self._resolve(window, focus=inner, active=None)
+        self.assertIs(context.parent, window)
+        self.assertIs(context.plan_view, self.plan)
+        orphan = QtWidgets.QMenu()
+        self.addCleanup(orphan.deleteLater)
+        context = self._resolve(window, focus=orphan, active=window)
+        self.assertIs(context.parent, window)
+        self.assertIs(context.plan_view, self.plan)
+        other = self._area_window()
+        context = self._resolve(window, focus=orphan, active=other)
+        self.assertIs(context.parent, window)
+        self.assertIsNone(context.plan_view)
+
+    def test_a_widget_top_level_is_none_for_missing_destroyed_or_failing_widgets(self):
+        top = QtWidgets.QWidget()
+        child = QtWidgets.QWidget(top)
+        self.addCleanup(top.deleteLater)
+        self.assertIsNone(MainWindow._widget_top_level(None))
+        self.assertIs(MainWindow._widget_top_level(child), top)
+        destroyed = QtWidgets.QWidget()
+        _a3_delete(destroyed)
+        self.assertIsNone(MainWindow._widget_top_level(destroyed))
+
+        class Failing:
+            def window(self):
+                raise RuntimeError("Internal C++ object already deleted.")
+
+        self.assertIsNone(MainWindow._widget_top_level(Failing()))
+
+        class Nothing:
+            def window(self):
+                return None
+
+        self.assertIsNone(MainWindow._widget_top_level(Nothing()))
+        gone = QtWidgets.QWidget()
+        _a3_delete(gone)
+
+        class Dangling:
+            def window(self):
+                return gone
+
+        self.assertIsNone(MainWindow._widget_top_level(Dangling()))
+
+    def test_detached_plan_windows_skips_missing_and_destroyed_windows(self):
+        window = MainWindow.__new__(MainWindow)
+        live = QtWidgets.QWidget()
+        self.addCleanup(live.deleteLater)
+        gone = QtWidgets.QWidget()
+        _a3_delete(gone)
+        window._annotation_view_manager = SimpleNamespace(get_window=lambda: gone)
+        window._view_window_manager = SimpleNamespace(get_window=lambda: live)
+        self.assertEqual(window._detached_plan_windows(), (live,))
+        window._annotation_view_manager = SimpleNamespace(get_window=lambda: None)
+        self.assertEqual(window._detached_plan_windows(), (live,))
+        window._view_window_manager = SimpleNamespace(get_window=lambda: None)
+        self.assertEqual(window._detached_plan_windows(), ())
+
+    def test_a_menu_inside_another_menus_widget_resolves_to_the_active_window(self):
+        window = self._area_window()
+        outer = QtWidgets.QMenu(window)
+        holder = QtWidgets.QWidget(outer)
+        inner = QtWidgets.QMenu(holder)
+        for widget in (outer, holder, inner):
+            self.addCleanup(widget.deleteLater)
+        self.assertIsInstance(MainWindow._widget_top_level(holder), QtWidgets.QMenu)
+        context = self._resolve(window, focus=inner, active=window)
+        self.assertIs(context.parent, window)
+        self.assertIs(context.plan_view, self.plan)
+        other = self._area_window()
+        context = self._resolve(window, focus=inner, active=other)
+        self.assertIs(context.parent, window)
+        self.assertIsNone(context.plan_view)
+
+
+class MainWindowA3ShellLayoutTests(unittest.TestCase):
+    """Toolbars, workspace tabs, sidebars and the status panel on real widgets."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _window(self, tab=TAB_INDEX_TAKEOFF):
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        self.holder = QtWidgets.QWidget()
+        self.addCleanup(self.holder.deleteLater)
+        self.tab = tab
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: self.tab)
+        window._workspace_toolbar_visibility = {
+            window.MAIN_TOOLBAR_KEY: True,
+            window.VIEW_TOOLBAR_KEY: True,
+            window.PLAN_TOOLS_TOOLBAR_KEY: True,
+            window.OVERLAY_TOOLS_TOOLBAR_KEY: True,
+        }
+        window._syncing_toolbar_visibility = False
+        for name in (
+            "_main_toolbar",
+            "_plan_tools_toolbar",
+            "_overlay_tools_toolbar",
+            "_view_toolbar",
+        ):
+            setattr(window, name, QtWidgets.QToolBar(self.holder))
+        self.saves = []
+        window._workspace_state_coordinator = SimpleNamespace(
+            request_save=lambda: self.saves.append("save")
+        )
+        return window
+
+    def test_toolbars_are_shown_by_preference_and_the_takeoff_ones_only_on_takeoff(self):
+        window = self._window(TAB_INDEX_TAKEOFF)
+        window._apply_workspace_toolbar_visibility()
+        toolbars = (
+            window._main_toolbar,
+            window._plan_tools_toolbar,
+            window._overlay_tools_toolbar,
+            window._view_toolbar,
+        )
+        self.assertEqual([t.isHidden() for t in toolbars], [False] * 4)
+        self.assertFalse(window._syncing_toolbar_visibility)
+        window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY] = False
+        window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY] = False
+        window._apply_workspace_toolbar_visibility()
+        self.assertEqual([t.isHidden() for t in toolbars], [True, False, False, True])
+        self.tab = TAB_INDEX_PROJECTS
+        window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY] = True
+        window._apply_workspace_toolbar_visibility()
+        self.assertEqual([t.isHidden() for t in toolbars], [False, True, True, True])
+
+    def test_toolbars_are_applied_while_the_window_marks_itself_as_syncing(self):
+        window = self._window()
+        seen = []
+        window._set_toolbar_visible = lambda toolbar, key, available: seen.append(
+            (key, available, window._syncing_toolbar_visibility)
+        )
+        window._apply_workspace_toolbar_visibility()
+        self.assertEqual(
+            seen,
+            [
+                (window.MAIN_TOOLBAR_KEY, True, True),
+                (window.PLAN_TOOLS_TOOLBAR_KEY, True, True),
+                (window.OVERLAY_TOOLS_TOOLBAR_KEY, True, True),
+                (window.VIEW_TOOLBAR_KEY, True, True),
+            ],
+        )
+        self.assertFalse(window._syncing_toolbar_visibility)
+
+    def test_toolbar_visibility_is_not_syncing_when_a_toolbar_update_fails(self):
+        window = self._window()
+        window._main_toolbar = None
+        with self.assertRaises(AttributeError):
+            window._apply_workspace_toolbar_visibility()
+        self.assertFalse(window._syncing_toolbar_visibility)
+
+    def test_user_toolbar_changes_are_remembered_unless_the_window_is_syncing(self):
+        window = self._window()
+        window._on_workspace_toolbar_visibility_changed(window.VIEW_TOOLBAR_KEY, False)
+        self.assertIs(window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False)
+        window._syncing_toolbar_visibility = True
+        window._on_workspace_toolbar_visibility_changed(window.VIEW_TOOLBAR_KEY, True)
+        self.assertIs(window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False)
+
+    def test_a_toolbar_preference_is_applied_and_saved(self):
+        window = self._window()
+        window.set_workspace_toolbar_preference(window.PLAN_TOOLS_TOOLBAR_KEY, False)
+        self.assertIs(
+            window._workspace_toolbar_visibility[window.PLAN_TOOLS_TOOLBAR_KEY], False
+        )
+        self.assertTrue(window._plan_tools_toolbar.isHidden())
+        self.assertEqual(self.saves, ["save"])
+        window.set_workspace_toolbar_preference(window.PLAN_TOOLS_TOOLBAR_KEY, 1)
+        self.assertIs(
+            window._workspace_toolbar_visibility[window.PLAN_TOOLS_TOOLBAR_KEY], True
+        )
+        self.assertFalse(window._plan_tools_toolbar.isHidden())
+        self.assertEqual(self.saves, ["save", "save"])
+
+    def test_the_toolbar_state_snapshot_is_a_copy_and_restores_known_keys_only(self):
+        window = self._window()
+        snapshot = window.get_workspace_toolbar_visibility_state()
+        snapshot[window.MAIN_TOOLBAR_KEY] = False
+        self.assertIs(window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY], True)
+        window.set_workspace_toolbar_visibility_state(
+            {window.VIEW_TOOLBAR_KEY: 0, "unknown": True}
+        )
+        self.assertIs(window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False)
+        self.assertNotIn("unknown", window._workspace_toolbar_visibility)
+        self.assertTrue(window._view_toolbar.isHidden())
+        self.assertEqual(self.saves, [])
+
+    def test_the_toolbar_popup_menu_lists_every_toolbar_and_toggles_the_preference(self):
+        window = self._window(TAB_INDEX_PROJECTS)
+        window._workspace_toolbar_visibility[window.OVERLAY_TOOLS_TOOLBAR_KEY] = False
+        menu = window.createPopupMenu()
+        self.addCleanup(menu.deleteLater)
+        self.assertEqual(menu.title(), SHOW_TOOLBARS_MENU_TITLE)
+        actions = menu.actions()
+        self.assertEqual(
+            [a.text() for a in actions],
+            [
+                MAIN_TOOLBAR_LABEL,
+                VIEW_TOOLBAR_LABEL,
+                PLAN_TOOLS_TOOLBAR_LABEL,
+                OVERLAY_TOOLS_TOOLBAR_LABEL,
+            ],
+        )
+        self.assertTrue(all(a.isCheckable() for a in actions))
+        self.assertEqual([a.isChecked() for a in actions], [True, True, True, False])
+        self.assertEqual([a.isEnabled() for a in actions], [True, False, False, False])
+        actions[0].setChecked(False)
+        self.assertIs(window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY], False)
+        self.assertTrue(window._main_toolbar.isHidden())
+        self.assertEqual(self.saves, ["save"])
+        self.tab = TAB_INDEX_TAKEOFF
+        enabled = [a.isEnabled() for a in window.createPopupMenu().actions()]
+        self.assertEqual(enabled, [True, True, True, True])
+
+    def test_takeoff_view_tabs_can_never_both_be_hidden(self):
+        window = self._window()
+        window._view_2d_action = _A3QAction("2d")
+        window._view_3d_action = _A3QAction("3d")
+        for action in (window._view_2d_action, window._view_3d_action):
+            action.setVisible(True)
+        window.set_takeoff_2d_tab_visible(False)
+        self.assertFalse(window.is_takeoff_2d_tab_visible())
+        self.assertTrue(window.is_takeoff_3d_tab_visible())
+        window.set_takeoff_3d_tab_visible(False)
+        self.assertTrue(window.is_takeoff_3d_tab_visible())
+        self.assertFalse(window.is_takeoff_2d_tab_visible())
+        window.set_takeoff_2d_tab_visible(True)
+        window.set_takeoff_3d_tab_visible(False)
+        self.assertTrue(window.is_takeoff_2d_tab_visible())
+        self.assertFalse(window.is_takeoff_3d_tab_visible())
+        window.set_takeoff_2d_tab_visible(False)
+        self.assertTrue(window.is_takeoff_2d_tab_visible())
+        self.assertEqual(len(self.saves), 5)
+
+    def test_view_tab_changes_request_a_workspace_save(self):
+        window = self._window()
+        window._view_2d_action = _A3QAction("2d")
+        window._view_3d_action = _A3QAction("3d")
+        window._view_2d_action.setVisible(True)
+        window._view_3d_action.setVisible(True)
+        window._request_workspace_state_save = lambda: self.saves.append("tab-save")
+        window.set_takeoff_2d_tab_visible(True)
+        window.set_takeoff_3d_tab_visible(True)
+        self.assertEqual(self.saves, ["tab-save", "tab-save"])
+
+    def test_the_active_takeoff_view_is_two_d_only_for_index_one(self):
+        window = self._window()
+        stack = QtWidgets.QStackedWidget()
+        self.addCleanup(stack.deleteLater)
+        stack.addWidget(QtWidgets.QWidget())
+        stack.addWidget(QtWidgets.QWidget())
+        window._view_stack = stack
+        stack.setCurrentIndex(1)
+        self.assertEqual(window.get_active_takeoff_view(), WORKSPACE_ACTIVE_VIEW_2D)
+        window.set_active_takeoff_view(WORKSPACE_ACTIVE_VIEW_3D)
+        self.assertEqual(stack.currentIndex(), 0)
+        self.assertEqual(window.get_active_takeoff_view(), WORKSPACE_ACTIVE_VIEW_3D)
+        window.set_active_takeoff_view(WORKSPACE_ACTIVE_VIEW_2D.upper())
+        self.assertEqual(stack.currentIndex(), 1)
+        changes = []
+        stack.currentChanged.connect(changes.append)
+        window.set_active_takeoff_view(WORKSPACE_ACTIVE_VIEW_2D)
+        self.assertEqual(changes, [])
+
+    def test_navigating_to_a_hotlink_selects_the_page_then_focuses_in_two_d(self):
+        window = self._window()
+        log = []
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(
+                navigate_to_takeoff_page=lambda page, view: log.append(("go", page, view)),
+                apply_pending_hotlink_view_focus=lambda: log.append("focus"),
+            )
+        )
+        window.set_active_takeoff_view = lambda view: log.append(("view", view))
+        window.navigate_to_hotlink_page("p2", "nv1")
+        window.navigate_to_hotlink_page("p3")
+        self.assertEqual(
+            log,
+            [
+                ("go", "p2", "nv1"),
+                ("view", WORKSPACE_ACTIVE_VIEW_2D),
+                "focus",
+                ("go", "p3", ""),
+                ("view", WORKSPACE_ACTIVE_VIEW_2D),
+                "focus",
+            ],
+        )
+
+    def _sidebar_window(self):
+        window = self._window()
+        window._conditions_sidebar = QtWidgets.QWidget(self.holder)
+        window._bid_layers_sidebar = QtWidgets.QWidget(self.holder)
+        window._pan_sidebar = QtWidgets.QWidget(self.holder)
+        window._left_splitter = QtWidgets.QSplitter(self.holder)
+        window._left_column_splitter = QtWidgets.QSplitter(self.holder)
+        window.status_panel = QtWidgets.QWidget(self.holder)
+        window._conditions_toggle_action = _A3QAction("conditions")
+        window._layers_toggle_action = _A3QAction("layers")
+        window._pan_toggle_action = _A3QAction("pan")
+        window._status_bar_action = _A3QAction("status")
+        for action in (
+            window._conditions_toggle_action,
+            window._layers_toggle_action,
+            window._pan_toggle_action,
+            window._status_bar_action,
+        ):
+            action.setCheckable(True)
+        self.ensured = []
+        window._ensure_sidebar_column_visible = lambda: self.ensured.append("column")
+        window._ensure_pan_pane_visible = lambda: self.ensured.append("pan")
+        window._ensure_sidebar_pane_visible = lambda index: self.ensured.append(index)
+        return window
+
+    def test_the_left_column_is_shown_for_any_visible_left_sidebar_or_the_pan(self):
+        window = self._sidebar_window()
+        for conditions_hidden, layers_hidden, pan_hidden, left_hidden, column_hidden in (
+            (True, True, True, True, True),
+            (False, True, True, False, False),
+            (True, False, True, False, False),
+            (True, True, False, True, False),
+            (False, False, False, False, False),
+        ):
+            with self.subTest(
+                conditions_hidden=conditions_hidden,
+                layers_hidden=layers_hidden,
+                pan_hidden=pan_hidden,
+            ):
+                window._conditions_sidebar.setHidden(conditions_hidden)
+                window._bid_layers_sidebar.setHidden(layers_hidden)
+                window._pan_sidebar.setHidden(pan_hidden)
+                window._sync_left_splitter_visibility()
+                self.assertEqual(window._left_splitter.isHidden(), left_hidden)
+                self.assertEqual(window._left_column_splitter.isHidden(), column_hidden)
+
+    def test_sidebar_toggles_change_the_action_first_and_only_then_the_pane(self):
+        window = self._sidebar_window()
+        for setter, getter, action_name, widget_name, ensured in (
+            ("set_pan_sidebar_visible", "is_pan_sidebar_visible",
+             "_pan_toggle_action", "_pan_sidebar", ["column", "pan"]),
+            ("set_layers_sidebar_visible", "is_layers_sidebar_visible",
+             "_layers_toggle_action", "_bid_layers_sidebar", [1]),
+            ("set_conditions_sidebar_visible", "is_conditions_sidebar_visible",
+             "_conditions_toggle_action", "_conditions_sidebar", [0]),
+        ):
+            with self.subTest(setter=setter):
+                action = getattr(window, action_name)
+                widget = getattr(window, widget_name)
+                for sidebar in (
+                    window._conditions_sidebar,
+                    window._bid_layers_sidebar,
+                    window._pan_sidebar,
+                ):
+                    sidebar.setHidden(True)
+                action.setChecked(False)
+                self.ensured.clear()
+                getattr(window, setter)(True)
+                # the action owns the change: the pane waits for its toggled handler
+                self.assertTrue(action.isChecked())
+                self.assertTrue(widget.isHidden())
+                self.assertEqual(self.ensured, [])
+                window._left_splitter.setHidden(True)
+                window._left_column_splitter.setHidden(True)
+                getattr(window, setter)(True)
+                self.assertFalse(widget.isHidden())
+                self.assertIs(getattr(window, getter)(), True)
+                self.assertEqual(self.ensured, ensured)
+                self.assertFalse(window._left_column_splitter.isHidden())
+                if setter != "set_pan_sidebar_visible":
+                    self.assertFalse(window._left_splitter.isHidden())
+                self.ensured.clear()
+                getattr(window, setter)(False)
+                self.assertFalse(action.isChecked())
+                getattr(window, setter)(False)
+                self.assertTrue(widget.isHidden())
+                self.assertIs(getattr(window, getter)(), False)
+                self.assertEqual(self.ensured, [])
+                self.assertTrue(window._left_column_splitter.isHidden())
+
+    def test_the_status_panel_follows_its_action_without_feeding_back(self):
+        window = self._sidebar_window()
+        toggles = []
+        window._status_bar_action.toggled.connect(toggles.append)
+        window.status_panel.setHidden(False)
+        window._status_bar_action.setChecked(True)
+        toggles.clear()
+        window.set_status_bar_visible(False)
+        self.assertTrue(window.status_panel.isHidden())
+        self.assertIs(window.is_status_bar_visible(), False)
+        self.assertFalse(window._status_bar_action.isChecked())
+        self.assertFalse(window._status_bar_action.signalsBlocked())
+        window.set_status_bar_visible(True)
+        self.assertIs(window.is_status_bar_visible(), True)
+        self.assertTrue(window._status_bar_action.isChecked())
+        self.assertEqual(toggles, [])
+
+
+class _A3Splitter:
+    """Minimal QSplitter stand-in with exact integer sizes (no handle or layout)."""
+
+    def __init__(self, sizes, extent=0):
+        self._sizes = list(sizes)
+        self.extent = extent
+        self.applied = []
+
+    def sizes(self):
+        return list(self._sizes)
+
+    def setSizes(self, sizes):
+        self.applied.append(list(sizes))
+        self._sizes = list(sizes)
+
+    def height(self):
+        return self.extent
+
+    def width(self):
+        return self.extent
+
+
+class MainWindowA3SplitterBoundaryTests(unittest.TestCase):
+    """Exact pixel arithmetic at the one-pixel and tiny-total boundaries."""
+
+    def _window(self, **splitters):
+        window = MainWindow.__new__(MainWindow)
+        window._last_takeoff_splitter_sizes = []
+        window._last_left_splitter_sizes = []
+        window._last_left_column_splitter_sizes = []
+        window._takeoff_splitter = splitters.get("takeoff", _A3Splitter([0, 0]))
+        window._left_splitter = splitters.get("left", _A3Splitter([0, 0]))
+        window._left_column_splitter = splitters.get("column", _A3Splitter([0, 0]))
+        return window
+
+    def test_a_one_pixel_sidebar_is_remembered_and_negative_sizes_clamp_to_zero(self):
+        window = self._window(takeoff=_A3Splitter([1, 399]))
+        self.assertEqual(window.get_takeoff_splitter_sizes(), [1, 399])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [1, 399])
+        window._takeoff_splitter = _A3Splitter([-4, 10])
+        self.assertEqual(window.get_takeoff_splitter_sizes(), [0, 10])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [1, 399])
+        window.set_takeoff_splitter_sizes([1, 0])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [1, 0])
+        self.assertEqual(window._takeoff_splitter.applied, [[1, 0]])
+        window.set_takeoff_splitter_sizes([0, 1])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [1, 0])
+        self.assertEqual(window._takeoff_splitter.applied[-1], [0, 1])
+        window.set_takeoff_splitter_sizes([-3, 0])
+        self.assertEqual(len(window._takeoff_splitter.applied), 2)
+
+    def test_the_left_splitter_boundaries_are_one_pixel_per_pane(self):
+        window = self._window(left=_A3Splitter([1, 1]))
+        self.assertEqual(window.get_left_splitter_sizes(), [1, 1])
+        self.assertEqual(window._last_left_splitter_sizes, [1, 1])
+        for sizes in ([0, 1], [1, 0], [7], [-2, 9]):
+            window._left_splitter = _A3Splitter(sizes)
+            window.get_left_splitter_sizes()
+            self.assertEqual(window._last_left_splitter_sizes, [1, 1], sizes)
+        window._left_splitter = _A3Splitter([-2, 9])
+        self.assertEqual(window.get_left_splitter_sizes(), [0, 9])
+        window = self._window()
+        window.set_left_splitter_sizes([1, 1])
+        self.assertEqual(window._last_left_splitter_sizes, [1, 1])
+        for sizes in ([0, 1], [1, 0], [5]):
+            window.set_left_splitter_sizes(sizes)
+            self.assertEqual(window._last_left_splitter_sizes, [1, 1], sizes)
+            self.assertEqual(window._left_splitter.applied[-1], sizes)
+        window.set_left_splitter_sizes([-1, 1])
+        self.assertEqual(window._left_splitter.applied[-1], [0, 1])
+        applied = len(window._left_splitter.applied)
+        window.set_left_splitter_sizes([-1, 0])
+        self.assertEqual(len(window._left_splitter.applied), applied)
+
+    def test_the_left_column_splitter_boundaries_are_exactly_two_one_pixel_panes(self):
+        window = self._window(column=_A3Splitter([1, 1]))
+        window.get_left_column_splitter_sizes()
+        self.assertEqual(window._last_left_column_splitter_sizes, [1, 1])
+        for sizes in ([0, 1], [1, 0], [3], [-1, 4]):
+            window._left_column_splitter = _A3Splitter(sizes)
+            result = window.get_left_column_splitter_sizes()
+            self.assertEqual(result, [max(0, s) for s in sizes])
+            self.assertEqual(window._last_left_column_splitter_sizes, [1, 1], sizes)
+        window = self._window()
+        window.set_left_column_splitter_sizes([1, 1])
+        self.assertEqual(window._left_column_splitter.applied, [[1, 1]])
+        self.assertEqual(window._last_left_column_splitter_sizes, [1, 1])
+        window.set_left_column_splitter_sizes([0, 2])
+        window.set_left_column_splitter_sizes([2, 0])
+        window.set_left_column_splitter_sizes([1, 0])
+        self.assertEqual(
+            window._left_column_splitter.applied[-3:], [[0, 2], [2, 0], [1, 0]]
+        )
+        self.assertEqual(window._last_left_column_splitter_sizes, [1, 1])
+        window.set_left_column_splitter_sizes([-1, 0])
+        window.set_left_column_splitter_sizes([1])
+        window.set_left_column_splitter_sizes([1, 1, 1])
+        self.assertEqual(len(window._left_column_splitter.applied), 4)
+
+    def test_reopening_a_left_pane_at_tiny_totals_keeps_both_panes_visible(self):
+        cases = (
+            # sizes, extent, saved, index -> expected
+            ([0, 1], 0, [], 0, [1, 1]),
+            ([0, 3], 0, [], 0, [1, 2]),
+            ([3, 0], 0, [], 1, [2, 1]),
+            ([0, 1], 9, [], 0, [4, 5]),
+            ([0, 1], 9, [], 0, [4, 5]),
+            ([0, 1], 0, [1, 1], 0, [1, 1]),
+            ([0, 2], 0, [1, 1], 0, [1, 1]),
+            ([0, 3], 0, [1, 1], 0, [2, 1]),
+            ([0, 3], 0, [1, 2], 0, [1, 2]),
+            ([0, 1], 12, [3, 1], 0, [9, 3]),
+        )
+        for sizes, extent, saved, index, expected in cases:
+            with self.subTest(sizes=sizes, extent=extent, saved=saved, index=index):
+                window = self._window(left=_A3Splitter(sizes, extent))
+                window._last_left_splitter_sizes = saved
+                window._ensure_left_splitter_pane_visible(index)
+                self.assertEqual(window._left_splitter.sizes(), expected)
+        window = self._window(left=_A3Splitter([5, 6]))
+        window._ensure_left_splitter_pane_visible(1)
+        self.assertEqual(window._left_splitter.applied, [])
+
+    def test_reopening_the_pan_pane_clamps_to_the_available_height(self):
+        cases = (
+            # sizes, extent, saved -> expected
+            ([0, 3], 0, [], [min(max(1, _A3_PAN_DEFAULT_HEIGHT), 2), 1]),
+            ([0, 1], 0, [1, 1], [1, 1]),
+            ([0, 2], 0, [1, 1], [1, 1]),
+            ([0, 3], 0, [1, 1], [2, 1]),
+            ([0, 3], 0, [1, 3], [1, 2]),
+            ([0, 3], 0, [3, 1], [2, 1]),
+            ([0, 200], 0, [1, 1], [100, 100]),
+            ([0, 200], 0, [0, 5], [min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199), 200 - min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199)]),
+            ([0, 200], 0, [5, 0], [min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199), 200 - min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199)]),
+            ([0, 10], 500, [1, 3], [125, 375]),
+            ([0, 1000], 0, [5, 0], [_A3_PAN_DEFAULT_HEIGHT, 1000 - _A3_PAN_DEFAULT_HEIGHT]),
+            ([0, 1000], 0, [0, 5], [_A3_PAN_DEFAULT_HEIGHT, 1000 - _A3_PAN_DEFAULT_HEIGHT]),
+            # saved ratio rounds up to the whole height: clamped to total - 1
+            ([0, 2], 0, [3, 1], [1, 1]),
+            ([0, 3], 0, [7, 1], [2, 1]),
+        )
+        for sizes, extent, saved, expected in cases:
+            with self.subTest(sizes=sizes, extent=extent, saved=saved):
+                window = self._window(column=_A3Splitter(sizes, extent))
+                window._last_left_column_splitter_sizes = saved
+                window._ensure_pan_pane_visible()
+                self.assertEqual(window._left_column_splitter.sizes(), expected)
+        for sizes in ([5, 6], [1, 0], [4]):
+            window = self._window(column=_A3Splitter(sizes))
+            window._ensure_pan_pane_visible()
+            self.assertEqual(window._left_column_splitter.applied, [], sizes)
+        window = self._window(column=_A3Splitter([0]))
+        window._ensure_pan_pane_visible()
+        self.assertEqual(window._left_column_splitter.applied, [])
+
+    def test_reopening_the_sidebar_column_clamps_to_the_splitter_width(self):
+        cases = (
+            # sizes, width, saved -> expected
+            ([0, 3], 0, [2, 1], [2, 1]),
+            ([0, 3], 0, [1, 2], [1, 2]),
+            ([0, 3], 0, [3, 0], [2, 1]),
+            ([0, 3], 0, [9, 0], [2, 1]),
+            ([0, 3], 0, [0, 3], [2, 1]),
+            ([0, 2000], 0, [], [500, 1500]),
+            ([0, 2002], 0, [], [500, 1502]),
+            ([0, 2000], 0, [0, 5], [500, 1500]),
+            ([0, 2000], 0, [-5, 5], [500, 1500]),
+            ([0, 1], 4000, [], [1000, 3000]),
+            ([0, 1], 0, [1, 1], [1, 1]),
+        )
+        for sizes, width, saved, expected in cases:
+            with self.subTest(sizes=sizes, width=width, saved=saved):
+                window = self._window(takeoff=_A3Splitter(sizes, width))
+                window._last_takeoff_splitter_sizes = saved
+                window._ensure_sidebar_column_visible()
+                self.assertEqual(window._takeoff_splitter.sizes(), expected)
+        window = self._window(takeoff=_A3Splitter([1, 0]))
+        window._ensure_sidebar_column_visible()
+        self.assertEqual(window._takeoff_splitter.applied, [])
+
+    def test_scaling_keeps_each_saved_pane_at_least_one_pixel(self):
+        scale = MainWindow._scale_left_splitter_sizes
+        self.assertEqual(scale([1, 1], 2), [1, 1])
+        self.assertEqual(scale([1, 1], 3), [2, 1])
+        self.assertEqual(scale([3, 1], 4), [3, 1])
+        self.assertEqual(scale([0, 5], 6), [1, 5])
+        self.assertEqual(scale([5, 0], 6), [5, 1])
+        self.assertEqual(scale([0, 0], 6), [1, 5])
+        # a saved total of exactly one pixel is a real total, not the zero fallback
+        self.assertEqual(scale([1, 0], 6), [5, 1])
+        self.assertEqual(scale([0, 1], 6), [1, 5])
+
+
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION as _A3_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT as _A3_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK as _A3_HOTLINK,
+    ANNOTATION_TYPE_TEXT as _A3_TEXT,
+)
+from ost_visualizer.domain.entities.annotation_style import (
+    AnnotationStyle as _A3AnnotationStyle,
+)
+from ost_visualizer.domain.entities.config import Config as _A3Config
+from ost_visualizer.domain.entities.font_definition import (
+    FontDefinition as _A3FontDefinition,
+)
+
+
+class MainWindowA3AnnotationStyleTests(unittest.TestCase):
+    """Active annotation styles: controls refresh and the persisted defaults."""
+
+    def _window(self):
+        window = MainWindow.__new__(MainWindow)
+        self.config = _A3Config()
+        self.updates = []
+        self.saves = []
+        window._config_service = SimpleNamespace(
+            get_config_snapshot=lambda: self.config,
+            update_app_options=lambda update: self.updates.append(update),
+        )
+        window._workspace_state_coordinator = SimpleNamespace(
+            request_save=lambda: self.saves.append("save")
+        )
+        return window
+
+    def test_a_font_definition_names_bold_italic_and_regular_faces(self):
+        for bold, italic, name, weight in (
+            (False, False, "Regular", 400),
+            (True, False, "Bold", 700),
+            (False, True, "Italic", 400),
+            (True, True, "Bold Italic", 700),
+        ):
+            with self.subTest(bold=bold, italic=italic):
+                style = _A3AnnotationStyle(
+                    font_name="Arial",
+                    font_size=14,
+                    font_bold=bold,
+                    font_italic=italic,
+                    font_underline=bold != italic,
+                )
+                self.assertEqual(
+                    MainWindow._font_definition_for_style(style),
+                    _A3FontDefinition(
+                        family="Arial",
+                        style_name=name,
+                        point_size=14,
+                        weight=weight,
+                        italic=italic,
+                        underline=bold != italic,
+                    ),
+                )
+
+    def test_config_updates_only_carry_what_the_changed_tool_persists(self):
+        window = self._window()
+        style = _A3AnnotationStyle(color="#112233", font_name="Arial", font_size=12)
+        font = MainWindow._font_definition_for_style(style)
+
+        def update(kind, **kwargs):
+            return window._config_update_for_annotation_style(kind, style, **kwargs)
+
+        result = update(_A3_TEXT, color="#112233", font_changed=False)
+        self.assertEqual(result.default_text_color, "#112233")
+        self.assertEqual(result.default_text_font, self.config.default_text_font)
+        result = update(_A3_TEXT, color=None, font_changed=True)
+        self.assertEqual(result.default_text_font, font)
+        self.assertEqual(result.default_text_color, self.config.default_text_color)
+        result = update(_A3_DIMENSION, color="#112233", font_changed=True)
+        self.assertEqual(result.default_dimension_annotation_color, "#112233")
+        self.assertEqual(result.default_dimension_annotation_font, font)
+        self.assertEqual(result.default_text_color, self.config.default_text_color)
+        result = update(_A3_DIMENSION, color=None, font_changed=False)
+        self.assertIsNone(result)
+        result = update(_A3_HIGHLIGHT, color="#112233", font_changed=True)
+        self.assertEqual(result.default_highlight_color, "#112233")
+        self.assertEqual(result.default_hotlink_color, self.config.default_hotlink_color)
+        result = update(_A3_HOTLINK, color="#112233", font_changed=False)
+        self.assertEqual(result.default_hotlink_color, "#112233")
+        self.assertEqual(result.default_highlight_color, self.config.default_highlight_color)
+        self.assertIsNone(update(_A3_HIGHLIGHT, color=None, font_changed=True))
+        self.assertIsNone(update(_A3_HOTLINK, color=None, font_changed=True))
+        self.assertIsNone(update("rectangle", color="#112233", font_changed=True))
+
+    def test_setting_a_style_refreshes_controls_and_persists_the_matching_default(self):
+        window = self._window()
+        refreshed = []
+        window._refresh_annotation_style_controls = lambda kind=None: refreshed.append(kind)
+        style = _A3AnnotationStyle(color="#445566")
+        calls = []
+        with patch.object(
+            main_window_module,
+            "set_active_annotation_style_for_tool",
+            side_effect=lambda kind, **kwargs: calls.append((kind, kwargs)) or style,
+        ):
+            result = window.set_annotation_style_for_tool(
+                _A3_HIGHLIGHT, color="#445566", line_width=3.0
+            )
+        self.assertIs(result, style)
+        self.assertEqual(
+            calls,
+            [
+                (
+                    _A3_HIGHLIGHT,
+                    {
+                        "color": "#445566",
+                        "line_width": 3.0,
+                        "font_name": None,
+                        "font_size": None,
+                        "font_bold": None,
+                        "font_italic": None,
+                        "font_underline": None,
+                        "text_align": None,
+                    },
+                )
+            ],
+        )
+        self.assertEqual(refreshed, [_A3_HIGHLIGHT])
+        (update,) = self.updates
+        self.assertEqual(update.default_highlight_color, "#445566")
+        self.assertEqual(self.saves, ["save"])
+
+    def test_every_font_attribute_counts_as_a_font_change_and_persist_can_be_off(self):
+        for field in ("font_name", "font_size", "font_bold", "font_italic", "font_underline"):
+            with self.subTest(field=field):
+                window = self._window()
+                window._refresh_annotation_style_controls = lambda kind=None: None
+                style = _A3AnnotationStyle(font_name="Arial", font_size=9)
+                value = {
+                    "font_name": "Arial",
+                    "font_size": 9,
+                    "font_bold": False,
+                    "font_italic": False,
+                    "font_underline": False,
+                }[field]
+                with patch.object(
+                    main_window_module,
+                    "set_active_annotation_style_for_tool",
+                    return_value=style,
+                ):
+                    window.set_annotation_style_for_tool(_A3_TEXT, **{field: value})
+                (update,) = self.updates
+                self.assertEqual(
+                    update.default_text_font, MainWindow._font_definition_for_style(style)
+                )
+                self.assertEqual(update.default_text_color, self.config.default_text_color)
+        window = self._window()
+        window._refresh_annotation_style_controls = lambda kind=None: None
+        with patch.object(
+            main_window_module,
+            "set_active_annotation_style_for_tool",
+            return_value=_A3AnnotationStyle(),
+        ):
+            window.set_annotation_style_for_tool(_A3_TEXT, color="#000000", persist=False)
+            self.assertEqual((self.updates, self.saves), ([], []))
+            window.set_annotation_style_for_tool("rectangle", line_width=2.0)
+        self.assertEqual((self.updates, self.saves), ([], ["save"]))
+
+    def test_a_color_only_change_does_not_persist_the_font(self):
+        window = self._window()
+        window._refresh_annotation_style_controls = lambda kind=None: None
+        style = _A3AnnotationStyle(color="#778899", font_name="Courier New", font_size=31)
+        self.assertNotEqual(
+            MainWindow._font_definition_for_style(style), self.config.default_text_font
+        )
+        with patch.object(
+            main_window_module, "set_active_annotation_style_for_tool", return_value=style
+        ):
+            window.set_annotation_style_for_tool(_A3_TEXT, color="#778899")
+        (update,) = self.updates
+        self.assertEqual(update.default_text_color, "#778899")
+        self.assertEqual(update.default_text_font, self.config.default_text_font)
+
+    def test_replacing_all_styles_refreshes_controls_and_saves_only_on_request(self):
+        window = self._window()
+        window._config_model = SimpleNamespace(snapshot=lambda: "config-snapshot")
+        refreshed = []
+        window._refresh_annotation_style_controls = lambda kind=None: refreshed.append(kind)
+        applied = []
+        styles = {_A3_TEXT: _A3AnnotationStyle()}
+        with patch.object(
+            main_window_module,
+            "set_active_annotation_styles_by_tool",
+            side_effect=lambda given, config: applied.append((given, config)),
+        ):
+            window.set_annotation_styles_by_tool(styles)
+            self.assertEqual(self.saves, [])
+            window.set_annotation_styles_by_tool(styles, persist=True)
+        self.assertEqual(applied, [(styles, "config-snapshot")] * 2)
+        self.assertEqual(refreshed, [None, None])
+        self.assertEqual(self.saves, ["save"])
+
+    def test_style_controls_refresh_the_toolbar_icons_and_every_open_detached_window(self):
+        window = self._window()
+        window._plan_tool_actions = {"actions": True}
+        refreshed = []
+        annotation = SimpleNamespace(
+            refresh_annotation_style=lambda kind: refreshed.append(("annotation", kind))
+        )
+        window.get_annotation_window = lambda: annotation
+        window.get_view_window = lambda: None
+        with patch.object(main_window_module, "apply_annotation_tool_icon_color") as colors:
+            window._refresh_annotation_style_controls(_A3_TEXT)
+            window._refresh_annotation_style_controls()
+        self.assertEqual(
+            [call.args for call in colors.call_args_list],
+            [({"actions": True}, _A3_TEXT), ({"actions": True}, None)],
+        )
+        self.assertEqual(refreshed, [("annotation", _A3_TEXT), ("annotation", None)])
+
+    def test_style_getters_read_the_active_styles(self):
+        window = MainWindow.__new__(MainWindow)
+        with patch.object(
+            main_window_module, "get_active_annotation_style_for_tool", return_value="one"
+        ) as one, patch.object(
+            main_window_module, "get_active_annotation_styles_by_tool", return_value="all"
+        ):
+            self.assertEqual(window.get_annotation_style_for_tool(_A3_TEXT), "one")
+            self.assertEqual(window.get_annotation_styles_by_tool(), "all")
+        one.assert_called_once_with(_A3_TEXT)
+
+
+class MainWindowA3ShellAccessorTests(unittest.TestCase):
+    """Splash, readiness and the small accessors other coordinators call."""
+
+    def test_the_splash_screen_is_finished_once_when_the_window_is_shown(self):
+        _app()
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        finished = []
+        window.splash_screen = SimpleNamespace(finish=lambda w: finished.append(w))
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, callback: scheduled.append((delay, callback)),
+        ):
+            window.showEvent(QtGui.QShowEvent())
+            window.showEvent(QtGui.QShowEvent())
+        self.assertEqual(finished, [window])
+        self.assertIsNone(window.splash_screen)
+        self.assertEqual(
+            scheduled, [(0, window._mark_main_window_ready)] * 2
+        )
+
+    def test_marking_the_window_ready_releases_waiting_imports(self):
+        window = MainWindow.__new__(MainWindow)
+        window._main_window_ready = False
+        released = []
+        window._schedule_pending_project_file_imports = lambda: released.append(
+            window._main_window_ready
+        )
+        window._mark_main_window_ready()
+        self.assertEqual(released, [True])
+
+    def test_the_update_service_is_optional(self):
+        window = MainWindow.__new__(MainWindow)
+
+        def missing(name):
+            raise KeyError(name)
+
+        window.app_controller = SimpleNamespace(get_service=missing)
+        self.assertIsNone(window._resolve_update_service())
+        window.app_controller = SimpleNamespace(get_service=lambda name: (name, "svc"))
+        self.assertEqual(window._resolve_update_service(), ("update_check_service", "svc"))
+
+    def test_delegating_accessors_return_the_owned_widgets_and_services(self):
+        window = MainWindow.__new__(MainWindow)
+        names = {
+            "get_view_stack": "_view_stack",
+            "get_left_splitter": "_left_splitter",
+            "get_takeoff_splitter": "_takeoff_splitter",
+            "get_left_column_splitter": "_left_column_splitter",
+            "get_layers_toggle_action": "_layers_toggle_action",
+            "get_conditions_toggle_action": "_conditions_toggle_action",
+            "get_pan_toggle_action": "_pan_toggle_action",
+            "get_mesh_window_action": "_mesh_window_action",
+            "get_annotation_window_action": "_annotation_window_action",
+            "get_view_window_action": "_view_window_action",
+            "get_status_bar_action": "_status_bar_action",
+            "get_conditions_sidebar": "_conditions_sidebar",
+            "get_condition_summary_tab": "_condition_summary_tab",
+        }
+        for getter, attribute in names.items():
+            marker = object()
+            setattr(window, attribute, marker)
+            self.assertIs(getattr(window, getter)(), marker, getter)
+        window._plan_tools_toolbar = "plan"
+        window._overlay_tools_toolbar = "overlay"
+        window._view_toolbar = "view"
+        window._main_toolbar = "main"
+        window._cover_sheet_button = "cover"
+        self.assertEqual(
+            window.get_workspace_toolbars(), ["main", "plan", "overlay", "view"]
+        )
+        self.assertEqual(window.get_toolbar_text_buttons(), ["cover"])
+        window.project_view = SimpleNamespace(
+            top_tree="tree",
+            get_expanded_node_keys=lambda: ["k"],
+            set_expanded_node_keys=lambda keys: setattr(window, "_keys", keys),
+            is_group_by_job_status=lambda: True,
+            get_selected_node_state=lambda: {"n": 1},
+            set_selected_node_state=lambda node: setattr(window, "_node", node),
+        )
+        self.assertEqual(window.get_project_tree(), "tree")
+        self.assertEqual(window.get_project_expanded_node_keys(), ["k"])
+        window.set_project_expanded_node_keys(["a"])
+        self.assertEqual(window._keys, ["a"])
+        self.assertIs(window.is_project_group_by_job_status(), True)
+        self.assertEqual(window.get_project_selected_node(), {"n": 1})
+        window.set_project_selected_node({"n": 2})
+        self.assertEqual(window._node, {"n": 2})
+        window._conditions_sidebar = SimpleNamespace(is_group_by_type_enabled=lambda: True)
+        self.assertIs(window.is_conditions_group_by_type_enabled(), True)
+        window._condition_summary_tab = SimpleNamespace(grouping="g")
+        self.assertEqual(window.get_summary_grouping(), "g")
+
+    def test_tab_state_questions_and_delegates(self):
+        window = MainWindow.__new__(MainWindow)
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_SUMMARY)
+        self.assertIs(window.is_summary_tab_active(), True)
+        self.assertIs(window.is_takeoff_tab_active(), False)
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_PROJECTS)
+        self.assertIs(window.is_summary_tab_active(), False)
+        log = []
+        window.license_coordinator = SimpleNamespace(show_dialog=lambda: log.append("dialog"))
+        window.show_license_dialog()
+        window._takeoff_toolbar_visibility = SimpleNamespace(
+            apply_hidden_items=lambda items: log.append(items)
+        )
+        window.apply_takeoff_toolbar_visibility(("a", "b"))
+        self.assertEqual(log, ["dialog", ("a", "b")])
+
+    def test_several_imports_into_an_orphan_target_say_so_once(self):
+        window = _startup_import__startup_import_window()
+        results = [
+            import_args_use_case.ProjectFileImportResult(
+                source_path=f"{name}.ost", success=True, message="ok"
+            )
+            for name in ("a", "b")
+        ]
+        text = window._format_project_file_import_details(
+            import_args_use_case.ProjectFileImportBatchResult(
+                results=results, import_as_orphaned_due_to_deleted_target=True
+            )
+        )
+        self.assertEqual(
+            text.splitlines()[0], "Successfully imported 2 project files into the database."
+        )
+        self.assertEqual(len(text.splitlines()), 2)
+        self.assertIn("orphaned", text.splitlines()[1])
+        plain = window._format_project_file_import_details(
+            import_args_use_case.ProjectFileImportBatchResult(results=results)
+        )
+        self.assertEqual(
+            plain, "Successfully imported 2 project files into the database."
+        )
+        single = window._format_project_file_import_details(
+            import_args_use_case.ProjectFileImportBatchResult(
+                results=results[:1], import_as_orphaned_due_to_deleted_target=True
+            )
+        )
+        self.assertIn("'a.ost' as orphaned", single)
+
+
+# ---------------------------------------------------------------------------
+# Real-MainWindow composition wiring (A3 round 2): one real window is built from the
+# configured application with spying wrappers installed on the MainWindow methods the
+# constructor connects to Qt signals, then every connection is exercised.
+# ---------------------------------------------------------------------------
+import logging as _a3_logging
+import tempfile as _a3_tempfile
+from contextlib import ExitStack as _A3ExitStack
+from pathlib import Path as _A3Path
+
+from ost_visualizer.config.di_config import configure_application as _a3_configure
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.presentation.handlers.export_handler import ExportHandler
+from ost_visualizer.presentation.actions.action_ids import (
+    ACTION_NEW_DATABASE,
+    ACTION_NEW_FOLDER,
+    ACTION_NEW_PROJECT,
+    ACTION_OPEN_FILES,
+)
+from ost_visualizer.presentation.config import MAIN_MARGINS, NO_SPACING
+from ost_visualizer.presentation.utils.plan_tool_registry import (
+    PLAN_ANNOTATION_TOOL_SPECS,
+)
+from ost_visualizer.infrastructure.logging.logger_factory import (
+    LoggerFactory as _A3LoggerFactory,
+)
+from ost_visualizer.presentation.handlers.plan_view_action_handler import (
+    PlanViewActionHandler as _A3PlanViewActionHandler,
+)
+from ost_visualizer.presentation.coordinators.license_ui_coordinator import (
+    LicenseUICoordinator as _A3LicenseUICoordinator,
+)
+from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
+    WorkspaceStateCoordinator as _A3WorkspaceStateCoordinator,
+)
+from ost_visualizer.presentation.services.mcp_context_bridge import (
+    McpContextBridge as _A3McpContextBridge,
+)
+from ost_visualizer.presentation.services.ai_takeoff_bridge import (
+    TakeoffCommandBridge as _A3TakeoffCommandBridge,
+)
+from ost_visualizer.presentation.managers.app_config_presentation_manager import (
+    AppConfigPresentationManager as _A3AppConfigPresentationManager,
+)
+from ost_visualizer.presentation.configurators.window_configurator import (
+    WindowConfigurator as _A3WindowConfigurator,
+)
+from ost_visualizer.presentation.handlers.cover_sheet_handler import (
+    CoverSheetHandler as _A3CoverSheetHandler,
+)
+from ost_visualizer.presentation.services.ai_sidecar_rebind_prompt import (
+    AiSidecarRebindPrompt as _A3AiSidecarRebindPrompt,
+)
+
+
+class MainWindowA3RealWiringTests(unittest.TestCase):
+    SPIED = (
+        "_copy_selected",
+        "_cut_selected",
+        "_paste_clipboard",
+        "_delete_selected",
+        "_duplicate_selected",
+        "_select_all",
+        "_on_tab_changed",
+        "set_layers_sidebar_visible",
+        "set_conditions_sidebar_visible",
+        "set_pan_sidebar_visible",
+        "set_status_bar_visible",
+        "_on_workspace_toolbar_visibility_changed",
+        "_on_ai_changeset_finished",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.calls = []
+        cls.timer_calls = []
+        cls.stack = _A3ExitStack()
+        cls.tmp = _a3_tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        root = _A3Path(cls.tmp.name)
+        stack = cls.stack
+        stack.enter_context(patch.object(_A3Path, "home", return_value=root))
+        stack.enter_context(patch.object(_A3LoggerFactory, "configure"))
+        stack.enter_context(
+            patch.object(
+                _A3LoggerFactory,
+                "get_logger",
+                return_value=_a3_logging.getLogger("test.main_window.wiring"),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                QtCore.QTimer,
+                "singleShot",
+                side_effect=lambda delay, callback: cls.timer_calls.append(
+                    (delay, callback)
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "ost_visualizer.presentation.utils.annotation_defaults."
+                "resolve_font_definition",
+                side_effect=lambda definition: definition,
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                MainWindow,
+                "_show_update_dialog",
+                lambda self, info: cls.calls.append(("_show_update_dialog", (info,))),
+            )
+        )
+
+        def spy(name):
+            original = getattr(MainWindow, name)
+
+            def wrapper(self, *args, **kwargs):
+                cls.calls.append((name, args))
+                return original(self, *args, **kwargs)
+
+            return wrapper
+
+        for name in cls.SPIED:
+            stack.enter_context(patch.object(MainWindow, name, spy(name)))
+
+        def handler_spy(name):
+            original = getattr(_A3PlanViewActionHandler, name)
+
+            def wrapper(self, *args, **kwargs):
+                cls.calls.append(("handler." + name, args))
+                return original(self, *args, **kwargs)
+
+            return wrapper
+
+        for name in (
+            "on_elements_deleted",
+            "on_assign_to_area",
+            "on_reassign_condition",
+            "on_set_negative",
+            "on_set_curved",
+        ):
+            stack.enter_context(
+                patch.object(_A3PlanViewActionHandler, name, handler_spy(name))
+            )
+
+        def class_spy(owner, name, tag):
+            original = getattr(owner, name)
+
+            def wrapper(self, *args, **kwargs):
+                cls.calls.append((tag, args))
+                return original(self, *args, **kwargs)
+
+            return wrapper
+
+        for owner, name, tag in (
+            (_A3LicenseUICoordinator, "initialize", "license.initialize"),
+            (
+                _A3LicenseUICoordinator,
+                "on_license_status_changed",
+                "license.status_changed",
+            ),
+            (
+                _A3WorkspaceStateCoordinator,
+                "restore_initial_state",
+                "workspace.restore_initial_state",
+            ),
+            (_A3McpContextBridge, "start", "mcp.start"),
+            (_A3TakeoffCommandBridge, "start", "ai_bridge.start"),
+            (_A3AppConfigPresentationManager, "apply", "config.apply"),
+            (_A3WindowConfigurator, "configure", "configurator.configure"),
+            (_A3CoverSheetHandler, "open_cover_sheet", "cover_sheet.open"),
+            (_A3AiSidecarRebindPrompt, "offer", "ai_rebind.offer"),
+        ):
+            stack.enter_context(
+                patch.object(owner, name, class_spy(owner, name, tag))
+            )
+        cls.container = _a3_configure(log_dir=root / "logs")
+        cls.controller = cls.container.get("app_controller")
+        cls.saved_rect_style = _A3AnnotationStyle(color="#123456", line_width=7.0)
+        model = cls.controller.get_service("workspace_state_model")
+        saved_state = model.state
+        saved_state.takeoff_workspace.annotation_styles = {"rect": cls.saved_rect_style}
+        model.update_state(saved_state)
+        cls.window = MainWindow(cls.controller)
+        cls.construction_log = list(cls.calls)
+        cls.calls.clear()
+
+    @classmethod
+    def tearDownClass(cls):
+        window = cls.window
+        try:
+            window._workspace_state_coordinator.cleanup()
+            window.event_coordinator.cleanup()
+            window.handlers.ui_event.cleanup()
+            window.license_coordinator.cleanup()
+            window.ui_access_manager.cleanup()
+            window._mcp_context_bridge.cleanup()
+            window._ai_takeoff_bridge.cleanup()
+            window._ai_approval.cleanup()
+            window._ai_rebind_prompt.cleanup()
+            window._ai_undo_notice.cleanup()
+            window._ai_pdf_source.release()
+            window._deferred_persistence_manager.cleanup()
+            window.hide()
+            window.deleteLater()
+        finally:
+            cls.controller.cleanup()
+            cls.app.sendPostedEvents(window, QtCore.QEvent.Type.DeferredDelete)
+            cls.stack.close()
+            cls.window = None
+            cls.controller = None
+            cls.container = None
+            cls.calls = []
+            cls.construction_log = []
+            cls.timer_calls = []
+            gc.collect()
+
+    def setUp(self):
+        self.calls.clear()
+
+    def _toolbar(self):
+        return self.window.handlers.ui_event._toolbar
+
+    def test_edit_actions_run_the_matching_main_window_command(self):
+        toolbar = self._toolbar()
+        for action, name in (
+            (toolbar._copy_action, "_copy_selected"),
+            (toolbar._cut_action, "_cut_selected"),
+            (toolbar._paste_action, "_paste_clipboard"),
+            (toolbar._delete_action, "_delete_selected"),
+            (toolbar._duplicate_action, "_duplicate_selected"),
+            (toolbar._select_all_action, "_select_all"),
+        ):
+            with self.subTest(name=name):
+                self.calls.clear()
+                action.triggered.emit()
+                self.assertEqual([call[0] for call in self.calls], [name])
+        self.assertIs(self.window._select_all_action, toolbar._select_all_action)
+
+    def test_undo_and_redo_actions_request_the_plan_view_history(self):
+        toolbar = self._toolbar()
+        seen = []
+        self.window.plan_view.undo_requested.connect(lambda: seen.append("undo"))
+        self.window.plan_view.redo_requested.connect(lambda: seen.append("redo"))
+        toolbar._undo_action.triggered.emit()
+        toolbar._redo_action.triggered.emit()
+        self.assertEqual(seen, ["undo", "redo"])
+
+    def test_sidebar_and_status_toggles_route_their_checked_state(self):
+        window = self.window
+        for action, name in (
+            (window.get_layers_toggle_action(), "set_layers_sidebar_visible"),
+            (window.get_conditions_toggle_action(), "set_conditions_sidebar_visible"),
+            (window.get_pan_toggle_action(), "set_pan_sidebar_visible"),
+            (window.get_status_bar_action(), "set_status_bar_visible"),
+        ):
+            with self.subTest(name=name):
+                self.calls.clear()
+                original = action.isChecked()
+                action.setChecked(not original)
+                self.assertEqual(self.calls[0], (name, (not original,)))
+                action.setChecked(original)
+                self.assertEqual(self.calls[-1], (name, (original,)))
+
+    def test_every_workspace_toolbar_reports_its_own_visibility(self):
+        window = self.window
+        for toolbar, key in (
+            (window._main_toolbar, window.MAIN_TOOLBAR_KEY),
+            (window._plan_tools_toolbar, window.PLAN_TOOLS_TOOLBAR_KEY),
+            (window._overlay_tools_toolbar, window.OVERLAY_TOOLS_TOOLBAR_KEY),
+            (window._view_toolbar, window.VIEW_TOOLBAR_KEY),
+        ):
+            with self.subTest(key=key):
+                self.calls.clear()
+                toolbar.visibilityChanged.emit(False)
+                toolbar.visibilityChanged.emit(True)
+                self.assertEqual(
+                    self.calls,
+                    [
+                        ("_on_workspace_toolbar_visibility_changed", (key, False)),
+                        ("_on_workspace_toolbar_visibility_changed", (key, True)),
+                    ],
+                )
+
+    def test_tab_changes_reach_the_tab_handler(self):
+        self.window.tab_widget.currentChanged.emit(TAB_INDEX_SUMMARY)
+        self.assertEqual(self.calls, [("_on_tab_changed", (TAB_INDEX_SUMMARY,))])
+
+    def test_detached_window_managers_notify_the_main_window(self):
+        window = self.window
+        with patch.object(window, "_sync_annotation_window_action") as annotation_sync, patch.object(
+            window, "_sync_view_window_action"
+        ) as view_sync:
+            window._annotation_view_manager._visibility_changed_callback(False)
+            self.assertEqual(annotation_sync.call_count, 1)
+            view_sync.reset_mock()
+            window._view_window_manager._visibility_changed_callback(False)
+            self.assertEqual(view_sync.call_count, 1)
+
+    def test_project_tree_callbacks_are_the_main_window_and_handler_commands(self):
+        window = self.window
+        tree = window.project_view
+        for attribute, expected in (
+            ("on_restore_bid", window._restore_project_bids),
+            ("on_copy_bids", window._copy_project_bids),
+            ("on_paste_bids", window._paste_project_bids),
+            ("on_can_paste_bids", window._can_paste_project_bids),
+            ("on_duplicate_bid", window._duplicate_project_tree_bid),
+            ("on_create_bid", window._create_project_tree_bid),
+            ("on_create_project", window._create_project_tree_project),
+            ("on_is_active_bid_context", window._project_tree_context_owns_active_bid),
+            ("on_multi_selection", window._on_project_multi_selection),
+            ("on_menu_command", window._trigger_project_tree_menu_command),
+            ("on_menu_command_enabled", window._is_project_tree_menu_command_enabled),
+            ("on_export_formats", window._project_tree_export_formats),
+            ("on_get_job_statuses", window._get_project_tree_job_statuses),
+            ("on_update_bid_job_status", window._update_project_tree_bid_job_status),
+            ("on_project_view_options_changed", window._request_workspace_state_save),
+            ("on_close_database", window.handlers.file_ops.unload_file_path),
+            ("on_delete_bids", window.handlers.delete.delete_bids),
+            ("on_empty_deleted_bids", window.handlers.delete.delete_bids),
+            ("on_delete_projects", window.handlers.delete.delete_projects),
+            ("on_import_project_file", window.handlers.import_.import_project_file),
+            ("on_rename_project", window.handlers.delete.rename_project),
+            ("on_renumber_conditions", window.handlers.ui_event.renumber_conditions),
+            ("on_can_renumber_conditions", window.handlers.ui_event.can_renumber_conditions),
+            ("on_can_duplicate_bid", window.ui_access_manager.can_duplicate_bid),
+            ("on_can_close_database", window.ui_access_manager.can_close_database),
+            ("on_can_delete_bids", window.ui_access_manager.can_delete_bids),
+            ("on_can_delete_projects", window.ui_access_manager.can_delete_projects),
+            ("on_can_create_bid", window.ui_access_manager.can_create_bid),
+            ("on_can_create_project", window.ui_access_manager.can_create_project),
+            ("on_can_update_bid_job_status", window.ui_access_manager.can_edit_bid_job_status),
+        ):
+            with self.subTest(attribute=attribute):
+                self.assertEqual(getattr(tree, attribute), expected)
+        self.assertEqual(tree.top_tree.on_move_bids, window._move_project_bids)
+        self.assertEqual(tree.top_tree.on_can_move_bids, window._can_move_project_bids)
+        self.assertTrue(
+            tree.on_can_import_project_file("ost", "C:/x.mdb", None)
+            in (True, False)
+        )
+
+    def test_ui_event_coordinator_receives_the_composed_widgets(self):
+        window = self.window
+        ui_event = window.handlers.ui_event
+        self.assertIs(ui_event._tab_widget, window.tab_widget)
+        self.assertIs(ui_event._bid_clipboard, window._bid_clipboard)
+        self.assertIs(ui_event.plan_view, window.plan_view)
+        self.assertIs(ui_event._view_stack, window.get_view_stack())
+        self.assertIs(ui_event.takeoff_sidebar, window.takeoff_sidebar)
+        self.assertIs(ui_event.opengl_viewer, window.opengl_viewer)
+        self.assertIs(ui_event.conditions_sidebar, window._conditions_sidebar)
+        self.assertIs(ui_event._plan_view_handler, window._plan_view_handler)
+
+    def test_3d_viewer_requests_reach_the_plan_view_handler(self):
+        viewer = self.window.opengl_viewer
+        viewer.elements_deleted.emit(["u1"])
+        viewer.assign_to_area_requested.emit(["u2"])
+        viewer.reassign_condition_requested.emit(["u3"], "c9")
+        viewer.set_negative_requested.emit(["u4"], True)
+        viewer.set_curved_requested.emit(["u5"], False)
+        self.assertEqual(
+            self.calls,
+            [
+                ("handler.on_elements_deleted", (["u1"],)),
+                ("handler.on_assign_to_area", (["u2"],)),
+                ("handler.on_reassign_condition", (["u3"], "c9")),
+                ("handler.on_set_negative", (["u4"], True)),
+                ("handler.on_set_curved", (["u5"], False)),
+            ],
+        )
+
+    def test_persistent_headers_cover_the_four_trees_with_their_semantic_columns(self):
+        window = self.window
+        controllers = window._header_controllers
+        self.assertEqual(
+            [
+                (c._view_id, c._sorting, c._movable, c._default_sort_column)
+                for c in controllers
+            ],
+            [
+                ("project_tree", True, True, "number"),
+                ("conditions_sidebar", True, False, "number"),
+                ("layers_sidebar", False, True, None),
+                ("condition_summary", True, True, "name"),
+            ],
+        )
+        self.assertEqual(
+            controllers[0]._column_keys,
+            (
+                "number", "name", "status", "bid_date", "job_number", "estimator",
+                "pages", "conditions", "notes", "copy_from", "copy_timestamp",
+            ),
+        )
+        self.assertEqual(
+            controllers[1]._column_keys,
+            ("number", "name", "quantity_1", "quantity_2", "quantity_3"),
+        )
+        self.assertEqual(controllers[2]._column_keys, ("visible", "layer"))
+        self.assertEqual(controllers[2]._persisted_width_keys, frozenset({"layer"}))
+        self.assertEqual(
+            controllers[3]._column_keys, window._condition_summary_tab.column_keys
+        )
+        self.assertIs(controllers[0]._view, window.project_view.top_tree)
+        self.assertIs(controllers[1]._view, window._conditions_sidebar.tree)
+        self.assertIs(controllers[2]._view, window._bid_layers_sidebar.table)
+        self.assertIs(controllers[3]._view, window._condition_summary_tab.tree)
+        for controller in controllers:
+            self.assertIs(controller._workspace_state_model, window._workspace_state_model)
+
+    def test_the_layers_header_keeps_a_fixed_visibility_column_and_a_free_name_column(self):
+        header = self.window._bid_layers_sidebar.table.header()
+        self.assertFalse(header.stretchLastSection())
+        self.assertEqual(
+            header.sectionResizeMode(0), QtWidgets.QHeaderView.ResizeMode.Fixed
+        )
+        self.assertEqual(
+            header.sectionResizeMode(1), QtWidgets.QHeaderView.ResizeMode.Interactive
+        )
+
+    def test_summary_column_updates_pause_and_resume_the_summary_header(self):
+        window = self.window
+        summary_controller = window._header_controllers[-1]
+        window._condition_summary_tab.columns_about_to_change.emit(
+            tuple(window._condition_summary_tab.column_keys)
+        )
+        self.assertTrue(summary_controller._columns_updating)
+        window._condition_summary_tab.columns_changed.emit()
+        self.assertFalse(summary_controller._columns_updating)
+        for other in window._header_controllers[:-1]:
+            self.assertFalse(other._columns_updating)
+
+
+    # ---- constructor state and one-shot wiring ---------------------------------
+    def test_a_new_window_starts_with_no_pending_startup_work(self):
+        window = self.window
+        self.assertIs(window._needs_create_database_prompt, False)
+        self.assertIs(window._startup_load_complete, False)
+        self.assertIs(window._main_window_ready, False)
+        self.assertIs(window._project_file_import_scheduled, False)
+        self.assertIs(window._project_file_import_running, False)
+        self.assertEqual(window._pending_project_file_args, [])
+        self.assertIs(window._collaboration_shutdown_pending, False)
+        self.assertIs(window._collaboration_shutdown_complete, False)
+        self.assertIs(window._collaboration_shutdown_failed, False)
+        self.assertIsNone(window.splash_screen)
+        self.assertEqual(window._last_left_column_splitter_sizes, [])
+        self.assertIs(window._syncing_toolbar_visibility, False)
+        self.assertEqual(
+            window.get_workspace_toolbar_visibility_state(),
+            {
+                window.MAIN_TOOLBAR_KEY: True,
+                window.VIEW_TOOLBAR_KEY: True,
+                window.PLAN_TOOLS_TOOLBAR_KEY: True,
+                window.OVERLAY_TOOLS_TOOLBAR_KEY: True,
+            },
+        )
+
+    def test_ai_takeoffs_are_filed_in_a_dated_session_folder(self):
+        import re
+
+        self.assertRegex(
+            self.window._ai_applier._session_folder_name,
+            re.compile(r"^AI \d{4}-\d{2}-\d{2} \d{2}:\d{2}$"),
+        )
+
+    def test_startup_schedules_the_config_load_and_the_first_show(self):
+        window = self.window
+        self.assertIn((0, window._load_files_from_config), self.timer_calls)
+        self.assertIn((0, window._show_main_window), self.timer_calls)
+
+    def test_the_window_registers_itself_and_keeps_its_collaborators(self):
+        window = self.window
+        controller = self.controller
+        self.assertIs(controller.container.get("main_window"), window)
+        self.assertIsNotNone(controller.container.get("hotlink_event_adapter"))
+        self.assertIs(
+            window._import_project_files_from_args,
+            controller.get_service("import_project_files_from_args_use_case"),
+        )
+        self.assertIs(window.takeoff_tab, window.tab_widget.widget(TAB_INDEX_TAKEOFF))
+        self.assertIs(window.summary_tab, window.tab_widget.widget(TAB_INDEX_SUMMARY))
+        self.assertIs(window._update_service, window._resolve_update_service())
+
+    def test_detached_window_actions_start_in_sync_with_no_open_windows(self):
+        window = self.window
+        self.assertFalse(window.get_annotation_window_action().isChecked())
+        self.assertFalse(window.get_view_window_action().isChecked())
+        self.assertFalse(window.get_view_window_action().isEnabled())
+
+    def test_select_all_has_its_shortcut_and_the_edit_actions_are_shared_with_handlers(
+        self,
+    ):
+        window = self.window
+        toolbar = self._toolbar()
+        self.assertFalse(window._select_all_action.shortcut().isEmpty())
+        self.assertIs(
+            window.handlers.delete._duplicate_action, toolbar._duplicate_action
+        )
+
+    def test_toolbar_state_receives_the_composed_buttons_and_actions(self):
+        window = self.window
+        toolbar = self._toolbar()
+        ui_event = window.handlers.ui_event
+        self.assertIsNotNone(toolbar._cover_sheet_button)
+        self.assertIsNotNone(toolbar._select_action)
+        self.assertIsNotNone(toolbar._place_action)
+        self.assertIsNotNone(toolbar._backout_action)
+        self.assertIsNotNone(toolbar._move_overlay_action)
+        self.assertEqual(
+            len(toolbar._annotation_tool_actions), len(PLAN_ANNOTATION_TOOL_SPECS)
+        )
+        self.assertIs(toolbar._page_settings_bar, window._page_settings_bar)
+        self.assertIs(ui_event._page_settings_bar, window._page_settings_bar)
+        self.assertIs(toolbar._bid_layers_sidebar, window._bid_layers_sidebar)
+        self.assertIs(ui_event._sidebar.bid_layers_sidebar, window._bid_layers_sidebar)
+        self.assertIs(ui_event._undo_service, window._undo_service)
+        self.assertIs(toolbar.undo_service, window._undo_service)
+        self.assertIs(ui_event._status_panel, window.status_panel)
+
+    def test_the_central_widget_stacks_the_workspace_above_the_status_panel(self):
+        window = self.window
+        layout = window.centralWidget().layout()
+        self.assertEqual(layout.contentsMargins(), QtCore.QMargins(*MAIN_MARGINS))
+        self.assertEqual(layout.spacing(), NO_SPACING)
+        self.assertEqual(layout.count(), 2)
+        self.assertIs(layout.itemAt(1).widget(), window.status_panel)
+
+    def test_select_all_and_status_bar_actions_carry_their_labels(self):
+        window = self.window
+        self.assertEqual(window._select_all_action.text(), "Select All")
+        self.assertEqual(window.get_status_bar_action().text(), "Status Bar")
+
+    def test_the_status_bar_action_mirrors_the_panel(self):
+        window = self.window
+        self.assertEqual(
+            window.get_status_bar_action().isChecked(), window.is_status_bar_visible()
+        )
+
+    def test_menu_actions_trigger_their_menu_callbacks(self):
+        window = self.window
+        shared = window.menu_controller._shared_actions
+        for key in (
+            ACTION_NEW_PROJECT,
+            ACTION_NEW_FOLDER,
+            ACTION_NEW_DATABASE,
+            ACTION_OPEN_FILES,
+        ):
+            with self.subTest(key=key):
+                with patch.object(
+                    window.menu_controller, "trigger_menu_callback"
+                ) as callback:
+                    shared[key].triggered.emit()
+                callback.assert_called_once_with(key)
+
+    def test_context_menus_use_the_menu_controller_commands(self):
+        window = self.window
+        controller = window.menu_controller
+        for view in (window.plan_view, window.opengl_viewer):
+            self.assertEqual(
+                view._context_menu_command_trigger, controller.trigger_menu_action
+            )
+        self.assertEqual(
+            window.plan_view._context_menu_action_state, controller.get_menu_action_state
+        )
+
+    def test_update_dialog_requests_reach_the_update_dialog(self):
+        self.window.update_dialog_requested.emit({"version": "9.9"})
+        self.assertEqual(self.calls, [("_show_update_dialog", ({"version": "9.9"},))])
+
+    def test_the_ai_bridge_is_started_and_decisions_are_audited(self):
+        window = self.window
+        token = (
+            _A3Path(self.tmp.name) / ".ost_visualizer" / "ai_takeoff" / "session.token"
+        )
+        self.assertTrue(token.is_file())
+        window._ai_approval.changeset_finished.emit("c-1", "rejected")
+        self.assertEqual(
+            self.calls, [("_on_ai_changeset_finished", ("c-1", "rejected"))]
+        )
+
+
+    def test_saved_annotation_styles_become_the_active_styles_at_startup(self):
+        style = self.window.get_annotation_style_for_tool("rect")
+        self.assertEqual(style.color, "#123456")
+        self.assertEqual(style.line_width, 7.0)
+
+    def test_construction_runs_each_startup_collaborator_once(self):
+        log = [call[0] for call in self.construction_log]
+        for tag in (
+            "license.initialize",
+            "workspace.restore_initial_state",
+            "mcp.start",
+            "ai_bridge.start",
+            "config.apply",
+            "configurator.configure",
+        ):
+            with self.subTest(tag=tag):
+                self.assertEqual(log.count(tag), 1)
+
+    def test_license_status_events_reach_the_license_coordinator(self):
+        window = self.window
+        window.event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        self.assertIn("license.status_changed", [call[0] for call in self.calls])
+
+    def test_the_cover_sheet_button_opens_the_cover_sheet_and_rebind_offers_reach_the_prompt(
+        self,
+    ):
+        window = self.window
+        self._toolbar()._cover_sheet_button.clicked.emit()
+        self.assertIn("cover_sheet.open", [call[0] for call in self.calls])
+        self.calls.clear()
+        window._ai_takeoff_bridge.rebind_suggested.emit()
+        self.assertEqual([call[0] for call in self.calls], ["ai_rebind.offer"])
+
+    def test_the_composed_services_and_handlers_are_attached(self):
+        window = self.window
+        controller = self.controller
+        self.assertIs(window._ai_audit_log, controller.get_service("ai_takeoff_audit_log"))
+        self.assertIsInstance(window.handlers.export, ExportHandler)
+        self.assertIs(window.handlers.delete._ui_event_coordinator, window.handlers.ui_event)
+        self.assertIs(
+            window.handlers.cover_sheet._ui_event_coordinator, window.handlers.ui_event
+        )
+        self.assertIs(window._pan_sidebar._plan_view, window.plan_view)
+        self.assertIs(
+            window.handlers.ui_event.condition_summary_tab, window._condition_summary_tab
+        )
+        self.assertIs(
+            window.handlers.ui_event._sidebar.condition_summary_tab,
+            window._condition_summary_tab,
+        )
+        self.assertIs(window.project_view.top_tree._ui_access_manager, window.ui_access_manager)
+
+
+    def test_transaction_monitor_messages_are_parented_to_the_window(self):
+        window = self.window
+        monitor = window._visualization_service._transaction_monitor
+        self.assertIs(monitor._notifier._default_parent, window)
+
+    def test_the_mesh_window_is_owned_by_the_ui_event_coordinator(self):
+        window = self.window
+        sentinel = object()
+        with patch.object(
+            window.handlers.ui_event, "get_mesh_window", return_value=sentinel
+        ):
+            self.assertIs(window.get_mesh_window(), sentinel)
+
+
+class MainWindowA3BaseClassDelegationTests(unittest.TestCase):
+    """showEvent/changeEvent keep delegating to QMainWindow before their own work."""
+
+    def _window(self):
+        _app()
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        window.splash_screen = None
+        return window
+
+    def test_show_event_delegates_to_the_base_class_first(self):
+        window = self._window()
+        order = []
+        window._finish_splash_screen = lambda: order.append("splash")
+        with patch.object(
+            QtWidgets.QMainWindow, "showEvent", lambda self, event: order.append("base")
+        ), patch.object(QtCore.QTimer, "singleShot"):
+            window.showEvent(QtGui.QShowEvent())
+        self.assertEqual(order, ["base", "splash"])
+
+    def test_change_event_delegates_to_the_base_class_for_every_event_type(self):
+        window = self._window()
+        seen = []
+        with patch.object(
+            QtWidgets.QMainWindow, "changeEvent", lambda self, event: seen.append(event.type())
+        ), patch.object(main_window_module, "rebuild_all_icons") as rebuild:
+            window.changeEvent(QtCore.QEvent(QtCore.QEvent.Type.EnabledChange))
+            window.changeEvent(QtCore.QEvent(QtCore.QEvent.Type.PaletteChange))
+        self.assertEqual(
+            seen,
+            [QtCore.QEvent.Type.EnabledChange, QtCore.QEvent.Type.PaletteChange],
+        )
+        self.assertEqual(rebuild.call_count, 1)
+
+
+class MainWindowA3StartupArgumentTests(unittest.TestCase):
+    """A separately composed real window keeps its startup arguments and splash."""
+
+    def _window(self, **kwargs):
+        _app()
+        stack = _A3ExitStack()
+        tmp = _a3_tempfile.TemporaryDirectory()
+        root = _A3Path(tmp.name)
+        stack.enter_context(patch.object(_A3Path, "home", return_value=root))
+        stack.enter_context(patch.object(_A3LoggerFactory, "configure"))
+        stack.enter_context(
+            patch.object(
+                _A3LoggerFactory,
+                "get_logger",
+                return_value=_a3_logging.getLogger("test.main_window.startup_args"),
+            )
+        )
+        stack.enter_context(patch.object(QtCore.QTimer, "singleShot"))
+        stack.enter_context(
+            patch(
+                "ost_visualizer.presentation.utils.annotation_defaults."
+                "resolve_font_definition",
+                side_effect=lambda definition: definition,
+            )
+        )
+        controller = _a3_configure(log_dir=root / "logs").get("app_controller")
+        window = MainWindow(controller, **kwargs)
+
+        def close():
+            window._workspace_state_coordinator.cleanup()
+            window.event_coordinator.cleanup()
+            window.handlers.ui_event.cleanup()
+            window.license_coordinator.cleanup()
+            window.ui_access_manager.cleanup()
+            window._mcp_context_bridge.cleanup()
+            window._ai_takeoff_bridge.cleanup()
+            window._ai_approval.cleanup()
+            window._ai_rebind_prompt.cleanup()
+            window._ai_undo_notice.cleanup()
+            window._ai_pdf_source.release()
+            window._deferred_persistence_manager.cleanup()
+            window.hide()
+            window.deleteLater()
+            controller.cleanup()
+            QtWidgets.QApplication.sendPostedEvents(
+                window, QtCore.QEvent.Type.DeferredDelete
+            )
+            stack.close()
+            tmp.cleanup()
+
+        self.addCleanup(close)
+        return window
+
+    def test_startup_arguments_and_the_splash_screen_are_kept_by_a_new_window(self):
+        splash = object()
+        args = import_args_use_case.ProjectFileArgs(
+            files=[], rejected=[_A3Rejected(value="bad.txt", reason="Unsupported.")]
+        )
+        self.assertTrue(args.has_file_args)
+        window = self._window(splash_screen=splash, startup_project_file_args=args)
+        self.assertIs(window.splash_screen, splash)
+        self.assertEqual(window._pending_project_file_args, [args])
+
+    def test_startup_arguments_without_files_or_rejections_are_not_queued(self):
+        empty = import_args_use_case.ProjectFileArgs(files=[], rejected=[])
+        self.assertFalse(empty.has_file_args)
+        window = self._window(startup_project_file_args=empty)
+        self.assertEqual(window._pending_project_file_args, [])
+        self.assertIsNone(window.splash_screen)

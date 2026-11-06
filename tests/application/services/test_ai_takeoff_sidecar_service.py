@@ -236,6 +236,21 @@ class ContextTests(SidecarServiceTestCase):
         self.assertEqual(fingerprint.first_page_pdf_source, "S-101.pdf")
         self.assertEqual(fingerprint.page_count, 3)
 
+    def test_an_unnamed_bid_has_an_empty_name_in_its_fingerprint(self):
+        for name in (None, ""):
+            with self.subTest(name=name):
+                self.project.bid = dataclasses.replace(self.project.bid, name=name)
+                self.assertEqual(self.sidecars.context().fingerprint.bid_name, "")
+
+    def test_the_source_file_is_named_without_its_folders_for_either_separator(self):
+        for image_path in ("C:/plans/x/S-101.pdf", "C:\\plans\\x\\S-101.pdf"):
+            with self.subTest(image_path=image_path):
+                self.project.pages = [
+                    Page(uid="p1", name="S", sequence=1, image_path=image_path)
+                ]
+                fingerprint = self.sidecars.context().fingerprint
+                self.assertEqual(fingerprint.first_page_pdf_source, "S-101.pdf")
+
     def test_pages_without_a_source_file_give_an_empty_pdf_source(self):
         self.project.pages = [Page(uid="p0", name="Blank", sequence=0, image_path="")]
         self.sidecars.record_assumptions((_assumption("cs1-a1"),))

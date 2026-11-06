@@ -40,6 +40,7 @@ from ost_visualizer.infrastructure.sql.schema_validator import (
     _normalize_filter,
 )
 
+from ost_visualizer.infrastructure.sql.schema_inspector import SqlModuleInventory
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
@@ -1159,3 +1160,218 @@ class SchemaValidatorRenamedIndexCandidateTests(unittest.TestCase):
                 # would settle on the decoy and report a false problem
                 inventory = replace(canonical, indexes=(decoy, renamed, *others))
                 self.assertEqual(validator.validate(inventory).problems, ())
+
+
+# ---------------------------------------------------------------------------
+# OPEN-2 characterization (audit): the validator's scope for views, triggers,
+# procedures, functions and extra indexes/constraints. These tests pin what the
+# validator accepts and refuses TODAY; the "accepted today" tests are the ones a
+# future owner decision on the scope would change. No restriction is implemented
+# without that product decision (see tests/_audit_progress/A1.json open2_decision).
+# ---------------------------------------------------------------------------
+
+class SchemaValidatorScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.validator = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema)
+        self.canonical = _canonical_inventory()
+
+    def problems(self, inventory):
+        return self.validator.validate(inventory).problems
+
+    def test_the_canonical_inventory_is_the_baseline_of_every_scope_test(self):
+        self.assertEqual(self.problems(self.canonical), ())
+        for field in ("views", "triggers", "procedures", "functions"):
+            self.assertEqual(getattr(self.canonical, field), ())
+
+    def test_user_views_procedures_and_functions_are_accepted_today(self):
+        # Reporting views and helper procedures/functions never affect the writer;
+        # the validator does not read these inventory fields at all.
+        inventory = replace(
+            self.canonical,
+            views=(SqlModuleInventory("dbo", "ReportBids"),),
+            procedures=(SqlModuleInventory("dbo", "usp_Report"),),
+            functions=(SqlModuleInventory("ostv", "fn_Helper"),),
+        )
+        self.assertEqual(self.problems(inventory), ())
+
+    def test_user_dml_triggers_are_accepted_today_whatever_their_action_or_state(
+        self,
+    ):
+        # OPEN-2 gap: SQL Server refuses (error 334) a DML statement with OUTPUT but
+        # without INTO when its target table has an ENABLED trigger for the same
+        # action (INSTEAD OF included). Every identity insert of the writer is an
+        # INSERT ... OUTPUT without INTO (see the next test), and two ostv UPDATEs
+        # are too. The inventory does not say whether a trigger is enabled, for which
+        # action, or on which table, so the validator cannot decide this today and
+        # accepts every trigger.
+        inventory = replace(
+            self.canonical,
+            triggers=(
+                SqlModuleInventory("dbo", "trg_Audit_BidLayers"),
+                SqlModuleInventory("ostv", "trg_Audit_Sessions"),
+            ),
+        )
+        self.assertEqual(self.problems(inventory), ())
+
+    def test_every_writer_identity_insert_returns_its_uid_without_an_into_target(self):
+        # Evidence for decision D1 (see A1.json open2_decision): all three places of
+        # SqlProjectWriter that insert a dbo row and read its identity back use
+        # "OUTPUT INSERTED.[UID] VALUES" with no INTO target.
+        from ost_visualizer.infrastructure.sql.write_schema import (
+            CurrentSqlWriteSchema,
+        )
+        from tests.infrastructure.sql.test_writer import (
+            _ScriptedConnection,
+            _ScriptedCursor,
+            _plain_writer,
+            strict_cursor,
+        )
+        import contextlib
+        from types import SimpleNamespace
+
+        schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+        writer = _plain_writer()
+        # 1. _insert_identity_raw (import graph)
+        connection = _ScriptedConnection(lambda _sql, _params: [(41,)])
+        writer._insert_identity_raw(
+            connection,
+            "BidLayers",
+            {"UID": "5", "Name": "L"},
+            ({"UID", "Name"}, {"Name": "nvarchar"}),
+        )
+        ((raw_sql, _params),) = connection.executed
+        # 2. _execute_insert_values (shared Access-layer insert path)
+        connection = _ScriptedConnection(lambda _sql, _params: [(42,)])
+        writer._execute_insert_values(
+            connection.cursor(),
+            schema,
+            "BidLayers",
+            {"UID": 1, "Name": "L"},
+            ("UID", "Name"),
+            "insert_layer",
+        )
+        ((values_sql, _params),) = connection.executed
+        # 3. create_project
+        cursor = _ScriptedCursor(lambda _sql, _params: [(43,)])
+        project_writer = _plain_writer()
+        project_writer._write_schema = schema
+
+        @contextlib.contextmanager
+        def lease(_database_id):
+            yield SimpleNamespace(cursor=lambda: strict_cursor(cursor))
+
+        project_writer._connection = lease
+        project_writer.create_project("database", "P")
+        ((project_sql, _params),) = cursor.executed
+        self.assertEqual(
+            raw_sql,
+            "INSERT INTO [dbo].[BidLayers] ([Name]) OUTPUT INSERTED.[UID] VALUES (?)",
+        )
+        self.assertEqual(
+            values_sql,
+            "INSERT INTO [dbo].[BidLayers] ([Name]) OUTPUT INSERTED.[UID] VALUES (?)",
+        )
+        self.assertEqual(
+            project_sql,
+            "INSERT INTO [dbo].[BidProjects] ([Name]) OUTPUT INSERTED.[UID] VALUES (?)",
+        )
+        for sql in (raw_sql, values_sql, project_sql):
+            self.assertNotIn(" INTO @", sql)
+            self.assertNotIn("OUTPUT INSERTED.[UID] INTO", sql)
+
+    def test_the_ostv_collaboration_store_also_uses_output_without_into_twice(self):
+        # Documentation pin for D1: the session heartbeat UPDATE (ostv.Sessions)
+        # and the lock-renewal UPDATE (ostv.Locks) return rows with OUTPUT and no
+        # INTO, so an enabled UPDATE trigger on those tables would hit the same
+        # SQL Server restriction. Source-text guard: a third statement of this
+        # shape must be classified before this count changes.
+        import inspect
+
+        from ost_visualizer.infrastructure.sql import collaboration_store
+
+        source = inspect.getsource(collaboration_store)
+        without_into = [
+            line.strip()
+            for line in source.splitlines()
+            if "OUTPUT INSERTED" in line and " INTO " not in line
+        ]
+        self.assertEqual(len(without_into), 2, without_into)
+        self.assertIn("UPDATE [ostv].[Sessions] SET", source)
+        self.assertIn("UPDATE l SET [LastRenewedAt]", source)
+
+    def test_extra_indexes_foreign_keys_and_checks_are_accepted_today(self):
+        extra_non_unique = SqlIndexInventory(
+            "dbo", "BidLayers", "IX_BidLayers_Reporting", False, False, ("Name",), ""
+        )
+        extra_unique = SqlIndexInventory(
+            "dbo", "BidLayers", "UX_BidLayers_Name", True, False, ("Name",), ""
+        )
+        extra_ostv_unique = SqlIndexInventory(
+            "ostv", "Sessions", "UX_Sessions_Extra", True, False, ("DisplayName",), ""
+        )
+        extra_key = SqlForeignKeyInventory(
+            "FK_External_BidLayers",
+            "dbo",
+            "BidLayers",
+            "Name",
+            "dbo",
+            "Bids",
+            "UID",
+        )
+        extra_ostv_check = SqlCheckConstraintInventory(
+            "ostv", "Sessions", "CK_Sessions_Extra", "([DisplayName]<>N'x')"
+        )
+        for label, change in (
+            ("non-unique index", {"indexes": (extra_non_unique,)}),
+            ("unique index on a core table", {"indexes": (extra_unique,)}),
+            ("unique index on an ostv table", {"indexes": (extra_ostv_unique,)}),
+            ("foreign key on a core table", {"foreign_keys": (extra_key,)}),
+            ("check on an ostv table", {"check_constraints": (extra_ostv_check,)}),
+        ):
+            with self.subTest(label):
+                inventory = replace(
+                    self.canonical,
+                    **{
+                        field: getattr(self.canonical, field) + value
+                        for field, value in change.items()
+                    },
+                )
+                self.assertEqual(self.problems(inventory), ())
+
+    def test_tables_in_other_schemas_are_ignored_unless_they_shadow_a_core_table(self):
+        inventory = replace(
+            self.canonical,
+            tables=self.canonical.tables | {("reporting", "Snapshots")},
+        )
+        self.assertEqual(self.problems(inventory), ())
+        shadow = replace(
+            self.canonical,
+            tables=self.canonical.tables | {("reporting", "BidLayers")},
+        )
+        self.assertEqual(self.problems(shadow), ("reporting.BidLayers.shadows_dbo",))
+
+    def test_the_closed_world_part_extra_tables_and_columns_are_refused(self):
+        extra_core_table = replace(
+            self.canonical, tables=self.canonical.tables | {("dbo", "Extra")}
+        )
+        self.assertEqual(self.problems(extra_core_table), ("dbo.Extra.unexpected",))
+        extra_ostv_table = replace(
+            self.canonical, tables=self.canonical.tables | {("ostv", "Extra")}
+        )
+        self.assertEqual(self.problems(extra_ostv_table), ("ostv.Extra.unexpected",))
+        extra_nullable_column = SqlColumnInventory(
+            "dbo", "BidLayers", "Notes", "nvarchar", 100, 0, True, False, False, ""
+        )
+        with_column = replace(
+            self.canonical, columns=self.canonical.columns + (extra_nullable_column,)
+        )
+        self.assertEqual(self.problems(with_column), ("dbo.BidLayers.Notes.unexpected",))
+        extra_ostv_column = SqlColumnInventory(
+            "ostv", "Sessions", "Notes", "nvarchar", 100, 0, True, False, False, ""
+        )
+        with_ostv_column = replace(
+            self.canonical, columns=self.canonical.columns + (extra_ostv_column,)
+        )
+        self.assertEqual(
+            self.problems(with_ostv_column), ("ostv.Sessions.Notes.unexpected",)
+        )

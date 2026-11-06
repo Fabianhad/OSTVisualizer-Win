@@ -32,3 +32,14 @@ class MeshSceneIdentityTests(unittest.TestCase):
         ):
             with self.subTest(changed=changed):
                 self.assertNotIn(changed, cache)
+
+
+class MeshGeometryValueTests(unittest.TestCase):
+    def test_mesh_geometry_is_an_immutable_value(self):
+        from dataclasses import FrozenInstanceError
+        from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
+
+        mesh = MeshGeometry([0.0], [1.0], [0], "#fff", 1.0, "p", "c", "t")
+        with self.assertRaises(FrozenInstanceError):
+            mesh.opacity = 0.5
+        self.assertEqual(mesh, MeshGeometry([0.0], [1.0], [0], "#fff", 1.0, "p", "c", "t"))

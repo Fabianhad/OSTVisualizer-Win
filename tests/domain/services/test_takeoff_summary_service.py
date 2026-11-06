@@ -36,3 +36,57 @@ class SummarizeTakeoffsByPageTests(unittest.TestCase):
         self.assertEqual([item.page_uid for item in summary], ["missing", "a", "b"])
         self.assertEqual(summary[0].page_name, "")
         self.assertEqual(summarize_takeoffs_by_page([], pages, {}), [])
+
+
+class PageTakeoffSummaryContractTests(unittest.TestCase):
+    def test_summary_defaults_are_zero_counts_and_it_is_frozen(self):
+        from dataclasses import FrozenInstanceError
+        from ost_visualizer.domain.services.takeoff_summary_service import (
+            PageTakeoffSummary,
+        )
+
+        summary = PageTakeoffSummary("p", "Page")
+        self.assertEqual((summary.takeoff_count, summary.visible_takeoff_count), (0, 0))
+        with self.assertRaises(FrozenInstanceError):
+            summary.takeoff_count = 1
+
+    def test_a_page_whose_takeoffs_are_all_hidden_reports_zero_visible(self):
+        conditions = {"h": Condition(uid="h", layer_visible=False)}
+        pages = {"p": Page(uid="p", name="Page")}
+        takeoffs = [Takeoff(uid=str(i), page_uid="p", condition_uid="h") for i in range(3)]
+        (summary,) = summarize_takeoffs_by_page(takeoffs, pages, conditions)
+        self.assertEqual((summary.takeoff_count, summary.visible_takeoff_count), (3, 0))
+
+    def test_counts_are_kept_per_page_and_mixed_visibility_is_split(self):
+        conditions = {
+            "h": Condition(uid="h", layer_visible=False),
+            "v": Condition(uid="v", layer_visible=True),
+        }
+        pages = {"a": Page(uid="a", name="A"), "b": Page(uid="b", name="B", page_index=1)}
+        takeoffs = [
+            Takeoff(uid="1", page_uid="a", condition_uid="v"),
+            Takeoff(uid="2", page_uid="a", condition_uid="h"),
+            Takeoff(uid="3", page_uid="b", condition_uid="v"),
+            Takeoff(uid="4", page_uid="a", condition_uid="v"),
+        ]
+        summary = {s.page_uid: s for s in summarize_takeoffs_by_page(takeoffs, pages, conditions)}
+        self.assertEqual(
+            (summary["a"].takeoff_count, summary["a"].visible_takeoff_count), (3, 2)
+        )
+        self.assertEqual(
+            (summary["b"].takeoff_count, summary["b"].visible_takeoff_count), (1, 1)
+        )
+
+    def test_pages_sort_by_page_index_then_case_insensitive_name_with_unknown_pages_at_index_zero(self):
+        pages = {
+            "late": Page(uid="late", name="Alpha", page_index=5),
+            "early": Page(uid="early", name="Zulu", page_index=2),
+            "mid": Page(uid="mid", name="beta", page_index=2),
+            "zed": Page(uid="zed", name="Zed", page_index=0),
+        }
+        takeoffs = [
+            Takeoff(uid=uid, page_uid=uid, condition_uid="")
+            for uid in ("late", "early", "mid", "ghost", "zed")
+        ]
+        order = [s.page_uid for s in summarize_takeoffs_by_page(takeoffs, pages, {})]
+        self.assertEqual(order, ["ghost", "zed", "mid", "early", "late"])

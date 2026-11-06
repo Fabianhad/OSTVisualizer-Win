@@ -1,3 +1,4 @@
+import json
 import logging
 import subprocess
 import tempfile
@@ -678,3 +679,456 @@ class DatabaseCreatorSequenceTests(unittest.TestCase):
             ],
         )
         self.assertEqual(database.closed, 1)
+
+
+_GOLDEN_DDL = Path(__file__).with_name("access_reference_ddl_golden.json")
+
+_SETTINGS_INSERT = (
+    "INSERT INTO [Settings] ([Name], [Created], [NextBidNo], "
+    "[LoginRequired], [MeasureBase], [PriceUsing], "
+    "[QuantitiesInLegend], [HoursPerDay], [StartWeekOn], "
+    "[GridCountMethod], [TakeoffIncrements], [ScaleStyle], "
+    "[IsCustomScale], [ScaleFactor1], [ScaleFactor2], "
+    "[PageScale], [PageWidth], [PageHeight], "
+    "[LabelHours1], [LabelHours2], [LabelHours3], [LabelHours4], "
+    "[IgnoreBidAreas], [SendImageFiles], "
+    "[BackupNo], [BackupPeriod], [CompressPeriod]) "
+    "VALUES (?, ?, 1, 0, 0, 0, -1, 8, 0, 0, 1.0, 1, 0, "
+    "0.125, 12.0, 1.0, 42.0, 30.0, "
+    "'Regular', 'Overtime', 'Time + 1/2', 'Double', "
+    "0, 0, 2, 2, 2)"
+)
+
+
+class DatabaseCreatorReferenceContractTests(unittest.TestCase):
+    @staticmethod
+    def golden_tables():
+        return json.loads(_GOLDEN_DDL.read_text(encoding="utf-8"))["tables"]
+
+    def test_every_table_ddl_matches_the_reviewed_snapshot_text_exactly(self):
+        golden = self.golden_tables()
+        rebuilt = [
+            "CREATE TABLE [%s] (\n%s\n    )"
+            % (
+                name,
+                ",\n".join(f"        [{column}] {kind}" for column, kind in columns),
+            )
+            for name, columns in golden
+        ]
+        self.assertEqual(len(golden), 64)
+        self.assertEqual(sum(len(columns) for _name, columns in golden), 668)
+        self.assertEqual(database_creator._TABLE_DDL, rebuilt)
+
+    def test_the_reference_schema_model_is_built_from_exactly_those_tables(self):
+        golden = self.golden_tables()
+        model = database_creator.get_reference_schema_model()
+        self.assertEqual(model.table_names, frozenset(name for name, _ in golden))
+        self.assertEqual(model.column_count, 668)
+        for name, columns in golden:
+            self.assertEqual(
+                [column.name for column in model.table(name).columns],
+                [column for column, _kind in columns],
+                name,
+            )
+        self.assertEqual(model.table("Bids").columns[0].name, "UID")
+        self.assertIs(model.table("Bids").columns[0].primary_key, True)
+
+    def test_the_registered_schema_versions_are_exactly_the_supported_release_list(
+        self,
+    ):
+        expected = [
+            86,
+            87,
+            88,
+            89,
+            90,
+            91,
+            94,
+            95,
+            96,
+            97,
+            98,
+            99,
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            107,
+            108,
+            109,
+            110,
+            111,
+            112,
+            113,
+        ]
+        self.assertEqual(database_creator._SCHEMA_VERSIONS, expected)
+        versions, layers = database_creator.get_reference_seed_data()
+        self.assertEqual(versions, tuple(expected))
+        self.assertEqual(layers, tuple(DEFAULT_LAYER_ROWS))
+
+    def test_seed_rows_use_the_exact_sql_and_parameters(self):
+        calls = []
+
+        class Cursor:
+            def execute(self, sql, *params):
+                calls.append((sql, params))
+
+        created = database_creator.datetime(2026, 1, 2, 3, 4, 5)
+        with patch.object(database_creator, "datetime") as clock:
+            clock.now.return_value = created
+            database_creator.DatabaseCreator()._insert_seed_rows(Cursor(), "My Bid DB")
+        layers = [
+            (
+                "INSERT INTO [BidLayers] "
+                "([IsTemplate], [Name], [Show], [IsLocked], [Sequence]) "
+                "VALUES (-1, ?, ?, ?, ?)",
+                (name, -1 if show else 0, -1 if locked else 0, sequence),
+            )
+            for name, show, locked, sequence in DEFAULT_LAYER_ROWS
+        ]
+        registry = [
+            (
+                "INSERT INTO [SchemaRegistry] ([Version], [Product]) VALUES (?, 2)",
+                (version,),
+            )
+            for version in (86, 87, 88, 89, 90, 91, 94, 95, 96, 97, 98, 99, 100)
+            + (101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113)
+        ]
+        self.assertEqual(
+            calls,
+            [
+                (_SETTINGS_INSERT, ("My Bid DB", created)),
+                ("INSERT INTO [BidProjects] ([Name]) VALUES (?)", ("Deleted Bids",)),
+            ]
+            + layers
+            + registry,
+        )
+
+
+class DatabaseCreatorBlankDatabaseTests(unittest.TestCase):
+    def test_the_blank_database_script_text_and_file_name_are_exact(self):
+        captured = []
+
+        def run(command, **_options):
+            script = Path(command[2])
+            captured.append((script.name, script.read_text(encoding="utf-8")))
+            Path(command[3]).touch()
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.object(database_creator.subprocess, "run", side_effect=run):
+                database_creator.DatabaseCreator()._create_blank_mdb(
+                    Path(tmp_dir) / "x.mdb"
+                )
+        name, script = captured[0]
+        self.assertRegex(name, r"^ost_create_mdb_[a-z0-9_]{8}\.vbs$")
+        self.assertEqual(
+            script,
+            "dbPath = WScript.Arguments(0)\n"
+            'Set cat = CreateObject("ADOX.Catalog")\n'
+            'cat.Create "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" '
+            '& Chr(34) & dbPath & Chr(34) & ";Jet OLEDB:Engine Type=5;"\n'
+            "Set cat = Nothing\n",
+        )
+
+    def test_a_missing_file_after_a_clean_exit_is_reported_with_the_exact_message(
+        self,
+    ):
+        def run(command, **_options):
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.object(database_creator.subprocess, "run", side_effect=run):
+                with self.assertRaises(RuntimeError) as raised:
+                    database_creator.DatabaseCreator()._create_blank_mdb(
+                        Path(tmp_dir) / "x.mdb"
+                    )
+        self.assertEqual(
+            str(raised.exception), "VBScript completed but MDB file was not created"
+        )
+
+    def test_a_script_that_already_vanished_is_not_reported_as_a_cleanup_failure(self):
+        def run(command, **_options):
+            Path(command[2]).unlink()
+            Path(command[3]).touch()
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        creator = database_creator.DatabaseCreator(logging.getLogger("creator.vanish"))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.object(database_creator.subprocess, "run", side_effect=run):
+                with self.assertNoLogs("creator.vanish", level="ERROR"):
+                    creator._create_blank_mdb(Path(tmp_dir) / "x.mdb")
+
+    def test_a_cscript_timeout_removes_the_script_and_propagates(self):
+        scripts = []
+
+        def run(command, **_options):
+            scripts.append(Path(command[2]))
+            raise subprocess.TimeoutExpired(command, 15)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.object(database_creator.subprocess, "run", side_effect=run):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    database_creator.DatabaseCreator()._create_blank_mdb(
+                        Path(tmp_dir) / "x.mdb"
+                    )
+        self.assertEqual(len(scripts), 1)
+        self.assertFalse(scripts[0].exists())
+
+
+class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
+    class Connection:
+        def __init__(self, events, execute_error=None, close_error=None):
+            self.events = events
+            self.cursor_instance = Mock()
+            self.cursor_instance.close.side_effect = lambda: events.append(
+                "cursor-close"
+            )
+            self.statements = []
+            if execute_error is not None:
+                self.cursor_instance.execute.side_effect = execute_error
+            else:
+                self.cursor_instance.execute.side_effect = self.statements.append
+            self.close_error = close_error
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self):
+            self.events.append("commit")
+
+        def rollback(self):
+            self.events.append("rollback")
+
+        def close(self):
+            self.events.append("close")
+            if self.close_error is not None:
+                raise self.close_error
+
+    def creator(self, name):
+        return database_creator.DatabaseCreator(logging.getLogger(name))
+
+    def test_a_metadata_failure_rolls_back_closes_and_never_seeds(self):
+        events = []
+        connection = self.Connection(events)
+        creator = self.creator("creator.atomic.metadata")
+        with (
+            patch.object(database_creator.pyodbc, "connect", return_value=connection),
+            patch.object(
+                creator,
+                "_apply_reference_schema_metadata",
+                side_effect=RuntimeError("dao metadata failed"),
+            ),
+            patch.object(creator, "_insert_seed_rows") as seed,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "dao metadata failed"):
+                creator._create_schema("x.mdb", seed_name="Created")
+        seed.assert_not_called()
+        self.assertEqual(
+            events, ["commit", "rollback", "cursor-close", "close"]
+        )
+
+    def test_a_seed_failure_after_metadata_rolls_back_the_seed_transaction(self):
+        events = []
+        connection = self.Connection(events)
+        creator = self.creator("creator.atomic.seed")
+        with (
+            patch.object(database_creator.pyodbc, "connect", return_value=connection),
+            patch.object(creator, "_apply_reference_schema_metadata"),
+            patch.object(
+                creator, "_insert_seed_rows", side_effect=ValueError("seed failed")
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "seed failed"):
+                creator._create_schema("x.mdb", seed_name="Created")
+        self.assertEqual(events, ["commit", "rollback", "cursor-close", "close"])
+
+    def test_a_failed_first_commit_skips_metadata_and_seed_entirely(self):
+        events = []
+        connection = self.Connection(events)
+        connection.commit = lambda: (_ for _ in ()).throw(
+            RuntimeError("commit refused")
+        )
+        creator = self.creator("creator.atomic.commit")
+        with (
+            patch.object(database_creator.pyodbc, "connect", return_value=connection),
+            patch.object(creator, "_apply_reference_schema_metadata") as metadata,
+            patch.object(creator, "_insert_seed_rows") as seed,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "commit refused"):
+                creator._create_schema("x.mdb", seed_name="Created")
+        metadata.assert_not_called()
+        seed.assert_not_called()
+        self.assertEqual(events, ["rollback", "cursor-close", "close"])
+
+    def test_without_a_seed_name_metadata_is_applied_after_the_connection_closes(self):
+        events = []
+        connection = self.Connection(events)
+        creator = self.creator("creator.atomic.noseed")
+        with (
+            patch.object(database_creator.pyodbc, "connect", return_value=connection),
+            patch.object(
+                creator,
+                "_apply_reference_schema_metadata",
+                side_effect=lambda path, progress_callback=None: events.append(
+                    ("metadata", path, progress_callback)
+                ),
+            ),
+            patch.object(creator, "_insert_seed_rows") as seed,
+        ):
+            creator._create_schema("x.mdb", progress_callback=events.append)
+        seed.assert_not_called()
+        self.assertEqual(
+            events[:-1],
+            ["schema tables", "commit", "cursor-close", "close"],
+        )
+        self.assertEqual(events[-1][:2], ("metadata", "x.mdb"))
+        self.assertEqual(events[-1][2], events.append)
+
+    def test_schema_failure_log_messages_name_the_schema_creation_operation(self):
+        events = []
+        connection = self.Connection(events, execute_error=RuntimeError("ddl failed"))
+        connection.rollback = Mock(side_effect=RuntimeError("rollback failed"))
+        connection.cursor_instance.close.side_effect = RuntimeError("cursor stuck")
+        connection.close = Mock(side_effect=RuntimeError("connection stuck"))
+        creator = self.creator("creator.atomic.labels")
+        with patch.object(database_creator.pyodbc, "connect", return_value=connection):
+            with self.assertLogs("creator.atomic.labels", level="ERROR") as logs:
+                with self.assertRaisesRegex(RuntimeError, "ddl failed"):
+                    creator._create_schema("x.mdb", seed_name="Created")
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Failed to roll back MDB schema creation",
+                "Failed to close MDB cursor after schema creation",
+                "Failed to close MDB connection after schema creation",
+            ],
+        )
+        connection.close.assert_called_once_with()
+
+    def test_a_cursor_that_never_opened_does_not_stop_the_connection_closing(self):
+        creator = self.creator("creator.atomic.cursorless")
+        connection = Mock()
+        creator._close_odbc_resources(None, connection, "seed", suppress_errors=False)
+        connection.close.assert_called_once_with()
+
+    def test_resource_close_log_messages_name_the_resource_and_operation(self):
+        creator = self.creator("creator.atomic.resources")
+        cursor = Mock()
+        cursor.close.side_effect = RuntimeError("a")
+        connection = Mock()
+        connection.close.side_effect = RuntimeError("b")
+        with self.assertLogs("creator.atomic.resources", level="ERROR") as logs:
+            with self.assertRaisesRegex(RuntimeError, "^a$"):
+                creator._close_odbc_resources(
+                    cursor, connection, "seed", suppress_errors=False
+                )
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Failed to close MDB cursor after seed",
+                "Failed to close MDB connection after seed",
+            ],
+        )
+
+    def test_a_seed_failure_keeps_the_original_error_over_a_failing_close(self):
+        events = []
+        connection = self.Connection(
+            events,
+            execute_error=ValueError("insert failed"),
+            close_error=RuntimeError("close failed"),
+        )
+        creator = self.creator("creator.atomic.seeddata")
+        with patch.object(database_creator.pyodbc, "connect", return_value=connection):
+            with self.assertLogs("creator.atomic.seeddata", level="ERROR") as logs:
+                with self.assertRaisesRegex(ValueError, "insert failed"):
+                    creator._insert_seed_data("x.mdb", "Created")
+        self.assertEqual(events, ["rollback", "cursor-close", "close"])
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            ["Failed to close MDB connection after seed-data insertion"],
+        )
+
+    def test_a_failed_seed_rollback_is_labelled_as_seed_data_insertion(self):
+        connection = Mock()
+        connection.cursor.return_value.execute.side_effect = ValueError("insert failed")
+        connection.rollback.side_effect = RuntimeError("rollback failed")
+        creator = self.creator("creator.atomic.seedrollback")
+        with patch.object(database_creator.pyodbc, "connect", return_value=connection):
+            with self.assertLogs("creator.atomic.seedrollback", level="ERROR") as logs:
+                with self.assertRaisesRegex(ValueError, "insert failed"):
+                    creator._insert_seed_data("x.mdb", "Created")
+        connection.rollback.assert_called_once_with()
+        self.assertEqual(
+            logs.records[0].getMessage(), "Failed to roll back MDB seed-data insertion"
+        )
+
+    def test_dao_is_opened_through_the_dao_120_engine_for_the_given_file(self):
+        engine = Mock()
+        engine.OpenDatabase.return_value = SimpleNamespace(
+            TableDefs=lambda _name: (_ for _ in ()).throw(RuntimeError("stop")),
+            Close=Mock(),
+        )
+        creator = self.creator("creator.atomic.dao")
+        with patch("win32com.client.Dispatch", return_value=engine) as dispatch:
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                creator._apply_reference_schema_metadata(Path("some.mdb"))
+        dispatch.assert_called_once_with("DAO.DBEngine.120")
+        engine.OpenDatabase.assert_called_once_with("some.mdb")
+        engine.OpenDatabase.return_value.Close.assert_called_once_with()
+
+    def test_a_dao_failure_during_creation_removes_the_half_built_database(self):
+        class Creator(database_creator.DatabaseCreator):
+            def _create_blank_mdb(self, db_path):
+                Path(db_path).write_bytes(b"blank")
+
+            def _create_schema(self, db_path, progress_callback=None, *, seed_name=None):
+                self._report_progress(progress_callback, "schema tables")
+                raise RuntimeError("dao metadata failed")
+
+        reports = []
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "half.mdb"
+            creator = Creator(logging.getLogger("creator.atomic.half"))
+            with self.assertLogs("creator.atomic.half", level="ERROR") as logs:
+                result = creator.create_database(db_path, "Half", reports.append)
+            self.assertIs(result, False)
+            self.assertFalse(db_path.exists())
+            self.assertEqual(list(Path(tmp_dir).iterdir()), [])
+        self.assertEqual(reports, ["database file", "schema tables"])
+        self.assertIn("Failed to create database", logs.output[0])
+        self.assertIn("dao metadata failed", logs.output[0])
+
+    def test_an_undeletable_partial_file_does_not_hide_the_failure_result(self):
+        class Creator(database_creator.DatabaseCreator):
+            def _create_blank_mdb(self, db_path):
+                Path(db_path).write_bytes(b"blank")
+
+            def _create_schema(self, db_path, progress_callback=None, *, seed_name=None):
+                raise RuntimeError("schema failed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "stuck.mdb"
+            creator = Creator(logging.getLogger("creator.atomic.stuck"))
+            with patch.object(Path, "unlink", side_effect=PermissionError("locked")):
+                with self.assertLogs("creator.atomic.stuck", level="ERROR"):
+                    result = creator.create_database(db_path, "Stuck")
+            self.assertIs(result, False)
+            self.assertEqual(db_path.read_bytes(), b"blank")
+
+    def test_an_existing_database_is_never_touched_or_recreated(self):
+        creator = self.creator("creator.atomic.exists")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "keep.mdb"
+            db_path.write_bytes(b"precious")
+            with (
+                patch.object(creator, "_create_blank_mdb") as blank,
+                patch.object(creator, "_create_schema") as schema,
+            ):
+                self.assertIs(creator.create_database(db_path, "Again"), False)
+            blank.assert_not_called()
+            schema.assert_not_called()
+            self.assertEqual(db_path.read_bytes(), b"precious")

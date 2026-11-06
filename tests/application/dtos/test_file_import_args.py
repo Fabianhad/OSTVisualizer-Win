@@ -64,3 +64,28 @@ class ProjectFileArgumentTests(unittest.TestCase):
             self.assertEqual(result.rejected[0].value, str(Path(directory).resolve()))
             self.assertEqual(result.rejected[0].reason, "File does not exist.")
             self.assertTrue(result.has_file_args)
+
+
+class ProjectFileArgumentValueTests(unittest.TestCase):
+    def test_rejection_text_and_immutability_of_the_parsed_values(self):
+        from dataclasses import FrozenInstanceError
+        from ost_visualizer.application.dtos.file_import_args import (
+            ParsedProjectFileArg,
+            ProjectFileArgs,
+            RejectedProjectFileArg,
+        )
+
+        result = parse_project_file_args(["plan.txt", "--flag", "-x"])
+        self.assertEqual(
+            [(item.value, item.reason) for item in result.rejected],
+            [("plan.txt", "Unsupported file type. Only .ost and .osp files can be imported.")],
+        )
+        self.assertTrue(result.has_file_args)
+        with self.assertRaises(FrozenInstanceError):
+            ParsedProjectFileArg("a", ".ost").path = "b"
+        with self.assertRaises(FrozenInstanceError):
+            RejectedProjectFileArg("a", "b").value = "c"
+        with self.assertRaises(FrozenInstanceError):
+            ProjectFileArgs().files = []
+        self.assertEqual(ProjectFileArgs().files, [])
+        self.assertIsNot(ProjectFileArgs().files, ProjectFileArgs().files)

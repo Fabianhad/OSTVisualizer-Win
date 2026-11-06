@@ -43,6 +43,7 @@ from ost_visualizer.presentation.components.plan_view.components.page_loader imp
     VISUAL_KIND_PAGE,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.components.plan_view import view as view_module
 from ost_visualizer.presentation.visualization.pdf.render_priority import RenderPriority
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
@@ -26920,3 +26921,621 @@ class PdfTextVisibleOriginMappingTests(unittest.TestCase):
             self._boxes(view._pdf_text_runs),
             ((20.0, 40.0, 40.0, 60.0), (20.0, 40.0, 24.0, 60.0)),
         )
+
+
+class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
+    """Second-pass (A3) tests for survivors of the full view.py mutation sweep."""
+
+    _text_annotation = TakeoffPlanViewTextStylePersistenceTests._text_annotation
+    _text_item = TakeoffPlanViewTextStylePersistenceTests._text_item
+    _persist_view = TakeoffPlanViewTextStylePersistenceTests._persist_view
+    _dimension_annotation = TakeoffPlanViewTextStylePersistenceTests._dimension_annotation
+
+    def test_resizing_the_view_remembers_the_visible_viewport_size(self):
+        view = self._make_plan_view()
+        view.resize(333, 222)
+        view.show()
+        QApplication.processEvents()
+        self.assertEqual(view._last_visible_viewport_size, view.viewport().size())
+        view.resize(410, 260)
+        QApplication.processEvents()
+        self.assertEqual(view._last_visible_viewport_size, view.viewport().size())
+        self.assertEqual(view._last_visible_viewport_size.width(), view.viewport().width())
+
+    def test_the_text_toolbar_contains_only_itself_and_its_descendants(self):
+        view = self._make_plan_view()
+        toolbar = view._condition_text_toolbar
+        self.assertIs(view._text_toolbar_contains_widget(None), False)
+        self.assertIs(view._text_toolbar_contains_widget(toolbar), True)
+        self.assertIs(
+            view._text_toolbar_contains_widget(view._condition_text_bold_btn), True
+        )
+        stranger = QtWidgets.QWidget()
+        self.addCleanup(stranger.deleteLater)
+        self.assertIs(view._text_toolbar_contains_widget(stranger), False)
+        view._condition_text_toolbar = None
+        self.assertIs(view._text_toolbar_contains_widget(stranger), False)
+
+    def test_a_dimension_label_target_needs_an_item_a_uid_and_a_dimension_annotation(
+        self,
+    ):
+        view = self._make_plan_view()
+        view._selected_text_item = None
+        view._selected_text_annotation_uid = "d1"
+        self.assertIsNone(view._selected_dimension_text_label_target())
+        label = QGraphicsTextItem("21'")
+        view._scene.addItem(label)
+        view._selected_text_item = label
+        view._selected_text_annotation_uid = None
+        self.assertIsNone(view._selected_dimension_text_label_target())
+
+    def test_syncing_the_toolbar_shows_the_selected_item_font_in_the_font_box(self):
+        fonts = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+        for filename in ("arial.ttf", "cour.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(os.path.join(fonts, filename))
+        view = self._make_plan_view()
+        item = QGraphicsTextItem("x")
+        view._selected_text_model_font_size = None
+        for family in ("Courier New", "Arial", "Courier New"):
+            item.setFont(QFont(family, 11))
+            view._sync_condition_text_controls(item)
+            self.assertEqual(
+                view._condition_text_font_combo.currentFont().family(), family
+            )
+
+    def test_a_destroyed_inline_item_forgets_its_lifetime_owner_and_reports_it(self):
+        view = self._make_plan_view()
+        owner = object()
+        seen = []
+        view._inline_text_lifetime_item = owner
+        view._on_inline_text_owner_destroyed = lambda item: seen.append(item)
+        view._on_inline_text_item_destroyed()
+        self.assertEqual(seen, [owner])
+        self.assertIsNone(view._inline_text_lifetime_item)
+
+    def test_clearing_a_destroyed_inline_document_does_not_touch_it(self):
+        view = self._make_plan_view()
+        document = QtGui.QTextDocument()
+        view._editing_text_document = document
+        delete(document)
+        view._clear_inline_text_document()
+        self.assertIsNone(view._editing_text_document)
+        live = QtGui.QTextDocument()
+        self.addCleanup(live.deleteLater)
+        view._set_inline_text_document(live)
+        self.assertIs(view._editing_text_document, live)
+        view._clear_inline_text_document()
+        self.assertIsNone(view._editing_text_document)
+
+    def test_select_all_shortcut_selects_the_whole_inline_document(self):
+        view = self._make_plan_view()
+        item = QGraphicsTextItem("hello world")
+        view._scene.addItem(item)
+        view._active_inline_text_item = lambda: item
+        view.is_text_annotation_inline_edit_active = lambda: True
+        self.assertTrue(view.handle_inline_text_shortcut("select_all"))
+        self.assertTrue(item.textCursor().hasSelection())
+        self.assertEqual(item.textCursor().selectedText(), "hello world")
+        self.assertFalse(view.handle_inline_text_shortcut("unknown"))
+
+    def test_the_inline_shortcut_is_ignored_without_an_active_inline_edit(self):
+        view = self._make_plan_view()
+        item = QGraphicsTextItem("hello")
+        view._scene.addItem(item)
+        view._active_inline_text_item = lambda: None
+        self.assertFalse(view.handle_inline_text_shortcut("select_all"))
+        view._active_inline_text_item = lambda: item
+        view.is_text_annotation_inline_edit_active = lambda: False
+        self.assertFalse(view.handle_inline_text_shortcut("select_all"))
+        self.assertFalse(item.textCursor().hasSelection())
+
+    def test_persisting_without_a_font_color_property_reports_the_annotation_color(self):
+        view, annotation, item, flushed = self._persist_view()
+        del annotation.properties["FontColor"]
+        annotation.color = "#112233"
+        view._persist_text_annotation("t1", item, "New text")
+        self.assertEqual(len(flushed), 1)
+        self.assertEqual(flushed[0][2]["FontColor"], hex_color_to_int("#112233"))
+        flushed.clear()
+        dimension = self._dimension_annotation()
+        view._current_annotations = {"d1": dimension}
+        view._ann_db_uid_map = {"d1": "db-d1"}
+        view._selected_text_model_font_size = 18
+        dimension.properties.pop("FontColor", None)
+        dimension.color = "#445566"
+        label = QGraphicsTextItem("21'")
+        label.setFont(QFont("Courier New", 14))
+        label.setDefaultTextColor(QColor("#336699"))
+        view._persist_selected_dimension_text_label("d1", label)
+        self.assertEqual(flushed[0][2]["FontColor"], hex_color_to_int("#445566"))
+
+    def test_persisting_a_text_annotation_that_is_gone_reports_nothing(self):
+        view, annotation, item, flushed = self._persist_view()
+        view._persist_text_annotation("missing", item, "New text")
+        self.assertEqual(flushed, [])
+        self.assertEqual(annotation.properties["Text"], "Hello")
+        view._text_annotation_properties = lambda uid, item, text: None
+        view._persist_text_annotation("t1", item, "New text")
+        self.assertEqual(flushed, [])
+
+    def test_layer_visibility_keeps_scanning_after_an_annotation_without_a_layer(self):
+        view = self._make_plan_view()
+        view._current_bid_page_uid = "p1"
+        view._current_takeoffs = {}
+        view._current_annotations = {
+            "free": BidAnnotation(
+                uid="free", annotation_type="rect", layer_uid=None, position=[0.0, 0.0]
+            ),
+            "layered": BidAnnotation(
+                uid="layered", annotation_type="rect", layer_uid="L1", position=[0.0, 0.0]
+            ),
+        }
+        items = {uid: QGraphicsRectItem(0, 0, 5, 5) for uid in view._current_annotations}
+        for item in items.values():
+            view._scene.addItem(item)
+        view._uid_to_items = {uid: [item] for uid, item in items.items()}
+        self.assertTrue(view.apply_layer_visibility("L1", False))
+        self.assertFalse(view._current_annotations["layered"].visible)
+        self.assertFalse(items["layered"].isVisible())
+        self.assertTrue(view._current_annotations["free"].visible)
+        self.assertTrue(view.apply_layer_visibility("L1", True))
+        self.assertTrue(view._current_annotations["layered"].visible)
+        self.assertTrue(items["layered"].isVisible())
+
+    def test_identity_change_keeps_the_view_only_for_view_neutral_differences(self):
+        view = self._make_plan_view()
+        keeping = sorted(view_module._VIEW_KEEPING_IDENTITY_KEYS)
+        self.assertTrue(keeping)
+        base = {"image_path": "a.pdf", "rotation": 0, keeping[0]: 1}
+        view._current_render_identity = {}
+        self.assertIs(view._identity_change_keeps_view(dict(base)), False)
+        view._current_render_identity = dict(base)
+        self.assertIs(view._identity_change_keeps_view(dict(base)), True)
+        self.assertIs(
+            view._identity_change_keeps_view({**base, keeping[0]: 2}), True
+        )
+        self.assertIs(view._identity_change_keeps_view({**base, "rotation": 90}), False)
+        self.assertIs(
+            view._identity_change_keeps_view({"image_path": "a.pdf", "rotation": 0}),
+            False,
+        )
+        self.assertIs(view._identity_change_keeps_view({**base, "extra": 1}), False)
+
+
+    # ---- view state ownership and load cycle ---------------------------------
+    def test_view_state_ownership_decides_who_records_the_view_in_the_page(self):
+        view, page = self._make_page_scale_view()
+        view._load_view_applied = True
+        live = view.get_view_state()
+        self.assertGreater(live[0], 0.0)
+        emitted = []
+        view.page_view_state_changed.connect(lambda *args: emitted.append(args))
+        sentinel = (7.5, 111.0, 222.0)
+        page.zoom_fac, page.current_x, page.current_y = sentinel
+        view.set_owns_page_view_state(False)
+        view._capture_view_state_to_page(page)
+        self.assertEqual((page.zoom_fac, page.current_x, page.current_y), sentinel)
+        view._publish_current_page_view_state()
+        self.assertEqual((page.zoom_fac, page.current_x, page.current_y), sentinel)
+        self.assertEqual(emitted, [(page.uid, *live)])
+        emitted.clear()
+        view.set_owns_page_view_state(True)
+        view._capture_view_state_to_page(page)
+        self.assertEqual((page.zoom_fac, page.current_x, page.current_y), live)
+        page.zoom_fac, page.current_x, page.current_y = sentinel
+        view._publish_current_page_view_state()
+        self.assertEqual((page.zoom_fac, page.current_x, page.current_y), live)
+        self.assertEqual(emitted, [(page.uid, *live)])
+        view.set_owns_page_view_state(0)
+        self.assertIs(view._owns_page_view_state, False)
+
+    def test_a_pending_view_state_is_used_once_by_the_next_load_cycle(self):
+        view, page = self._make_page_scale_view()
+        page = replace(page, zoom_fac=0.0)
+        view.set_view_state_for_next_load((2.0, 5.0, 6.0))
+        view._begin_load_cycle(page, False)
+        self.assertEqual(view._preserved_view_state, (2.0, 5.0, 6.0))
+        self.assertIsNone(view._pending_load_view_state)
+        self.assertEqual(view._load_initial_view_mode, "restore")
+        view._begin_load_cycle(page, False)
+        self.assertIsNone(view._preserved_view_state)
+        self.assertNotEqual(view._load_initial_view_mode, "restore")
+        view.set_view_state_for_next_load((0.0, 5.0, 6.0))
+        view._begin_load_cycle(page, False)
+        self.assertIsNone(view._preserved_view_state)
+        self.assertIsNone(view._pending_load_view_state)
+
+    def test_the_load_cycle_preserves_a_positive_live_view_and_the_pending_state_wins(
+        self,
+    ):
+        view, page = self._make_page_scale_view()
+        page = replace(page, zoom_fac=0.0)
+        view._capture_view_state_to_page = lambda *_args, **_kwargs: None
+        view._capture_scroll_state = lambda: None
+        view.get_view_state = lambda: (0.5, 1.0, 2.0)
+        view._begin_load_cycle(page, True)
+        self.assertEqual(view._preserved_view_state, (0.5, 1.0, 2.0))
+        self.assertEqual(view._load_initial_view_mode, "restore")
+        view.set_view_state_for_next_load((4.0, 7.0, 8.0))
+        view._begin_load_cycle(page, True)
+        self.assertEqual(view._preserved_view_state, (4.0, 7.0, 8.0))
+        view.get_view_state = lambda: (0.0, 1.0, 2.0)
+        view._begin_load_cycle(page, True)
+        self.assertIsNone(view._preserved_view_state)
+        view._preserved_view_state = (9.0, 9.0, 9.0)
+        view._begin_load_cycle(page, False)
+        self.assertIsNone(view._preserved_view_state)
+
+    def test_a_remembered_page_zoom_alone_restores_the_view_when_load_starts(self):
+        view, page = self._make_page_scale_view()
+        for zoom, expected_restore in ((0.5, True), (0.0, False), (-1.0, False)):
+            with self.subTest(zoom=zoom):
+                view._begin_load_cycle(replace(page, zoom_fac=zoom), False)
+                self.assertEqual(view._load_initial_view_mode == "restore", expected_restore)
+
+    def test_finishing_a_page_load_drops_the_saved_scroll_and_preserved_view(self):
+        view, page = self._make_page_scale_view()
+        view.show()
+        QApplication.processEvents()
+        for user_changed in (True, False):
+            with self.subTest(user_changed=user_changed):
+                view._load_geometry_ready = True
+                view._load_view_applied = False
+                view._load_user_view_changed = user_changed
+                view._saved_scroll_state = (3, 4)
+                view._preserved_view_state = (1.0, 2.0, 3.0)
+                view._apply_current_view_contract = lambda **_kwargs: None
+                self.assertTrue(view._finalize_page_load_if_ready())
+                self.assertIsNone(view._saved_scroll_state)
+                self.assertIsNone(view._preserved_view_state)
+                self.assertTrue(view._load_view_applied)
+
+    # ---- PDF text mapping ----------------------------------------------------
+    _make_pdf_view = PdfTextSelectionTests._make_view
+
+    def _pdf_run(self, chars, text="Hello"):
+        return _pdf_text_support__raw_run(text, 10.0, 20.0, 70.0, 80.0, chars)
+
+    def test_overlay_pdf_text_needs_both_overlay_dimensions(self):
+        view = self._make_pdf_view()
+        source = (PDF_INTELLIGENCE_SOURCE_OVERLAY, "overlay.pdf", 0)
+        char = _pdf_text_support__raw_char("H", 10.0, 12.0, 70.0, 80.0)
+        runs = [self._pdf_run([char])]
+        for width, height in ((0.0, 0.0), (200.0, 0.0), (0.0, 100.0)):
+            with self.subTest(width=width, height=height):
+                info = _pdf_text_support__page_info(pdf_width=width, pdf_height=height)
+                self.assertEqual(view._map_pdf_text_runs(runs, info, source), [])
+        info = _pdf_text_support__page_info(pdf_width=200.0, pdf_height=100.0)
+        mapped = view._map_pdf_text_runs(runs, info, source)
+        self.assertEqual(len(mapped), 1)
+
+    def test_a_missing_intrinsic_rotation_maps_like_no_rotation(self):
+        view = self._make_pdf_view()
+        char = _pdf_text_support__raw_char("H", 10.0, 12.0, 70.0, 80.0)
+        runs = [self._pdf_run([char])]
+        plain = view._map_pdf_text_runs(runs, _pdf_text_support__page_info(rotation=0))
+        for rotation in (None, 0):
+            info = _pdf_text_support__page_info(rotation=rotation)
+            mapped = view._map_pdf_text_runs(runs, info)
+            self.assertEqual(
+                (mapped[0].left, mapped[0].top, mapped[0].right, mapped[0].bottom),
+                (plain[0].left, plain[0].top, plain[0].right, plain[0].bottom),
+            )
+        self.assertEqual(
+            (plain[0].left, plain[0].top, plain[0].right, plain[0].bottom),
+            (20.0, 40.0, 40.0, 60.0),
+        )
+
+    def test_characters_without_text_are_skipped_and_later_characters_kept(self):
+        view = self._make_pdf_view()
+        chars = [
+            _pdf_text_support__raw_char("", 10.0, 12.0, 70.0, 80.0),
+            _pdf_text_support__raw_char("H", 12.0, 14.0, 70.0, 80.0),
+            _pdf_text_support__raw_char("e", 14.0, 16.0, 70.0, 80.0),
+        ]
+        mapped = view._map_pdf_text_runs(
+            [self._pdf_run(chars)], _pdf_text_support__page_info()
+        )
+        self.assertEqual([char.text for char in mapped[0].chars], ["H", "e"])
+
+    # ---- restore after a refused write ----------------------------------------
+    def _restore_view(self):
+        view = self._make_plan_view()
+        view._current_takeoffs = {
+            uid: Takeoff(
+                uid=uid, condition_uid="c1", page_uid="p1", position=[0.0, 0.0], rotation=0.0
+            )
+            for uid in ("t1", "t2")
+        }
+        rebuilt = []
+        view._rebuild_current_overlays_from_model = lambda: rebuilt.append(True)
+        return view, rebuilt
+
+    def test_restoring_positions_skips_unknown_and_empty_entries_without_stopping(self):
+        view, rebuilt = self._restore_view()
+        view.restore_flushed_positions(
+            [("missing", [1.0, 1.0], [2.0, 2.0]), ("t1", [], [3.0, 3.0]), ("t2", [7.0, 8.0], [9.0, 9.0])],
+            [],
+        )
+        self.assertEqual(view._current_takeoffs["t2"].position, [7.0, 8.0])
+        self.assertEqual(view._current_takeoffs["t1"].position, [0.0, 0.0])
+        self.assertEqual(rebuilt, [True])
+        rebuilt.clear()
+        view.restore_flushed_positions([("missing", [1.0, 1.0], [2.0, 2.0])], [])
+        self.assertEqual(rebuilt, [])
+
+    def test_restoring_rotations_skips_unknown_and_unset_entries_without_stopping(self):
+        view, rebuilt = self._restore_view()
+        view.restore_flushed_rotations(
+            [("missing", 10.0, 20.0), ("t1", None, 5.0), ("t2", 30.0, 40.0)]
+        )
+        self.assertEqual(view._current_takeoffs["t2"].rotation, 30.0)
+        self.assertEqual(view._current_takeoffs["t1"].rotation, 0.0)
+        self.assertEqual(rebuilt, [True])
+
+    def test_restoring_condition_text_skips_unknown_and_empty_entries_without_stopping(
+        self,
+    ):
+        view, rebuilt = self._restore_view()
+        applied = []
+        view._apply_takeoff_text_style_values = lambda takeoff, values: applied.append(
+            (takeoff.uid, values)
+        )
+        view.restore_condition_text_properties(
+            [
+                ("missing", "name", {"a": 1}, {}),
+                ("t1", "name", {}, {"a": 3}),
+                ("t2", "name", {"a": 2}, {"a": 4}),
+            ]
+        )
+        self.assertEqual(applied, [("t2", {"a": 2})])
+        self.assertEqual(rebuilt, [True])
+
+    # ---- clear() with an annotation placement tool -----------------------------
+    _clear_view = TakeoffPlanViewClearSweepTests._view
+    _clear_stub = TakeoffPlanViewClearSweepTests._stub
+
+    def test_clear_preserving_an_annotation_tool_resets_only_its_in_progress_state(self):
+        view = self._clear_view()
+        calls = self._clear_stub(view)
+        area = []
+        view._set_area_placement_in_progress = lambda value: area.append(value)
+        view._annotation_place_type = "rect"
+        view._annotation_place_points = [(1.0, 2.0)]
+        view._annotation_place_dragging = True
+        view._annotation_area_rect_dragging = True
+        view.clear(preserve_place_session=True)
+        self.assertIn("clear_place_preview", calls)
+        self.assertEqual(area, [False])
+        self.assertEqual(view._annotation_place_points, [])
+        self.assertIs(view._annotation_place_dragging, False)
+        self.assertIs(view._annotation_area_rect_dragging, False)
+        self.assertEqual(view._annotation_place_type, "rect")
+        self.assertNotIn("_exit_annotation_place_mode", calls)
+
+    def test_clear_without_preserving_ends_the_annotation_tool(self):
+        view = self._clear_view()
+        calls = self._clear_stub(view)
+        view._annotation_place_type = "rect"
+        view.clear()
+        self.assertIn("_exit_annotation_place_mode", calls)
+        self.assertNotIn("clear_place_preview", calls)
+
+
+    # ---- text annotation item font sizing ---------------------------------------
+    def test_text_annotation_item_font_size_defaults_and_minimum(self):
+        view = self._make_plan_view()
+
+        class Scale(_interaction_support_FakeCoordinateSystem):
+            @staticmethod
+            def pdf_points_to_screen_pixels(value):
+                return float(value) * 10.0
+
+        view._scene_builder = _interaction_support_FakeSceneBuilder()
+        view._scene_builder.cs = Scale()
+        adjust = view_module.DIMENSION_FONT_SIZE_ADJUSTMENT
+
+        def point_size(properties):
+            ann = BidAnnotation(
+                uid="t", annotation_type="text", position=[0.0, 0.0, 50.0, 20.0],
+                properties=properties,
+            )
+            return view._text_annotation_item_from_properties(ann).font().pointSize()
+
+        self.assertEqual(point_size({}), max(int(12 * 10.0 * adjust), 1))
+        self.assertEqual(point_size({"FontSize": 0}), max(int(12 * 10.0 * adjust), 1))
+        self.assertEqual(point_size({"FontSize": 20}), max(int(20 * 10.0 * adjust), 1))
+        self.assertEqual(point_size({"FontSize": -5}), max(int(1 * 10.0 * adjust), 1))
+        self.assertEqual(point_size({"FontSize": 1}), max(int(1 * 10.0 * adjust), 1))
+
+    # ---- changed-overlay fast paths ---------------------------------------------
+    _changed_view = TakeoffPlanViewChangedOverlayRefreshSweepTests._view
+    _changed_incoming = TakeoffPlanViewChangedOverlayRefreshSweepTests._incoming
+    _changed_takeoff_call = TakeoffPlanViewChangedOverlayRefreshSweepTests._takeoff_call
+    _changed_annotation_call = TakeoffPlanViewChangedOverlayRefreshSweepTests._annotation_call
+
+    def test_a_missing_annotation_list_is_treated_as_no_annotations(self):
+        for call in ("annotation", "takeoff"):
+            with self.subTest(call=call):
+                view, _builder = self._changed_view()
+                incoming = self._changed_incoming(view, annotations=None)
+                if call == "annotation":
+                    result = self._changed_annotation_call(view, incoming)
+                else:
+                    result = self._changed_takeoff_call(view, incoming, ["t2"])
+                self.assertIsInstance(result, bool)
+        view, _builder = self._changed_view()
+        self.assertIs(
+            self._changed_annotation_call(
+                view, self._changed_incoming(view, annotations=None)
+            ),
+            False,
+        )
+
+    # ---- reload decisions ---------------------------------------------------------
+    _load_view = TakeoffPlanViewLoadPageContractSweepTests._view
+    _strategy = staticmethod(TakeoffPlanViewLoadPageContractSweepTests._strategy)
+    _names = TakeoffPlanViewLoadPageContractSweepTests._names
+    _load_call = TakeoffPlanViewLoadPageContractSweepTests._load
+    _load_prepare = TakeoffPlanViewLoadPageContractSweepTests._prepare_loaded
+
+    def _begin_flag(self, view):
+        return next(entry for entry in self.log if entry[0] == "begin")[2]
+
+    def test_only_view_neutral_identity_changes_keep_the_view_across_a_reload(self):
+        cases = (
+            ("rotated page", dict(rotation=90), False),
+            ("inverted page", dict(invert=True), True),
+            ("bitonal page", dict(bitonal=True), True),
+            ("renamed uid", dict(uid="p2"), False),
+        )
+        for label, overrides, expected in cases:
+            with self.subTest(label):
+                self.page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+                view = self._load_view()
+                self._load_prepare(view)
+                view._load_view_applied = True
+                changed = replace(self.page, **overrides)
+                self._load_call(view, page=changed)
+                self.assertNotIn("refresh", self._names())
+                self.assertEqual(self._begin_flag(view), expected)
+
+    def test_a_forced_reload_of_another_page_keeps_the_view_only_when_it_was_applied(self):
+        for applied in (True, False):
+            with self.subTest(applied=applied):
+                view = self._load_view()
+                self._load_prepare(view)
+                view._load_view_applied = applied
+                changed = replace(self.page, rotation=90)
+                self._load_call(view, page=changed, force_visual_reload=True)
+                self.assertEqual(self._begin_flag(view), applied)
+
+    def test_nothing_loaded_never_keeps_the_view_even_with_a_view_neutral_change(self):
+        view = self._load_view()
+        self._load_prepare(view)
+        view._current_page = None
+        view._load_view_applied = True
+        self._load_call(view, page=replace(self.page, invert=True))
+        self.assertIs(self._begin_flag(view), False)
+
+    def test_a_reload_after_a_project_change_never_keeps_the_view(self):
+        view = self._load_view()
+        self._load_prepare(view)
+        view._load_view_applied = True
+        self._load_call(
+            view, page=replace(self.page, invert=True), bid_ref=BidRef("db.mdb", "bid-2")
+        )
+        self.assertIs(self._begin_flag(view), False)
+
+    def test_an_annotation_placement_tool_survives_a_reload_of_the_same_project(self):
+        for place_type, project_changed, expected in (
+            ("rect", False, True),
+            ("rect", True, False),
+            (None, False, False),
+        ):
+            with self.subTest(place_type=place_type, project_changed=project_changed):
+                view = self._load_view()
+                self._load_prepare(view)
+                view._annotation_place_type = place_type
+                bid_ref = BidRef("db.mdb", "bid-2") if project_changed else None
+                self._load_call(view, force_visual_reload=True, **({"bid_ref": bid_ref} if bid_ref else {}))
+                clear_call = next(e for e in self.log if e[0] == "clear")
+                self.assertIs(clear_call[2]["preserve_place_session"], expected)
+
+
+    # ---- second round: remaining confirmed gaps --------------------------------
+    def test_a_pending_view_state_with_a_small_positive_zoom_is_still_used(self):
+        view, page = self._make_page_scale_view()
+        page = replace(page, zoom_fac=0.0)
+        view.set_view_state_for_next_load((0.5, 5.0, 6.0))
+        view._begin_load_cycle(page, False)
+        self.assertEqual(view._preserved_view_state, (0.5, 5.0, 6.0))
+        self.assertIsNone(view._pending_load_view_state)
+
+    def test_overlay_pdf_text_with_no_overlay_size_maps_nothing_even_in_a_tiny_page(self):
+        view = self._make_pdf_view()
+        source = (PDF_INTELLIGENCE_SOURCE_OVERLAY, "overlay.pdf", 0)
+        char = _pdf_text_support__raw_char("H", 0.1, 0.2, 0.1, 0.2)
+        runs = [_pdf_text_support__raw_run("H", 0.1, 0.2, 0.1, 0.2, [char])]
+
+        def info(size):
+            return _pdf_text_support__page_info(
+                pdf_width=size, pdf_height=size,
+                media_width=max(size, 0.5), media_height=max(size, 0.5),
+            )
+
+        self.assertEqual(view._map_pdf_text_runs(runs, info(0.0), source), [])
+        self.assertEqual(len(view._map_pdf_text_runs(runs, info(0.5), source)), 1)
+        self.assertEqual(len(view._map_pdf_text_runs(runs, info(1.0), source)), 1)
+        view._pdf_height_pts = 0.0
+        view._current_page.height_pts = 0.0
+        self.assertEqual(
+            view._map_pdf_text_runs(runs, _pdf_text_support__page_info()), []
+        )
+
+    def test_restoring_annotation_edits_skips_empty_entries_without_stopping(self):
+        view = self._make_plan_view()
+        first = BidAnnotation(
+            uid="a1", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0],
+            properties={"Text": "one", "FontColor": 0},
+        )
+        second = BidAnnotation(
+            uid="a2", annotation_type="rect", position=[0.0, 0.0, 2.0, 2.0],
+            properties={"Text": "two", "FontColor": 0},
+        )
+        view._current_annotations = {"k1": first, "k2": second}
+        view._ann_db_uid_map = {"k1": "a1", "k2": "a2"}
+        self.assertIs(
+            view._restore_annotation_positions(
+                [
+                    ("a1", "rect", [], [9.0, 9.0, 9.0, 9.0]),
+                    ("a2", "rect", [7.0, 7.0, 8.0, 8.0], [9.0, 9.0, 9.0, 9.0]),
+                ]
+            ),
+            True,
+        )
+        self.assertEqual(first.position, [0.0, 0.0, 1.0, 1.0])
+        self.assertEqual(second.position, [7.0, 7.0, 8.0, 8.0])
+        self.assertIs(
+            view._restore_annotation_properties(
+                [("a1", "rect", {}, {"Text": "x"}), ("a2", "rect", {"Text": "old"}, {})]
+            ),
+            True,
+        )
+        self.assertEqual(first.properties["Text"], "one")
+        self.assertEqual(second.properties["Text"], "old")
+        self.assertIs(
+            view._restore_annotation_styles(
+                [("a1", "rect", {}, {"Color": "#111111"}), ("a2", "rect", {"Color": "#222222"}, {})]
+            ),
+            True,
+        )
+        self.assertNotEqual(first.color, "#222222")
+        self.assertEqual(second.color, "#222222")
+        self.assertIs(view._restore_annotation_positions([("a1", "rect", [], [1.0])]), False)
+
+    def test_the_move_handle_pixmap_is_a_26_pixel_outlined_icon(self):
+        view = self._make_plan_view()
+        pixmap = view._outlined_icon_pixmap(view_module._MOVE_OVERLAY_ICON, "#ffffff")
+        self.assertEqual(pixmap.size(), QtCore.QSize(26, 26))
+        self.assertFalse(pixmap.isNull())
+        image = pixmap.toImage()
+        self.assertGreater(image.pixelColor(13, 13).alpha(), 0)
+        self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
+
+    # ---- cleanup -----------------------------------------------------------------
+    def test_cleanup_releases_the_snap_indexes(self):
+        view = self._make_plan_view()
+        view._takeoff_snap_index = object()
+        view._pdf_snap_index = object()
+        view._pdf_snap_index_key = ("k",)
+        view._pdf_snap_index_complete = True
+        view._pdf_snap_request_key = ("r",)
+        view._pdf_snap_request_id = "id"
+        view.cleanup()
+        self.assertIsNone(view._takeoff_snap_index)
+        self.assertIsNone(view._pdf_snap_index)
+        self.assertIsNone(view._pdf_snap_index_key)
+        self.assertIs(view._pdf_snap_index_complete, False)
+        self.assertIsNone(view._pdf_snap_request_key)
+        self.assertIsNone(view._pdf_snap_request_id)

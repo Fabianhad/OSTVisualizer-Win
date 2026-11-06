@@ -12,6 +12,14 @@ from unittest.mock import Mock, patch
 from ost_visualizer.application.dtos.active_bid_locked_error import (
     ActiveBidLockedError,
 )
+from ost_visualizer.application.dtos.ai_changeset_write_dtos import (
+    AiChangesetCommit,
+    AiChangesetUndoPlan,
+    AiChangesetWritePlan,
+    AiChangesetWriteResult,
+    AiScaleUndoPlan,
+    AiTakeoffWrite,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     ChangeOperation,
@@ -22,6 +30,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ExpectedResourceVersion,
     MutationExecutionResult,
     MutationOutcomeStatus,
+    MutationRejectionReason,
     PlanItemsPastePayload,
     PlanPropertyPayload,
     ProjectImportPayload,
@@ -18091,3 +18100,1475 @@ class ProjectWriteLiteralContractSweepTests(unittest.TestCase):
         self.assertEqual(authoritative.affected_families, ("conditions",))
         self.assertEqual(authoritative.affected_condition_uids, ("c9",))
         self.assertEqual(authoritative.affected_page_uids, ())
+
+
+class ProjectWriteAiChangesetContractTests(unittest.TestCase):
+    """The AI changeset commands of the write service, driven through the strict
+    harness: exact use-case arguments, request resources and dependencies, recorded
+    changes, failure messages, lock handling and the authoritative result. Before the
+    third pass these methods were executed by no test in this module (sibling modules
+    reached them only through the applier)."""
+
+    DB = _Harness.DATABASE
+
+    @staticmethod
+    def write_plan(**overrides):
+        options = dict(
+            folder_name="AI folder",
+            existing_folder_uid=None,
+            conditions=(("k1", CreateConditionSpec(name="Slab")),),
+            takeoffs=(
+                AiTakeoffWrite(
+                    "k1", "20", (0.0, 0.0, 1.0, 1.0), holes=((0.2, 0.2, 0.4, 0.4),)
+                ),
+                AiTakeoffWrite("11", "21", (2.0, 2.0, 3.0, 3.0), area_uid="5"),
+            ),
+            existing_condition_uids=("11",),
+        )
+        options.update(overrides)
+        return AiChangesetWritePlan(**options)
+
+    @staticmethod
+    def results(**overrides):
+        created = []
+
+        def insert_takeoffs(_database, _bid, specs):
+            uids = [str(100 + len(created) + index) for index in range(len(specs))]
+            created.extend(uids)
+            return uids
+
+        options = {
+            "insert_condition_folder": 90,
+            "insert_condition": 91,
+            "insert_takeoffs": insert_takeoffs,
+        }
+        options.update(overrides)
+        return options
+
+    def records(self, harness):
+        return harness.record_lines()
+
+    # -- apply (local)
+
+    def test_a_local_apply_writes_every_object_and_records_each_change(self):
+        harness = _Harness(self.results(), sql=False)
+        commit = harness.service.execute_ai_changeset_local(
+            self.DB, "7", self.write_plan()
+        )
+        self.assertIs(commit.committed, True)
+        self.assertEqual(
+            commit.result,
+            AiChangesetWriteResult(
+                folder_uid="90",
+                created_folder=True,
+                condition_uids=(("k1", "91"),),
+                takeoff_uids=("100", "101", "102"),
+            ),
+        )
+        self.assertEqual((commit.message, commit.locked, commit.conflict), ("", False, False))
+        spec = CreateConditionSpec(name="Slab")
+        self.assertEqual(
+            harness.calls,
+            [
+                (
+                    "insert_condition_folder",
+                    "execute",
+                    (self.DB, "7", "AI folder", None),
+                    {},
+                ),
+                (
+                    "insert_condition",
+                    "execute",
+                    (self.DB, "7", replace(spec, folder_uid="90")),
+                    {},
+                ),
+                (
+                    "insert_takeoffs",
+                    "execute",
+                    (
+                        self.DB,
+                        "7",
+                        [
+                            InsertTakeoffSpec(
+                                condition_uid="91",
+                                page_uid="20",
+                                area_uid=None,
+                                position=[0.0, 0.0, 1.0, 1.0],
+                            ),
+                            InsertTakeoffSpec(
+                                condition_uid="11",
+                                page_uid="21",
+                                area_uid="5",
+                                position=[2.0, 2.0, 3.0, 3.0],
+                            ),
+                        ],
+                    ),
+                    {},
+                ),
+                (
+                    "insert_takeoffs",
+                    "execute",
+                    (
+                        self.DB,
+                        "7",
+                        [
+                            InsertTakeoffSpec(
+                                condition_uid="91",
+                                page_uid="20",
+                                area_uid=None,
+                                position=[0.2, 0.2, 0.4, 0.4],
+                                parent_uid="100",
+                            )
+                        ],
+                    ),
+                    {},
+                ),
+            ],
+        )
+        self.assertEqual(
+            self.records(harness),
+            [
+                "record condition:91@7 create",
+                "record condition_folder:90@7 create",
+                "record conditions_collection:7@7 update",
+                "record takeoff:100@7 create",
+                "record takeoff:101@7 create",
+                "record takeoff:102@7 create",
+                "record takeoffs_collection:7@7 update",
+            ],
+        )
+        (request,) = harness.executor.requests
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.resources],
+            [
+                "condition:11@7",
+                "conditions_collection:7@7",
+                "page:20@7",
+                "page:21@7",
+                "takeoffs_collection:7@7",
+            ],
+        )
+        self.assertEqual(harness.executor.values, [commit.result])
+        self.assertEqual(harness.reloads, [self.DB])
+        self.assertEqual(
+            [(event.__name__, payload) for event, payload in harness.events.published],
+            [
+                (
+                    "DatabaseRefreshedEvent",
+                    {
+                        "file_path": self.DB,
+                        "image_sources_unchanged": False,
+                        "mesh_scene_unchanged": False,
+                        "page_scale_uids": (),
+                    },
+                )
+            ],
+        )
+
+    def test_an_apply_without_new_conditions_creates_no_folder_or_conditions(self):
+        for folder in (None, "3"):
+            with self.subTest(existing_folder_uid=folder):
+                harness = _Harness(self.results(), sql=False)
+                plan = self.write_plan(
+                    conditions=(),
+                    existing_folder_uid=folder,
+                    takeoffs=(AiTakeoffWrite("11", "20", (0.0, 0.0, 1.0, 1.0)),),
+                )
+                commit = harness.service.execute_ai_changeset_local(self.DB, "7", plan)
+                self.assertIs(commit.committed, True)
+                self.assertEqual(
+                    commit.result,
+                    AiChangesetWriteResult(folder, False, (), ("100",)),
+                )
+                self.assertEqual(
+                    [(name, method) for name, method, _a, _k in harness.calls],
+                    [("insert_takeoffs", "execute")],
+                )
+                self.assertEqual(
+                    self.records(harness),
+                    [
+                        "record takeoff:100@7 create",
+                        "record takeoffs_collection:7@7 update",
+                    ],
+                )
+                (request,) = harness.executor.requests
+                expected = ["condition:11@7", "page:20@7", "takeoffs_collection:7@7"]
+                if folder:
+                    expected.insert(1, "condition_folder:3@7")
+                self.assertEqual(
+                    [harness.resource_text(r) for r in request.resources],
+                    sorted(expected),
+                )
+
+    def test_an_existing_folder_is_reused_for_new_conditions(self):
+        harness = _Harness(self.results(), sql=False)
+        plan = self.write_plan(existing_folder_uid="3", takeoffs=())
+        commit = harness.service.execute_ai_changeset_local(self.DB, "7", plan)
+        self.assertEqual(
+            commit.result,
+            AiChangesetWriteResult("3", False, (("k1", "91"),), ()),
+        )
+        self.assertEqual(
+            [(name, method) for name, method, _a, _k in harness.calls],
+            [("insert_condition", "execute")],
+        )
+        self.assertEqual(
+            harness.calls[0][2][2], replace(CreateConditionSpec(name="Slab"), folder_uid="3")
+        )
+        self.assertEqual(
+            self.records(harness),
+            [
+                "record condition:91@7 create",
+                "record conditions_collection:7@7 update",
+                "record takeoffs_collection:7@7 update",
+            ],
+        )
+        (request,) = harness.executor.requests
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.resources],
+            [
+                "condition:11@7",
+                "condition_folder:3@7",
+                "conditions_collection:7@7",
+                "takeoffs_collection:7@7",
+            ],
+        )
+
+    def test_an_apply_reports_each_use_case_failure_without_reloading(self):
+        def short(_database, _bid, specs):
+            return [str(7)] * len(specs)
+
+        cases = (
+            (
+                "folder",
+                {"insert_condition_folder": None},
+                "The AI condition folder could not be created.",
+            ),
+            (
+                "condition",
+                {"insert_condition": None},
+                "An AI condition could not be created.",
+            ),
+            (
+                "takeoffs returns nothing",
+                {"insert_takeoffs": None},
+                "The AI takeoff insertion was incomplete.",
+            ),
+            (
+                "takeoffs returns too few",
+                {"insert_takeoffs": lambda *_args: ["100"]},
+                "The AI takeoff insertion was incomplete.",
+            ),
+            (
+                "takeoffs returns a blank identity",
+                {"insert_takeoffs": lambda *_args: ["100", None]},
+                "The AI takeoff insertion was incomplete.",
+            ),
+            (
+                "takeoffs returns duplicate identities",
+                {"insert_takeoffs": short},
+                "The AI takeoff insertion was incomplete.",
+            ),
+        )
+        for label, overrides, message in cases:
+            with self.subTest(label):
+                harness = _Harness(self.results(**overrides), sql=False)
+                commit = harness.service.execute_ai_changeset_local(
+                    self.DB, "7", self.write_plan()
+                )
+                self.assertEqual(
+                    commit, AiChangesetCommit(False, None, message, False, False)
+                )
+                self.assertEqual(harness.reloads, [])
+                self.assertEqual(harness.events.published, [])
+
+    def test_an_apply_without_takeoffs_never_calls_the_takeoff_use_case(self):
+        harness = _Harness(self.results(), sql=False)
+        commit = harness.service.execute_ai_changeset_local(
+            self.DB, "7", self.write_plan(takeoffs=())
+        )
+        self.assertEqual(commit.result.takeoff_uids, ())
+        self.assertNotIn("insert_takeoffs", [call[0] for call in harness.calls])
+
+    def test_an_apply_reports_numeric_takeoff_identities_as_text(self):
+        harness = _Harness(
+            self.results(insert_takeoffs=lambda *_args: [100, 101]), sql=False
+        )
+        plan = self.write_plan(
+            conditions=(),
+            takeoffs=(
+                AiTakeoffWrite("11", "20", (0.0, 0.0, 1.0, 1.0)),
+                AiTakeoffWrite("11", "21", (0.0, 0.0, 2.0, 2.0)),
+            ),
+        )
+        commit = harness.service.execute_ai_changeset_local(self.DB, "7", plan)
+        self.assertEqual(commit.result.takeoff_uids, ("100", "101"))
+
+    # -- locks, outcomes and routing (local)
+
+    def test_a_locked_active_bid_blocks_every_local_ai_command_before_any_write(self):
+        undo = AiChangesetUndoPlan(("100",), ("91",), "90")
+        scale = AiScaleUndoPlan("20", 2.0, 3.0, (("30", (1.0, 2.0, 3.0, 4.0)),))
+        commands = (
+            lambda s: s.execute_ai_changeset_local(self.DB, "7", self.write_plan()),
+            lambda s: s.execute_ai_changeset_undo_local(self.DB, "7", undo),
+            lambda s: s.execute_ai_scale_undo_local(self.DB, "7", scale),
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=index):
+                harness = _Harness(self.results(), sql=False)
+                harness.data.locked = True
+                commit = command(harness.service)
+                self.assertEqual(
+                    commit,
+                    AiChangesetCommit(False, None, "The bid is locked.", True, False),
+                )
+                self.assertEqual(
+                    (harness.calls, harness.executor.requests, harness.reloads),
+                    ([], [], []),
+                )
+
+    def test_another_bid_or_database_is_not_blocked_by_the_active_bid_lock(self):
+        harness = _Harness(self.results(), sql=False)
+        harness.data.locked = True
+        plan = self.write_plan(conditions=(), takeoffs=())
+        for database, bid in (
+            (self.DB, "8"),
+            ("C:/jobs/other.mdb", "7"),
+        ):
+            with self.subTest(database=database, bid=bid):
+                commit = harness.service.execute_ai_changeset_local(database, bid, plan)
+                self.assertIs(commit.committed, True)
+                self.assertFalse(commit.locked)
+
+    def test_uncommitted_outcomes_map_to_lock_conflict_or_plain_rejection(self):
+        conflict = _synchronization_conflict()
+        cases = (
+            (
+                "bid lock",
+                dict(
+                    status=MutationOutcomeStatus.REJECTED,
+                    rejection_reason=MutationRejectionReason.BID_LOCKED,
+                ),
+                AiChangesetCommit(False, None, "The bid is locked.", True, False),
+            ),
+            (
+                "plain rejection",
+                dict(status=MutationOutcomeStatus.REJECTED),
+                AiChangesetCommit(
+                    False, None, "The database rejected the change.", False, False
+                ),
+            ),
+            (
+                "conflict",
+                dict(status=MutationOutcomeStatus.CONFLICT, conflict=conflict),
+                AiChangesetCommit(False, None, conflict.reason, False, True),
+            ),
+            (
+                "unknown commit",
+                dict(status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN),
+                AiChangesetCommit(
+                    False, None, "The database rejected the change.", False, False
+                ),
+            ),
+        )
+        for label, attributes, expected in cases:
+            with self.subTest(label):
+                harness = _Harness(self.results(), sql=False)
+                for name, value in attributes.items():
+                    setattr(harness.executor, name, value)
+                commit = harness.service.execute_ai_changeset_local(
+                    self.DB, "7", self.write_plan()
+                )
+                self.assertEqual(commit, expected)
+                self.assertEqual((harness.reloads, harness.events.published), ([], []))
+
+    def test_the_local_ai_commands_refuse_sql_databases(self):
+        undo = AiChangesetUndoPlan(("100",), (), None)
+        scale = AiScaleUndoPlan("20", 2.0, 3.0, ())
+        for label, command in (
+            (
+                "apply",
+                lambda s: s.execute_ai_changeset_local(self.DB, "7", self.write_plan()),
+            ),
+            ("undo", lambda s: s.execute_ai_changeset_undo_local(self.DB, "7", undo)),
+            ("scale", lambda s: s.execute_ai_scale_undo_local(self.DB, "7", scale)),
+        ):
+            with self.subTest(label):
+                harness = _Harness(self.results(), sql=True)
+                with self.assertRaisesRegex(
+                    ValueError, "^SQL AI changesets must use the collaboration queue$"
+                ):
+                    command(harness.service)
+                self.assertEqual((harness.calls, harness.executor.requests), ([], []))
+
+    # -- undo (local)
+
+    def test_a_local_undo_removes_takeoffs_conditions_and_folder_in_order(self):
+        harness = _Harness({}, sql=False)
+        plan = AiChangesetUndoPlan(("100", "101"), ("91",), "90")
+        commit = harness.service.execute_ai_changeset_undo_local(self.DB, "7", plan)
+        self.assertEqual(
+            commit,
+            AiChangesetCommit(True, AiChangesetWriteResult(None, False, (), ())),
+        )
+        self.assertEqual(
+            harness.calls,
+            [
+                ("delete_takeoffs", "execute", (self.DB, ["100", "101"]), {}),
+                ("delete_conditions", "execute", (self.DB, "7", ["91"]), {}),
+                ("delete_condition_folders", "execute", (self.DB, ["90"]), {}),
+            ],
+        )
+        self.assertEqual(
+            self.records(harness),
+            [
+                "record condition:91@7 delete",
+                "record condition_folder:90@7 delete",
+                "record conditions_collection:7@7 update",
+                "record takeoff:100@7 delete",
+                "record takeoff:101@7 delete",
+                "record takeoffs_collection:7@7 update",
+            ],
+        )
+        (request,) = harness.executor.requests
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.resources],
+            [
+                "condition:91@7",
+                "condition_folder:90@7",
+                "conditions_collection:7@7",
+                "takeoff:100@7",
+                "takeoff:101@7",
+                "takeoffs_collection:7@7",
+            ],
+        )
+        self.assertEqual(harness.reloads, [self.DB])
+
+    def test_an_undo_touches_only_what_the_plan_names(self):
+        cases = (
+            (
+                "takeoffs only",
+                AiChangesetUndoPlan(("100",), (), None),
+                ["delete_takeoffs"],
+                ["takeoff:100@7", "takeoffs_collection:7@7"],
+            ),
+            (
+                "conditions only",
+                AiChangesetUndoPlan((), ("91",), None),
+                ["delete_conditions"],
+                ["condition:91@7", "conditions_collection:7@7", "takeoffs_collection:7@7"],
+            ),
+            (
+                "folder only",
+                AiChangesetUndoPlan((), (), "90"),
+                ["delete_condition_folders"],
+                [
+                    "condition_folder:90@7",
+                    "conditions_collection:7@7",
+                    "takeoffs_collection:7@7",
+                ],
+            ),
+            (
+                "nothing",
+                AiChangesetUndoPlan((), (), None),
+                [],
+                ["takeoffs_collection:7@7"],
+            ),
+        )
+        for label, plan, use_cases, resources in cases:
+            with self.subTest(label):
+                harness = _Harness({}, sql=False)
+                commit = harness.service.execute_ai_changeset_undo_local(
+                    self.DB, "7", plan
+                )
+                self.assertIs(commit.committed, True)
+                self.assertEqual([call[0] for call in harness.calls], use_cases)
+                (request,) = harness.executor.requests
+                self.assertEqual(
+                    [harness.resource_text(r) for r in request.resources],
+                    resources,
+                )
+                recorded = {line.split()[1] for line in self.records(harness)}
+                self.assertEqual(recorded, set(resources))
+
+    def test_an_undo_reports_each_failed_removal(self):
+        plan = AiChangesetUndoPlan(("100",), ("91",), "90")
+        for use_case, message in (
+            ("delete_takeoffs", "The AI takeoffs could not be removed."),
+            ("delete_conditions", "The AI conditions could not be removed."),
+            ("delete_condition_folders", "The AI condition folder could not be removed."),
+        ):
+            with self.subTest(use_case):
+                harness = _Harness({use_case: False}, sql=False)
+                commit = harness.service.execute_ai_changeset_undo_local(
+                    self.DB, "7", plan
+                )
+                self.assertEqual(
+                    commit, AiChangesetCommit(False, None, message, False, False)
+                )
+                self.assertEqual(harness.reloads, [])
+
+    # -- scale undo (local)
+
+    def test_a_local_scale_undo_restores_the_scale_and_positions(self):
+        harness = _Harness({}, sql=False)
+        plan = AiScaleUndoPlan(
+            "20",
+            2.0,
+            3.0,
+            (("31", (5.0, 6.0, 7.0, 8.0)), ("30", (1.0, 2.0, 3.0, 4.0))),
+        )
+        commit = harness.service.execute_ai_scale_undo_local(self.DB, "7", plan)
+        self.assertEqual(
+            commit,
+            AiChangesetCommit(True, AiChangesetWriteResult(None, False, (), ())),
+        )
+        self.assertEqual(
+            harness.calls,
+            [
+                ("save_page_scale", "execute", (self.DB, "20", 2.0, 3.0), {}),
+                (
+                    "save_takeoff_positions",
+                    "execute",
+                    (
+                        self.DB,
+                        [("31", [5.0, 6.0, 7.0, 8.0]), ("30", [1.0, 2.0, 3.0, 4.0])],
+                    ),
+                    {},
+                ),
+            ],
+        )
+        self.assertEqual(
+            self.records(harness),
+            [
+                "record page:20@7 update",
+                "record takeoff:30@7 update",
+                "record takeoff:31@7 update",
+            ],
+        )
+        (request,) = harness.executor.requests
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.resources],
+            ["page:20@7", "takeoff:30@7", "takeoff:31@7"],
+        )
+        self.assertEqual(harness.reloads, [self.DB])
+        (event, payload) = harness.events.published[0]
+        self.assertEqual(payload["page_scale_uids"], ("20",))
+
+    def test_a_scale_undo_without_positions_does_not_write_positions(self):
+        harness = _Harness({}, sql=False)
+        commit = harness.service.execute_ai_scale_undo_local(
+            self.DB, "7", AiScaleUndoPlan("20", 2.0, 3.0, ())
+        )
+        self.assertIs(commit.committed, True)
+        self.assertEqual([call[0] for call in harness.calls], ["save_page_scale"])
+        self.assertEqual(self.records(harness), ["record page:20@7 update"])
+
+    def test_a_scale_undo_reports_each_failed_restore(self):
+        plan = AiScaleUndoPlan("20", 2.0, 3.0, (("30", (1.0, 2.0, 3.0, 4.0)),))
+        for use_case, message, calls in (
+            (
+                "save_page_scale",
+                "The previous page scale could not be restored.",
+                ["save_page_scale"],
+            ),
+            (
+                "save_takeoff_positions",
+                "The previous takeoff positions could not be restored.",
+                ["save_page_scale", "save_takeoff_positions"],
+            ),
+        ):
+            with self.subTest(use_case):
+                harness = _Harness({use_case: False}, sql=False)
+                commit = harness.service.execute_ai_scale_undo_local(
+                    self.DB, "7", plan
+                )
+                self.assertEqual(
+                    commit, AiChangesetCommit(False, None, message, False, False)
+                )
+                self.assertEqual([call[0] for call in harness.calls], calls)
+                self.assertEqual(harness.reloads, [])
+
+    # -- queued (SQL)
+
+    def test_a_queued_apply_submits_the_plan_and_projects_the_authoritative_result(
+        self,
+    ):
+        harness = _Harness(self.results())
+        plan = self.write_plan()
+        sequence = harness.service.queue_ai_changeset(
+            self.DB, "7", plan, lambda _result: None
+        )
+        self.assertEqual(sequence, 41)
+        self.assertEqual(harness.calls, [], "queueing must not write")
+        request, execute, _callback = harness.provider.requests[0]
+        self.assertEqual(request.owning_surface, "ai-takeoff")
+        self.assertEqual(request.bid_uid, 7)
+        self.assertEqual(
+            request.payload,
+            ProjectWritePayload.from_values("apply_ai_changeset", {"plan": asdict(plan)}),
+        )
+        self.assertEqual(request.payload.write_kind, "apply_ai_changeset")
+        self.assertEqual(
+            json.loads(request.payload.values_json)["plan"]["folder_name"], "AI folder"
+        )
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.resources],
+            ["conditions_collection:7@7", "takeoffs_collection:7@7"],
+        )
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.dependency_resources],
+            ["condition:11@7", "page:20@7", "page:21@7"],
+        )
+        execution = execute()
+        self.assertEqual(execution.outcome_status, MutationOutcomeStatus.COMMITTED)
+        authoritative = execution.authoritative_result
+        self.assertEqual(execution.created_resource_ids, ("100", "101", "102"))
+        self.assertEqual(authoritative.created_resource_ids, ("100", "101", "102"))
+        self.assertEqual(
+            authoritative.created_uid_maps,
+            (
+                ("condition_folders", (("0", "90"),)),
+                ("conditions", (("k1", "91"),)),
+                ("takeoffs", (("0", "100"), ("1", "101"), ("2", "102"))),
+            ),
+        )
+        self.assertEqual(authoritative.affected_condition_uids, ("91",))
+        self.assertEqual(authoritative.affected_families, ("takeoffs", "conditions"))
+        executed = harness.executor.requests[-1]
+        self.assertEqual(
+            [harness.resource_text(r) for r in executed.resources],
+            [
+                "condition:11@7",
+                "conditions_collection:7@7",
+                "page:20@7",
+                "page:21@7",
+                "takeoffs_collection:7@7",
+            ],
+        )
+
+    def test_a_queued_apply_with_an_existing_folder_maps_no_folder(self):
+        harness = _Harness(self.results())
+        plan = self.write_plan(existing_folder_uid="3", conditions=(), takeoffs=())
+        harness.service.queue_ai_changeset(self.DB, "7", plan, lambda _result: None)
+        request, execute, _callback = harness.provider.requests[0]
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.resources],
+            ["takeoffs_collection:7@7"],
+        )
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.dependency_resources],
+            ["condition:11@7", "condition_folder:3@7"],
+        )
+        authoritative = execute().authoritative_result
+        self.assertEqual(
+            authoritative.created_uid_maps,
+            (("condition_folders", ()), ("conditions", ()), ("takeoffs", ())),
+        )
+        self.assertEqual(authoritative.affected_condition_uids, ())
+
+    def test_a_queued_undo_submits_the_plan_and_names_the_affected_families(self):
+        harness = _Harness({})
+        plan = AiChangesetUndoPlan(("100", "101"), ("91", "92"), "90")
+        sequence = harness.service.queue_ai_changeset_undo(
+            self.DB, "7", plan, lambda _result: None
+        )
+        self.assertEqual(sequence, 41)
+        self.assertEqual(harness.calls, [], "queueing must not write")
+        request, execute, _callback = harness.provider.requests[0]
+        self.assertEqual(request.owning_surface, "ai-takeoff")
+        self.assertEqual(request.bid_uid, 7)
+        self.assertEqual(
+            request.payload,
+            ProjectWritePayload.from_values("undo_ai_changeset", {"plan": asdict(plan)}),
+        )
+        self.assertEqual(request.payload.write_kind, "undo_ai_changeset")
+        self.assertEqual(request.dependency_resources, ())
+        self.assertEqual(
+            [harness.resource_text(r) for r in request.resources],
+            [
+                "condition:91@7",
+                "condition:92@7",
+                "condition_folder:90@7",
+                "conditions_collection:7@7",
+                "takeoff:100@7",
+                "takeoff:101@7",
+                "takeoffs_collection:7@7",
+            ],
+        )
+        execution = execute()
+        self.assertEqual(execution.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            [call[:2] for call in harness.calls],
+            [
+                ("delete_takeoffs", "execute"),
+                ("delete_conditions", "execute"),
+                ("delete_condition_folders", "execute"),
+            ],
+        )
+        authoritative = execution.authoritative_result
+        self.assertEqual(authoritative.affected_condition_uids, ("91", "92"))
+        self.assertEqual(authoritative.affected_families, ("takeoffs", "conditions"))
+
+    def test_queued_ai_commands_refuse_a_locked_active_bid_without_queueing(self):
+        undo = AiChangesetUndoPlan(("100",), (), None)
+        for label, command in (
+            (
+                "apply",
+                lambda s: s.queue_ai_changeset(
+                    self.DB, "7", self.write_plan(), lambda _result: None
+                ),
+            ),
+            (
+                "undo",
+                lambda s: s.queue_ai_changeset_undo(
+                    self.DB, "7", undo, lambda _result: None
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                harness = _Harness(self.results())
+                harness.data.locked = True
+                with self.assertRaises(ActiveBidLockedError):
+                    command(harness.service)
+                self.assertEqual(harness.provider.requests, [])
+
+
+_QUEUE_FAILURE_MESSAGES = {
+    "queue_project_create": "The project creation was incomplete.",
+    "queue_bid_create": "The bid creation was incomplete.",
+    "queue_bid_create orphan": "The bid creation was incomplete.",
+    "queue_project_rename": "The project rename was incomplete.",
+    "queue_bids_move": "The bid move was incomplete.",
+    "queue_bids_move to orphan": "The bid move was incomplete.",
+    "queue_bids_duplicate": "The bid duplication was incomplete.",
+    "queue_bids_delete": "The bid deletion was incomplete.",
+    "queue_projects_delete": "The project deletion was incomplete.",
+    "queue_bid_job_status_update": "The bid job-status update was incomplete.",
+    "queue_bid_areas_save": "The bid-area update was incomplete.",
+    "queue_cover_sheet_save": "The cover-sheet update was incomplete.",
+    "queue_condition_types_save": "The condition-type update was incomplete.",
+    "queue_default_layer_insert": "The default-layer creation was incomplete.",
+    "queue_default_layers_delete": "The default-layer deletion was incomplete.",
+    "queue_default_layer_update rename": "The default-layer update was incomplete.",
+    "queue_default_layer_update show": "The default-layer update was incomplete.",
+    "queue_default_layer_update show_all": "The default-layer update was incomplete.",
+    "queue_default_layer_update reorder": "The default-layer update was incomplete.",
+    "queue_job_statuses_save": "The master-data update was incomplete.",
+    "queue_employees_save": "The master-data update was incomplete.",
+    "queue_pay_classes_save": "The master-data update was incomplete.",
+    "queue_pages_delete": "The page deletion was incomplete.",
+    "queue_pages_delete single": "The page deletion was incomplete.",
+    "queue_condition_create": "The condition insertion was incomplete.",
+    "queue_condition_create plain": "The condition insertion was incomplete.",
+    "queue_conditions_delete": "The condition deletion was incomplete.",
+    "queue_conditions_duplicate": (
+        "The condition duplicate returned an incomplete identity map."
+    ),
+    # The condition update use case reports its own error text.
+    "queue_conditions_update": "rejected",
+    "queue_conditions_update clearing type": "rejected",
+    "queue_conditions_renumber": "The condition reorder was incomplete.",
+    "queue_condition_folder_create": "The condition folder insertion was incomplete.",
+    "queue_condition_folder_create root": (
+        "The condition folder insertion was incomplete."
+    ),
+    "queue_condition_folder_rename": "The condition folder rename was incomplete.",
+    "queue_condition_folders_delete": "The condition folder deletion was incomplete.",
+    "queue_layer_insert": "The layer insertion was incomplete.",
+    "queue_layer_delete": "The layer deletion was incomplete.",
+    "queue_layers_delete": "The layer deletion was incomplete.",
+    "queue_layer_reorder": "The layer reorder was incomplete.",
+    "queue_all_layers_show": "The bulk Layer visibility update was incomplete.",
+    "queue_layer_rename": "The layer rename was incomplete.",
+}
+_PLAN_LOCAL_FAILURE_MESSAGES = {
+    "delete_local mixed": "The annotation deletion was incomplete.",
+    "delete_local takeoffs only without refresh": (
+        "The takeoff deletion was incomplete."
+    ),
+    "delete_local annotations only": "The annotation deletion was incomplete.",
+    "geometry_local mixed": "The takeoff position update was incomplete.",
+    "geometry_local rotation only": "The takeoff rotation update was incomplete.",
+    "geometry_local annotations only without refresh": (
+        "The annotation position update was incomplete."
+    ),
+    "properties_local takeoff_text": "The plan property update was incomplete.",
+    "properties_local takeoff_area": "The plan property update was incomplete.",
+    "properties_local takeoff_condition": "The plan property update was incomplete.",
+    "properties_local takeoff_negative": "The plan property update was incomplete.",
+    "properties_local takeoff_curve": "The plan property update was incomplete.",
+    "properties_local annotation_text": "The plan property update was incomplete.",
+    "properties_local annotation_style without refresh": (
+        "The plan property update was incomplete."
+    ),
+    "paste_local same bid": "The paste returned an incomplete Takeoff UID map.",
+    "paste_local cross bid": "The paste did not create every required condition.",
+}
+_PLAN_QUEUE_FAILURE_MESSAGES = {
+    "placement": (
+        "The takeoff insertion returned an incomplete authoritative identity set."
+    ),
+    "delete mixed": "The annotation deletion was incomplete.",
+    "delete takeoffs only": "The takeoff deletion was incomplete.",
+    "delete annotations only": "The annotation deletion was incomplete.",
+    "geometry mixed": "The takeoff position update was incomplete.",
+    "geometry rotation only": "The takeoff rotation update was incomplete.",
+    "geometry annotations only": "The annotation position update was incomplete.",
+    "properties takeoff_text": "The plan property update was incomplete.",
+    "properties takeoff_area": "The plan property update was incomplete.",
+    "properties takeoff_condition": "The plan property update was incomplete.",
+    "properties takeoff_negative": "The plan property update was incomplete.",
+    "properties takeoff_curve": "The plan property update was incomplete.",
+    "properties annotation_text": "The plan property update was incomplete.",
+    "properties annotation_style": "The plan property update was incomplete.",
+    "paste same bid": "The paste returned an incomplete Takeoff UID map.",
+    "paste cross bid": "The paste did not create every required condition.",
+    "page scale": "The page setting update was incomplete.",
+    "page show_mode": "The page setting update was incomplete.",
+    "page overlay_image": "The page setting update was incomplete.",
+    "page overlay_rect": "The page setting update was incomplete.",
+    "page invert": "The page setting update was incomplete.",
+    "page bitonal": "The page setting update was incomplete.",
+    "page image_adjustments": "The page setting update was incomplete.",
+    "page area": "The page setting update was incomplete.",
+    "page name": "The page setting update was incomplete.",
+    "page layer_show": "The page setting update was incomplete.",
+}
+
+
+class ProjectWriteFailureMessageContractTests(unittest.TestCase):
+    """The exact error text of every aborted queued or local command. The older sweep
+    only asserted that *a* RuntimeError (or a loose "incomplete" pattern) occurred, so
+    a changed or blanked message passed; these tables pin the text the operator sees
+    (generated from the production strings and read through once)."""
+
+    def test_every_queued_project_command_aborts_with_its_own_message(self):
+        messages = {}
+        for label, results, submit in _queue_rows():
+            probe = _Harness(results)
+            submit(probe.service, lambda _result: None)
+            probe.queue_report()
+            if not probe.calls:
+                continue  # project import: its work is an injected callable
+            use_case, method = probe.calls[0][0], probe.calls[0][1]
+            if use_case == "update_condition":
+                failure = UpdateConditionResultDto(success=False, error="rejected")
+            else:
+                failure = None
+            harness = _Harness({**results, (use_case, method): failure})
+            submit(harness.service, lambda _result: None)
+            _request, execute, _callback = harness.provider.requests[0]
+            with self.assertRaises(RuntimeError) as raised:
+                execute()
+            messages[label] = str(raised.exception)
+        self.assertEqual(messages, _QUEUE_FAILURE_MESSAGES)
+
+    def test_every_local_plan_command_reports_its_own_failure_message(self):
+        messages = {}
+        for label, results, command in _plan_local_rows():
+            probe = _Harness(results, sql=False)
+            command(probe.service)
+            use_case, method = probe.calls[0][0], probe.calls[0][1]
+            harness = _Harness(
+                {**results, (use_case, method): _failure_value(use_case, method)},
+                sql=False,
+            )
+            result = command(harness.service)
+            self.assertEqual(
+                result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+            )
+            messages[label] = result.message
+        self.assertEqual(messages, _PLAN_LOCAL_FAILURE_MESSAGES)
+
+    def test_every_queued_plan_command_aborts_with_its_own_message(self):
+        messages = {}
+        for label, results, submit, setup in _plan_queue_rows():
+            probe = _Harness(results)
+            if setup:
+                setup(probe)
+            submit(probe.service, lambda _result: None)
+            probe.queue_report()
+            use_case, method = probe.calls[0][0], probe.calls[0][1]
+            harness = _Harness(
+                {**results, (use_case, method): _failure_value(use_case, method)}
+            )
+            if setup:
+                setup(harness)
+            submit(harness.service, lambda _result: None)
+            _request, execute, _callback = harness.provider.requests[0]
+            with self.assertRaises(RuntimeError) as raised:
+                execute()
+            messages[label] = str(raised.exception)
+        self.assertEqual(messages, _PLAN_QUEUE_FAILURE_MESSAGES)
+
+    def test_a_failed_condition_update_uses_the_use_case_error_or_its_default(self):
+        for error, expected in (
+            ("rejected by rule", "rejected by rule"),
+            ("", "The condition update was incomplete."),
+            (None, "The condition update was incomplete."),
+        ):
+            with self.subTest(error=error):
+                harness = _Harness(
+                    {
+                        "update_condition": UpdateConditionResultDto(
+                            success=False, error=error
+                        )
+                    }
+                )
+                harness.service.queue_conditions_update(
+                    _Harness.DATABASE,
+                    "7",
+                    ["10"],
+                    {"name": "Renamed"},
+                    lambda _result: None,
+                )
+                _request, execute, _callback = harness.provider.requests[0]
+                with self.assertRaises(RuntimeError) as raised:
+                    execute()
+                self.assertEqual(str(raised.exception), expected)
+
+    def test_a_failed_duplicate_target_update_uses_the_use_case_error_or_its_default(
+        self,
+    ):
+        for error, expected in (
+            ("target refused", "target refused"),
+            ("", "The duplicated condition target update was incomplete."),
+        ):
+            with self.subTest(error=error):
+                harness = _Harness(
+                    {
+                        "duplicate_conditions": {"10": "50"},
+                        "update_condition": UpdateConditionResultDto(
+                            success=False, error=error
+                        ),
+                    }
+                )
+                harness.service.queue_conditions_duplicate(
+                    _Harness.DATABASE,
+                    "7",
+                    ["10"],
+                    lambda _result: None,
+                    target_changes={"name": "Copy"},
+                )
+                _request, execute, _callback = harness.provider.requests[0]
+                with self.assertRaises(RuntimeError) as raised:
+                    execute()
+                self.assertEqual(str(raised.exception), expected)
+
+    def test_queue_time_validation_messages_are_exact(self):
+        database = _Harness.DATABASE
+
+        def noop(_result):
+            return None
+
+        cases = (
+            (
+                "placement",
+                lambda s: s.queue_takeoff_placement(database, "7", [], "op", noop),
+                "A queued takeoff placement requires at least one takeoff",
+            ),
+            (
+                "bid move",
+                lambda s: s.queue_bids_move(database, [], "3", noop),
+                "A queued bid move requires at least one bid",
+            ),
+            (
+                "bid duplication",
+                lambda s: s.queue_bids_duplicate(database, [], "3", noop),
+                "A queued bid duplication requires at least one bid",
+            ),
+            (
+                "bid deletion",
+                lambda s: s.queue_bids_delete(database, ["", None], noop),
+                "A queued bid deletion requires at least one bid",
+            ),
+            (
+                "project deletion",
+                lambda s: s.queue_projects_delete(database, [], noop),
+                "A queued project deletion requires at least one project",
+            ),
+            (
+                "condition types",
+                lambda s: s.queue_condition_types_save(database, {}, noop),
+                "A queued condition-type update requires changes",
+            ),
+            (
+                "default layers deletion",
+                lambda s: s.queue_default_layers_delete(database, [], noop),
+                "A queued default-layer deletion requires layers",
+            ),
+            (
+                "default layer update",
+                lambda s: s.queue_default_layer_update(database, "bogus", {}, noop),
+                "Unsupported default-layer update",
+            ),
+            (
+                "job statuses",
+                lambda s: s.queue_job_statuses_save(database, {}, noop),
+                "A queued master-data update requires changes",
+            ),
+            (
+                "page deletion",
+                lambda s: s.queue_pages_delete(database, "7", [], noop),
+                "A queued page deletion requires at least one page",
+            ),
+            (
+                "condition deletion",
+                lambda s: s.queue_conditions_delete(database, "7", [], noop),
+                "A queued condition deletion requires a condition",
+            ),
+            (
+                "condition duplicate",
+                lambda s: s.queue_conditions_duplicate(database, "7", [], noop),
+                "A queued condition duplicate requires a condition",
+            ),
+            (
+                "condition update without items",
+                lambda s: s.queue_conditions_update(
+                    database, "7", [], {"name": "x"}, noop
+                ),
+                "A queued condition update requires items and changes",
+            ),
+            (
+                "condition update without changes",
+                lambda s: s.queue_conditions_update(database, "7", ["10"], {}, noop),
+                "A queued condition update requires items and changes",
+            ),
+            (
+                "condition reorder",
+                lambda s: s.queue_conditions_renumber(database, "7", [], noop),
+                "A queued condition reorder requires conditions",
+            ),
+            (
+                "folder deletion",
+                lambda s: s.queue_condition_folders_delete(database, "7", [], noop),
+                "A queued folder deletion requires a folder",
+            ),
+            (
+                "layer deletion",
+                lambda s: s.queue_layers_delete(database, "7", [], noop),
+                "A queued layer deletion requires at least one layer",
+            ),
+            (
+                "bulk layer visibility",
+                lambda s: s.queue_all_layers_show(database, "7", True, [], noop),
+                "A bulk Layer visibility update requires Layer UIDs",
+            ),
+            (
+                "all-layers page setting",
+                lambda s: s.queue_page_setting_if_sql(
+                    database, "7", "all_layers_show", [True]
+                ),
+                "An all-Layers visibility update requires a value and Layer UIDs",
+            ),
+        )
+        for label, command, message in cases:
+            with self.subTest(label):
+                harness = _Harness()
+                with self.assertRaises(ValueError) as raised:
+                    command(harness.service)
+                self.assertEqual(str(raised.exception), message)
+                self.assertEqual(harness.provider.requests, [])
+
+    def test_a_blocked_condition_folder_deletion_names_the_folder_in_use(self):
+        harness = _Harness()
+        harness.data.get_bid_condition_folders = lambda: {
+            "F1": BidConditionFolder(uid="F1", name="Walls"),
+            "F2": BidConditionFolder(uid="F2", name="Floors", parent_uid="F1"),
+        }
+        harness.data.conditions = {
+            "10": Condition(uid="10", folder_uid="missing"),
+            "11": Condition(uid="11", folder_uid="F2"),
+        }
+        validation = harness.service.validate_condition_folder_delete(
+            _Harness.DATABASE, "7", ["F1", "F2", "F3"]
+        )
+        # The first condition names a folder that is not in the Bid; it must not stop
+        # the scan: the second condition keeps F2 and its ancestor F1 in use.
+        self.assertEqual(validation.blocked_uids, ["F1", "F2"])
+        self.assertEqual(validation.failure_reason, "condition_folder_in_use")
+        with self.assertRaises(ValueError) as raised:
+            harness.service.queue_condition_folders_delete(
+                _Harness.DATABASE, "7", ["F1"], lambda _result: None
+            )
+        self.assertEqual(
+            str(raised.exception), "A requested condition folder is still in use"
+        )
+        self.assertEqual(harness.provider.requests, [])
+
+    def test_the_constructor_names_each_missing_collaborator(self):
+        harness = _Harness()
+        annotation = "ProjectWriteService requires annotation write use cases"
+        cases = [
+            ("bid_write_guard", "ProjectWriteService requires bid_write_guard"),
+            (
+                "project_data_service",
+                "ProjectWriteService requires project_data_service",
+            ),
+            ("mutation_executor", "ProjectWriteService requires mutation_executor"),
+            ("session_registry", "ProjectWriteService requires session_registry"),
+            ("concurrency_tokens", "ProjectWriteService requires concurrency_tokens"),
+            (
+                "sql_collaboration_provider",
+                "ProjectWriteService requires sql_collaboration_provider",
+            ),
+        ] + [
+            (name, annotation)
+            for name in (
+                "delete_annotations",
+                "insert_annotations",
+                "save_annotation_positions",
+                "save_annotation_text_properties",
+                "save_annotation_styles",
+            )
+        ]
+        for name, message in cases:
+            with self.subTest(name):
+                arguments = dict(harness.constructor_arguments, **{name: None})
+                with self.assertRaises(ValueError) as raised:
+                    ProjectWriteService(**arguments)
+                self.assertEqual(str(raised.exception), message)
+
+
+class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
+    """Exact text of the remaining error paths of queued and local commands: results
+    that are committed carry no message, the local plan commands name the collaboration
+    queue for SQL databases, and each incomplete-result failure reports its own text."""
+
+    DATABASE = _Harness.DATABASE
+
+    @staticmethod
+    def queue_row(label):
+        (row,) = [row for row in _queue_rows() if row[0] == label]
+        return row
+
+    def queued_failure(self, label, overrides):
+        _label, results, submit = self.queue_row(label)
+        harness = _Harness({**results, **overrides})
+        submit(harness.service, lambda _result: None)
+        _request, execute, _callback = harness.provider.requests[0]
+        with self.assertRaises(RuntimeError) as raised:
+            execute()
+        return str(raised.exception)
+
+    def test_committed_queued_commands_report_an_empty_message(self):
+        seen = 0
+        for label, results, submit in _queue_rows():
+            with self.subTest(command=label):
+                harness = _Harness(results)
+                submit(harness.service, lambda _result: None)
+                _request, execute, _callback = harness.provider.requests[0]
+                execution = execute()
+                self.assertEqual(
+                    execution.outcome_status, MutationOutcomeStatus.COMMITTED
+                )
+                self.assertEqual(execution.message, "")
+                seen += 1
+        for label, results, submit, setup in _plan_queue_rows():
+            with self.subTest(command=label):
+                harness = _Harness(results)
+                if setup:
+                    setup(harness)
+                submit(harness.service, lambda _result: None)
+                _request, execute, _callback = harness.provider.requests[0]
+                execution = execute()
+                self.assertEqual(
+                    execution.outcome_status, MutationOutcomeStatus.COMMITTED
+                )
+                self.assertEqual(execution.message, "")
+                seen += 1
+        self.assertGreater(seen, 60)
+
+    def test_a_conflict_message_replaces_the_default_rejection_text(self):
+        for label, results, submit in _queue_rows():
+            with self.subTest(command=label):
+                harness = _Harness(results)
+                harness.executor.status = MutationOutcomeStatus.CONFLICT
+                harness.executor.conflict = _synchronization_conflict()
+                submit(harness.service, lambda _result: None)
+                _request, execute, _callback = harness.provider.requests[0]
+                execution = execute()
+                self.assertEqual(execution.message, "stale")
+                self.assertIs(execution.conflict, harness.executor.conflict)
+
+    def test_the_local_plan_commands_name_the_collaboration_queue_for_sql(self):
+        prefixes = {
+            "delete_local": "SQL plan-item deletion must use the collaboration queue",
+            "geometry_local": "SQL plan geometry must use the collaboration queue",
+            "properties_local": "SQL plan properties must use the collaboration queue",
+            "paste_local": "SQL paste must use the collaboration queue",
+        }
+        seen = set()
+        for label, results, command in _plan_local_rows():
+            prefix = label.split()[0]
+            with self.subTest(command=label):
+                harness = _Harness(results, sql=True)
+                with self.assertRaises(ValueError) as raised:
+                    command(harness.service)
+                self.assertEqual(str(raised.exception), prefixes[prefix])
+                seen.add(prefix)
+        self.assertEqual(seen, set(prefixes))
+
+    def test_a_duplicate_with_reassignment_must_name_exactly_the_original_condition(
+        self,
+    ):
+        harness = _Harness()
+        with self.assertRaises(ValueError) as raised:
+            harness.service.queue_conditions_duplicate(
+                self.DATABASE,
+                "7",
+                ["10", "11"],
+                lambda _result: None,
+                reassign_takeoffs=ConditionTakeoffReassignment("10", "20", ("30",)),
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "Reassignment requires exactly the original Condition.",
+        )
+        self.assertEqual(harness.provider.requests, [])
+
+    def test_a_stale_submission_baseline_asks_for_a_refresh_with_its_own_text(self):
+        harness = _Harness()
+        harness.tokens.guard = True
+        harness.tokens.expected_versions = lambda _database, _resources: ()
+        with self.assertRaises(ValueError) as raised:
+            harness.service.queue_conditions_duplicate(
+                self.DATABASE,
+                "7",
+                ["10"],
+                lambda _result: None,
+                reassign_takeoffs=ConditionTakeoffReassignment("10", "20", ("30",)),
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "Refresh the Bid before duplicating and reassigning Takeoffs.",
+        )
+        self.assertEqual(harness.provider.requests, [])
+        (row,) = [
+            row
+            for row in _plan_queue_rows()
+            if row[0] == "properties takeoff_text"
+        ]
+        _label, results, submit, setup = row
+        harness = _Harness(results)
+        setup(harness)
+        harness.tokens.expected_versions = lambda _database, _resources: ()
+        with self.assertRaises(ValueError) as raised:
+            submit(harness.service, lambda _result: None)
+        self.assertEqual(
+            str(raised.exception), "Refresh the Bid before editing Takeoff properties."
+        )
+        self.assertEqual(harness.provider.requests, [])
+
+    def test_a_property_request_for_an_unknown_takeoff_is_refused(self):
+        harness = _Harness(sql=False)
+        result = harness.service.execute_plan_properties_local(
+            self.DATABASE,
+            "7",
+            "takeoff_text",
+            [("99", {"Text": "T"})],
+        )
+        self.assertEqual(
+            result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+        )
+        self.assertEqual(
+            result.message, "A property mutation Takeoff is no longer authoritative."
+        )
+        self.assertEqual((harness.calls, harness.reloads), ([], []))
+
+    def test_a_failed_bid_duplication_assignment_is_reported(self):
+        self.assertEqual(
+            self.queued_failure(
+                "queue_bids_duplicate", {"duplicate_bid": "70", "move_bids": False}
+            ),
+            "The duplicated bid assignment was incomplete.",
+        )
+
+    def test_an_incomplete_identity_map_is_reported_per_family(self):
+        self.assertEqual(
+            self.queued_failure("queue_bid_areas_save", {"save_bid_areas": {}}),
+            "The bid-area update returned an incomplete identity map.",
+        )
+        self.assertEqual(
+            self.queued_failure(
+                "queue_condition_types_save", {"save_condition_types": {}}
+            ),
+            "The condition-type update returned an incomplete identity map.",
+        )
+        for label, use_case in (
+            ("queue_job_statuses_save", "save_job_statuses"),
+            ("queue_employees_save", "save_employees"),
+            ("queue_pay_classes_save", "save_pay_classes"),
+        ):
+            with self.subTest(label):
+                self.assertEqual(
+                    self.queued_failure(label, {use_case: {}}),
+                    "The master-data update returned an incomplete identity map.",
+                )
+
+    def test_a_condition_type_still_in_use_cannot_be_deleted_by_the_queued_work(self):
+        harness = _Harness()
+        harness.service.queue_condition_types_save(
+            self.DATABASE, {"deleted_uids": ["used"]}, lambda _result: None
+        )
+        _request, execute, _callback = harness.provider.requests[0]
+        with self.assertRaises(RuntimeError) as raised:
+            execute()
+        self.assertEqual(
+            str(raised.exception),
+            "A condition type is still referenced by a condition.",
+        )
+        self.assertEqual(harness.calls, [])
+
+    def test_a_project_import_without_identities_is_reported(self):
+        harness = _Harness()
+        harness.service.queue_project_import(
+            self.DATABASE,
+            "9",
+            _import_payload(),
+            lambda _recorder: "not a mapping",
+            lambda _result: None,
+        )
+        _request, execute, _callback = harness.provider.requests[0]
+        with self.assertRaises(RuntimeError) as raised:
+            execute()
+        self.assertEqual(
+            str(raised.exception),
+            "The project import did not return authoritative identities.",
+        )
+
+    def test_an_incomplete_paste_identity_map_names_the_missing_family(self):
+        for label in ("paste same bid", "paste cross bid"):
+            (row,) = [row for row in _plan_queue_rows() if row[0] == label]
+            _label, results, submit, setup = row
+            calls = []
+
+            def insert(_database, _bid, specs, _remap=None, calls=calls):
+                calls.append(len(specs))
+                return [f"9{index}" for index in range(len(specs))] if len(calls) == 1 else []
+
+            with self.subTest(label, case="named views"):
+                harness = _Harness({**results, "insert_annotations": lambda *_a: []})
+                if setup:
+                    setup(harness)
+                submit(harness.service, lambda _result: None)
+                _request, execute, _callback = harness.provider.requests[0]
+                with self.assertRaises(RuntimeError) as raised:
+                    execute()
+                self.assertEqual(
+                    str(raised.exception),
+                    "The paste returned an incomplete named-view UID map.",
+                )
+            with self.subTest(label, case="annotations"):
+                harness = _Harness({**results, "insert_annotations": insert})
+                if setup:
+                    setup(harness)
+                submit(harness.service, lambda _result: None)
+                _request, execute, _callback = harness.provider.requests[0]
+                with self.assertRaises(RuntimeError) as raised:
+                    execute()
+                self.assertEqual(
+                    str(raised.exception),
+                    "The paste returned an incomplete annotation UID map.",
+                )
+
+    def test_a_local_paste_with_an_incomplete_identity_map_names_the_missing_family(
+        self,
+    ):
+        for label in ("paste_local same bid", "paste_local cross bid"):
+            (row,) = [row for row in _plan_local_rows() if row[0] == label]
+            _label, results, command = row
+            calls = []
+
+            def insert(_database, _bid, specs, _remap=None, calls=calls):
+                calls.append(len(specs))
+                return (
+                    [f"9{index}" for index in range(len(specs))]
+                    if len(calls) == 1
+                    else []
+                )
+
+            for case, override, message in (
+                (
+                    "named views",
+                    lambda *_args: [],
+                    "The paste returned an incomplete named-view UID map.",
+                ),
+                (
+                    "annotations",
+                    insert,
+                    "The paste returned an incomplete annotation UID map.",
+                ),
+            ):
+                with self.subTest(label, case=case):
+                    calls.clear()
+                    harness = _Harness({**results, "insert_annotations": override}, sql=False)
+                    result = command(harness.service)
+                    self.assertEqual(
+                        result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+                    )
+                    self.assertEqual(result.message, message)
+                    self.assertEqual((harness.reloads, harness.events.published), ([], []))
+
+    def test_a_paste_whose_takeoffs_are_each_others_parents_is_refused(self):
+        def cycle_payload():
+            return PlanItemsPastePayload(
+                source_bid_uid="7",
+                destination_bid_uid="7",
+                takeoff_source_uids=("a", "b"),
+                takeoff_specs=(
+                    InsertTakeoffSpec(
+                        condition_uid="c1",
+                        page_uid="p1",
+                        area_uid="0",
+                        position=[0.0, 0.0, 1.0, 0.0],
+                        parent_uid="b",
+                    ),
+                    InsertTakeoffSpec(
+                        condition_uid="c1",
+                        page_uid="p1",
+                        area_uid="0",
+                        position=[0.0, 1.0, 1.0, 1.0],
+                        parent_uid="a",
+                    ),
+                ),
+            )
+
+        message = "The paste contains a Takeoff parent cycle."
+        harness = _Harness()
+        harness.service.queue_plan_items_paste(
+            self.DATABASE, cycle_payload(), lambda _result: None
+        )
+        _request, execute, _callback = harness.provider.requests[0]
+        with self.assertRaises(ValueError) as raised:
+            execute()
+        self.assertEqual(str(raised.exception), message)
+        self.assertEqual(harness.calls, [])
+        local = _Harness(sql=False)
+        result = local.service.execute_plan_items_paste_local(
+            self.DATABASE, cycle_payload()
+        )
+        self.assertEqual(
+            result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+        )
+        self.assertEqual(result.message, message)
+        self.assertEqual(local.calls, [])
+
+    def test_a_page_image_batch_needs_one_adjustment_set(self):
+        harness = _Harness()
+        harness.service.queue_page_settings(
+            self.DATABASE,
+            "7",
+            "image_adjustments",
+            [["20", 90, 1, 0, 1, 0], ["21", 0, 1, 0, 1, 0]],
+            lambda _result: None,
+        )
+        _request, execute, _callback = harness.provider.requests[0]
+        with self.assertRaises(ValueError) as raised:
+            execute()
+        self.assertEqual(
+            str(raised.exception), "A page-image batch requires one adjustment set"
+        )
+        self.assertEqual(harness.calls, [])

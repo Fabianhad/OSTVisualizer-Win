@@ -5,8 +5,12 @@ from ost_visualizer.infrastructure.database.annotation_storage import (
 )
 from ost_visualizer.infrastructure.mdb.components.serialization import (
     TEXT_POSITION_TABLES,
+    coerce_binary_column_value,
     decode_annotation_text,
+    decode_text_blob,
     encode_annotation_text,
+    encode_position,
+    encode_text_blob,
     parse_position_storage,
     serialize_position_for_table,
 )
@@ -137,3 +141,73 @@ class AnnotationFamilyGeometryTests(unittest.TestCase):
                     ANNOTATION_TABLE_BY_TYPE[kind], position
                 )
                 self.assertEqual(parse_position_storage(stored), position)
+
+
+class TextBlobAndPositionEncodingTests(unittest.TestCase):
+    def test_text_blobs_are_utf8_and_only_strings_are_encoded(self):
+        self.assertIsNone(encode_text_blob(None))
+        self.assertEqual(encode_text_blob("caf\u00e9"), b"caf\xc3\xa9")
+        self.assertEqual(encode_text_blob(""), b"")
+        payload = b"\xff\x00raw"
+        self.assertIs(encode_text_blob(payload), payload)
+        self.assertEqual(encode_text_blob(7), 7)
+
+    def test_text_blob_decoding_handles_empty_bytes_text_and_invalid_utf8(self):
+        for empty in (None, b"", "", 0, bytearray()):
+            with self.subTest(empty=empty):
+                self.assertEqual(decode_text_blob(empty), "")
+        self.assertEqual(decode_text_blob(b"caf\xc3\xa9"), "caf\u00e9")
+        self.assertEqual(decode_text_blob(bytearray(b"memo")), "memo")
+        self.assertEqual(decode_text_blob(b"ok\xffend"), "ok\ufffdend")
+        self.assertEqual(decode_text_blob("already text"), "already text")
+        self.assertEqual(decode_text_blob(42), "42")
+
+    def test_text_blob_roundtrip_keeps_non_ascii_text(self):
+        for text in ("caf\u00e9", "\u4e2d\u6587", "tab\tnewline\n"):
+            with self.subTest(text=text):
+                self.assertEqual(decode_text_blob(encode_text_blob(text)), text)
+
+    def test_binary_column_coercion_only_encodes_strings(self):
+        self.assertEqual(coerce_binary_column_value("caf\u00e9"), b"caf\xc3\xa9")
+        raw = bytearray(b"\x00\x01")
+        self.assertIs(coerce_binary_column_value(raw), raw)
+        self.assertIsNone(coerce_binary_column_value(None))
+        self.assertEqual(coerce_binary_column_value(12), 12)
+
+    def test_annotation_text_passes_non_text_through_and_cleans_text_input(self):
+        raw = b"caf\xe9"
+        self.assertIs(encode_annotation_text(raw), raw)
+        self.assertIsNone(encode_annotation_text(None))
+        self.assertEqual(decode_annotation_text("a\r\nb\x00c"), "a\nbc")
+        self.assertEqual(decode_annotation_text(bytearray(b"caf\xe9")), "caf\u00e9")
+        for empty in (None, b"", ""):
+            self.assertEqual(decode_annotation_text(empty), "")
+        self.assertEqual(decode_annotation_text(12), "12")
+
+    def test_positions_round_to_three_decimals_and_trim_trailing_zeros(self):
+        self.assertEqual(
+            encode_position([10.0, 100.0, 0.5, -2.0004, 1.23456, 0.0006]),
+            b"10;100;0.5;-2;1.235;0.001\n",
+        )
+        self.assertEqual(encode_position([]), b"\n")
+        self.assertEqual(encode_position([7]), b"7\n")
+
+    def test_preserved_indices_keep_full_float_precision_and_others_still_round(self):
+        self.assertEqual(
+            encode_position([1.23456, 1.23456, 4.0], preserve_indices=frozenset({1})),
+            b"1.235;1.23456;4\n",
+        )
+        self.assertEqual(
+            encode_position([3, 4], preserve_indices=frozenset({0, 1})), b"3.0;4.0\n"
+        )
+
+    def test_position_text_uses_latin1_bytes_for_binary_tables(self):
+        self.assertEqual(serialize_position_for_table("BidTakeoffs", [1.0]), b"1\n")
+        self.assertEqual(serialize_position_for_table("BidTexts", [1.0]), "1.0\n")
+
+    def test_position_storage_decodes_any_byte_without_failing(self):
+        self.assertEqual(parse_position_storage(b"\xff;1"), [])
+        self.assertEqual(parse_position_storage(bytes([0x31, 0x3B, 0x32])), [1.0, 2.0])
+
+    def test_positions_round_half_way_values_once_to_three_decimals(self):
+        self.assertEqual(encode_position([0.00049999, 1.00049999]), b"0;1\n")

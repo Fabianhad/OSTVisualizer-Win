@@ -55,3 +55,23 @@ class AnnotationCaptionDtoTests(unittest.TestCase):
             {field.name for field in fields(ResolvedAnnotationCaptionDto)},
             {"lines", "label", "measurement_types"},
         )
+
+
+class AnnotationCaptionDtoValueTests(unittest.TestCase):
+    def test_dtos_are_immutable_and_resolved_captions_default_to_empty(self):
+        from dataclasses import FrozenInstanceError
+        from ost_visualizer.application.dtos.annotation_caption_dto import (
+            AnnotationCaptionSettingsDto,
+            AnnotationCaptionSpec,
+            ResolvedAnnotationCaptionDto,
+        )
+
+        resolved = ResolvedAnnotationCaptionDto()
+        self.assertEqual((resolved.lines, resolved.label, resolved.measurement_types), ((), "", 0))
+        with self.assertRaises(FrozenInstanceError):
+            resolved.label = "x"
+        with self.assertRaises(FrozenInstanceError):
+            AnnotationCaptionSettingsDto(True, ()).enabled = False
+        with self.assertRaises(FrozenInstanceError):
+            AnnotationCaptionSpec("t", 1, "p").title = "x"
+        self.assertEqual(AnnotationCaptionSettingsDto(True, ()), AnnotationCaptionSettingsDto(True, ()))

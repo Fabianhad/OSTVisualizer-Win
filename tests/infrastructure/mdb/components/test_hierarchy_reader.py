@@ -33,6 +33,10 @@ from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
     TakeoffOperationsMixin,
 )
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyBidInfo,
+    HierarchyPageInfo,
+)
 from tests.helpers.mdb.operations import (
     _SqliteConnectionWrapper,
     _SqliteCursorWrapper,
@@ -544,4 +548,455 @@ class HierarchyReaderPersistenceTests(unittest.TestCase):
                 orphan.takeoff_increments,
             ),
             ("", None, "", 1, 2, 1.0),
+        )
+
+
+_FULL_PAGE_COLUMNS = (
+    "UID INTEGER, BidUID INTEGER, Name TEXT, BidPageFolderUID INTEGER, "
+    "SheetNo TEXT, Sequence INTEGER, ImagePath TEXT, Width REAL, Height REAL, "
+    "ScaleFactor1 REAL, ScaleFactor2 REAL, Rotation INTEGER, FlipX INTEGER, "
+    "FlipY INTEGER, Index1 INTEGER"
+)
+
+
+class HierarchyRealSchemaTests(unittest.TestCase):
+    def connection(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        for statement in statements:
+            connection.execute(statement)
+        return connection
+
+    def structure(self, connection, bid_uid="1"):
+        return _SqliteHierarchyReader(connection)._get_bid_folder_page_structure(
+            _SqliteConnection(connection), bid_uid, _SqliteHierarchySchema(connection)
+        )
+
+    def test_page_info_carries_every_stored_field_in_sequence_name_uid_order(self):
+        connection = self.connection(
+            f"CREATE TABLE BidPages ({_FULL_PAGE_COLUMNS})",
+            "INSERT INTO BidPages VALUES (20, 1, 'A-101', NULL, 'S1', 2, 'a.pdf', "
+            "36.5, 24.25, 0.125, 12.0, 90, -1, 0, 3)",
+            "INSERT INTO BidPages VALUES (21, 1, NULL, 0, NULL, NULL, NULL, NULL, "
+            "NULL, NULL, NULL, NULL, 0, 1, NULL)",
+            "INSERT INTO BidPages VALUES (22, 1, 'B', NULL, '', 1, '', 0, 0, 0, 0, 0, "
+            "1, -1, 0)",
+            "INSERT INTO BidPages VALUES (23, 1, 'A', NULL, '', 1, '', 0, 0, 0, 0, 0, "
+            "0, 0, 7)",
+            "INSERT INTO BidPages VALUES (24, 2, 'Other', NULL, '', 1, '', 0, 0, 1, 1, "
+            "0, 0, 0, 1)",
+        )
+        folders, loose = self.structure(connection)
+        self.assertEqual(folders, {})
+        self.assertEqual(
+            loose,
+            [
+                HierarchyPageInfo(
+                    "21", "", "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, True, 0
+                ),
+                HierarchyPageInfo(
+                    "23", "A", "", 1, None, 0.0, 0.0, 0.0, 0.0, 0, False, False, 6
+                ),
+                HierarchyPageInfo(
+                    "22", "B", "", 1, None, 0.0, 0.0, 0.0, 0.0, 0, True, True, 0
+                ),
+                HierarchyPageInfo(
+                    "20",
+                    "A-101",
+                    "S1",
+                    2,
+                    "a.pdf",
+                    36.5,
+                    24.25,
+                    0.125,
+                    12.0,
+                    90,
+                    True,
+                    False,
+                    2,
+                ),
+            ],
+        )
+
+    def test_pages_of_a_database_without_optional_columns_use_defaults_and_uid_order(
+        self,
+    ):
+        connection = self.connection(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidPages VALUES (31, 1)",
+            "INSERT INTO BidPages VALUES (30, 1)",
+            "INSERT INTO BidPages VALUES (32, 2)",
+        )
+        folders, loose = self.structure(connection)
+        self.assertEqual(folders, {})
+        self.assertEqual(
+            loose,
+            [
+                HierarchyPageInfo("30", "", "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, False, 0),
+                HierarchyPageInfo("31", "", "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, False, 0),
+            ],
+        )
+
+    def test_folders_nest_by_parent_drop_empty_branches_and_keep_name_order(self):
+        connection = self.connection(
+            "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "Description TEXT, ParentUID INTEGER)",
+            f"CREATE TABLE BidPages ({_FULL_PAGE_COLUMNS})",
+            "INSERT INTO BidPageFolders VALUES (10, 1, 'Zeta', 'zd', NULL)",
+            "INSERT INTO BidPageFolders VALUES (11, 1, 'Alpha', 'ad', 0)",
+            "INSERT INTO BidPageFolders VALUES (12, 1, 'Child B', NULL, 10)",
+            "INSERT INTO BidPageFolders VALUES (13, 1, 'Child A', 'cd', 10)",
+            "INSERT INTO BidPageFolders VALUES (14, 1, 'Empty', '', NULL)",
+            "INSERT INTO BidPageFolders VALUES (15, 1, 'Orphan', '', 999)",
+            "INSERT INTO BidPageFolders VALUES (16, 2, 'Other bid', '', NULL)",
+            "INSERT INTO BidPages (UID, BidUID, Name, BidPageFolderUID, Sequence) "
+            "VALUES (20, 1, 'P-a', 13, 1)",
+            "INSERT INTO BidPages (UID, BidUID, Name, BidPageFolderUID, Sequence) "
+            "VALUES (21, 1, 'P-b', 12, 1)",
+            "INSERT INTO BidPages (UID, BidUID, Name, BidPageFolderUID, Sequence) "
+            "VALUES (22, 1, 'P-c', 11, 1)",
+            "INSERT INTO BidPages (UID, BidUID, Name, BidPageFolderUID, Sequence) "
+            "VALUES (23, 1, 'P-d', 15, 1)",
+            "INSERT INTO BidPages (UID, BidUID, Name, BidPageFolderUID, Sequence) "
+            "VALUES (24, 1, 'P-e', 16, 1)",
+            "INSERT INTO BidPages (UID, BidUID, Name, BidPageFolderUID, Sequence) "
+            "VALUES (25, 1, 'P-f', 14, 1)",
+            "DELETE FROM BidPages WHERE UID=25",
+        )
+        folders, loose = self.structure(connection)
+        self.assertEqual(list(folders), ["11", "15", "10"])
+        self.assertEqual(
+            (folders["11"].name, folders["11"].description, folders["11"].parent_uid),
+            ("Alpha", "ad", None),
+        )
+        self.assertEqual([page.uid for page in folders["11"].pages], ["22"])
+        self.assertEqual([page.uid for page in folders["15"].pages], ["23"])
+        self.assertEqual(folders["15"].parent_uid, "999")
+        top = folders["10"]
+        self.assertEqual((top.name, top.description, top.parent_uid), ("Zeta", "zd", None))
+        self.assertEqual(top.pages, [])
+        self.assertEqual(list(top.subfolders), ["13", "12"])
+        self.assertEqual(
+            (top.subfolders["13"].name, top.subfolders["13"].description),
+            ("Child A", "cd"),
+        )
+        self.assertEqual(top.subfolders["13"].parent_uid, "10")
+        self.assertEqual(top.subfolders["12"].description, "")
+        self.assertEqual([p.uid for p in top.subfolders["13"].pages], ["20"])
+        self.assertEqual([p.uid for p in top.subfolders["12"].pages], ["21"])
+        self.assertEqual([page.uid for page in loose], ["24"])
+
+    def test_page_structure_without_a_folder_table_lists_pages_loose(self):
+        connection = self.connection(
+            f"CREATE TABLE BidPages ({_FULL_PAGE_COLUMNS})",
+            "INSERT INTO BidPages (UID, BidUID, BidPageFolderUID) VALUES (20, 1, 10)",
+        )
+        folders, loose = self.structure(connection)
+        self.assertEqual((folders, [page.uid for page in loose]), ({}, ["20"]))
+
+    def test_hierarchy_requires_each_structural_column(self):
+        columns = {
+            "BidProjects": ["UID", "Name"],
+            "Bids": ["UID", "JobName"],
+            "BidPages": ["UID", "BidUID"],
+            "BidConditions": ["UID", "BidUID"],
+        }
+        for table, column in (
+            ("BidProjects", "UID"),
+            ("BidProjects", "Name"),
+            ("Bids", "UID"),
+            ("Bids", "JobName"),
+            ("BidPages", "UID"),
+            ("BidPages", "BidUID"),
+            ("BidConditions", "UID"),
+            ("BidConditions", "BidUID"),
+        ):
+            with self.subTest(table=table, column=column):
+                connection = sqlite3.connect(":memory:")
+                self.addCleanup(connection.close)
+                for name, names in columns.items():
+                    present = [c for c in names if (name, c) != (table, column)]
+                    connection.execute(f"CREATE TABLE {name} ({', '.join(present)})")
+                with self.assertRaisesRegex(RuntimeError, f"Missing {table}.{column}"):
+                    _SqliteHierarchyReader(connection)._parse_hierarchy(
+                        _SqliteConnection(connection), "x.mdb"
+                    )
+
+    def test_folder_tables_require_their_structural_columns(self):
+        for column in ("UID", "BidUID", "Name"):
+            with self.subTest(column=column):
+                present = [c for c in ("UID", "BidUID", "Name") if c != column]
+                connection = self.connection(
+                    f"CREATE TABLE BidPageFolders ({', '.join(present)})",
+                    f"CREATE TABLE BidPages ({_FULL_PAGE_COLUMNS})",
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, f"Missing BidPageFolders.{column}"
+                ):
+                    self.structure(connection)
+
+    def test_full_hierarchy_maps_every_bid_field_and_orders_bids_and_projects(self):
+        connection = self.connection(
+            "CREATE TABLE BidProjects (UID INTEGER, Name TEXT, Description TEXT)",
+            "CREATE TABLE Bids (UID INTEGER, BidProjectUID INTEGER, "
+            "OrigBidProjectUID INTEGER, JobName TEXT, JobID TEXT, BidNo INTEGER, "
+            "BidDate TEXT, Notes BLOB, JobStatusUID INTEGER, EstimatorUID INTEGER, "
+            "CopyFromBidNO INTEGER, CopyTimeStamp TEXT, MeasureBase INTEGER, "
+            "TakeoffIncrements REAL)",
+            f"CREATE TABLE BidPages ({_FULL_PAGE_COLUMNS})",
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)",
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "CREATE TABLE Employees (UID INTEGER, FirstName TEXT, LastName TEXT)",
+            "INSERT INTO BidProjects VALUES (2, 'Beta', 'd2')",
+            "INSERT INTO BidProjects VALUES (1, 'Alpha', 'd1')",
+            "INSERT INTO BidProjects VALUES (3, 'Alpha', NULL)",
+            "INSERT INTO Bids VALUES (10, 1, 7, 'B10', 'J10', 2, '2024-05-01', "
+            "X'6E6F7465207465FA', 5, 6, 3, 'ts', 1, 0.5)",
+            "INSERT INTO Bids VALUES (11, 1, 0, 'B11', NULL, 1, NULL, NULL, 0, 0, "
+            "NULL, NULL, NULL, 0)",
+            "INSERT INTO Bids VALUES (12, 2, NULL, 'B12', 'J12', 0, NULL, 'plain', "
+            "77, 99, 4, NULL, 2, 2.5)",
+            "INSERT INTO Bids VALUES (13, 99, NULL, 'Lost', NULL, 0, NULL, NULL, NULL, "
+            "NULL, NULL, NULL, NULL, NULL)",
+            "INSERT INTO Bids VALUES (14, 0, NULL, 'Free', NULL, 0, NULL, NULL, NULL, "
+            "NULL, NULL, NULL, NULL, NULL)",
+            "INSERT INTO BidPages (UID, BidUID, Name) VALUES (20, 10, 'p')",
+            "INSERT INTO BidPages (UID, BidUID, Name) VALUES (21, 10, 'q')",
+            "INSERT INTO BidPages (UID, BidUID, Name) VALUES (22, 12, 'r')",
+            "INSERT INTO BidConditions VALUES (30, 10)",
+            "INSERT INTO BidConditions VALUES (31, 10)",
+            "INSERT INTO BidConditions VALUES (32, 10)",
+            "INSERT INTO JobStatuses VALUES (5, 'Won')",
+            "INSERT INTO Employees VALUES (6, 'Eve', 'Estimator')",
+        )
+        entry = _SqliteHierarchyReader(connection)._parse_hierarchy(
+            _SqliteConnection(connection), "C:/data/dir/sample.mdb"
+        )
+        self.assertEqual(entry.file_path, "")
+        self.assertEqual(entry.database_name, "sample")
+        self.assertEqual(list(entry.bid_projects), ["1", "3", "2"])
+        self.assertEqual(
+            [
+                (p.name, p.description)
+                for p in (entry.bid_projects[uid] for uid in ("1", "3", "2"))
+            ],
+            [("Alpha", "d1"), ("Alpha", ""), ("Beta", "d2")],
+        )
+        alpha = entry.bid_projects["1"]
+        self.assertEqual([bid.uid for bid in alpha.bids], ["11", "10"])
+        ten = alpha.bids[1]
+        self.assertEqual(
+            ten,
+            HierarchyBidInfo(
+                uid="10",
+                name="B10",
+                job_id="J10",
+                bid_no=2,
+                bid_date="2024-05-01",
+                notes="note te\ufffd",
+                status="Won",
+                status_uid="5",
+                estimator="Eve Estimator",
+                page_count=2,
+                condition_count=3,
+                measure_base=1,
+                takeoff_increments=0.5,
+                orig_bid_project_uid="7",
+                copy_from_bid_no=3,
+                copy_timestamp="ts",
+                folders={},
+                pages_without_folder=ten.pages_without_folder,
+            ),
+        )
+        self.assertEqual([page.uid for page in ten.pages_without_folder], ["20", "21"])
+        eleven = alpha.bids[0]
+        self.assertEqual(
+            (
+                eleven.job_id,
+                eleven.bid_no,
+                eleven.bid_date,
+                eleven.notes,
+                eleven.status,
+                eleven.status_uid,
+                eleven.estimator,
+                eleven.page_count,
+                eleven.condition_count,
+                eleven.measure_base,
+                eleven.takeoff_increments,
+                eleven.orig_bid_project_uid,
+                eleven.copy_from_bid_no,
+                eleven.copy_timestamp,
+            ),
+            ("", 1, None, "", "", "0", "", 0, 0, 0, 1.0, None, 0, None),
+        )
+        twelve = entry.bid_projects["2"].bids[0]
+        self.assertEqual(
+            (
+                twelve.notes,
+                twelve.status,
+                twelve.status_uid,
+                twelve.estimator,
+                twelve.measure_base,
+                twelve.takeoff_increments,
+                twelve.copy_from_bid_no,
+            ),
+            ("plain", "", "77", "", 2, 2.5, 4),
+        )
+        self.assertEqual(entry.bid_projects["3"].bids, [])
+        self.assertEqual([bid.uid for bid in entry.orphan_bids], ["14", "13"])
+        self.assertEqual(
+            [(bid.name, bid.status_uid) for bid in entry.orphan_bids],
+            [("Free", None), ("Lost", None)],
+        )
+
+    def test_minimal_schema_hierarchy_uses_documented_defaults(self):
+        connection = self.connection(
+            "CREATE TABLE BidProjects (UID INTEGER, Name TEXT)",
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidProjects VALUES (1, 'P')",
+            "INSERT INTO Bids VALUES (9, 'Only')",
+            "INSERT INTO Bids VALUES (8, 'Earlier')",
+        )
+        entry = _SqliteHierarchyReader(connection)._parse_hierarchy(
+            _SqliteConnection(connection), "min.mdb"
+        )
+        self.assertEqual(entry.bid_projects["1"].description, "")
+        self.assertEqual(entry.bid_projects["1"].bids, [])
+        self.assertEqual(
+            entry.orphan_bids,
+            [
+                HierarchyBidInfo(
+                    uid="8", name="Earlier", bid_no=0, takeoff_increments=1.0
+                ),
+                HierarchyBidInfo(uid="9", name="Only", bid_no=0, takeoff_increments=1.0),
+            ],
+        )
+
+    def test_status_and_employee_maps_require_their_identity_columns(self):
+        for load, table, setup in (
+            ("_load_status_map", "JobStatuses", "CREATE TABLE JobStatuses (UID INTEGER)"),
+            (
+                "_load_status_map",
+                "JobStatuses",
+                "CREATE TABLE JobStatuses (Name TEXT)",
+            ),
+            ("_load_employee_map", "Employees", "CREATE TABLE Employees (Name TEXT)"),
+        ):
+            with self.subTest(load=load, setup=setup):
+                connection = self.connection(setup)
+                ops = _SqliteMdbOps(connection)
+                missing = "UID" if "UID" not in setup else "Name"
+                with self.assertRaisesRegex(RuntimeError, f"Missing {table}.{missing}"):
+                    getattr(MdbReader, load)(ops, _SqliteConnectionWrapper(connection))
+
+    def test_employee_map_without_name_columns_yields_blank_names(self):
+        connection = self.connection(
+            "CREATE TABLE Employees (UID INTEGER, FirstName TEXT)",
+            "INSERT INTO Employees VALUES (3, ' Ann ')",
+            "INSERT INTO Employees VALUES (4, NULL)",
+        )
+        self.assertEqual(
+            MdbReader._load_employee_map(
+                _SqliteMdbOps(connection), _SqliteConnectionWrapper(connection)
+            ),
+            {"3": "Ann", "4": ""},
+        )
+
+    def test_folder_whose_parent_uid_is_one_nests_under_it(self):
+        connection = self.connection(
+            "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "ParentUID INTEGER)",
+            f"CREATE TABLE BidPages ({_FULL_PAGE_COLUMNS})",
+            "INSERT INTO BidPageFolders VALUES (1, 1, 'Root', NULL)",
+            "INSERT INTO BidPageFolders VALUES (2, 1, 'Kid', 1)",
+            "INSERT INTO BidPages (UID, BidUID, BidPageFolderUID) VALUES (20, 1, 2)",
+        )
+        folders, loose = self.structure(connection)
+        self.assertEqual(list(folders), ["1"])
+        self.assertEqual(folders["1"].parent_uid, None)
+        self.assertEqual(list(folders["1"].subfolders), ["2"])
+        self.assertEqual(folders["1"].subfolders["2"].parent_uid, "1")
+        self.assertEqual(loose, [])
+
+    def test_a_textual_zero_parent_uid_is_a_root_folder(self):
+        # Hand-built rows: some drivers hand ParentUID back as text.
+        page = _PageRow(20, "P", 10, "S", 1, "p.pdf", 1.0, 1.0, 1.0, 1.0, 0, 0, 0, 1)
+        folders, loose = _Reader()._get_bid_folder_page_structure(
+            _Connection([(10, "Top", "", "0")], [page]), "1", _Schema()
+        )
+        self.assertEqual(list(folders), ["10"])
+        self.assertEqual(folders["10"].parent_uid, "0")
+        self.assertEqual([p.uid for p in folders["10"].pages], ["20"])
+        self.assertEqual(loose, [])
+
+    def test_bids_with_equal_project_and_number_are_ordered_by_uid(self):
+        connection = self.connection(
+            "CREATE TABLE BidProjects (UID INTEGER, Name TEXT)",
+            "CREATE TABLE Bids (UID INTEGER, BidProjectUID INTEGER, JobName TEXT, "
+            "BidNo INTEGER)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidProjects VALUES (1, 'P')",
+            "INSERT INTO Bids VALUES (12, 1, 'third', 5)",
+            "INSERT INTO Bids VALUES (10, 1, 'first', 5)",
+            "INSERT INTO Bids VALUES (11, 1, 'second', 5)",
+        )
+        entry = _SqliteHierarchyReader(connection)._parse_hierarchy(
+            _SqliteConnection(connection), "x.mdb"
+        )
+        self.assertEqual(
+            [bid.uid for bid in entry.bid_projects["1"].bids], ["10", "11", "12"]
+        )
+
+    def test_folders_without_a_parent_column_are_all_roots(self):
+        connection = self.connection(
+            "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT)",
+            f"CREATE TABLE BidPages ({_FULL_PAGE_COLUMNS})",
+            "INSERT INTO BidPageFolders VALUES (10, 1, 'A')",
+            "INSERT INTO BidPageFolders VALUES (11, 1, 'B')",
+            "INSERT INTO BidPages (UID, BidUID, BidPageFolderUID) VALUES (20, 1, 10)",
+            "INSERT INTO BidPages (UID, BidUID, BidPageFolderUID) VALUES (21, 1, 11)",
+        )
+        folders, loose = self.structure(connection)
+        self.assertEqual(list(folders), ["10", "11"])
+        self.assertEqual(
+            [(f.description, f.parent_uid, f.subfolders) for f in folders.values()],
+            [("", None, {}), ("", None, {})],
+        )
+        self.assertEqual(loose, [])
+
+    def test_pages_without_a_uid_column_are_rejected_as_malformed(self):
+        connection = self.connection(
+            "CREATE TABLE BidPages (BidUID INTEGER, Name TEXT)",
+            "INSERT INTO BidPages VALUES (1, 'orphan row')",
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "BidPages contains malformed UID <missing>"
+        ):
+            self.structure(connection)
+
+    def test_status_map_reads_with_the_exact_select_statement(self):
+        connection = self.connection(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+            "INSERT INTO JobStatuses VALUES (1, 'Open')",
+        )
+        statements = []
+        connection.set_trace_callback(statements.append)
+        MdbReader._load_status_map(
+            _SqliteMdbOps(connection), _SqliteConnectionWrapper(connection)
+        )
+        self.assertIn("SELECT [UID], [Name] FROM [JobStatuses]", statements)
+
+    def test_employee_map_without_a_first_name_column_uses_last_names(self):
+        connection = self.connection(
+            "CREATE TABLE Employees (UID INTEGER, LastName TEXT)",
+            "INSERT INTO Employees VALUES (3, ' Lee ')",
+        )
+        self.assertEqual(
+            MdbReader._load_employee_map(
+                _SqliteMdbOps(connection), _SqliteConnectionWrapper(connection)
+            ),
+            {"3": "Lee"},
         )

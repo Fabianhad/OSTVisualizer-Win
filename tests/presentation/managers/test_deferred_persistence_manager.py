@@ -6589,3 +6589,348 @@ class DeferredPersistenceManagerUidTypeTests(_DeferredPersistenceManagerFixture)
         self.manager.schedule_all_layers_show(self.DB, 7, False, [1, 2, 1])
         self.assertTrue(self.manager.flush())
         self.assertEqual(seen, [(7, list, ["1", "2"])])
+
+
+class DeferredPersistenceManagerThirdPassBoundaryTests(_DeferredPersistenceManagerFixture):
+    """Loop-continuation and per-kind contracts found by the third-pass mutation
+    sweep: each test fails if a scan stops early or a kind is missing from a set."""
+
+    DB = "db.mdb"
+
+    def fresh(self):
+        self.tearDown()
+        self.setUp()
+
+    def ok(self, status=MutationOutcomeStatus.COMMITTED):
+        return QueuedMutationResult(
+            database_id=self.DB,
+            runtime_generation=1,
+            operation_id=str(uuid.uuid4()),
+            outcome_status=status,
+        )
+
+    def page_schedulers(self):
+        db = self.DB
+        return {
+            "page_show_mode": lambda m, **kw: m.schedule_page_show_mode(
+                db, "p1", 1, **kw
+            ),
+            "page_area_selection": lambda m, **kw: m.schedule_page_area_selection(
+                db, "p1", "a", **kw
+            ),
+            "page_invert": lambda m, **kw: m.schedule_page_invert(db, "p1", True, **kw),
+            "page_bitonal": lambda m, **kw: m.schedule_page_bitonal(
+                db, "p1", True, **kw
+            ),
+            "page_overlay_rect": lambda m, **kw: m.schedule_page_overlay_rect(
+                db, "p1", (1, 2, 3, 4), **kw
+            ),
+        }
+
+    def test_every_page_visual_kind_is_cancelled_invalidated_and_reprojected(self):
+        for kind, schedule in self.page_schedulers().items():
+            for bid_uid in (None, "b1"):
+                with self.subTest(kind=kind, bid_uid=bid_uid):
+                    # 1. a pending (unflushed) write is cancelled with its state.
+                    self.fresh()
+                    schedule(self.manager, bid_uid=bid_uid)
+                    self.assertEqual(self.manager.pending_count, 1)
+                    self.manager.cancel_pages(self.DB, "b1", ["p1"])
+                    self.assertEqual(self.manager.pending_count, 0)
+                    self.assertEqual(self.manager._visual_states, {})
+                    # 2. a pending write is dropped by invalidation too.
+                    self.fresh()
+                    schedule(self.manager, bid_uid=bid_uid)
+                    self.manager.invalidate_page_visual_revisions(
+                        self.DB, ["p1"], "b1"
+                    )
+                    self.assertEqual(self.manager.pending_count, 0)
+                    self.assertEqual(self.manager._visual_states, {})
+                    # 3. an in-flight (queued, unfinished) write loses its state.
+                    self.fresh()
+                    self.service.queue_sql_settings = True
+                    schedule(self.manager, bid_uid=bid_uid)
+                    self.assertTrue(self.manager.flush())
+                    self.assertEqual(len(self.manager._visual_states), 1)
+                    self.manager.cancel_pages(self.DB, "b1")
+                    self.assertEqual(self.manager._visual_states, {})
+                    self.fresh()
+                    self.service.queue_sql_settings = True
+                    schedule(self.manager, bid_uid=bid_uid)
+                    self.assertTrue(self.manager.flush())
+                    self.manager.invalidate_page_visual_revisions(self.DB)
+                    self.assertEqual(self.manager._visual_states, {})
+                    # 4. two in-flight revisions: the newest is reprojected.
+                    self.fresh()
+                    self.service.queue_sql_settings = True
+                    projections = []
+                    for number in (1, 2):
+                        schedule(
+                            self.manager,
+                            bid_uid=bid_uid,
+                            project_value=lambda number=number: projections.append(
+                                number
+                            ),
+                        )
+                        self.assertTrue(self.manager.flush())
+                    self.manager.reproject_newer_page_visual_revisions(
+                        self.DB, ["p1"], "b1"
+                    )
+                    self.assertEqual(projections, [2])
+
+    def test_cancel_pages_keeps_scanning_after_keys_of_another_database(self):
+        manager = self.manager
+        manager.schedule_page_invert("other.mdb", "p1", True)
+        manager.schedule_bid_selected_page(self.DB, "b1", "p1")
+        manager.schedule_page_view_state(self.DB, "b1", "p1", 1.0, 2.0, 3.0)
+        manager.schedule_page_invert(self.DB, "p1", True)
+        manager.cancel_pages(self.DB, "b1")
+        self.assertEqual(set(manager._pending), {("page_invert", "other.mdb", "p1")})
+
+    def test_cancel_pages_drops_in_flight_states_after_states_of_another_database(
+        self,
+    ):
+        self.service.queue_sql_settings = True
+        manager = self.manager
+        for database in ("other.mdb", self.DB):
+            manager.schedule_page_invert(database, "p1", True)
+            self.assertTrue(manager.flush())
+        manager.schedule_page_bitonal(self.DB, "p1", True, bid_uid="b2")
+        self.assertTrue(manager.flush())
+        manager.cancel_pages(self.DB, "b1")
+        # Only the other database's state and the other Bid's state survive.
+        self.assertEqual(
+            set(manager._visual_states),
+            {
+                ("page_invert", "other.mdb", "p1"),
+                ("page_bitonal", self.DB, "b2", "p1"),
+            },
+        )
+
+    def test_a_flush_continues_past_an_item_removed_by_an_earlier_write(self):
+        ran = []
+        manager = self.manager
+
+        def first():
+            ran.append(1)
+            manager.cancel_for_file("b.mdb")
+            return True
+
+        manager.schedule("custom", ("custom", "a.mdb", "1"), "first", first)
+        manager.schedule(
+            "custom", ("custom", "b.mdb", "2"), "second", lambda: ran.append(2) or True
+        )
+        manager.schedule(
+            "custom", ("custom", "a.mdb", "3"), "third", lambda: ran.append(3) or True
+        )
+        self.assertTrue(manager.flush())
+        self.assertEqual(ran, [1, 3])
+        self.assertEqual(manager.pending_count, 0)
+
+    def test_a_newer_bulk_write_discards_failed_retries_after_unrelated_states(self):
+        manager = self.manager
+        events = []
+        self.service.fail_methods.add("update_layer_show")
+        for layer in ("l9", "l1"):
+            manager.schedule_layer_show(
+                self.DB,
+                layer,
+                False,
+                restore_authoritative=lambda layer=layer: events.append(layer),
+            )
+        self.assertFalse(manager.flush())
+        self.assertEqual(
+            set(manager._pending),
+            {("layer_show", self.DB, "l9"), ("layer_show", self.DB, "l1")},
+        )
+        manager.schedule_all_layers_show(self.DB, "7", True, ["l1", "l2"])
+        # The failed retry of l1 is covered by the bulk write; l9 is unrelated.
+        self.assertEqual(
+            set(manager._pending),
+            {("layer_show", self.DB, "l9"), ("all_layers_show", self.DB, "7")},
+        )
+        self.assertEqual(
+            set(manager._visual_states),
+            {("layer_show", self.DB, "l9"), ("all_layers_show", self.DB, "7")},
+        )
+
+    def test_a_newer_bulk_write_discards_failed_retries_after_in_flight_states(self):
+        manager = self.manager
+        self.service.queue_sql_settings = True
+        manager.schedule_layer_show(self.DB, "l2", False)
+        self.assertTrue(manager.flush())
+        self.service.queue_sql_settings = False
+        self.service.fail_methods.add("update_layer_show")
+        manager.schedule_layer_show(self.DB, "l1", False)
+        self.assertFalse(manager.flush())
+        self.assertEqual(set(manager._pending), {("layer_show", self.DB, "l1")})
+        manager.schedule_all_layers_show(self.DB, "7", True, ["l1", "l2"])
+        # l2 is in flight (no failed retry to drop); the failed l1 retry is dropped.
+        self.assertEqual(set(manager._pending), {("all_layers_show", self.DB, "7")})
+        self.assertEqual(
+            set(manager._visual_states),
+            {("layer_show", self.DB, "l2"), ("all_layers_show", self.DB, "7")},
+        )
+
+    def test_layer_reprojection_scans_past_states_of_another_database(self):
+        self.service.queue_sql_settings = True
+        manager = self.manager
+        projections = []
+        manager.schedule_layer_show(
+            "other.mdb",
+            "l1",
+            False,
+            project_value=lambda: projections.append("other"),
+        )
+        self.assertTrue(manager.flush())
+        manager.schedule_layer_show(
+            self.DB, "l1", False, project_value=lambda: projections.append("layer")
+        )
+        self.assertTrue(manager.flush())
+        manager.schedule_all_layers_show(
+            self.DB, "7", True, ["l1"], project_value=lambda: projections.append("bulk")
+        )
+        self.assertTrue(manager.flush())
+        manager.reproject_newer_layer_visual_revisions(self.DB)
+        self.assertEqual(projections, ["bulk"])
+        projections.clear()
+        manager.reproject_newer_layer_visual_revisions(self.DB, ["l1"])
+        self.assertEqual(projections, ["bulk"])
+
+    def test_a_retried_layer_write_stays_projected_after_an_older_connected_bulk_write(
+        self,
+    ):
+        events = []
+        manager = self.manager
+        self.service.queue_sql_settings = True
+        manager.schedule_all_layers_show(
+            self.DB,
+            "7",
+            False,
+            ["l1", "l2"],
+            restore_authoritative=lambda: events.append("restore bulk"),
+            project_value=lambda: events.append("project bulk"),
+        )
+        self.assertTrue(manager.flush())
+        self.service.queue_sql_settings = False
+        self.service.fail_methods.add("update_layer_show")
+        manager.schedule_layer_show(
+            self.DB,
+            "l1",
+            True,
+            restore_authoritative=lambda: events.append("restore layer"),
+            project_value=lambda: events.append("project layer"),
+        )
+        self.assertFalse(manager.flush())
+        self.assertEqual(events, ["restore layer"])
+        self.service.fail_methods.clear()
+        self.assertTrue(manager.flush())
+        self.assertEqual(events, ["restore layer", "project layer"])
+        # The retried write keeps its state while the older connected bulk write
+        # is unresolved, so the bulk completion can still order the two intents.
+        self.assertEqual(
+            set(manager._visual_states),
+            {("layer_show", self.DB, "l1"), ("all_layers_show", self.DB, "7")},
+        )
+        self.service.queued_setting_callbacks[0](self.ok())
+        # Oldest intent first, newest last: the display ends on the layer write.
+        self.assertEqual(
+            events,
+            ["restore layer", "project layer", "project bulk", "project layer"],
+        )
+        self.assertEqual(manager._visual_states, {})
+        self.assertEqual(manager.pending_count, 0)
+
+    def test_a_rejected_older_layer_write_does_not_hide_a_committed_newer_bulk_write(
+        self,
+    ):
+        events = []
+        manager = self.manager
+        self.service.queue_sql_settings = True
+        manager.schedule_layer_show(
+            self.DB,
+            "l1",
+            False,
+            restore_authoritative=lambda: events.append("restore layer"),
+            project_value=lambda: events.append("project layer"),
+        )
+        self.assertTrue(manager.flush())
+        manager.schedule_all_layers_show(
+            self.DB,
+            "7",
+            True,
+            ["l1"],
+            restore_authoritative=lambda: events.append("restore bulk"),
+            project_value=lambda: events.append("project bulk"),
+        )
+        self.assertTrue(manager.flush())
+        layer_done, bulk_done = self.service.queued_setting_callbacks
+        layer_done(self.ok(MutationOutcomeStatus.REJECTED))
+        # The newer bulk write is still in flight: its intent is shown meanwhile.
+        self.assertEqual(events, ["project bulk"])
+        bulk_done(self.ok())
+        # Baselines are restored newest origin first, then the committed newer
+        # write is projected last, so the final display is the bulk value.
+        self.assertEqual(
+            events,
+            ["project bulk", "restore bulk", "restore layer", "project bulk"],
+        )
+        self.assertEqual(manager._visual_states, {})
+
+    def test_a_projection_that_invalidates_state_mid_completion_is_tolerated(self):
+        # A project_value callback runs inside the completion; it may invalidate the
+        # layer states (a remote refresh) before the completion finishes its own
+        # cleanup, which then finds no state for its key.
+        manager = self.manager
+        self.service.queue_sql_settings = True
+        events = []
+        armed = []
+
+        def project_second():
+            events.append("project second")
+            if armed:
+                manager.invalidate_layer_visual_revisions(self.DB)
+
+        manager.schedule_layer_show(
+            self.DB, "l1", False, project_value=lambda: events.append("project first")
+        )
+        self.assertTrue(manager.flush())
+        manager.schedule_layer_show(self.DB, "l1", True, project_value=project_second)
+        self.assertTrue(manager.flush())
+        first_done, second_done = self.service.queued_setting_callbacks
+        second_done(self.ok())
+        events.clear()
+        armed.append(True)
+        first_done(self.ok())
+        self.assertEqual(events, ["project second"])
+        self.assertEqual(manager._visual_states, {})
+        self.assertEqual(manager.pending_count, 0)
+
+    def test_reprojection_skips_layers_with_one_candidate_whatever_the_hash_order(
+        self,
+    ):
+        # The affected layers are a set iterated in hash order; many layers with a
+        # single candidate and many with two make an early stop at the first
+        # single-candidate layer visible for every hash seed.
+        manager = self.manager
+        self.service.queue_sql_settings = True
+        projected = []
+        multi = [f"m{index}" for index in range(12)]
+        single = [f"s{index}" for index in range(40)]
+        manager.schedule_all_layers_show(
+            self.DB, "7", False, multi, project_value=lambda: projected.append("bulk")
+        )
+        self.assertTrue(manager.flush())
+        for layer in multi + single:
+            manager.schedule_layer_show(
+                self.DB,
+                layer,
+                True,
+                project_value=lambda layer=layer: projected.append(layer),
+            )
+            self.assertTrue(manager.flush())
+        projected.clear()
+        manager.reproject_newer_layer_visual_revisions(self.DB)
+        # Only layers with at least two candidates (bulk + own write) are replayed,
+        # each once, newest-revision order, i.e. the order of their layer writes.
+        self.assertEqual(projected, multi)

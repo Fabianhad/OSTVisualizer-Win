@@ -262,5 +262,108 @@ class StdlibOnlyTests(unittest.TestCase):
                         )
 
 
+class JsonRpcWireContractTests(unittest.TestCase):
+    """Literal error objects, so a client sees the same codes and text."""
+
+    @staticmethod
+    def error(request_id, code, message):
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": code, "message": message},
+        }
+
+    def test_each_refusal_is_a_complete_error_object_with_its_text(self):
+        def raw(**fields):
+            body = {"jsonrpc": "2.0", "id": 5, "method": "ping"}
+            body.update(fields)
+            return json.dumps(body)
+
+        cases = {
+            "request that is not an object": (
+                "[1]",
+                self.error(None, -32600, "Invalid JSON-RPC request"),
+            ),
+            "id that is a list": (
+                raw(id=[1]),
+                self.error(None, -32600, "Invalid JSON-RPC id"),
+            ),
+            "wrong version": (
+                raw(jsonrpc="1.0"),
+                self.error(5, -32600, "JSON-RPC version must be 2.0"),
+            ),
+            "method that is not text": (
+                raw(method=7),
+                self.error(5, -32600, "Missing JSON-RPC method"),
+            ),
+            "params that are not an object": (
+                raw(params=[1]),
+                self.error(5, -32602, "JSON-RPC params must be an object"),
+            ),
+            "tool arguments that are not an object": (
+                raw(method="tools/call", params={"name": "t", "arguments": 3}),
+                self.error(5, -32602, "Tool arguments must be an object"),
+            ),
+            "unsupported method": (
+                raw(method="resources/list"),
+                self.error(5, -32601, "Unsupported method: resources/list"),
+            ),
+            "nesting too deep": (
+                "[" * 100000,
+                self.error(None, -32700, "Parse error: nesting too deep"),
+            ),
+            "malformed json": (
+                "{",
+                self.error(
+                    None,
+                    -32700,
+                    "Parse error: Expecting property name enclosed in double quotes",
+                ),
+            ),
+        }
+        for label, (line, expected) in cases.items():
+            with self.subTest(label=label):
+                self.assertEqual(json.loads(_server().handle_line(line)), expected)
+
+    def test_a_failing_tool_is_an_internal_error_that_names_only_the_exception_type(self):
+        response = json.loads(
+            _server(failure=ValueError("secret")).handle_line(
+                _request("tools/call", {"name": "list_sheets"})
+            )
+        )
+        self.assertEqual(
+            response, self.error(1, -32603, "Internal error: ValueError")
+        )
+
+    def test_replies_are_compact_json_with_the_request_id(self):
+        line = _server().handle_line(_request("ping", request_id="r1"))
+        self.assertEqual(line, '{"jsonrpc":"2.0","id":"r1","result":{}}')
+
+    def test_the_default_protocol_version_and_server_version(self):
+        self.assertEqual(protocol.DEFAULT_PROTOCOL_VERSION, "2025-06-18")
+        info = json.loads(_server().handle_line(_request("initialize")))["result"][
+            "serverInfo"
+        ]
+        self.assertEqual(info, {"name": "ost-takeoff", "version": "unknown"})
+        versioned = JsonRpcStdioServer(
+            name="ost-takeoff",
+            list_tools=lambda: [],
+            call_tool=lambda name, arguments: {},
+            version="1.4.2",
+        )
+        info = json.loads(versioned.handle_line(_request("initialize")))["result"][
+            "serverInfo"
+        ]
+        self.assertEqual(info, {"name": "ost-takeoff", "version": "1.4.2"})
+
+    def test_only_booleans_and_structures_are_invalid_ids(self):
+        valid = [None, "", "a", 0, 3, 1.5]
+        invalid = [True, False, [], {}, float("inf"), float("nan")]
+        for value in valid:
+            self.assertTrue(protocol._is_valid_id(value), value)
+        for value in invalid:
+            self.assertFalse(protocol._is_valid_id(value), value)
+
+
 if __name__ == "__main__":
     unittest.main()

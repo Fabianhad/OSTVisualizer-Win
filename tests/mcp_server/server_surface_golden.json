@@ -1,0 +1,1124 @@
+{
+ "tools": [
+  {
+   "name": "list_databases",
+   "description": "List checked OST databases as safe IDs and basenames, never full paths.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    }
+   }
+  },
+  {
+   "name": "get_current_context",
+   "description": "Return live app context when available, otherwise saved workspace context (ost-visualizer server, read-only). Use when you need the database_id and bid_uid of the bid the user has open; the ost-takeoff server works on that open bid implicitly and its bid_uid is the same value.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "list_projects",
+   "description": "List projects in a checked database by database_id.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id"
+    ]
+   }
+  },
+  {
+   "name": "list_bids",
+   "description": "List bids in a checked database, optionally scoped to one project.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "project_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id"
+    ]
+   }
+  },
+  {
+   "name": "get_bid_summary",
+   "description": "Return read-only bid metadata and current page selection.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "compare_bids_by_ref_no",
+   "description": "Compare two bids by condition ref_no and return bounded type aggregates (ost-visualizer server, read-only). Quantities compare visible takeoffs only, so a condition that moved to a hidden layer shows as a change; the other quantity tools count hidden layers.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "old_bid_uid": {
+      "type": "string"
+     },
+     "new_bid_uid": {
+      "type": "string"
+     },
+     "include_details": {
+      "type": "boolean",
+      "default": false
+     },
+     "limit": {
+      "type": "integer",
+      "default": 250
+     }
+    },
+    "required": [
+     "database_id",
+     "old_bid_uid",
+     "new_bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "list_pages",
+   "description": "List redacted page metadata for a bid with bounded results (ost-visualizer server, read-only). Use when you need the pages of any checked database or bid, with or without the running app. For the open bid's page size in page points and OST inches use list_sheets in the ost-takeoff server.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_current_page",
+   "description": "Return the bid's selected page metadata with local paths redacted.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_page_metadata",
+   "description": "Return general redacted metadata for one page (ost-visualizer server, read-only). Use when you need the PDF source, overlay and page-box details of one page. For its size and scale in page points and OST inches use list_sheets in the ost-takeoff server.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_page_pdf_text_summary",
+   "description": "Return bounded embedded PDF text metadata and snippets for one page (ost-visualizer server, read-only). Use when you only need a short overview. Positions are raw PDF points, y up from the lower-left of the visible box and unrotated (coordinate_space pdf_pts_y_up), not page points. For positioned text in page points and OST inches, with paging, use list_text in the ost-takeoff server.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     },
+     "source": {
+      "type": "string",
+      "default": "auto"
+     },
+     "include_text": {
+      "type": "boolean",
+      "default": false
+     },
+     "limit": {
+      "type": "integer",
+      "default": 10
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_page_pdf_vectors_summary",
+   "description": "Return bounded PDF vector line metadata used for snapping (ost-visualizer server, read-only). Use when you only need line counts and a small sample. Coordinates are raw PDF points, y up and unrotated (coordinate_space pdf_pts_y_up). For every straight segment in page points and OST inches, with paging, use list_segments in the ost-takeoff server.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     },
+     "source": {
+      "type": "string",
+      "default": "auto"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 20
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_page_markups_summary",
+   "description": "Return bounded markup and annotation counts for one page.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 50
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_page_overlay_summary",
+   "description": "Return redacted main/overlay page source and transform metadata.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid"
+    ]
+   }
+  },
+  {
+   "name": "search_page_pdf_text",
+   "description": "Search embedded PDF text on one page with bounded snippets (ost-visualizer server, read-only). Use when you only need to know whether text exists and roughly where, in raw PDF points, y up and unrotated (coordinate_space pdf_pts_y_up). For matching text runs in page points and OST inches use list_text with a query in the ost-takeoff server.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     },
+     "query": {
+      "type": "string"
+     },
+     "source": {
+      "type": "string",
+      "default": "auto"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 10
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid",
+     "query"
+    ]
+   }
+  },
+  {
+   "name": "list_conditions",
+   "description": "List bid conditions with bounded read-only metadata.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "list_areas",
+   "description": "List bid areas with usage counts and bounded result metadata.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_area_summary",
+   "description": "Summarize one bid area, its child areas, and page takeoff counts.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "area_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 250
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "area_uid"
+    ]
+   }
+  },
+  {
+   "name": "search_conditions",
+   "description": "Search bid conditions by safe text fields such as name, type, and notes.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "query": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 50
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "query"
+    ]
+   }
+  },
+  {
+   "name": "get_condition_summary",
+   "description": "Summarize one condition with quantities and page usage.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "condition_uid": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "condition_uid"
+    ]
+   }
+  },
+  {
+   "name": "list_takeoffs",
+   "description": "List takeoffs, including those on hidden layers, with optional geometry in OST inches; geometry requests are tightly capped (ost-visualizer server, read-only). Every row is listed, area holes included (is_hole); the quantity tools report holes separately as hole_count. Set visible_only to leave out hidden layers.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "condition_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "visible_only": {
+      "type": "boolean",
+      "default": false
+     },
+     "include_geometry": {
+      "type": "boolean",
+      "default": false
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_selected_takeoffs_summary",
+   "description": "Summarize takeoffs currently selected in the live desktop app.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    }
+   }
+  },
+  {
+   "name": "get_selected_pages_summary",
+   "description": "Summarize pages currently selected in the live desktop app.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    }
+   }
+  },
+  {
+   "name": "summarize_quantities",
+   "description": "Summarize quantities with bounded condition rows (ost-visualizer server, read-only). Use when you review any checked database. Hidden layers are counted, area holes are reported separately as hole_count and only conditions with takeoffs are listed, as in get_quantities in the ost-takeoff server. Right after an AI change was applied, values here can lag a few seconds; use get_quantities in the ost-takeoff server for the result.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "condition_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "search_pages",
+   "description": "Search pages by name, sheet number, sequence, or UID (ost-visualizer server, read-only). Use when you need to find a page by text in a bid; list_sheets in the ost-takeoff server lists the open bid's pages with their scale.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "query": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 50
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "query"
+    ]
+   }
+  },
+  {
+   "name": "list_layers",
+   "description": "List summarized bid layers and usage counts without raw table data.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "list_named_views",
+   "description": "List named views as page navigation summaries with bounds.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "limit": {
+      "type": "integer",
+      "default": 250
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "list_hotlinks",
+   "description": "List hotlinks and resolved target views without raw annotation details.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "limit": {
+      "type": "integer",
+      "default": 250
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_page_quantity_summary",
+   "description": "Summarize quantities for one page (ost-visualizer server, read-only). Use when you review one page of any checked database, with the same rules as summarize_quantities. Right after an AI change was applied, values can lag a few seconds; use get_quantities with group_by page in the ost-takeoff server.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid"
+    ]
+   }
+  },
+  {
+   "name": "search_takeoffs",
+   "description": "Search takeoffs, hidden layers included, by safe page, condition, area, and ID fields.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "query": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "condition_uid": {
+      "type": "string",
+      "nullable": true,
+      "default": null
+     },
+     "limit": {
+      "type": "integer",
+      "default": 50
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "query"
+    ]
+   }
+  },
+  {
+   "name": "get_bid_quantity_summary",
+   "description": "Return bounded per-condition quantity summaries for a bid (ost-visualizer server, read-only). Use when you need counts, page usage and zero-quantity flags per condition; only conditions with takeoffs are listed, hidden layers are counted and area holes appear as hole_count. Right after an AI change was applied, values can lag a few seconds; use get_quantities in the ost-takeoff server for the result.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 250
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_summary",
+   "description": "Return the structured Summary tree for a bid with explicit grouping (ost-visualizer server, read-only). Use when you need the app's Summary grouping by type, area or page. Right after an AI change was applied it can lag a few seconds; use get_quantities in the ost-takeoff server for the result.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "group_by_page": {
+      "type": "boolean",
+      "default": false
+     },
+     "group_by_type": {
+      "type": "boolean",
+      "default": true
+     },
+     "group_by_area": {
+      "type": "boolean",
+      "default": true
+     },
+     "limit": {
+      "type": "integer",
+      "default": 500
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "review_scope_gaps",
+   "description": "Review common read-only scope gaps such as unused pages and conditions.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 100
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "find_duplicate_conditions",
+   "description": "Find conditions with duplicate normalized names.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 100
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "find_zero_quantity_conditions",
+   "description": "Find conditions that have takeoffs but compute to zero quantity.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 100
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "find_unplaced_takeoffs",
+   "description": "Find takeoffs that are not associated with a valid page.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 100
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "get_page_context",
+   "description": "Return task-oriented page context with redacted source path metadata (ost-visualizer server, read-only). Use when you need a page's label, sheet name and source file name; for its size and scale in page points and OST inches use list_sheets in the ost-takeoff server.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "page_uid": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid",
+     "page_uid"
+    ]
+   }
+  },
+  {
+   "name": "find_pages_without_takeoffs",
+   "description": "Find pages that have no takeoffs, with bounded results.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 100
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  },
+  {
+   "name": "find_conditions_without_takeoffs",
+   "description": "Find conditions that have no takeoffs, with bounded results.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "database_id": {
+      "type": "string"
+     },
+     "bid_uid": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "default": 100
+     }
+    },
+    "required": [
+     "database_id",
+     "bid_uid"
+    ]
+   }
+  }
+ ],
+ "prompts": [
+  {
+   "name": "review_current_estimator_context",
+   "description": "Guide an AI client through a read-only review of the current context.",
+   "arguments": []
+  },
+  {
+   "name": "review_takeoff_scope",
+   "description": "Guide an AI client through read-only scope and quantity review.",
+   "arguments": [
+    {
+     "name": "database_id",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "bid_uid",
+     "description": "",
+     "required": true
+    }
+   ]
+  },
+  {
+   "name": "review_bid_scope",
+   "description": "Guide a full read-only bid scope review.",
+   "arguments": [
+    {
+     "name": "database_id",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "bid_uid",
+     "description": "",
+     "required": true
+    }
+   ]
+  },
+  {
+   "name": "review_page_qa",
+   "description": "Guide a read-only page quality review.",
+   "arguments": [
+    {
+     "name": "database_id",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "bid_uid",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "page_uid",
+     "description": "",
+     "required": true
+    }
+   ]
+  },
+  {
+   "name": "review_markup_and_links",
+   "description": "Guide a read-only markup, named-view, and hotlink review.",
+   "arguments": [
+    {
+     "name": "database_id",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "bid_uid",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "page_uid",
+     "description": "",
+     "required": false
+    }
+   ]
+  },
+  {
+   "name": "review_overlay_and_pdf_context",
+   "description": "Guide a read-only overlay and PDF-context review.",
+   "arguments": [
+    {
+     "name": "database_id",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "bid_uid",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "page_uid",
+     "description": "",
+     "required": true
+    }
+   ]
+  },
+  {
+   "name": "review_quantity_variance",
+   "description": "Guide a read-only quantity variance review.",
+   "arguments": [
+    {
+     "name": "database_id",
+     "description": "",
+     "required": true
+    },
+    {
+     "name": "bid_uid",
+     "description": "",
+     "required": true
+    }
+   ]
+  }
+ ],
+ "resources": [
+  {
+   "uri": "ost://databases",
+   "name": "databases_resource",
+   "description": "Checked database IDs and redacted basenames available to MCP clients.",
+   "mimeType": "application/json"
+  }
+ ],
+ "resource_templates": [
+  {
+   "uriTemplate": "ost://database/{database_id}/hierarchy",
+   "name": "hierarchy_resource",
+   "description": "Project and bid hierarchy for one checked database.",
+   "mimeType": "application/json"
+  },
+  {
+   "uriTemplate": "ost://database/{database_id}/bid/{bid_uid}/pages",
+   "name": "pages_resource",
+   "description": "Bounded redacted page metadata for one bid.",
+   "mimeType": "application/json"
+  },
+  {
+   "uriTemplate": "ost://database/{database_id}/bid/{bid_uid}/conditions",
+   "name": "conditions_resource",
+   "description": "Bounded condition metadata for one bid.",
+   "mimeType": "application/json"
+  },
+  {
+   "uriTemplate": "ost://database/{database_id}/bid/{bid_uid}/quantities",
+   "name": "quantities_resource",
+   "description": "Bounded quantity summary for one bid, hidden layers included.",
+   "mimeType": "application/json"
+  }
+ ],
+ "prompt_texts": {
+  "review_current_estimator_context": {
+   "required": "Review the current OST Visualizer estimator context using only read-only MCP tools. Start with get_current_context and get_selected_takeoffs_summary. If a live bid is available, inspect get_selected_pages_summary, list_pages, list_conditions, list_takeoffs, get_condition_summary, and summarize_quantities before drawing conclusions. Treat status=truncated or meta.has_more=true as partial evidence and narrow the request with page, condition, or search filters. Stay read-only and base conclusions only on returned data.",
+   "all": "Review the current OST Visualizer estimator context using only read-only MCP tools. Start with get_current_context and get_selected_takeoffs_summary. If a live bid is available, inspect get_selected_pages_summary, list_pages, list_conditions, list_takeoffs, get_condition_summary, and summarize_quantities before drawing conclusions. Treat status=truncated or meta.has_more=true as partial evidence and narrow the request with page, condition, or search filters. Stay read-only and base conclusions only on returned data."
+  },
+  "review_takeoff_scope": {
+   "required": "Review the OST takeoff scope for database_id=sample-database_id and bid_uid=sample-bid_uid. Use list_pages, get_page_metadata, get_page_pdf_text_summary, get_page_pdf_vectors_summary, search_page_pdf_text, get_page_markups_summary, get_page_overlay_summary, list_conditions, search_conditions, list_takeoffs, get_condition_summary, get_bid_quantity_summary, review_scope_gaps, find_duplicate_conditions, find_zero_quantity_conditions, find_unplaced_takeoffs, and get_page_context. Call out pages with unusually low or high takeoff counts, conditions without takeoffs, hidden-layer conditions, and major quantity drivers. Treat truncated or has_more results as partial and refine with page_uid, condition_uid, query, or lower limits. Stay read-only and do not infer data that was not returned.",
+   "all": "Review the OST takeoff scope for database_id=sample-database_id and bid_uid=sample-bid_uid. Use list_pages, get_page_metadata, get_page_pdf_text_summary, get_page_pdf_vectors_summary, search_page_pdf_text, get_page_markups_summary, get_page_overlay_summary, list_conditions, search_conditions, list_takeoffs, get_condition_summary, get_bid_quantity_summary, review_scope_gaps, find_duplicate_conditions, find_zero_quantity_conditions, find_unplaced_takeoffs, and get_page_context. Call out pages with unusually low or high takeoff counts, conditions without takeoffs, hidden-layer conditions, and major quantity drivers. Treat truncated or has_more results as partial and refine with page_uid, condition_uid, query, or lower limits. Stay read-only and do not infer data that was not returned."
+  },
+  "review_bid_scope": {
+   "required": "Review bid scope for database_id=sample-database_id and bid_uid=sample-bid_uid. Start with get_bid_summary, list_pages, list_conditions, list_areas, and get_bid_quantity_summary. Then run review_scope_gaps, find_duplicate_conditions, find_zero_quantity_conditions, and find_unplaced_takeoffs. For pages or conditions that look unusual, follow up with get_page_quantity_summary, get_condition_summary, list_takeoffs, and get_page_context. Treat status=truncated or meta.has_more=true as partial evidence; refine with page_uid, condition_uid, search_pages, search_conditions, or search_takeoffs. Stay read-only and summarize confidence limits.",
+   "all": "Review bid scope for database_id=sample-database_id and bid_uid=sample-bid_uid. Start with get_bid_summary, list_pages, list_conditions, list_areas, and get_bid_quantity_summary. Then run review_scope_gaps, find_duplicate_conditions, find_zero_quantity_conditions, and find_unplaced_takeoffs. For pages or conditions that look unusual, follow up with get_page_quantity_summary, get_condition_summary, list_takeoffs, and get_page_context. Treat status=truncated or meta.has_more=true as partial evidence; refine with page_uid, condition_uid, search_pages, search_conditions, or search_takeoffs. Stay read-only and summarize confidence limits."
+  },
+  "review_page_qa": {
+   "required": "Review one page for QA using database_id=sample-database_id, bid_uid=sample-bid_uid, and page_uid=sample-page_uid. Start with get_page_metadata, get_page_context, get_page_quantity_summary, get_page_markups_summary, get_page_overlay_summary, get_page_pdf_text_summary, and get_page_pdf_vectors_summary. Check takeoff counts with list_takeoffs, condition context with list_conditions and list_layers, and missing-scope signals with review_scope_gaps. Note missing or sparse takeoffs, hidden-layer context, dense or unusual markups, overlay/source mode, and whether PDF text or vectors are available. Treat truncated or has_more results as partial and refine with page_uid, condition_uid, source, query, or lower limits. Stay read-only.",
+   "all": "Review one page for QA using database_id=sample-database_id, bid_uid=sample-bid_uid, and page_uid=sample-page_uid. Start with get_page_metadata, get_page_context, get_page_quantity_summary, get_page_markups_summary, get_page_overlay_summary, get_page_pdf_text_summary, and get_page_pdf_vectors_summary. Check takeoff counts with list_takeoffs, condition context with list_conditions and list_layers, and missing-scope signals with review_scope_gaps. Note missing or sparse takeoffs, hidden-layer context, dense or unusual markups, overlay/source mode, and whether PDF text or vectors are available. Treat truncated or has_more results as partial and refine with page_uid, condition_uid, source, query, or lower limits. Stay read-only."
+  },
+  "review_markup_and_links": {
+   "required": "Review markups, named views, and hotlinks for database_id=sample-database_id, bid_uid=sample-bid_uid, scope=all pages in the bid, using page filters for follow-up. Start with list_pages, list_layers, list_named_views, and list_hotlinks. For each page of interest, use get_page_metadata and get_page_markups_summary; pass page_uid to list_named_views and list_hotlinks when narrowing. Look for orphan-looking links, target pages that need context, hidden layer involvement, high markup density, and sparse named-view coverage. Treat truncated or has_more results as partial and refine by page_uid or smaller limits. Stay read-only and cite the tool results used.",
+   "all": "Review markups, named views, and hotlinks for database_id=sample-database_id, bid_uid=sample-bid_uid, scope=page_uid=sample-page_uid. Start with list_pages, list_layers, list_named_views, and list_hotlinks. For each page of interest, use get_page_metadata and get_page_markups_summary; pass page_uid to list_named_views and list_hotlinks when narrowing. Look for orphan-looking links, target pages that need context, hidden layer involvement, high markup density, and sparse named-view coverage. Treat truncated or has_more results as partial and refine by page_uid or smaller limits. Stay read-only and cite the tool results used."
+  },
+  "review_overlay_and_pdf_context": {
+   "required": "Review overlay and PDF context for database_id=sample-database_id, bid_uid=sample-bid_uid, and page_uid=sample-page_uid. Start with get_page_overlay_summary and get_page_metadata. Then call get_page_pdf_text_summary and get_page_pdf_vectors_summary with source=auto first; use source=main or source=overlay only when the overlay summary shows both sources and you need to compare them. Use search_page_pdf_text for specific labels or sheet notes. Report source kind, show mode, overlay transform, embedded text availability, vector availability, and any mismatch between visible source context and PDF source choice. Treat truncated or has_more results as partial and refine with source, query, or lower limits. Stay read-only.",
+   "all": "Review overlay and PDF context for database_id=sample-database_id, bid_uid=sample-bid_uid, and page_uid=sample-page_uid. Start with get_page_overlay_summary and get_page_metadata. Then call get_page_pdf_text_summary and get_page_pdf_vectors_summary with source=auto first; use source=main or source=overlay only when the overlay summary shows both sources and you need to compare them. Use search_page_pdf_text for specific labels or sheet notes. Report source kind, show mode, overlay transform, embedded text availability, vector availability, and any mismatch between visible source context and PDF source choice. Treat truncated or has_more results as partial and refine with source, query, or lower limits. Stay read-only."
+  },
+  "review_quantity_variance": {
+   "required": "Review quantity variance for database_id=sample-database_id and bid_uid=sample-bid_uid. Start with get_bid_quantity_summary, summarize_quantities, find_zero_quantity_conditions, find_duplicate_conditions, and review_scope_gaps. For outliers, call get_condition_summary, get_page_quantity_summary, list_takeoffs, list_pages, and list_conditions. Remember that quantity summaries count takeoffs on hidden layers and report area holes separately; check which layers are hidden with list_layers and the condition layer fields. Treat truncated or has_more results as partial and refine with condition_uid, page_uid, query, or lower limits. Stay read-only and separate confirmed findings from questions for estimator review.",
+   "all": "Review quantity variance for database_id=sample-database_id and bid_uid=sample-bid_uid. Start with get_bid_quantity_summary, summarize_quantities, find_zero_quantity_conditions, find_duplicate_conditions, and review_scope_gaps. For outliers, call get_condition_summary, get_page_quantity_summary, list_takeoffs, list_pages, and list_conditions. Remember that quantity summaries count takeoffs on hidden layers and report area holes separately; check which layers are hidden with list_layers and the condition layer fields. Treat truncated or has_more results as partial and refine with condition_uid, page_uid, query, or lower limits. Stay read-only and separate confirmed findings from questions for estimator review."
+  }
+ }
+}

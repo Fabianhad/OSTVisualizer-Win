@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,7 +13,7 @@ from tests.integration.ai_takeoff import s101_fixture as fx
 from tests.paths import REPO_ROOT
 from tests.presentation.services.ai_takeoff_pdf_support import write_content_pdf
 from tools import ai_takeoff_corpus_worker as worker
-from tools.ai_takeoff_corpus import RUN_COLUMNS
+from tools.ai_takeoff_corpus import RUN_COLUMNS, TextRun
 import tests.helpers.mdb.schema_support as access
 
 TITLE = (
@@ -552,9 +553,11 @@ class WorkerHelperTests(unittest.TestCase):
         from types import SimpleNamespace
 
         calls = []
+        header = []
 
         def memory_info(handle, reference, size):
             calls.append((handle, size))
+            header.append(int.from_bytes(bytes(reference._obj)[:4], "little"))
             reference._obj.PeakWorkingSetSize = int(5.25 * 1024 * 1024)
 
         libraries = {
@@ -564,6 +567,7 @@ class WorkerHelperTests(unittest.TestCase):
         with mock.patch.object(worker.ctypes, "WinDLL", lambda name: libraries[name]):
             self.assertEqual(worker.peak_mb(), 5.2)
         self.assertEqual(calls, [(77, worker.ctypes.sizeof(worker._Counters))])
+        self.assertEqual(header, [worker.ctypes.sizeof(worker._Counters)])
 
     def test_long_line_lengths_are_summed_to_a_tenth_of_a_point(self):
         from ost_visualizer.domain.services.ai_linework import LineSegment
@@ -579,6 +583,31 @@ class WorkerHelperTests(unittest.TestCase):
 
 
 class WorkerProcessTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # One prepared scratch bid of the standard synthetic plan, shared by the tests
+        # that only read it (measure_page and sheets never write to the bid).
+        if not access._access_available():
+            raise unittest.SkipTest("Access ODBC/ADOX unavailable")
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        work = Path(directory.name)
+        pdf = write_content_pdf(work / "plan.pdf", fx.s101_content() + TITLE)
+        cls.plan_path = work / "plan.json"
+        completed = subprocess.run(
+            [sys.executable, "-m", "tools.ai_takeoff_corpus_worker", "prepare",
+             str(pdf), str(work), str(cls.plan_path)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr[-2000:])
+        cls.plan = json.loads(cls.plan_path.read_text(encoding="utf-8"))
+        cls.plan_uid = cls.plan["pages"][0]["uid"]
+
     def setUp(self):
         if not access._access_available():
             self.skipTest("Access ODBC/ADOX unavailable")
@@ -705,11 +734,7 @@ class WorkerProcessTests(unittest.TestCase):
     def test_wall_width_variants_and_callouts_are_measured(self):
         from tools.ai_takeoff_corpus import RUN_COLUMNS
 
-        pdf = write_content_pdf(self.work / "plan.pdf", fx.s101_content() + TITLE)
-        prepared_path = self.work / "plan.json"
-        self.call("prepare", str(pdf), str(self.work), str(prepared_path))
-        prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
-        row = worker.measure_page(prepared, prepared["pages"][0]["uid"], [])
+        row = worker.measure_page(self.plan, self.plan_uid, [])
         self.assertEqual(
             (row["dominant_wall_width"], row["suggestion_removes_dominant"]),
             (2.0, False),
@@ -743,11 +768,7 @@ class WorkerProcessTests(unittest.TestCase):
     def test_in_process_measurement_of_truncated_and_unseeded_pages(self):
         from ost_visualizer.presentation.services import ai_takeoff_pdf_source
 
-        pdf = write_content_pdf(self.work / "plan.pdf", fx.s101_content() + TITLE)
-        prepared_path = self.work / "plan.json"
-        self.call("prepare", str(pdf), str(self.work), str(prepared_path))
-        prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
-        uid = prepared["pages"][0]["uid"]
+        prepared, uid = self.plan, self.plan_uid
         row = worker.measure_page(prepared, uid, [])
         self.assertEqual(
             (row["extraction_truncated"], row["box_quadrants_truncated"]), (False, "")
@@ -794,7 +815,7 @@ class WorkerProcessTests(unittest.TestCase):
         return json.loads(prepared_path.read_text(encoding="utf-8"))
 
     def test_the_measured_row_reports_the_page_text_and_linework_counts(self):
-        _pdf, prepared, uid = self.prepared_plan(fx.s101_content() + TITLE)
+        prepared, uid = self.plan, self.plan_uid
         seeds = [{"seed_pts": fx.SEED_PTS, "expected_sf": round(fx.ROOM_AREA_SF, 2)}]
         row = worker.measure_page(prepared, uid, seeds)
         label = '1/8"=1\'-0"'
@@ -900,7 +921,7 @@ class WorkerProcessTests(unittest.TestCase):
     ):
         from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 
-        pdf, prepared, uid = self.prepared_plan(fx.s101_content() + TITLE)
+        prepared, uid = self.plan, self.plan_uid
         created = []
         original = worker.tempfile.TemporaryDirectory
 
@@ -921,9 +942,7 @@ class WorkerProcessTests(unittest.TestCase):
         self.assertFalse(any(Path(directory.name).exists() for directory in created))
 
     def test_main_dispatches_each_command_and_adds_the_peak_memory(self):
-        pdf = write_content_pdf(self.work / "plan.pdf", fx.s101_content() + TITLE)
-        prepared = self.prepare_in_subprocess(pdf, "plan.json")
-        prepared_path = self.work / "plan.json"
+        prepared, prepared_path = self.plan, self.plan_path
         sheets_path = self.work / "sheets.json"
         self.assertEqual(
             worker.main(["sheets", str(prepared_path), str(sheets_path)]), 0
@@ -1044,7 +1063,7 @@ class WorkerProcessTests(unittest.TestCase):
     def test_truncated_pages_count_only_the_quadrants_that_are_still_truncated(self):
         from ost_visualizer.presentation.services import ai_takeoff_pdf_source
 
-        _pdf, prepared, uid = self.prepared_plan(fx.s101_content() + TITLE)
+        prepared, uid = self.plan, self.plan_uid
         for cap, quadrants in ((8, 3), (20, 2), (40, 1)):
             with self.subTest(cap=cap):
                 with mock.patch.object(
@@ -1055,7 +1074,7 @@ class WorkerProcessTests(unittest.TestCase):
                 self.assertEqual(row["box_quadrants_truncated"], quadrants)
 
     def test_the_hand_seed_error_is_reported_in_percent_of_the_expected_area(self):
-        _pdf, prepared, uid = self.prepared_plan(fx.s101_content() + TITLE)
+        prepared, uid = self.plan, self.plan_uid
         row = worker.measure_page(
             prepared, uid, [{"seed_pts": fx.SEED_PTS, "expected_sf": 300.0}]
         )
@@ -1064,10 +1083,8 @@ class WorkerProcessTests(unittest.TestCase):
         self.assertEqual(row["hand_error_pct"], round(row["hand_error_pct"], 3))
 
     def test_main_reads_the_command_line_when_no_arguments_are_passed(self):
-        pdf = write_content_pdf(self.work / "plan.pdf", fx.s101_content() + TITLE)
-        self.prepare_in_subprocess(pdf, "plan.json")
         out = self.work / "sheets.json"
-        command = ["worker", "sheets", str(self.work / "plan.json"), str(out)]
+        command = ["worker", "sheets", str(self.plan_path), str(out)]
         with mock.patch.object(sys, "argv", command):
             self.assertEqual(worker.main(), 0)
         self.assertEqual(
@@ -1095,6 +1112,359 @@ class WorkerProcessTests(unittest.TestCase):
             ("skipped",) * 3,
         )
         self.assertEqual(row["segments"], 1)
+
+
+
+class WorkerSupportTests(unittest.TestCase):
+    """Small seams of the worker that need no PDF and no Access database."""
+
+    def test_text_runs_are_collected_page_by_page_until_there_is_no_cursor(self):
+        calls = []
+        pages = {
+            None: ("c1", [("A", [1, 2, 3, 4])]),
+            "c1": ("c2", [("B", [5, 6, 7, 8]), ("C", [9, 10, 11, 12])]),
+            "c2": (None, [("D", [13, 14, 15, 16])]),
+        }
+
+        class Read:
+            def list_text(self, snapshot, cursor=None, limit=None):
+                calls.append((snapshot, cursor, limit))
+                following, items = pages[cursor]
+                meta = {"next_cursor": following} if following else {}
+                return {
+                    "data": {
+                        "runs": [
+                            {"text": {"value": text}, "bbox_pts": box}
+                            for text, box in items
+                        ]
+                    },
+                    "meta": meta,
+                }
+
+        runs = worker.page_runs(Read(), "snap")
+        self.assertEqual(
+            runs,
+            [
+                TextRun("A", 1, 2, 3, 4),
+                TextRun("B", 5, 6, 7, 8),
+                TextRun("C", 9, 10, 11, 12),
+                TextRun("D", 13, 14, 15, 16),
+            ],
+        )
+        self.assertEqual(
+            calls, [("snap", None, 500), ("snap", "c1", 500), ("snap", "c2", 500)]
+        )
+
+    def test_the_page_kind_is_read_from_the_pages_title_block_text(self):
+        class Read:
+            def list_text(self, snapshot, cursor=None, limit=None):
+                return {
+                    "data": {
+                        "runs": [
+                            {"text": {"value": "FRAMING PLAN"}, "bbox_pts": [500, 700, 590, 712]}
+                        ]
+                    },
+                    "meta": {},
+                }
+
+        snapshot = types.SimpleNamespace(width_pts=612.0, height_pts=792.0)
+        self.assertEqual(worker.page_kind(Read(), snapshot), "plan")
+
+    def test_the_scratch_project_exposes_the_bid_and_its_pages_read_only(self):
+        pages = [types.SimpleNamespace(uid="a"), types.SimpleNamespace(uid="b")]
+        project = worker._ScratchProject("ref", "bid", pages)
+        self.assertEqual(
+            (project.get_current_bid_ref(), project.get_current_bid()), ("ref", "bid")
+        )
+        listed = project.get_all_pages()
+        self.assertEqual(listed, pages)
+        listed.clear()
+        self.assertEqual(len(project.get_all_pages()), 2)
+        self.assertIs(project.get_page("b"), pages[1])
+        self.assertIsNone(project.get_page("missing"))
+        self.assertEqual(project.get_page_takeoffs("a"), [])
+
+    def test_the_scratch_read_service_reads_the_bid_once_and_always_closes_the_connection(
+        self,
+    ):
+        events = []
+        record = types.SimpleNamespace(page_index=0)
+
+        class Connections:
+            def close(self):
+                events.append("close")
+
+        class Reader:
+            def __init__(self, connections):
+                events.append("reader")
+
+            def get_bid_data(self, db, bid_uid):
+                events.append((db, bid_uid))
+                if self.fail:
+                    raise RuntimeError("unreadable")
+                return (None, None, None, {"p": record})
+
+            fail = False
+
+        prepared = {"db": "x.mdb", "bid_uid": "bid-1", "pages": []}
+        built = []
+
+        def build(records, others):
+            built.append((records, others))
+            return {"p": types.SimpleNamespace(uid="p")}
+
+        patches = (
+            mock.patch(
+                "ost_visualizer.infrastructure.mdb.connection_manager.MdbConnectionManager",
+                Connections,
+            ),
+            mock.patch("ost_visualizer.infrastructure.mdb.mdb_reader.MdbReader", Reader),
+            mock.patch("ost_visualizer.domain.entities.page.build_pages_from_bid_data", build),
+        )
+        with tempfile.TemporaryDirectory() as sidecars, patches[0], patches[1], patches[2]:
+            service, pages = worker._scratch_read_service(prepared, sidecars, object())
+            self.assertEqual([page.uid for page in pages], ["p"])
+            self.assertEqual(built, [({"p": record}, [])])
+            self.assertEqual(events, ["reader", ("x.mdb", "bid-1"), "close"])
+            events.clear()
+            Reader.fail = True
+            with self.assertRaises(RuntimeError):
+                worker._scratch_read_service(prepared, sidecars, object())
+            self.assertEqual(events[-1], "close")
+            events.clear()
+            worker._scratch_read_service(prepared, sidecars, object(), pages=pages)
+            self.assertEqual(events, [])
+            pages_for_service = []
+            listed = worker._scratch_read_service(
+                prepared, sidecars, object(), pages=pages_for_service
+            )[0].list_sheets()["data"]
+            self.assertEqual(
+                (listed["bid_uid"], listed["bid_name"]["value"], listed["sheets"]),
+                ("bid-1", "Corpus scratch", []),
+            )
+
+    def test_the_memory_counters_structure_has_the_win32_layout(self):
+        word = worker.ctypes.sizeof(worker.ctypes.c_size_t)
+        names = (
+            "cb", "PageFaultCount", "PeakWorkingSetSize", "WorkingSetSize",
+            "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage",
+            "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage",
+            "PagefileUsage", "PeakPagefileUsage",
+        )
+        offsets = [0, 4] + [8 + index * word for index in range(len(names) - 2)]
+        self.assertEqual(
+            [(name, getattr(worker._Counters, name).offset) for name in names],
+            list(zip(names, offsets)),
+        )
+        self.assertEqual(worker.ctypes.sizeof(worker._Counters), 8 + 8 * word)
+
+    def test_every_standard_sheet_size_has_its_label(self):
+        label = worker._size_class
+        for name, long_side, short_side in (
+            ("ARCH E1 30x42", 42, 30),
+            ("ARCH D 24x36", 36, 24),
+            ("ARCH E 36x48", 48, 36),
+            ("ANSI D 22x34", 34, 22),
+            ("Tabloid 11x17", 17, 11),
+            ("Letter", 11, 8.5),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(label(long_side * 72, short_side * 72), name)
+                self.assertEqual(label(short_side * 72, long_side * 72), name)
+
+    def test_importing_the_worker_selects_the_offscreen_qt_platform_without_overriding_a_choice(
+        self,
+    ):
+        def platform(choice):
+            environment = {
+                key: value for key, value in os.environ.items() if key != "QT_QPA_PLATFORM"
+            }
+            if choice:
+                environment["QT_QPA_PLATFORM"] = choice
+            done = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os, tools.ai_takeoff_corpus_worker; "
+                    "print(os.environ['QT_QPA_PLATFORM'])",
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return done.stdout.strip()
+
+        self.assertEqual(platform(None), "offscreen")
+        self.assertEqual(platform("windows"), "windows")
+
+
+def _synthetic_lines(count, y0=100):
+    return "".join(
+        f"{10 + i % 50} {y0 + i} m {40 + i % 50} {y0 + i} l S\n" for i in range(count)
+    )
+
+
+def _synthetic_texts(count):
+    return "".join(
+        f"BT /F1 9 Tf {50 + 30 * (i % 5)} {300 + 20 * (i // 5)} Td (T{i}) Tj ET\n"
+        for i in range(count)
+    )
+
+
+class MeasurementBoundaryTests(unittest.TestCase):
+    """One prepared bid with a page per boundary; measure_page runs in process."""
+
+    LONG_TITLE = "FOUNDATION PLAN " + "X" * 64
+    PAGES = [
+        _synthetic_lines(499) + TITLE,
+        _synthetic_lines(500) + TITLE,
+        _synthetic_lines(500) + _synthetic_texts(9) + TITLE,
+        _synthetic_lines(500) + _synthetic_texts(10) + TITLE,
+        "6 w 0 100 m 300 100 l S\n0.1 w 0 120 m 20 120 l S\n" + TITLE,
+        _synthetic_lines(10),
+        f"BT /F1 6 Tf 40 60 Td ({LONG_TITLE}) Tj ET\n" + _synthetic_lines(3),
+        fx.s101_content() + TITLE,
+    ]
+    (FEWER_SEGMENTS, CALLOUTS_AT_CAP, FEWEST_RUNS, ENOUGH_RUNS, WIDTH_ORDER,
+     NO_TEXT, LONG_TITLE_PAGE, ROOM) = range(8)
+
+    @classmethod
+    def setUpClass(cls):
+        if not access._access_available():
+            raise unittest.SkipTest("Access ODBC/ADOX unavailable")
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        work = Path(directory.name)
+        pdf = _pages_pdf(work / "boundaries.pdf", cls.PAGES)
+        prepared = work / "boundaries.json"
+        completed = subprocess.run(
+            [sys.executable, "-m", "tools.ai_takeoff_corpus_worker", "prepare",
+             str(pdf), str(work), str(prepared)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr[-2000:])
+        cls.prepared = json.loads(prepared.read_text(encoding="utf-8"))
+
+    def measure(self, index):
+        return worker.measure_page(self.prepared, self.prepared["pages"][index]["uid"], [])
+
+    def test_callouts_need_fewer_than_ten_drawing_runs_and_at_least_500_segments(self):
+        rows = [
+            self.measure(index)
+            for index in (
+                self.FEWER_SEGMENTS, self.CALLOUTS_AT_CAP, self.FEWEST_RUNS, self.ENOUGH_RUNS
+            )
+        ]
+        self.assertEqual(
+            [(r["segments"], r["drawing_text_runs"], r["callouts_as_lines"]) for r in rows],
+            [(499, 0, False), (500, 0, True), (500, 9, True), (500, 10, False)],
+        )
+
+    def test_width_buckets_are_listed_in_sorted_order(self):
+        self.assertEqual(
+            self.measure(self.WIDTH_ORDER)["widths"], '{"<0.25": 1, ">=2": 1}'
+        )
+
+    def test_a_title_of_exactly_80_characters_is_kept_whole(self):
+        row = self.measure(self.LONG_TITLE_PAGE)
+        self.assertEqual(len(self.LONG_TITLE), 80)
+        self.assertEqual(row["title"], self.LONG_TITLE)
+
+    def test_outlined_text_needs_no_text_runs_and_at_least_30_percent_symbols(self):
+        def symbols(count):
+            return lambda items: ["symbol"] * count + ["wall"] * (len(items) - count)
+
+        target = "ost_visualizer.domain.services.ai_linework.classify_linework"
+        for count, expected in ((2, False), (3, True), (4, True)):
+            with self.subTest(symbols=count):
+                with mock.patch(target, symbols(count)):
+                    row = self.measure(self.NO_TEXT)
+                self.assertEqual((row["segments"], row["text_runs"]), (10, 0))
+                self.assertIs(row["outlined_text"], expected)
+        with mock.patch(target, symbols(3)):
+            row = self.measure(self.LONG_TITLE_PAGE)
+        self.assertGreater(row["text_runs"], 0)
+        self.assertIs(row["outlined_text"], False)
+
+    def test_the_visible_area_is_offset_by_more_than_a_hundredth_of_a_point(self):
+        target = (
+            "ost_visualizer.presentation.visualization.pdf.pdf_visible_origin."
+            "read_visible_box_origin"
+        )
+        for origin, expected in (
+            ((0.0, 0.0), "no"),
+            ((0.01, 0.0), "no"),
+            ((0.0, -0.01), "no"),
+            ((0.011, 0.0), "yes"),
+            ((0.0, -0.011), "yes"),
+        ):
+            with self.subTest(origin=origin):
+                with mock.patch(target, lambda *args, value=origin: value):
+                    row = self.measure(self.NO_TEXT)
+                self.assertEqual(row["visible_offset"], expected)
+
+    def test_the_heavy_threshold_is_rounded_to_three_decimals(self):
+        target = "ost_visualizer.domain.services.ai_linework.heavy_width_threshold"
+        with mock.patch(target, return_value=1.23456):
+            row = self.measure(self.NO_TEXT)
+        self.assertEqual(row["heavy_threshold"], 1.235)
+
+
+class WorkerToleranceTests(unittest.TestCase):
+    """Float tolerances of the wall profile and the wall-width suggestion check."""
+
+    def walls(self):
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        items = [LineSegment(0, i, 100, i, width=2.0) for i in range(4)]
+        items += [LineSegment(0, 50 + i, 100, 50 + i, width=1.0) for i in range(8)]
+        return items
+
+    def dominant(self, threshold):
+        target = "ost_visualizer.domain.services.ai_linework.heavy_width_threshold"
+        with mock.patch(target, return_value=threshold):
+            return worker.wall_profile(self.walls())["dominant_wall_width"]
+
+    def test_a_wall_up_to_a_billionth_below_the_threshold_still_counts_as_heavy(self):
+        self.assertEqual(self.dominant(2.0 + 0.75e-9), 2.0)
+        self.assertIsNone(self.dominant(2.0 + 1.5e-9))
+        # (2.0 + 1e-9) - 1e-9 is exactly 2.0: the boundary itself is inclusive.
+        self.assertEqual((2.0 + 1e-9) - 1e-9, 2.0)
+        self.assertEqual(self.dominant(2.0 + 1e-9), 2.0)
+
+    def test_a_suggestion_must_exceed_the_dominant_wall_by_more_than_a_billionth(self):
+        self.assertTrue(worker.removes_dominant(2.0 + 1.5e-9, 2.0))
+        self.assertFalse(worker.removes_dominant(2.0 + 0.75e-9, 2.0))
+        self.assertFalse(worker.removes_dominant(2.0 + 1e-9, 2.0))
+
+    def test_the_histogram_keys_are_written_in_sorted_text_order(self):
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        items = [LineSegment(0, i, 100, i, width=9.0) for i in range(5)]
+        items += [LineSegment(0, 20 + i, 100, 20 + i, width=10.0) for i in range(5)]
+        self.assertEqual(
+            worker.wall_profile(items)["long_width_histogram"],
+            '{"10.0": 500.0, "9.0": 500.0}',
+        )
+
+    def test_a_timed_call_reports_its_duration_to_a_thousandth_of_a_second(self):
+        readings = iter([10.0, 10.12345, 20.0, 20.12345])
+        clock = types.SimpleNamespace(perf_counter=lambda: next(readings))
+        with mock.patch.object(worker, "time", clock):
+            ok_timing, _result = worker._timed(lambda: {"status": "ok"})
+            failed_timing, _none = worker._timed(lambda: 1 / 0)
+        self.assertEqual(ok_timing, {"status": "ok", "seconds": 0.123})
+        self.assertEqual(
+            failed_timing, {"status": "exception:ZeroDivisionError", "seconds": 0.123}
+        )
 
 
 if __name__ == "__main__":

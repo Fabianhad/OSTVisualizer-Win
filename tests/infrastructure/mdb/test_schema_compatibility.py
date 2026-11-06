@@ -1,3 +1,4 @@
+import logging
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -42,7 +43,8 @@ class SchemaCompatibilityCompatibilityTests(unittest.TestCase):
         inspector = MdbSchemaInspector(
             _schema_support__FakeConnection({"Bids"}, {"Bids": {"UID"}})
         )
-        self.assertTrue(inspector.optional_table_missing("BidHotLinks"))
+        self.assertIs(inspector.optional_table_missing("BidHotLinks"), True)
+        self.assertIs(inspector.optional_table_missing("Bids"), False)
         self.assertEqual(
             inspector.report.detected_schema_notes,
             {"missing optional table BidHotLinks"},
@@ -78,7 +80,11 @@ class SchemaCompatibilityCompatibilityTests(unittest.TestCase):
         inspector = MdbSchemaInspector(
             _schema_support__FakeConnection({"BidLayers"}, {"BidLayers": {"UID"}})
         )
-        with self.assertRaises(UnsupportedMdbSchemaError):
+        with self.assertRaisesRegex(
+            UnsupportedMdbSchemaError,
+            r"^This OST database is missing required column BidLayers\.Name "
+            r"and cannot be loaded\.$",
+        ):
             inspector.require_column("BidLayers", "Name")
         self.assertEqual(
             inspector.report.missing_required_columns,
@@ -98,7 +104,9 @@ class SchemaCompatibilityCompatibilityTests(unittest.TestCase):
         )
         inspector.require_table("BidLayers")
         with self.assertRaisesRegex(
-            UnsupportedMdbSchemaError, "missing required table BidPages"
+            UnsupportedMdbSchemaError,
+            r"^This OST database is missing required table BidPages "
+            r"and cannot be loaded\.$",
         ):
             inspector.require_table("BidPages")
         with self.assertRaisesRegex(
@@ -111,10 +119,10 @@ class SchemaCompatibilityCompatibilityTests(unittest.TestCase):
         inspector = MdbSchemaInspector(
             _schema_support__FakeConnection(set(), {"BidPages": {"UID"}})
         )
-        self.assertTrue(inspector.table_exists("BidPages"))
-        self.assertFalse(inspector.table_exists("BidHotLinks"))
-        self.assertTrue(inspector.optional_table_missing("BidHotLinks"))
-        self.assertFalse(inspector.optional_table_missing("BidPages"))
+        self.assertIs(inspector.table_exists("BidPages"), True)
+        self.assertIs(inspector.table_exists("BidHotLinks"), False)
+        self.assertIs(inspector.optional_table_missing("BidHotLinks"), True)
+        self.assertIs(inspector.optional_table_missing("BidPages"), False)
         self.assertEqual(
             inspector.report.detected_schema_notes,
             {"missing optional table BidHotLinks"},
@@ -142,8 +150,8 @@ class SchemaCompatibilityCompatibilityTests(unittest.TestCase):
                 return _RaisingCursor()
 
         inspector = MdbSchemaInspector(_RaisingConnection())
-        self.assertFalse(inspector.table_exists("BidPages"))
-        self.assertFalse(inspector.column_exists("BidPages", "Name"))
+        self.assertIs(inspector.table_exists("BidPages"), False)
+        self.assertIs(inspector.column_exists("BidPages", "Name"), False)
         self.assertEqual(inspector.report.detected_tables, set())
         self.assertEqual(
             inspector.optional_column("BidPages", "Name", "NULL"),
@@ -174,4 +182,194 @@ class SchemaCompatibilityCompatibilityTests(unittest.TestCase):
                 "BidPages", ("FolderUID", "PageNumber"), "[UID]"
             ),
             "[FolderUID], [PageNumber]",
+        )
+
+
+class _RecordingCursor:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        self._connection.closed_cursors += 1
+        return False
+
+    def tables(self, **kwargs):
+        self._connection.table_calls.append(kwargs)
+        return _schema_support__FakeResult(
+            [SimpleNamespace(table_name=name) for name in self._connection.tables]
+        )
+
+    def columns(self, **kwargs):
+        self._connection.column_calls.append(kwargs)
+        return _schema_support__FakeResult(
+            [
+                SimpleNamespace(column_name=name)
+                for name in self._connection.columns_by_table.get(kwargs["table"], ())
+            ]
+        )
+
+
+class _RecordingConnection:
+    def __init__(self, tables, columns_by_table, database_name="<unset>"):
+        self.tables = list(tables)
+        self.columns_by_table = columns_by_table
+        self.database_name = database_name
+        self.table_calls = []
+        self.column_calls = []
+        self.getinfo_calls = []
+        self.closed_cursors = 0
+
+    def cursor(self):
+        return _RecordingCursor(self)
+
+    def getinfo(self, info_type):
+        self.getinfo_calls.append(info_type)
+        if isinstance(self.database_name, BaseException):
+            raise self.database_name
+        return self.database_name
+
+
+class SchemaInspectorCatalogQueryTests(unittest.TestCase):
+    def test_table_listing_is_restricted_to_user_tables_and_cached(self):
+        connection = _RecordingConnection(["BidPages", "Bids"], {})
+        inspector = MdbSchemaInspector(connection)
+        self.assertIs(inspector.table_exists("BidPages"), True)
+        self.assertIs(inspector.table_exists("Bids"), True)
+        self.assertEqual(connection.table_calls, [{"tableType": "TABLE"}])
+        self.assertEqual(connection.column_calls, [])
+        self.assertEqual(inspector.report.detected_tables, {"BidPages", "Bids"})
+        self.assertEqual(connection.closed_cursors, 1)
+
+    def test_column_listing_uses_table_keyword_and_is_cached_per_table(self):
+        connection = _RecordingConnection(
+            [], {"BidPages": {"UID", "Name"}, "BidLayers": {"UID"}}
+        )
+        inspector = MdbSchemaInspector(connection)
+        self.assertEqual(inspector.get_columns("BidPages"), {"UID", "Name"})
+        self.assertIs(inspector.column_exists("BidPages", "Name"), True)
+        self.assertIs(inspector.column_exists("BidPages", "Missing"), False)
+        self.assertEqual(inspector.get_columns("BidLayers"), {"UID"})
+        self.assertEqual(
+            connection.column_calls, [{"table": "BidPages"}, {"table": "BidLayers"}]
+        )
+        self.assertEqual(connection.closed_cursors, 2)
+
+    def test_empty_column_listing_is_cached_and_does_not_requery(self):
+        connection = _RecordingConnection([], {})
+        inspector = MdbSchemaInspector(connection)
+        self.assertEqual(inspector.get_columns("Ghost"), set())
+        self.assertEqual(inspector.get_columns("Ghost"), set())
+        self.assertEqual(connection.column_calls, [{"table": "Ghost"}])
+
+    def test_unlisted_table_is_found_through_its_columns(self):
+        connection = _RecordingConnection([], {"BidPages": {"UID"}})
+        inspector = MdbSchemaInspector(connection)
+        self.assertIs(inspector.table_exists("BidPages"), True)
+        self.assertEqual(inspector.report.detected_tables, set())
+        inspector.require_table("BidPages")
+
+    def test_non_odbc_errors_while_listing_are_not_swallowed(self):
+        class _BrokenCursor(_RecordingCursor):
+            def tables(self, **kwargs):
+                raise RuntimeError("connection lost")
+
+        class _BrokenConnection(_RecordingConnection):
+            def cursor(self):
+                return _BrokenCursor(self)
+
+        inspector = MdbSchemaInspector(_BrokenConnection([], {}))
+        with self.assertRaisesRegex(RuntimeError, "connection lost"):
+            inspector.table_exists("BidPages")
+        self.assertEqual(inspector.report.detected_tables, set())
+
+    def test_optional_column_without_alias_defaults_to_column_name_alias(self):
+        inspector = MdbSchemaInspector(
+            _RecordingConnection(["BidPages"], {"BidPages": {"UID"}})
+        )
+        self.assertEqual(
+            inspector.optional_column("BidPages", "Name", "NULL"),
+            "NULL AS [Name]",
+        )
+        self.assertEqual(
+            inspector.optional_column("BidPages", "UID", "0", alias="UID"), "[UID]"
+        )
+        self.assertEqual(inspector.report.missing_optional_columns, {"BidPages.Name"})
+
+
+class SchemaInspectorDatabaseKeyTests(unittest.TestCase):
+    def setUp(self):
+        MdbSchemaInspector._logged_optional_write_skips.clear()
+        self.addCleanup(MdbSchemaInspector._logged_optional_write_skips.clear)
+
+    def test_database_key_is_the_odbc_database_name_when_available(self):
+        connection = _RecordingConnection([], {}, database_name="C:/data/ost.mdb")
+        inspector = MdbSchemaInspector(connection)
+        self.assertEqual(inspector._database_key(), "C:/data/ost.mdb")
+        self.assertEqual(connection.getinfo_calls, [pyodbc.SQL_DATABASE_NAME])
+
+    def test_database_key_falls_back_to_connection_identity(self):
+        for label, database_name in (
+            ("empty", ""),
+            ("none", None),
+            ("attribute", AttributeError("no getinfo")),
+            ("odbc", pyodbc.Error("HY000", "no info")),
+        ):
+            with self.subTest(label):
+                connection = _RecordingConnection([], {}, database_name=database_name)
+                inspector = MdbSchemaInspector(connection)
+                self.assertEqual(inspector._database_key(), str(id(connection)))
+
+    def test_database_key_without_getinfo_uses_connection_identity(self):
+        connection = _schema_support__FakeConnection(set(), {})
+        inspector = MdbSchemaInspector(connection)
+        self.assertEqual(inspector._database_key(), str(id(connection)))
+
+    def test_database_key_stringifies_non_string_names(self):
+        inspector = MdbSchemaInspector(_RecordingConnection([], {}, database_name=12345))
+        self.assertEqual(inspector._database_key(), "12345")
+
+    def test_same_named_database_logs_each_skip_once_across_connections(self):
+        logger = Mock()
+        first = MdbSchemaInspector(
+            _RecordingConnection([], {}, database_name="ost.mdb"), logger=logger
+        )
+        second = MdbSchemaInspector(
+            _RecordingConnection([], {}, database_name="ost.mdb"), logger=logger
+        )
+        other = MdbSchemaInspector(
+            _RecordingConnection([], {}, database_name="other.mdb"), logger=logger
+        )
+        first.log_optional_write_skip("BidPages", "Name", "rename")
+        second.log_optional_write_skip("BidPages", "Name", "rename")
+        self.assertEqual(logger.warning.call_count, 1)
+        other.log_optional_write_skip("BidPages", "Name", "rename")
+        self.assertEqual(logger.warning.call_count, 2)
+        self.assertEqual(
+            MdbSchemaInspector._logged_optional_write_skips,
+            {
+                "ost.mdb:BidPages.Name:rename",
+                "other.mdb:BidPages.Name:rename",
+            },
+        )
+
+    def test_unnamed_databases_are_distinguished_by_connection_identity(self):
+        logger = Mock()
+        first = MdbSchemaInspector(
+            _RecordingConnection([], {}, database_name=""), logger=logger
+        )
+        second = MdbSchemaInspector(
+            _RecordingConnection([], {}, database_name=""), logger=logger
+        )
+        first.log_optional_write_skip("BidPages", "Name", "rename")
+        second.log_optional_write_skip("BidPages", "Name", "rename")
+        self.assertEqual(logger.warning.call_count, 2)
+
+    def test_default_logger_is_the_module_logger(self):
+        inspector = MdbSchemaInspector(_RecordingConnection([], {}))
+        self.assertIs(
+            inspector.logger,
+            logging.getLogger("ost_visualizer.infrastructure.mdb.schema_compatibility"),
         )

@@ -12,6 +12,7 @@ from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.render_priority import RenderPriority
 from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
     PDFRenderingService,
+    PdfTextRequest,
     RenderRequest,
 )
 from PySide6.QtGui import QColor, QImage
@@ -722,6 +723,222 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
         service = self._service(SolidRenderer(), num_workers=0)
         result = service._execute_render(self._bare_request("composite_frame"))
         self.assertEqual(result, RenderResult("r1", False, None, "No page entity"))
+
+    class _RecordingComposites:
+        """CompositeRenderer stand-in that records what the service forwards."""
+
+        def __init__(self, image=None):
+            self.image = image
+            self.calls = []
+
+        def render_composite(self, *args, **kwargs):
+            self.calls.append(("composite", args, kwargs))
+            return self.image
+
+        def render_composite_frame(self, *args, **kwargs):
+            self.calls.append(("frame", args, kwargs))
+            return self.image
+
+        def clear_cache(self):
+            pass
+
+    def test_composite_request_forwards_its_snapshot_and_applies_page_effects(self):
+        service = self._service(SolidRenderer(), num_workers=0)
+        composites = self._RecordingComposites(_solid_image("red"))
+        service._composite_renderer = composites
+        page = Page(uid="p", name="P", image_path="a.pdf", invert=True)
+        bid_ref = object()
+        results = []
+        request_id = service.render_composite_async(
+            page, bid_ref, 2.5, 90, results.append
+        )
+        request = service._active_requests[request_id]
+        result = service._execute_render(request)
+        self.assertEqual((result.request_id, result.success, result.error), (request_id, True, None))
+        # Inversion of the page snapshot is applied to the composited image.
+        self.assertEqual(result.image.pixelColor(0, 0).name(), "#00ffff")
+        ((kind, args, kwargs),) = composites.calls
+        self.assertEqual(kind, "composite")
+        self.assertEqual(args, (request.page_entity, bid_ref, 2.5, 90))
+        self.assertIsNot(request.page_entity, page)
+        self.assertTrue(kwargs["wait_for_in_flight"])
+        self.assertFalse(kwargs["cancelled_check"]())
+        request.cancelled.set()
+        self.assertTrue(kwargs["cancelled_check"]())
+
+    def test_composite_frame_request_forwards_its_frame_and_applies_page_effects(self):
+        service = self._service(SolidRenderer(), num_workers=0)
+        composites = self._RecordingComposites(_solid_image("red"))
+        service._composite_renderer = composites
+        page = Page(uid="p", name="P", image_path="a.pdf", invert=True)
+        request_id = service.render_composite_frame_async(
+            page, None, 1.5, 270, 1.0, 2.0, 30.0, 40.0, lambda _result: None
+        )
+        request = service._active_requests[request_id]
+        result = service._execute_render(request)
+        self.assertTrue(result.success)
+        self.assertEqual(result.image.pixelColor(0, 0).name(), "#00ffff")
+        ((kind, args, kwargs),) = composites.calls
+        self.assertEqual(kind, "frame")
+        self.assertEqual(
+            args, (request.page_entity, 1.5, 1.0, 2.0, 30.0, 40.0, 270)
+        )
+        self.assertTrue(kwargs["wait_for_in_flight"])
+        self.assertFalse(kwargs["cancelled_check"]())
+        request.cancelled.set()
+        self.assertTrue(kwargs["cancelled_check"]())
+
+    def test_composites_that_cannot_be_rendered_report_distinct_failures(self):
+        service = self._service(SolidRenderer(), num_workers=0)
+        service._composite_renderer = self._RecordingComposites(None)
+        page = Page(uid="p", name="P", image_path="a.pdf")
+        composite = service._active_requests[
+            service.render_composite_async(page, None, 1.0, 0, lambda _r: None)
+        ]
+        frame = service._active_requests[
+            service.render_composite_frame_async(
+                page, None, 1.0, 0, 0.0, 0.0, 5.0, 5.0, lambda _r: None
+            )
+        ]
+        for request, message in (
+            (composite, "Failed to render composite"),
+            (frame, "Failed to render composite frame"),
+        ):
+            with self.subTest(message=message):
+                result = service._execute_render(request)
+                self.assertEqual(
+                    result, RenderResult(request.request_id, False, None, message)
+                )
+
+    def test_composites_render_through_the_worker_and_reach_the_callback(self):
+        service = self._service(SolidRenderer(), num_workers=1)
+        service._composite_renderer = self._RecordingComposites(_solid_image("red"))
+        page = Page(uid="p", name="P", image_path="a.pdf")
+        composite = self._run(
+            lambda callback: service.render_composite_async(
+                page, None, 1.0, 0, callback
+            )
+        )
+        frame = self._run(
+            lambda callback: service.render_composite_frame_async(
+                page, None, 1.0, 0, 0.0, 0.0, 5.0, 5.0, callback
+            )
+        )
+        for result in (composite, frame):
+            self.assertTrue(result.success)
+            self.assertEqual(result.image.pixelColor(0, 0).name(), "#ff0000")
+
+    def test_overlay_request_succeeds_with_page_and_tinted_images(self):
+        renderer = SolidRenderer()
+        service = self._service(renderer)
+        page = Page(uid="p", name="P", image_path="a.pdf", overlay_image_path="o.pdf")
+        plain = self._run(
+            lambda callback: service.render_overlay_async(page, 1, 0, 1.0, callback)
+        )
+        tinted = self._run(
+            lambda callback: service.render_overlay_async(page, 2, 0, 1.0, callback)
+        )
+        self.assertTrue(plain.success)
+        self.assertIsNone(plain.error)
+        self.assertEqual(plain.image.pixelColor(0, 0).name(), "#ff0000")
+        self.assertTrue(tinted.success)
+        self.assertNotEqual(tinted.image.pixelColor(0, 0).name(), "#ff0000")
+
+    def test_a_request_cancelled_while_rendering_reports_cancelled(self):
+        service = self._service(SolidRenderer(), num_workers=0)
+        page_request = self._bare_request("page")
+        page_request.cancelled.set()
+        self.assertEqual(
+            service._execute_render(page_request),
+            RenderResult("r1", False, None, "Cancelled"),
+        )
+        text_request = PdfTextRequest("t1", "page.pdf", 0, 2, lambda _r: None)
+        text_request.cancelled.set()
+        with mock.patch(
+            "ost_visualizer.presentation.visualization.pdf.services."
+            "pdf_rendering_service.read_visible_box_origin",
+            return_value=(1.0, 2.0),
+        ):
+            self.assertEqual(
+                service._execute_render(text_request),
+                RenderResult("t1", False, None, "Cancelled"),
+            )
+
+    def test_requests_default_to_applying_inversion_and_bitonal_effects(self):
+        request = self._bare_request("page")
+        self.assertTrue(request.apply_invert_effect)
+        self.assertTrue(request.apply_bitonal_effect)
+        self.assertTrue(request.wait_for_in_flight)
+        service = self._service(SolidRenderer(), num_workers=0)
+        page = Page(uid="p", name="P", overlay_image_path="o.pdf")
+        noop = lambda _result: None
+        defaults = {
+            "page": service._active_requests[
+                service.render_page_async("a.pdf", 0, 1.0, 0, noop)
+            ],
+            "overlay": service._active_requests[
+                service.render_overlay_async(page, 1, 0, 1.0, noop)
+            ],
+        }
+        for name, request in defaults.items():
+            with self.subTest(request=name):
+                self.assertTrue(request.apply_invert_effect)
+                self.assertTrue(request.apply_bitonal_effect)
+        deferred = service._active_requests[
+            service.render_overlay_async(
+                page,
+                1,
+                0,
+                1.0,
+                noop,
+                apply_invert_effect=False,
+                apply_bitonal_effect=False,
+            )
+        ]
+        self.assertFalse(deferred.apply_invert_effect)
+        self.assertFalse(deferred.apply_bitonal_effect)
+
+    def test_page_request_applies_bitonal_conversion_unless_deferred(self):
+        service = self._service(SolidRenderer())
+        results = {}
+        for name, effects in (("applied", {}), ("deferred", {"apply_bitonal_effect": False})):
+            results[name] = self._run(
+                lambda callback, effects=effects, name=name: service.render_page_async(
+                    f"{name}.pdf", 0, 1.0, 0, callback, bitonal=True, **effects
+                )
+            )
+        # Red is not black or white, so a bitonal conversion must change it.
+        self.assertNotEqual(results["applied"].image.pixelColor(0, 0).name(), "#ff0000")
+        self.assertEqual(results["deferred"].image.pixelColor(0, 0).name(), "#ff0000")
+
+    def test_default_service_has_two_workers_and_jobs_default_to_text_priority(self):
+        service = PDFRenderingService(PageCache())
+        self.addCleanup(service.shutdown)
+        self.assertEqual(len(service._worker_threads), 2)
+        job = service._active_requests[
+            service.run_job_async(lambda: None, lambda _result: None)
+        ]
+        self.assertEqual(job.priority, RenderPriority.PDF_TEXT)
+
+    def test_an_idle_worker_keeps_waiting_and_serves_a_later_request(self):
+        service = self._service(SolidRenderer(), num_workers=1)
+        # The worker polls its queue every 0.5 s; let it time out at least once.
+        time.sleep(0.7)
+        self.assertTrue(all(thread.is_alive() for thread in service._worker_threads))
+        result = self._run(
+            lambda callback: service.render_page_async(
+                "later.pdf", 0, 1.0, 0, callback
+            )
+        )
+        self.assertTrue(result.success)
+
+    def test_shutdown_stops_workers_without_unhandled_thread_errors(self):
+        errors = []
+        service = PDFRenderingService(PageCache(), num_workers=2)
+        with mock.patch.object(threading, "excepthook", errors.append):
+            service.shutdown()
+        self.assertEqual(errors, [])
+        self.assertEqual(service._worker_threads, [])
 
 
 class PdfRenderingRequestSchedulingTests(unittest.TestCase):

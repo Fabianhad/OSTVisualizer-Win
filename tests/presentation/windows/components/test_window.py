@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.presentation.components.page_combo import _ITEM_ROLE_PRECHECK_ICON
 from ost_visualizer.presentation.windows.components.window import (
     DetachedPageViewWindow,
     DetachedPageViewWindowConfig,
@@ -11314,3 +11315,161 @@ class DetachedPageViewWindowQueueExceptionCleanupTests(
         )
         self.assertEqual(plan_view.restored_positions, [([], changes)])
         self._assert_freed(window, plan_view, undo_service, {"a1"})
+
+
+class DetachedWindowA3GapTests(_DetachedPageViewManagerLifecycleFixture):
+    """Second-pass (A3) tests for survivors of a full window.py mutation sweep:
+    constructor wiring, named-view listing across pages without views, takeoff
+    markers on the page combo, lease-loss bookkeeping and the SQL guard paths."""
+
+    def _recording(self, **options):
+        return _recording_window(
+            self,
+            view=AnnotationView(
+                uid="view-1", bid_uid="7", target_page_uid="p2", file_path="bid.mdb"
+            ),
+            bid=_three_page_bid(),
+            **options,
+        )
+
+    def test_the_detached_plan_view_never_owns_the_main_page_view_state(self):
+        window = self._recording()
+        self.assertEqual(
+            window.plan_view.calls_named("set_owns_page_view_state"), [((False,), {})]
+        )
+
+    def test_every_toolbar_tool_button_shows_an_icon_at_the_default_size(self):
+        window = self._recording()
+        size = QtCore.QSize(*DEFAULT_ICON_SIZE)
+        buttons = list(window._annotation_tool_buttons.values())
+        self.assertTrue(buttons)
+        if window._btn_select is not None:
+            buttons.append(window._btn_select)
+        for button in buttons:
+            with self.subTest(tooltip=button.toolTip()):
+                self.assertFalse(button.icon().isNull())
+                self.assertEqual(button.iconSize(), size)
+                self.assertTrue(button.isCheckable())
+
+    def test_named_views_after_a_page_without_views_are_still_listed(self):
+        window = self._recording(
+            named_views=[
+                ("nv3", "p3", "Three", "Third"),
+                ("nv1", "p1", "One", "First"),
+            ]
+        )
+        combo = window._named_view_combo
+        role = QtCore.Qt.ItemDataRole.UserRole
+        self.assertEqual(
+            [(combo.itemText(i), combo.itemData(i, role)) for i in range(combo.count())],
+            [("First", ("p1", "nv1")), ("Third", ("p3", "nv3"))],
+        )
+
+    def test_navigation_update_projects_takeoff_markers_onto_the_page_combo(self):
+        window = self._recording()
+        window.update_navigation(_three_page_bid(), pages_with_takeoffs={"p3"})
+        combo = window._page_combo
+        active = combo._draft_icon_active.cacheKey()
+        default = combo._draft_icon_default.cacheKey()
+
+        def key(uid):
+            return combo._page_items[uid].data(_ITEM_ROLE_PRECHECK_ICON).cacheKey()
+
+        self.assertEqual((key("p1"), key("p2"), key("p3")), (default, default, active))
+        window.update_navigation(_three_page_bid(), pages_with_takeoffs=set())
+        self.assertEqual((key("p1"), key("p2"), key("p3")), (default, default, default))
+
+    def test_a_lease_loss_clears_the_pending_request_and_stops_geometry_leasing(self):
+        window, plan_view, queued, _undo = DetachedWindowSqlQueueTests._fixture(self)
+        window._on_geometry_edit_lease_requested(["a1"])
+        handle = DetachedWindowGestureLeaseLifecycleTests._grant(window, queued)
+        window._geometry_edit_lease_request_id = "pending-request"
+        window._on_edit_lease_lost(
+            EditLeaseLoss(
+                database_id=handle.database_id,
+                draft_id=handle.draft_id,
+                runtime_generation=handle.runtime_generation,
+                operation_id=handle.operation_id,
+                owning_surface=handle.owning_surface,
+                resources=handle.resources,
+                reason="trust-lost",
+            )
+        )
+        self.assertEqual(window._geometry_edit_lease_request_id, "")
+        self.assertIsNone(window._geometry_edit_lease_handle)
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+
+    def test_a_consumed_geometry_lease_forgets_its_request_id_and_selection(self):
+        window, plan_view, queued, _undo = (
+            DetachedWindowGestureLeaseLifecycleTests._fixture(self)
+        )
+        window._on_geometry_edit_lease_requested(["a1"])
+        handle = DetachedWindowGestureLeaseLifecycleTests._grant(window, queued)
+        window._geometry_edit_lease_request_id = "stale-request"
+        window._on_positions_flushed([], [("a1", "text", [1.0, 1.0], [2.0, 2.0])])
+        self.assertIs(queued.geometry_calls[0][1]["edit_lease_handle"], handle)
+        self.assertIsNone(window._geometry_edit_lease_handle)
+        self.assertEqual(window._geometry_edit_lease_request_id, "")
+        self.assertEqual(window._geometry_edit_lease_selection, set())
+        self.assertEqual(queued.ended_edit_leases, [])
+
+    def test_an_empty_selection_requests_no_geometry_lease(self):
+        window, _plan_view, queued, _undo = DetachedWindowSqlQueueTests._fixture(self)
+        window._on_geometry_edit_lease_requested([])
+        window._on_geometry_edit_lease_requested(["", None])
+        self.assertEqual(queued.edit_lease_requests, [])
+
+    def test_a_completion_only_counts_as_applied_when_it_committed_that_operation(self):
+        window, _plan_view, _queued, _undo = DetachedWindowSqlQueueTests._fixture(self)
+
+        def result(status, operation_id):
+            return QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=operation_id,
+                outcome_status=status,
+            )
+
+        operation_id = str(uuid.uuid4())
+        committed = result(MutationOutcomeStatus.COMMITTED, operation_id)
+        self.assertFalse(window._sql_completion_was_applied(committed))
+        window._mark_sql_completion_applied(committed)
+        self.assertTrue(window._sql_completion_was_applied(committed))
+        self.assertFalse(
+            window._sql_completion_was_applied(
+                result(MutationOutcomeStatus.COMMITTED, str(uuid.uuid4()))
+            )
+        )
+        # a later non-committed delivery for the same operation is not "applied"
+        self.assertFalse(
+            window._sql_completion_was_applied(
+                result(MutationOutcomeStatus.CONFLICT, operation_id)
+            )
+        )
+        never_recorded = str(uuid.uuid4())
+        window._mark_sql_completion_applied(
+            result(MutationOutcomeStatus.CONFLICT, never_recorded)
+        )
+        self.assertNotIn(never_recorded, window._completed_sql_mutation_ids)
+
+    def test_blank_annotation_types_and_empty_deletions_queue_nothing(self):
+        window, _plan_view, queued, _undo = DetachedWindowSqlQueueTests._fixture(self)
+        window._on_annotation_created("", [1.0, 2.0, 3.0, 4.0], "p1")
+        window._on_annotation_created("line", [1.0, 2.0, 3.0, 4.0], "")
+        window._on_elements_deleted([])
+        self.assertEqual(queued.paste_calls, [])
+        self.assertEqual(queued.delete_calls, [])
+
+    def test_property_history_is_not_recorded_without_an_undo_service(self):
+        window, _plan_view, queued, undo = DetachedWindowSqlQueueTests._fixture(
+            self, undo=False
+        )
+        self.assertIsNone(undo)
+        window._push_sql_annotation_property_history(
+            BidRef("bid.mdb", "7"),
+            "text",
+            [("a1", "text", {"Text": "Old"})],
+            [("a1", "text", {"Text": "New"})],
+            ("p1",),
+        )
+        self.assertEqual(queued.geometry_calls, [])

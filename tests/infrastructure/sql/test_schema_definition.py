@@ -532,3 +532,23 @@ class SchemaRecordCanonicalContractTests(unittest.TestCase):
         ):
             with self.subTest(version=version, checksum=type(checksum).__name__):
                 self.assertIs(schema_record_is_canonical(version, checksum), False)
+
+
+class SchemaMigrationLabelTests(unittest.TestCase):
+    def test_the_schema_label_and_version_are_the_persisted_migration_identity(self):
+        # database_creator writes SQL_SCHEMA_V1.name into ostv.SchemaMigrations.Name
+        # and the version into DatabaseMetadata; the creator tests compare against
+        # the constant itself, so only a literal pin protects the persisted value.
+        # The label is deliberately outside the checksum: renaming it must be an
+        # explicit, reviewed edit of this literal rather than a silent drift.
+        self.assertEqual(SQL_SCHEMA_V1.name, "canonical OST Visualizer schema")
+        self.assertIs(type(SQL_SCHEMA_V1.version), int)
+        self.assertEqual(SQL_SCHEMA_V1.version, 1)
+        self.assertLessEqual(len(SQL_SCHEMA_V1.name), 200)
+        migrations = next(
+            table for table in SQL_SCHEMA_V1.tables if table.name == "SchemaMigrations"
+        )
+        name_column = next(
+            column for column in migrations.columns if column.name == "Name"
+        )
+        self.assertEqual(name_column.data_type, "nvarchar(200)")

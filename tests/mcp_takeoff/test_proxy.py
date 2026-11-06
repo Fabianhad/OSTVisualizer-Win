@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import importlib
 import io
 import json
@@ -119,8 +120,12 @@ class TakeoffProxyTests(unittest.TestCase):
         saved = Path(image["file"]["path"])
         self.assertEqual(saved.parent, self.output_dir)
         self.assertEqual(saved.suffix, ".png")
+        self.assertEqual(saved.name, "20261007_093000_000000_render_sheet_abc123.png")
         self.assertEqual(saved.read_bytes(), big_png)
-        self.assertEqual(image["file"]["size_bytes"], len(big_png))
+        self.assertEqual(
+            image["file"],
+            {"path": str(saved), "size_bytes": len(big_png), "mime_type": "image/png"},
+        )
         self.assertNotIn("png_base64", json.dumps(response["structuredContent"]))
 
     def test_large_json_is_saved_to_a_file_with_a_preview(self):
@@ -200,12 +205,15 @@ class TakeoffProxyTests(unittest.TestCase):
             (lambda: "n" * 30, "n" * 16),
             (lambda: "../..", "output"),
             (lambda: "a b/c", "a-b-c"),
+            (lambda: "", "output"),
+            (lambda: "._-ab-_.", "ab"),
+            (lambda: "XaX", "XaX"),
         )
-        for nonce_factory, expected in cases:
+        for index, (nonce_factory, expected) in enumerate(cases):
             with self.subTest(expected=expected):
                 proxy = TakeoffProxy(
                     FakeClient(result),
-                    self.output_dir,
+                    self.output_dir / str(index),
                     inline_max_bytes=1000,
                     clock=lambda: datetime(2026, 10, 7, 9, 30, 0, 12),
                     nonce_factory=nonce_factory,
@@ -354,6 +362,78 @@ class TakeoffProxyTests(unittest.TestCase):
         self.assertNotIn("png_base64", json.dumps(structured))
 
 
+class OutputNamingAndSummaryTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.output_dir = Path(directory.name) / "outputs"
+        self.result = {"success": True, "status": "ok", "data": {"x": "y" * 5000}}
+
+    def proxy(self, result, inline_max_bytes=1000):
+        return TakeoffProxy(
+            FakeClient(result),
+            self.output_dir,
+            inline_max_bytes=inline_max_bytes,
+            clock=lambda: datetime(2026, 10, 7, 9, 30, 0),
+            nonce_factory=lambda: "abc123",
+        )
+
+    def test_the_last_numbered_name_is_still_available(self):
+        base = "20261007_093000_000000_list_text_abc123"
+        self.output_dir.mkdir(parents=True)
+        for attempt in range(999):
+            name = f"{base}.json" if attempt == 0 else f"{base}_{attempt}.json"
+            (self.output_dir / name).write_bytes(b"")
+        structured = self.proxy(self.result).call_tool("list_text", {})[
+            "structuredContent"
+        ]
+        self.assertTrue(structured["full_output_saved"])
+        self.assertEqual(
+            Path(structured["full_output"]["path"]).name, f"{base}_999.json"
+        )
+        self.assertEqual(len(list(self.output_dir.iterdir())), 1000)
+
+    def test_a_spilled_summary_keeps_success_status_meta_and_error(self):
+        result = {
+            "success": False,
+            "status": "invalid_argument",
+            "data": {"x": "y" * 5000},
+            "meta": {"returned_count": 0},
+            "error": {"code": "invalid_argument", "message": "bad"},
+        }
+        response = self.proxy(result).call_tool("list_text", {})
+        structured = response["structuredContent"]
+        self.assertEqual(structured["success"], False)
+        self.assertEqual(structured["status"], "invalid_argument")
+        self.assertEqual(structured["meta"], {"returned_count": 0})
+        self.assertEqual(
+            structured["error"], {"code": "invalid_argument", "message": "bad"}
+        )
+        self.assertTrue(response["isError"])
+
+    def test_the_failure_preview_is_cut_on_a_character_boundary(self):
+        prefix = "Output from list_text was too large to show inline and saving it failed: "
+        pad = "x" if (1000 - 64 - len(prefix)) % 2 == 0 else ""
+        unicode_error = OSError(pad + "\u00e9" * 600)
+        with patch.object(Path, "open", side_effect=unicode_error):
+            response = self.proxy(self.result).call_tool("list_text", {})
+        text = response["content"][0]["text"]
+        self.assertTrue(text.startswith(prefix + pad + "\u00e9"))
+        self.assertTrue(text.endswith("\u00e9"))
+        encoded = text.encode("utf-8")
+        self.assertEqual(len(encoded), 1000 - 64 - 1)
+
+    def test_names_are_made_of_safe_characters_and_stop_at_eighty(self):
+        from ost_visualizer.mcp_takeoff.proxy import _safe
+
+        self.assertEqual(_safe("a" * 100), "a" * 80)
+        self.assertEqual(_safe("a" * 80), "a" * 80)
+        self.assertEqual(_safe("!!!"), "output")
+        self.assertEqual(_safe(""), "output")
+        self.assertEqual(_safe("-._x y.-"), "x-y")
+        self.assertEqual(_safe("XhelloX"), "XhelloX")
+
+
 class MainTests(unittest.TestCase):
     def test_only_the_log_level_argument_exists(self):
         with self.assertRaises(SystemExit):
@@ -471,6 +551,130 @@ class MainTests(unittest.TestCase):
                 main_module.main([], stdin=io.StringIO(""), stdout=io.StringIO())
             self.assertNotIn(stale, main_module.LOGGER.handlers)
             self.assertIsNone(stale.stream)
+
+
+class TakeoffMainLoggingContractTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name) / "nested" / "app_data"
+        self.addCleanup(self.drop_handlers)
+
+    @staticmethod
+    def drop_handlers():
+        for handler in list(main_module.LOGGER.handlers):
+            main_module.LOGGER.removeHandler(handler)
+            handler.close()
+
+    def test_the_logger_is_the_takeoff_package_logger(self):
+        self.assertEqual(main_module.LOGGER.name, "ost_visualizer.mcp_takeoff")
+        self.assertEqual(
+            main_module._LEVELS, ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+        )
+
+    def test_every_documented_level_is_accepted_and_applied_to_the_logger_and_both_handlers(
+        self,
+    ):
+        for name, level in (
+            ("DEBUG", logging.DEBUG),
+            ("INFO", logging.INFO),
+            ("WARNING", logging.WARNING),
+            ("ERROR", logging.ERROR),
+            ("CRITICAL", logging.CRITICAL),
+        ):
+            with self.subTest(level=name):
+                self.assertEqual(main_module.parse_args(["--log-level", name]).log_level, name)
+                self.drop_handlers()
+                with contextlib.redirect_stderr(io.StringIO()):
+                    logger = main_module._configure_logging(self.directory, name)
+                self.assertEqual(logger.level, level)
+                self.assertEqual(len(logger.handlers), 2)
+                self.assertEqual({handler.level for handler in logger.handlers}, {level})
+                self.assertFalse(logger.propagate)
+
+    def test_both_handlers_use_the_timestamped_format_and_the_folder_is_created(self):
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            logger = main_module._configure_logging(self.directory, "INFO")
+        logger.warning("recorded")
+        for handler in logger.handlers:
+            handler.flush()
+        pattern = (
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} "
+            r"WARNING ost_visualizer\.mcp_takeoff: recorded$"
+        )
+        self.assertRegex(captured.getvalue().strip(), pattern)
+        written = (self.directory / "mcp_takeoff.log").read_text(encoding="utf-8")
+        self.assertRegex(written.strip(), pattern)
+
+    def test_help_describes_the_proxy_and_its_only_option(self):
+        stdout = io.StringIO()
+        with patch.dict(os.environ, {"COLUMNS": "300"}), contextlib.redirect_stdout(
+            stdout
+        ), self.assertRaises(SystemExit):
+            main_module.parse_args(["--help"])
+        lines = [line.strip() for line in stdout.getvalue().splitlines()]
+        self.assertIn("Run the OST Visualizer AI takeoff MCP stdio proxy.", lines)
+        self.assertIn(
+            "Logging level. Logs go to stderr and the app data log file.", lines
+        )
+
+    def test_stale_handlers_are_removed_and_closed_when_logging_is_configured(self):
+        self.directory.parent.mkdir(parents=True, exist_ok=True)
+        stale = logging.FileHandler(self.directory.parent / "stale.log", encoding="utf-8")
+        self.addCleanup(stale.close)
+        main_module.LOGGER.addHandler(stale)
+        with contextlib.redirect_stderr(io.StringIO()):
+            logger = main_module._configure_logging(self.directory, "INFO")
+        self.assertNotIn(stale, logger.handlers)
+        self.assertIsNone(stale.stream)
+        self.assertEqual(len(logger.handlers), 2)
+
+    def test_the_handlers_of_a_finished_run_are_closed(self):
+        recorded = []
+        real = main_module._configure_logging
+
+        def configure(directory, level):
+            logger = real(directory, level)
+            recorded.extend(logger.handlers)
+            return logger
+
+        with patch.object(main_module, "app_data_dir", return_value=self.directory):
+            with patch.object(main_module, "_configure_logging", configure):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    main_module.main([], stdin=io.StringIO(""), stdout=io.StringIO())
+        file_handlers = [h for h in recorded if isinstance(h, logging.FileHandler)]
+        self.assertEqual(len(file_handlers), 1)
+        self.assertIsNone(file_handlers[0].stream)
+        self.assertEqual(main_module.LOGGER.handlers, [])
+
+    def test_a_run_logs_its_start_and_releases_its_handlers_when_it_ends(self):
+        with patch.object(main_module, "app_data_dir", return_value=self.directory):
+            with contextlib.redirect_stderr(io.StringIO()):
+                main_module.main(
+                    ["--log-level", "INFO"],
+                    stdin=io.StringIO(""),
+                    stdout=io.StringIO(),
+                )
+        self.assertEqual(main_module.LOGGER.handlers, [])
+        written = (self.directory / "mcp_takeoff.log").read_text(encoding="utf-8")
+        self.assertIn("INFO ost_visualizer.mcp_takeoff: AI takeoff MCP proxy started", written)
+
+    def test_a_real_stdin_is_read_as_utf8_with_a_bom_and_bad_bytes_replaced(self):
+        class FakeStdin(io.StringIO):
+            calls = []
+
+            def reconfigure(self, **options):
+                FakeStdin.calls.append(options)
+
+        with patch.object(main_module, "app_data_dir", return_value=self.directory):
+            with patch.object(sys, "stdin", FakeStdin("")), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                main_module.main([], stdout=io.StringIO())
+        self.assertEqual(
+            FakeStdin.calls, [{"encoding": "utf-8-sig", "errors": "replace"}]
+        )
 
 
 class EntryScriptTests(unittest.TestCase):

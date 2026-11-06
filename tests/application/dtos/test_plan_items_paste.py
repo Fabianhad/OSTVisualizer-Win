@@ -91,3 +91,70 @@ class PreparePlanItemsPastePayloadTests(unittest.TestCase):
         self.assertEqual(prepared.takeoff_specs[0].condition_uid, "condition")
         self.assertEqual(prepared.takeoff_specs[0].parent_uid, "parent")
         self.assertEqual(prepared.takeoff_external_parent_sources, ("child",))
+
+
+class PreparePlanItemsPasteEdgeTests(unittest.TestCase):
+    def spec(self, annotation_type="hotlink", target="view"):
+        return InsertAnnotationSpec("page", annotation_type, [1.0], "#000000", 1.0, {"BidPageViewUID": target})
+
+    def payload(self, *specs, sources=("hotlink/h",), destination="other"):
+        return PlanItemsPastePayload(
+            source_bid_uid="source",
+            destination_bid_uid=destination,
+            annotation_source_uids=tuple(sources),
+            annotation_specs=tuple(specs),
+        )
+
+    def test_only_links_to_views_that_are_not_copied_along_are_cleared_across_bids(self):
+        prepared = prepare_plan_items_paste_payload(self.payload(self.spec(target="view")))
+        self.assertIsNone(prepared.annotation_specs[0].properties["BidPageViewUID"])
+        kept = prepare_plan_items_paste_payload(
+            self.payload(
+                self.spec(target="view"),
+                self.spec(annotation_type="namedview", target=None),
+                sources=("hotlink/h", "namedview/view"),
+            )
+        )
+        self.assertEqual(kept.annotation_specs[0].properties["BidPageViewUID"], "view")
+        numeric = prepare_plan_items_paste_payload(
+            self.payload(
+                self.spec(target=7),
+                self.spec(annotation_type="namedview", target=None),
+                sources=("hotlink/h", "namedview/7"),
+            )
+        )
+        self.assertEqual(numeric.annotation_specs[0].properties["BidPageViewUID"], 7)
+
+    def test_null_and_zero_targets_and_other_annotation_types_are_left_alone(self):
+        for target in (None, "", 0, "0"):
+            prepared = prepare_plan_items_paste_payload(self.payload(self.spec(target=target)))
+            self.assertEqual(prepared.annotation_specs[0].properties["BidPageViewUID"], target)
+        other = self.spec(annotation_type="rect", target="view")
+        prepared = prepare_plan_items_paste_payload(self.payload(other, sources=("rect/r",)))
+        self.assertEqual(prepared.annotation_specs[0].properties["BidPageViewUID"], "view")
+
+    def test_unchanged_cross_bid_payloads_are_returned_as_the_prepared_copy_and_only_changed_specs_differ(self):
+        keep = self.spec(annotation_type="rect", target="view")
+        clear = self.spec(target="gone")
+        prepared = prepare_plan_items_paste_payload(self.payload(keep, clear, sources=("rect/r", "hotlink/h")))
+        self.assertEqual(prepared.annotation_specs[0].properties["BidPageViewUID"], "view")
+        self.assertIsNone(prepared.annotation_specs[1].properties["BidPageViewUID"])
+        self.assertEqual(prepared.annotation_specs[1].position, [1.0])
+        original = self.payload(keep, sources=("rect/r",))
+        same = prepare_plan_items_paste_payload(original)
+        self.assertIsNot(same, original)
+        self.assertEqual(same, original)
+        self.assertEqual(same.annotation_specs[0], keep)
+
+    def test_cross_bid_clearing_applies_whichever_bid_uid_sorts_first(self):
+        # Only inequality of the two bid uids matters, not their string order.
+        for destination in ("a-before-source", "zz-after-source"):
+            with self.subTest(destination=destination):
+                prepared = prepare_plan_items_paste_payload(
+                    self.payload(self.spec(target="view"), destination=destination)
+                )
+                self.assertIsNone(prepared.annotation_specs[0].properties["BidPageViewUID"])
+        same_bid = prepare_plan_items_paste_payload(
+            self.payload(self.spec(target="view"), destination="source")
+        )
+        self.assertEqual(same_bid.annotation_specs[0].properties["BidPageViewUID"], "view")

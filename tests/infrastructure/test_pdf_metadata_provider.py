@@ -479,5 +479,150 @@ class PdfMetadataUnknownOriginTests(unittest.TestCase):
                 self.assert_page_coordinates_are_unshifted(provider, pdf)
 
 
+class _ClosedDocumentRenderer:
+    """Renderer whose document cannot be opened (open returns False)."""
+
+    closed = 0
+
+    def open(self, _file_path):
+        return False
+
+    def close(self):
+        type(self).closed += 1
+
+    def page_count(self):
+        raise AssertionError("an unopened document has no pages to count")
+
+
+class _NoPageInfoRenderer(ScriptedRenderer):
+    def page_info(self, page_index):
+        self.page_info_requests.append(page_index)
+        return None
+
+
+class _MalformedRunRenderer(ScriptedRenderer):
+    def extract_text_runs(self, page_index):
+        self.text_requests.append(page_index)
+        return [
+            SimpleNamespace(text="no box"),
+            SimpleNamespace(text="bad", left="x", top=0, right=0, bottom=0),
+            SimpleNamespace(text="good", left=1.0, top=2.0, right=3.0, bottom=4.0),
+            SimpleNamespace(text="none", left=None, top=0, right=0, bottom=0),
+        ]
+
+
+class PdfMetadataStatusAndBoundsTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.pdf = os.path.join(directory.name, "plan.pdf")
+        with open(self.pdf, "wb") as handle:
+            handle.write(b"%PDF-1.4")
+        saved = (
+            ScriptedRenderer.page_total,
+            ScriptedRenderer.fail_in,
+            ScriptedRenderer.instances,
+            _ClosedDocumentRenderer.closed,
+        )
+        self.addCleanup(self.restore_renderer_state, saved)
+        ScriptedRenderer.page_total = 3
+        ScriptedRenderer.fail_in = None
+        _ClosedDocumentRenderer.closed = 0
+
+    @staticmethod
+    def restore_renderer_state(saved):
+        (
+            ScriptedRenderer.page_total,
+            ScriptedRenderer.fail_in,
+            ScriptedRenderer.instances,
+            _ClosedDocumentRenderer.closed,
+        ) = saved
+
+    @staticmethod
+    def provider(renderer_factory):
+        return NativePdfMetadataProvider(
+            logger=logging.getLogger("tests.pdf_metadata_status"),
+            renderer_factory=renderer_factory,
+            geometry_reader_factory=lambda: SimpleNamespace(
+                get_page_geometries=lambda _path: []
+            ),
+        )
+
+    def test_a_readable_page_reports_ok_with_its_native_geometry(self):
+        info = self.provider(ScriptedRenderer).get_page_info(self.pdf, 1)
+        self.assertEqual(
+            (
+                info.status,
+                info.page_count,
+                info.effective_width_pts,
+                info.effective_height_pts,
+                info.media_width_pts,
+                info.media_height_pts,
+                info.crop_width_pts,
+                info.crop_height_pts,
+                info.intrinsic_rotation,
+            ),
+            ("ok", 3, 101.0, 200.0, 100.0, 200.0, 100.0, 200.0, 0),
+        )
+
+    def test_a_document_that_will_not_open_is_unavailable_and_never_closed(self):
+        provider = self.provider(_ClosedDocumentRenderer)
+        info = provider.get_page_info(self.pdf, 0)
+        self.assertEqual((info.status, info.page_count), ("unavailable", 0))
+        self.assertEqual(provider.get_text_runs(self.pdf, 0), [])
+        self.assertEqual(provider.get_vector_segments(self.pdf, 0), [])
+        self.assertEqual(_ClosedDocumentRenderer.closed, 0)
+
+    def test_a_page_without_native_info_is_unavailable_but_keeps_the_page_count(self):
+        ScriptedRenderer.instances = []
+        info = self.provider(_NoPageInfoRenderer).get_page_info(self.pdf, 1)
+        self.assertEqual((info.status, info.page_count), ("unavailable", 3))
+        self.assertEqual(ScriptedRenderer.instances[-1].closed, 1)
+
+    def test_malformed_native_text_runs_are_skipped_not_fatal(self):
+        runs = self.provider(_MalformedRunRenderer).get_text_runs(self.pdf, 0)
+        self.assertEqual(
+            [(run.text, run.left, run.top, run.right, run.bottom) for run in runs],
+            [("good", 1.0, 2.0, 3.0, 4.0)],
+        )
+
+    def test_a_missing_page_count_still_reads_page_zero(self):
+        for page_total in (0, 1):
+            with self.subTest(page_total=page_total):
+                ScriptedRenderer.page_total = page_total
+                ScriptedRenderer.instances = []
+                provider = self.provider(ScriptedRenderer)
+                provider.get_page_info(self.pdf, 5)
+                provider.get_text_runs(self.pdf, 5)
+                provider.get_vector_segments(self.pdf, 5)
+                renderer = ScriptedRenderer.instances
+                self.assertEqual(
+                    [r.page_info_requests for r in renderer], [[0], [], []]
+                )
+                self.assertEqual([r.text_requests for r in renderer], [[], [0], []])
+                self.assertEqual([r.segment_requests for r in renderer], [[], [], [0]])
+
+    def test_the_cache_holds_exactly_the_documented_number_of_entries(self):
+        provider = self.provider(ScriptedRenderer)
+        limit = NativePdfMetadataProvider.MAX_CACHE_ENTRIES
+        self.assertEqual(limit, 512)
+        for index in range(limit + 1):
+            provider.get_page_info(f"missing-{index}.pdf", 0)
+        keys = [key[0] for key in provider._page_info_cache]
+        self.assertEqual(len(keys), limit)
+        self.assertEqual(keys[0], "missing-1.pdf")
+        self.assertEqual(keys[-1], f"missing-{limit}.pdf")
+
+    def test_restoring_an_existing_key_makes_it_the_most_recent(self):
+        provider = self.provider(ScriptedRenderer)
+        from collections import OrderedDict
+
+        cache = OrderedDict()
+        provider._store_lru(cache, "a", 1)
+        provider._store_lru(cache, "b", 2)
+        provider._store_lru(cache, "a", 3)
+        self.assertEqual(list(cache.items()), [("b", 2), ("a", 3)])
+
+
 if __name__ == "__main__":
     unittest.main()

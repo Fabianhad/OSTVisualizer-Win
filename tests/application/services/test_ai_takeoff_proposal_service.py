@@ -1,6 +1,8 @@
 import dataclasses
 import math
+import os
 import re
+import types
 import unittest
 from dataclasses import replace
 from unittest import mock
@@ -548,6 +550,29 @@ class ScaleProposalTests(ProposalTestCase):
         )["data"]
         return data
 
+    def test_a_dimension_is_measured_from_the_actual_first_point_not_a_mirrored_one(self):
+        data = self.dimension_check(
+            290.0, first=(100, 300), second=(532, 300), x=150.0
+        )
+        self.assertIsNotNone(data["scale"]["dimension_check"])
+
+    def test_of_two_equally_near_dimensions_the_first_one_read_is_used(self):
+        self.setUp()
+        self.pdf.runs = [
+            PdfTextRunDto(
+                text,
+                left=x,
+                top=PAGE_HEIGHT - 90,
+                right=x + 30,
+                bottom=PAGE_HEIGHT - 98,
+            )
+            for text, x in (("24'-0\"", 200.0), ("20'-0\"", 300.0))
+        ]
+        data = self.service_m1b.propose_scale(
+            "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        self.assertEqual(data["scale"]["dimension_check"]["real_in"], 288.0)
+
     def test_a_dimension_counts_when_within_a_quarter_of_the_measured_distance(self):
         for y, found in (
             (204.0, True),
@@ -571,7 +596,7 @@ class ScaleProposalTests(ProposalTestCase):
         data = self.dimension_check(90.0, text="24'-6\"")
         check = data["scale"]["dimension_check"]
         self.assertEqual((check["real_in"], check["agrees"]), (294.0, False))
-        self.assertAlmostEqual(check["error_pct"], 2.0408, places=3)
+        self.assertEqual(check["error_pct"], 2.0408)
         self.assertEqual(
             data["assumptions"][0]["reason"]["value"],
             "Scale proposed by the AI from a measured distance. A dimension near the "
@@ -2165,6 +2190,8 @@ class RegionSimplificationTests(ProposalTestCase):
         self.assertEqual(geometry["outline_vertices"][0], count)
         self.assertLess(geometry["outline_vertices"][1], 2000)
         self.assertLessEqual(abs(geometry["area_change_pct"]), 0.1)
+        self.assertEqual(geometry["area_change_pct"], -0.0401)
+        self.assertEqual(geometry["hole_vertices"], [0, 0])
         self.assertEqual(geometry["holes_dropped"], 0)
         self.assertEqual(
             data["takeoffs"][0]["vertex_count"], geometry["outline_vertices"][1]
@@ -3029,10 +3056,6 @@ class DashedAnalysisBudgetTests(ProposalTestCase):
                 )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _pen(width):
     return PdfPathStyleDto(width, (), 0x000000FF, 0, True, False)
 
@@ -3334,7 +3357,9 @@ class SegmentCapTests(ProposalTestCase):
             "invalid_argument",
             lambda: self.find(bbox=[0, 0, 2000, 2000], min_width=0.0),
         )
-        self.assertIn("More than 20000 line segments", error.message)
+        self.assertEqual(
+            error.message, "More than 20000 line segments; use a smaller bounding box."
+        )
         self.assertNotIn("min_width", error.message)
 
     def test_no_hint_when_no_width_would_pass(self):
@@ -3342,7 +3367,9 @@ class SegmentCapTests(ProposalTestCase):
         error = self.assert_error(
             "invalid_argument", lambda: self.find(bbox=[0, 0, 2000, 2000])
         )
-        self.assertIn("More than 20000 line segments", error.message)
+        self.assertEqual(
+            error.message, "More than 20000 line segments; use a smaller bounding box."
+        )
         self.assertNotIn("min_width", error.message)
 
 
@@ -3350,12 +3377,26 @@ class SeededSegmentCapTests(ProposalTestCase):
     find = FindRegionFilterTests.find
     sealed_page = RegionSearchBudgetTests.sealed_page
     BOX = [0, 0, 2000, 2000]
+    # The real cap is 20000 segments and each find over it takes 15 to 230 s of
+    # planar-region work, so the normal suite lowers the cap through the two
+    # module globals that carry it (the domain check and the service's hint) and
+    # fills the page to exactly that cap. FullSizeSeededSegmentCapTests runs the
+    # same scenarios at the real 20000 when OSTV_SLOW_TESTS is set.
+    CAP = 300
+    LOWER_THE_CAP = True
 
     def setUp(self):
         super().setUp()
         budget = mock.patch.object(module, "REGION_SEARCH_BUDGET_S", 1e6)
         budget.start()
         self.addCleanup(budget.stop)
+        if self.LOWER_THE_CAP:
+            for target in (planar_module, module):
+                patch = mock.patch.object(target, "MAX_REGION_SEGMENTS", self.CAP)
+                patch.start()
+                self.addCleanup(patch.stop)
+        self.assertEqual(planar_module.MAX_REGION_SEGMENTS, self.CAP)
+        self.assertEqual(module.MAX_REGION_SEGMENTS, self.CAP)
 
     def fill_to(self, total, width=0.5):
         base = list(self.pdf.segments)
@@ -3365,7 +3406,7 @@ class SeededSegmentCapTests(ProposalTestCase):
         for boundary_kinds in (None, ["wall", "thin"]):
             with self.subTest(boundary_kinds=boundary_kinds):
                 self.sealed_page()
-                self.fill_to(20000)
+                self.fill_to(self.CAP)
                 result = self.find(
                     bbox=self.BOX,
                     seed_pts=[250, 200],
@@ -3377,7 +3418,7 @@ class SeededSegmentCapTests(ProposalTestCase):
                 self.assertEqual(data["region_search"], "complete")
                 (region,) = data["regions"]
                 self.assertEqual(region["method"], "raster")
-                self.assertEqual(data["segment_count"], 20000)
+                self.assertEqual(data["segment_count"], self.CAP)
                 self.assertEqual(data["closures"], "skipped_segment_cap")
                 self.assertEqual(result["status"], "ok")
 
@@ -3386,7 +3427,7 @@ class SeededSegmentCapTests(ProposalTestCase):
         self.raster_result = RasterResult(
             ((100.0, 300.0), (400.0, 300.0), (400.0, 500.0), (100.0, 500.0)), False, 4.0
         )
-        self.fill_to(20000)
+        self.fill_to(self.CAP)
         result = self.find(
             bbox=self.BOX, seed_pts=[250, 400], max_gap_in=40.0, min_width=0.0
         )
@@ -3409,20 +3450,20 @@ class SeededSegmentCapTests(ProposalTestCase):
 
     def test_nothing_found_over_the_cap_is_still_refused_with_the_hint(self):
         self.pdf.segments = _styled_rect(100, 100, 300, 250) + _scattered(
-            20001, 150, 1000.0, 0.25
+            self.CAP + 1, 150, 1000.0, 0.25
         )
         self.raster_result = None
         error = self.assert_error(
             "invalid_argument",
             lambda: self.find(bbox=self.BOX, seed_pts=[250, 200], min_width=0.0),
         )
-        self.assertIn("More than 20000 line segments", error.message)
+        self.assertIn(f"More than {self.CAP} line segments", error.message)
         self.assertIn("min_width 2 keeps 4 line segments and would pass", error.message)
         self.assertEqual(self.raster_calls, [])
 
     def test_a_leak_check_over_the_cap_is_reported_not_passed(self):
         self.pdf.segments = _two_rooms()
-        self.fill_to(20000, width=2.0)
+        self.fill_to(self.CAP, width=2.0)
         result = self.service_m1b.find_regions(
             self.snapshot(), self.BOX, seed_pts=[200, 200]
         )
@@ -3456,3 +3497,828 @@ class SeededSegmentCapTests(ProposalTestCase):
         )["data"]
         self.assertEqual(closed["leak_guard"], "complete")
         self.assertIs(closed["regions"][0]["leak_risk"], False)
+
+
+@unittest.skipUnless(
+    os.environ.get("OSTV_SLOW_TESTS"),
+    "set OSTV_SLOW_TESTS=1 to run the full-size segment-cap scenarios (minutes)",
+)
+class FullSizeSeededSegmentCapTests(SeededSegmentCapTests):
+    CAP = 20000
+    LOWER_THE_CAP = False
+
+
+class ArgumentNameInErrorTests(ProposalTestCase):
+    """A rejected argument is named in its message, so a client can fix it."""
+
+    SQUARE = [0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0]
+
+    def message(self, call, code="invalid_argument"):
+        return self.assert_error(code, call).message
+
+    def changeset(self):
+        return self.service_m1b.propose_element(
+            "slab", "p1", polygon_ost=self.SQUARE
+        )["data"]["changeset_id"]
+
+    def test_scale_arguments_are_named(self):
+        propose = self.service_m1b.propose_scale
+        cases = {
+            "real_in": (
+                lambda: propose("p1", [0, 0], [100, 0], real_in="x"),
+                "real_in must be a number",
+            ),
+            "reason": (
+                lambda: propose("p1", [0, 0], [100, 0], real_in=10.0, reason=5),
+                "reason must be text",
+            ),
+            "sheet_ref": (
+                lambda: propose("p1", [0, 0], [100, 0], real_in=10.0, sheet_ref=5),
+                "sheet_ref must be text",
+            ),
+            "too close": (
+                lambda: propose("p1", [0, 0], [0.5, 0], real_in=10.0),
+                "p1_pts and p2_pts must be at least 1 point apart",
+            ),
+            "neither": (
+                lambda: propose("p1", [0, 0], [100, 0]),
+                "Give real_in, preset or both",
+            ),
+        }
+        for label, (call, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.message(call), expected)
+
+    def test_find_regions_arguments_are_named(self):
+        def find(**kwargs):
+            return lambda: self.service_m1b.find_regions(
+                self.snapshot(), kwargs.pop("bbox", [0, 0, 600, 700]), **kwargs
+            )
+
+        cases = {
+            "bbox count": (find(bbox=[0, 0, 5]), "bbox_pts needs 4 numbers"),
+            "bbox value": (find(bbox=[0, 0, 5, "x"]), "bbox_pts must be a number"),
+            "seed": (find(seed_pts=[1]), "seed_pts needs 2 numbers"),
+            "gap_close_in": (
+                find(gap_close_in="x"),
+                "gap_close_in must be a number",
+            ),
+            "max_gap_in negative": (
+                find(max_gap_in=-1),
+                "max_gap_in must be 0 or more",
+            ),
+            "both gaps": (
+                find(gap_close_in=1, max_gap_in=2),
+                "Give max_gap_in or gap_close_in, not two values",
+            ),
+            "min_width": (find(min_width="x"), "min_width must be a number"),
+            "min_area_sf": (find(min_area_sf="x"), "min_area_sf must be a number"),
+            "symbol_max_pts": (
+                find(symbol_max_pts="x"),
+                "symbol_max_pts must be a number",
+            ),
+            "exclude_dashed": (
+                find(exclude_dashed="x"),
+                "exclude_dashed must be true or false",
+            ),
+            "exclude_thin_curves": (
+                find(exclude_thin_curves="x"),
+                "exclude_thin_curves must be true or false",
+            ),
+            "colors": (
+                find(colors="red"),
+                "colors must be a list of #rrggbb values",
+            ),
+            "cursor": (find(cursor=5), "cursor must be text"),
+            "limit zero": (
+                find(limit=0),
+                "limit must be a whole number from 1 to 50",
+            ),
+            "limit above the cap": (
+                find(limit=51),
+                "limit must be a whole number from 1 to 50",
+            ),
+            "boundary_kinds": (
+                find(boundary_kinds=[]),
+                "boundary_kinds must be a non-empty list of "
+                + ", ".join(module.BOUNDARY_KINDS),
+            ),
+        }
+        for label, (call, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.message(call), expected)
+
+    def test_the_region_limit_accepts_exactly_one_to_fifty(self):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        for limit in (1, 50):
+            with self.subTest(limit=limit):
+                data = self.service_m1b.find_regions(
+                    self.snapshot(), [0, 0, 600, 700], limit=limit
+                )["data"]
+                self.assertEqual(data["total_count"], 1)
+
+    def test_a_find_on_an_unscaled_page_says_to_set_the_scale_first(self):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        self.project.pages[1] = replace(self.project.pages[1], scale_factor1=0.0)
+        self.assertEqual(
+            self.message(
+                lambda: self.service_m1b.find_regions(self.snapshot(), [0, 0, 5, 5]),
+                "scale_unset",
+            ),
+            "Set the page scale first",
+        )
+
+    def test_element_arguments_are_named(self):
+        propose = self.service_m1b.propose_element
+        square = self.SQUARE
+        cases = {
+            "kind": (lambda: propose("wall", "p1", polygon_ost=square), "kind must be slab"),
+            "geometry source": (
+                lambda: propose("slab", "p1"),
+                "Give exactly one of polygon_ost or region_id",
+            ),
+            "holes list": (
+                lambda: propose("slab", "p1", polygon_ost=square, holes_ost="x"),
+                "holes_ost must be a list",
+            ),
+            "hole numbers": (
+                lambda: propose("slab", "p1", polygon_ost=square, holes_ost=[["x"]]),
+                "holes_ost must be a number",
+            ),
+            "thickness": (
+                lambda: propose("slab", "p1", polygon_ost=square, thickness_in="x"),
+                "thickness_in must be a number",
+            ),
+            "elevation": (
+                lambda: propose("slab", "p1", polygon_ost=square, top_elev_in="x"),
+                "top_elev_in must be a number",
+            ),
+            "elevation range": (
+                lambda: propose(
+                    "slab", "p1", polygon_ost=square, top_elev_in=10**9
+                ),
+                "top_elev_in is out of range",
+            ),
+            "level": (
+                lambda: propose("slab", "p1", polygon_ost=square, level_id="L9"),
+                "Unknown level_id",
+            ),
+            "level type": (
+                lambda: propose("slab", "p1", polygon_ost=square, level_id=5),
+                "level_id must be text",
+            ),
+            "name": (
+                lambda: propose("slab", "p1", polygon_ost=square, name=5),
+                "name must be text",
+            ),
+            "summary": (
+                lambda: propose("slab", "p1", polygon_ost=square, summary=5),
+                "summary must be text",
+            ),
+            "condition": (
+                lambda: propose("slab", "p1", polygon_ost=square, condition_uid=5),
+                "condition_uid must be text",
+            ),
+        }
+        for label, (call, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.message(call), expected)
+
+    def test_an_unknown_region_is_refused_as_not_found(self):
+        error = self.assert_error(
+            "not_found",
+            lambda: self.service_m1b.propose_element("slab", "p1", region_id="r999"),
+        )
+        self.assertEqual(error.message, "Unknown region_id for this page")
+
+    def test_unscaled_pages_cannot_take_elements_and_say_why(self):
+        self.project.pages[1] = replace(self.project.pages[1], scale_factor2=0.0)
+        self.assertEqual(
+            self.message(
+                lambda: self.service_m1b.propose_element(
+                    "slab", "p1", polygon_ost=self.SQUARE
+                ),
+                "scale_unset",
+            ),
+            "Set the page scale first",
+        )
+
+    def test_assumption_arguments_are_named(self):
+        uid = self.changeset()
+        update = self.service_m1b.update_assumption
+        cases = {
+            "op": (lambda: update(uid, "accept"), "op must be add or revise"),
+            "subject": (
+                lambda: update(uid, "add", subject="colour", target_key="c1"),
+                "Unknown subject",
+            ),
+            "scale subject": (
+                lambda: update(uid, "add", subject="scale", target_key="p1"),
+                "The scale assumption cannot be added or revised; call propose_scale again",
+            ),
+            "length": (
+                lambda: update(
+                    uid,
+                    "add",
+                    subject="closing_segment",
+                    target_key="c1",
+                    length_in="x",
+                ),
+                "length_in must be a number",
+            ),
+            "target": (
+                lambda: update(uid, "add", subject="other", target_key=5),
+                "target_key must be text",
+            ),
+            "add value": (
+                lambda: update(uid, "add", subject="other", target_key="c1", value=5),
+                "value must be text",
+            ),
+            "add reason": (
+                lambda: update(
+                    uid, "add", subject="other", target_key="c1", reason=5
+                ),
+                "reason must be text",
+            ),
+            "add sheet": (
+                lambda: update(
+                    uid, "add", subject="other", target_key="c1", sheet_ref=5
+                ),
+                "sheet_ref must be text",
+            ),
+            "assumption id": (
+                lambda: update(uid, "revise", assumption_id=5),
+                "assumption_id must be text",
+            ),
+            "revise value": (
+                lambda: update(uid, "revise", assumption_id="a1", value=5),
+                "value must be text",
+            ),
+            "revise reason": (
+                lambda: update(uid, "revise", assumption_id="a1", reason=5),
+                "reason must be text",
+            ),
+            "changeset id": (
+                lambda: update(5, "revise", assumption_id="a1"),
+                "changeset_id must be text",
+            ),
+        }
+        for label, (call, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.message(call), expected)
+
+    def test_apply_and_discard_name_their_changeset_argument(self):
+        for method in (
+            self.service_m1b.apply_changeset,
+            self.service_m1b.discard_changeset,
+        ):
+            for value in (5, "", "  ", None):
+                with self.subTest(method=method.__name__, value=value):
+                    self.assertEqual(
+                        self.message(lambda: method(value)),
+                        "changeset_id must be text",
+                    )
+
+
+class ProposalContractTests(ProposalTestCase):
+    SQUARE = [0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0]
+
+    def test_the_search_and_leak_limits_match_the_plan(self):
+        self.assertEqual(module.MAX_SUPPRESSED_BOXES, 20)
+        self.assertEqual(module.MAX_OPEN_GAPS, 20)
+        self.assertEqual(module.OPENING_TOLERANCE_MIN_PTS, 1.0)
+        self.assertEqual(module.OPENING_TOLERANCE_PX, 3.0)
+        self.assertEqual(module.OPENING_SNAP_TOLERANCES, 3.0)
+        self.assertEqual(module.OPENING_AREA_MATCH, 0.25)
+        self.assertEqual(module.LEAK_SPLIT_SHARE, 0.05)
+        self.assertEqual(module.REGION_SEARCH_BUDGET_S, 20.0)
+
+    def test_internal_records_are_immutable(self):
+        mutable = [
+            name
+            for name, value in vars(module).items()
+            if isinstance(value, type)
+            and value.__module__ == module.__name__
+            and dataclasses.is_dataclass(value)
+            and not value.__dataclass_params__.frozen
+        ]
+        self.assertEqual(mutable, [])
+
+    def test_an_element_proposal_is_described_with_exactly_these_fields(self):
+        data = self.service_m1b.propose_element(
+            "slab",
+            "p1",
+            polygon_ost=self.SQUARE,
+            thickness_in=8.0,
+            top_elev_in=1.0,
+            name="N",
+            summary="S",
+        )["data"]
+        data.pop("changeset_id")
+        text = lambda value: {"value": value, "untrusted": True, "truncated": False}
+        self.assertEqual(
+            data,
+            {
+                "status": "proposed",
+                "kind": "elements",
+                "summary": text("S"),
+                "conditions": [
+                    {
+                        "key": "c1",
+                        "name": text("N @T 0' - 1\""),
+                        "thickness_in": 8.0,
+                        "top_elev_in": 1.0,
+                    }
+                ],
+                "takeoffs": [
+                    {
+                        "key": "t1",
+                        "page_uid": "p1",
+                        "condition_key": "c1",
+                        "vertex_count": 4,
+                        "hole_count": 0,
+                    }
+                ],
+                "assumptions": [],
+                "blocking_assumption_ids": [],
+                "quantity_delta": [
+                    {
+                        "key": "c1",
+                        "name": text("N @T 0' - 1\""),
+                        "takeoff_count": 1,
+                        "area_sf": 1200.0,
+                        "volume_cy": 29.6296,
+                    }
+                ],
+            },
+        )
+
+    def test_a_scale_proposal_is_described_with_exactly_these_fields(self):
+        data = self.service_m1b.propose_scale("p1", [0, 0], [100, 0], real_in=10.0)[
+            "data"
+        ]
+        self.assertEqual(
+            data["scale"],
+            {
+                "page_uid": "p1",
+                "sf1_sf2": [1.0, 7.2],
+                "previous_sf1_sf2": [0.25, 12.0],
+                "error_pct": 0.0,
+                "dimension_check": None,
+            },
+        )
+        (assumption,) = data["assumptions"]
+        self.assertEqual(
+            set(assumption),
+            {
+                "id",
+                "subject",
+                "target_key",
+                "value",
+                "reason",
+                "sheet_ref",
+                "impact",
+                "status",
+            },
+        )
+        self.assertEqual(assumption["target_key"], "p1")
+
+    def test_a_find_answers_with_exactly_these_fields_and_one_region(self):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        result = self.service_m1b.find_regions(self.snapshot(), [0, 0, 600, 700])
+        self.assertEqual(
+            list(result["data"]),
+            [
+                "page_uid",
+                "regions",
+                "truncated",
+                "total_count",
+                "filters",
+                "segment_count",
+                "dash_bridge_count",
+                "dashed_analysis",
+                "region_search",
+                "closures",
+                "leak_guard",
+                "width_suggestion",
+                "excluded",
+                "suppressed_symbol_count",
+                "suppressed_symbols_pts",
+                "extraction_truncated",
+                "extraction_scope",
+                "coordinate_space",
+            ],
+        )
+        self.assertEqual(result["data"]["page_uid"], "p1")
+        self.assertEqual(
+            result["meta"],
+            {
+                "limit": 50,
+                "returned_count": 1,
+                "total_count": 1,
+                "truncated": False,
+                "has_more": False,
+                "next_cursor": None,
+            },
+        )
+
+
+class ProposalWordingTests(ProposalTestCase):
+    def test_missing_thickness_and_elevation_become_open_assumptions_with_their_reason(self):
+        data = self.service_m1b.propose_element(
+            "slab", "p1", polygon_ost=[0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0]
+        )["data"]
+        rows = [
+            (a["subject"], a["target_key"], a["value"]["value"], a["reason"]["value"], a["sheet_ref"]["value"])
+            for a in data["assumptions"]
+        ]
+        self.assertEqual(
+            rows,
+            [
+                ("thickness", "c1", "", "The slab thickness was not given.", ""),
+                ("top_elevation", "c1", "", "The top elevation was not given.", ""),
+            ],
+        )
+
+    def test_a_region_found_at_another_page_scale_must_be_found_again(self):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        region = self.service_m1b.find_regions(self.snapshot(), [0, 0, 600, 700])[
+            "data"
+        ]["regions"][0]
+        self.project.pages[1] = replace(self.project.pages[1], scale_factor1=0.5)
+        error = self.assert_error(
+            "not_found",
+            lambda: self.service_m1b.propose_element(
+                "slab", "p1", region_id=region["id"]
+            ),
+        )
+        self.assertEqual(
+            error.message,
+            "That region was found at a different page scale; call find_regions again",
+        )
+
+
+class RegionRefusalReasonTests(ProposalTestCase):
+    """A stored region is refused for exactly three reasons, each with its own text."""
+
+    def found_region(self):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        return self.service_m1b.find_regions(self.snapshot(), [0, 0, 600, 700])[
+            "data"
+        ]["regions"][0]
+
+    def with_scale_error(self, relative):
+        page = self.project.pages[1]
+        self.project.pages[1] = replace(
+            page, scale_factor2=page.scale_factor2 * (1.0 + relative)
+        )
+
+    def test_unknown_stale_and_leaking_regions_are_each_refused_with_their_reason(self):
+        propose = self.service_m1b.propose_element
+        unknown = self.assert_error(
+            "not_found", lambda: propose("slab", "p1", region_id="r999")
+        )
+        self.assertEqual(unknown.message, "Unknown region_id for this page")
+        region = self.found_region()
+        self.with_scale_error(1.5e-9)
+        stale = self.assert_error(
+            "not_found", lambda: propose("slab", "p1", region_id=region["id"])
+        )
+        self.assertEqual(
+            stale.message,
+            "That region was found at a different page scale; call find_regions again",
+        )
+        self.setUp()
+        propose = self.service_m1b.propose_element
+        self.raster_result = RasterResult(
+            ((10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)), True
+        )
+        leaking = self.service_m1b.find_regions(
+            self.snapshot(), [0, 0, 600, 700], seed_pts=[30, 600]
+        )["data"]["regions"][0]
+        self.assertEqual(leaking["method"], "raster")
+        refused = self.assert_error(
+            "invalid_geometry",
+            lambda: propose("slab", "p1", region_id=leaking["id"]),
+        )
+        self.assertEqual(refused.message, "That region leaks outside its outline")
+
+    def test_the_scale_match_tolerates_a_relative_difference_of_under_one_in_a_billion(
+        self,
+    ):
+        region = self.found_region()
+        self.with_scale_error(7e-10)
+        data = self.service_m1b.propose_element("slab", "p1", region_id=region["id"])[
+            "data"
+        ]
+        self.assertEqual(data["status"], "proposed")
+        self.with_scale_error(0.0)
+        self.setUp()
+        region = self.found_region()
+        self.with_scale_error(1.5e-9)
+        self.assert_error(
+            "not_found",
+            lambda: self.service_m1b.propose_element(
+                "slab", "p1", region_id=region["id"]
+            ),
+        )
+
+
+class FindResultShapeTests(ProposalTestCase):
+    def test_a_raster_page_answers_not_pdf_with_only_its_page_and_the_coordinate_spaces(self):
+        result = self.service_m1b.find_regions(self.snapshot("p3"), [0, 0, 600, 700])
+        self.assertEqual(result["status"], "not_pdf")
+        self.assertEqual(
+            list(result["data"]), ["page_uid", "regions", "coordinate_space"]
+        )
+        self.assertEqual(result["data"]["page_uid"], "p3")
+        self.assertEqual(result["data"]["regions"], [])
+
+    def test_a_box_must_have_positive_width_and_height(self):
+        for box in ([10, 10, 5, 20], [10, 10, 10, 20], [0, 10, 5, 10], [0, 10, 5, 4]):
+            with self.subTest(box=box):
+                error = self.assert_error(
+                    "invalid_argument",
+                    lambda: self.service_m1b.find_regions(self.snapshot(), box),
+                )
+                self.assertEqual(
+                    error.message, "bbox_pts must be [left, top, right, bottom]"
+                )
+
+    def test_a_seeded_answer_is_one_region_with_a_limit_of_one(self):
+        self.raster_result = RasterResult(
+            ((10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)), False
+        )
+        result = self.service_m1b.find_regions(
+            self.snapshot(), [0, 0, 600, 700], seed_pts=[30, 600]
+        )
+        self.assertEqual(
+            result["meta"],
+            {
+                "limit": 1,
+                "returned_count": 1,
+                "total_count": 1,
+                "truncated": False,
+                "has_more": False,
+                "next_cursor": None,
+            },
+        )
+        (region,) = result["data"]["regions"]
+        self.assertEqual(
+            list(region),
+            [
+                "id",
+                "method",
+                "polygon_ost",
+                "holes_ost",
+                "area_sf",
+                "leak_risk",
+                "gaps",
+                "unlocated_gaps_up_to_in",
+                "open_gaps",
+                "dashed_outline",
+            ],
+        )
+
+    def test_an_ignored_dashed_outline_is_reported_with_its_area_to_four_decimals(self):
+        self.assertEqual(module._outline_item(None), None)
+        self.assertEqual(module._outline_item(12.345678), {"area_sf": 12.3457})
+
+    def test_a_ring_within_half_a_percent_of_the_dashed_outline_is_not_an_ignored_outline(
+        self,
+    ):
+        outline = types.SimpleNamespace(outer=((0, 0), (200, 0), (200, 200), (0, 200)))
+        exactly_half_a_percent = ((0, 0), (199, 0), (199, 200), (0, 200))
+        beyond = ((0, 0), (198.9, 0), (198.9, 200), (0, 200))
+        self.assertIsNone(module._ignored_outline_sf(outline, exactly_half_a_percent, 1.0))
+        self.assertAlmostEqual(
+            module._ignored_outline_sf(outline, beyond, 1.0), 40000 / 144.0
+        )
+        self.assertIsNone(module._ignored_outline_sf(None, beyond, 1.0))
+
+
+class GapBridgingTests(ProposalTestCase):
+    def broken_square(self, gap):
+        left, right = 150.0 - gap / 2, 150.0 + gap / 2
+        self.pdf.segments = [
+            _raw(100, 100, left, 100),
+            _raw(right, 100, 200, 100),
+            _raw(200, 100, 200, 200),
+            _raw(200, 200, 100, 200),
+            _raw(100, 200, 100, 100),
+        ]
+
+    def test_an_unbridged_search_does_not_close_a_gap_wider_than_the_snap_tolerance(self):
+        self.broken_square(0.8)
+        result = self.service_m1b.find_regions(
+            self.snapshot(), [0, 0, 600, 700], seed_pts=[150, 150]
+        )
+        self.assertEqual(result["data"]["regions"], [])
+        self.assertEqual(self.raster_calls[0][2], 1.0)
+
+    def test_a_requested_gap_close_bridges_a_gap_of_a_little_under_a_point(self):
+        self.broken_square(0.8)
+        max_gap_in = 0.9 * K
+        result = self.service_m1b.find_regions(
+            self.snapshot(),
+            [0, 0, 600, 700],
+            seed_pts=[150, 150],
+            max_gap_in=max_gap_in,
+        )
+        (region,) = result["data"]["regions"]
+        self.assertEqual(region["method"], "vector")
+        self.assertEqual(len(region["gaps"]), 1)
+
+
+class DashedLoopTests(unittest.TestCase):
+    RECTANGLE = [
+        (100.0, 100.0, 200.0, 100.0),
+        (200.0, 100.0, 200.0, 400.0),
+        (200.0, 400.0, 100.0, 400.0),
+        (100.0, 400.0, 100.0, 100.0),
+    ]
+
+    def outline(self, loops, seed):
+        with mock.patch.object(
+            module, "dashed_components", lambda lines, boundary, deadline: loops
+        ):
+            return module._dashed_outline([], None, seed)
+
+    def test_the_loop_that_contains_the_seed_is_the_outline(self):
+        region = self.outline([self.RECTANGLE], (150.0, 200.0))
+        self.assertAlmostEqual(abs(module.ring_area(region.outer)), 100.0 * 300.0)
+
+    def test_a_seed_on_or_outside_the_loops_box_has_no_outline(self):
+        for seed in (
+            (100.0, 200.0),
+            (200.0, 200.0),
+            (150.0, 100.0),
+            (150.0, 400.0),
+            (60.0, 200.0),
+            (150.0, 450.0),
+        ):
+            with self.subTest(seed=seed):
+                self.assertIsNone(self.outline([self.RECTANGLE], seed))
+
+    def test_a_loop_with_a_gap_wider_than_the_snap_tolerance_is_not_closed(self):
+        broken = [
+            (100.0, 100.0, 149.6, 100.0),
+            (150.4, 100.0, 200.0, 100.0),
+            *self.RECTANGLE[1:],
+        ]
+        self.assertIsNone(self.outline([broken], (150.0, 200.0)))
+
+    def test_the_smallest_of_several_loops_around_the_seed_wins(self):
+        inner = [
+            (130.0, 130.0, 170.0, 130.0),
+            (170.0, 130.0, 170.0, 170.0),
+            (170.0, 170.0, 130.0, 170.0),
+            (130.0, 170.0, 130.0, 130.0),
+        ]
+        region = self.outline([self.RECTANGLE, inner], (150.0, 150.0))
+        self.assertAlmostEqual(abs(module.ring_area(region.outer)), 40.0 * 40.0)
+
+
+class OpeningGeometryTests(unittest.TestCase):
+    RING = ((0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0))
+
+    def square_with_bottom_gap(self, first, second):
+        return [
+            (0, 0, first, 0),
+            (second, 0, 100, 0),
+            (100, 0, 100, 100),
+            (100, 100, 0, 100),
+            (0, 100, 0, 0),
+        ]
+
+    def test_the_opening_tolerance_follows_the_raster_resolution(self):
+        segments = self.square_with_bottom_gap(40, 48)
+        closures = {}
+        for px_per_pt in (0.0, 0.5, 1.0, 3.0):
+            closures[px_per_pt] = module._sealed_openings(
+                RasterResult(self.RING, False, px_per_pt), segments, 10.0, (50.0, 50.0)
+            )
+        self.assertEqual(closures[0.0], [(40.0, 0.0, 48.0, 0.0)])
+        self.assertEqual(closures[0.5], [])
+        self.assertEqual(closures[1.0], [])
+        self.assertEqual(closures[3.0], [(40.0, 0.0, 48.0, 0.0)])
+
+    def test_a_result_without_a_resolution_uses_the_minimum_tolerance(self):
+        segments = self.square_with_bottom_gap(40, 48)
+        self.assertEqual(
+            module._sealed_openings(
+                RasterResult(self.RING, False), segments, 10.0, (50.0, 50.0)
+            ),
+            [(40.0, 0.0, 48.0, 0.0)],
+        )
+
+    def test_the_pen_width_sets_how_long_an_opening_may_be_and_how_far_its_ends_snap(self):
+        # (gap start, gap end, px per pt, pen): openings found / not found, measured on
+        # the current heuristic; the thresholds pin the tolerance and reach formulas.
+        cases = (
+            (40, 52, 1.0, 1.0, 0),
+            (40, 52, 1.0, 2.0, 1),
+            (40, 60, 1.0, 10.0, 0),
+            (40, 60, 1.0, 14.0, 1),
+            (40, 46, 3.0, 1.0, 0),
+            (40, 46, 3.0, 2.0, 1),
+            (40, 50, 3.0, 4.0, 0),
+            (40, 50, 3.0, 6.0, 1),
+        )
+        for first, second, px_per_pt, pen, expected in cases:
+            with self.subTest(gap=(first, second), px=px_per_pt, pen=pen):
+                found = module._sealed_openings(
+                    RasterResult(self.RING, False, px_per_pt),
+                    self.square_with_bottom_gap(first, second),
+                    pen,
+                    (50.0, 50.0),
+                )
+                self.assertEqual(len(found), expected)
+
+    def test_a_gap_that_the_pen_cannot_have_closed_is_not_an_opening(self):
+        segments = self.square_with_bottom_gap(40, 60)
+        self.assertEqual(
+            module._sealed_openings(
+                RasterResult(self.RING, False, 0.0), segments, 4.0, (50.0, 50.0)
+            ),
+            [],
+        )
+        self.assertEqual(
+            module._sealed_openings(
+                RasterResult(self.RING, False, 0.0),
+                self.square_with_bottom_gap(40, 44),
+                4.0,
+                (50.0, 50.0),
+            ),
+            [],
+        )
+
+    def test_a_line_continues_through_a_point_only_when_the_other_end_is_within_fifteen_degrees(
+        self,
+    ):
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        wall = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        self.assertIs(module._continues_a_line((10.0, 0.0), (15.0, 0.0), wall), True)
+        self.assertIs(module._continues_a_line((10.0, 0.0), (15.0, 5.0), wall), False)
+        tiny = SegmentGrid([(0.0, 0.0, 0.5, 0.0)])
+        self.assertIs(module._continues_a_line((0.5, 0.0), (1.0, 0.0), tiny), True)
+        dot = SegmentGrid([(3.0, 3.0, 3.0, 3.0)])
+        self.assertIs(module._continues_a_line((3.0, 3.0), (6.0, 3.0), dot), False)
+        far = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        self.assertIs(module._continues_a_line((10.0, 0.4), (15.0, 0.4), far), True)
+        self.assertIs(module._continues_a_line((10.0, 0.6), (15.0, 0.6), far), False)
+
+    @staticmethod
+    def padded_grid(extra):
+        """101+ segments over a 1100 x 1100 sheet: 11 grid cells of 100 per side."""
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        fillers = [(i * 11.0, i * 11.0, i * 11.0 + 1.0, i * 11.0 + 1.0) for i in range(100)]
+        fillers.append((1099.0, 1099.0, 1100.0, 1100.0))
+        return SegmentGrid(fillers + list(extra))
+
+    def test_the_search_box_around_a_point_reaches_a_line_in_the_neighbouring_grid_cell(
+        self,
+    ):
+        horizontal = self.padded_grid([(150.0, 505.0, 199.9, 505.0)])
+        self.assertEqual(
+            module._snap_to_linework((200.4, 505.0), horizontal, 1.0, (0.0, 0.0)),
+            (199.9, 505.0),
+        )
+        vertical = self.padded_grid([(505.0, 150.0, 505.0, 199.9)])
+        self.assertEqual(
+            module._snap_to_linework((505.0, 200.4), vertical, 1.0, (0.0, 0.0)),
+            (505.0, 199.9),
+        )
+        self.assertIs(
+            module._continues_a_line((200.3, 505.0), (205.0, 505.0), horizontal), True
+        )
+        self.assertIs(
+            module._continues_a_line((505.0, 200.3), (505.0, 205.0), vertical), True
+        )
+
+    def test_a_point_snaps_to_the_nearest_line_end_in_reach_preferring_the_one_closest_to_the_seed(
+        self,
+    ):
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        grid = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        self.assertEqual(
+            module._snap_to_linework((10.3, 0.2), grid, 1.0, (50.0, 50.0)), (10.0, 0.0)
+        )
+        self.assertEqual(
+            module._snap_to_linework((-0.2, -0.3), grid, 1.0, (50.0, 50.0)), (0.0, 0.0)
+        )
+        self.assertIsNone(module._snap_to_linework((10.0, 2.0), grid, 1.0, (0.0, 0.0)))
+        two = SegmentGrid([(4.0, 0.0, 4.0, -9.0), (6.0, 0.0, 6.0, -9.0)])
+        self.assertEqual(
+            module._snap_to_linework((5.0, 0.0), two, 1.5, (5.0, 100.0)), (4.0, 0.0)
+        )
+        self.assertEqual(
+            module._snap_to_linework((5.0, 0.0), two, 1.5, (50.0, 100.0)), (6.0, 0.0)
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -71,5 +71,109 @@ class MergeLayersForBidTests(unittest.TestCase):
         self.assertEqual(merge_layers_for_bid([]), [])
 
 
+class LayerNameHelpersTests(unittest.TestCase):
+    def test_reserved_layer_names_are_the_stored_lowercase_values(self):
+        from ost_visualizer.domain.entities import layer
+
+        self.assertEqual(
+            (
+                layer.ANNOTATION_LAYER_NAME,
+                layer.IMAGE_LAYER_NAME,
+                layer.COMMENTS_LAYER_NAME,
+            ),
+            ("annotation", "image", "comments"),
+        )
+
+    def test_normalize_layer_name_trims_lowercases_and_tolerates_none(self):
+        from ost_visualizer.domain.entities.layer import normalize_layer_name
+
+        self.assertEqual(normalize_layer_name("  Mixed CASE "), "mixed case")
+        self.assertEqual(normalize_layer_name(None), "")
+        self.assertEqual(normalize_layer_name(""), "")
+        self.assertEqual(normalize_layer_name(0), "")
+        self.assertEqual(normalize_layer_name(12), "12")
+
+    def test_comments_layer_detection_ignores_case_and_padding_only(self):
+        from ost_visualizer.domain.entities.layer import is_comments_layer_name
+
+        for name in ("comments", " Comments ", "COMMENTS"):
+            with self.subTest(name=name):
+                self.assertIs(is_comments_layer_name(name), True)
+        for name in ("comment", "comments2", "my comments", "", None, "image"):
+            with self.subTest(name=name):
+                self.assertIs(is_comments_layer_name(name), False)
+
+
+class LayerEntityContractTests(unittest.TestCase):
+    def test_layer_defaults_to_visible_and_empty_name(self):
+        layer = Layer(uid="1")
+        self.assertEqual((layer.name, layer.visible), ("", True))
+
+    def test_bid_layer_flags_default_to_a_plain_unlocked_bid_layer(self):
+        layer = BidLayer("u", "b", "n", True, 4)
+        self.assertEqual((layer.is_template, layer.is_locked), (False, False))
+        self.assertEqual((layer.uid, layer.bid_uid, layer.sequence), ("u", "b", 4))
+
+    def test_layer_visibility_is_a_frozen_value_pair(self):
+        from dataclasses import FrozenInstanceError
+        from ost_visualizer.domain.entities.layer import LayerVisibility
+
+        visibility = LayerVisibility("7", False)
+        self.assertEqual(visibility.as_tuple(), ("7", False))
+        with self.assertRaises(FrozenInstanceError):
+            visibility.visible = True
+        self.assertEqual(LayerVisibility("7", False), LayerVisibility("7", False))
+
+    def test_resolve_layer_without_uid_is_unassigned_and_visible_but_known_uid_is_exact(self):
+        layers = LayerSet({"5": Layer(uid="5", name="Custom", visible=False)})
+        unassigned = layers.resolve_layer(None)
+        self.assertEqual(unassigned.as_tuple(), (None, True))
+        self.assertEqual(layers.resolve_layer("5").as_tuple(), ("5", False))
+        self.assertEqual(layers.resolve_layer(5).as_tuple(), ("5", False))
+        self.assertEqual(layers.resolve_layer("6").as_tuple(), ("6", True))
+
+    def test_annotation_layer_visibility_is_visible_when_the_layer_is_absent(self):
+        self.assertIs(LayerSet({}).annotation_layer_visible(), True)
+        self.assertIs(
+            LayerSet({"1": Layer("1", "annotation", True)}).annotation_layer_visible(),
+            True,
+        )
+
+    def test_is_layer_visible_treats_blank_uid_as_visible_even_if_a_layer_is_keyed_that_way(self):
+        from ost_visualizer.domain.entities.layer import is_layer_visible
+
+        layers = {"": Layer("", "x", False), "0": Layer("0", "y", False)}
+        self.assertIs(is_layer_visible(layers, None), True)
+        self.assertIs(is_layer_visible(layers, ""), True)
+        # A uid of 0 is a real key: it is only a blank/None uid that bypasses lookup.
+        self.assertIs(is_layer_visible(layers, "0"), False)
+
+    def test_get_layer_uid_by_name_returns_the_first_matching_layer_in_mapping_order(self):
+        from ost_visualizer.domain.entities.layer import get_layer_uid_by_name
+
+        layers = {
+            "2": Layer("2", "Dup", True),
+            "1": Layer("1", " dup ", False),
+        }
+        self.assertEqual(get_layer_uid_by_name(layers, "DUP"), "2")
+        self.assertIsNone(get_layer_uid_by_name(layers, ""))
+        self.assertEqual(get_layer_uid_by_name({"3": Layer("3", "", True)}, ""), "3")
+
+    def test_merge_prefers_the_later_sequence_for_equal_non_template_names(self):
+        first = BidLayer("a", "bid", "Same", True, 1)
+        second = BidLayer("b", "bid", "same", False, 2)
+        template = BidLayer("t", "0", "SAME", True, 0, is_template=True)
+        merged = merge_layers_for_bid([second, template, first])
+        self.assertEqual([layer.uid for layer in merged], ["b"])
+        sorted_output = merge_layers_for_bid(
+            [
+                BidLayer("x", "bid", "X", True, 9),
+                BidLayer("y", "bid", "Y", True, 3),
+                BidLayer("z", "0", "Z", True, 5, is_template=True),
+            ]
+        )
+        self.assertEqual([layer.uid for layer in sorted_output], ["y", "z", "x"])
+
+
 if __name__ == "__main__":
     unittest.main()

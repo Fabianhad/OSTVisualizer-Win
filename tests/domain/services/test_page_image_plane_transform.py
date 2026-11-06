@@ -99,3 +99,42 @@ class NativePageImagePlaneTests(unittest.TestCase):
                     transform=transform.__name__, width=width, height=height
                 ):
                     self.assertIsNone(transform(width, height, 3.0))
+
+
+class PagePlaneEdgeTests(unittest.TestCase):
+    def test_small_but_positive_pages_still_get_a_plane_with_exact_geometry(self):
+        for transform in (native_page_plane_transform, threejs_page_plane_transform):
+            for width, height in ((0.5, 0.25), (1.0, 1.0), (1e-9, 3.0), (3.0, 0.75)):
+                with self.subTest(transform=transform.__name__, width=width, height=height):
+                    plane = transform(width, height, 0.0)
+                    self.assertIsNotNone(plane)
+                    self.assertEqual((plane.plane_width, plane.plane_height), (width, height))
+                    self.assertEqual(plane.plane_x, -width / 2.0)
+
+    def test_planes_are_frozen_and_floor_elevation_accepts_numeric_text(self):
+        from dataclasses import FrozenInstanceError
+
+        plane = native_page_plane_transform(2.0, 4.0, "1.5")
+        self.assertAlmostEqual(plane.plane_z, 1.5 - PAGE_PLANE_FLOOR_OFFSET)
+        self.assertEqual(plane.plane_y, 2.0)
+        with self.assertRaises(FrozenInstanceError):
+            plane.plane_x = 0.0
+        self.assertAlmostEqual(
+            threejs_page_plane_transform(2.0, 4.0, -1).plane_y,
+            -1 - PAGE_PLANE_FLOOR_OFFSET,
+        )
+
+    def test_equal_and_lower_elevations_keep_the_lowest_and_uids_are_text(self):
+        self.assertEqual(
+            resolve_page_floor_elevations(
+                [(7, [5.0, 5.0]), ("7", [6.0]), (7, ["4.5"]), ("x", [0.0])]
+            ),
+            {"7": 4.5, "x": 0.0},
+        )
+        self.assertEqual(resolve_page_floor_elevations([("a", [-1.0, 2.0])]), {"a": -1.0})
+
+    def test_odd_page_dimensions_are_halved_exactly_not_floored(self):
+        native = native_page_plane_transform(3.0, 5.0, 0.0)
+        self.assertEqual((native.plane_x, native.plane_y), (-1.5, 2.5))
+        threejs = threejs_page_plane_transform(3.0, 5.0, 0.0)
+        self.assertEqual((threejs.plane_x, threejs.plane_z), (-1.5, -2.5))

@@ -123,5 +123,83 @@ class WorkingDirectoryServiceTests(unittest.TestCase):
             name.assert_called_once_with()
 
 
+
+class WorkingDirectoryNameRuleTests(unittest.TestCase):
+    def test_database_names_must_be_valid_windows_file_names(self):
+        from ost_visualizer.application.services.working_directory_service import _validated_database_name as validate
+
+        for name in ("Plan A", "Xavier plan XX", "  trimmed  ", "a.b", "name.with.dots.mdb", "CONSOLE", "COM10", "LPT10", "COM0", "LPT0", "A" * 200, "naïve", "con_x"):
+            self.assertEqual(validate(name), str(name).strip(), name)
+        invalid = ["", "   ", "name.", "a<b", "a>b", "a:b", 'a"b', "a/b", "a\\b", "a|b", "a?b", "a*b", "a\x00b", "a\x1fb", "a\tb"]
+        invalid += ["CON", "con", "PRN", "AUX", "NUL", "nul.txt", "Aux.mdb", "COM1", "com9.x", "LPT1", "lpt9", "LPT5.log", "COM5.mdb"]
+        for name in invalid:
+            with self.subTest(name=name):
+                self.assertIsNone(validate(name))
+        self.assertEqual(validate(12), "12")
+        self.assertEqual(validate("a b"), "a b")
+        self.assertEqual(validate("a\x7fb"), "a\x7fb")
+
+    def test_every_reserved_device_name_is_rejected_with_any_extension(self):
+        from ost_visualizer.application.services.working_directory_service import _validated_database_name as validate
+
+        devices = ["CON", "PRN", "AUX", "NUL"] + [f"COM{n}" for n in range(1, 10)] + [f"LPT{n}" for n in range(1, 10)]
+        for device in devices:
+            for variant in (device, device.lower(), device + ".mdb", device.title() + ".x.y"):
+                with self.subTest(variant=variant):
+                    self.assertIsNone(validate(variant))
+        self.assertEqual(validate("COM"), "COM")
+        self.assertEqual(validate("LPT"), "LPT")
+
+    def test_default_names_use_the_unpadded_month_day_time_form_and_directory_is_created_with_parents(self):
+        import re
+        import tempfile
+        from pathlib import Path
+        from ost_visualizer.application.services.working_directory_service import WorkingDirectoryService
+
+        class Creator:
+            def __init__(self):
+                self.names = []
+
+            def create_database(self, path, name, progress_callback=None):
+                self.names.append(name)
+                return True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "a" / "b" / "work"
+            creator = Creator()
+            service = WorkingDirectoryService(creator, root)
+            self.assertEqual(service.working_dir, root)
+            created = service.create_database()
+            self.assertTrue(root.is_dir())
+            self.assertEqual(created, root / f"{creator.names[0]}.mdb")
+            self.assertRegex(creator.names[0], r"^\d{1,2}-\d{1,2}-\d{4} \d{1,2}-\d{1,2}-\d{1,2}$")
+            service.ensure_working_dir()
+            service.ensure_working_dir()
+            self.assertIsInstance(service._generate_default_name(), str)
+
+    def test_merging_discovered_files_returns_the_same_list_object_when_nothing_was_found(self):
+        import tempfile
+        from pathlib import Path
+        from ost_visualizer.application.services.working_directory_service import WorkingDirectoryService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WorkingDirectoryService(object(), Path(tmp))
+            existing = [FileEntry("C:/x.mdb")]
+            self.assertIs(service.merge_discovered_into_file_state(existing), existing)
+            self.assertEqual(service.merge_discovered_into_file_state([]), [])
+
+    def test_a_missing_working_directory_has_no_databases_and_a_custom_logger_is_kept(self):
+        import logging
+        from pathlib import Path
+        from ost_visualizer.application.services.working_directory_service import WorkingDirectoryService
+
+        custom = logging.getLogger("custom-working-dir")
+        service = WorkingDirectoryService(object(), Path("Z:/definitely/not/here"), custom)
+        self.assertIs(service._logger, custom)
+        self.assertEqual(service.discover_databases(), [])
+        default = WorkingDirectoryService(object(), Path("Z:/x"))
+        self.assertEqual(default._logger.name, "ost_visualizer.application.services.working_directory_service")
+
+
 if __name__ == "__main__":
     unittest.main()

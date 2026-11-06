@@ -378,6 +378,29 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.plan.clear_selection()
         self.assertEqual(self.sidebar.get_selected_condition_uids(), [])
 
+    def test_page_switch_restores_the_project_tree_bid_selection_only_when_it_moved_away(self):
+        project_view = self.coordinator.main_window.project_view
+        self.plan.set_selected_uids({"1"})
+        project_view.restore_bid_selection.reset_mock()
+        self.load_page(self.plan, self.other_page)
+        project_view.restore_bid_selection.assert_not_called()
+        project_view.get_selected_node_state.return_value = {
+            "kind": "database",
+            "file_path": self.bid_ref.file_path,
+        }
+        self.plan.set_selected_uids({"3"})
+        project_view.restore_bid_selection.reset_mock()
+        self.load_page(self.plan, self.page)
+        project_view.restore_bid_selection.assert_called_once_with(self.bid_ref)
+
+    def test_reloading_the_same_page_keeps_the_takeoff_selection_and_its_condition(self):
+        self.plan.set_selected_uids({"1"})
+        self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
+        self.load_page(self.plan, self.page)
+        self.assertEqual(self.plan.get_selected_takeoff_uids(), ["1"])
+        self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
+        self.assertEqual(self.state.highlighted_condition_uids, {"target"})
+
     def test_disappearing_matches_do_not_change_selection(self):
         self.plan.set_selected_uids({"3"})
 

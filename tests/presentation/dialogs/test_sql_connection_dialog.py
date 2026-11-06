@@ -128,12 +128,18 @@ class SqlConnectionDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
             dialog.deleteLater()
 
     def test_incomplete_connection_is_rejected_with_warning(self):
-        cases = (
-            ("blank server", "   ", False, "", ""),
-            ("missing login", "localhost", True, "", "temporary-secret"),
-            ("missing password", "localhost", True, "test-user", ""),
+        server_warning = ("SQL Server", "Enter a SQL Server name.")
+        login_warning = (
+            "SQL Server Authentication",
+            "Enter both a login name and password.",
         )
-        for label, server, sql_auth, username, password in cases:
+        cases = (
+            ("blank server", "   ", False, "", "", server_warning),
+            ("missing login", "localhost", True, "", "temporary-secret", login_warning),
+            ("blank login", "localhost", True, "   ", "temporary-secret", login_warning),
+            ("missing password", "localhost", True, "test-user", "", login_warning),
+        )
+        for label, server, sql_auth, username, password, warned in cases:
             with self.subTest(label):
                 dialog = SqlConnectionDialog(self.icon_provider)
                 try:
@@ -146,7 +152,7 @@ class SqlConnectionDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
                         "show_warning"
                     ) as warning:
                         dialog._accept_if_valid()
-                    warning.assert_called_once()
+                    warning.assert_called_once_with(dialog, *warned)
                     self.assertIsNone(dialog.result_data())
                     self.assertNotEqual(
                         dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
@@ -426,6 +432,36 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
         self.assertEqual(dialog.result_data().location.username, "user")
         self.assertEqual(dialog.result_data().password, " pw ")
 
+    def test_a_supplied_location_loses_its_stale_database_and_guid(self):
+        dialog = self.make()
+        stale = SqlConnectionDialogResult(
+            SqlServerDatabaseLocation(
+                server="old-server",
+                database="Old",
+                database_guid="G-STALE",
+                authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+                username="old-login",
+                connection_timeout_seconds=9,
+                command_timeout_seconds=19,
+            ),
+            "old-secret",
+        )
+        dialog.server_input.setText("new-server")
+        result = dialog._validated_connection(stale)
+        location = result.location
+        self.assertEqual(
+            (location.server, location.database, location.database_guid),
+            ("new-server", "", ""),
+        )
+        # the form decides authentication and login, other settings are kept
+        self.assertEqual(location.authentication_mode, SqlAuthenticationMode.WINDOWS)
+        self.assertEqual(location.username, "")
+        self.assertEqual(
+            (location.connection_timeout_seconds, location.command_timeout_seconds),
+            (9, 19),
+        )
+        self.assertEqual(result.password, "")
+
     def test_result_carries_trimmed_server_and_the_transport_choices(self):
         dialog = self.make()
         dialog.server_input.setText("  server\\instance  ")
@@ -538,6 +574,59 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
         dialog.windows_auth_radio.setChecked(True)
         self.assertTrue(dialog.username_input.isEnabled())
         self.assertEqual(self.shown_warnings, [])
+
+    def test_cleanup_attempts_every_signal_even_when_a_disconnect_raises(self):
+        class _RaisingSignal:
+            def __init__(self, error, log, name):
+                self.error, self.log, self.name = error, log, name
+
+            def disconnect(self):
+                self.log.append(self.name)
+                raise self.error
+
+        class _Proxy:
+            """A real widget whose named signals raise when disconnected."""
+
+            def __init__(self, widget, signals):
+                self._widget, self._signals = widget, signals
+
+            def __getattr__(self, name):
+                if name in self._signals:
+                    return self._signals[name]
+                return getattr(self._widget, name)
+
+        for error in (TypeError("not connected"), RuntimeError("deleted")):
+            with self.subTest(error=type(error).__name__):
+                dialog = self.make()
+                log = []
+                for attribute, signal in (
+                    ("windows_auth_radio", "toggled"),
+                    ("sql_auth_radio", "toggled"),
+                    ("connect_button", "clicked"),
+                    ("cancel_button", "clicked"),
+                ):
+                    real = getattr(dialog, attribute)
+                    setattr(
+                        dialog,
+                        attribute,
+                        _Proxy(
+                            real,
+                            {signal: _RaisingSignal(error, log, f"{attribute}.{signal}")},
+                        ),
+                    )
+                dialog.password_input.setText("secret")
+                dialog.cleanup()
+                self.assertEqual(
+                    log,
+                    [
+                        "windows_auth_radio.toggled",
+                        "sql_auth_radio.toggled",
+                        "connect_button.clicked",
+                        "cancel_button.clicked",
+                    ],
+                )
+                self.assertEqual(dialog.password_input.text(), "")
+                self.assertIsNone(dialog.result_data())
 
     def test_cleanup_tolerates_a_destroyed_dialog_and_can_run_twice(self):
         dialog = SqlConnectionDialog(RecordingIconProvider())
