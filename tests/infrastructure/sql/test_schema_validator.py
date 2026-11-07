@@ -1167,7 +1167,7 @@ class SchemaValidatorRenamedIndexCandidateTests(unittest.TestCase):
 # procedures, functions and extra indexes/constraints. These tests pin what the
 # validator accepts and refuses TODAY; the "accepted today" tests are the ones a
 # future owner decision on the scope would change. No restriction is implemented
-# without that product decision (see tests/_audit_progress/A1.json open2_decision).
+# without that product decision (see the AGENTS.md "Database backends" paragraph).
 # ---------------------------------------------------------------------------
 class SchemaValidatorScopeTests(unittest.TestCase):
     def setUp(self):

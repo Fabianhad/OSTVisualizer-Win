@@ -148056,7 +148056,7 @@
       "duplicate_method_names": []
     },
     "tests/infrastructure/sql/test_schema_validator.py": {
-      "sha256": "29f593b0d43385a1edc0eca1141e6255fb46e67b5bdd4dd2fe6ecfbe9f9ec679",
+      "sha256": "240c03cde5c95a6fa24e83bdf8982b98bc5abad3fe5ba0354fcf1dcab83446ca",
       "methods": [
         {
           "name": "SchemaValidatorCollaborationTests.test_schema_v1_requires_snapshot_isolation_and_tracking_configuration",
