@@ -52,19 +52,19 @@ class ProjectOperationsPersistenceTests(unittest.TestCase):
             "UID INTEGER PRIMARY KEY, BidProjectUID INTEGER, "
             "OrigBidProjectUID INTEGER)"
         )
-        conn.executemany("INSERT INTO BidProjects VALUES (?)", ((1,), (2,)))
-        conn.execute("INSERT INTO Bids VALUES (10, 2, 1)")
-        conn.execute("INSERT INTO Bids VALUES (11, 1, NULL)")
-        self.assertTrue(_SqliteMdbOps(conn).delete_projects("bid.mdb", ["1"]))
+        conn.executemany("INSERT INTO BidProjects VALUES (?)", ((2,), (3,)))
+        conn.execute("INSERT INTO Bids VALUES (10, 3, 2)")
+        conn.execute("INSERT INTO Bids VALUES (11, 2, NULL)")
+        self.assertTrue(_SqliteMdbOps(conn).delete_projects("bid.mdb", ["2"]))
         self.assertEqual(
             conn.execute(
                 "SELECT UID, BidProjectUID, OrigBidProjectUID FROM Bids ORDER BY UID"
             ).fetchall(),
-            [(10, 2, None), (11, None, None)],
+            [(10, 3, None), (11, None, None)],
         )
         self.assertEqual(
             conn.execute("SELECT UID FROM BidProjects ORDER BY UID").fetchall(),
-            [(2,)],
+            [(3,)],
         )
 
     def test_project_insert_does_not_claim_orphan_bid_project_uid(self):
@@ -362,14 +362,14 @@ class ProjectOperationContractTests(unittest.TestCase):
     def test_deleting_projects_detaches_their_bids_and_restore_references(self):
         conn = _project_db()
         conn.execute(
-            "UPDATE Bids SET BidProjectUID = 1, OrigBidProjectUID = 1 WHERE UID = 10"
+            "UPDATE Bids SET BidProjectUID = 2, OrigBidProjectUID = 2 WHERE UID = 10"
         )
         conn.execute(
-            "UPDATE Bids SET BidProjectUID = 2, OrigBidProjectUID = 1 WHERE UID = 11"
+            "UPDATE Bids SET BidProjectUID = 1, OrigBidProjectUID = 2 WHERE UID = 11"
         )
-        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["1"]), True)
-        self.assertEqual(_bids(conn), [(10, None, None), (11, 2, None)])
-        self.assertEqual(conn.execute("SELECT UID FROM BidProjects").fetchall(), [(2,)])
+        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["2"]), True)
+        self.assertEqual(_bids(conn), [(10, None, None), (11, 1, None)])
+        self.assertEqual(conn.execute("SELECT UID FROM BidProjects").fetchall(), [(1,)])
 
     def test_deleting_projects_tolerates_a_bid_table_without_project_columns(self):
         for bids in (
@@ -380,18 +380,18 @@ class ProjectOperationContractTests(unittest.TestCase):
             with self.subTest(bids=bids):
                 conn = _project_db(bids=bids)
                 self.assertIs(
-                    RealContractOps(conn).delete_projects("x.mdb", ["1"]), True
+                    RealContractOps(conn).delete_projects("x.mdb", ["2"]), True
                 )
                 self.assertEqual(
-                    conn.execute("SELECT UID FROM BidProjects").fetchall(), [(2,)]
+                    conn.execute("SELECT UID FROM BidProjects").fetchall(), [(1,)]
                 )
 
     def test_deleting_projects_without_a_bid_table_still_deletes_them(self):
         conn = contract_db(
             "CREATE TABLE BidProjects (UID INTEGER, Name TEXT)",
-            "INSERT INTO BidProjects VALUES (1, 'One')",
+            "INSERT INTO BidProjects VALUES (2, 'Two')",
         )
-        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["1"]), True)
+        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["2"]), True)
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM BidProjects").fetchall(), [(0,)]
         )
@@ -628,15 +628,15 @@ class ProjectOperationFailurePathTests(unittest.TestCase):
         conn = _project_db(
             "INSERT INTO BidProjects (UID) VALUES (3)",
             "INSERT INTO Bids (UID) VALUES (12)",
-            "UPDATE Bids SET BidProjectUID = 1, OrigBidProjectUID = 3 WHERE UID = 10",
-            "UPDATE Bids SET BidProjectUID = 2, OrigBidProjectUID = 1 WHERE UID = 11",
-            "UPDATE Bids SET BidProjectUID = 3, OrigBidProjectUID = 2 WHERE UID = 12",
+            "UPDATE Bids SET BidProjectUID = 2, OrigBidProjectUID = 1 WHERE UID = 10",
+            "UPDATE Bids SET BidProjectUID = 3, OrigBidProjectUID = 2 WHERE UID = 11",
+            "UPDATE Bids SET BidProjectUID = 1, OrigBidProjectUID = 3 WHERE UID = 12",
         )
-        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["1", "2"]), True)
-        # Every deleted project leaves both bid columns; the bystander project 3
+        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["2", "3"]), True)
+        # Every deleted project leaves both bid columns; the bystander project 1
         # and the bid that points at it keep their references.
-        self.assertEqual(conn.execute("SELECT UID FROM BidProjects").fetchall(), [(3,)])
-        self.assertEqual(_bids(conn), [(10, None, 3), (11, None, None), (12, 3, None)])
+        self.assertEqual(conn.execute("SELECT UID FROM BidProjects").fetchall(), [(1,)])
+        self.assertEqual(_bids(conn), [(10, None, 1), (11, None, None), (12, 1, None)])
 
     def test_characterisation_renaming_an_absent_project_is_a_silent_success(self):
         # Pins current behaviour, not an endorsed contract: unlike
@@ -972,7 +972,7 @@ class ProjectOperationsLargeBatchTests(unittest.TestCase):
         )
 
     def test_a_large_project_delete_detaches_and_removes_every_project(self):
-        projects = list(range(1, 121))
+        projects = list(range(2, 122))
         conn = _large_db(
             [(1000 + uid, uid, uid) for uid in projects] + [(2000, 500, 500)],
             [(uid,) for uid in projects] + [(500,)],
@@ -994,7 +994,7 @@ class ProjectOperationsLargeBatchTests(unittest.TestCase):
         )
 
     def test_a_missing_or_duplicated_uid_in_a_late_chunk_refuses_the_whole_batch(self):
-        batch = list(range(1, 121))
+        batch = list(range(2, 122))
         everyone = [str(uid) for uid in batch]
         # move: bid 110 does not exist.
         conn = _large_db(
@@ -1044,3 +1044,91 @@ class ProjectOperationsLargeBatchTests(unittest.TestCase):
             ).fetchone(),
             (0,),
         )
+
+
+class DeletedBidsProjectGuardTests(unittest.TestCase):
+    """The system project "Deleted Bids" (UID 1) cannot be deleted by the writer.
+
+    The tree view and the write handler already refuse it; the writer is the last
+    line of defence for every other caller (MCP, scripts, a future screen).
+    """
+
+    @staticmethod
+    def _database():
+        conn = _project_db()
+        conn.execute("UPDATE BidProjects SET Name = 'Deleted Bids' WHERE UID = 1")
+        conn.execute(
+            "UPDATE Bids SET BidProjectUID = 1, OrigBidProjectUID = 2 WHERE UID = 10"
+        )
+        conn.execute(
+            "UPDATE Bids SET BidProjectUID = 2, OrigBidProjectUID = 1 WHERE UID = 11"
+        )
+        return conn
+
+    @staticmethod
+    def _state(conn):
+        return (
+            conn.execute("SELECT UID, Name FROM BidProjects ORDER BY UID").fetchall(),
+            _bids(conn),
+        )
+
+    def test_the_system_project_is_refused_and_every_row_is_left_untouched(self):
+        for uids in (["1"], [1], [" 1 "], ["01"], ["1", "1"]):
+            with self.subTest(uids=uids):
+                conn = self._database()
+                before = self._state(conn)
+                with self.assertLogs("test", "WARNING") as logs:
+                    self.assertIs(
+                        RealContractOps(conn).delete_projects("x.mdb", uids), False
+                    )
+                self.assertIn("Deleted Bids", logs.output[0])
+                self.assertEqual(self._state(conn), before)
+
+    def test_one_system_project_in_a_batch_refuses_the_whole_batch(self):
+        for uids in (["2", "1"], ["1", "2"]):
+            with self.subTest(uids=uids):
+                conn = self._database()
+                before = self._state(conn)
+                with self.assertLogs("test", "WARNING"):
+                    self.assertIs(
+                        RealContractOps(conn).delete_projects("x.mdb", uids), False
+                    )
+                self.assertEqual(self._state(conn), before)
+
+    def test_the_refusal_happens_before_the_database_is_opened(self):
+        class _NoConnectionOps(RealContractOps):
+            def _connection(self, _db_path):
+                raise AssertionError(
+                    "the guard must refuse before opening a connection"
+                )
+
+        with self.assertLogs("test", "WARNING"):
+            self.assertIs(
+                _NoConnectionOps(self._database()).delete_projects("x.mdb", ["1"]),
+                False,
+            )
+
+    def test_the_refusal_follows_the_strict_error_policy(self):
+        conn = self._database()
+        before = self._state(conn)
+        with self.assertRaisesRegex(
+            ValueError, r"^Cannot delete the system project 'Deleted Bids' \(UID 1\)$"
+        ):
+            _StrictPolicyOps(conn).delete_projects("x.mdb", ["1"])
+        self.assertEqual(self._state(conn), before)
+
+    def test_other_projects_are_still_deleted_and_the_system_project_survives(self):
+        conn = self._database()
+        self.assertIs(RealContractOps(conn).delete_projects("x.mdb", ["2"]), True)
+        self.assertEqual(
+            self._state(conn),
+            ([(1, "Deleted Bids")], [(10, 1, None), (11, None, 1)]),
+        )
+
+    def test_moving_bids_into_or_out_of_the_system_project_is_unaffected(self):
+        conn = self._database()
+        ops = RealContractOps(conn)
+        self.assertIs(ops.move_bids_to_project("x.mdb", ["11"], "1", "2"), True)
+        self.assertEqual(_bids(conn), [(10, 1, 2), (11, 1, 2)])
+        self.assertIs(ops.orphan_bids("x.mdb", ["10"]), True)
+        self.assertEqual(_bids(conn), [(10, None, 2), (11, 1, 2)])

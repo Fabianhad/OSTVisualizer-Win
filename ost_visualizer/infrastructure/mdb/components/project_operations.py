@@ -1,4 +1,9 @@
 from typing import List, Optional
+from ....domain.entities.project_constants import (
+    DELETED_BIDS_PROJECT_NAME,
+    DELETED_BIDS_PROJECT_UID,
+    is_deleted_bids_project_uid,
+)
 from ...database.bid_owned_identity import (
     require_existing_unique_bid_owned_uid_matches,
     require_unique_bid_owned_uid_matches,
@@ -162,6 +167,11 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
             )
             return False
         try:
+            if any(is_deleted_bids_project_uid(str(uid)) for uid in uids):
+                raise ValueError(
+                    f"Cannot delete the system project {DELETED_BIDS_PROJECT_NAME!r} "
+                    f"(UID {DELETED_BIDS_PROJECT_UID})"
+                )
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidProjects", ("UID",))

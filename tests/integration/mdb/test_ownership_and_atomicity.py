@@ -383,11 +383,14 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
             ),
             12,
         )
+        # Project UID 1 is the protected "Deleted Bids" system project, so the
+        # deletable projects are numbered from 2.
+        project_uids = range(2, row_count + 2)
         project_conn = sqlite3.connect(":memory:")
         project_conn.execute("CREATE TABLE BidProjects (UID INTEGER)")
         project_conn.executemany(
             "INSERT INTO BidProjects VALUES (?)",
-            ((uid,) for uid in range(1, row_count + 1)),
+            ((uid,) for uid in project_uids),
         )
         project_conn.execute(
             "CREATE TABLE Bids ("
@@ -395,13 +398,13 @@ class OwnershipAndAtomicityPersistenceTests(unittest.TestCase):
         )
         project_conn.executemany(
             "INSERT INTO Bids VALUES (?, ?, ?)",
-            ((1000 + uid, uid, uid) for uid in range(1, row_count + 1)),
+            ((1000 + uid, uid, uid) for uid in project_uids),
         )
         project_statements = []
         project_conn.set_trace_callback(project_statements.append)
         self.assertTrue(
             _ParameterLimitedSqliteOps(project_conn).delete_projects(
-                "large.mdb", uid_strings
+                "large.mdb", [str(uid) for uid in project_uids]
             )
         )
         project_counts = {

@@ -1356,6 +1356,27 @@ class WriterSqlCleanupTests(unittest.TestCase):
             "SQL writes must run through a collaboration mutation transaction.",
         )
 
+    def test_sql_delete_projects_refuses_the_deleted_bids_system_project(self):
+        writer, descriptor, manager = _recording_writer()
+        with self.assertRaisesRegex(ValueError, "Deleted Bids"):
+            writer.execute(
+                _cleanup_support_DatabaseMutationRequest(
+                    database_id=descriptor.database_id, session_id="session-1"
+                ),
+                lambda _recorder: writer.delete_projects(
+                    descriptor.database_id, ["2", "1"]
+                ),
+            )
+        changing = [
+            statement
+            for statement, _params in manager.lease.statements
+            if statement.lstrip().upper().startswith(("DELETE", "UPDATE"))
+            and ("BidProjects" in statement or "[Bids]" in statement)
+        ]
+        self.assertEqual(changing, [])
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
     def test_inherited_sql_takeoff_validation_error_is_raised_not_returned_as_false(
         self,
     ):
