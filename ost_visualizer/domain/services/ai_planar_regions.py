@@ -87,6 +87,7 @@ def point_in_ring(point: Point, ring: Sequence[Point]) -> bool:
 class _VertexIndex:
     def __init__(self, tolerance: float):
         self._tolerance = tolerance
+        self.tolerance = tolerance
         self._cells: Dict[Tuple[int, int], List[int]] = defaultdict(list)
         self.points: List[Point] = []
 
@@ -342,6 +343,30 @@ def _candidate_pairs_with_work(
     return sorted(found), work
 
 
+def _split_at_near_split_points(
+    segments: List[Tuple[Point, Point]],
+    pairs: List[Tuple[int, int]],
+    splits: Dict[int, List[Tuple[float, Point]]],
+    tolerance: float,
+    deadline: Optional[float] = None,
+) -> None:
+    found = {owner: {point for _t, point in near} for owner, near in splits.items()}
+    exact = tolerance * 1e-6
+    extra: List[Tuple[int, float, Point]] = []
+    for visited, (first, second) in enumerate(pairs):
+        if visited % DEADLINE_CHECK_EVERY == 0:
+            check_deadline(deadline)
+        for owner, other in ((first, second), (second, first)):
+            p, q = segments[owner]
+            for point in found.get(other, ()):
+                t, distance = _segment_point_parameter(p, q, point)
+                if exact < distance <= tolerance:
+                    foot = (p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]))
+                    extra.append((owner, t, foot))
+    for owner, t, foot in extra:
+        splits[owner].append((t, foot))
+
+
 def _split_segments(
     segments: List[Tuple[Point, Point]],
     index: _VertexIndex,
@@ -350,9 +375,8 @@ def _split_segments(
     deadline: Optional[float] = None,
 ) -> Tuple[Set[Tuple[int, int]], Set[Tuple[int, int]]]:
     splits: Dict[int, List[Tuple[float, Point]]] = defaultdict(list)
-    for checked, (first, second) in enumerate(
-        _candidate_pairs(segments, tolerance, deadline)
-    ):
+    pairs = _candidate_pairs(segments, tolerance, deadline)
+    for checked, (first, second) in enumerate(pairs):
         if checked % DEADLINE_CHECK_EVERY == 0:
             check_deadline(deadline)
         a, b = segments[first]
@@ -371,9 +395,13 @@ def _split_segments(
                 if distance <= tolerance:
                     foot = (p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]))
                     splits[owner].append((t, foot))
+    _split_at_near_split_points(segments, pairs, splits, tolerance, deadline)
+    added: Set[Point] = set()
     for owner_splits in splits.values():
         for _t, point in owner_splits:
-            index.add(point)
+            if point not in added:
+                added.add(point)
+                index.add(point)
     edges: Set[Tuple[int, int]] = set()
     drawn: Set[Tuple[int, int]] = set()
     for position, (a, b) in enumerate(segments):
@@ -436,7 +464,7 @@ def _close_gaps(
     closures = []
     neighbours = _adjacency(edges)
     dangling = sorted(vertex for vertex, near in neighbours.items() if len(near) == 1)
-    order = {vertex: position for position, vertex in enumerate(neighbours)}
+    order = {vertex: position for position, vertex in enumerate(sorted(neighbours))}
     near_dangling = _NearVertices(index.points, dangling, gap_close)
     near_any = _NearVertices(index.points, list(neighbours), gap_close)
     used: Set[int] = set()
@@ -454,6 +482,9 @@ def _close_gaps(
                 or other in used
                 or other in neighbours[vertex]
                 or _runs_along_an_edge(index.points, neighbours, vertex, other)
+                or _passes_a_neighbour(
+                    index.points, neighbours, vertex, other, index.tolerance
+                )
             ):
                 continue
             distance = math.dist(point, index.points[other])
@@ -467,6 +498,9 @@ def _close_gaps(
                     or other in neighbours[vertex]
                     or len(neighbours[other]) < 2
                     or _runs_along_an_edge(index.points, neighbours, vertex, other)
+                    or _passes_a_neighbour(
+                        index.points, neighbours, vertex, other, index.tolerance
+                    )
                 ):
                     continue
                 distance = math.dist(point, index.points[other])
@@ -497,6 +531,25 @@ def _runs_along_an_edge(
             nx, ny = points[near][0] - sx, points[near][1] - sy
             length = math.hypot(ex, ey) * math.hypot(nx, ny)
             if abs(ex * ny - ey * nx) <= 1e-9 * length and ex * nx + ey * ny > 0.0:
+                return True
+    return False
+
+
+def _passes_a_neighbour(
+    points: List[Point],
+    neighbours: Dict[int, Set[int]],
+    first: int,
+    second: int,
+    tolerance: float,
+) -> bool:
+    for start, end in ((first, second), (second, first)):
+        for near in neighbours[start]:
+            if near == end:
+                continue
+            t, distance = _segment_point_parameter(
+                points[start], points[end], points[near]
+            )
+            if 0.0 < t < 1.0 and distance <= tolerance:
                 return True
     return False
 
@@ -564,8 +617,9 @@ def _components(edges: Set[Tuple[int, int]]) -> Dict[int, int]:
             vertex = parent[vertex]
         return vertex
 
-    for u, v in edges:
-        parent[find(u)] = find(v)
+    for u, v in sorted(edges):
+        first, second = find(u), find(v)
+        parent[max(first, second)] = min(first, second)
     return {vertex: find(vertex) for vertex in list(parent)}
 
 
@@ -575,6 +629,13 @@ def _finite_pairs(segments) -> List[Tuple[Point, Point]]:
         for x1, y1, x2, y2 in segments
         if all(math.isfinite(float(value)) for value in (x1, y1, x2, y2))
     ]
+
+
+def _canonical_segments(
+    segments: List[Tuple[Point, Point]],
+) -> List[Tuple[Point, Point]]:
+    oriented = [(a, b) if a <= b else (b, a) for a, b in segments]
+    return sorted(oriented, key=lambda line: (-math.dist(*line), line))
 
 
 def check_segment_count(count: int) -> None:
@@ -604,8 +665,8 @@ def find_planar_regions_report(
     closures: Sequence[Tuple[float, float, float, float]] = (),
     deadline: Optional[float] = None,
 ) -> PlanarRegionReport:
-    clean = _finite_pairs(segments)
-    given = _finite_pairs(closures)
+    clean = _canonical_segments(_finite_pairs(segments))
+    given = _canonical_segments(_finite_pairs(closures))
     check_segment_count(len(clean) + len(given))
     tolerance = max(float(snap_tol), 1e-6)
     index = _VertexIndex(tolerance)
@@ -646,7 +707,7 @@ def find_planar_regions_report(
     regions = []
     for component, cycle in candidates:
         check_deadline(deadline)
-        ring = tuple(points[vertex] for vertex in cycle)
+        ring = _ring_from_lowest_left(tuple(points[vertex] for vertex in cycle))
         holes = []
         inside = [
             ring_keys[position]
@@ -679,14 +740,21 @@ def find_planar_regions_report(
             (min(u, v), max(u, v)) for u, v in zip(cycle, cycle[1:] + cycle[:1])
         }
         gaps = tuple(
-            RegionGap(points[u], points[v], math.dist(points[u], points[v]))
-            for u, v in sorted(closure_set & ring_edges)
+            sorted(
+                (
+                    RegionGap(
+                        min(points[u], points[v]),
+                        max(points[u], points[v]),
+                        math.dist(points[u], points[v]),
+                    )
+                    for u, v in closure_set & ring_edges
+                ),
+                key=lambda gap: (gap.p1, gap.p2),
+            )
         )
         regions.append(PlanarRegion(ring, tuple(holes), area, gaps))
     regions.sort(key=lambda region: -region.area)
-    return PlanarRegionReport(
-        tuple(regions), tuple(suppressed[key] for key in sorted(suppressed))
-    )
+    return PlanarRegionReport(tuple(regions), tuple(sorted(suppressed.values())))
 
 
 def opening_candidates(
@@ -697,7 +765,7 @@ def opening_candidates(
     ring: Sequence[Point] = (),
     deadline: Optional[float] = None,
 ) -> List[Tuple[float, float, float, float]]:
-    clean = _finite_pairs(segments)
+    clean = _canonical_segments(_finite_pairs(segments))
     tolerance = max(float(snap_tol), 1e-6)
     index = _VertexIndex(tolerance)
     edges, _given = _split_segments(clean, index, tolerance, deadline=deadline)
@@ -804,6 +872,13 @@ def opening_candidates(
         if best is not None:
             _keep_opening(found, start, best[1], grid, tolerance)
     return [first + second for first, second in found.values()]
+
+
+def _ring_from_lowest_left(ring: Ring) -> Ring:
+    start = min(
+        range(len(ring)), key=lambda position: (ring[position][1], ring[position])
+    )
+    return ring[start:] + ring[:start]
 
 
 def _unit(start: Point, end: Point) -> Point:

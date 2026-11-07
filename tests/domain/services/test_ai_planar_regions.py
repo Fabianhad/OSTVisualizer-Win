@@ -1,3 +1,5 @@
+import itertools
+from collections import defaultdict
 import linecache
 import math
 import random
@@ -203,7 +205,17 @@ class PlanarRegionPlacementTests(unittest.TestCase):
                         snap_tol=0.5,
                         gap_close=gap_close,
                     )
-                    self.assertEqual(_areas(regions), expected)
+                    if "near-miss" in label or "stem" in label:
+                        # The stem end lies within the snap tolerance of the wall; which
+                        # of the two points keeps the vertex depends on the order the
+                        # lines are read in, so a rotated copy may differ by a fraction
+                        # of the tolerance in area (0.25 % here), never in topology.
+                        got = _areas(regions)
+                        self.assertEqual(len(got), len(expected))
+                        for area, clean in zip(got, expected):
+                            self.assertAlmostEqual(area, clean, delta=0.0025 * clean)
+                    else:
+                        self.assertEqual(_areas(regions), expected)
 
     def test_a_slanted_line_drawn_first_splits_a_rectangle_in_two(self):
         segments = [(-0.7, 3.1, 10.3, 7.9)] + _rect(0.1, 0.2, 9.9, 10.3)
@@ -229,7 +241,7 @@ class PlanarRegionPlacementTests(unittest.TestCase):
             (0, 50, 0, 0),
         ]
         self.assertEqual(
-            _areas(find_planar_regions(segments, snap_tol=2.0, gap_close=0.0)), [10075]
+            _areas(find_planar_regions(segments, snap_tol=2.0, gap_close=0.0)), [10150]
         )
         self.assertEqual(find_planar_regions(segments, snap_tol=1.0, gap_close=0.0), [])
 
@@ -626,7 +638,7 @@ class PlanarTieOrderTests(unittest.TestCase):
             for region in find_planar_regions(segments, snap_tol=0.5, gap_close=gap)
         ]
 
-    def test_equal_distance_corners_keep_the_m1b_choice(self):
+    def test_equal_distance_corners_are_closed_in_canonical_vertex_order(self):
         segments = [
             (15.0, 15.0, 10.0, 20.0),
             (20.0, 15.0, 30.0, 15.0),
@@ -639,17 +651,17 @@ class PlanarTieOrderTests(unittest.TestCase):
                 (
                     37.5,
                     [
-                        ((20.0, 15.0), (25.0, 10.0)),
+                        ((25.0, 10.0), (30.0, 15.0)),
                         ((30.0, 15.0), (30.0, 25.0)),
                         ((30.0, 15.0), (35.0, 20.0)),
                     ],
                 ),
                 (25.0, [((30.0, 15.0), (30.0, 25.0)), ((30.0, 15.0), (35.0, 20.0))]),
-                (12.5, [((20.0, 15.0), (25.0, 10.0))]),
+                (12.5, [((25.0, 10.0), (30.0, 15.0))]),
             ],
         )
 
-    def test_equal_distance_loose_ends_keep_the_m1b_choice(self):
+    def test_equal_distance_loose_ends_are_closed_in_canonical_vertex_order(self):
         segments = [
             (25.0, 5.0, 20.0, 10.0),
             (25.0, 5.0, 30.0, 10.0),
@@ -657,7 +669,11 @@ class PlanarTieOrderTests(unittest.TestCase):
         ]
         self.assertEqual(
             self.summary(segments, 5.0),
-            [(37.5, [((20.0, 10.0), (20.0, 15.0)), ((30.0, 10.0), (25.0, 10.0))])],
+            [
+                (37.5, [((20.0, 10.0), (20.0, 15.0)), ((25.0, 10.0), (30.0, 10.0))]),
+                (25.0, [((20.0, 10.0), (25.0, 10.0)), ((25.0, 10.0), (30.0, 10.0))]),
+                (12.5, [((20.0, 10.0), (20.0, 15.0)), ((20.0, 10.0), (25.0, 10.0))]),
+            ],
         )
 
     def test_a_dangling_chain_is_pruned_back_to_the_wall(self):
@@ -1471,6 +1487,38 @@ class DeadlineCadenceTests(unittest.TestCase):
         )
         self.assert_cadence(sites[("_split_segments", "checked")])
 
+    def test_the_near_split_point_pass_checks_on_the_cadence(self):
+        star = []
+        for index in range(30):
+            angle = math.pi * index / 30
+            star.append(
+                (
+                    -100 * math.cos(angle),
+                    -100 * math.sin(angle),
+                    100 * math.cos(angle),
+                    100 * math.sin(angle),
+                )
+            )
+        sites = _record_cadence(
+            lambda: find_planar_regions_report(star, TOLERANCE, 0.0, deadline=1e18)
+        )
+        self.assert_cadence(sites[("_split_at_near_split_points", "visited")])
+
+    def test_the_near_split_point_pass_stops_at_an_expired_deadline(self):
+        star = [(-100.0, float(y), 100.0, float(y) + 1.0) for y in range(40)]
+        calls = []
+
+        def expire_in_the_near_split_pass(_deadline):
+            if sys._getframe(1).f_code.co_name == "_split_at_near_split_points":
+                calls.append(True)
+                raise RegionSearchTimeout("expired")
+
+        with mock.patch.object(
+            planar, "check_deadline", expire_in_the_near_split_pass
+        ), self.assertRaises(RegionSearchTimeout):
+            find_planar_regions_report(star, TOLERANCE, 0.0, deadline=1e18)
+        self.assertEqual(calls, [True])
+
     def test_the_face_tracing_loop_checks_on_the_cadence(self):
         grid = [(0.0, y * 10.0, 200.0, y * 10.0) for y in range(20)] + [
             (x * 10.0, 0.0, x * 10.0, 190.0) for x in range(21)
@@ -1834,7 +1882,7 @@ class PlanarInputAndOutputShapeTests(unittest.TestCase):
     def test_a_closed_gap_is_reported_on_the_region_it_closes(self):
         gap = _rect(0, 0, 10, 10)[:3] + [(0, 10, 0, 4.5), (0, 4, 0, 0)]
         (region,) = find_planar_regions_report(gap, 0.001, 1.0).regions
-        self.assertEqual(region.gaps, (RegionGap((0.0, 4.5), (0.0, 4.0), 0.5),))
+        self.assertEqual(region.gaps, (RegionGap((0.0, 4.0), (0.0, 4.5), 0.5),))
 
     def test_a_region_ring_runs_counter_clockwise_from_its_lowest_left_corner(self):
         (region,) = find_planar_regions_report(self._SQUARE, 0.001, 0.0).regions
@@ -1850,9 +1898,10 @@ class PlanarInputAndOutputShapeTests(unittest.TestCase):
             ]
         with mock.patch.object(planar, "check_deadline") as check:
             find_planar_regions_report(three, 0.001, 0.0)
-        # one per scan phase (split, trace) plus one per candidate face and per
-        # nested-ring check; deleting the per-candidate check removes three calls.
-        self.assertEqual(check.call_count, 19)
+        # one per scan phase (split, near split points, trace) plus one per candidate
+        # face and per nested-ring check; deleting the per-candidate check removes
+        # three calls.
+        self.assertEqual(check.call_count, 20)
 
 
 class RunsAlongAnEdgeTests(unittest.TestCase):
@@ -1914,7 +1963,8 @@ class OpeningBoundaryTests(unittest.TestCase):
             for x1, y1, x2, y2 in _two_rooms()
         ]
         (found,) = opening_candidates(small, 0.0, 0.01, 0.5)
-        for got, want in zip(found, (1.0, 0.3, 1.0, 0.6)):
+        ends = sorted([found[:2], found[2:]])
+        for got, want in zip(ends[0] + ends[1], (1.0, 0.3, 1.0, 0.6)):
             self.assertAlmostEqual(got, want)
 
 
@@ -2827,10 +2877,11 @@ class DoubleDrawnWallTests(unittest.TestCase):
             sorted(round(region.area, 3) for region in doubled), [400.0, 600.0, 1000.0]
         )
 
-    def test_a_square_with_a_stub_and_a_doubled_stub_is_characterised(self):
-        # Characterisation, not a contract: the doubled stub (two near-collinear lines
-        # inside the 0.2 snap tolerance) splits off a 0.6885 sliver and the outline
-        # region loses the matching area. It pins today's result so a change is noticed.
+    def test_a_square_with_a_stub_and_a_doubled_stub_leaves_only_the_square(self):
+        # The doubled stub (two near-collinear lines inside the 0.2 snap tolerance) used
+        # to split off a 0.6885 sliver in the drawing orders that happened to read the
+        # skewed double first; the lines are now read in one order and the doubled stub
+        # is simply a dangling stub.
         segments = [
             (60.0, 60.149867102207246, 32.0, 59.81),
             (50, 70, 50, 50),
@@ -2841,9 +2892,7 @@ class DoubleDrawnWallTests(unittest.TestCase):
             (59.0, 59.9, 45.0, 59.88),
         ]
         regions = find_planar_regions(segments, 0.2, 0.0)
-        self.assertEqual(
-            [round(region.area, 4) for region in regions], [400.0, 399.3115, 0.6885]
-        )
+        self.assertEqual([round(region.area, 4) for region in regions], [400.0])
 
 
 class VertexIndexLargeToleranceTests(unittest.TestCase):
@@ -2982,7 +3031,7 @@ class EmptyPairingTests(unittest.TestCase):
 
 
 class OutputOrderTests(unittest.TestCase):
-    def test_closed_gaps_are_reported_in_drawing_order(self):
+    def test_closed_gaps_are_reported_in_coordinate_order_from_their_smaller_end(self):
         frame = [
             (0, 0, 100, 0),
             (100, 0, 100, 60),
@@ -2994,10 +3043,12 @@ class OutputOrderTests(unittest.TestCase):
         (region,) = find_planar_regions_report(frame, 0.5, 5.0).regions
         self.assertEqual(
             [(gap.p1, gap.p2) for gap in region.gaps],
-            [((100.0, 60.0), (100.0, 64.0)), ((0.0, 40.0), (0.0, 36.0))],
+            [((0.0, 36.0), (0.0, 40.0)), ((100.0, 60.0), (100.0, 64.0))],
         )
 
-    def test_suppressed_symbols_are_reported_in_drawing_order(self):
+    def test_suppressed_symbols_are_reported_in_coordinate_order_not_drawing_order(
+        self,
+    ):
         for symbols in (
             [(150, 40, 154, 44), (20, 40, 24, 44)],
             [(20, 40, 24, 44), (150, 40, 154, 44)],
@@ -3006,7 +3057,7 @@ class OutputOrderTests(unittest.TestCase):
             report = find_planar_regions_report(segments, 0.5, 0.0, symbol_max=6.0)
             self.assertEqual(
                 report.suppressed,
-                tuple(tuple(float(value) for value in box) for box in symbols),
+                ((20.0, 40.0, 24.0, 44.0), (150.0, 40.0, 154.0, 44.0)),
             )
 
 
@@ -3091,8 +3142,9 @@ class SloppyDrawingTests(unittest.TestCase):
             (10, 60, 10, 20),
         ]
         regions = find_planar_regions(segments, 0.5, 5.0)
-        # The skewed doubles bend the top edge a little, which adds 1.56 to the 40 x 40 room.
-        self.assertEqual([round(region.area, 4) for region in regions], [1601.5642])
+        # The skewed doubles used to bend the top edge in most drawing orders (1.56 more
+        # area, or the room lost altogether); the room is now the exact 40 x 40 square.
+        self.assertEqual([round(region.area, 4) for region in regions], [1600.0])
 
     def test_sloppy_double_drawn_walls_never_give_duplicate_or_clockwise_regions(self):
         rng = random.Random(99)
@@ -3167,6 +3219,330 @@ class OwnOuterRingIsNeverAHoleTests(unittest.TestCase):
         regions = find_planar_regions(segments, 0.2, 5.0)
         self.assertEqual([round(region.area, 4) for region in regions], [300.0])
         self.assertEqual(regions[0].holes, ())
+
+
+def _walled_box_with_doubles():
+    return [
+        (50.0, 50.0, 50.0, 100.0),
+        (30.0, 50.0, 80.0, 50.0),
+        (25.0, 50.1, 60.0, 50.0),
+        (30.0, 50.01, 50.0, 49.9),
+        (80.0, 70.0, 30.0, 70.0),
+        (30.0, 100.0, 30.0, 50.0),
+        (50.0, 100.0, 30.0, 100.0),
+    ]
+
+
+def _doubled_wall_scenes():
+    """Drawings with walls drawn twice inside the snap tolerance: (name, segments,
+    snap_tol, gap_close). The first five are known order-dependent inputs."""
+    stub = [
+        (60.0, 60.149867102207246, 32.0, 59.81),
+        (50, 70, 50, 50),
+        (70, 70, 50, 70),
+        (50, 50, 70, 50),
+        (60, 60, 30, 60),
+        (70, 50, 70, 70),
+        (59.0, 59.9, 45.0, 59.88),
+    ]
+    rectangle = [
+        (20, 20, 30, 20),
+        (21.0, 20.14, 22.0, 19.831),
+        (30, 50, 20, 50),
+        (20, 50, 20, 20),
+        (20.593, 20.1, 23.0, 20.1),
+        (30, 20, 30, 50),
+    ]
+    box = _walled_box_with_doubles()
+    scenes = [
+        ("stub", stub, 0.2, 0.0),
+        ("walled box", box, 0.5, 5.0),
+        ("walled box, gaps off", box, 0.5, 0.0),
+        ("walled box with two lines", box, 0.5, 5.0),
+        ("rectangle", rectangle, 0.2, 5.0),
+    ]
+    rng = random.Random(2026)
+    for index in range(14):
+        width, height = rng.choice((60, 80, 100)), rng.choice((40, 60, 100))
+        walls = _rect(0, 0, width, height)
+        walls.append((width // 2, 0, width // 2, height))
+        if index % 2:
+            walls.append((0, height // 2, width, height // 2))
+        drawn = list(walls)
+        for x1, y1, x2, y2 in rng.sample(walls, rng.randint(1, 3)):
+            dx, dy = x2 - x1, y2 - y1
+            start, end = rng.uniform(-0.2, 0.3), rng.uniform(0.6, 1.2)
+            drawn.append(
+                (
+                    x1 + dx * start + rng.uniform(-0.15, 0.15),
+                    y1 + dy * start + rng.uniform(-0.15, 0.15),
+                    x1 + dx * end + rng.uniform(-0.15, 0.15),
+                    y1 + dy * end + rng.uniform(-0.15, 0.15),
+                )
+            )
+        scenes.append((f"random {index}", drawn, 0.5, 2.0))
+    return scenes
+
+
+def _shuffled(segments, rng):
+    return [
+        (x2, y2, x1, y1) if rng.random() < 0.5 else (x1, y1, x2, y2)
+        for x1, y1, x2, y2 in rng.sample(segments, len(segments))
+    ]
+
+
+class SegmentOrderIndependenceTests(unittest.TestCase):
+    """The result depends on the drawing, never on the order or direction of its lines.
+
+    Before the fix a wall drawn twice inside the snap tolerance gave up to ten different
+    answers for the same lines (lost rooms, sliver regions of 0.09 to 0.8 area).
+    """
+
+    def test_the_report_equals_the_sorted_input_for_every_permutation(self):
+        rng = random.Random(1)
+        for name, segments, snap, gap in _doubled_wall_scenes():
+            expected = find_planar_regions_report(sorted(segments), snap, gap)
+            for _ in range(40):
+                shuffled = _shuffled(segments, rng)
+                with self.subTest(scene=name):
+                    self.assertEqual(
+                        find_planar_regions_report(shuffled, snap, gap), expected
+                    )
+
+    def test_every_ordering_of_the_known_scenes_gives_one_answer(self):
+        scenes = {name: rest for name, *rest in _doubled_wall_scenes()}
+        for name in ("stub", "rectangle"):
+            segments, snap, gap = scenes[name]
+            expected = find_planar_regions_report(sorted(segments), snap, gap)
+            for order in itertools.permutations(segments):
+                with self.subTest(scene=name):
+                    self.assertEqual(
+                        find_planar_regions_report(list(order), snap, gap), expected
+                    )
+
+    def test_the_known_doubled_wall_drawings_keep_their_rooms(self):
+        # Independence alone could settle on a bad answer: the one answer must still be
+        # the clean drawing's regions.
+        scenes = {name: rest for name, *rest in _doubled_wall_scenes()}
+        segments, snap, gap = scenes["stub"]
+        self.assertEqual(
+            [round(r.area, 2) for r in find_planar_regions(segments, snap, gap)],
+            [400.0],
+        )
+        segments, snap, gap = scenes["rectangle"]
+        self.assertEqual(
+            [round(r.area, 2) for r in find_planar_regions(segments, snap, gap)],
+            [300.0],
+        )
+        segments, snap, gap = scenes["walled box"]
+        areas = [r.area for r in find_planar_regions(segments, snap, gap)]
+        self.assertEqual(len(areas), 3)
+        for area, clean in zip(areas, (1000.0, 600.0, 400.0)):
+            self.assertAlmostEqual(area, clean, delta=0.01 * clean)
+
+    def test_closing_segments_and_gaps_do_not_depend_on_the_order_either(self):
+        rng = random.Random(3)
+        frame = [
+            (0, 0, 100, 0),
+            (100, 0, 100, 60),
+            (100, 64, 100, 100),
+            (100, 100, 0, 100),
+            (0, 100, 0, 40),
+            (0, 36, 0, 0),
+        ]
+        closures = [(100, 60, 100, 64), (50, 0, 50, 100), (0, 40, 0, 36)]
+        expected = find_planar_regions_report(
+            sorted(frame), 0.5, 5.0, symbol_max=6.0, closures=sorted(closures)
+        )
+        self.assertGreater(len(expected.regions), 0)
+        for _ in range(40):
+            report = find_planar_regions_report(
+                _shuffled(frame, rng),
+                0.5,
+                5.0,
+                symbol_max=6.0,
+                closures=_shuffled(closures, rng),
+            )
+            self.assertEqual(report, expected)
+
+    def test_suppressed_symbols_are_reported_in_a_fixed_order(self):
+        rng = random.Random(4)
+        segments = (
+            _rect(0, 0, 200, 100) + _rect(150, 40, 154, 44) + _rect(20, 40, 24, 44)
+        )
+        expected = find_planar_regions_report(
+            sorted(segments), 0.5, 0.0, symbol_max=6.0
+        ).suppressed
+        self.assertEqual(
+            expected, ((20.0, 40.0, 24.0, 44.0), (150.0, 40.0, 154.0, 44.0))
+        )
+        for _ in range(20):
+            report = find_planar_regions_report(
+                _shuffled(segments, rng), 0.5, 0.0, symbol_max=6.0
+            )
+            self.assertEqual(report.suppressed, expected)
+
+    def test_opening_candidates_do_not_depend_on_the_order(self):
+        rng = random.Random(5)
+        wall_with_gaps = (
+            _polyline([(0, 0), (30, 0)])
+            + _polyline([(34, 0), (60, 0)])
+            + _polyline([(60, 0), (60, 40), (0, 40), (0, 4)])
+            + [(20.05, 0.04, 40.0, -0.03), (45.0, 0.0, 45.0, 10.0)]
+        )
+        for segments in (wall_with_gaps, _walled_box_with_doubles()):
+            expected = opening_candidates(sorted(segments), 0.5, 1.0, 12.0)
+            for _ in range(40):
+                with self.subTest(segments=len(segments)):
+                    self.assertEqual(
+                        opening_candidates(_shuffled(segments, rng), 0.5, 1.0, 12.0),
+                        expected,
+                    )
+
+    def test_a_large_random_floor_plan_is_order_independent(self):
+        rng = random.Random(6)
+        segments = []
+        for column in range(8):
+            for row in range(8):
+                segments += _rect(
+                    column * 12, row * 12, column * 12 + 10, row * 12 + 10
+                )
+        segments += [
+            (x1 + rng.uniform(-0.1, 0.1), y1 + rng.uniform(-0.1, 0.1), x2, y2)
+            for x1, y1, x2, y2 in rng.sample(segments, 30)
+        ]
+        expected = find_planar_regions_report(sorted(segments), 0.5, 3.0)
+        for _ in range(5):
+            self.assertEqual(
+                find_planar_regions_report(_shuffled(segments, rng), 0.5, 3.0),
+                expected,
+            )
+
+
+class CanonicalOrderHelperTests(unittest.TestCase):
+    def test_lines_are_read_from_their_smaller_end_longest_first(self):
+        lines = [
+            ((5.0, 0.0), (0.0, 0.0)),
+            ((0.0, 0.0), (0.0, 20.0)),
+            ((3.0, 4.0), (0.0, 0.0)),
+            ((0.0, 0.0), (0.0, 5.0)),
+            ((7.0, 1.0), (7.0, 1.0)),
+        ]
+        self.assertEqual(
+            planar._canonical_segments(lines),
+            [
+                ((0.0, 0.0), (0.0, 20.0)),
+                ((0.0, 0.0), (0.0, 5.0)),
+                ((0.0, 0.0), (3.0, 4.0)),
+                ((0.0, 0.0), (5.0, 0.0)),
+                ((7.0, 1.0), (7.0, 1.0)),
+            ],
+        )
+        self.assertEqual(
+            planar._canonical_segments(lines),
+            planar._canonical_segments(lines[::-1]),
+        )
+
+    def test_a_ring_starts_at_its_lowest_corner_and_then_its_leftmost(self):
+        ring = ((5.0, 0.0), (10.0, 10.0), (0.0, 5.0))
+        self.assertEqual(
+            planar._ring_from_lowest_left(ring),
+            ((5.0, 0.0), (10.0, 10.0), (0.0, 5.0)),
+        )
+        # The lowest corner is not the leftmost one here.
+        self.assertEqual(
+            planar._ring_from_lowest_left(((0.0, 5.0), (5.0, 0.0), (10.0, 10.0))),
+            ((5.0, 0.0), (10.0, 10.0), (0.0, 5.0)),
+        )
+        # Two corners share the lowest height: the leftmost one starts the ring.
+        square = ((10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0))
+        self.assertEqual(
+            planar._ring_from_lowest_left(square),
+            ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)),
+        )
+
+    def test_the_component_root_is_its_smallest_vertex_whatever_the_edge_order(self):
+        edges = {(5, 9), (9, 2), (2, 7), (10, 11), (11, 3)}
+        self.assertEqual(
+            planar._components(edges),
+            {2: 2, 5: 2, 7: 2, 9: 2, 3: 3, 10: 3, 11: 3},
+        )
+
+    def test_a_closing_edge_through_a_neighbour_of_its_end_is_redundant(self):
+        along = planar._passes_a_neighbour
+        # vertex 0 is joined to vertex 2; vertex 1 is the end the closing edge would reach
+        points = [(0.0, 0.0), (10.0, 0.0), (4.0, 0.3)]
+        neighbours = {0: {2}, 1: set(), 2: {0}}
+        self.assertIs(along(points, neighbours, 0, 1, 0.5), True)
+        self.assertIs(along(points, neighbours, 1, 0, 0.5), True)
+        # the neighbour misses the closing edge by more than the tolerance
+        self.assertIs(along(points, neighbours, 0, 1, 0.29), False)
+        # ... or by exactly the tolerance, which still counts
+        flat = [(0.0, 0.0), (10.0, 0.0), (4.0, 0.5)]
+        self.assertIs(along(flat, neighbours, 0, 1, 0.5), True)
+        self.assertIs(along(flat, neighbours, 0, 1, 0.4999), False)
+
+    def test_a_neighbour_behind_beyond_or_at_an_end_does_not_count(self):
+        along = planar._passes_a_neighbour
+        neighbours = {0: {2}, 1: set(), 2: {0}}
+        for name, neighbour in (
+            ("behind the start", (-4.0, 0.2)),
+            ("beyond the end", (14.0, 0.2)),
+            ("at the end", (10.0, 0.2)),
+            ("at the start", (0.0, 0.2)),
+        ):
+            with self.subTest(name):
+                points = [(0.0, 0.0), (10.0, 0.0), neighbour]
+                self.assertIs(along(points, neighbours, 0, 1, 0.5), False)
+        # a neighbour that is the other end of the closing edge is skipped
+        self.assertIs(
+            along([(0.0, 0.0), (10.0, 0.0)], {0: {1}, 1: {0}}, 0, 1, 0.5), False
+        )
+
+    def test_a_split_point_beside_a_line_splits_it_only_within_the_tolerance(self):
+        segments = [((0.0, 0.0), (10.0, 0.0)), ((0.0, 5.0), (10.0, 5.0))]
+        near = planar._split_at_near_split_points
+        for height, expected in (
+            (0.5, [(0.5, (5.0, 0.0))]),
+            (0.4999, [(0.5, (5.0, 0.0))]),
+            (0.5001, []),
+            (0.0, []),
+            (1e-9, []),
+        ):
+            with self.subTest(height=height):
+                splits = defaultdict(list, {1: [(0.5, (5.0, height))]})
+                near(segments, [(0, 1)], splits, 0.5)
+                self.assertEqual(splits[0], expected)
+                self.assertEqual(splits[1], [(0.5, (5.0, height))])
+
+    def test_split_points_are_not_copied_onto_the_line_that_owns_them(self):
+        segments = [((0.0, 0.0), (10.0, 0.0)), ((0.0, 0.2), (10.0, 0.2))]
+        splits = defaultdict(list, {0: [(0.5, (5.0, 0.0))]})
+        planar._split_at_near_split_points(segments, [(0, 1)], splits, 0.5)
+        self.assertEqual(splits[0], [(0.5, (5.0, 0.0))])
+        self.assertEqual(splits[1], [(0.5, (5.0, 0.2))])
+
+    def test_equal_distance_corners_are_closed_to_the_first_vertex_number(self):
+        # One loose end and two corners at the same distance: the vertex created first
+        # wins, whatever order the lines were drawn in.
+        lines = (
+            [(-20.0, 0.0, 0.0, 0.0)]
+            + _polyline([(5.0, 25.0), (5.0, 5.0), (25.0, 5.0)])
+            + _polyline([(5.0, -25.0), (5.0, -5.0), (25.0, -5.0)])
+        )
+        rng = random.Random(8)
+        for _ in range(10):
+            index = _VertexIndex(0.5)
+            edges, _drawn = planar._split_segments(
+                planar._canonical_segments(_finite_pairs(_shuffled(lines, rng))),
+                index,
+                0.5,
+            )
+            closures = planar._close_gaps(edges, index, 8.0)
+            self.assertEqual(
+                [(index.points[u], index.points[v]) for u, v in closures],
+                [((5.0, 5.0), (0.0, 0.0))],
+            )
 
 
 if __name__ == "__main__":
