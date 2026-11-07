@@ -358,7 +358,15 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                 name,
                 int(layer_uid),
             )
-            return True
+            if cursor.rowcount >= 0:
+                return bool(cursor.rowcount)
+            cursor.execute(
+                "SELECT [UID] FROM [BidLayers] "
+                f"WHERE {' AND '.join(where_parts)} AND [Name] = ?",
+                int(layer_uid),
+                name,
+            )
+            return cursor.fetchone() is not None
 
     def update_default_layer_name(
         self, db_path: str, layer_uid: str, name: str

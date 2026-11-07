@@ -142,8 +142,7 @@ class LayerOperationsPersistenceTests(_StrictTestCase):
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
         conn.execute("INSERT INTO Bids VALUES (1)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidLayers (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER,
@@ -151,16 +150,13 @@ class LayerOperationsPersistenceTests(_StrictTestCase):
                 IsTemplate INTEGER,
                 IsLocked INTEGER
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidAnnotationRects (
                 UID INTEGER PRIMARY KEY,
                 BidLayerUID INTEGER
             )
-            """
-        )
+            """)
         conn.execute(
             "INSERT INTO BidLayers "
             "(UID, BidUID, Sequence, IsTemplate, IsLocked) VALUES (30, 1, 1, 0, 0)"
@@ -1670,7 +1666,12 @@ class BulkVisibilityPartialTemplateSchemaTests(_StrictTestCase):
 
 
 class _NumericTextRejectingCursor(_SqliteCursorWrapper):
-    """Access rejects text criteria against Long columns; sqlite silently coerces them."""
+    """Fails any numeric-text bind, which sqlite would silently coerce.
+
+    Real Access also accepts numeric text for a Long column (see
+    DuplicateBidRealAccessNumericTextTests in test_bid_operations), so this pins
+    the typed-binding convention of the writer, not an Access limitation.
+    """
 
     def execute(self, query, *params):
         for parameter in params:
@@ -1690,7 +1691,7 @@ class _StrictParameterOps(_SqliteDuplicateOps):
 
 
 class LayerParameterTypingTests(_StrictTestCase):
-    """The uid/bid arguments arrive as text; every operation must bind them as integers."""
+    """The uid/bid arguments arrive as text; every operation binds them as integers."""
 
     def _db(self):
         conn = _layer_db(
@@ -1774,4 +1775,787 @@ class LayerTextRowTests(_StrictTestCase):
         operations.cursor.forced_postupdate_uids = ("10", "11")
         self.assertIsTrue(
             operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
+        )
+
+
+class _NoCountRenameCursor(_Cursor):
+    """SQL Server style cursor: UPDATE reports rowcount -1, read-back is scripted."""
+
+    rowcount = -1
+
+    def __init__(self, verify_row):
+        super().__init__()
+        self._verify_row = verify_row
+
+    def fetchone(self):
+        return self._verify_row
+
+
+class LayerRenameOutcomeTests(_StrictTestCase):
+    """update_layer_name's result says whether the name was stored.
+
+    The ownership preflight only proves the layer exists in one bid; the UPDATE
+    itself is further guarded by IsTemplate = 0 AND IsLocked = 0. Callers treat
+    False as "not applied" (the sidebar reloads, a queued rename is rejected), so
+    a guard that matched nothing must not be reported as success. The default
+    layer rename already reports its match (update_default_layer_name).
+    """
+
+    def test_a_rename_blocked_by_the_locked_or_template_guard_reports_no_change(self):
+        conn = _layer_db(
+            [
+                (10, 7, "A", -1, 1, 0, 0),
+                (11, 7, "Locked", -1, 2, 0, -1),
+                (12, 7, "Template", -1, 3, -1, 0),
+            ]
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertIsFalse(ops.update_layer_name("bid.mdb", "11", "Renamed"))
+        self.assertIsFalse(ops.update_layer_name("bid.mdb", "12", "Renamed"))
+        self.assertEqual(
+            _layer_rows(conn, "UID, Name"),
+            [(10, "A"), (11, "Locked"), (12, "Template")],
+        )
+        self.assertIsTrue(ops.update_layer_name("bid.mdb", "10", "Renamed"))
+        self.assertEqual(
+            _layer_rows(conn, "UID, Name"),
+            [(10, "Renamed"), (11, "Locked"), (12, "Template")],
+        )
+
+    def test_a_rename_without_the_guard_columns_still_reports_the_match(self):
+        conn = _layer_db(
+            [(10, 7, "A")], columns="UID INTEGER, BidUID INTEGER, Name TEXT"
+        )
+        self.assertIsTrue(_SqliteMdbOps(conn).update_layer_name("bid.mdb", "10", "B"))
+
+    def test_an_unknown_rowcount_is_confirmed_by_reading_the_name_back(self):
+        for stored, expected in ((("row",), True), (None, False)):
+            with self.subTest(stored=stored):
+                operations = _LayerOperations()
+                operations.cursor = _NoCountRenameCursor(stored)
+                self.assertIs(
+                    operations.update_layer_name("sql-db", "10", "Renamed"), expected
+                )
+                self.assertEqual(
+                    operations.cursor.executions[-1],
+                    (
+                        "SELECT [UID] FROM [BidLayers] WHERE [UID] = ? AND "
+                        "[IsTemplate] = 0 AND [IsLocked] = 0 AND [Name] = ?",
+                        (10, "Renamed"),
+                    ),
+                )
+
+    def test_a_reported_rowcount_decides_a_rename_without_a_read_back(self):
+        for rowcount, expected in ((0, False), (1, True)):
+            with self.subTest(rowcount=rowcount):
+                operations = _LayerOperations()
+                operations.cursor.forced_update_rowcount = rowcount
+                self.assertIs(
+                    operations.update_layer_name("bid.mdb", "10", "Renamed"), expected
+                )
+                self.assertEqual(
+                    operations.cursor.executions[-1],
+                    (
+                        "UPDATE [BidLayers] SET [Name] = ? WHERE [UID] = ? AND "
+                        "[IsTemplate] = 0 AND [IsLocked] = 0",
+                        ("Renamed", 10),
+                    ),
+                )
+
+
+class LayerOperationsRealAccessTests(unittest.TestCase):
+    """The layer operations against a real Access/ACE database.
+
+    sqlite stands in for Access everywhere else in this module; it cannot show
+    how the Jet engine reports an UPDATE's rowcount, evaluates the yes/no
+    criteria, or what a rolled-back transaction leaves behind. The scenarios
+    run in a child process (Access ODBC state must not leak into the suite) and
+    are skipped when the driver is unavailable. Identifiers are passed as text,
+    as the application does, and the writer binds them as integers.
+    """
+
+    @staticmethod
+    def _create_database(folder, seed, references=True):
+        from pathlib import Path
+        import tests.helpers.mdb.schema_support as access
+
+        db_path = Path(folder) / "layers.mdb"
+        if not access.DatabaseCreator().create_database(db_path, "Layers"):
+            raise AssertionError("database creation failed")
+        connection = access._connect_mdb(db_path)
+        cursor = connection.cursor()
+        try:
+            for bid_uid in (11, 12):
+                cursor.execute(
+                    "INSERT INTO [Bids] ([UID], [JobName]) VALUES (?, ?)",
+                    bid_uid,
+                    f"Bid {bid_uid}",
+                )
+            for uid, bid_uid, name, show, sequence, locked in seed:
+                cursor.execute(
+                    "INSERT INTO [BidLayers] ([UID], [BidUID], [Name], [Show], "
+                    "[Sequence], [IsTemplate], [IsLocked]) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    uid,
+                    bid_uid,
+                    name,
+                    show,
+                    sequence,
+                    False,
+                    locked,
+                )
+            condition_rows = ((301, 11, 102), (302, 12, 202), (303, 11, 103))
+            for uid, bid_uid, layer_uid in condition_rows if references else ():
+                cursor.execute(
+                    "INSERT INTO [BidConditions] ([UID], [BidUID], [BidLayerUID], "
+                    "[Name]) VALUES (?, ?, ?, 'condition')",
+                    uid,
+                    bid_uid,
+                    layer_uid,
+                )
+            annotation_rows = (
+                ("BidComments", 401, 11, 102),
+                ("BidAnnotationRects", 501, 11, 102),
+                ("BidAnnotationRects", 502, 12, 202),
+            )
+            for table, uid, bid_uid, layer_uid in annotation_rows if references else ():
+                cursor.execute(
+                    f"INSERT INTO [{table}] ([UID], [BidUID], [BidLayerUID]) "
+                    "VALUES (?, ?, ?)",
+                    uid,
+                    bid_uid,
+                    layer_uid,
+                )
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
+        return db_path
+
+    @staticmethod
+    def _query(db_path, sql):
+        import tests.helpers.mdb.schema_support as access
+
+        connection = access._connect_mdb(db_path)
+        cursor = connection.cursor()
+        try:
+            cursor.execute(sql)
+            # Access yes/no columns come back as bool; compare them as -1 / 0
+            return [
+                tuple(
+                    -int(value) if isinstance(value, bool) else value for value in row
+                )
+                for row in cursor.fetchall()
+            ]
+        finally:
+            cursor.close()
+            connection.close()
+
+    @staticmethod
+    def _with_writer(db_path, action):
+        from ost_visualizer.infrastructure.mdb.connection_manager import (
+            MdbConnectionManager,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+
+        manager = MdbConnectionManager()
+        try:
+            return action(MdbWriter(manager), str(db_path))
+        finally:
+            manager.close()
+
+    @classmethod
+    def _fail_then_commit_elsewhere(cls, db_path, writer_class, failing_call, label):
+        """Run a failing write, then an unrelated committing write on the same cache.
+
+        A rollback that only happens when the connection is closed would let the
+        next committed write of the same cached connection persist the failed
+        write's partial changes.
+        """
+        from ost_visualizer.infrastructure.mdb.connection_manager import (
+            MdbConnectionManager,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+
+        manager = MdbConnectionManager()
+        try:
+            cls._expect_raises(
+                RuntimeError,
+                lambda: failing_call(writer_class(manager), str(db_path)),
+                label,
+            )
+            cls._expect_result(
+                MdbWriter(manager).update_layer_show(str(db_path), "202", False),
+                True,
+                "unrelated write after the failure",
+            )
+        finally:
+            manager.close()
+
+    @classmethod
+    def _expect_rows(cls, db_path, sql, expected, label):
+        rows = cls._query(db_path, sql)
+        if rows != expected:
+            raise AssertionError(f"{label}: {rows} != {expected}")
+
+    @staticmethod
+    def _expect_raises(error_type, call, label):
+        try:
+            call()
+        except error_type:
+            return
+        raise AssertionError(f"{label}: {error_type.__name__} was not raised")
+
+    @staticmethod
+    def _expect_result(actual, expected, label):
+        if actual is not expected:
+            raise AssertionError(f"{label}: returned {actual!r}, expected {expected!r}")
+
+    @classmethod
+    def _bid_layer_lifecycle_through_real_access(cls):
+        import tempfile
+        from ost_visualizer.infrastructure.database.bid_owned_identity import (
+            IncoherentBidOwnedScopeError,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+
+        bid_layers = (
+            "SELECT [UID], [BidUID], [Name], [Show], [Sequence] FROM [BidLayers] "
+            "WHERE [BidUID] IS NOT NULL ORDER BY [UID]"
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            seed = (
+                (101, 11, "A", -1, 1, False),
+                (102, 11, "B", -1, 2, False),
+                (103, 11, "C", -1, 3, False),
+                (104, 11, "Locked", -1, 4, True),
+                (201, 12, "X", -1, 1, False),
+                (202, 12, "Y", -1, 2, False),
+            )
+            db_path = cls._create_database(folder, seed)
+
+            def run(action):
+                return cls._with_writer(db_path, action)
+
+            # rename: quoting survives parameter binding; the locked guard is reported
+            name = 'O\'Brien "A" é; DROP'
+            cls._expect_result(
+                run(lambda w, p: w.update_layer_name(p, "101", name)),
+                True,
+                "rename of an unlocked layer",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.update_layer_name(p, "104", "Nope")),
+                False,
+                "rename of a locked layer",
+            )
+            cls._expect_raises(
+                RuntimeError,
+                lambda: run(lambda w, p: w.update_layer_name(p, "999", "Nope")),
+                "rename of an unknown layer",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [Name] FROM [BidLayers] WHERE [BidUID] IS NOT NULL "
+                "ORDER BY [UID]",
+                [
+                    (101, name),
+                    (102, "B"),
+                    (103, "C"),
+                    (104, "Locked"),
+                    (201, "X"),
+                    (202, "Y"),
+                ],
+                "names after rename",
+            )
+
+            # single and bulk visibility
+            cls._expect_result(
+                run(lambda w, p: w.update_layer_show(p, "101", False)),
+                True,
+                "show of one layer",
+            )
+            show_rows = (
+                "SELECT [UID], [Show] FROM [BidLayers] WHERE [BidUID] IS NOT NULL "
+                "ORDER BY [UID]"
+            )
+            cls._expect_rows(
+                db_path,
+                show_rows,
+                [(101, 0), (102, -1), (103, -1), (104, -1), (201, -1), (202, -1)],
+                "show of one layer",
+            )
+            cls._expect_result(
+                run(
+                    lambda w, p: w.update_all_layers_show(
+                        p, "11", False, ["102", "201"]
+                    )
+                ),
+                False,
+                "captured layer of another bid",
+            )
+            cls._expect_result(
+                run(
+                    lambda w, p: w.update_all_layers_show(
+                        p, "11", False, ["102", "103"]
+                    )
+                ),
+                True,
+                "captured visibility",
+            )
+            cls._expect_rows(
+                db_path,
+                show_rows,
+                [(101, 0), (102, 0), (103, 0), (104, -1), (201, -1), (202, -1)],
+                "captured visibility",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.update_all_layers_show(p, "11", False)),
+                True,
+                "uncaptured visibility",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [Show] FROM [BidLayers] ORDER BY [UID]",
+                [
+                    (1, 0),
+                    (2, 0),
+                    (3, 0),
+                    (4, 0),
+                    (101, 0),
+                    (102, 0),
+                    (103, 0),
+                    (104, 0),
+                    (201, -1),
+                    (202, -1),
+                ],
+                "uncaptured visibility covers the bid and the shared layers only",
+            )
+
+            # insert shifts only the later layers of that bid
+            new_uid = run(lambda w, p: w.insert_layer(p, "11", "New", 1))
+            if new_uid is None or int(new_uid) in (101, 102, 103, 104, 201, 202):
+                raise AssertionError(f"inserted layer uid {new_uid!r}")
+            cls._expect_rows(
+                db_path,
+                bid_layers,
+                [
+                    (101, 11, name, 0, 1),
+                    (102, 11, "B", 0, 3),
+                    (103, 11, "C", 0, 4),
+                    (104, 11, "Locked", 0, 5),
+                    (201, 12, "X", -1, 1),
+                    (202, 12, "Y", -1, 2),
+                    (int(new_uid), 11, "New", -1, 2),
+                ],
+                "layers after insert",
+            )
+
+            # swap exchanges two sequences inside one bid and refuses a cross-bid pair
+            cls._expect_result(
+                run(lambda w, p: w.swap_layer_sequence(p, "101", "103")),
+                True,
+                "swap",
+            )
+            cls._expect_raises(
+                IncoherentBidOwnedScopeError,
+                lambda: run(lambda w, p: w.swap_layer_sequence(p, "101", "201")),
+                "cross-bid swap",
+            )
+            sequences = (
+                "SELECT [UID], [Sequence] FROM [BidLayers] "
+                "WHERE [BidUID] IS NOT NULL ORDER BY [UID]"
+            )
+            cls._expect_rows(
+                db_path,
+                sequences,
+                [
+                    (101, 4),
+                    (102, 3),
+                    (103, 1),
+                    (104, 5),
+                    (201, 1),
+                    (202, 2),
+                    (int(new_uid), 2),
+                ],
+                "sequences after swap",
+            )
+
+            # a failing renumber statement rolls back the cascade and the delete
+            class _FailingRenumberCursor:
+                def __init__(self, cursor):
+                    self._cursor = cursor
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_exception):
+                    return self._cursor.__exit__(*_exception)
+
+                def execute(self, sql, *parameters):
+                    if "[Sequence] = [Sequence] - 1" in sql:
+                        raise RuntimeError("renumbering failed")
+                    return self._cursor.execute(sql, *parameters)
+
+                def __getattr__(self, attribute):
+                    return getattr(self._cursor, attribute)
+
+            class _FailingRenumberConnection:
+                def __init__(self, connection):
+                    self._connection = connection
+
+                def cursor(self):
+                    return _FailingRenumberCursor(self._connection.cursor())
+
+                def __getattr__(self, attribute):
+                    return getattr(self._connection, attribute)
+
+            class _FailingRenumberWriter(MdbWriter):
+                @contextmanager
+                def _connection(self, db_path):
+                    with super()._connection(db_path) as connection:
+                        yield _FailingRenumberConnection(connection)
+
+            references = (
+                "SELECT 'condition', [UID], [BidLayerUID] FROM [BidConditions] "
+                "UNION ALL SELECT 'comment', [UID], [BidLayerUID] FROM [BidComments] "
+                "UNION ALL SELECT 'rect', [UID], [BidLayerUID] "
+                "FROM [BidAnnotationRects]"
+            )
+            before_layers = cls._query(db_path, bid_layers)
+            before_references = sorted(cls._query(db_path, references), key=repr)
+            cls._fail_then_commit_elsewhere(
+                db_path,
+                _FailingRenumberWriter,
+                lambda w, p: w.delete_layer(p, "102"),
+                "failing delete",
+            )
+            # only the unrelated write (layer 202 hidden) may have been committed
+            hidden_202 = [
+                (*row[:3], 0, row[4]) if row[0] == 202 else row for row in before_layers
+            ]
+            if cls._query(db_path, bid_layers) != hidden_202:
+                raise AssertionError("a failed delete changed the layers")
+            if sorted(cls._query(db_path, references), key=repr) != before_references:
+                raise AssertionError("a failed delete left cleared references")
+            cls._expect_result(
+                run(lambda w, p: w.update_layer_show(p, "202", True)), True, "restore"
+            )
+
+            # the delete: references of that layer only are cleared, only later
+            # layers of that bid are renumbered, guarded layers are refused
+            cls._expect_result(
+                run(lambda w, p: w.delete_layer(p, "102")), True, "delete"
+            )
+            cls._expect_result(
+                run(lambda w, p: w.delete_layer(p, "104")), False, "locked delete"
+            )
+            cls._expect_rows(
+                db_path,
+                bid_layers,
+                [
+                    (101, 11, name, 0, 3),
+                    (103, 11, "C", 0, 1),
+                    (104, 11, "Locked", 0, 4),
+                    (201, 12, "X", -1, 1),
+                    (202, 12, "Y", -1, 2),
+                    (int(new_uid), 11, "New", -1, 2),
+                ],
+                "layers after delete",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [BidLayerUID] FROM [BidConditions] ORDER BY [UID]",
+                [(301, None), (302, 202), (303, 103)],
+                "condition references after delete",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [BidLayerUID] FROM [BidComments]",
+                [(401, None)],
+                "comment references after delete",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [BidLayerUID] FROM [BidAnnotationRects] ORDER BY [UID]",
+                [(501, None), (502, 202)],
+                "annotation references after delete",
+            )
+
+            # a failing insert leaves the sequences it had already shifted alone
+            class _FailingInsertWriter(MdbWriter):
+                def _execute_insert_values(self, *_arguments):
+                    raise RuntimeError("insert failed")
+
+            before_layers = cls._query(db_path, bid_layers)
+            cls._fail_then_commit_elsewhere(
+                db_path,
+                _FailingInsertWriter,
+                lambda w, p: w.insert_layer(p, "11", "Doomed", 0),
+                "failing insert",
+            )
+            hidden_202 = [
+                (*row[:3], 0, row[4]) if row[0] == 202 else row for row in before_layers
+            ]
+            if cls._query(db_path, bid_layers) != hidden_202:
+                raise AssertionError("a failed insert left shifted sequences")
+
+    @classmethod
+    def _default_layer_lifecycle_through_real_access(cls):
+        import tempfile
+        import pyodbc
+        import tests.helpers.mdb.schema_support as access
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            db_path = cls._create_database(
+                folder, ((101, 11, "Bid layer", -1, 9, False),), references=False
+            )
+
+            def run(action):
+                return cls._with_writer(db_path, action)
+
+            seed_connection = access._connect_mdb(db_path)
+            try:
+                seed_connection.cursor().execute(
+                    "INSERT INTO [BidConditions] ([UID], [BidUID], [BidLayerUID], "
+                    "[Name]) VALUES (301, 11, 2, 'on the Annotation layer')"
+                )
+                seed_connection.commit()
+            finally:
+                seed_connection.close()
+
+            templates = (
+                "SELECT [UID], [Name], [Show], [Sequence], [IsTemplate], [IsLocked] "
+                "FROM [BidLayers] WHERE [IsTemplate] <> 0 ORDER BY [UID]"
+            )
+            bid_layer = (
+                "SELECT [Name], [Show], [Sequence] FROM [BidLayers] WHERE [UID] = 101"
+            )
+
+            name = "Dflt 'q' é"
+            cls._expect_result(
+                run(lambda w, p: w.update_default_layer_name(p, "1", name)),
+                True,
+                "default rename",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.update_default_layer_name(p, "101", "No")),
+                False,
+                "default rename of a bid layer",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.update_default_layer_name(p, "99", "No")),
+                False,
+                "default rename of an unknown layer",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.update_default_layer_show(p, "2", False)),
+                True,
+                "default show",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.update_default_layer_show(p, "101", False)),
+                False,
+                "default show of a bid layer",
+            )
+            cls._expect_rows(
+                db_path,
+                templates,
+                [
+                    (1, name, -1, 2, -1, -1),
+                    (2, "Annotation", 0, 1, -1, -1),
+                    (3, "Image", -1, 0, -1, -1),
+                    (4, "Comments", -1, 3, -1, -1),
+                ],
+                "default layers after rename and show",
+            )
+            cls._expect_rows(
+                db_path, bid_layer, [("Bid layer", -1, 9)], "bid layer after edits"
+            )
+
+            cls._expect_result(
+                run(lambda w, p: w.update_all_default_layers_show(p, False)),
+                True,
+                "default show all",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [Show] FROM [BidLayers] ORDER BY [UID]",
+                [(1, 0), (2, 0), (3, 0), (4, 0), (101, -1)],
+                "show of every default layer",
+            )
+
+            new_uid = run(lambda w, p: w.insert_default_layer(p, "DNew", 1))
+            if new_uid is None or int(new_uid) in (1, 2, 3, 4, 101):
+                raise AssertionError(f"inserted default layer uid {new_uid!r}")
+            cls._expect_rows(
+                db_path,
+                templates,
+                [
+                    (1, name, 0, 3, -1, -1),
+                    (2, "Annotation", 0, 1, -1, -1),
+                    (3, "Image", 0, 0, -1, -1),
+                    (4, "Comments", 0, 4, -1, -1),
+                    (int(new_uid), "DNew", -1, 2, -1, -1),
+                ],
+                "default layers after insert",
+            )
+
+            cls._expect_result(
+                run(lambda w, p: w.swap_default_layer_sequence(p, "1", "3")),
+                True,
+                "default swap",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.swap_default_layer_sequence(p, "1", "101")),
+                False,
+                "default swap with a bid layer",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.delete_default_layer(p, "101")),
+                False,
+                "default delete of a bid layer",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.delete_default_layer(p, "3")),
+                True,
+                "default delete",
+            )
+            cls._expect_rows(
+                db_path,
+                templates,
+                [
+                    (1, name, 0, 0, -1, -1),
+                    (2, "Annotation", 0, 1, -1, -1),
+                    (4, "Comments", 0, 3, -1, -1),
+                    (int(new_uid), "DNew", -1, 2, -1, -1),
+                ],
+                "default layers after swap and delete",
+            )
+
+            # a default layer that a condition still references is not deleted
+            # (Access enforces the relationship), and nothing is half-deleted
+            cls._expect_raises(
+                pyodbc.Error,
+                lambda: run(lambda w, p: w.delete_default_layer(p, "2")),
+                "referenced default delete",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [Sequence] FROM [BidLayers] WHERE [IsTemplate] <> 0 "
+                "ORDER BY [UID]",
+                [(1, 0), (2, 1), (4, 3), (int(new_uid), 2)],
+                "default layers after the refused delete",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [BidLayerUID] FROM [BidConditions]",
+                [(301, 2)],
+                "condition reference after the refused delete",
+            )
+            cls._expect_rows(
+                db_path, bid_layer, [("Bid layer", -1, 9)], "bid layer after all edits"
+            )
+
+    def _run_in_child(self, scenario):
+        import subprocess
+        import sys
+        from tests.helpers.mdb.schema_support import _access_available
+        from tests.paths import REPO_ROOT
+
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX is not available")
+        code = (
+            "from tests.infrastructure.mdb.components.test_layer_operations import "
+            f"LayerOperationsRealAccessTests as Tests; Tests.{scenario}()"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_bid_layer_operations_persist_and_roll_back_on_real_access(self):
+        self._run_in_child("_bid_layer_lifecycle_through_real_access")
+
+    def test_default_layer_operations_persist_on_real_access(self):
+        self._run_in_child("_default_layer_lifecycle_through_real_access")
+
+
+class _FailingRenumberCursor(_SqliteCursorWrapper):
+    def execute(self, query, *params):
+        if "[Sequence] = [Sequence] - 1" in query:
+            raise RuntimeError("renumbering failed")
+        return super().execute(query, *params)
+
+
+class _FailingRenumberConnection(_SqliteConnectionWrapper):
+    def cursor(self):
+        return _FailingRenumberCursor(self._connection)
+
+
+class _FailingRenumberOps(_SqliteMdbOps):
+    def _connection(self, _db_path):
+        return _FailingRenumberConnection(self._connection_ref)
+
+
+class LayerFailurePropagationTests(_StrictTestCase):
+    def test_a_failed_renumbering_after_a_bid_layer_delete_propagates(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
+        with self.assertRaisesRegex(RuntimeError, "renumbering failed"):
+            _FailingRenumberOps(conn).delete_layer("bid.mdb", "1")
+
+    def test_a_failed_renumbering_after_a_default_layer_delete_propagates(self):
+        conn = _layer_db(
+            [(1, None, "T1", -1, 1, -1, -1), (2, None, "T2", -1, 2, -1, -1)]
+        )
+        with self.assertRaisesRegex(RuntimeError, "renumbering failed"):
+            _FailingRenumberOps(conn).delete_default_layer("bid.mdb", "1")
+
+    def test_a_failed_insert_shift_propagates_before_any_row_is_added(self):
+        conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
+
+        class _FailingShiftOps(_SqliteMdbOps):
+            def _connection(self, _db_path):
+                return _FailingShiftConnection(self._connection_ref)
+
+        class _FailingShiftCursor(_SqliteCursorWrapper):
+            def execute(self, query, *params):
+                if "[Sequence] = [Sequence] + 1" in query:
+                    raise RuntimeError("shift failed")
+                return super().execute(query, *params)
+
+        class _FailingShiftConnection(_SqliteConnectionWrapper):
+            def cursor(self):
+                return _FailingShiftCursor(self._connection)
+
+        with self.assertRaisesRegex(RuntimeError, "shift failed"):
+            _FailingShiftOps(conn).insert_layer("bid.mdb", "7", "New", 1)
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, 2)])
+
+
+class LayerSwapAndReadBackPinTests(_StrictTestCase):
+    def test_swapping_a_default_layer_with_itself_is_refused_without_writing(self):
+        conn = _layer_db(
+            [(1, None, "T1", -1, 1, -1, -1), (2, None, "T2", -1, 2, -1, -1)]
+        )
+        self.assertIsFalse(
+            _SqliteMdbOps(conn).swap_default_layer_sequence("bid.mdb", "1", "1")
+        )
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, 2)])
+
+    def test_a_reported_rowcount_makes_a_captured_update_skip_the_read_back(self):
+        operations = _LayerOperations()
+        operations.cursor.forced_update_rowcount = 2
+        self.assertIsTrue(
+            operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
+        )
+        self.assertFalse(
+            any(
+                sql.startswith("SELECT [UID] FROM [BidLayers]") and "[Show] = ?" in sql
+                for sql, _parameters in operations.cursor.executions
+            )
         )
