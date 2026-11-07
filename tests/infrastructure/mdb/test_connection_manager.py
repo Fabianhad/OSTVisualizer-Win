@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 import unittest
 from typing import Optional
@@ -576,6 +577,8 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
 
     def test_same_database_worker_leases_are_serialized(self):
         manager = MdbConnectionManager()
+        contended = _ContendedRLock()
+        manager._path_locks[os.path.normcase(os.path.abspath("shared.mdb"))] = contended
         first_entered = threading.Event()
         release_first = threading.Event()
         second_attempting = threading.Event()
@@ -599,7 +602,9 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         self.assertTrue(first_entered.wait(timeout=2.0))
         second.start()
         self.assertTrue(second_attempting.wait(timeout=2.0))
-        self.assertFalse(second_entered.wait(timeout=0.05))
+        # The second worker found the database lock held and is blocked on it.
+        self.assertTrue(contended.contended.wait(timeout=2.0))
+        self.assertFalse(second_entered.is_set())
         release_first.set()
         first.join()
         second.join()
@@ -1102,6 +1107,10 @@ class MdbConnectionManagerHandleHealthTests(unittest.TestCase):
 
     def test_path_lock_serializes_leases_spelled_with_different_case(self):
         manager = MdbConnectionManager()
+        contended = _ContendedRLock()
+        manager._path_locks[os.path.normcase(os.path.abspath("Lock-Identity.mdb"))] = (
+            contended
+        )
         first_entered = threading.Event()
         release_first = threading.Event()
         second_entered = threading.Event()
@@ -1120,7 +1129,8 @@ class MdbConnectionManagerHandleHealthTests(unittest.TestCase):
         first.start()
         self.assertTrue(first_entered.wait(timeout=2.0))
         second.start()
-        self.assertFalse(second_entered.wait(timeout=0.1))
+        self.assertTrue(contended.contended.wait(timeout=2.0))
+        self.assertFalse(second_entered.is_set())
         release_first.set()
         first.join()
         second.join()
@@ -2702,3 +2712,680 @@ class ConnectionWrapperContractTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             foreign.rollback()
         self.assertFalse(foreign.rollback_failed)
+
+
+_MANAGER_MODULE = "ost_visualizer.infrastructure.mdb.connection_manager"
+
+
+class _OwnedLock:
+    """A non-reentrant mutex that knows which thread holds it."""
+
+    def __init__(self) -> None:
+        self._mutex = threading.Lock()
+        self.owner = None
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        acquired = self._mutex.acquire(blocking, timeout)
+        if acquired:
+            self.owner = threading.get_ident()
+        return acquired
+
+    def release(self) -> None:
+        self.owner = None
+        self._mutex.release()
+
+    def __enter__(self) -> "_OwnedLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.release()
+
+    def held(self) -> bool:
+        return self.owner == threading.get_ident()
+
+
+class _ContendedRLock:
+    """A re-entrant lock that announces when a thread finds it held by another
+    thread, just before that thread blocks on it. This turns "the second thread
+    is waiting for the first" into an event instead of a timed guess."""
+
+    def __init__(self) -> None:
+        self._rlock = threading.RLock()
+        self.contended = threading.Event()
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if self._rlock.acquire(False):
+            return True
+        self.contended.set()
+        return self._rlock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._rlock.release()
+
+    def __enter__(self) -> "_ContendedRLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.release()
+
+
+class _LockAudit:
+    """Records every access made by the manager's own code to state that the
+    manager lock guards while that lock is not held by the accessing thread.
+    Accesses from the test module itself are ignored (they inspect state)."""
+
+    def __init__(self) -> None:
+        self.lock = _OwnedLock()
+        self.violations = []
+        self.observed = 0
+        self.structures = set()
+        self.driver_calls = set()
+
+    def check(self, structure: str, operation: str) -> None:
+        # Frame 0 is this method, 1 the audited operation, 2 its caller.
+        frame = sys._getframe(2)
+        if frame.f_globals.get("__name__") != _MANAGER_MODULE:
+            return
+        self.observed += 1
+        self.structures.add(structure)
+        if not self.lock.held():
+            self.violations.append(
+                f"{structure}.{operation} used by {frame.f_code.co_name} "
+                f"(line {frame.f_lineno}) without the manager lock"
+            )
+
+
+_NOT_AUDITED = frozenset(
+    {
+        "__class__",
+        "__init__",
+        "__new__",
+        "__getattribute__",
+        "__setattr__",
+        "__delattr__",
+        "__init_subclass__",
+        "__subclasshook__",
+        "__reduce__",
+        "__reduce_ex__",
+        "__sizeof__",
+        "__dir__",
+        "__format__",
+        "__repr__",
+        "__str__",
+        "__hash__",
+        "__getstate__",
+        "__class_getitem__",
+        "fromkeys",
+    }
+)
+
+
+def _audit_every_operation(proxy_class: type, base: type) -> None:
+    """Give proxy_class an audited override of every callable member of base
+    (methods and operator dunders), so no way of touching the container escapes
+    the audit. Each override checks first and then delegates to base."""
+    for name in dir(base):
+        member = getattr(base, name)
+        if name in _NOT_AUDITED or not callable(member):
+            continue
+
+        def audited(self, *args, _member=member, _name=name, **kwargs):
+            self._audit.check(self._label, _name)
+            return _member(self, *args, **kwargs)
+
+        audited.__name__ = name
+        setattr(proxy_class, name, audited)
+
+
+class _GuardedDict(dict):
+    def __init__(self, audit: _LockAudit, label: str, items) -> None:
+        super().__init__(items)
+        self._audit = audit
+        self._label = label
+
+
+class _GuardedSet(set):
+    def __init__(self, audit: _LockAudit, label: str, items) -> None:
+        super().__init__(items)
+        self._audit = audit
+        self._label = label
+
+
+_audit_every_operation(_GuardedDict, dict)
+_audit_every_operation(_GuardedSet, set)
+
+
+class _AuditedManager(MdbConnectionManager):
+    """The real manager with its lock and shared containers instrumented."""
+
+    _DICTS = ("_read_conns", "_write_conns", "_path_locks", "_active_leases")
+    _SETS = (
+        "_unhealthy_connection_ids",
+        "_deferred_eviction_ids",
+        "_writer_read_paths",
+        "_maintenance_paths",
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.audit = _LockAudit()
+        self._lock = self.audit.lock
+        for name in self._DICTS:
+            setattr(self, name, _GuardedDict(self.audit, name, getattr(self, name)))
+        for name in self._SETS:
+            setattr(self, name, _GuardedSet(self.audit, name, getattr(self, name)))
+
+    def audit_driver_call(self, what: str, connection_string: str) -> None:
+        self.audit.driver_calls.add(what)
+        key = connection_string.split("DBQ=", 1)[1].rstrip(";")
+        path_lock = dict.get(self._path_locks, key)
+        if not self.audit.lock.held():
+            self.audit.violations.append(f"driver {what} without the manager lock")
+        if path_lock is None or not path_lock._is_owned():
+            self.audit.violations.append(f"driver {what} without the database lock")
+
+    @property
+    def _write_blocked(self) -> bool:
+        audit = self.__dict__.get("audit")
+        if audit is not None:
+            audit.check("_write_blocked", "read")
+        return self.__dict__["_write_blocked_value"]
+
+    @_write_blocked.setter
+    def _write_blocked(self, blocked: bool) -> None:
+        audit = self.__dict__.get("audit")
+        if audit is not None:
+            audit.check("_write_blocked", "write")
+        self.__dict__["_write_blocked_value"] = blocked
+
+
+class _AuditedConnection(_FakeConnection):
+    def __init__(self, manager, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._manager = manager
+
+    def close(self) -> None:
+        self._manager_driver_call("close")
+        super().close()
+
+    def _manager_driver_call(self, what: str) -> None:
+        self._manager.audit_driver_call(what, self.connection_string)
+
+
+class _AuditedConnect(_FakeConnect):
+    """pyodbc.connect fake that checks, at the moment the driver is called,
+    that the caller holds the manager lock and the lock of that database."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.manager = None
+
+    def __call__(self, connection_string: str, *, autocommit: bool):
+        self.manager.audit_driver_call("connect", connection_string)
+        self.connect_attempts += 1
+        if (
+            self.max_opens is not None
+            and self.counts.connections_opened >= self.max_opens
+        ):
+            raise pyodbc.OperationalError(
+                "08004", "Too many client tasks. (-1036) (SQLDriverConnect)"
+            )
+        return _AuditedConnection(
+            self.manager, self.counts, connection_string, autocommit
+        )
+
+
+class MdbConnectionManagerLockDisciplineTests(unittest.TestCase):
+    """Concurrency pass: the lock discipline is checked directly. Removing a lock
+    never fails a single-threaded test, so the manager's own code is audited for
+    every access to guarded state and every driver call, and the cross-thread
+    waits are observed as events (no sleeps)."""
+
+    def setUp(self) -> None:
+        self.connect = _AuditedConnect()
+        patcher = patch(
+            "ost_visualizer.infrastructure.mdb.connection_manager.pyodbc.connect",
+            self.connect,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _audited_manager(self) -> _AuditedManager:
+        manager = _AuditedManager()
+        self.connect.manager = manager
+        return manager
+
+    def test_the_audit_flags_unlocked_use_from_the_manager_module_only(self):
+        manager = self._audited_manager()
+        manager._read_conns["probe"] = object()
+        self.assertIn("probe", manager._read_conns)
+        self.assertEqual(manager.audit.violations, [])
+        unlocked = compile("manager._read_conns.get('probe')", "<m>", "eval")
+        eval(unlocked, {"__name__": _MANAGER_MODULE, "manager": manager})
+        with manager._lock:
+            eval(unlocked, {"__name__": _MANAGER_MODULE, "manager": manager})
+        self.assertEqual(len(manager.audit.violations), 1)
+        self.assertEqual(manager.audit.observed, 2)
+
+    def test_all_guarded_state_and_driver_calls_stay_under_the_documented_locks(self):
+        manager = self._audited_manager()
+        writer = MdbWriter(conn_manager=manager)
+        failure = pyodbc.OperationalError("HY000", "rollback refused")
+        # Plain, nested, writer and borrowed-writer leases.
+        with manager.connection("audit.mdb"):
+            with manager.connection("audit.mdb"):
+                pass
+            with self.assertRaises(RuntimeError):
+                with manager.connection("audit.mdb", autocommit=False):
+                    pass
+        with writer._connection("audit.mdb") as lease:
+            lease.cursor().execute("INSERT_PENDING")
+        with manager.connection("audit.mdb"):
+            pass
+        # Connection error, statement error and failed rollback evictions.
+        with self.assertRaises(pyodbc.OperationalError):
+            with manager.connection("audit.mdb") as lease:
+                lease.cursor().execute("RAISE_CONNECTION_CLASS_ERROR")
+        with self.assertRaises(pyodbc.ProgrammingError):
+            with manager.connection("audit.mdb") as lease:
+                lease.cursor().execute("RAISE_SCHEMA_ERROR")
+        with writer._connection("audit.mdb"):
+            pass
+        with self.assertRaises(pyodbc.OperationalError):
+            with manager.connection("audit.mdb") as lease:
+                lease._conn.rollback_error = failure
+        # Cursor-cleanup failure under a nested lease (deferred close), a
+        # failed idle probe and a condemned nested lease.
+        with manager.connection("audit.mdb") as outer:
+            with manager.connection("audit.mdb") as inner:
+                inner._conn.fail_next_cursor_close = True
+                inner.cursor().execute("SELECT")
+            with self.assertRaises(RuntimeError):
+                with manager.connection("audit.mdb"):
+                    pass
+        with manager.connection("audit.mdb") as lease:
+            lease._conn.unhealthy = True
+        with manager.connection("audit.mdb"):
+            pass
+        # Preferences, write blocking and maintenance.
+        manager.use_committed_writer_for_reads("audit.mdb")
+        manager.set_write_blocked(True)
+        self.assertTrue(manager.is_write_blocked())
+        with self.assertRaises(WriteBlockedError):
+            with manager.connection("audit.mdb", autocommit=False):
+                pass
+        with self.assertRaises(WriteBlockedError):
+            with manager.maintenance("audit.mdb"):
+                pass
+        manager.set_write_blocked(False)
+        self.assertFalse(manager.is_write_blocked())
+        with manager.maintenance("audit.mdb"):
+            with self.assertRaises(RuntimeError):
+                with manager.connection("audit.mdb"):
+                    pass
+            with self.assertRaises(RuntimeError):
+                with manager.maintenance("audit.mdb"):
+                    pass
+        with manager.connection("audit.mdb"):
+            with self.assertRaises(RuntimeError):
+                with manager.maintenance("audit.mdb"):
+                    pass
+        # Pool teardown, including a close that fails and is retried.
+        with writer._connection("audit.mdb"):
+            pass
+        manager.close_write_connections()
+        with writer._connection("audit.mdb"):
+            pass
+        manager.close_database("audit.mdb")
+        with manager.connection("audit.mdb") as lease:
+            handle = lease._conn
+        original_close = handle.close
+        handle.close = Mock(side_effect=pyodbc.OperationalError("HY000", "stuck"))
+        with self.assertRaises(pyodbc.OperationalError):
+            manager.close()
+        handle.close = original_close
+        self.connect.max_opens = self.connect.counts.connections_opened
+        with self.assertRaises(DatabaseConnectionUnavailableError):
+            with manager.connection("other.mdb"):
+                pass
+        manager.close()
+        self.assertEqual(manager.audit.violations, [])
+        # The audit really looked: every guarded structure was touched by the
+        # manager's own code, and the driver was called to connect and to close.
+        self.assertGreater(manager.audit.observed, 0)
+        expected = set(_AuditedManager._DICTS) | set(_AuditedManager._SETS)
+        expected.add("_write_blocked")
+        self.assertEqual(expected - manager.audit.structures, set())
+        self.assertEqual({"connect", "close"} - manager.audit.driver_calls, set())
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+
+class MdbConnectionManagerCrossThreadWaitTests(unittest.TestCase):
+    """Concurrency pass: maintenance-style calls from another thread wait for the
+    lease holding the database lock. The wait is an event announced by the lock
+    itself (a thread that found it held), so nothing here sleeps or guesses."""
+
+    def setUp(self) -> None:
+        self.connect = _FakeConnect()
+        patcher = patch(
+            "ost_visualizer.infrastructure.mdb.connection_manager.pyodbc.connect",
+            self.connect,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _hold_lease_on_another_thread(self, manager, path, **lease_options):
+        held = threading.Event()
+        release = threading.Event()
+        handles = []
+
+        def hold() -> None:
+            with manager.connection(path, **lease_options) as lease:
+                handles.append(lease._conn)
+                held.set()
+                release.wait(timeout=10.0)
+
+        holder = threading.Thread(target=hold, daemon=True)
+        holder.start()
+        self.assertTrue(held.wait(timeout=5.0))
+        return holder, release, handles[0]
+
+    def _run_while_a_lease_is_held(self, action, **lease_options):
+        """Run action(manager, path) on a second thread while the first holds a
+        lease. Returns (manager, handle, snapshot taken while the second thread
+        was provably waiting, finished flag)."""
+        manager = MdbConnectionManager()
+        path = "contended.mdb"
+        key = os.path.normcase(os.path.abspath(path))
+        lock = _ContendedRLock()
+        manager._path_locks[key] = lock
+        holder, release, handle = self._hold_lease_on_another_thread(
+            manager, path, **lease_options
+        )
+        finished = threading.Event()
+
+        def run_action() -> None:
+            action(manager, path)
+            finished.set()
+
+        worker = threading.Thread(target=run_action, daemon=True)
+        try:
+            worker.start()
+            self.assertTrue(
+                lock.contended.wait(timeout=3.0),
+                "the second thread never waited for the database lock",
+            )
+            waiting = (handle.closed, finished.is_set())
+        finally:
+            release.set()
+            holder.join(timeout=10.0)
+            worker.join(timeout=10.0)
+        self.assertFalse(holder.is_alive() or worker.is_alive())
+        return manager, key, handle, waiting, finished
+
+    def test_close_database_waits_for_the_lease_held_by_another_thread(self):
+        manager, key, handle, waiting, finished = self._run_while_a_lease_is_held(
+            lambda manager, path: manager.close_database(path)
+        )
+        self.assertEqual(waiting, (False, False))
+        self.assertTrue(finished.is_set())
+        self.assertTrue(handle.closed)
+        self.assertEqual(manager._read_conns, {})
+
+    def test_close_write_connections_waits_for_a_write_lease_held_elsewhere(self):
+        manager, key, handle, waiting, finished = self._run_while_a_lease_is_held(
+            lambda manager, path: manager.close_write_connections(),
+            autocommit=False,
+        )
+        self.assertEqual(waiting, (False, False))
+        self.assertTrue(finished.is_set())
+        self.assertTrue(handle.closed)
+        self.assertEqual(manager._write_conns, {})
+
+    def test_the_writer_read_preference_waits_for_the_lease_and_is_then_applied(self):
+        manager, key, handle, waiting, finished = self._run_while_a_lease_is_held(
+            lambda manager, path: manager.use_committed_writer_for_reads(path)
+        )
+        self.assertEqual(waiting, (False, False))
+        self.assertTrue(finished.is_set())
+        self.assertIn(key, manager._writer_read_paths)
+        self.assertFalse(handle.closed)
+        manager.close()
+
+
+class MdbConnectionManagerPoolOwnershipTests(unittest.TestCase):
+    """Concurrency pass: exception paths and re-pooling must leave the pool and
+    the lease bookkeeping consistent, and never act on a handle that the pool
+    no longer owns."""
+
+    def setUp(self) -> None:
+        self.connect = _FakeConnect()
+        patcher = patch(
+            "ost_visualizer.infrastructure.mdb.connection_manager.pyodbc.connect",
+            self.connect,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_close_leaves_a_replacement_the_pool_acquired_during_the_close(self):
+        manager = MdbConnectionManager()
+        with manager.connection("swap.mdb"):
+            pass
+        key = os.path.normcase(os.path.abspath("swap.mdb"))
+        old = manager._read_conns[key]
+        replacement = _FakeConnection(self.connect.counts, "replacement", True)
+        manager._unhealthy_connection_ids.add(id(old))
+        original_close = old.close
+
+        def close_while_the_path_is_repooled() -> None:
+            manager._read_conns[key] = replacement
+            original_close()
+
+        old.close = close_while_the_path_is_repooled
+        manager.close_database("swap.mdb")
+        self.assertTrue(old.closed)
+        self.assertIs(manager._read_conns[key], replacement)
+        self.assertFalse(replacement.closed)
+        # The closed handle's health flag goes with it either way.
+        self.assertNotIn(id(old), manager._unhealthy_connection_ids)
+        replacement.close()
+        manager._read_conns.clear()
+
+    def test_deferred_close_never_touches_a_handle_pooled_after_the_condemned_one(self):
+        manager = MdbConnectionManager()
+        key = os.path.normcase(os.path.abspath("repool.mdb"))
+        with manager.connection("repool.mdb") as outer:
+            condemned = outer._conn
+            with manager.connection("repool.mdb") as inner:
+                inner._conn.fail_next_cursor_close = True
+                inner.cursor().execute("SELECT")
+            self.assertEqual(manager._deferred_eviction_ids, {id(condemned)})
+            # The condemned handle is closed for good under the outer lease and
+            # a fresh one is pooled for the same path before the lease ends.
+            manager.close_database("repool.mdb")
+            self.assertTrue(condemned.closed)
+            with manager.connection("repool.mdb") as again:
+                replacement = again._conn
+            self.assertIsNot(replacement, condemned)
+        self.assertFalse(replacement.closed)
+        self.assertIs(manager._read_conns[key], replacement)
+        self.assertEqual(manager._deferred_eviction_ids, set())
+        self.assertEqual(manager._unhealthy_connection_ids, set())
+        self.assertEqual(manager._active_leases, {})
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_an_unexpected_cursor_cleanup_failure_leaves_the_lease_bookkeeping_clean(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        with patch.object(
+            ConnectionWrapper,
+            "close_cursors",
+            side_effect=RuntimeError("cleanup exploded"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "cleanup exploded"):
+                with manager.connection("explode.mdb"):
+                    pass
+        self.assertEqual(manager._active_leases, {})
+        self.assertEqual(manager._deferred_eviction_ids, set())
+        with manager.connection("explode.mdb") as lease:
+            lease.cursor().execute("SELECT")
+        self.assertEqual(self.connect.counts.connections_opened, 1)
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_a_dead_cached_writer_is_replaced_in_the_write_pool_not_the_read_pool(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        path = "dead-writer.mdb"
+        key = os.path.normcase(os.path.abspath(path))
+        with manager.connection(path):
+            pass
+        with manager.connection(path, autocommit=False):
+            pass
+        manager.use_committed_writer_for_reads(path)
+        reader = manager._read_conns[key]
+        dead_writer = manager._write_conns[key]
+        dead_writer.unhealthy = True
+        with manager.connection(path, autocommit=False) as lease:
+            new_writer = lease._conn
+        self.assertIsNot(new_writer, dead_writer)
+        self.assertTrue(dead_writer.closed)
+        self.assertIs(manager._write_conns[key], new_writer)
+        self.assertIs(manager._read_conns[key], reader)
+        self.assertFalse(reader.closed)
+        self.assertIs(new_writer.autocommit, False)
+        # Only a borrowed writer drops the reader preference with the handle.
+        self.assertIn(key, manager._writer_read_paths)
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_a_reader_opened_after_the_writer_was_lost_is_not_rolled_back_as_borrowed(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "writer-lost-plain.mdb"
+        key = os.path.normcase(os.path.abspath(path))
+        with writer._connection(path):
+            pass
+        self.assertIn(key, manager._writer_read_paths)
+        manager.close_write_connections()
+        rollbacks = self.connect.counts.rollbacks
+        with manager.connection(path) as lease:
+            fresh_reader = lease._conn
+        # Only a borrowed writer is rolled back at the end of a read lease; the
+        # reader that replaced the lost writer is a plain read handle.
+        self.assertEqual(self.connect.counts.rollbacks, rollbacks)
+        self.assertIs(manager._read_conns[key], fresh_reader)
+        self.assertEqual(manager._write_conns, {})
+        self.assertNotIn(key, manager._writer_read_paths)
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_maintenance_is_only_blocked_by_leases_on_the_same_database(self):
+        manager = MdbConnectionManager()
+        quiet_key = os.path.normcase(os.path.abspath("quiet.mdb"))
+        with manager.connection("busy.mdb") as busy:
+            with manager.maintenance("quiet.mdb"):
+                self.assertEqual(manager._maintenance_paths, {quiet_key})
+                busy.cursor().execute("SELECT")
+                with manager.connection("busy.mdb") as nested:
+                    self.assertIs(nested._conn, busy._conn)
+            # The same database is refused whatever the spelling of its path.
+            with self.assertRaisesRegex(RuntimeError, "active operations"):
+                with manager.maintenance(os.path.abspath("BUSY.MDB")):
+                    self.fail("maintenance granted under a lease on that database")
+            self.assertFalse(busy._conn.closed)
+        self.assertEqual(manager._maintenance_paths, set())
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_the_database_lock_is_reentrant_for_nested_use_on_one_thread(self):
+        manager = MdbConnectionManager()
+        outcome = []
+
+        def nested_use() -> None:
+            with manager.connection("reentrant.mdb") as outer:
+                with manager.connection("reentrant.mdb") as inner:
+                    outcome.append(inner._conn is outer._conn)
+                manager.use_committed_writer_for_reads("reentrant.mdb")
+                manager.close_database("reentrant.mdb")
+            outcome.append("done")
+
+        # A watchdog thread: a non-reentrant lock would hang, not fail.
+        worker = threading.Thread(target=nested_use, daemon=True)
+        worker.start()
+        worker.join(timeout=10.0)
+        self.assertFalse(worker.is_alive(), "nested use of one database deadlocked")
+        self.assertEqual(outcome, [True, "done"])
+        self.assertEqual(manager._active_leases, {})
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_nested_error_on_a_handle_replaced_in_the_pool_flags_nothing(self):
+        # The nested failure site must check that the pool still holds THIS
+        # handle, not merely that the key is occupied: a replacement pooled
+        # while the lease was open must stay open and unflagged.
+        manager = MdbConnectionManager()
+        with manager.connection("nested-replaced.mdb") as outer:
+            condemned = outer._conn
+            with self.assertRaisesRegex(pyodbc.OperationalError, "communication"):
+                with manager.connection("nested-replaced.mdb"):
+                    manager.close_database("nested-replaced.mdb")
+                    self.assertTrue(condemned.closed)
+                    with manager.connection("nested-replaced.mdb") as third:
+                        replacement = third._conn
+                    self.assertIsNot(replacement, condemned)
+                    raise pyodbc.OperationalError("08S01", "communication link failed")
+            self.assertNotIn(id(condemned), manager._unhealthy_connection_ids)
+            self.assertNotIn(id(condemned), manager._deferred_eviction_ids)
+        self.assertFalse(replacement.closed)
+        manager.close()
+        self.assertEqual(manager._unhealthy_connection_ids, set())
+        self.assertEqual(manager._deferred_eviction_ids, set())
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_overlapping_maintenance_keeps_each_database_guarded_until_its_own_end(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        first_key = os.path.normcase(os.path.abspath("first.mdb"))
+        with manager.maintenance("first.mdb"):
+            with manager.maintenance("second.mdb"):
+                self.assertEqual(len(manager._maintenance_paths), 2)
+            # Ending the second maintenance releases only the second database.
+            self.assertEqual(manager._maintenance_paths, {first_key})
+            with self.assertRaisesRegex(RuntimeError, "maintenance"):
+                with manager.connection("first.mdb"):
+                    self.fail("lease granted during maintenance of that database")
+        self.assertEqual(manager._maintenance_paths, set())
+        with manager.connection("first.mdb"):
+            pass
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_a_non_driver_failure_in_the_health_probe_propagates_and_flags_nothing(
+        self,
+    ):
+        # Only driver errors mean the handle is dead; a bug elsewhere must not
+        # be mistaken for that and silently replace a healthy cached handle.
+        manager = MdbConnectionManager()
+        key = os.path.normcase(os.path.abspath("probe-bug.mdb"))
+        with manager.connection("probe-bug.mdb"):
+            pass
+        cached = manager._read_conns[key]
+        with patch.object(cached, "cursor", side_effect=RuntimeError("probe bug")):
+            with self.assertRaisesRegex(RuntimeError, "probe bug"):
+                with manager.connection("probe-bug.mdb"):
+                    self.fail("lease granted although the probe raised")
+        self.assertIs(manager._read_conns[key], cached)
+        self.assertFalse(cached.closed)
+        self.assertEqual(manager._unhealthy_connection_ids, set())
+        self.assertEqual(manager._active_leases, {})
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)

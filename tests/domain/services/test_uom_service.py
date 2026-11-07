@@ -1821,3 +1821,295 @@ class UomConditionTypeSupportTests(unittest.TestCase):
     def test_an_unsupported_type_is_refused_even_without_geometry(self):
         with self.assertRaises(ValueError):
             _quantities(5, 0)
+
+
+def _circumcircle_arc_length(p1, control, p2):
+    """Length of the arc p1 -> control -> p2 of the circle through the three points.
+
+    Independent oracle: circumcentre from the closed-form determinant formula and the
+    travel direction from the orientation of the triple (not from angle ordering).
+    """
+    ox, oy = p1
+    ax, ay = 0.0, 0.0
+    bx, by = control[0] - ox, control[1] - oy
+    cx, cy = p2[0] - ox, p2[1] - oy
+    d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    ux = (
+        (ax * ax + ay * ay) * (by - cy)
+        + (bx * bx + by * by) * (cy - ay)
+        + (cx * cx + cy * cy) * (ay - by)
+    ) / d
+    uy = (
+        (ax * ax + ay * ay) * (cx - bx)
+        + (bx * bx + by * by) * (ax - cx)
+        + (cx * cx + cy * cy) * (bx - ax)
+    ) / d
+    radius = math.hypot(ax - ux, ay - uy)
+    start = math.atan2(ay - uy, ax - ux)
+    end = math.atan2(cy - uy, cx - ux)
+    counter_clockwise = (bx - ax) * (cy - by) - (by - ay) * (cx - bx) > 0
+    full_turn = 2.0 * math.pi
+    if counter_clockwise:
+        sweep = (end - start) % full_turn
+    else:
+        sweep = (start - end) % full_turn
+    return radius * sweep
+
+
+class UomWaveThreeArcOracleTests(unittest.TestCase):
+    """Arcs through arbitrary (not angle-parameterised) points, measured against the
+    closed-form circumcircle instead of the implementation's own centre formulas."""
+
+    @staticmethod
+    def length(p1, control, p2):
+        return uom._calc_linear_length([*p1, *p2, *control], curve=0)
+
+    def test_arbitrary_three_point_arcs_match_the_circumcircle_in_length(self):
+        # Controls are off the chord bisector, on minor and major arcs, in every
+        # quadrant and travel direction.
+        cases = (
+            ((0, 0), (80, 30), (20, 70)),
+            ((0, 0), (80, 30), (10, -40)),
+            ((100, 100), (160, 100), (110, 40)),
+            ((-200, 50), (-150, -100), (30, 20)),
+            ((0, 0), (3, -4), (100, 10)),
+            ((0, 0), (-60, 40), (90, 10)),
+            ((50, 50), (0, 0), (100, 0)),
+            ((10, 0), (90, 60), (0, 10)),
+            ((0, 0), (0.5, 70), (100, 0.5)),
+            ((0, 0), (100, 1), (50, 60)),
+            ((0, 0), (120, 5), (60, -80)),
+            ((300, 200), (250, 260), (380, 210)),
+        )
+        for p1, control, p2 in cases:
+            with self.subTest(points=(p1, control, p2)):
+                expected = _circumcircle_arc_length(p1, control, p2)
+                self.assertAlmostEqual(
+                    self.length(p1, control, p2), expected, delta=expected * 0.003
+                )
+                # Swapping the end points walks the same circle the other way round
+                # and must pass through the same control point: same arc length.
+                self.assertAlmostEqual(
+                    self.length(p2, control, p1), expected, delta=expected * 0.003
+                )
+
+    def test_mirroring_an_arc_does_not_change_its_length(self):
+        for p1, control, p2 in (
+            ((0, 0), (80, 30), (20, 70)),
+            ((50, 50), (0, 0), (100, 0)),
+            ((0, 0), (120, 5), (60, -80)),
+        ):
+            with self.subTest(points=(p1, control, p2)):
+                straight = self.length(p1, control, p2)
+                mirrored = self.length(
+                    (-p1[0], p1[1]), (-control[0], control[1]), (-p2[0], p2[1])
+                )
+                flipped = self.length(
+                    (p1[0], -p1[1]), (control[0], -control[1]), (p2[0], -p2[1])
+                )
+                self.assertAlmostEqual(mirrored, straight, delta=straight * 1e-9)
+                self.assertAlmostEqual(flipped, straight, delta=straight * 1e-9)
+
+    def test_segments_whose_x_step_is_exactly_minus_one_still_find_the_circle(self):
+        # A perpendicular-slope special case must not be triggered by dx == -1.
+        for p1, control, p2 in (
+            ((0, 0), (-1, 50), (40, 80)),  # first segment dx = -1
+            ((0, 0), (10, 20), (9, 60)),  # second segment dx = -1
+            ((0, 0), (-1, -50), (-30, -80)),
+            ((0, 0), (1, 50), (40, 80)),  # same with dx = +1
+        ):
+            with self.subTest(points=(p1, control, p2)):
+                expected = _circumcircle_arc_length(p1, control, p2)
+                self.assertAlmostEqual(
+                    self.length(p1, control, p2), expected, delta=expected * 0.003
+                )
+
+    def test_a_control_point_a_little_off_a_far_away_short_chord_is_an_arc(self):
+        # The straight-chord epsilon is 1e-9 of the chord length, not of the distance
+        # from the origin: 1e-3 from an end of a 100 chord located at 1e6 is a real arc.
+        origin = 1e6
+        p1 = (origin, origin)
+        p2 = (origin + 60.0, origin + 80.0)
+        control = (origin + 1e-3, origin)
+        expected = _circumcircle_arc_length((0.0, 0.0), (1e-3, 0.0), (60.0, 80.0))
+        self.assertGreater(expected, 110.0)
+        self.assertAlmostEqual(
+            self.length(p1, control, p2), expected, delta=expected * 0.01
+        )
+
+    def test_the_straight_chord_epsilon_scales_with_the_chord_when_the_ends_cancel(
+        self,
+    ):
+        # Chord 1.2e6 centred on the origin along an axis: a control point 1e-4 from an
+        # end is within 1e-9 of the chord, so it is that end (evenly spaced chord),
+        # whichever axis the chord lies on and whichever end is nearest.
+        for p1, p2, controls in (
+            ((-6e5, 0.0), (6e5, 0.0), ((-6e5 + 1e-4, 0.0), (6e5 - 1e-4, 0.0))),
+            ((0.0, -6e5), (0.0, 6e5), ((0.0, -6e5 + 1e-4), (0.0, 6e5 - 1e-4))),
+        ):
+            for control in controls:
+                with self.subTest(p1=p1, p2=p2, control=control):
+                    segments = uom._calc_curve_segments(*p1, *p2, *control)
+                    points = uom._advanced_curve_points(*p1, *p2, *control, segments)
+                    self.assertEqual(len(points), segments + 1)
+                    for i, (x, y) in enumerate(points):
+                        t = i / segments
+                        self.assertAlmostEqual(
+                            x, p1[0] + t * (p2[0] - p1[0]), delta=1e-3
+                        )
+                        self.assertAlmostEqual(
+                            y, p1[1] + t * (p2[1] - p1[1]), delta=1e-3
+                        )
+
+
+class UomWaveThreeSlopeAndGridDefaultTests(unittest.TestCase):
+    SQUARE = [0, 0, 12, 0, 12, 12, 0, 12]
+
+    def test_a_small_negative_rise_or_run_is_not_a_slope(self):
+        # Only strictly positive rise and run form a slope (a zero run would divide
+        # by zero).
+        for rise, run in (
+            (-0.5, 4.0),
+            (3.0, -0.5),
+            (-0.5, -0.5),
+            (0.0, 4.0),
+            (3.0, 0.0),
+        ):
+            with self.subTest(rise=rise, run=run):
+                self.assertEqual(uom._calc_slope_factor(rise, run), 1.0)
+                self.assertEqual(
+                    _quantities(
+                        Condition.TYPE_LINEAR,
+                        1,
+                        position=[0, 0, 12, 0],
+                        rise=rise,
+                        run=run,
+                    )[0],
+                    12.0,
+                )
+
+    def test_small_negative_rise_or_run_has_magnitude_for_areas(self):
+        # Area slopes use the magnitudes, so -0.5/4 is the same slope as 0.5/4.
+        expected = 144.0 * math.sqrt(0.5 * 0.5 + 4.0 * 4.0) / 4.0
+        for rise, run in ((-0.5, 4.0), (0.5, -4.0), (-0.5, -4.0)):
+            with self.subTest(rise=rise, run=run):
+                self.assertAlmostEqual(
+                    _quantities(
+                        Condition.TYPE_AREA,
+                        uom.CALC_AREA,
+                        position=self.SQUARE,
+                        rise=rise,
+                        run=run,
+                    )[0],
+                    expected,
+                )
+
+    def test_an_omitted_grid_size_or_gap_counts_as_zero_in_the_cell_size(self):
+        # Square 12 x 12, no holes. unit = grid size + gap, with omitted values 0.
+        # The first case (both sizes, no gap) is the real contract. The other two
+        # are CHARACTERISATION of the current default semantics (a missing size
+        # counts as 0, so a gap alone still spans a cell); production always passes
+        # both sizes, so revisit them if that default is ever changed on purpose.
+        cases = (
+            # (kwargs, tile average, grid length, visible tiles)
+            (dict(grid_size1=3.0, grid_size2=4.0), 144 / 12, 4 * 12 + 3 * 12, 4 * 3),
+            (dict(grid_size2=3.0, gap=1.0), 144 / 4, 12 * 12 + 3 * 12, 12 * 3),
+            (dict(grid_size1=3.0, gap=1.0), 144 / 4, 3 * 12 + 12 * 12, 3 * 12),
+        )
+        for kwargs, average, length, visible in cases:
+            with self.subTest(kwargs=kwargs):
+                for calc_type, expected in ((17, average), (16, length), (18, visible)):
+                    public = _quantities(
+                        Condition.TYPE_AREA,
+                        calc_type,
+                        position=self.SQUARE,
+                        **kwargs,
+                    )[0]
+                    self.assertAlmostEqual(public, expected)
+                    direct = uom._calc_raw_for_area(
+                        calc_type,
+                        0.0,
+                        144.0,
+                        0.0,
+                        48.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        bbox_w=12.0,
+                        bbox_h=12.0,
+                        **kwargs,
+                    )
+                    self.assertAlmostEqual(direct, expected)
+
+
+class UomWaveThreeReworkTests(unittest.TestCase):
+    RECTANGLE = [0, 0, 20, 0, 20, 10, 0, 10]  # 20 wide, 10 high
+
+    def test_a_huge_circle_keeps_the_short_sweep_when_control_and_end_angles_tie(self):
+        # Control 1.5e-7 short of the end (outside the 1e-9 * chord straight band) and
+        # 4.5e-16 off the chord line: the circumcircle radius is ~1.7e10 and, in
+        # floating point, the control's angle equals the end point's angle. The arc is
+        # then the short one (the chord), not a sweep once around the huge circle.
+        length = uom._calc_linear_length(
+            [0, 0, 100, 0, 100 - 1.5e-7, -4.50354391908547e-16], curve=0
+        )
+        self.assertAlmostEqual(length, 100.0, delta=0.01)
+
+    def test_grid_size1_runs_along_the_width_and_grid_size2_along_the_height(self):
+        def grid(calc_type, size1, size2):
+            return _quantities(
+                Condition.TYPE_AREA,
+                calc_type,
+                position=self.RECTANGLE,
+                grid_size1=size1,
+                grid_size2=size2,
+            )[0]
+
+        # 5 across 20 -> 4 columns, 4 down 10 -> 3 rows (rounded up) or 2 (whole).
+        self.assertAlmostEqual(
+            grid(16, 5.0, 4.0), math.ceil(20 / 5) * 10 + math.ceil(10 / 4) * 20
+        )
+        self.assertAlmostEqual(grid(18, 5.0, 4.0), 4 * 2)
+        # Swapped sizes: 4 across 20 -> 5 columns, 5 down 10 -> 2 rows.
+        self.assertAlmostEqual(
+            grid(16, 4.0, 5.0), math.ceil(20 / 4) * 10 + math.ceil(10 / 5) * 20
+        )
+        self.assertAlmostEqual(grid(18, 4.0, 5.0), 5 * 2)
+        self.assertNotEqual(grid(18, 5.0, 4.0), grid(18, 4.0, 5.0))
+
+    def test_the_straight_chord_band_scales_with_the_chord_not_with_the_coordinates(
+        self,
+    ):
+        # A 100 long chord (60, 80) far from the origin on one or both axes, with the
+        # control 5e-4 from its start: that is 5e-6 of the chord, well outside the
+        # 1e-9 band, so it is a real arc and not the 100 long straight chord. A band
+        # scaled by the coordinates (1e6) would call it straight.
+        far = 1e6
+        for origin in ((far, far), (far, 0.0), (0.0, far)):
+            p1 = origin
+            p2 = (origin[0] + 60.0, origin[1] + 80.0)
+            control = (origin[0] + 5e-4, origin[1])
+            with self.subTest(origin=origin):
+                expected = _circumcircle_arc_length(
+                    (0.0, 0.0), (5e-4, 0.0), (60.0, 80.0)
+                )
+                length = uom._calc_linear_length([*p1, *p2, *control], curve=0)
+                self.assertGreater(length, 110.0)
+                self.assertAlmostEqual(length, expected, delta=expected * 0.01)
+
+    def test_polygon_area_of_a_small_polygon_a_billion_inches_from_the_origin(self):
+        # The shoelace sum is taken relative to a polygon vertex: relative to (0, 0)
+        # the products (1e9 * 1e9) would swallow the 100 square inches.
+        far = 1e9
+        square = [far, far, far + 10, far, far + 10, far + 10, far, far + 10]
+        self.assertAlmostEqual(
+            uom.calculate_polygon_area(uom.vertices_from_position(square)),
+            100.0,
+            delta=1e-6,
+        )
+
+    def test_an_unsupported_condition_type_message_names_the_type(self):
+        with self.assertRaisesRegex(
+            uom.UnsupportedConditionTypeError, r"^Unsupported condition type 7$"
+        ):
+            _quantities(7, 0)

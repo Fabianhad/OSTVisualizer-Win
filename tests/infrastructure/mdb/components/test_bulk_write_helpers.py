@@ -2,7 +2,11 @@ import logging
 import unittest
 from contextlib import contextmanager
 import pyodbc
+from ost_visualizer.infrastructure.database.bid_owned_identity import (
+    BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE,
+)
 from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
+    ACCESS_BULK_CHUNK_SIZE,
     AccessBulkWriteMixin,
 )
 from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
@@ -227,3 +231,186 @@ class BulkWriteHelperContractTests(unittest.TestCase):
         ):
             ops._execute_uid_in_update_chunks(cursor, "BidTakeoffs", "UID", {}, [1])
         self.assertEqual(ops.executions, [])
+
+
+class BulkWriteDefaultChunkingTests(unittest.TestCase):
+    def test_default_chunking_bounds_every_statement_and_keeps_the_uid_order(self):
+        # Two full chunks and a final single uid: equality for the last chunk,
+        # IN for the others, every uid bound exactly once and in the given order.
+        size = ACCESS_BULK_CHUNK_SIZE
+        self.assertEqual(size, BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE)
+        uids = list(range(500, 500 + 2 * size + 1))
+        chunks = [uids[:size], uids[size : 2 * size], uids[2 * size :]]
+        self.assertEqual([len(chunk) for chunk in chunks], [size, size, 1])
+        in_clause = "IN (" + ",".join("?" * size) + ")"
+        update_in = f"UPDATE [T] SET [A]=?, [B]=? WHERE [UID] {in_clause}"
+        update_one = "UPDATE [T] SET [A]=?, [B]=? WHERE [UID]=?"
+        delete_in = f"DELETE FROM [T] WHERE [UID] {in_clause}"
+        ops = _RecordingTakeoffOps()
+        cursor = _RecordingConnection(ops).cursor()
+        ops._execute_uid_in_update_chunks(cursor, "T", "UID", {"A": 7, "B": None}, uids)
+        ops._execute_uid_in_delete_chunks(cursor, "T", "UID", uids)
+        self.assertEqual(
+            ops.executions,
+            [
+                (update_in, (7, None, *chunks[0])),
+                (update_in, (7, None, *chunks[1])),
+                (update_one, (7, None, *chunks[2])),
+                (delete_in, tuple(chunks[0])),
+                (delete_in, tuple(chunks[1])),
+                ("DELETE FROM [T] WHERE [UID]=?", tuple(chunks[2])),
+            ],
+        )
+
+    def test_the_default_chunk_size_is_the_one_the_iterator_uses(self):
+        ops = _RecordingTakeoffOps()
+        size = ACCESS_BULK_CHUNK_SIZE
+        chunks = list(ops._iter_access_chunks(list(range(size + 1))))
+        self.assertEqual([len(chunk) for chunk in chunks], [size, 1])
+
+    def test_resource_exhaustion_is_found_when_the_error_carries_non_text_arguments(
+        self,
+    ):
+        ops = _RecordingTakeoffOps()
+        self.assertIs(
+            ops._is_access_resource_exceeded(pyodbc.Error(-1305, "[HY001] memory")),
+            True,
+        )
+        self.assertIs(
+            ops._is_access_resource_exceeded(
+                pyodbc.Error(42, "System resource exceeded")
+            ),
+            True,
+        )
+        self.assertIs(ops._is_access_resource_exceeded(pyodbc.Error(42, 7)), False)
+
+
+class BulkWriteRealAccessTests(unittest.TestCase):
+    """Real Access: the chunked UPDATE/DELETE helpers bind NULL and Long uids."""
+
+    @staticmethod
+    def _exercise_real_access():
+        import tempfile
+        from pathlib import Path
+        import tests.helpers.mdb.schema_support as access
+
+        class Spy:
+            def __init__(self, cursor):
+                self._cursor = cursor
+                self.calls = []
+
+            def execute(self, sql, *params):
+                self.calls.append((sql, params))
+                return self._cursor.execute(sql, *params)
+
+        def expect(actual, expected, label):
+            if actual != expected:
+                raise AssertionError(f"{label}: {actual!r} != {expected!r}")
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = Path(folder) / "bulk.mdb"
+            if not access.DatabaseCreator().create_database(path, "Bulk"):
+                raise AssertionError("database creation failed")
+            connection = access._connect_mdb(path)
+            try:
+                cursor = connection.cursor()
+                uids = list(range(1000, 1000 + 2 * ACCESS_BULK_CHUNK_SIZE + 1))
+                for uid in uids:
+                    cursor.execute(
+                        "INSERT INTO [BidProjects] ([UID], [Name]) VALUES (?, 'old')",
+                        uid,
+                    )
+                cursor.execute(
+                    "INSERT INTO [BidProjects] ([UID], [Name]) VALUES (5000, 'keep')"
+                )
+                connection.commit()
+
+                def rows():
+                    cursor.execute(
+                        "SELECT [UID], [Name] FROM [BidProjects] "
+                        "WHERE [UID] >= 1000 ORDER BY [UID]"
+                    )
+                    return [tuple(row) for row in cursor.fetchall()]
+
+                helper = AccessBulkWriteMixin()
+                spy = Spy(cursor)
+                helper._execute_uid_in_update_chunks(
+                    spy, "BidProjects", "UID", {"Name": None}, uids
+                )
+                connection.commit()
+                expect(
+                    [len(params) for _sql, params in spy.calls],
+                    [1 + ACCESS_BULK_CHUNK_SIZE, 1 + ACCESS_BULK_CHUNK_SIZE, 2],
+                    "update parameter counts",
+                )
+                expect(
+                    rows(),
+                    [(uid, None) for uid in uids] + [(5000, "keep")],
+                    "after update",
+                )
+                spy = Spy(cursor)
+                helper._execute_uid_in_delete_chunks(spy, "BidProjects", "UID", uids)
+                connection.commit()
+                expect(
+                    [len(params) for _sql, params in spy.calls],
+                    [ACCESS_BULK_CHUNK_SIZE, ACCESS_BULK_CHUNK_SIZE, 1],
+                    "delete parameter counts",
+                )
+                expect(rows(), [(5000, "keep")], "after delete")
+            finally:
+                connection.close()
+
+    def test_chunked_update_and_delete_run_on_real_access(self):
+        import subprocess
+        import sys
+        from tests.helpers.mdb.schema_support import _access_available
+        from tests.paths import REPO_ROOT
+
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX is not available")
+        code = (
+            "from tests.infrastructure.mdb.components.test_bulk_write_helpers "
+            "import BulkWriteRealAccessTests as Tests; "
+            "Tests._exercise_real_access()"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class BulkWriteCorrelationUidTests(unittest.TestCase):
+    def test_the_first_offender_is_named_and_zero_and_case_are_distinct_values(self):
+        check = AccessBulkWriteMixin._require_unique_correlation_uids
+        # The scan stops at the first offender: the missing uid is reported, not
+        # the later duplicate; the first repeated value, not the later one.
+        with self.assertRaisesRegex(ValueError, "correlation UID <missing> must"):
+            check([None, "a", "a"], "takeoff")
+        with self.assertRaisesRegex(ValueError, "correlation UID 1 must"):
+            check([1, 1, 2, 2], "takeoff")
+        # 0 is a present value, and string comparison is exact.
+        check([0, "A", "a", " a"], "takeoff")
+
+
+class BulkWriteExplicitSizeTests(unittest.TestCase):
+    def test_an_explicit_chunk_size_larger_than_the_default_is_honoured(self):
+        uids = list(range(1, 121))
+        ops = _RecordingTakeoffOps()
+        cursor = _RecordingConnection(ops).cursor()
+        ops._execute_uid_in_update_chunks(cursor, "T", "UID", {"A": 1}, uids, 100)
+        ops._execute_uid_in_delete_chunks(cursor, "T", "UID", uids, 100)
+        self.assertEqual(
+            [len(params) for _sql, params in ops.executions], [101, 21, 100, 20]
+        )
+        self.assertEqual(ops.executions[2][1], tuple(uids[:100]))
+        self.assertEqual(ops.executions[3][1], tuple(uids[100:]))
+
+    def test_the_uid_clause_binds_every_uid_however_many_there_are(self):
+        uids = list(range(1, 61))
+        clause, params = AccessBulkWriteMixin._uid_where_clause("UID", uids)
+        self.assertEqual(clause, "[UID] IN (" + ",".join("?" * 60) + ")")
+        self.assertEqual(params, uids)

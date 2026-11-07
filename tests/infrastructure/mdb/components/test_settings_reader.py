@@ -53,6 +53,9 @@ from ost_visualizer.infrastructure.mdb.components.bid_operations import (
 import unittest
 import sqlite3
 import logging
+from ost_visualizer.infrastructure.mdb.components.constants import (
+    LAYER_REFERENCE_TABLES,
+)
 from ost_visualizer.infrastructure.mdb.components.settings_reader import (
     _clean_optional_text,
 )
@@ -1589,4 +1592,369 @@ class SettingsReaderSparseSchemaTests(unittest.TestCase):
         self.assertEqual(pay_classes, [PayClass(uid="", name="Std")])
         self.assertEqual(
             reader.get_job_statuses("x.mdb"), [JobStatus("", "Open", False, 0)]
+        )
+
+
+class _InspectedReader(SettingsReaderMixin):
+    """Reader sharing one real schema inspector so its compatibility report is visible."""
+
+    def __init__(self, connection):
+        self._connection_obj = connection
+        self.logger = logging.getLogger("test")
+        self.inspector = MdbSchemaInspector(connection, self.logger)
+
+    @contextmanager
+    def _connection(self, _file_path):
+        yield self._connection_obj
+
+    def _schema(self, _connection):
+        return self.inspector
+
+    @staticmethod
+    def _record_caught_read_error(_exc, _locator=None):
+        return False
+
+
+class SettingsReaderSchemaReportTests(unittest.TestCase):
+    def test_a_missing_optional_table_is_reported_and_reads_as_unused(self):
+        cases = (
+            ("get_condition_type_uids_in_use", ("x.mdb",), "BidConditions"),
+            ("get_master_data_uids_in_use", ("x.mdb", "employees"), "Bids"),
+            ("get_master_data_uids_in_use", ("x.mdb", "job_statuses"), "Bids"),
+        )
+        for method, args, table in cases:
+            with self.subTest(method=method, args=args):
+                reader = _InspectedReader(_FakeConnection({}, {}))
+                self.assertEqual(getattr(reader, method)(*args), set())
+                self.assertEqual(
+                    reader.inspector.report.detected_schema_notes,
+                    {f"missing optional table {table}"},
+                )
+
+    def test_a_present_table_without_the_reference_column_is_not_reported_missing(
+        self,
+    ):
+        cases = (
+            ("get_condition_type_uids_in_use", ("x.mdb",), "BidConditions"),
+            ("get_master_data_uids_in_use", ("x.mdb", "employees"), "Bids"),
+            ("get_master_data_uids_in_use", ("x.mdb", "job_statuses"), "Bids"),
+        )
+        for method, args, table in cases:
+            with self.subTest(method=method, args=args):
+                reader = _InspectedReader(_FakeConnection({table: {"UID"}}, {}))
+                self.assertEqual(getattr(reader, method)(*args), set())
+                self.assertEqual(reader.inspector.report.detected_schema_notes, set())
+
+    def test_the_employee_role_query_selects_every_present_role_column_from_bids(self):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.execute(
+            "CREATE TABLE Bids (UID INTEGER, EstimatorUID INTEGER, "
+            "PrManagerUID INTEGER, JobSiteManagerUID INTEGER)"
+        )
+        connection.execute("INSERT INTO Bids VALUES (1, 10, 20, 30)")
+        statements = []
+        connection.set_trace_callback(statements.append)
+        used = _SqliteSettingsReader(connection).get_master_data_uids_in_use(
+            "x.mdb", "employees"
+        )
+        self.assertEqual(used, {"10", "20", "30"})
+        self.assertIn(
+            "SELECT [EstimatorUID], [PrManagerUID], [JobSiteManagerUID] FROM [Bids]",
+            statements,
+        )
+
+
+class JobStatusSequenceBoundaryTests(unittest.TestCase):
+    _DDL = "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence)"
+
+    def database(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        for statement in statements:
+            connection.execute(statement)
+        return connection
+
+    def statuses(self, *rows, reader_class=_SqliteSettingsReader):
+        connection = self.database(self._DDL)
+        connection.executemany("INSERT INTO JobStatuses VALUES (?, ?, 0, ?)", rows)
+        return reader_class(connection).get_job_statuses("x.mdb")
+
+    def test_negative_blank_text_and_padded_sequences_order_numerically(self):
+        result = self.statuses(
+            (1, "pos", 5),
+            (2, "neg", -3),
+            (3, "null", None),
+            (4, "sentinel", "NULL"),
+            (5, "blank", ""),
+            (6, "text", " 4 "),
+            (7, "digits", "12"),
+        )
+        self.assertEqual(
+            [(s.uid, s.sequence) for s in result],
+            [("2", -3), ("3", 0), ("4", 0), ("5", 0), ("6", 4), ("1", 5), ("7", 12)],
+        )
+
+    def test_a_very_large_sequence_sorts_last_without_overflow(self):
+        result = self.statuses((1, "huge", 10**15), (2, "small", 1), (3, "none", None))
+        self.assertEqual([s.uid for s in result], ["3", "2", "1"])
+        self.assertEqual(result[-1].sequence, 10**15)
+
+    def test_a_row_with_every_optional_column_null_is_blank_not_an_error(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked INTEGER, "
+            "Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (NULL, NULL, 0, NULL)",
+        )
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_job_statuses("x.mdb"),
+            [JobStatus("", "", False, 0)],
+        )
+
+    def test_locked_follows_access_yes_no_and_numeric_spellings(self):
+        for stored, expected in (
+            (0, False),
+            (1, True),
+            (-1, True),
+            ("0", False),
+            ("1", True),
+            ("True", True),
+            ("False", False),
+        ):
+            with self.subTest(locked=stored):
+                connection = self.database(self._DDL)
+                connection.execute(
+                    "INSERT INTO JobStatuses VALUES (1, 'S', ?, 1)", (stored,)
+                )
+                (status,) = _SqliteSettingsReader(connection).get_job_statuses("x.mdb")
+                self.assertIs(status.locked, expected)
+
+    def test_a_malformed_sequence_degrades_the_status_list_but_fails_the_cover_sheet(
+        self,
+    ):
+        # Characterisation of the current policy for non-numeric Sequence data (only
+        # NULL/blank/"NULL" are tolerated), not an endorsement. The standalone status read
+        # warns and returns [] (the generic degrade-to-empty policy of the tolerant
+        # readers), the cover sheet read surfaces the ValueError. Note the consequence:
+        # ProjectReadService.is_bid_locked then reads False (fail-open) for a bid whose
+        # status is locked, because the status list it searches is empty.
+        connection = self.database(
+            self._DDL,
+            "INSERT INTO JobStatuses VALUES (1, 'Open', 0, 1)",
+            "INSERT INTO JobStatuses VALUES (2, 'Bad', 0, 'abc')",
+            "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER)",
+            "INSERT INTO Bids VALUES (7, 2)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        )
+        with self.assertLogs("test", level="WARNING") as logs:
+            self.assertEqual(
+                _SqliteSettingsReader(connection).get_job_statuses("x.mdb"), []
+            )
+        self.assertEqual(
+            logs.records[0].getMessage(), "Could not load job statuses from x.mdb"
+        )
+        with self.assertRaises(ValueError):
+            _FatalReadErrors(connection).get_job_statuses("x.mdb")
+        with self.assertRaises(ValueError):
+            _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "7")
+
+    def test_a_cover_sheet_with_null_sequences_keeps_the_bid_and_status_links(self):
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER, JobName TEXT)",
+            "INSERT INTO Bids VALUES (7, 2, 'Job')",
+            "INSERT INTO Bids VALUES (8, NULL, 'Other')",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            self._DDL,
+            "INSERT INTO JobStatuses VALUES (2, 'Lost', 0, NULL)",
+            "INSERT INTO JobStatuses VALUES (1, 'Open', 0, NULL)",
+            "INSERT INTO JobStatuses VALUES (3, 'Won', 1, 2)",
+        )
+        reader = _SqliteSettingsReader(connection)
+        data = reader.get_cover_sheet_data("x.mdb", "7")
+        self.assertEqual(data.job_status_uid, "2")
+        self.assertEqual(data.job_name, "Job")
+        self.assertEqual(data.used_job_status_uids, {"2"})
+        self.assertEqual(
+            data.job_statuses,
+            [
+                JobStatus("1", "Open", False, 0),
+                JobStatus("2", "Lost", False, 0),
+                JobStatus("3", "Won", True, 2),
+            ],
+        )
+        other = reader.get_cover_sheet_data("x.mdb", "8")
+        self.assertEqual(other.job_status_uid, "")
+        self.assertEqual(other.job_statuses, data.job_statuses)
+
+
+class JobStatusLockedContractTests(unittest.TestCase):
+    """A status whose lock flag cannot be read is locked: fail closed.
+
+    This mirrors the SQL write guard `[Locked] IS NULL OR [Locked]=1` in
+    infrastructure/sql/writer.py, so both backends agree on what is locked.
+    """
+
+    def read(self, locked_values):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.execute(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence)"
+        )
+        connection.executemany(
+            "INSERT INTO JobStatuses VALUES (?, 'S', ?, 0)",
+            list(enumerate(locked_values, start=1)),
+        )
+        return [
+            status.locked
+            for status in _SqliteSettingsReader(connection).get_job_statuses("x.mdb")
+        ]
+
+    def test_a_null_lock_flag_reads_as_locked(self):
+        self.assertEqual(self.read([None]), [True])
+        self.assertEqual(self.read(["NULL"]), [True])
+
+    def test_only_blank_zero_and_false_spellings_read_as_unlocked(self):
+        self.assertEqual(self.read(["", "0", "False", 0, 0.0]), [False] * 5)
+
+    def test_every_other_lock_flag_reads_as_locked(self):
+        self.assertEqual(self.read([1, -1, 2, "1", "True"]), [True] * 5)
+
+    def test_a_missing_lock_column_reads_as_unlocked(self):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.execute("CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)")
+        connection.execute("INSERT INTO JobStatuses VALUES (1, 'S')")
+        (status,) = _SqliteSettingsReader(connection).get_job_statuses("x.mdb")
+        self.assertIs(status.locked, False)
+
+
+class CoverSheetFolderTreeTests(unittest.TestCase):
+    def test_get_cover_sheet_data_carries_the_folder_tree_and_loose_pages(self):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        for statement in (
+            "CREATE TABLE Bids (UID INTEGER, JobName TEXT)",
+            "INSERT INTO Bids VALUES (7, 'J')",
+            "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "ParentUID INTEGER)",
+            "INSERT INTO BidPageFolders VALUES (1, 7, 'Root', NULL)",
+            "INSERT INTO BidPageFolders VALUES (2, 7, 'Child', 1)",
+            "INSERT INTO BidPageFolders VALUES (3, 8, 'Other bid', NULL)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "BidPageFolderUID INTEGER, Sequence INTEGER)",
+            "INSERT INTO BidPages VALUES (10, 7, 'Nested', 2, 1)",
+            "INSERT INTO BidPages VALUES (11, 7, 'Loose', NULL, 2)",
+            "INSERT INTO BidPages VALUES (12, 7, 'Root page', 1, 3)",
+            "INSERT INTO BidPages VALUES (13, 8, 'Other page', NULL, 1)",
+        ):
+            connection.execute(statement)
+        data = _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "7")
+        self.assertEqual(list(data.folders), ["1"])
+        root = data.folders["1"]
+        self.assertEqual(root.name, "Root")
+        self.assertEqual([page.name for page in root.pages], ["Root page"])
+        self.assertEqual(list(root.subfolders), ["2"])
+        self.assertEqual(root.subfolders["2"].name, "Child")
+        self.assertEqual([page.name for page in root.subfolders["2"].pages], ["Nested"])
+        self.assertEqual([page.name for page in data.pages_without_folder], ["Loose"])
+
+
+class ReadErrorLocatorTests(unittest.TestCase):
+    """The failing database path is forwarded as the locator of every recorded read error."""
+
+    class _Recording(_FailingOpen):
+        def __init__(self, error):
+            super().__init__(None)
+            self.error = error
+            self.recorded = []
+            self.logger = SimpleNamespace(warning=lambda *_args, **_kwargs: None)
+
+        def _record_caught_read_error(self, exc, locator=None):
+            self.recorded.append((exc, locator))
+            return False
+
+    def test_every_tolerant_read_records_its_error_against_the_database_path(self):
+        calls = (
+            ("get_job_statuses", ("a.mdb",)),
+            ("get_employees_and_pay_classes", ("a.mdb",)),
+            ("get_bid_areas", ("a.mdb", "7")),
+            ("get_settings_defaults", ("a.mdb",)),
+            ("get_employee_uids_in_use", ("a.mdb",)),
+            ("get_condition_type_uids_in_use", ("a.mdb",)),
+            ("get_layer_uids_in_use", ("a.mdb", "7")),
+        )
+        for method, args in calls:
+            with self.subTest(method=method):
+                error = ValueError("boom")
+                reader = self._Recording(error)
+                getattr(reader, method)(*args)
+                self.assertEqual(len(reader.recorded), 1)
+                recorded_error, locator = reader.recorded[0]
+                self.assertIs(recorded_error, error)
+                self.assertEqual(locator, "a.mdb")
+
+
+class SettingsReaderRoundTwoBoundaryTests(unittest.TestCase):
+    def database(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        for statement in statements:
+            connection.execute(statement)
+        return connection
+
+    def test_each_page_integer_column_is_read_from_its_own_column(self):
+        # MultiPageCount, Index1 and Show are independent: a NULL in one must not borrow
+        # the NULL-ness (or the value) of another column.
+        connection = self.database(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "Index1 INTEGER, [Show] INTEGER, MultiPageCount INTEGER, Sequence INTEGER)",
+            "INSERT INTO BidPages VALUES (1, 7, 'named', 4, 2, NULL, 1)",
+            "INSERT INTO BidPages VALUES (2, 7, NULL, NULL, NULL, 5, 2)",
+            "INSERT INTO BidPages VALUES (3, 7, 'full', 3, 1, 6, 3)",
+        )
+        _folders, pages = _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+            _SqliteConnectionWrapper(connection), "7"
+        )
+        self.assertEqual(
+            [(p.name, p.index, p.show_mode, p.multi_page_count) for p in pages],
+            [("named", 4, 2, 0), ("", 1, 0, 5), ("full", 3, 1, 6)],
+        )
+
+    def test_condition_type_and_layer_usage_reads_tolerate_every_data_error_type(self):
+        for method, args, message in (
+            (
+                "get_condition_type_uids_in_use",
+                ("x.mdb",),
+                "Could not query condition type UIDs in use: ",
+            ),
+            (
+                "get_layer_uids_in_use",
+                ("x.mdb", "1"),
+                "Could not query layer UIDs in use: ",
+            ),
+        ):
+            for error in (pyodbc.Error("HY000", "p"), TypeError("t"), ValueError("v")):
+                with self.subTest(method=method, error=type(error).__name__):
+                    failing = type("R", (_FailingOpen,), {"error": error})
+                    with self.assertLogs("test", level="WARNING") as logs:
+                        self.assertEqual(getattr(failing(None), method)(*args), set())
+                    self.assertTrue(logs.records[0].getMessage().startswith(message))
+                    fatal = type("F", (_FailingOpenFatal,), {"error": error})
+                    with self.assertRaises(type(error)):
+                        getattr(fatal(None), method)(*args)
+
+    def test_missing_pay_class_and_layer_tables_are_reported_as_missing(self):
+        reader = _InspectedReader(_FakeConnection({}, {}))
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), set()
+        )
+        self.assertEqual(
+            reader.inspector.report.detected_schema_notes,
+            {"missing optional table Employees"},
+        )
+        reader = _InspectedReader(_FakeConnection({}, {}))
+        self.assertEqual(reader.get_layer_uids_in_use("x.mdb", "7"), set())
+        self.assertEqual(
+            reader.inspector.report.detected_schema_notes,
+            {f"missing optional table {table}" for table in LAYER_REFERENCE_TABLES},
         )

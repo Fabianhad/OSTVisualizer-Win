@@ -3724,3 +3724,851 @@ class ReaderTextValueTests(unittest.TestCase):
                     _SqliteConnectionWrapper(conn), "1", {}, {}, reader._schema_ref
                 )
                 self.assertEqual(conditions["7"].uom1, expected)
+
+
+class _ReverseColumnSchema(_SqliteSchema):
+    """Reports table columns in reverse alphabetical order, as an unsorted set could."""
+
+    def get_columns(self, table_name):
+        return sorted(super().get_columns(table_name), reverse=True)
+
+
+class ConditionColumnIsolationTests(unittest.TestCase):
+    """One column at a time: a NULL (or a distinct flag) must only affect its own field."""
+
+    _BASELINE = {
+        "Type": 4,
+        "Thickness": 0.5,
+        "Height": 1.5,
+        "Width": 2.5,
+        "Depth": 3.5,
+        "Rise": 4.5,
+        "Run": 5.5,
+        "Shape": 6,
+        "ColorFill": 7,
+        "CdnTypeUID": 3,
+        "Pattern": 8,
+        "Spacing": 9.5,
+        "BidLayerUID": 5,
+        "UOM1": UOM_LINEAR_FEET,
+        "UOM2": UOM_SQUARE_FEET,
+        "UOM3": UOM_CUBIC_FEET,
+        "Quantity1": CALC_LINEAR_LENGTH,
+        "Quantity2": CALC_LINEAR_BOTH_SIDES,
+        "Quantity3": CALC_VOLUME,
+        "RefNo": 12,
+        "DisplaySize": 150.0,
+        "DropRun": 1,
+        "DropValue": 6.5,
+        "BidConditionFolderUID": 11,
+        "Notes": b"memo",
+        "RoundQuantity": -1,
+        "RoundUp": 0.25,
+        "Trim": -1,
+        "IsCurvedSegment": -1,
+        "Grid": -1,
+        "GridSize1": 1.5,
+        "GridSize2": 2.5,
+        "Gap": 3.5,
+        "DisplayDimension": -1,
+        "DisplayName": -1,
+        "DisplayGridWhileDrawing": -1,
+    }
+    _NUMERIC_DEFAULTS = {
+        name: (100.0 if name == "DisplaySize" else 0)
+        for name in _BASELINE
+        if name not in ("CdnTypeUID", "BidLayerUID", "BidConditionFolderUID", "Notes")
+    }
+
+    def _read(self, overrides):
+        values = dict(self._BASELINE)
+        values.update(overrides)
+        conn = _db(f"CREATE TABLE BidConditions ({BidConditionReaderTests._FULL})")
+        columns = ("UID", "BidUID", "Name") + tuple(values)
+        _insert(
+            conn, "BidConditions", columns, [(7, 1, "Wall") + tuple(values.values())]
+        )
+        reader = _SqliteBidReader(conn)
+        return reader._parse_bid_conditions_for_bid(
+            _SqliteConnectionWrapper(conn),
+            "1",
+            {"5": Layer(uid="5", name="Walls", visible=False)},
+            {"3": CdnType(uid="3", name="Concrete")},
+            reader._schema_ref,
+        )["7"]
+
+    def test_a_null_numeric_or_flag_column_reads_like_its_default_and_changes_nothing_else(
+        self,
+    ):
+        no_calculation = {"Quantity1": 0, "Quantity2": 0, "Quantity3": 0}
+        for column, default in self._NUMERIC_DEFAULTS.items():
+            with self.subTest(column=column):
+                # A selected calculation derives the units, so the unit columns
+                # are only observable while no calculation is selected.
+                fixed = no_calculation if column.startswith("UOM") else {}
+                baseline = self._read(fixed)
+                nulled = self._read({**fixed, column: None})
+                defaulted = self._read({**fixed, column: default})
+                self.assertEqual(vars(nulled), vars(defaulted))
+                self.assertNotEqual(vars(nulled), vars(baseline))
+
+    def test_a_null_reference_or_notes_column_clears_only_its_own_fields(self):
+        baseline = vars(self._read({}))
+        cases = (
+            ("CdnTypeUID", {"cdn_type_uid": None, "cdn_type_name": "Unknown"}),
+            ("BidLayerUID", {"layer_uid": None, "layer_visible": True}),
+            ("BidConditionFolderUID", {"folder_uid": None}),
+            ("Notes", {"notes": ""}),
+        )
+        self.assertEqual(
+            (baseline["cdn_type_uid"], baseline["layer_uid"], baseline["folder_uid"]),
+            ("3", "5", "11"),
+        )
+        for column, expected_change in cases:
+            with self.subTest(column=column):
+                actual = vars(self._read({column: None}))
+                self.assertEqual(actual, {**baseline, **expected_change})
+
+
+class PageFlagIsolationTests(unittest.TestCase):
+    def test_each_page_flag_is_true_only_when_its_own_column_is_set(self):
+        flags = (
+            ("FlipX", "flip_x"),
+            ("FlipY", "flip_y"),
+            ("OverlayResized", "overlay_resized"),
+            ("Invert", "invert"),
+            ("Bitonal", "bitonal"),
+        )
+        conn = _db(f"CREATE TABLE BidPages ({BidPageReaderTests._COLUMNS})")
+        for index, (column, _attribute) in enumerate(flags):
+            conn.execute(
+                f"INSERT INTO BidPages (UID, BidUID, {column}) VALUES (?, 1, -1)",
+                (index + 1,),
+            )
+        reader = _SqliteBidReader(conn)
+        pages = reader._parse_bid_pages_for_bid(
+            _SqliteConnectionWrapper(conn), "1", {}, reader._schema_ref
+        )
+        attributes = {attribute for _column, attribute in flags}
+        for index, (_column, own) in enumerate(flags):
+            with self.subTest(attribute=own):
+                page = pages[str(index + 1)]
+                self.assertEqual(
+                    {a for a in attributes if getattr(page, a) is True}, {own}
+                )
+
+
+class BytesAndTypedTextTests(unittest.TestCase):
+    """Access drivers can return text as bytes (latin-1) or as untyped numbers."""
+
+    def test_condition_names_are_decoded_before_the_elevation_is_read(self):
+        conn = _db(f"CREATE TABLE BidConditions ({BidConditionReaderTests._FULL})")
+        _insert(
+            conn,
+            "BidConditions",
+            ("UID", "BidUID", "Name"),
+            [(7, 1, b"Caf\xe9 @T 9' 6\""), (8, 1, None)],
+        )
+        reader = _SqliteBidReader(conn)
+        conditions = reader._parse_bid_conditions_for_bid(
+            _SqliteConnectionWrapper(conn), "1", {}, {}, reader._schema_ref
+        )
+        self.assertEqual(conditions["7"].name, "Caf\xe9 @T 9' 6\"")
+        self.assertEqual(
+            (conditions["7"].z_value, conditions["7"].is_top), (114.0, True)
+        )
+        self.assertEqual(conditions["8"].name, "")
+        self.assertEqual(
+            (conditions["8"].z_value, conditions["8"].is_top), (0.0, False)
+        )
+
+    def test_page_text_columns_are_decoded_from_bytes(self):
+        conn = _db(f"CREATE TABLE BidPages ({BidPageReaderTests._COLUMNS})")
+        _insert(
+            conn,
+            "BidPages",
+            (
+                "UID",
+                "BidUID",
+                "Name",
+                "SheetNo",
+                "ImagePath",
+                "OverlayImagePath",
+                "OverlayRect",
+            ),
+            [
+                (
+                    7,
+                    1,
+                    b"Pl\xe9n",
+                    b"S\xe9-1",
+                    b"C:\\p\xe9.png",
+                    b"C:\\o\xe9.png",
+                    b"1,2,3,4",
+                ),
+                (8, 1, None, None, None, None, None),
+            ],
+        )
+        reader = _SqliteBidReader(conn)
+        pages = reader._parse_bid_pages_for_bid(
+            _SqliteConnectionWrapper(conn), "1", {}, reader._schema_ref
+        )
+        self.assertEqual(
+            (
+                pages["7"].name,
+                pages["7"].sheet_no,
+                pages["7"].image_path,
+                pages["7"].overlay_image_path,
+                pages["7"].overlay_rect,
+            ),
+            (
+                "Pl\xe9n",
+                "S\xe9-1",
+                "C:\\p\xe9.png",
+                "C:\\o\xe9.png",
+                (1.0, 2.0, 3.0, 4.0),
+            ),
+        )
+        self.assertEqual(
+            (pages["8"].name, pages["8"].sheet_no, pages["8"].image_path),
+            ("", "", None),
+        )
+
+    def test_area_layer_and_folder_names_are_decoded_from_bytes(self):
+        conn = _db(
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, Name, GUID)",
+            "CREATE TABLE BidLayers (UID INTEGER, BidUID INTEGER, Name, Show INTEGER)",
+            "CREATE TABLE BidConditionFolders (UID INTEGER, BidUID INTEGER, Name)",
+        )
+        _insert(
+            conn,
+            "BidAreas",
+            ("UID", "BidUID", "Name", "GUID"),
+            [(5, 1, b"Z\xf3n", 4711)],
+        )
+        _insert(
+            conn,
+            "BidLayers",
+            ("UID", "BidUID", "Name", "Show"),
+            [(6, 1, b"L\xe1y", -1), (7, 1, None, 0)],
+        )
+        _insert(
+            conn, "BidConditionFolders", ("UID", "BidUID", "Name"), [(8, 1, b"F\xf6l")]
+        )
+        reader = _SqliteBidReader(conn)
+        wrapper = _SqliteConnectionWrapper(conn)
+        area = reader._parse_bid_areas_for_bid(wrapper, "1", reader._schema_ref)["5"]
+        self.assertEqual((area.name, area.guid), ("Z\xf3n", "4711"))
+        layers = reader._parse_bid_layers_for_bid(wrapper, "1")
+        self.assertEqual((layers["6"].name, layers["7"].name), ("L\xe1y", ""))
+        folders = reader._parse_bid_condition_folders_for_bid(
+            wrapper, "1", reader._schema_ref
+        )
+        self.assertEqual(folders["8"].name, "F\xf6l")
+
+    def test_takeoff_font_names_that_arrive_as_numbers_are_text(self):
+        conn = _db(
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidConditionUID INTEGER, "
+            "BidPageUID INTEGER, Position BLOB, FontName, NameFontName)"
+        )
+        conn.execute(
+            "INSERT INTO BidTakeoffs VALUES (4, 1, 10, 20, ?, 123, 456)",
+            (b"1;2;3;4\n",),
+        )
+        reader = _SqliteBidReader(conn)
+        (takeoff,), _extras = reader._parse_bid_takeoffs_for_bid(
+            _SqliteConnectionWrapper(conn), "1", reader._schema_ref
+        )
+        self.assertEqual(
+            (takeoff.dimension_font_name, takeoff.name_font_name), ("123", "456")
+        )
+
+
+class ElevationRecoveryTests(unittest.TestCase):
+    def _conditions(self, rows):
+        conn = _db(f"CREATE TABLE BidConditions ({BidConditionReaderTests._FULL})")
+        _insert(
+            conn,
+            "BidConditions",
+            (
+                "UID",
+                "BidUID",
+                "Name",
+                "Type",
+                "Thickness",
+                "BidConditionFolderUID",
+                "RefNo",
+            ),
+            rows,
+        )
+        reader = _SqliteBidReader(conn)
+        return reader._parse_bid_conditions_for_bid(
+            _SqliteConnectionWrapper(conn), "1", {}, {}, reader._schema_ref
+        )
+
+    def test_the_warning_names_the_condition_its_text_and_the_bid_exactly(self):
+        with self.assertLogs("test.bid_reader", level="WARNING") as logged:
+            self._conditions([(42, 1, 'Broken @B 1/0"', 2, 1.5, 9, 3)])
+        self.assertEqual(len(logged.records), 1)
+        record = logged.records[0]
+        self.assertEqual(
+            (record.name, record.levelname), ("test.bid_reader", "WARNING")
+        )
+        with self.assertRaises(ValueError) as unreadable:
+            extract_z_value_from_name('Broken @B 1/0"')
+        self.assertEqual(
+            record.getMessage(),
+            "Ignoring unreadable elevation in condition 42 ('Broken @B 1/0\"') "
+            f"of bid 1: {unreadable.exception}",
+        )
+
+    def test_an_unreadable_elevation_keeps_every_other_field_of_that_condition(self):
+        conditions = self._conditions(
+            [
+                (41, 1, 'Broken @T 1/0"', 3, 2.5, 9, 77),
+                (42, 1, "Fine @T 9' 6\"", 3, 2.5, 9, 77),
+            ]
+        )
+        broken, fine = conditions["41"], conditions["42"]
+        self.assertEqual((broken.z_value, broken.is_top), (0.0, False))
+        self.assertEqual((fine.z_value, fine.is_top), (114.0, True))
+        for attribute in ("condition_type", "thickness", "folder_uid", "ref_no"):
+            self.assertEqual(
+                getattr(broken, attribute), getattr(fine, attribute), attribute
+            )
+        self.assertEqual(
+            (broken.condition_type, broken.thickness, broken.folder_uid, broken.ref_no),
+            (3, 2.5, "9", 77),
+        )
+
+    def test_names_without_a_readable_elevation_are_not_reported(self):
+        with self.assertNoLogs("test.bid_reader", level="WARNING"):
+            conditions = self._conditions(
+                [
+                    (1, 1, "Plain", 1, 0, None, 0),
+                    (2, 1, "Marker only @", 1, 0, None, 0),
+                    (3, 1, 'Legacy @ 12"', 1, 0, None, 0),
+                ]
+            )
+        self.assertEqual(
+            [(c.z_value, c.is_top) for c in conditions.values()],
+            [(0.0, False), (0.0, False), (12.0, False)],
+        )
+
+    def test_an_error_that_is_not_an_unreadable_elevation_is_not_swallowed(self):
+        from unittest import mock
+
+        from ost_visualizer.infrastructure.mdb.components import bid_data_reader
+
+        with mock.patch.object(
+            bid_data_reader,
+            "extract_z_value_from_name",
+            side_effect=RuntimeError("parser bug"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "parser bug"):
+                self._conditions([(1, 1, "Wall @T 9' 6\"", 1, 0, None, 0)])
+
+
+class TakeoffValueEdgeTests(unittest.TestCase):
+    def _read(self, rows):
+        conn = _db(f"CREATE TABLE BidTakeoffs ({BidTakeoffReaderTests._COLUMNS})")
+        _insert(
+            conn,
+            "BidTakeoffs",
+            (
+                "UID",
+                "BidUID",
+                "BidConditionUID",
+                "BidPageUID",
+                "BidAreaUID",
+                "Position",
+                "Rotation",
+                "Curve",
+                "ParentUID",
+            ),
+            rows,
+        )
+        reader = _SqliteBidReader(conn)
+        takeoffs, _extras = reader._parse_bid_takeoffs_for_bid(
+            _SqliteConnectionWrapper(conn), "1", reader._schema_ref
+        )
+        return {t.uid: t for t in takeoffs}
+
+    def test_explicit_zero_and_null_markers_are_roots_without_area_or_curve_loss(self):
+        pos = b"1;2;3;4\n"
+        by_uid = self._read(
+            [
+                (1, 1, 10, 20, 0, pos, 0, 0, 0),
+                (2, 1, 10, 20, None, pos, None, None, None),
+                (3, 1, 10, 20, 5, pos, -90.5, 3, 2),
+            ]
+        )
+        explicit, null, hole = by_uid["1"], by_uid["2"], by_uid["3"]
+        self.assertEqual(
+            (explicit.area_uid, explicit.rotation, explicit.curve, explicit.parent_uid),
+            ("0", 0.0, 0, "0"),
+        )
+        self.assertEqual(
+            (null.area_uid, null.rotation, null.curve, null.parent_uid),
+            ("0", 0.0, -1, "0"),
+        )
+        self.assertEqual(
+            (hole.area_uid, hole.rotation, hole.curve, hole.parent_uid),
+            ("5", -90.5, 3, "2"),
+        )
+        self.assertEqual(
+            (explicit.is_hole, null.is_hole, hole.is_hole), (False, False, True)
+        )
+
+    def test_position_text_and_bytes_decode_to_the_same_coordinates(self):
+        by_uid = self._read(
+            [
+                (1, 1, 10, 20, 0, b"1;2;3;4;5;6\r\n", 0, -1, 0),
+                (2, 1, 10, 20, 0, "7.5;8;9;10\n", 0, -1, 0),
+                (3, 1, 10, 20, 0, None, 0, -1, 0),
+                (4, 1, 10, 20, 0, b"", 0, -1, 0),
+            ]
+        )
+        self.assertEqual(by_uid["1"].position, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        self.assertEqual(by_uid["2"].position, [7.5, 8.0, 9.0, 10.0])
+        self.assertEqual((by_uid["3"].position, by_uid["4"].position), ([], []))
+
+    def test_a_non_finite_rotation_violates_the_takeoff_contract_with_its_uid(self):
+        with self.assertRaises(ValueError) as caught:
+            self._read([(9, 1, 10, 20, 0, b"1;2;3;4\n", "nan", -1, 0)])
+        self.assertEqual(
+            str(caught.exception),
+            "BidTakeoffs.UID=9 does not satisfy the Takeoff domain contract",
+        )
+
+    def test_extra_columns_follow_the_sorted_select_order(self):
+        conn = _db(
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidConditionUID INTEGER, "
+            "BidPageUID INTEGER, Position BLOB, Zed TEXT, Alpha TEXT, Mid TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO BidTakeoffs VALUES (4, 1, 10, 20, ?, 'z', 'a', 'm')",
+            (b"1;2;3;4\n",),
+        )
+        reader = _SqliteBidReader(conn)
+        reader._schema_ref = _ReverseColumnSchema(conn)
+        statements = []
+        conn.set_trace_callback(statements.append)
+        _takeoffs, extras = reader._parse_bid_takeoffs_for_bid(
+            _SqliteConnectionWrapper(conn), "1", reader._schema_ref
+        )
+        self.assertEqual(list(extras["4"]), ["Alpha", "Mid", "Zed"])
+        select = [s for s in statements if s.startswith("SELECT")][0]
+        self.assertEqual(
+            select,
+            "SELECT [Alpha], [BidConditionUID], [BidPageUID], [BidUID], [Mid], "
+            "[Position], [UID], [Zed] FROM [BidTakeoffs] WHERE [BidUID] = '1'",
+        )
+
+
+class ExactReaderContractTests(unittest.TestCase):
+    def test_raw_select_lists_columns_in_sorted_order_whatever_the_schema_reports(self):
+        conn = _db("CREATE TABLE T (Zed TEXT, UID INTEGER, Alpha TEXT)")
+        reader = _SqliteBidReader(conn)
+        self.assertEqual(
+            reader._select_all_columns(_ReverseColumnSchema(conn), "T"),
+            "[Alpha], [UID], [Zed]",
+        )
+
+    def test_statistics_issue_one_exact_count_statement_per_table(self):
+        conn = _db(
+            "CREATE TABLE BidProjects (UID INTEGER)",
+            "CREATE TABLE Bids (UID INTEGER)",
+            "CREATE TABLE BidTakeoffs (UID INTEGER)",
+            "CREATE TABLE BidConditions (UID INTEGER)",
+            "CREATE TABLE BidPages (UID INTEGER)",
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        _SqliteBidReader(conn).get_database_statistics("x.mdb")
+        self.assertEqual(
+            [s for s in statements if s.startswith("SELECT COUNT")],
+            [
+                "SELECT COUNT(*) FROM [BidProjects]",
+                "SELECT COUNT(*) FROM [Bids]",
+                "SELECT COUNT(*) FROM [BidTakeoffs]",
+                "SELECT COUNT(*) FROM [BidConditions]",
+                "SELECT COUNT(*) FROM [BidPages]",
+            ],
+        )
+
+    def test_global_raw_tables_are_ordered_by_uid_even_when_sequences_tie(self):
+        conn = _db(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Sequence INTEGER)",
+            "CREATE TABLE Employees (Name TEXT, Sequence INTEGER)",
+        )
+        _insert(
+            conn,
+            "JobStatuses",
+            ("UID", "Name", "Sequence"),
+            [(7, "d", None), (3, "a", 0), (5, "c", None), (4, "b", 0)],
+        )
+        _insert(conn, "Employees", ("Name", "Sequence"), [("y", 2), ("x", 9), ("z", 1)])
+        raw = _SqliteBidReader(conn).get_raw_bid_data("x.mdb", "1")
+        self.assertEqual(
+            [row["UID"] for row in raw.global_tables["JobStatuses"]],
+            ["3", "4", "5", "7"],
+        )
+        self.assertEqual(
+            [row["Name"] for row in raw.global_tables["Employees"]], ["y", "x", "z"]
+        )
+
+    def test_takeoff_ownership_errors_state_their_full_message(self):
+        takeoffs = [
+            Takeoff(uid="7", condition_uid="5", page_uid="3"),
+            Takeoff(uid="8", condition_uid="5", page_uid="4", parent_uid="7"),
+        ]
+        reader = _owner_validation_reader(takeoffs)
+        reader._parse_bid_pages_for_bid = lambda *_: {
+            uid: SimpleNamespace(uid=uid) for uid in ("3", "4")
+        }
+        with self.assertRaises(IncoherentBidOwnedScopeError) as caught:
+            reader.get_bid_data("malformed.mdb", "1")
+        self.assertEqual(
+            str(caught.exception),
+            "A Takeoff and its parent must belong to the same Page.",
+        )
+
+    def test_a_takeoff_parent_cycle_message_is_exact(self):
+        conn = BidLoadAssemblyTests()._bid_db()
+        conn.execute("UPDATE BidTakeoffs SET ParentUID = 61 WHERE UID = 60")
+        with self.assertRaises(CyclicBidOwnedReferenceError) as caught:
+            _SqliteFullReader(conn).get_bid_data("x.mdb", "1")
+        self.assertEqual(
+            str(caught.exception),
+            "BidTakeoffs.UID=60 participates in a ParentUID cycle.",
+        )
+
+    def test_a_takeoff_parent_cycle_is_reported_by_its_numerically_smallest_uid(self):
+        conn = BidLoadAssemblyTests()._bid_db()
+        conn.execute("UPDATE BidTakeoffs SET UID = 9 WHERE UID = 60")
+        conn.execute("UPDATE BidTakeoffs SET UID = 10, ParentUID = 9 WHERE UID = 61")
+        conn.execute("UPDATE BidTakeoffs SET ParentUID = 10 WHERE UID = 9")
+        with self.assertRaises(CyclicBidOwnedReferenceError) as caught:
+            _SqliteFullReader(conn).get_bid_data("x.mdb", "1")
+        self.assertEqual(
+            str(caught.exception),
+            "BidTakeoffs.UID=9 participates in a ParentUID cycle.",
+        )
+
+    def test_delete_content_scan_failures_propagate_when_the_policy_records_them(self):
+        conn = _db(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+        )
+        with self.assertRaises(pyodbc.Error):
+            _SqliteFullReader(
+                conn, strict=True, fail_tables=("BidPages",)
+            ).get_pages_with_delete_content("x.mdb", "1")
+        with self.assertLogs("test.full_reader", level="WARNING") as logged:
+            result = _SqliteFullReader(
+                conn, fail_tables=("BidPages",)
+            ).get_pages_with_delete_content("x.mdb", "1")
+        self.assertIsNone(result)
+        self.assertEqual(
+            logged.records[0].getMessage(),
+            "Failed to load pages with delete-sensitive content for bid 1",
+        )
+
+    def test_diagnostic_warnings_state_the_bid_or_page_they_describe(self):
+        conn = _db(
+            "CREATE TABLE BidSettings (UID INTEGER, BidUID INTEGER, BidPageSelectedUID INTEGER)"
+        )
+        failing = _FailingTableConnection(conn, ("BidSettings",))
+        reader = _SqliteFullReader(conn)
+        with self.assertLogs("test.full_reader", level="WARNING") as logged:
+            self.assertIsNone(reader._parse_bid_selected_page(failing, "1"))
+        self.assertEqual(
+            logged.records[0].getMessage(),
+            "Could not read the saved page for bid 1; treating the bid as "
+            "having no saved page: "
+            f"{pyodbc.Error('HY000', 'injected read failure')}",
+        )
+        conn = _db(f"CREATE TABLE BidPages ({BidPageReaderTests._COLUMNS})")
+        _insert(conn, "BidPages", ("UID", "BidUID", "OverlayRect"), [(7, 1, "bad")])
+        paged = _SqliteBidReader(conn)
+        with self.assertLogs("test.bid_reader", level="WARNING") as logged:
+            paged._parse_bid_pages_for_bid(
+                _SqliteConnectionWrapper(conn), "1", {}, paged._schema_ref
+            )
+        with self.assertRaises(ValueError) as malformed:
+            parse_overlay_rect_storage("bad")
+        self.assertEqual(
+            logged.records[0].getMessage(),
+            f"Ignoring invalid OverlayRect for page 7: {malformed.exception}",
+        )
+
+
+class _RaisingTableCursor(_SqliteCursorWrapper):
+    """Raises the given error for every data read; schema lookups are untouched."""
+
+    def __init__(self, connection, error):
+        super().__init__(connection)
+        self._error = error
+
+    def execute(self, query, *params):
+        if "FROM [" in query:
+            raise self._error
+        return super().execute(query, *params)
+
+
+class _RaisingTableConnection(_SqliteConnectionWrapper):
+    def __init__(self, connection, error):
+        super().__init__(connection)
+        self._error = error
+
+    def cursor(self):
+        return _RaisingTableCursor(self._connection, self._error)
+
+
+class _TableCheckRecordingSchema(_SqliteSchema):
+    """Records optional_table_missing calls, as the Access inspector notes them."""
+
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.table_checks = []
+
+    def optional_table_missing(self, table_name):
+        self.table_checks.append(table_name)
+        return super().optional_table_missing(table_name)
+
+
+class AnnotationNameDecodingTests(unittest.TestCase):
+    """BidTexts/BidCallOuts Name blobs are latin-1 in every raw read path."""
+
+    def test_raw_page_sections_decode_annotation_names_as_latin1(self):
+        conn = _db(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "CREATE TABLE BidTexts (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER, Name BLOB)",
+            "CREATE TABLE BidCallOuts (UID INTEGER, BidPageUID INTEGER, Name BLOB)",
+        )
+        _insert(conn, "BidPages", ("UID", "BidUID"), [(10, 1)])
+        _insert(
+            conn,
+            "BidTexts",
+            ("UID", "BidUID", "BidPageUID", "Name"),
+            [(1, 1, 10, b"caf\xe9")],
+        )
+        _insert(
+            conn, "BidCallOuts", ("UID", "BidPageUID", "Name"), [(2, 10, b"na\xefve")]
+        )
+        raw = _SqliteBidReader(conn).get_raw_bid_data("x.mdb", "1")
+        # BidTexts is read by its own BidUID, BidCallOuts through its page.
+        self.assertEqual(raw.page_tables["BidTexts"][0]["Name"], "caf\xe9")
+        self.assertEqual(raw.page_tables["BidCallOuts"][0]["Name"], "na\xefve")
+
+    def test_single_filtered_and_unfiltered_reads_decode_annotation_names_as_latin1(
+        self,
+    ):
+        conn = _db("CREATE TABLE BidTexts (UID INTEGER, BidUID INTEGER, Name BLOB)")
+        _insert(conn, "BidTexts", ("UID", "BidUID", "Name"), [(1, 1, b"caf\xe9")])
+        reader = _SqliteBidReader(conn)
+        wrapper = _SqliteConnectionWrapper(conn)
+        self.assertEqual(
+            reader._select_all_single(wrapper, "BidTexts", "UID", "1")["Name"],
+            "caf\xe9",
+        )
+        self.assertEqual(
+            reader._select_all_filtered(wrapper, "BidTexts", "BidUID", "1")[0]["Name"],
+            "caf\xe9",
+        )
+        self.assertEqual(
+            reader._select_all_unfiltered(wrapper, "BidTexts")[0]["Name"], "caf\xe9"
+        )
+
+    def test_other_blob_columns_keep_the_default_text_encoding(self):
+        conn = _db(
+            "CREATE TABLE Other (UID INTEGER, BidUID INTEGER, Name BLOB)",
+        )
+        _insert(
+            conn,
+            "Other",
+            ("UID", "BidUID", "Name"),
+            [(1, 1, "caf\xe9".encode("utf-8"))],
+        )
+        reader = _SqliteBidReader(conn)
+        wrapper = _SqliteConnectionWrapper(conn)
+        self.assertEqual(
+            reader._select_all_filtered(wrapper, "Other", "BidUID", "1")[0]["Name"],
+            "caf\xe9",
+        )
+
+
+class RawReadErrorScopeTests(unittest.TestCase):
+    def _reader_and_table(self):
+        conn = _db("CREATE TABLE T (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)")
+        return _SqliteBidReader(conn), conn
+
+    def test_only_a_pyodbc_error_is_a_recoverable_raw_read_failure(self):
+        reader, conn = self._reader_and_table()
+        bug = _RaisingTableConnection(conn, RuntimeError("driver bug"))
+        calls = {
+            "single": lambda c: reader._select_all_single(c, "T", "UID", "1"),
+            "filtered": lambda c: reader._select_all_filtered(c, "T", "BidUID", "1"),
+            "by_bid_or_page": lambda c: reader._select_all_by_bid_or_page(
+                c, "T", "1", ["1"]
+            ),
+            "unfiltered": lambda c: reader._select_all_unfiltered(c, "T"),
+        }
+        recovered = _RaisingTableConnection(conn, pyodbc.Error("HY000", "read"))
+        empty = {"single": {}}
+        for name, call in calls.items():
+            with self.subTest(helper=name):
+                with self.assertRaisesRegex(RuntimeError, "driver bug"):
+                    call(bug)
+                self.assertEqual(call(recovered), empty.get(name, []))
+
+    def test_only_a_value_error_from_the_overlay_rect_parser_is_recovered(self):
+        from unittest import mock
+
+        from ost_visualizer.infrastructure.mdb.components import bid_data_reader
+
+        conn = _db(f"CREATE TABLE BidPages ({BidPageReaderTests._COLUMNS})")
+        _insert(conn, "BidPages", ("UID", "BidUID", "OverlayRect"), [(7, 1, "1,2,3,4")])
+        reader = _SqliteBidReader(conn)
+        with mock.patch.object(
+            bid_data_reader,
+            "parse_overlay_rect_storage",
+            side_effect=RuntimeError("rect bug"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "rect bug"):
+                reader._parse_bid_pages_for_bid(
+                    _SqliteConnectionWrapper(conn), "1", {}, reader._schema_ref
+                )
+
+
+class TakeoffExtrasContentTests(unittest.TestCase):
+    def test_extras_hold_every_untyped_column_and_the_fonts_are_still_typed(self):
+        conn = _db(
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, BidConditionUID INTEGER, "
+            "BidPageUID INTEGER, Position BLOB, FontName TEXT, FontSize INTEGER, Extra TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO BidTakeoffs VALUES (4, 1, 10, 20, ?, 'Arial', -12, 'e')",
+            (b"1;2;3;4\n",),
+        )
+        reader = _SqliteBidReader(conn)
+        (takeoff,), extras = reader._parse_bid_takeoffs_for_bid(
+            _SqliteConnectionWrapper(conn), "1", reader._schema_ref
+        )
+        self.assertEqual(
+            extras["4"], {"Extra": "e", "FontName": "Arial", "FontSize": -12}
+        )
+        self.assertEqual(
+            (takeoff.dimension_font_name, takeoff.dimension_font_size), ("Arial", 12)
+        )
+
+
+class PageAreaSelectionScopeTests(unittest.TestCase):
+    def test_selections_are_keyed_only_by_the_pages_that_were_loaded(self):
+        conn = _db(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "CREATE TABLE BidPageSettings (UID INTEGER, BidPageUID INTEGER, "
+            "BidAreaUID INTEGER, BidAreaSelected INTEGER)",
+        )
+        _insert(conn, "BidPages", ("UID", "BidUID"), [(1, 1), (2, 1)])
+        _insert(
+            conn,
+            "BidPageSettings",
+            ("UID", "BidPageUID", "BidAreaUID", "BidAreaSelected"),
+            [(1, 1, 5, 1), (2, 2, 6, 1)],
+        )
+        reader = _SqliteBidReader(conn)
+        selections = reader._parse_page_area_selections_for_bid(
+            _SqliteConnectionWrapper(conn), "1", {"1": object()}, reader._schema_ref
+        )
+        self.assertEqual(selections, {"1": "5"})
+
+    def test_a_bid_without_pages_never_touches_the_page_settings_table(self):
+        conn = _db("CREATE TABLE BidPageSettings (UID INTEGER)")
+        reader = _SqliteBidReader(conn)
+        reader._schema_ref = _TableCheckRecordingSchema(conn)
+        selections = reader._parse_page_area_selections_for_bid(
+            _SqliteConnectionWrapper(conn), "1", {}, reader._schema_ref
+        )
+        self.assertEqual(selections, {})
+        self.assertEqual(reader._schema_ref.table_checks, [])
+
+
+class OptionalTableCheckOrderTests(unittest.TestCase):
+    def test_every_raw_helper_asks_whether_the_optional_table_is_missing(self):
+        conn = _db(
+            "CREATE TABLE Present (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)"
+        )
+        calls = (
+            ("single", lambda r, c: r._select_all_single(c, "Missing", "UID", "1")),
+            (
+                "filtered",
+                lambda r, c: r._select_all_filtered(c, "Missing", "BidUID", "1"),
+            ),
+            (
+                "by_bid_or_page",
+                lambda r, c: r._select_all_by_bid_or_page(c, "Missing", "1", ["1"]),
+            ),
+            ("unfiltered", lambda r, c: r._select_all_unfiltered(c, "Missing")),
+        )
+        for name, call in calls:
+            with self.subTest(helper=name):
+                reader = _SqliteBidReader(conn)
+                reader._schema_ref = _TableCheckRecordingSchema(conn)
+                call(reader, _SqliteConnectionWrapper(conn))
+                self.assertIn("Missing", reader._schema_ref.table_checks)
+
+    def test_the_delete_content_scan_asks_about_the_page_table_before_its_columns(self):
+        conn = _db("CREATE TABLE Present (UID INTEGER)")
+        reader = _SqliteBidReader(conn)
+        reader._schema_ref = _TableCheckRecordingSchema(conn)
+        self.assertEqual(
+            reader._parse_pages_with_delete_content(
+                _SqliteConnectionWrapper(conn), "1"
+            ),
+            set(),
+        )
+        self.assertEqual(reader._schema_ref.table_checks, ["BidPages"])
+
+
+class DeleteContentScanScopeTests(unittest.TestCase):
+    def test_a_bid_without_pages_scans_no_content_table(self):
+        conn = _db(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "CREATE TABLE BidTexts (UID INTEGER, BidPageUID INTEGER)",
+        )
+        _insert(conn, "BidTexts", ("UID", "BidPageUID"), [(1, 99)])
+        reader = _SqliteFullReader(conn, strict=True, fail_tables=("BidTexts",))
+        self.assertEqual(reader.get_pages_with_delete_content("x.mdb", "1"), set())
+
+    def test_every_content_table_is_checked_for_existence_before_its_columns(self):
+        conn = _db("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        _insert(conn, "BidPages", ("UID", "BidUID"), [(10, 1)])
+        reader = _SqliteBidReader(conn)
+        reader._schema_ref = _TableCheckRecordingSchema(conn)
+        self.assertEqual(
+            reader._parse_pages_with_delete_content(
+                _SqliteConnectionWrapper(conn), "1"
+            ),
+            set(),
+        )
+        self.assertEqual(
+            reader._schema_ref.table_checks,
+            ["BidPages", *PAGE_DELETE_CONFIRMATION_TABLES],
+        )
+
+    def test_an_interrupt_during_the_scan_is_not_treated_as_a_read_failure(self):
+        class Interrupted(_SqliteFullReader):
+            policy_calls = 0
+
+            def _parse_pages_with_delete_content(self, _connection, _bid_uid):
+                raise KeyboardInterrupt
+
+            def _record_caught_read_error(self, _exc, _file_path=None):
+                type(self).policy_calls += 1
+                return False
+
+        conn = _db("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        with self.assertRaises(KeyboardInterrupt):
+            Interrupted(conn).get_pages_with_delete_content("x.mdb", "1")
+        self.assertEqual(Interrupted.policy_calls, 0)

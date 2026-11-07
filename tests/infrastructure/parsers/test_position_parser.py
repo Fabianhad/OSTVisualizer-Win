@@ -410,5 +410,369 @@ class MixedUnitAndCacheTests(unittest.TestCase):
         self.assertEqual((info.hits, info.misses), (1, 1))
 
 
+# Every character str.split() and the regex \s treat as whitespace. They are written as
+# \u escapes, never as raw characters, so the source shows what is being tested.
+# U+200B (zero width space) is deliberately not in this set.
+_UNICODE_SEPARATORS = {
+    "ascii space": " ",
+    "no-break space": "\u00a0",
+    "narrow no-break space": "\u202f",
+    "thin space": "\u2009",
+    "figure space": "\u2007",
+    "em space": "\u2003",
+    "ideographic space": "\u3000",
+    "tab": "\t",
+    "vertical tab": "\x0b",
+    "line feed": "\n",
+    "next line": "\x85",
+    "two mixed": "\u00a0\u202f",
+}
+
+
+class UnicodeWhitespaceBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_every_unicode_whitespace_separates_inch_fractions_in_both_entry_points(
+        self,
+    ):
+        plain_metric = convert_elevation_in_name('Wall @B 6 1/2"', True)
+        plain_imperial = convert_elevation_in_name('Wall @B 6 1/2"', False)
+        self.assertEqual(plain_metric, "Wall @B 16.51 cm")
+        self.assertEqual(plain_imperial, 'Wall @B 6 1/2"')
+        for label, sep in _UNICODE_SEPARATORS.items():
+            with self.subTest(separator=label):
+                self.assertEqual(
+                    extract_z_value_from_name(f'Wall @B 6{sep}1/2"'), (6.5, False)
+                )
+                self.assertEqual(
+                    extract_z_value_from_name(f'Wall @T -6{sep}1/2"'), (-6.5, True)
+                )
+                self.assertEqual(
+                    extract_z_value_from_name(f"Slab @T 12'{sep}6{sep}1/2\""),
+                    (150.5, True),
+                )
+                self.assertEqual(
+                    extract_z_value_from_name(f"Slab @T 12'{sep}6\""), (150.0, True)
+                )
+                self.assertEqual(
+                    convert_elevation_in_name(f'Wall @B 6{sep}1/2"', True),
+                    plain_metric,
+                )
+                self.assertEqual(
+                    convert_elevation_in_name(f'Wall @B 6{sep}1/2"', False),
+                    plain_imperial,
+                )
+
+    def test_a_run_of_mixed_whitespace_is_one_separator(self):
+        mixed = " \u00a0\t\u202f "
+        self.assertEqual(
+            extract_z_value_from_name(f"Slab @T 12'{mixed}6{mixed}1/2\""),
+            (150.5, True),
+        )
+        self.assertEqual(
+            position_parser._parse_fractional_inches_text(f"-{mixed}3{mixed}3/4"), -3.75
+        )
+
+    def test_whitespace_around_the_fraction_bar_is_not_an_elevation(self):
+        # The elevation grammar needs digits/digits; no whitespace flavour may bridge it,
+        # and the converter must then leave the name alone instead of guessing.
+        for label, sep in _UNICODE_SEPARATORS.items():
+            for text in (f'6 1{sep}/2"', f'6 1/{sep}2"'):
+                with self.subTest(separator=label, text=text):
+                    name = "Wall @B " + text
+                    self.assertEqual(extract_z_value_from_name(name), (0.0, False))
+                    self.assertEqual(convert_elevation_in_name(name, True), name)
+                    self.assertEqual(convert_elevation_in_name(name, False), name)
+
+    def test_a_zero_width_space_is_not_whitespace(self):
+        zwsp = "\u200b"
+        for text in (f'6{zwsp}1/2"', f"12'{zwsp}6\""):
+            with self.subTest(text=text):
+                name = "Wall @B " + text
+                self.assertEqual(extract_z_value_from_name(name), (0.0, False))
+                self.assertEqual(convert_elevation_in_name(name, True), name)
+
+    def test_whitespace_around_the_whole_value_is_ignored(self):
+        for label, sep in _UNICODE_SEPARATORS.items():
+            with self.subTest(separator=label):
+                self.assertEqual(
+                    extract_z_value_from_name(f'Wall @B{sep}6 1/2"{sep}'), (6.5, False)
+                )
+
+    def test_zero_denominators_stay_value_errors_with_any_whitespace_flavour(self):
+        for label, sep in _UNICODE_SEPARATORS.items():
+            for text in (f'6{sep}1/0"', f"12'{sep}6{sep}1/0\"", f'-6{sep}0/0"'):
+                with self.subTest(separator=label, text=text):
+                    with self.assertRaises(ValueError):
+                        extract_z_value_from_name("Wall @B " + text)
+                    with self.assertRaises(ValueError):
+                        convert_elevation_in_name("Wall @B " + text, True)
+                    with self.assertRaises(ValueError):
+                        convert_elevation_in_name("Wall @B " + text, False)
+
+
+class ElevationValueBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_a_dash_between_feet_and_inches_is_a_separator_not_a_sign(self):
+        table = (
+            ("Wall @T 12'-6\"", (150.0, True)),
+            ("Wall @T 12' - 6\"", (150.0, True)),
+            ("Wall @T 12'6\"", (150.0, True)),
+            ("Wall @T -12'-6\"", (-150.0, True)),
+            ("Wall @B 12'-6 1/2\"", (150.5, False)),
+        )
+        for name, expected in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), expected)
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T 12'-6\"", False), "Wall @T 12' 6\""
+        )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T 12'-6\"", True), "Wall @T 381 cm"
+        )
+
+    def test_zero_and_negative_values_keep_their_top_or_bottom_flag(self):
+        table = (
+            ('Wall @T 0"', (0.0, True)),
+            ('Wall @B 0"', (0.0, False)),
+            ("Wall @T 0' 0\"", (0.0, True)),
+            ("Wall @T 0'x", (0.0, True)),
+            ("Wall @T 0 cm", (0.0, True)),
+            ('Wall @B 0/4"', (0.0, False)),
+            ('Wall @T -1/2"', (-0.5, True)),
+            ('Wall @B - 6"', (-6.0, False)),
+            ("Wall @T 5' 6 0/4\"", (66.0, True)),
+        )
+        for name, expected in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), expected)
+        self.assertEqual(
+            convert_elevation_in_name('Wall @B 0/4"', True), "Wall @B 0 cm"
+        )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T 0' 0\"", True), "Wall @T 0 cm"
+        )
+        self.assertEqual(
+            convert_elevation_in_name('Wall @B -1/2"', True), "Wall @B -1.27 cm"
+        )
+
+    def test_a_zero_denominator_after_feet_without_whole_inches_is_not_an_elevation(
+        self,
+    ):
+        # Feet plus a bare fraction is outside the grammar, so the zero denominator is
+        # never reached: no exception, no elevation, name unchanged.
+        for name in ("Wall @T 5' 1/0\"", "Wall @T 5' 1/2\""):
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (0.0, False))
+                self.assertEqual(convert_elevation_in_name(name, True), name)
+                self.assertEqual(convert_elevation_in_name(name, False), name)
+
+    def test_the_zero_denominator_error_names_the_offending_fraction(self):
+        for name, fragment in (
+            ('Wall @B 1/0"', "1/0"),
+            ('Wall @B 6 1/00"', "1/00"),
+            ("Wall @T 12' 6 3/0\"", "3/0"),
+            ('Wall @B 0/0"', "0/0"),
+        ):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    ValueError, rf"^zero denominator in fraction {fragment}$"
+                ):
+                    extract_z_value_from_name(name)
+                with self.assertRaisesRegex(
+                    ValueError, rf"^zero denominator in fraction {fragment}$"
+                ):
+                    convert_elevation_in_name(name, True)
+
+    def test_a_denominator_that_is_zero_by_value_is_refused(self):
+        for text in ("1/0.0", "1/-0", "1/0e0", "3 1/0.0"):
+            with self.subTest(text=text):
+                with self.assertRaises(ValueError) as caught:
+                    position_parser._parse_fractional_inches_text(text)
+                self.assertNotIsInstance(caught.exception, ZeroDivisionError)
+                self.assertIn("zero denominator", str(caught.exception))
+
+    def test_only_a_zero_denominator_is_refused_not_a_negative_one(self):
+        # Helper-level characterisation: the elevation grammar never yields a signed
+        # denominator, but "zero" must mean the value 0, not "non-positive".
+        self.assertEqual(position_parser._parse_fractional_inches_text("1/-1"), -1.0)
+        self.assertEqual(position_parser._parse_fractional_inches_text("-1/-4"), 0.25)
+
+    def test_a_very_large_denominator_gives_a_tiny_value_not_zero_or_an_error(self):
+        self.assertEqual(
+            extract_z_value_from_name('Wall @B 1/99999999999999999999"'), (1e-20, False)
+        )
+        self.assertEqual(
+            position_parser._parse_fractional_inches_text("1/1000000"), 1e-06
+        )
+
+    def test_very_large_values_are_exact_or_float_rounded_not_rejected(self):
+        self.assertEqual(
+            extract_z_value_from_name("Wall @T 1000000000' 6\""),
+            (12000000006.0, True),
+        )
+        self.assertEqual(
+            extract_z_value_from_name("Wall @T -1000000000' 6\""),
+            (-12000000006.0, True),
+        )
+        self.assertEqual(
+            extract_z_value_from_name("Wall @T 99999999999999999999' 0\""),
+            (1.2e21, True),
+        )
+        self.assertEqual(
+            extract_z_value_from_name('Wall @B 99999999999999999999/1"'), (1e20, False)
+        )
+
+    def test_the_last_elevation_marker_wins_and_a_legacy_bare_marker_is_a_bottom(self):
+        table = (
+            ("Wall @T 5' 6\" @B 3' 0\"", (36.0, False)),
+            ("Wall @B 3' 0\" @T 5' 6\"", (66.0, True)),
+            ('A @T 1/2" @T 3/4"', (0.75, True)),
+            ('Wall @ 6"', (6.0, False)),
+            ('Wall @ 6 1/2"', (6.5, False)),
+        )
+        for name, expected in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), expected)
+        self.assertEqual(
+            convert_elevation_in_name('Wall @ 6"', True), "Wall @B 15.24 cm"
+        )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T 5' 6\" @B 3' 0\"", True),
+            "Wall @T 5' 6\" @B 91.44 cm",
+        )
+
+    def test_decimal_inches_and_nested_fractions_are_outside_the_grammar(self):
+        for name in ('Wall @B 6.5"', 'Wall @T 6 1/2/3"', 'Wall @B 6 1/2/3"'):
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (0.0, False))
+                self.assertEqual(convert_elevation_in_name(name, True), name)
+
+
+class MetricSpellingBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_metric_units_are_case_insensitive_in_every_entry_point(self):
+        table = (
+            ("Wall @T 3 M", 300.0, True),
+            ("Wall @B 30 CM", 30.0, False),
+            ("Wall @T 1M 20CM", 120.0, True),
+            ("Wall @B 3 Meters", 300.0, False),
+            ("Wall @T 2 CENTIMETERS", 2.0, True),
+        )
+        for name, centimetres, is_top in table:
+            with self.subTest(name=name):
+                value, top = extract_z_value_from_name(name)
+                self.assertAlmostEqual(value, centimetres / 2.54, places=9)
+                self.assertIs(top, is_top)
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T 3 M", True), "Wall @T 300 cm"
+        )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @B 3 Meters", False), "Wall @B 9' 10 1/8\""
+        )
+        for text, expected in (("1M 20CM", 120.0), ("3 METERS", 300.0), ("5 Cm", 5.0)):
+            with self.subTest(helper=text):
+                self.assertEqual(
+                    position_parser._parse_metric_elevation(text), expected
+                )
+
+    def test_decimal_metres_and_decimal_centimetres_in_a_compound_value(self):
+        table = (
+            ("Wall @T 1.5m 20cm", 170.0),
+            ("Wall @T 1,5 m 20 cm", 170.0),
+            ("Wall @T 1m 2.5cm", 102.5),
+            ("Wall @T 1m and 2,5 cm", 102.5),
+        )
+        for name, centimetres in table:
+            with self.subTest(name=name):
+                self.assertAlmostEqual(
+                    extract_z_value_from_name(name)[0], centimetres / 2.54, places=9
+                )
+        self.assertEqual(position_parser._parse_metric_elevation("1.5m 20cm"), 170.0)
+        self.assertEqual(position_parser._parse_metric_elevation("1m 2.5cm"), 102.5)
+
+    def test_whitespace_around_the_value_is_ignored_by_both_entry_points(self):
+        self.assertEqual(extract_z_value_from_name('Wall @T  -6"'), (-6.0, True))
+        self.assertEqual(
+            convert_elevation_in_name('Wall @T  -6"', True), "Wall @T -15.24 cm"
+        )
+        self.assertEqual(
+            convert_elevation_in_name('Wall @T 6" ', True), "Wall @T 15.24 cm"
+        )
+        self.assertEqual(convert_elevation_in_name('Wall @T 6"  ', False), 'Wall @T 6"')
+
+    def test_a_value_near_but_not_at_whole_centimetres_keeps_two_decimals(self):
+        fmt = position_parser._format_metric_elevation
+        self.assertEqual(fmt(1.001 / 2.54), "1.00 cm")
+        self.assertEqual(fmt(0.999 / 2.54), "1.00 cm")
+        self.assertEqual(fmt(-50.0), "-127 cm")
+        self.assertEqual(fmt(-2.5 / 2.54), "-2.50 cm")
+
+
+class PrivateParserSearchSemanticsTests(unittest.TestCase):
+    """Characterisation of the private parsers' search (not anchored match) behaviour."""
+
+    imperial = staticmethod(position_parser._parse_imperial_elevation)
+    metric = staticmethod(position_parser._parse_metric_elevation)
+
+    def test_a_foot_mark_needs_a_word_boundary_after_it(self):
+        self.assertEqual(self.imperial("5'"), 0.0)
+        self.assertEqual(self.imperial("5' x"), 0.0)
+        self.assertEqual(self.imperial("5'x"), 60.0)
+
+    def test_the_value_is_found_after_leading_noise(self):
+        self.assertEqual(self.imperial("x5' 6\""), 66.0)
+        self.assertEqual(self.imperial("x5'6"), 60.0)
+        self.assertEqual(self.imperial('x 6"'), 6.0)
+        self.assertEqual(self.metric("x 3 m"), 300.0)
+        self.assertEqual(self.metric("x 30 cm"), 30.0)
+        self.assertEqual(self.metric("x 1m 20cm"), 120.0)
+
+    def test_the_fraction_helper_reads_decimal_parts_and_tiny_denominators(self):
+        parse = position_parser._parse_fractional_inches_text
+        self.assertEqual(parse("1.5/2"), 0.75)
+        self.assertEqual(parse("6.5 1/2"), 7.0)
+        self.assertEqual(parse("1/0.0000001"), 1e7)
+        self.assertEqual(parse("1/1e-12"), 1e12)
+
+
+class CompoundMetricConversionAndEmptyBaseNameTests(unittest.TestCase):
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_compound_metric_values_convert_in_both_directions(self):
+        table = (
+            ("Wall @T 1m 20cm", "Wall @T 120 cm", "Wall @T 3' 11 1/4\""),
+            ("Wall @T 1m and 20cm", "Wall @T 120 cm", "Wall @T 3' 11 1/4\""),
+            ("Wall @B 1m+20cm", "Wall @B 120 cm", "Wall @B 3' 11 1/4\""),
+            ("Wall @T -1m 20cm", "Wall @T -80 cm", "Wall @T -2' 7 1/2\""),
+            ("Wall @T 1.5m 20cm", "Wall @T 170 cm", "Wall @T 5' 6 7/8\""),
+        )
+        for name, metric, imperial in table:
+            with self.subTest(name=name):
+                self.assertEqual(convert_elevation_in_name(name, True), metric)
+                self.assertEqual(convert_elevation_in_name(name, False), imperial)
+
+    def test_an_elevation_marker_with_an_empty_base_name_still_has_an_elevation(self):
+        self.assertEqual(extract_z_value_from_name(' @T 6"'), (6.0, True))
+        self.assertEqual(extract_z_value_from_name(' @B 6"'), (6.0, False))
+        self.assertEqual(extract_z_value_from_name('   @T 6"'), (6.0, True))
+        self.assertEqual(convert_elevation_in_name(' @B 6"', True), " @B 15.24 cm")
+        self.assertEqual(convert_elevation_in_name(' @B 6"', False), ' @B 6"')
+
+    def test_a_marker_without_the_leading_space_is_not_an_elevation_marker(self):
+        self.assertEqual(extract_z_value_from_name('@T 6"'), (0.0, False))
+        self.assertEqual(convert_elevation_in_name('@T 6"', True), '@T 6"')
+
+
 if __name__ == "__main__":
     unittest.main()
