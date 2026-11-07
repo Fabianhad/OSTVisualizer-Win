@@ -1736,8 +1736,9 @@ class JobStatusSequenceBoundaryTests(unittest.TestCase):
         # NULL/blank/"NULL" are tolerated), not an endorsement. The standalone status read
         # warns and returns [] (the generic degrade-to-empty policy of the tolerant
         # readers), the cover sheet read surfaces the ValueError. Note the consequence:
-        # ProjectReadService.is_bid_locked then reads False (fail-open) for a bid whose
-        # status is locked, because the status list it searches is empty.
+        # The status list that ProjectReadService.is_bid_locked searches is then empty;
+        # since the lock read fails closed, that bid reads as locked (see
+        # test_a_degraded_status_list_makes_the_bid_read_as_locked below).
         connection = self.database(
             self._DDL,
             "INSERT INTO JobStatuses VALUES (1, 'Open', 0, 1)",
@@ -1757,6 +1758,31 @@ class JobStatusSequenceBoundaryTests(unittest.TestCase):
             _FatalReadErrors(connection).get_job_statuses("x.mdb")
         with self.assertRaises(ValueError):
             _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "7")
+
+    def test_a_degraded_status_list_makes_the_bid_read_as_locked(self):
+        # End to end through the real status reader: one malformed Sequence degrades
+        # the whole list to [], and the lock read must then fail closed.
+        from ost_visualizer.application.services.project_read_service import (
+            ProjectReadService,
+        )
+
+        connection = self.database(
+            self._DDL,
+            "INSERT INTO JobStatuses VALUES (1, 'Open', 0, 1)",
+            "INSERT INTO JobStatuses VALUES (2, 'Locked', 1, 'abc')",
+        )
+        service = ProjectReadService(_SqliteSettingsReader(connection))
+        with self.assertLogs("test", level="WARNING"):
+            self.assertIs(service.is_bid_locked("x.mdb", "1"), True)
+            self.assertIs(service.is_bid_locked("x.mdb", "2"), True)
+        healthy = self.database(
+            self._DDL,
+            "INSERT INTO JobStatuses VALUES (1, 'Open', 0, 1)",
+            "INSERT INTO JobStatuses VALUES (2, 'Locked', 1, 2)",
+        )
+        service = ProjectReadService(_SqliteSettingsReader(healthy))
+        self.assertIs(service.is_bid_locked("x.mdb", "1"), False)
+        self.assertIs(service.is_bid_locked("x.mdb", "2"), True)
 
     def test_a_cover_sheet_with_null_sequences_keeps_the_bid_and_status_links(self):
         connection = self.database(

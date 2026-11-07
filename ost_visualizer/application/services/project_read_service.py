@@ -80,7 +80,12 @@ class ProjectReadService:
         for s in self.get_job_statuses(file_path):
             if str(s.uid) == str(bid_status_uid):
                 return s.locked
-        return False
+        self.logger.warning(
+            "Job status %r of a bid in %s could not be resolved; treating the bid as locked",
+            bid_status_uid,
+            file_path,
+        )
+        return True
 
     def get_cover_sheet_data(
         self, file_path: str, bid_uid: str

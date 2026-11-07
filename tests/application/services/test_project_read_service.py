@@ -76,6 +76,52 @@ class ProjectReadServiceTests(unittest.TestCase):
         self.assertEqual(self.reader.get_job_statuses.call_count, 2)
         self.reader.get_job_statuses.assert_called_with("a.mdb")
 
+    def test_a_bid_with_a_status_reads_as_locked_when_the_status_cannot_be_resolved(
+        self,
+    ):
+        """Fail closed: an unknown status must never read as unlocked."""
+        cases = (
+            ("the status list is empty", [], None),
+            (
+                "the list does not contain the status",
+                [JobStatus("1", "Open", locked=False)],
+                None,
+            ),
+            ("the status read failed", None, OSError("database busy")),
+        )
+        for label, statuses, error in cases:
+            with self.subTest(label):
+                self.reader.get_job_statuses.reset_mock(side_effect=True)
+                self.reader.get_job_statuses.return_value = statuses
+                self.reader.get_job_statuses.side_effect = error
+                with self.assertLogs(self.service.logger, "WARNING") as logs:
+                    self.assertIs(self.service.is_bid_locked("a.mdb", "9"), True)
+                self.assertTrue(logs.output)
+                self.reader.get_job_statuses.assert_called_once_with("a.mdb")
+
+    def test_the_unresolvable_status_warning_names_the_status_and_the_database(self):
+        self.reader.get_job_statuses.return_value = []
+        with self.assertLogs(self.service.logger, "WARNING") as logs:
+            self.service.is_bid_locked("a.mdb", "9")
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            "Job status '9' of a bid in a.mdb could not be resolved; "
+            "treating the bid as locked",
+        )
+
+    def test_resolvable_statuses_and_missing_statuses_read_exactly_as_before(self):
+        self.reader.get_job_statuses.return_value = [
+            JobStatus("7", "Open", locked=False),
+            JobStatus("9", "Closed", locked=True),
+        ]
+        with self.assertNoLogs(self.service.logger, "WARNING"):
+            self.assertIs(self.service.is_bid_locked("a.mdb", "7"), False)
+            self.assertIs(self.service.is_bid_locked("a.mdb", "9"), True)
+            self.assertIs(self.service.is_bid_locked("a.mdb", 9), True)
+            for absent in (None, ""):
+                self.assertIs(self.service.is_bid_locked("a.mdb", absent), False)
+
     def _reads(self):
         return [
             (
@@ -245,12 +291,15 @@ class ProjectReadServiceTests(unittest.TestCase):
             self.assertIs(self.service.is_bid_locked("db", status), False)
         self.reader.get_job_statuses.assert_not_called()
         self.reader.get_job_statuses.return_value = [
-            JobStatus("9", "missing", locked=True)
+            JobStatus("9", "missing", locked=True),
+            JobStatus("8", "Open", locked=False),
         ]
-        self.assertIs(self.service.is_bid_locked("db", "missing"), False)
+        # The status name is not an identity: "missing" is an unknown uid, which
+        # fails closed (locked) instead of matching the status called "missing".
+        with self.assertLogs(self.service.logger, "WARNING"):
+            self.assertIs(self.service.is_bid_locked("db", "missing"), True)
         self.assertIs(self.service.is_bid_locked("db", "9"), True)
-        self.reader.get_job_statuses.return_value = []
-        self.assertIs(self.service.is_bid_locked("db", "9"), False)
+        self.assertIs(self.service.is_bid_locked("db", "8"), False)
 
     def test_dimension_facade_uses_real_metric_and_imperial_formatting(self):
         self.assertEqual(self.service.display_to_inches("25.4", True), 1.0)
