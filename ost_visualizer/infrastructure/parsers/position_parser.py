@@ -54,7 +54,6 @@ def _parse_fractional_inches_text(inch_text: str) -> float:
 
 
 def _without_whitespace(text: str) -> str:
-    # The grammar allows spaces between a leading minus and the digits ("- 5' 6\"").
     return "".join(text.split())
 
 
