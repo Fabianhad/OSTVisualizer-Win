@@ -868,7 +868,10 @@ class WorkerProcessTests(unittest.TestCase):
             "proposal_status": "ok",
             "proposal_assumptions": 1,
             "proposal_subjects": '{"closing_segment": 1}',
-            "proposal_outline_vertices": 5,
+            # The region ring now starts at its lowest-left corner, so the simplified
+            # outline of the gap-closed room is the plain 4-corner rectangle (it kept
+            # one collinear gap vertex when the ring happened to start there).
+            "proposal_outline_vertices": 4,
             "proposal_hole_vertices": 0,
             "proposal_holes_dropped": 0,
             "hand_expected_sf": 333.33,
