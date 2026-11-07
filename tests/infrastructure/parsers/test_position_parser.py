@@ -774,5 +774,97 @@ class CompoundMetricConversionAndEmptyBaseNameTests(unittest.TestCase):
         self.assertEqual(convert_elevation_in_name('@T 6"', True), '@T 6"')
 
 
+class DetachedMinusTests(unittest.TestCase):
+    """A minus separated from the number by spaces still negates the whole value.
+
+    The elevation grammar (elevation_text) accepts ``-`` followed by whitespace, and an
+    attached minus (``-5' 6"``) already negates feet and inches together.
+    """
+
+    imperial = staticmethod(position_parser._parse_imperial_elevation)
+    metric = staticmethod(position_parser._parse_metric_elevation)
+
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_a_detached_minus_negates_feet_and_inches_together(self):
+        table = (
+            ("- 5' 6\"", -66.0),
+            ("-  5' 6\"", -66.0),
+            ("- 5' 6 1/2\"", -66.5),
+            ("- 5'-6\"", -66.0),
+            ("- 5' - 6\"", -66.0),
+            ("- 0' 6\"", -6.0),
+            ('- 5′ 6"', -66.0),
+            ("- 5'x", -60.0),
+            ("- 4' 2\"", -50.0),
+        )
+        for text, expected in table:
+            with self.subTest(text=text):
+                self.assertEqual(self.imperial(text), expected)
+                self.assertEqual(
+                    self.imperial(text), self.imperial(text.replace("- ", "-", 1))
+                )
+
+    def test_attached_and_absent_signs_read_as_before(self):
+        table = (
+            ("5' 6\"", 66.0),
+            ("-5' 6\"", -66.0),
+            ("5'-6\"", 66.0),
+            ("-5' -6\"", -66.0),
+            ('- 6"', -6.0),
+            ("-5'x", -60.0),
+        )
+        for text, expected in table:
+            with self.subTest(text=text):
+                self.assertEqual(self.imperial(text), expected)
+
+    def test_a_detached_minus_in_metric_text_is_read_not_refused(self):
+        table = (
+            ("- 1m", -100.0),
+            ("- 1 m", -100.0),
+            ("- 1,5 m", -150.0),
+            ("- 20cm", -20.0),
+            ("- 3 meters", -300.0),
+            ("- 1m 20cm", -80.0),
+            ("1m - 20cm", 80.0),
+            ("- 1m - 20cm", -120.0),
+        )
+        for text, expected in table:
+            with self.subTest(text=text):
+                self.assertEqual(self.metric(text), expected)
+                self.assertEqual(
+                    self.metric(text), self.metric(text.replace("- ", "-"))
+                )
+
+    def test_the_entry_points_agree_for_a_detached_minus(self):
+        for name, expected in (
+            ("Wall @T - 5' 6\"", (-66.0, True)),
+            ("Wall @B - 5' 6\"", (-66.0, False)),
+            ('Wall @T - 6"', (-6.0, True)),
+            ("Wall @T - 1 m", (-100.0 / 2.54, True)),
+            ("Wall @T - 20cm", (-20.0 / 2.54, True)),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), expected)
+                self.assertEqual(
+                    extract_z_value_from_name(name),
+                    extract_z_value_from_name(name.replace("- ", "-", 1)),
+                )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T - 5' 6\"", True), "Wall @T -167.64 cm"
+        )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T - 5' 6\"", False), "Wall @T -5' 6\""
+        )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T - 1 m", True), "Wall @T -100 cm"
+        )
+        self.assertEqual(
+            convert_elevation_in_name("Wall @T - 1 m", False), "Wall @T -3' 3 3/8\""
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

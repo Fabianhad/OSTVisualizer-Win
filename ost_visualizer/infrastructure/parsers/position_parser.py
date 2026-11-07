@@ -53,23 +53,28 @@ def _parse_fractional_inches_text(inch_text: str) -> float:
     return -value if negative else value
 
 
+def _without_whitespace(text: str) -> str:
+    # The grammar allows spaces between a leading minus and the digits ("- 5' 6\"").
+    return "".join(text.split())
+
+
 def _parse_imperial_elevation(elevation_text: str) -> float:
     text = elevation_text.strip()
     m = re.search(
-        r"(?P<feet>-?\d+)\s*[\'′]\s*(?:-?\s*)?(?P<inches>\d+(?:\s+\d+/\d+)?|\d+/\d+)\s*\"",
+        r"(?P<feet>-?\s*\d+)\s*[\'′]\s*(?:-?\s*)?(?P<inches>\d+(?:\s+\d+/\d+)?|\d+/\d+)\s*\"",
         text,
     )
     if m:
-        feet_str = m.group("feet").strip()
+        feet_str = _without_whitespace(m.group("feet"))
         inches_str = m.group("inches").strip()
         negative = feet_str.startswith("-")
         feet_val = abs(int(feet_str))
         inches_val = _parse_fractional_inches_text(inches_str)
         total = feet_val * 12 + inches_val
         return -total if negative else total
-    m = re.search(r"(?P<feet>-?\d+)\s*[\'′]\b", text)
+    m = re.search(r"(?P<feet>-?\s*\d+)\s*[\'′]\b", text)
     if m:
-        feet_str = m.group("feet").strip()
+        feet_str = _without_whitespace(m.group("feet"))
         feet_val = int(feet_str)
         return float(feet_val * 12)
     m = re.search(r"(?P<inches>-?\s*(?:\d+(?:\s+\d+/\d+)?|\d+/\d+))\s*\"", text)
@@ -85,16 +90,16 @@ def _parse_metric_elevation(elevation_text: str) -> float:
         r"(-?\s*\d+(?:\.\d+)?)\s*m\s*(?:and|\+)?\s*(-?\s*\d+(?:\.\d+)?)\s*cm", text
     )
     if m:
-        meter_part = float(m.group(1).strip())
-        cm_part = float(m.group(2).strip())
+        meter_part = float(_without_whitespace(m.group(1)))
+        cm_part = float(_without_whitespace(m.group(2)))
         return meter_part * 100.0 + cm_part
     m = re.search(r"(-?\s*\d+(?:\.\d+)?)\s*(?:m|meters?)\b", text)
     if m:
-        meter_part = float(m.group(1).strip())
+        meter_part = float(_without_whitespace(m.group(1)))
         return meter_part * 100.0
     m = re.search(r"(-?\s*\d+(?:\.\d+)?)\s*(?:cm|centimeters?)\b", text)
     if m:
-        return float(m.group(1).strip())
+        return float(_without_whitespace(m.group(1)))
     return 0.0
 
 
