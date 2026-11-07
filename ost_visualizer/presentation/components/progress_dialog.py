@@ -122,7 +122,6 @@ class ProgressDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self._task_fn = task_fn
         self._thread: Optional[_WorkerThread] = None
-        self._worker: Optional[QObject] = None
         self._reporter = reporter
         self._action_text = action_text
         self._result: Any = None
@@ -232,7 +231,6 @@ class ProgressDialog(QtWidgets.QDialog):
         if isinstance(self._progress, _CenteredBusyProgressBar):
             self._progress.stop_animation()
         self._task_fn = None
-        self._worker = None
         self._thread = None
         self._reporter = None
         self._label = None

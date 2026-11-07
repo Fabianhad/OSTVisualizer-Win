@@ -75,12 +75,25 @@ class MaintenanceProgressDialogTests(unittest.TestCase):
 
 
 class DialogLifecycleTests(unittest.TestCase):
+    def test_a_dialog_keeps_no_unused_worker_attribute(self):
+        # ProgressDialog once carried a _worker slot that nothing ever read or set to a
+        # worker; the task runs on its own _WorkerThread.
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertIsNotNone(app)
+        dialog = ProgressDialog("database", lambda: None)
+        try:
+            self.assertFalse(hasattr(dialog, "_worker"))
+            dialog.cleanup()
+            self.assertFalse(hasattr(dialog, "_worker"))
+        finally:
+            dialog.cleanup()
+            delete(dialog)
+
     def test_progress_dialog_cleanup_releases_worker_callback_references(self):
         dialog = ProgressDialog.__new__(ProgressDialog)
         retained = object()
         dialog._task_fn = lambda: retained
         dialog._thread = None
-        dialog._worker = object()
         dialog._reporter = None
         dialog._label = object()
         dialog._progress = object()
@@ -91,7 +104,6 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertTrue(dialog._cleaned_up)
         self.assertTrue(dialog._cleanup_complete)
         self.assertIsNone(dialog._task_fn)
-        self.assertIsNone(dialog._worker)
         self.assertIsNone(dialog._thread)
         self.assertIsNone(dialog._reporter)
         self.assertIsNone(dialog._label)
@@ -124,7 +136,6 @@ class DialogLifecycleTests(unittest.TestCase):
         dialog = ProgressDialog.__new__(ProgressDialog)
         dialog._task_fn = lambda: None
         dialog._thread = thread
-        dialog._worker = object()
         dialog._reporter = None
         dialog._label = object()
         dialog._progress = object()
