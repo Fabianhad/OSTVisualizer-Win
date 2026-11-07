@@ -4572,3 +4572,1782 @@ class DeleteContentScanScopeTests(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             Interrupted(conn).get_pages_with_delete_content("x.mdb", "1")
         self.assertEqual(Interrupted.policy_calls, 0)
+
+
+class RealAccessReaderScenarios:
+    """Reader scenarios that run in a child process against a real Access file.
+
+    Creating Access databases in the test process exhausts the DAO client tasks,
+    so each scenario creates and reads its own temporary file in a child process
+    (see ``ProjectOperationsRealAccessTests``). Seeds are plain pyodbc INSERTs and
+    expectations are hard-coded or read back with a plain cursor, never derived
+    from the reader.
+    """
+
+    @staticmethod
+    def _expect(actual, expected, label):
+        if actual != expected:
+            raise AssertionError(f"{label}: {actual!r} != {expected!r}")
+
+    @staticmethod
+    def _create(folder, name="reader.mdb"):
+        from pathlib import Path
+        import tests.helpers.mdb.schema_support as access
+
+        path = Path(folder) / name
+        if not access.DatabaseCreator().create_database(path, "Reader"):
+            raise AssertionError("database creation failed")
+        return path
+
+    @staticmethod
+    def _execute(path, statements):
+        import tests.helpers.mdb.schema_support as access
+
+        connection = access._connect_mdb(path)
+        try:
+            cursor = connection.cursor()
+            for sql, *params in statements:
+                cursor.execute(sql, *params)
+            connection.commit()
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _query(path, sql, *params):
+        import tests.helpers.mdb.schema_support as access
+
+        connection = access._connect_mdb(path)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(sql, *params)
+            return [tuple(row) for row in cursor.fetchall()]
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _columns(path, table):
+        import tests.helpers.mdb.schema_support as access
+
+        connection = access._connect_mdb(path)
+        try:
+            cursor = connection.cursor()
+            return [row.column_name for row in cursor.columns(table=table)]
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _insert(table, **values):
+        columns = ", ".join(f"[{name}]" for name in values)
+        marks = ", ".join("?" for _name in values)
+        return (
+            f"INSERT INTO [{table}] ({columns}) VALUES ({marks})",
+            *values.values(),
+        )
+
+    @classmethod
+    def _seed_two_bids(cls, path):
+        import datetime
+
+        ins = cls._insert
+        statements = [
+            ("DELETE FROM [BidLayers]",),
+            ins(
+                "Bids",
+                UID=101,
+                JobName="\u00d1and\u00fa \u2013 caf\u00e9",
+                MeasureBase=1,
+                CreateDateTime=datetime.datetime(2024, 3, 5, 14, 7, 9),
+                BidDate=datetime.datetime(2024, 1, 2),
+                Notes="caf\u00e9 \u00d1".encode("utf-8"),
+                IsAccepted=True,
+                TakeoffIncrements=0.5,
+                HoursPerDay=8,
+                ScaleFactor1=0.25,
+                ScaleFactor2=12.0,
+            ),
+            ins(
+                "Bids",
+                UID=102,
+                JobName="Neighbour",
+                MeasureBase=0,
+                CreateDateTime=datetime.datetime(2020, 1, 2, 3, 4, 5),
+            ),
+            ins("Bids", UID=103, JobName="Empty bid"),
+            ins("Bids", UID=104, JobName="Pageless takeoff"),
+            ins("CdnTypes", UID=6, Name="Wood"),
+            ins("CdnTypes", UID=5, Name="Concrete \u00d1"),
+            ins("JobStatuses", UID=3, Locked=False, Name="Won", Sequence=2),
+            ins("JobStatuses", UID=2, Locked=True, Name="Lost", Sequence=1),
+            # Template layers (BidUID NULL): NULL Sequence, 0, 2; one unlocked.
+            ins(
+                "BidLayers",
+                UID=31,
+                IsTemplate=True,
+                Name="Tpl B",
+                Show=True,
+                IsLocked=True,
+                Sequence=2,
+            ),
+            ins(
+                "BidLayers",
+                UID=32,
+                IsTemplate=True,
+                Name="Tpl C",
+                Show=True,
+                IsLocked=False,
+                Sequence=0,
+            ),
+            ins(
+                "BidLayers",
+                UID=30,
+                IsTemplate=True,
+                Name="Tpl A",
+                Show=True,
+                IsLocked=True,
+                Sequence=None,
+            ),
+            ins(
+                "BidLayers",
+                UID=11,
+                BidUID=101,
+                IsTemplate=False,
+                Name="Image",
+                Show=False,
+                IsLocked=False,
+                Sequence=3,
+            ),
+            ins(
+                "BidLayers",
+                UID=12,
+                BidUID=101,
+                IsTemplate=False,
+                Name="Capa \u00d1 oculta",
+                Show=False,
+                IsLocked=False,
+                Sequence=1,
+            ),
+            ins(
+                "BidLayers",
+                UID=14,
+                BidUID=101,
+                IsTemplate=False,
+                Name="Capa visible",
+                Show=True,
+                IsLocked=True,
+                Sequence=None,
+            ),
+            ins(
+                "BidLayers",
+                UID=13,
+                BidUID=102,
+                IsTemplate=False,
+                Name="Image",
+                Show=True,
+                IsLocked=False,
+                Sequence=0,
+            ),
+        ]
+        statements.append(ins("BidPageFolders", UID=9, BidUID=101, Name="Folder"))
+        page_rows = [
+            # (uid, name, sequence), inserted in a scrambled physical order
+            (48, "same", 3.0),
+            (45, "b-second", 2.0),
+            (44, "Zebra", 1.5),
+            (43, "\u00d1o\u00f1o Planta Baja", None),
+            (47, "same", 3.0),
+            (46, "a-first", 2.0),
+            (42, "Mid", 0.0),
+        ]
+        for uid, name, sequence in page_rows:
+            statements.append(
+                ins("BidPages", UID=uid, BidUID=101, Name=name, Sequence=sequence)
+            )
+        statements.append(
+            ins(
+                "BidPages",
+                UID=41,
+                BidUID=101,
+                Name="Last",
+                Sequence=-2.0,
+                ImagePath="C:\\plans\\\u00f1.pdf",
+                SheetNo="A-101",
+                Width=8.5,
+                Height=11.25,
+                ScaleFactor1=0.25,
+                ScaleFactor2=12.0,
+                Rotation=450.0,
+                FlipX=True,
+                FlipY=False,
+                Index1=3,
+                Show=2,
+                ZoomFac=1.25,
+                CurrentX=10.5,
+                CurrentY=-4.5,
+                Invert=True,
+                Bitonal=False,
+            )
+        )
+        statements += [
+            ("UPDATE [BidPages] SET [BidPageFolderUID] = 9 WHERE [UID] = 44",),
+            ins("BidPages", UID=49, BidUID=102, Name="Neighbour page", Sequence=0.0),
+            # Folders: NULL parent, a child and a literal 0 parent
+            ins("BidConditionFolders", UID=74, BidUID=101, ParentUID=0, Name="Zero"),
+            ins("BidConditionFolders", UID=72, BidUID=101, ParentUID=71, Name="Child"),
+            ins(
+                "BidConditionFolders",
+                UID=71,
+                BidUID=101,
+                ParentUID=None,
+                Name="Carpeta \u00d1",
+            ),
+            ins("BidConditionFolders", UID=73, BidUID=102, Name="Neighbour folder"),
+            # Conditions (UOM1 2 = linear feet, normalised to metres in a metric bid)
+            ins(
+                "BidConditions",
+                UID=62,
+                BidUID=101,
+                BidLayerUID=14,
+                Name="Wall",
+                Type=0,
+                UOM1=2,
+                DisplaySize=50,
+            ),
+            ins(
+                "BidConditions",
+                UID=61,
+                BidUID=101,
+                BidConditionFolderUID=71,
+                BidLayerUID=12,
+                CdnTypeUID=5,
+                Name="Losa \u00d1",
+                Type=2,
+                Width=1.5,
+                Height=8.25,
+                Thickness=0.5,
+                UOM1=2,
+                Quantity1=0,
+                RoundQuantity=True,
+                RoundUp=0.25,
+                DisplayName=True,
+                Notes="Notas: caf\u00e9 \u00f1".encode("utf-8"),
+            ),
+            ins(
+                "BidConditions",
+                UID=63,
+                BidUID=102,
+                BidLayerUID=13,
+                Name="Neighbour cond",
+                UOM1=2,
+            ),
+            # Areas: NULL Sequence sorts first, ParentUID NULL/0 both mean no parent
+            ins(
+                "BidAreas",
+                UID=83,
+                BidUID=101,
+                ParentUID=81,
+                Name="Sub \u00f1",
+                Sequence=1,
+                GUID="",
+            ),
+            ins(
+                "BidAreas",
+                UID=82,
+                BidUID=101,
+                ParentUID=0,
+                Name="Zone B",
+                Sequence=None,
+                GUID=None,
+            ),
+            ins(
+                "BidAreas",
+                UID=81,
+                BidUID=101,
+                ParentUID=None,
+                Name="Zone A",
+                Sequence=3,
+                GUID="GUID-A",
+            ),
+            ins("BidAreas", UID=84, BidUID=102, Name="Neighbour area", Sequence=0),
+            # Takeoffs: a polygon with a hole, a bare takeoff and a neighbour's
+            ins(
+                "BidTakeoffs",
+                UID=91,
+                BidUID=101,
+                BidConditionUID=61,
+                BidPageUID=41,
+                BidAreaUID=81,
+                No=7,
+                Quantity=12.375,
+                Count=0.1,
+                Rotation=90.0,
+                Position=b"0;0;10;0;10;10;0;10\n",
+                IsNegativeQuantity=True,
+                FontName="Arial \u00d1",
+                FontColor=255,
+                FontSize=-12,
+                FontBold=True,
+                NameFontSize=14,
+                NameFontBold=True,
+                Curve=5,
+            ),
+            ins(
+                "BidTakeoffs",
+                UID=92,
+                BidUID=101,
+                BidConditionUID=61,
+                BidPageUID=41,
+                ParentUID=91,
+                Position=b"1;1;2;1;2;2;1;2\n",
+            ),
+            ins(
+                "BidTakeoffs",
+                UID=93,
+                BidUID=101,
+                BidConditionUID=62,
+                BidPageUID=42,
+                Position=b"1;2;3;4\n",
+            ),
+            ins(
+                "BidTakeoffs",
+                UID=94,
+                BidUID=102,
+                BidConditionUID=63,
+                BidPageUID=49,
+                Position=b"5;6;7;8\n",
+            ),
+            # Bid 104: a takeoff without any page next to one on page 50
+            ins("BidPages", UID=50, BidUID=104, Name="Only page", Sequence=0.0),
+            ins("BidConditions", UID=64, BidUID=104, Name="Loose cond"),
+            ins(
+                "BidTakeoffs",
+                UID=95,
+                BidUID=104,
+                BidConditionUID=64,
+                BidPageUID=None,
+                Position=b"1;2;3;4\n",
+            ),
+            ins(
+                "BidTakeoffs",
+                UID=96,
+                BidUID=104,
+                BidConditionUID=64,
+                BidPageUID=50,
+                Position=b"1;2;3;4\n",
+            ),
+            ins("BidTakeoffTotals", UID=301, BidUID=101, Quantity1=12.5),
+            ins("BidTakeoffTotals", UID=302, BidUID=102, Quantity1=99.0),
+            # Page content scanned by the delete confirmation (page 43: a text,
+            # page 44: a hot link, a text without any page, and the neighbour's)
+            ins("BidTexts", UID=201, BidUID=101, BidPageUID=43, Name="note"),
+            ins("BidTexts", UID=202, BidUID=102, BidPageUID=49, Name="other"),
+            ins("BidTexts", UID=203, BidUID=101, BidPageUID=None, Name="no page"),
+            ins(
+                "BidHotLinks",
+                UID=211,
+                BidUID=101,
+                BidPageUID=44,
+                BidPageViewUID=None,
+                BidLayerUID=None,
+            ),
+            # Page area selections: newest of the selected rows wins, 0 never does
+            ins(
+                "BidPageSettings",
+                UID=105,
+                BidPageUID=41,
+                BidAreaUID=81,
+                BidAreaSelected=1,
+            ),
+            ins(
+                "BidPageSettings",
+                UID=106,
+                BidPageUID=41,
+                BidAreaUID=82,
+                BidAreaSelected=1,
+            ),
+            ins(
+                "BidPageSettings",
+                UID=107,
+                BidPageUID=42,
+                BidAreaUID=81,
+                BidAreaSelected=3,
+            ),
+            ins(
+                "BidPageSettings",
+                UID=108,
+                BidPageUID=42,
+                BidAreaUID=82,
+                BidAreaSelected=1,
+            ),
+            ins(
+                "BidPageSettings",
+                UID=109,
+                BidPageUID=43,
+                BidAreaUID=81,
+                BidAreaSelected=0,
+            ),
+            ins(
+                "BidPageSettings",
+                UID=111,
+                BidPageUID=44,
+                BidAreaUID=None,
+                BidAreaSelected=1,
+            ),
+            ins(
+                "BidPageSettings",
+                UID=110,
+                BidPageUID=49,
+                BidAreaUID=84,
+                BidAreaSelected=1,
+            ),
+            ins("BidSettings", UID=401, BidUID=101, BidPageSelectedUID=42),
+            ins("BidSettings", UID=402, BidUID=102, BidPageSelectedUID=49),
+        ]
+        cls._execute(path, statements)
+
+    @classmethod
+    def exercise_scoping_and_types(cls):
+        import tempfile
+        from ost_visualizer.domain.entities.layer import BidLayer
+        from ost_visualizer.infrastructure.database.bid_owned_identity import (
+            MissingBidOwnedUidError,
+        )
+        from ost_visualizer.infrastructure.mdb.bid_settings_contract import (
+            BidSettingsCardinalityError,
+        )
+        from ost_visualizer.infrastructure.mdb.connection_manager import (
+            MdbConnectionManager,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+        from ost_visualizer.infrastructure.mdb.schema_contract import (
+            PAGE_SECTIONS,
+            RAW_BID_TABLES,
+            RAW_GLOBAL_TABLES,
+        )
+
+        expect = cls._expect
+
+        class HydratingReader(MdbReader):
+            def _hydrates_bid_navigation_snapshots(self):
+                return True
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = cls._create(folder)
+            source = str(path)
+            system_projects = cls._query(path, "SELECT COUNT(*) FROM [BidProjects]")
+            cls._seed_two_bids(path)
+            manager = MdbConnectionManager()
+            reader = MdbReader(manager)
+            try:
+                # --- text uids bound against Long columns select exactly one bid
+                expect(
+                    reader.get_pages_with_takeoffs(source, "101"),
+                    {"41", "42"},
+                    "pages with takeoffs 101",
+                )
+                expect(
+                    reader.get_pages_with_takeoffs(source, "102"),
+                    {"49"},
+                    "pages with takeoffs 102",
+                )
+                expect(
+                    reader.get_pages_with_takeoffs(source, "103"),
+                    set(),
+                    "pages with takeoffs 103",
+                )
+                expect(
+                    reader.get_pages_with_takeoffs(source, "104"),
+                    {"50"},
+                    "a NULL BidPageUID is not a page",
+                )
+                # A text uid that is not a number is compared with the Long
+                # column without an error and matches nothing.
+                expect(
+                    reader.get_pages_with_takeoffs(source, "abc"),
+                    set(),
+                    "non numeric text uid",
+                )
+                expect(
+                    reader.get_raw_bid_data(source, "abc").bid_row,
+                    {},
+                    "non numeric text uid raw bid row",
+                )
+                expect(
+                    reader.get_pages_with_takeoffs(source, "999"),
+                    set(),
+                    "pages with takeoffs unknown bid",
+                )
+                expect(
+                    reader.get_pages_with_delete_content(source, "101"),
+                    {"41", "42", "43", "44"},
+                    "delete content 101",
+                )
+                expect(
+                    reader.get_pages_with_delete_content(source, "102"),
+                    {"49"},
+                    "delete content 102",
+                )
+                expect(
+                    reader.get_pages_with_delete_content(source, "103"),
+                    set(),
+                    "delete content 103",
+                )
+                expect(
+                    reader.get_pages_with_delete_content(source, "104"),
+                    {"50"},
+                    "delete content 104",
+                )
+
+                # --- layers: BIT visibility, NULL vs 0 Sequence, sidebar OR filter
+                def layer_tuple(layer):
+                    return (
+                        layer.uid,
+                        layer.bid_uid,
+                        layer.name,
+                        layer.show,
+                        layer.sequence,
+                        layer.is_template,
+                        layer.is_locked,
+                    )
+
+                expect(
+                    [layer_tuple(layer) for layer in reader.get_default_layers(source)],
+                    [
+                        ("30", "", "Tpl A", True, 0, True, True),
+                        ("32", "", "Tpl C", True, 0, True, False),
+                        ("31", "", "Tpl B", True, 2, True, True),
+                    ],
+                    "default layers",
+                )
+                sidebar = reader.get_bid_layers_for_sidebar(source, "101")
+                expect(
+                    sorted(layer_tuple(layer) for layer in sidebar),
+                    [
+                        ("11", "101", "Image", False, 3, False, False),
+                        ("12", "101", "Capa \u00d1 oculta", False, 1, False, False),
+                        ("14", "101", "Capa visible", True, 0, False, True),
+                        ("30", "", "Tpl A", True, 0, True, True),
+                        ("31", "", "Tpl B", True, 2, True, True),
+                    ],
+                    "sidebar layers 101",
+                )
+                expect(
+                    sorted(
+                        layer_tuple(layer)
+                        for layer in reader.get_bid_layers_for_sidebar(source, "102")
+                    ),
+                    [
+                        ("13", "102", "Image", True, 0, False, False),
+                        ("30", "", "Tpl A", True, 0, True, True),
+                        ("31", "", "Tpl B", True, 2, True, True),
+                    ],
+                    "sidebar layers 102",
+                )
+                expect(
+                    all(isinstance(layer, BidLayer) for layer in sidebar),
+                    True,
+                    "layer type",
+                )
+                expect(
+                    sorted(
+                        layer_tuple(layer)
+                        for layer in reader.get_bid_layers_for_sidebar(source, "103")
+                    ),
+                    [
+                        ("30", "", "Tpl A", True, 0, True, True),
+                        ("31", "", "Tpl B", True, 2, True, True),
+                    ],
+                    "sidebar layers 103 (templates only)",
+                )
+
+                # --- the full load of bid 101
+                (
+                    conditions,
+                    takeoffs,
+                    areas,
+                    pages,
+                    selections,
+                    cdn_types,
+                    annotations,
+                    folders,
+                    selected_page,
+                    extras,
+                    cover_sheet,
+                    delete_content,
+                ) = reader.get_bid_data(source, "101")
+                expect(
+                    {
+                        uid: (
+                            c.name,
+                            c.condition_type,
+                            c.width,
+                            c.height,
+                            c.thickness,
+                            c.uom1,
+                            c.cdn_type_uid,
+                            c.cdn_type_name,
+                            c.folder_uid,
+                            c.layer_uid,
+                            c.layer_visible,
+                            c.round_quantity,
+                            c.round_up,
+                            c.display_name,
+                            c.display_size,
+                            c.notes,
+                        )
+                        for uid, c in conditions.items()
+                    },
+                    {
+                        "61": (
+                            "Losa \u00d1",
+                            2,
+                            1.5,
+                            8.25,
+                            0.5,
+                            13,
+                            "5",
+                            "Concrete \u00d1",
+                            "71",
+                            "12",
+                            False,
+                            True,
+                            0.25,
+                            True,
+                            100.0,
+                            "Notas: caf\u00e9 \u00f1",
+                        ),
+                        "62": (
+                            "Wall",
+                            0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            13,
+                            None,
+                            "Unknown",
+                            None,
+                            "14",
+                            True,
+                            False,
+                            0.0,
+                            False,
+                            50.0,
+                            "",
+                        ),
+                    },
+                    "conditions 101",
+                )
+                expect(
+                    sorted(
+                        (
+                            t.uid,
+                            t.condition_uid,
+                            t.page_uid,
+                            t.area_uid,
+                            t.position,
+                            t.rotation,
+                            t.curve,
+                            t.parent_uid,
+                            t.is_negative,
+                            t.is_hole,
+                            t.dimension_font_name,
+                            t.dimension_font_color,
+                            t.dimension_font_size,
+                            t.dimension_font_bold,
+                            t.name_font_name,
+                            t.name_font_size,
+                            t.name_font_bold,
+                        )
+                        for t in takeoffs
+                    ),
+                    [
+                        (
+                            "91",
+                            "61",
+                            "41",
+                            "81",
+                            [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],
+                            90.0,
+                            5,
+                            "0",
+                            True,
+                            False,
+                            "Arial \u00d1",
+                            255,
+                            12,
+                            True,
+                            None,
+                            14,
+                            True,
+                        ),
+                        (
+                            "92",
+                            "61",
+                            "41",
+                            "0",
+                            [1.0, 1.0, 2.0, 1.0, 2.0, 2.0, 1.0, 2.0],
+                            0.0,
+                            -1,
+                            "91",
+                            False,
+                            True,
+                            None,
+                            0,
+                            None,
+                            False,
+                            None,
+                            None,
+                            False,
+                        ),
+                        (
+                            "93",
+                            "62",
+                            "42",
+                            "0",
+                            [1.0, 2.0, 3.0, 4.0],
+                            0.0,
+                            -1,
+                            "0",
+                            False,
+                            False,
+                            None,
+                            0,
+                            None,
+                            False,
+                            None,
+                            None,
+                            False,
+                        ),
+                    ],
+                    "takeoffs 101",
+                )
+                expect(
+                    {
+                        uid: (a.bid_uid, a.parent_uid, a.name, a.sequence, a.guid)
+                        for uid, a in areas.items()
+                    },
+                    {
+                        "81": ("101", "", "Zone A", 3, "GUID-A"),
+                        "82": ("101", "", "Zone B", 0, ""),
+                        "83": ("101", "81", "Sub \u00f1", 1, ""),
+                    },
+                    "areas 101",
+                )
+                expect(list(areas), ["82", "83", "81"], "area order (NULL first)")
+                expect(
+                    list(pages),
+                    ["43", "41", "42", "44", "46", "45", "47", "48"],
+                    "page order",
+                )
+                expect(
+                    [pages[uid].name for uid in pages],
+                    [
+                        "\u00d1o\u00f1o Planta Baja",
+                        "Last",
+                        "Mid",
+                        "Zebra",
+                        "a-first",
+                        "b-second",
+                        "same",
+                        "same",
+                    ],
+                    "page names",
+                )
+                expect(
+                    [pages[uid].sequence for uid in pages],
+                    [0, -2, 0, 1, 2, 2, 3, 3],
+                    "page sequences",
+                )
+                expect(
+                    [pages[uid].layer_visible for uid in pages],
+                    [False] * 8,
+                    "image layer of bid 101 is hidden",
+                )
+                page = pages["41"]
+                expect(
+                    (
+                        page.sheet_no,
+                        page.image_path,
+                        page.width_pts,
+                        page.height_pts,
+                        page.scale_factor1,
+                        page.scale_factor2,
+                        page.rotation,
+                        page.flip_x,
+                        page.flip_y,
+                        page.page_index,
+                        page.image_show_mode,
+                        page.zoom_fac,
+                        page.current_x,
+                        page.current_y,
+                        page.invert,
+                        page.bitonal,
+                        page.folder_uid,
+                    ),
+                    (
+                        "A-101",
+                        "C:\\plans\\\u00f1.pdf",
+                        612.0,
+                        810.0,
+                        0.25,
+                        12.0,
+                        90,
+                        True,
+                        False,
+                        2,
+                        2,
+                        1.25,
+                        10.5,
+                        -4.5,
+                        True,
+                        False,
+                        None,
+                    ),
+                    "page 41 values",
+                )
+                bare = pages["43"]
+                expect(
+                    (
+                        bare.sheet_no,
+                        bare.image_path,
+                        bare.width_pts,
+                        bare.scale_factor1,
+                        bare.rotation,
+                        bare.page_index,
+                        bare.image_show_mode,
+                        bare.flip_x,
+                        bare.invert,
+                    ),
+                    ("", None, 0.0, 1.0, 0, 0, 0, False, False),
+                    "NULL page columns",
+                )
+                expect(pages["44"].folder_uid, "9", "page folder uid")
+                expect(
+                    selections,
+                    {
+                        "41": "82",
+                        "42": "81",
+                        "43": None,
+                        "44": "0",
+                        "45": None,
+                        "46": None,
+                        "47": None,
+                        "48": None,
+                    },
+                    "page area selections",
+                )
+                expect(
+                    {uid: ct.name for uid, ct in cdn_types.items()},
+                    {"5": "Concrete \u00d1", "6": "Wood"},
+                    "cdn types",
+                )
+                expect(annotations, [], "annotations")
+                expect(
+                    {
+                        uid: (f.name, f.bid_uid, f.parent_uid)
+                        for uid, f in folders.items()
+                    },
+                    {
+                        "71": ("Carpeta \u00d1", "101", None),
+                        "72": ("Child", "101", "71"),
+                        "74": ("Zero", "101", "0"),
+                    },
+                    "folders 101",
+                )
+                expect(selected_page, "42", "selected page")
+                typed = {
+                    "UID",
+                    "BidUID",
+                    "BidConditionUID",
+                    "BidPageUID",
+                    "BidAreaUID",
+                    "Position",
+                    "Rotation",
+                    "Curve",
+                    "ParentUID",
+                    "IsNegativeQuantity",
+                }
+                expect(
+                    sorted(extras["91"]),
+                    sorted(set(cls._columns(path, "BidTakeoffs")) - typed),
+                    "takeoff extras columns",
+                )
+                expect(
+                    {
+                        key: extras["91"][key]
+                        for key in (
+                            "Count",
+                            "FlipX",
+                            "FontBold",
+                            "FontColor",
+                            "FontName",
+                            "FontSize",
+                            "GUID",
+                            "NameFontBold",
+                            "NameFontName",
+                            "NameFontSize",
+                            "No",
+                            "Quantity",
+                            "TakeoffModified",
+                        )
+                    },
+                    {
+                        "Count": 0.1,
+                        "FlipX": False,
+                        "FontBold": True,
+                        "FontColor": 255,
+                        "FontName": "Arial \u00d1",
+                        "FontSize": -12,
+                        "GUID": None,
+                        "NameFontBold": True,
+                        "NameFontName": None,
+                        "NameFontSize": 14,
+                        "No": 7,
+                        "Quantity": 12.375,
+                        "TakeoffModified": False,
+                    },
+                    "takeoff extras values",
+                )
+                expect(sorted(extras), ["91", "92", "93"], "extras keys")
+                expect((cover_sheet, delete_content), (None, None), "navigation")
+
+                # --- the same load hydrates the navigation snapshots on request
+                hydrating = HydratingReader(manager)
+                hydrated = hydrating.get_bid_data(source, "101")
+                expect(hydrated[11], frozenset({"41", "42", "43", "44"}), "hydrated")
+                cover = hydrated[10]
+                expect(
+                    (
+                        cover.bid_uid,
+                        cover.job_name,
+                        cover.bid_date,
+                        cover.measure_base,
+                        cover.takeoff_increments,
+                        cover.scale_factor1,
+                        cover.scale_factor2,
+                        cover.notes,
+                    ),
+                    (
+                        "101",
+                        "\u00d1and\u00fa \u2013 caf\u00e9",
+                        "2024 1 2 0 0 0",
+                        1,
+                        0.5,
+                        0.25,
+                        12.0,
+                        "caf\u00e9 \u00d1",
+                    ),
+                    "cover sheet",
+                )
+
+                # --- the neighbour, an empty bid and an unknown bid
+                neighbour = reader.get_bid_data(source, "102")
+                expect(
+                    {uid: c.uom1 for uid, c in neighbour[0].items()},
+                    {"63": 2},
+                    "neighbour is imperial: its UOM stays",
+                )
+                expect([t.uid for t in neighbour[1]], ["94"], "neighbour takeoffs")
+                expect(list(neighbour[2]), ["84"], "neighbour areas")
+                expect(list(neighbour[3]), ["49"], "neighbour pages")
+                expect(neighbour[3]["49"].layer_visible, True, "neighbour image")
+                expect(neighbour[4], {"49": "84"}, "neighbour selection")
+                expect(list(neighbour[7]), ["73"], "neighbour folders")
+                expect(neighbour[8], "49", "neighbour selected page")
+                for empty_uid in ("103", "999"):
+                    empty = reader.get_bid_data(source, empty_uid)
+                    expect(
+                        empty,
+                        ({}, [], {}, {}, {}, empty[5], [], {}, None, {}, None, None),
+                        f"empty bid {empty_uid}",
+                    )
+
+                # --- bid families
+                family_conditions, family_folders = reader.get_condition_family(
+                    source, "101"
+                )
+                expect(sorted(family_conditions), ["61", "62"], "family conditions")
+                expect(sorted(family_folders), ["71", "72", "74"], "family folders")
+                expect(family_conditions["61"].uom1, 13, "family conditions are metric")
+                expect(
+                    sorted(reader.get_condition_family(source, "102")[0]),
+                    ["63"],
+                    "family conditions 102",
+                )
+                expect(
+                    [a.uid for a in reader.get_area_family(source, "101")],
+                    ["82", "83", "81"],
+                    "area family 101",
+                )
+                expect(
+                    [a.uid for a in reader.get_area_family(source, "102")],
+                    ["84"],
+                    "area family 102",
+                )
+                expect(reader.get_area_family(source, "103"), [], "area family 103")
+                for family in (reader.get_condition_family, reader.get_area_family):
+                    try:
+                        family(source, "999")
+                    except MissingBidOwnedUidError as exc:
+                        expect(
+                            "Bids has no row for UID 999" in str(exc),
+                            True,
+                            f"missing bid message {exc}",
+                        )
+                    else:
+                        raise AssertionError(f"{family.__name__} accepted bid 999")
+
+                # --- raw bid data: bid scoping, serialised Access types, ordering
+                raw = reader.get_raw_bid_data(source, "101")
+                expect(
+                    sorted(raw.bid_row),
+                    sorted(cls._columns(path, "Bids")),
+                    "bid row columns",
+                )
+                expect(
+                    {
+                        key: raw.bid_row[key]
+                        for key in (
+                            "UID",
+                            "JobName",
+                            "MeasureBase",
+                            "CreateDateTime",
+                            "BidDate",
+                            "Notes",
+                            "IsAccepted",
+                            "RecalcNeeded",
+                            "TakeoffIncrements",
+                            "HoursPerDay",
+                            "ScaleFactor1",
+                            "ScaleFactor2",
+                            "PageWidth",
+                            "JobStatusUID",
+                        )
+                    },
+                    {
+                        "UID": "101",
+                        "JobName": "\u00d1and\u00fa \u2013 caf\u00e9",
+                        "MeasureBase": "1",
+                        "CreateDateTime": "2024 3 5 14 7 9",
+                        "BidDate": "2024 1 2 0 0 0",
+                        "Notes": "caf\u00e9 \u00d1",
+                        "IsAccepted": "1",
+                        "RecalcNeeded": "0",
+                        "TakeoffIncrements": "0.5",
+                        "HoursPerDay": "8",
+                        "ScaleFactor1": "0.25",
+                        "ScaleFactor2": "12",
+                        "PageWidth": "NULL",
+                        "JobStatusUID": "NULL",
+                    },
+                    "bid row values",
+                )
+                expect(
+                    reader.get_raw_bid_data(source, "102").bid_row["JobName"],
+                    "Neighbour",
+                    "neighbour bid row",
+                )
+                expect(
+                    reader.get_raw_bid_data(source, "999").bid_row,
+                    {},
+                    "unknown bid row",
+                )
+                expect(
+                    sorted(raw.bid_tables),
+                    sorted([*RAW_BID_TABLES, "BidTakeoffTotals"]),
+                    "raw bid tables",
+                )
+                counts = {
+                    table: len(rows) for table, rows in raw.bid_tables.items() if rows
+                }
+                expect(
+                    counts,
+                    {
+                        "BidAreas": 3,
+                        "BidConditionFolders": 3,
+                        "BidConditions": 2,
+                        "BidHotLinks": 1,
+                        "BidLayers": 3,
+                        "BidPageFolders": 1,
+                        "BidPages": 8,
+                        "BidSettings": 1,
+                        "BidTakeoffTotals": 1,
+                    },
+                    "raw bid table row counts",
+                )
+                expect(
+                    raw.bid_tables["BidTakeoffTotals"][0]["Quantity1"],
+                    "12.5",
+                    "totals row of bid 101",
+                )
+                expect(
+                    sorted(row["UID"] for row in raw.bid_tables["BidPages"]),
+                    ["41", "42", "43", "44", "45", "46", "47", "48"],
+                    "raw pages",
+                )
+                expect(
+                    sorted(raw.page_tables),
+                    sorted(PAGE_SECTIONS),
+                    "raw page tables",
+                )
+                expect(
+                    {
+                        table: sorted(row["UID"] for row in rows)
+                        for table, rows in raw.page_tables.items()
+                        if rows
+                    },
+                    {
+                        "BidTakeoffs": ["91", "92", "93"],
+                        "BidTexts": ["201", "203"],
+                        "BidPageSettings": [
+                            "105",
+                            "106",
+                            "107",
+                            "108",
+                            "109",
+                            "111",
+                        ],
+                    },
+                    "raw page tables by BidUID or by page subquery",
+                )
+                takeoff_91 = next(
+                    row for row in raw.page_tables["BidTakeoffs"] if row["UID"] == "91"
+                )
+                expect(
+                    {
+                        key: takeoff_91[key]
+                        for key in (
+                            "BidConditionUID",
+                            "BidPageUID",
+                            "ParentUID",
+                            "Quantity",
+                            "Count",
+                            "Rotation",
+                            "Position",
+                            "IsNegativeQuantity",
+                            "FontName",
+                            "FontSize",
+                            "GUID",
+                            "Curve",
+                        )
+                    },
+                    {
+                        "BidConditionUID": "61",
+                        "BidPageUID": "41",
+                        "ParentUID": "NULL",
+                        "Quantity": "12.375",
+                        "Count": "0.1",
+                        "Rotation": "90",
+                        "Position": "0;0;10;0;10;10;0;10\n",
+                        "IsNegativeQuantity": "1",
+                        "FontName": "Arial \u00d1",
+                        "FontSize": "-12",
+                        "GUID": "NULL",
+                        "Curve": "5",
+                    },
+                    "raw takeoff serialisation",
+                )
+                expect(
+                    sorted(row["Name"] for row in raw.bid_tables["BidConditions"]),
+                    ["Losa \u00d1", "Wall"],
+                    "raw condition names",
+                )
+                expect(
+                    next(
+                        row["Notes"]
+                        for row in raw.bid_tables["BidConditions"]
+                        if row["UID"] == "61"
+                    ),
+                    "Notas: caf\u00e9 \u00f1",
+                    "raw LONGBINARY notes",
+                )
+                expect(
+                    [row["UID"] for row in raw.global_tables["JobStatuses"]],
+                    ["2", "3"],
+                    "global JobStatuses ordered by UID",
+                )
+                expect(
+                    raw.global_tables["JobStatuses"][0],
+                    {"UID": "2", "Locked": "1", "Name": "Lost", "Sequence": "1"},
+                    "global JobStatuses values",
+                )
+                expect(
+                    [
+                        (row["UID"], row["Name"], row["ExpandState"])
+                        for row in raw.global_tables["CdnTypes"]
+                    ],
+                    [("5", "Concrete \u00d1", "NULL"), ("6", "Wood", "NULL")],
+                    "global CdnTypes ordered by UID",
+                )
+                expect(
+                    sorted(raw.global_tables),
+                    sorted(RAW_GLOBAL_TABLES),
+                    "raw global tables",
+                )
+                expect(
+                    [
+                        (table, rows)
+                        for table, rows in raw.global_tables.items()
+                        if table in ("Employees", "PayClasses", "AccessLevels")
+                    ],
+                    [("Employees", []), ("PayClasses", []), ("AccessLevels", [])],
+                    "empty global tables",
+                )
+                raw_empty = reader.get_raw_bid_data(source, "103")
+                expect(
+                    {t: r for t, r in raw_empty.bid_tables.items() if r},
+                    {},
+                    "empty bid raw tables",
+                )
+                expect(
+                    {t: r for t, r in raw_empty.page_tables.items() if r},
+                    {},
+                    "empty bid page tables",
+                )
+
+                # --- statistics
+                expect(
+                    reader.get_database_statistics(source),
+                    {
+                        "projects": system_projects[0][0],
+                        "bids": 4,
+                        "takeoffs": 6,
+                        "conditions": 4,
+                        "pages": 10,
+                    },
+                    "statistics",
+                )
+
+                # --- a second settings row makes the double fetch raise, only for
+                # the bid that has it
+                cls._execute(
+                    path,
+                    [
+                        cls._insert(
+                            "BidSettings", UID=403, BidUID=102, BidPageSelectedUID=49
+                        )
+                    ],
+                )
+                manager.close_database(source)
+                try:
+                    reader.get_bid_data(source, "102")
+                except BidSettingsCardinalityError as exc:
+                    expect("Bids.UID=102" in str(exc), True, f"cardinality {exc}")
+                else:
+                    raise AssertionError("two BidSettings rows were accepted")
+                expect(
+                    reader.get_bid_data(source, "101")[8],
+                    "42",
+                    "bid 101 keeps its saved page",
+                )
+            finally:
+                manager.close()
+
+    @classmethod
+    def exercise_missing_optional_schema(cls):
+        import tempfile
+        from ost_visualizer.infrastructure.mdb.connection_manager import (
+            MdbConnectionManager,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+        from ost_visualizer.infrastructure.mdb.schema_compatibility import (
+            MdbSchemaInspector,
+        )
+        import tests.helpers.mdb.schema_support as access
+
+        expect = cls._expect
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = cls._create(folder)
+            source = str(path)
+            cls._seed_two_bids(path)
+            cls._execute(
+                path, [("UPDATE [BidPages] SET [Name] = 'Zulu' WHERE [UID] = 43",)]
+            )
+
+            # An older file: drop the optional columns and tables the reader
+            # replaces with literal column expressions or skips.
+            drops = [
+                "ALTER TABLE [BidSettings] DROP CONSTRAINT [BidSettings_BidPageSelectedUID1]",
+                "ALTER TABLE [BidSettings] DROP COLUMN [BidPageSelectedUID]",
+                "DROP INDEX [BidAreas_GUID] ON [BidAreas]",
+                "ALTER TABLE [BidAreas] DROP COLUMN [GUID]",
+                "ALTER TABLE [BidAreas] DROP COLUMN [Sequence]",
+                "DROP INDEX [BidConditionFolders_ParentUID] ON [BidConditionFolders]",
+                "ALTER TABLE [BidConditionFolders] DROP COLUMN [ParentUID]",
+                "ALTER TABLE [BidLayers] DROP COLUMN [Show]",
+                "ALTER TABLE [BidLayers] DROP COLUMN [IsLocked]",
+                "ALTER TABLE [BidLayers] DROP COLUMN [Sequence]",
+                "ALTER TABLE [BidPages] DROP COLUMN [Sequence]",
+                "ALTER TABLE [BidPages] DROP COLUMN [Width]",
+                "ALTER TABLE [BidPages] DROP COLUMN [ScaleFactor1]",
+                "ALTER TABLE [BidPages] DROP COLUMN [Index1]",
+                "ALTER TABLE [BidPages] DROP COLUMN [ImagePath]",
+                "ALTER TABLE [BidPages] DROP COLUMN [SheetNo]",
+                "ALTER TABLE [BidPages] DROP COLUMN [Invert]",
+                "ALTER TABLE [BidConditions] DROP COLUMN [Notes]",
+                "ALTER TABLE [BidConditions] DROP COLUMN [DisplaySize]",
+                "ALTER TABLE [BidConditions] DROP COLUMN [Width]",
+                "ALTER TABLE [BidConditions] DROP COLUMN [RoundQuantity]",
+                "DROP INDEX [BidTakeoffs_ParentUID] ON [BidTakeoffs]",
+                "ALTER TABLE [BidTakeoffs] DROP COLUMN [ParentUID]",
+                "ALTER TABLE [BidTakeoffs] DROP COLUMN [Rotation]",
+                "ALTER TABLE [BidTakeoffs] DROP COLUMN [Curve]",
+                "ALTER TABLE [BidTakeoffs] DROP COLUMN [IsNegativeQuantity]",
+                "DROP TABLE [BidPageSettings]",
+                "DROP TABLE [BidTakeoffTotals]",
+                "DROP TABLE [BidTexts]",
+                "DROP TABLE [BidHotLinks]",
+            ]
+            cls._execute(path, [(sql,) for sql in drops])
+
+            # What the schema inspector sees on the real file.
+            connection = access._connect_mdb(path)
+            try:
+                inspector = MdbSchemaInspector(connection)
+                expect(inspector.table_exists("BidPageAreaSelections"), False, "absent")
+                expect(
+                    inspector.get_columns("BidPageAreaSelections"), set(), "absent cols"
+                )
+                expect(inspector.table_exists("BidPageSettings"), False, "dropped")
+                expect(inspector.table_exists("BidAreas"), True, "kept table")
+                expect(
+                    inspector.column_exists("BidAreas", "GUID"), False, "dropped col"
+                )
+                expect(inspector.column_exists("BidAreas", "Name"), True, "kept col")
+                expect(
+                    inspector.optional_column("BidAreas", "GUID", "NULL"),
+                    "NULL AS [GUID]",
+                    "fallback expression",
+                )
+                expect(
+                    inspector.order_by_existing(
+                        "BidPages", ("Sequence", "Name", "UID"), "[UID]"
+                    ),
+                    "[Name], [UID]",
+                    "order without Sequence",
+                )
+            finally:
+                connection.close()
+
+            manager = MdbConnectionManager()
+            reader = MdbReader(manager)
+            try:
+                # The literal fallbacks (NULL, 0, 1, -1, 100) are accepted by ACE.
+                (
+                    conditions,
+                    takeoffs,
+                    areas,
+                    pages,
+                    selections,
+                    _cdn_types,
+                    _annotations,
+                    folders,
+                    selected_page,
+                    _extras,
+                    _cover,
+                    _delete,
+                ) = reader.get_bid_data(source, "101")
+                expect(
+                    {
+                        uid: (
+                            c.name,
+                            c.width,
+                            c.round_quantity,
+                            c.display_size,
+                            c.notes,
+                        )
+                        for uid, c in conditions.items()
+                    },
+                    {
+                        "61": ("Losa \u00d1", 0.0, False, 100.0, ""),
+                        "62": ("Wall", 0.0, False, 100.0, ""),
+                    },
+                    "conditions without optional columns",
+                )
+                expect(
+                    sorted(
+                        (
+                            t.uid,
+                            t.rotation,
+                            t.curve,
+                            t.parent_uid,
+                            t.is_hole,
+                            t.is_negative,
+                        )
+                        for t in takeoffs
+                    ),
+                    [
+                        ("91", 0.0, -1, "0", False, False),
+                        ("92", 0.0, -1, "0", False, False),
+                        ("93", 0.0, -1, "0", False, False),
+                    ],
+                    "takeoffs without optional columns",
+                )
+                expect(
+                    {
+                        uid: (a.parent_uid, a.name, a.sequence, a.guid)
+                        for uid, a in areas.items()
+                    },
+                    {
+                        "81": ("", "Zone A", 0, ""),
+                        "82": ("", "Zone B", 0, ""),
+                        "83": ("81", "Sub \u00f1", 0, ""),
+                    },
+                    "areas without Sequence and GUID",
+                )
+                expect(list(areas), ["81", "82", "83"], "areas ordered by UID")
+                # ORDER BY [Name], [UID]: ACE compares text without regard to case
+                # (a binary sort would put 'Last', 'Mid' and 'Zebra' first).
+                expect(
+                    [(uid, p.name) for uid, p in pages.items()],
+                    [
+                        ("46", "a-first"),
+                        ("45", "b-second"),
+                        ("41", "Last"),
+                        ("42", "Mid"),
+                        ("47", "same"),
+                        ("48", "same"),
+                        ("44", "Zebra"),
+                        ("43", "Zulu"),
+                    ],
+                    "pages ordered by Name, UID",
+                )
+                page = pages["41"]
+                expect(
+                    (
+                        page.sequence,
+                        page.width_pts,
+                        page.height_pts,
+                        page.scale_factor1,
+                        page.scale_factor2,
+                        page.page_index,
+                        page.image_path,
+                        page.sheet_no,
+                        page.invert,
+                        page.rotation,
+                        page.flip_x,
+                    ),
+                    (0, 0.0, 810.0, 1.0, 12.0, 0, None, "", False, 90, True),
+                    "page without optional columns",
+                )
+                expect(
+                    selections,
+                    {
+                        uid: None
+                        for uid in ("41", "42", "43", "44", "45", "46", "47", "48")
+                    },
+                    "no BidPageSettings table: no page area selection",
+                )
+                expect(selected_page, None, "no BidPageSelectedUID column")
+                expect(
+                    {uid: f.parent_uid for uid, f in folders.items()},
+                    {"71": None, "72": None, "74": None},
+                    "folders without ParentUID",
+                )
+                expect(
+                    sorted(
+                        (layer.uid, layer.show, layer.sequence, layer.is_locked)
+                        for layer in reader.get_bid_layers_for_sidebar(source, "101")
+                    ),
+                    [
+                        ("11", True, 0, False),
+                        ("12", True, 0, False),
+                        ("14", True, 0, False),
+                    ],
+                    "sidebar layers without the template filter columns",
+                )
+                expect(
+                    [
+                        (layer.uid, layer.show, layer.sequence)
+                        for layer in reader.get_default_layers(source)
+                    ],
+                    [("30", True, 0), ("31", True, 0), ("32", True, 0)],
+                    "default layers ordered by UID without Sequence",
+                )
+                expect(
+                    reader.get_pages_with_delete_content(source, "101"),
+                    {"41", "42"},
+                    "delete content without the dropped page content tables",
+                )
+                expect(
+                    [a.uid for a in reader.get_area_family(source, "101")],
+                    ["81", "82", "83"],
+                    "area family without Sequence",
+                )
+                raw = reader.get_raw_bid_data(source, "101")
+                expect(raw.bid_tables["BidTakeoffTotals"], [], "dropped totals table")
+                expect(raw.page_tables["BidTexts"], [], "dropped texts table")
+                expect(raw.page_tables["BidPageSettings"], [], "dropped settings table")
+                expect(
+                    sorted(raw.bid_tables["BidAreas"][0]),
+                    ["BidUID", "Name", "ParentUID", "UID", "WasSent"],
+                    "raw rows carry only the columns that exist",
+                )
+                expect(
+                    [row["UID"] for row in raw.bid_tables["BidSettings"]],
+                    ["401"],
+                    "raw settings rows",
+                )
+                expect(
+                    reader.get_database_statistics(source)["pages"], 10, "statistics"
+                )
+            finally:
+                manager.close()
+
+    @classmethod
+    def exercise_access_rejections_and_read_policy(cls):
+        import logging
+        import tempfile
+        import pyodbc
+        import tests.helpers.mdb.schema_support as access
+        from ost_visualizer.infrastructure.mdb.connection_manager import (
+            MdbConnectionManager,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+        from ost_visualizer.infrastructure.mdb.schema_compatibility import (
+            MdbSchemaInspector,
+            UnsupportedMdbSchemaError,
+        )
+
+        expect = cls._expect
+
+        class Records(logging.Handler):
+            def __init__(self):
+                super().__init__(logging.WARNING)
+                self.messages = []
+
+            def emit(self, record):
+                self.messages.append(record.getMessage())
+
+        def raised(call):
+            try:
+                call()
+            except Exception as exc:  # noqa: BLE001 - the type is what is asserted
+                return exc
+            return None
+
+        def expect_access_error(call, label):
+            error = raised(call)
+            expect(isinstance(error, pyodbc.Error), True, f"{label}: {error!r}")
+            return error
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = cls._create(folder)
+            source = str(path)
+            cls._seed_two_bids(path)
+
+            # An inspector that still describes the file as it was: the columns
+            # dropped below are "known", so the reader's SQL names them and ACE
+            # (not the schema checks) has to reject the statements.
+            connection = access._connect_mdb(path)
+            try:
+                stale = MdbSchemaInspector(connection)
+                for table in sorted(stale._get_tables()):
+                    stale.get_columns(table)
+            finally:
+                connection.close()
+            drops = (
+                "DROP INDEX [BidTakeoffs_BidUID] ON [BidTakeoffs]",
+                "ALTER TABLE [BidTakeoffs] DROP COLUMN [BidUID]",
+                "ALTER TABLE [BidAreas] DROP COLUMN [Name]",
+                "ALTER TABLE [BidConditionFolders] DROP COLUMN [Name]",
+                "ALTER TABLE [BidSettings] DROP CONSTRAINT "
+                "[BidSettings_BidPageSelectedUID1]",
+                "ALTER TABLE [BidSettings] DROP COLUMN [BidPageSelectedUID]",
+                "ALTER TABLE [BidTexts] DROP CONSTRAINT [BidTexts_BidPageUID1]",
+                "DROP INDEX [BidTexts_BidPageUID] ON [BidTexts]",
+                "ALTER TABLE [BidTexts] DROP COLUMN [BidPageUID]",
+            )
+            cls._execute(path, [(sql,) for sql in drops])
+
+            class TolerantStaleReader(MdbReader):
+                def _schema(self, _connection):
+                    return stale
+
+            class StrictStaleReader(TolerantStaleReader):
+                @staticmethod
+                def _record_caught_read_error(_exc, _locator=None):
+                    return True
+
+            manager = MdbConnectionManager()
+            records = Records()
+            logger = logging.getLogger("test.real_access_reader")
+            logger.addHandler(records)
+            logger.propagate = False
+            fresh = MdbReader(manager, logger)
+            tolerant = TolerantStaleReader(manager, logger)
+            strict = StrictStaleReader(manager, logger)
+            try:
+                # Required columns missing from the real file are refused up front
+                # and are never mistaken for a read failure to be swallowed.
+                for call in (
+                    lambda: fresh.get_pages_with_takeoffs(source, "101"),
+                    lambda: fresh.get_bid_data(source, "101"),
+                ):
+                    error = raised(call)
+                    expect(type(error), UnsupportedMdbSchemaError, "missing column")
+                    expect("BidTakeoffs.BidUID" in str(error), True, f"message {error}")
+
+                # ACE rejects a SELECT that names a dropped column ("Too few
+                # parameters" on this driver) ...
+                error = expect_access_error(
+                    lambda: strict.get_pages_with_takeoffs(source, "101"), "strict"
+                )
+                expect(error.args[0], "07002", f"SQLSTATE of {error}")
+                expect("Too few parameters" in str(error), True, f"message {error}")
+                # ... which the tolerant policy turns into an empty answer.
+                expect(
+                    tolerant.get_pages_with_takeoffs(source, "101"),
+                    set(),
+                    "tolerant takeoff pages",
+                )
+
+                # The Takeoff load re-raises whatever the policy says.
+                for reader in (tolerant, strict):
+                    expect_access_error(
+                        lambda: reader.get_bid_data(source, "101"), "takeoff load"
+                    )
+
+                # Areas and folders: swallowed inside a load, raised for a family.
+                with tolerant._connection(source) as connection:
+                    expect(
+                        tolerant._parse_bid_areas_for_bid(connection, "101", stale),
+                        {},
+                        "tolerant areas",
+                    )
+                    expect(
+                        tolerant._parse_bid_condition_folders_for_bid(
+                            connection, "101", stale
+                        ),
+                        {},
+                        "tolerant folders",
+                    )
+                    expect_access_error(
+                        lambda: strict._parse_bid_areas_for_bid(
+                            connection, "101", stale
+                        ),
+                        "strict areas",
+                    )
+                    expect_access_error(
+                        lambda: strict._parse_bid_condition_folders_for_bid(
+                            connection, "101", stale
+                        ),
+                        "strict folders",
+                    )
+                    expect_access_error(
+                        lambda: tolerant._parse_bid_areas_for_bid(
+                            connection, "101", stale, require_complete=True
+                        ),
+                        "complete areas",
+                    )
+                    expect_access_error(
+                        lambda: tolerant._parse_bid_condition_folders_for_bid(
+                            connection, "101", stale, require_complete=True
+                        ),
+                        "complete folders",
+                    )
+                expect_access_error(
+                    lambda: tolerant.get_area_family(source, "101"), "area family"
+                )
+                expect_access_error(
+                    lambda: tolerant.get_condition_family(source, "101"),
+                    "condition family",
+                )
+
+                # The saved page of a bid whose column vanished: the tolerant policy
+                # answers "no saved page" and warns, the strict one re-raises.
+                with tolerant._connection(source) as connection:
+                    expect(
+                        tolerant._parse_bid_selected_page(connection, "101"),
+                        None,
+                        "tolerant selected page",
+                    )
+                    expect_access_error(
+                        lambda: strict._parse_bid_selected_page(connection, "101"),
+                        "strict selected page",
+                    )
+                expect(
+                    sum(
+                        "Could not read the saved page for bid 101" in message
+                        for message in records.messages
+                    ),
+                    1,
+                    "selected page warnings",
+                )
+
+                # The delete-confirmation scan catches every Exception: tolerant
+                # -> None and a warning, strict -> the ACE error.
+                expect(
+                    tolerant.get_pages_with_delete_content(source, "101"),
+                    None,
+                    "tolerant delete content",
+                )
+                expect(
+                    sum(
+                        "Failed to load pages with delete-sensitive content" in message
+                        for message in records.messages
+                    ),
+                    1,
+                    "delete content warnings",
+                )
+                expect_access_error(
+                    lambda: strict.get_pages_with_delete_content(source, "101"),
+                    "strict delete content",
+                )
+
+                # Raw copy: a rejected table is skipped by the tolerant policy and
+                # fails the whole read under the strict one.
+                raw = tolerant.get_raw_bid_data(source, "101")
+                expect(raw.page_tables["BidTakeoffs"], [], "rejected raw takeoffs")
+                expect(raw.page_tables["BidTexts"], [], "rejected raw texts")
+                expect(
+                    sorted(row["UID"] for row in raw.bid_tables["BidPages"]),
+                    ["41", "42", "43", "44", "45", "46", "47", "48"],
+                    "other raw tables still load",
+                )
+                expect_access_error(
+                    lambda: strict.get_raw_bid_data(source, "101"), "strict raw"
+                )
+            finally:
+                logger.removeHandler(records)
+                manager.close()
+
+
+class RealAccessReaderTests(unittest.TestCase):
+    """Real Access: the reader's SQL and ODBC value handling.
+
+    The sqlite stand-ins cannot show how ACE binds text uids against Long
+    columns, sorts NULL, returns BIT/DOUBLE/LONGBINARY/DATETIME values or which
+    errors it raises, so each scenario runs in a child process on a real file.
+    """
+
+    def _run_scenario(self, name):
+        import subprocess
+        import sys
+        from tests.helpers.mdb.schema_support import _access_available
+        from tests.paths import REPO_ROOT
+
+        if not _access_available():
+            self.skipTest("Microsoft Access ODBC driver (ACE) or ADOX is not available")
+        code = (
+            "from tests.infrastructure.mdb.components.test_bid_data_reader "
+            "import RealAccessReaderScenarios as Scenarios; "
+            f"Scenarios.{name}()"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_text_bid_uids_scope_every_read_and_values_decode_on_real_access(self):
+        self._run_scenario("exercise_scoping_and_types")
+
+    def test_older_files_without_optional_columns_and_tables_read_on_real_access(self):
+        self._run_scenario("exercise_missing_optional_schema")
+
+    def test_access_rejections_follow_the_read_policy_on_real_access(self):
+        self._run_scenario("exercise_access_rejections_and_read_policy")
