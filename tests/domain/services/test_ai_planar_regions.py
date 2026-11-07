@@ -3293,7 +3293,6 @@ def _shuffled(segments, rng):
 
 class SegmentOrderIndependenceTests(unittest.TestCase):
     """The result depends on the drawing, never on the order or direction of its lines.
-
     Before the fix a wall drawn twice inside the snap tolerance gave up to ten different
     answers for the same lines (lost rooms, sliver regions of 0.09 to 0.8 area).
     """

@@ -1,3 +1,4 @@
+import logging
 import os
 import unittest
 from types import SimpleNamespace
@@ -273,3 +274,26 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
                 self.assertEqual(result, "annotation")
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(calls[0]["target_page_uid"], "page-2")
+
+
+class OpenAnnotationViewUseCaseLoggerTests(unittest.TestCase):
+    def test_injected_logger_is_stored(self):
+        logger = logging.getLogger("tests.open_annotation_view.injected")
+        use_case = OpenAnnotationViewUseCase(
+            SimpleNamespace(), SimpleNamespace(), logger=logger
+        )
+        self.assertIs(use_case.logger, logger)
+
+    def test_missing_logger_defaults_to_the_module_logger(self):
+        for kwargs in ({}, {"logger": None}):
+            with self.subTest(kwargs=kwargs):
+                use_case = OpenAnnotationViewUseCase(
+                    SimpleNamespace(), SimpleNamespace(), **kwargs
+                )
+                self.assertIs(
+                    use_case.logger,
+                    logging.getLogger(
+                        "ost_visualizer.application.use_cases.annotation_view."
+                        "open_annotation_view_use_case"
+                    ),
+                )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, List, Set
+from typing import Dict, Iterable, List, Optional, Set
 from .employee import Employee, PayClass
 
 
@@ -10,6 +10,17 @@ class JobStatus:
     name: str
     locked: bool = False
     sequence: int = 0
+
+
+def resolve_bid_status_lock(
+    job_statuses: Iterable[JobStatus], bid_status_uid: Optional[str]
+) -> Optional[bool]:
+    if bid_status_uid is None or bid_status_uid == "":
+        return False
+    for status in job_statuses:
+        if str(status.uid) == str(bid_status_uid):
+            return status.locked
+    return None
 
 
 @dataclass

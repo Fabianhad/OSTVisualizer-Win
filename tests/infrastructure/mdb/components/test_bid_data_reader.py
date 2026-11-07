@@ -355,6 +355,48 @@ class BidDataReaderPersistenceTests(unittest.TestCase):
                 self.assertEqual(list(areas), ["7"])
                 self.assertEqual(areas["7"].parent_uid, "")
 
+    def test_condition_folder_parent_reads_as_empty_for_null_zero_and_blank(self):
+        # Same convention as BidArea.parent_uid: no parent is the empty string.
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE BidConditionFolders "
+            "(UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID)"
+        )
+        conn.executemany(
+            "INSERT INTO BidConditionFolders VALUES (?, ?, ?, ?)",
+            (
+                (1, 1, "Null", None),
+                (2, 1, "Zero", 0),
+                (3, 1, "Zero text", "0"),
+                (4, 1, "Blank", ""),
+                (5, 1, "Child of four", 4),
+            ),
+        )
+        folders = MdbReader._parse_bid_condition_folders_for_bid(
+            _SqliteMdbOps(conn),
+            _SqliteConnectionWrapper(conn),
+            "1",
+            _SqliteSchema(conn),
+        )
+        self.assertEqual(
+            {uid: folder.parent_uid for uid, folder in folders.items()},
+            {"1": "", "2": "", "3": "", "4": "", "5": "4"},
+        )
+
+    def test_condition_folder_without_a_parent_column_reads_as_empty(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE BidConditionFolders (UID INTEGER, BidUID INTEGER, Name TEXT)"
+        )
+        conn.execute("INSERT INTO BidConditionFolders VALUES (1, 1, 'Old file')")
+        folders = MdbReader._parse_bid_condition_folders_for_bid(
+            _SqliteMdbOps(conn),
+            _SqliteConnectionWrapper(conn),
+            "1",
+            _SqliteSchema(conn),
+        )
+        self.assertEqual(folders["1"].parent_uid, "")
+
     def test_condition_folder_reader_preserves_orphan_and_valid_chain_contracts(self):
         conn = sqlite3.connect(":memory:")
         conn.execute(
@@ -379,7 +421,7 @@ class BidDataReaderPersistenceTests(unittest.TestCase):
             _SqliteSchema(conn),
         )
         self.assertEqual(sorted(folders), ["10", "11", "7", "8", "9"])
-        self.assertIsNone(folders["7"].parent_uid)
+        self.assertEqual(folders["7"].parent_uid, "")
         self.assertEqual(folders["8"].parent_uid, "7")
         self.assertEqual(folders["9"].parent_uid, "8")
         self.assertEqual(folders["10"].parent_uid, "99")
@@ -1516,7 +1558,7 @@ class BidFamilyReaderTests(unittest.TestCase):
         )
         self.assertEqual(
             {uid: (f.name, f.parent_uid, f.bid_uid) for uid, f in folders.items()},
-            {"10": ("Root", None, "1"), "11": ("Child", "10", "1")},
+            {"10": ("Root", "", "1"), "11": ("Child", "10", "1")},
         )
 
     def test_condition_family_of_a_missing_bid_is_a_missing_owner_error(self):
@@ -2468,6 +2510,72 @@ class BidPageReaderTests(unittest.TestCase):
                 (True, False, True, True, True),
                 (False, True, False, False, False),
             ],
+        )
+
+    def test_overlay_resized_reads_every_stored_spelling_of_the_flag(self):
+        # Access stores BidPages.OverlayResized as VARCHAR, so the flag arrives
+        # as text; the column is declared without affinity to keep every value
+        # exactly as stored.
+        spellings = (
+            (True, True),
+            (-1, True),
+            (1, True),
+            (-1.0, True),
+            (1.0, True),
+            (0.0, False),
+            ("-1", True),
+            ("1", True),
+            ("True", True),
+            ("true", True),
+            (" -1 ", True),
+            (0, False),
+            ("0", False),
+            ("", False),
+            (None, False),
+            ("False", False),
+            ("false", False),
+            (False, False),
+            (2, False),
+            ("2", False),
+            ("-2", False),
+            ("yes", False),
+        )
+        for stored, expected in spellings:
+            with self.subTest(stored=stored):
+                conn = _db(
+                    "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, OverlayResized)"
+                )
+                conn.execute("INSERT INTO BidPages VALUES (1, 1, ?)", (stored,))
+                self.assertIs(self._read(conn)["1"].overlay_resized, expected)
+
+    def test_overlay_resized_stored_in_a_text_column_reads_as_a_flag(self):
+        conn = _db(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, OverlayResized TEXT)"
+        )
+        _insert(
+            conn,
+            "BidPages",
+            ("UID", "BidUID", "OverlayResized"),
+            [(1, 1, "-1"), (2, 1, "1"), (3, 1, "True"), (4, 1, "0"), (5, 1, "")],
+        )
+        self.assertEqual(
+            [page.overlay_resized for page in self._read(conn).values()],
+            [True, True, True, False, False],
+        )
+
+    def test_overlay_resized_bytes_text_reads_as_a_flag(self):
+        conn = _db(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, OverlayResized)"
+        )
+        _insert(
+            conn,
+            "BidPages",
+            ("UID", "BidUID", "OverlayResized"),
+            [(1, 1, b"-1"), (2, 1, b"0")],
+        )
+        self.assertEqual(
+            [page.overlay_resized for page in self._read(conn).values()],
+            [True, False],
         )
 
     def test_pages_are_ordered_by_sequence_then_name_then_uid(self):
@@ -4057,7 +4165,6 @@ class ElevationRecoveryTests(unittest.TestCase):
 
     def test_an_error_that_is_not_an_unreadable_elevation_is_not_swallowed(self):
         from unittest import mock
-
         from ost_visualizer.infrastructure.mdb.components import bid_data_reader
 
         with mock.patch.object(
@@ -4424,7 +4531,6 @@ class RawReadErrorScopeTests(unittest.TestCase):
 
     def test_only_a_value_error_from_the_overlay_rect_parser_is_recovered(self):
         from unittest import mock
-
         from ost_visualizer.infrastructure.mdb.components import bid_data_reader
 
         conn = _db(f"CREATE TABLE BidPages ({BidPageReaderTests._COLUMNS})")
@@ -4576,7 +4682,6 @@ class DeleteContentScanScopeTests(unittest.TestCase):
 
 class RealAccessReaderScenarios:
     """Reader scenarios that run in a child process against a real Access file.
-
     Creating Access databases in the test process exhausts the DAO client tasks,
     so each scenario creates and reads its own temporary file in a child process
     (see ``ProjectOperationsRealAccessTests``). Seeds are plain pyodbc INSERTs and
@@ -4785,12 +4890,20 @@ class RealAccessReaderScenarios:
                 CurrentY=-4.5,
                 Invert=True,
                 Bitonal=False,
+                OverlayResized="-1",
             )
         )
         statements += [
             ("UPDATE [BidPages] SET [BidPageFolderUID] = 9 WHERE [UID] = 44",),
+            # OverlayResized is a VARCHAR column: the flag is stored as text
+            # (page 43 keeps NULL, page 41 holds "-1")
+            ("UPDATE [BidPages] SET [OverlayResized] = '1' WHERE [UID] = 42",),
+            ("UPDATE [BidPages] SET [OverlayResized] = 'True' WHERE [UID] = 44",),
+            ("UPDATE [BidPages] SET [OverlayResized] = '0' WHERE [UID] = 45",),
+            ("UPDATE [BidPages] SET [OverlayResized] = '' WHERE [UID] = 46",),
+            ("UPDATE [BidPages] SET [OverlayResized] = 'False' WHERE [UID] = 47",),
             ins("BidPages", UID=49, BidUID=102, Name="Neighbour page", Sequence=0.0),
-            # Folders: NULL parent, a child and a literal 0 parent
+            # Folders: NULL parent, a child and a literal 0 parent (both read as "")
             ins("BidConditionFolders", UID=74, BidUID=101, ParentUID=0, Name="Zero"),
             ins("BidConditionFolders", UID=72, BidUID=101, ParentUID=71, Name="Child"),
             ins(
@@ -5158,7 +5271,6 @@ class RealAccessReaderScenarios:
                     ],
                     "sidebar layers 103 (templates only)",
                 )
-
                 # --- the full load of bid 101
                 (
                     conditions,
@@ -5404,6 +5516,20 @@ class RealAccessReaderScenarios:
                     ),
                     "page 41 values",
                 )
+                expect(
+                    {uid: pages[uid].overlay_resized for uid in sorted(pages)},
+                    {
+                        "41": True,
+                        "42": True,
+                        "43": False,
+                        "44": True,
+                        "45": False,
+                        "46": False,
+                        "47": False,
+                        "48": False,
+                    },
+                    "overlay resized stored as text",
+                )
                 bare = pages["43"]
                 expect(
                     (
@@ -5447,9 +5573,9 @@ class RealAccessReaderScenarios:
                         for uid, f in folders.items()
                     },
                     {
-                        "71": ("Carpeta \u00d1", "101", None),
+                        "71": ("Carpeta \u00d1", "101", ""),
                         "72": ("Child", "101", "71"),
-                        "74": ("Zero", "101", "0"),
+                        "74": ("Zero", "101", ""),
                     },
                     "folders 101",
                 )
@@ -5509,7 +5635,6 @@ class RealAccessReaderScenarios:
                 )
                 expect(sorted(extras), ["91", "92", "93"], "extras keys")
                 expect((cover_sheet, delete_content), (None, None), "navigation")
-
                 # --- the same load hydrates the navigation snapshots on request
                 hydrating = HydratingReader(manager)
                 hydrated = hydrating.get_bid_data(source, "101")
@@ -5538,7 +5663,6 @@ class RealAccessReaderScenarios:
                     ),
                     "cover sheet",
                 )
-
                 # --- the neighbour, an empty bid and an unknown bid
                 neighbour = reader.get_bid_data(source, "102")
                 expect(
@@ -5560,7 +5684,6 @@ class RealAccessReaderScenarios:
                         ({}, [], {}, {}, {}, empty[5], [], {}, None, {}, None, None),
                         f"empty bid {empty_uid}",
                     )
-
                 # --- bid families
                 family_conditions, family_folders = reader.get_condition_family(
                     source, "101"
@@ -5595,7 +5718,6 @@ class RealAccessReaderScenarios:
                         )
                     else:
                         raise AssertionError(f"{family.__name__} accepted bid 999")
-
                 # --- raw bid data: bid scoping, serialised Access types, ordering
                 raw = reader.get_raw_bid_data(source, "101")
                 expect(
@@ -5803,7 +5925,6 @@ class RealAccessReaderScenarios:
                     {},
                     "empty bid page tables",
                 )
-
                 # --- statistics
                 expect(
                     reader.get_database_statistics(source),
@@ -5816,7 +5937,6 @@ class RealAccessReaderScenarios:
                     },
                     "statistics",
                 )
-
                 # --- a second settings row makes the double fetch raise, only for
                 # the bid that has it
                 cls._execute(
@@ -5855,7 +5975,6 @@ class RealAccessReaderScenarios:
         import tests.helpers.mdb.schema_support as access
 
         expect = cls._expect
-
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             path = cls._create(folder)
             source = str(path)
@@ -5863,7 +5982,6 @@ class RealAccessReaderScenarios:
             cls._execute(
                 path, [("UPDATE [BidPages] SET [Name] = 'Zulu' WHERE [UID] = 43",)]
             )
-
             # An older file: drop the optional columns and tables the reader
             # replaces with literal column expressions or skips.
             drops = [
@@ -5899,7 +6017,6 @@ class RealAccessReaderScenarios:
                 "DROP TABLE [BidHotLinks]",
             ]
             cls._execute(path, [(sql,) for sql in drops])
-
             # What the schema inspector sees on the real file.
             connection = access._connect_mdb(path)
             try:
@@ -5928,7 +6045,6 @@ class RealAccessReaderScenarios:
                 )
             finally:
                 connection.close()
-
             manager = MdbConnectionManager()
             reader = MdbReader(manager)
             try:
@@ -6041,7 +6157,7 @@ class RealAccessReaderScenarios:
                 expect(selected_page, None, "no BidPageSelectedUID column")
                 expect(
                     {uid: f.parent_uid for uid, f in folders.items()},
-                    {"71": None, "72": None, "74": None},
+                    {"71": "", "72": "", "74": ""},
                     "folders without ParentUID",
                 )
                 expect(
@@ -6135,7 +6251,6 @@ class RealAccessReaderScenarios:
             path = cls._create(folder)
             source = str(path)
             cls._seed_two_bids(path)
-
             # An inspector that still describes the file as it was: the columns
             # dropped below are "known", so the reader's SQL names them and ACE
             # (not the schema checks) has to reject the statements.
@@ -6187,7 +6302,6 @@ class RealAccessReaderScenarios:
                     error = raised(call)
                     expect(type(error), UnsupportedMdbSchemaError, "missing column")
                     expect("BidTakeoffs.BidUID" in str(error), True, f"message {error}")
-
                 # ACE rejects a SELECT that names a dropped column ("Too few
                 # parameters" on this driver) ...
                 error = expect_access_error(
@@ -6201,13 +6315,11 @@ class RealAccessReaderScenarios:
                     set(),
                     "tolerant takeoff pages",
                 )
-
                 # The Takeoff load re-raises whatever the policy says.
                 for reader in (tolerant, strict):
                     expect_access_error(
                         lambda: reader.get_bid_data(source, "101"), "takeoff load"
                     )
-
                 # Areas and folders: swallowed inside a load, raised for a family.
                 with tolerant._connection(source) as connection:
                     expect(
@@ -6253,7 +6365,6 @@ class RealAccessReaderScenarios:
                     lambda: tolerant.get_condition_family(source, "101"),
                     "condition family",
                 )
-
                 # The saved page of a bid whose column vanished: the tolerant policy
                 # answers "no saved page" and warns, the strict one re-raises.
                 with tolerant._connection(source) as connection:
@@ -6274,7 +6385,6 @@ class RealAccessReaderScenarios:
                     1,
                     "selected page warnings",
                 )
-
                 # The delete-confirmation scan catches every Exception: tolerant
                 # -> None and a warning, strict -> the ACE error.
                 expect(
@@ -6294,7 +6404,6 @@ class RealAccessReaderScenarios:
                     lambda: strict.get_pages_with_delete_content(source, "101"),
                     "strict delete content",
                 )
-
                 # Raw copy: a rejected table is skipped by the tolerant policy and
                 # fails the whole read under the strict one.
                 raw = tolerant.get_raw_bid_data(source, "101")
@@ -6315,7 +6424,6 @@ class RealAccessReaderScenarios:
 
 class RealAccessReaderTests(unittest.TestCase):
     """Real Access: the reader's SQL and ODBC value handling.
-
     The sqlite stand-ins cannot show how ACE binds text uids against Long
     columns, sorts NULL, returns BIT/DOUBLE/LONGBINARY/DATETIME values or which
     errors it raises, so each scenario runs in a child process on a real file.

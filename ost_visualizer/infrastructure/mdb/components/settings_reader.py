@@ -319,15 +319,44 @@ class SettingsReaderMixin:
         with connection.cursor() as cursor:
             row = fetch_optional_global_settings_row(cursor, settings_select)
             if row:
-                defaults["scale_style"] = row.ScaleStyle or 1
-                defaults["scale_factor1"] = row.ScaleFactor1 or 0.125
-                defaults["scale_factor2"] = row.ScaleFactor2 or 12.0
-                defaults["page_width"] = row.PageWidth or 42.0
-                defaults["page_height"] = row.PageHeight or 30.0
-                defaults["measure_base"] = row.MeasureBase or 0
-                defaults["takeoff_increments"] = row.TakeoffIncrements or 1.0
-                defaults["next_bid_no"] = normalize_next_bid_number(row.NextBidNo)
+                for key, column, raw, convert in (
+                    ("scale_style", "ScaleStyle", row.ScaleStyle, int),
+                    ("scale_factor1", "ScaleFactor1", row.ScaleFactor1, float),
+                    ("scale_factor2", "ScaleFactor2", row.ScaleFactor2, float),
+                    ("page_width", "PageWidth", row.PageWidth, float),
+                    ("page_height", "PageHeight", row.PageHeight, float),
+                    ("measure_base", "MeasureBase", row.MeasureBase, int),
+                    (
+                        "takeoff_increments",
+                        "TakeoffIncrements",
+                        row.TakeoffIncrements,
+                        float,
+                    ),
+                    (
+                        "next_bid_no",
+                        "NextBidNo",
+                        row.NextBidNo,
+                        normalize_next_bid_number,
+                    ),
+                ):
+                    defaults[key] = self._read_settings_field(
+                        raw, column, convert, defaults[key]
+                    )
         return defaults
+
+    def _read_settings_field(self, raw, column: str, convert, default):
+        try:
+            if raw in (None, ""):
+                return default
+            return convert(raw) or default
+        except (TypeError, ValueError, OverflowError):
+            self.logger.warning(
+                "Ignoring malformed Settings.%s value %r; using the default %r",
+                column,
+                raw,
+                default,
+            )
+            return default
 
     def get_job_statuses(self, file_path: str) -> List[JobStatus]:
         try:

@@ -4,7 +4,11 @@ from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
-from ...domain.entities.cover_sheet import CoverSheetData, JobStatus
+from ...domain.entities.cover_sheet import (
+    CoverSheetData,
+    JobStatus,
+    resolve_bid_status_lock,
+)
 from ...domain.entities.employee import Employee, PayClass
 from ...domain.entities.layer import (
     BidLayer,
@@ -75,11 +79,13 @@ class ProjectReadService:
             return []
 
     def is_bid_locked(self, file_path: str, bid_status_uid: Optional[str]) -> bool:
-        if not bid_status_uid:
+        if bid_status_uid is None or bid_status_uid == "":
             return False
-        for s in self.get_job_statuses(file_path):
-            if str(s.uid) == str(bid_status_uid):
-                return s.locked
+        locked = resolve_bid_status_lock(
+            self.get_job_statuses(file_path), bid_status_uid
+        )
+        if locked is not None:
+            return locked
         self.logger.warning(
             "Job status %r of a bid in %s could not be resolved; treating the bid as locked",
             bid_status_uid,

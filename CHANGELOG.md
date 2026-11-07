@@ -29,3 +29,16 @@
   selection is no longer cleared by switching pages, so you no longer have to
   pick the Takeoff cursor first. Deselecting the takeoff on the same page
   still releases it.
+- **Deleted Bids cannot be deleted from outside the menus.** The database layer
+  now refuses to delete the system project "Deleted Bids" (Access and SQL Server);
+  before, only the project tree and its menu blocked it.
+- **A bid with an unreadable status is treated as locked.** If a bid's job status
+  could not be read or found, the bid used to read as unlocked and could be edited.
+  It now reads as locked on Access and on SQL Server.
+- **AI regions no longer depend on the order the lines were drawn in.** The same
+  drawing now gives the same regions whichever order its lines are read in, and a
+  wall drawn twice no longer makes a room disappear or leaves a sliver region.
+- **A minus before an elevation applies to the whole value.** `@T - 5' 6"` is
+  -5' 6" (it was read as +5' 6"), `@T -1m 20cm` is -120 cm (it was -80 cm), and
+  `@T - 1 m` is read instead of being skipped. Converting `1 cm` to metric keeps
+  `1 cm` instead of `1.00 cm`.

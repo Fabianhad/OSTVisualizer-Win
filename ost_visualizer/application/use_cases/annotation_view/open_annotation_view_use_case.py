@@ -22,6 +22,7 @@ class OpenAnnotationViewUseCase:
         self.config_model = config_model
         self.view_window_manager = view_window_manager
         self.main_view_manager = main_view_manager
+        self.logger = logger or logging.getLogger(__name__)
 
     def execute_from_hotlink(self, event: AppEvents.HOTLINK_CLICKED) -> str:
         bid_ref = self.project_data.get_current_bid_ref()

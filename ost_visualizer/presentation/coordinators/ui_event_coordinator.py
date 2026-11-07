@@ -44,6 +44,7 @@ from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
 from ...domain.entities.bid import Bid
 from ...domain.entities.condition import Condition
+from ...domain.entities.cover_sheet import resolve_bid_status_lock
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.loaded_file import LoadedFile
@@ -5009,12 +5010,18 @@ class UIEventCoordinator:
         if self._project_write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
         ):
-            is_locked = any(
-                str(status.uid) == str(bid_status_uid) and status.locked
-                for status in self.project_data.get_job_status_snapshot(
-                    bid_ref.file_path
-                )
+            is_locked = resolve_bid_status_lock(
+                self.project_data.get_job_status_snapshot(bid_ref.file_path),
+                bid_status_uid,
             )
+            if is_locked is None:
+                logger.warning(
+                    "Job status %r of a bid in %s could not be resolved; "
+                    "treating the bid as locked",
+                    bid_status_uid,
+                    bid_ref.file_path,
+                )
+                is_locked = True
         else:
             is_locked = self._project_read_service.is_bid_locked(
                 bid_ref.file_path, bid_status_uid

@@ -43217,8 +43217,8 @@
       "state": "All agents were stopped at their own checkpoint. Their full reports (tests/_audit_progress/*.json) were not retained (deleted 2026-11-06); the ledger keeps the conclusions."
     },
     "module_counts": {
-      "Awaiting Verification": 57,
-      "Verified": 51,
+      "Awaiting Verification": 60,
+      "Verified": 48,
       "In Progress": 24,
       "Partial": 1,
       "Verification Failed": 9,
@@ -43288,7 +43288,11 @@
       "tests/infrastructure/sql/test_schema_validator.py": {
         "auditor": "A1",
         "status": "Verified",
-        "verifier": "V1"
+        "verifier": "V1",
+        "wave5_2026-11-07": {
+          "changes": "comment-only: OPEN-2 comments now say 'documented only'; no test changed",
+          "status_unchanged": "Verified"
+        }
       },
       "tests/presentation/managers/test_deferred_persistence_manager.py": {
         "auditor": "A2",
@@ -43345,7 +43349,7 @@
       },
       "tests/presentation/coordinators/test_ui_event_coordinator.py": {
         "auditor": "A3",
-        "status": "Verified",
+        "status": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
         "verifier": "V3",
         "mutation": {
           "total": 4338,
@@ -43354,6 +43358,16 @@
           "equivalent": 18,
           "excluded": 0,
           "timeouts": 0
+        },
+        "status_before_wave5": "Verified",
+        "wave5_2026-11-07": {
+          "changes": "item 2: Sp3a5gBidLockStateTests (3 new, 1 changed): the SQL lock branch fails closed",
+          "independent_verification": "none yet: written and mutation-checked by their author only"
+        },
+        "wave6_2026-11-07": {
+          "changes": "item 3: Sp3a5gBidLockStateTests: integer uid 0 reads locked with the warning (2 new rows) and a resolvable integer 0 reads its own flag (2 new rows)",
+          "status_unchanged": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
+          "independent_verification": "none yet"
         }
       },
       "tests/presentation/windows/components/test_window.py": {
@@ -43685,7 +43699,7 @@
         }
       },
       "tests/infrastructure/mdb/components/test_layer_operations.py": {
-        "status": "Verified",
+        "status": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
         "auditor": "W3-LAYER",
         "verifier": "V3-LAYER",
         "second_pass": {
@@ -43760,7 +43774,17 @@
         },
         "outstanding_before_wave3": "Per-test notes: layer notes cover 83 tests; the rework classes (LayerParameterTypingTests, LayerTextRowTests) and one note that referenced a nonexistent test id need refreshing. 5 survivors listed (equivalent/unreachable).",
         "note_before_wave3": "V5 failed first pass; reworked, not re-verified",
-        "earlier_auditor": "A5"
+        "earlier_auditor": "A5",
+        "status_before_wave5": "Verified",
+        "wave5_2026-11-07": {
+          "changes": "item 5: delete_default_layer refuses locked built-in layers (8 new tests incl. 1 real Access; 3 fixtures moved off built-in uids)",
+          "independent_verification": "none yet: written and mutation-checked by their author only"
+        },
+        "wave6_2026-11-07": {
+          "changes": "item 1: BuiltInDefaultLayerUidAgreementTests (1 test: the dialog rule and the writer guard name the same uids)",
+          "status_unchanged": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
+          "independent_verification": "none yet"
+        }
       },
       "tests/infrastructure/mdb/components/test_bid_data_reader.py": {
         "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
@@ -43835,6 +43859,11 @@
         "wave4_2026-11-07": {
           "changes": "item 6: RealAccessReaderTests (3 tests, one child process each)",
           "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        },
+        "wave5_2026-11-07": {
+          "changes": "item 9: OverlayResized text flag and folder ParentUID '' normalisation (sqlite tests and the real-Access class); 3 characterisation pins moved",
+          "status_unchanged": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+          "independent_verification": "none yet"
         }
       },
       "tests/infrastructure/mdb/components/test_bid_operations.py": {
@@ -43861,6 +43890,10 @@
           "equivalent": 47,
           "excluded": 91,
           "timeouts": 1
+        },
+        "wave5_2026-11-07": {
+          "changes": "item 7: 1 test pinning the per-condition ValueError catch (the existing test was weak on the uid/bid message)",
+          "status_unchanged": "Blocked"
         }
       },
       "tests/domain/services/test_ai_planar_regions.py": {
@@ -44275,6 +44308,11 @@
         "wave4_2026-11-07": {
           "changes": "item 5: DetachedMinusTests (4 tests)",
           "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        },
+        "wave5_2026-11-07": {
+          "changes": "items 1 and 6: MetricSignAppliesToTheWholeValueTests (6), MetricFormattingDropsRoundingNoiseTests (6); 3 pins moved from -80 to -120 cm; 1 pin of the '1.00 cm' bug replaced; dead replace() removed (differential run, 0 differences in 16,933 inputs)",
+          "status_unchanged": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+          "independent_verification": "none yet"
         }
       },
       "tests/infrastructure/mdb/importers/test_ost_importer.py": {
@@ -44721,6 +44759,16 @@
         "wave4_2026-11-07": {
           "changes": "item 2: 1 end-to-end test (degraded status list reads locked); a comment corrected",
           "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        },
+        "wave5_2026-11-07": {
+          "changes": "item 4: per-field settings defaults (7 new tests)",
+          "status_unchanged": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+          "independent_verification": "none yet"
+        },
+        "wave6_2026-11-07": {
+          "changes": "item 2: the strict-reader test that expected a raise now expects the per-field default; 2 new tests (every field on its own under a fatal reader, the hydration parser)",
+          "status_unchanged": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+          "independent_verification": "none yet"
         }
       },
       "tests/presentation/visualization/exporters/test_pdf_exporter.py": {
@@ -45035,7 +45083,7 @@
       },
       "tests/domain/entities/test_layer.py": {
         "auditor": "A7",
-        "status": "Verified",
+        "status": "Awaiting Verification (wave-6 additions; the earlier version was Verified)",
         "verifier": "V7",
         "mutation": {
           "total": 51,
@@ -45044,6 +45092,11 @@
           "equivalent": 0,
           "excluded": 0,
           "timeouts": 0
+        },
+        "status_before_wave6": "Verified",
+        "wave6_2026-11-07": {
+          "changes": "item 1: LockedBuiltInDefaultLayerTests (2 tests) for is_locked_built_in_default_layer",
+          "independent_verification": "none yet: written and mutation-checked by their author only"
         }
       },
       "tests/domain/entities/test_pattern.py": {
@@ -45531,6 +45584,10 @@
           "equivalent": 14,
           "excluded": 0,
           "timeouts": 0
+        },
+        "wave5_2026-11-07": {
+          "changes": "item 8: DatabaseMutationRequest accepts the enum member (2 new tests, 1 pin of the old rejection removed)",
+          "status_unchanged": "In Progress"
         }
       },
       "tests/application/dtos/test_collaboration_resource_catalog.py": {
@@ -45904,6 +45961,24 @@
         "ost_visualizer/domain/services/ai_planar_regions.py": "lines read in one canonical order (smaller end first, longest first); segments also split at the split points of neighbouring lines; component roots and gap-closing ties by vertex number; closing edges that pass a neighbour of their end are skipped; rings start at the lowest-left corner; gaps and suppressed symbols in coordinate order. Item 3.",
         "ost_visualizer/presentation/components/progress_dialog.py": "removed the unused ProgressDialog._worker. Item 4.",
         "ost_visualizer/infrastructure/parsers/position_parser.py": "a minus separated from the number by spaces negates the whole value (imperial) and no longer raises ValueError (metric). Item 5."
+      },
+      "wave5_2026-11-07": {
+        "ost_visualizer/infrastructure/parsers/position_parser.py": "a leading minus before the metres negates metres plus centimetres (-1m 20cm = -120 cm); _format_metric_elevation rounds to 2 decimals before the integer check ('1cm' stays '1 cm'); dead replace() removed.",
+        "ost_visualizer/domain/entities/cover_sheet.py": "new pure helper resolve_bid_status_lock(job_statuses, bid_status_uid) -> Optional[bool] (None = unresolvable).",
+        "ost_visualizer/application/services/project_read_service.py": "is_bid_locked uses the shared helper (behaviour unchanged).",
+        "ost_visualizer/presentation/coordinators/ui_event_coordinator.py": "_resolve_bid_lock_state SQL branch fails closed through the shared helper, with the same warning.",
+        "ost_visualizer/infrastructure/mdb/components/settings_reader.py": "get_settings_defaults falls back per field (new _read_settings_field); SQL readers still re-raise.",
+        "ost_visualizer/infrastructure/mdb/components/layer_operations.py": "delete_default_layer refuses the locked built-in default layers (uids 1-4: IsTemplate and IsLocked), warning + False, no row change.",
+        "ost_visualizer/application/use_cases/annotation_view/open_annotation_view_use_case.py": "stores its logger like the sibling use cases.",
+        "ost_visualizer/application/dtos/collaboration_dtos.py": "DatabaseMutationRequest accepts a CollaborationMutationType member as well as its string value.",
+        "ost_visualizer/infrastructure/mdb/components/bid_data_reader.py": "OverlayResized read robustly from text (-1, 1, true); folder ParentUID NULL, 0, '0' and '' read as ''."
+      },
+      "wave6_2026-11-07": {
+        "ost_visualizer/domain/entities/layer.py": "new BUILT_IN_DEFAULT_LAYER_UIDS (1-4 as text) and is_locked_built_in_default_layer(layer) (locked template with a built-in uid).",
+        "ost_visualizer/presentation/dialogs/layers_dialog.py": "new _can_delete: the Delete button and _on_delete skip the locked built-in default layers.",
+        "ost_visualizer/infrastructure/mdb/components/settings_reader.py": "_read_settings_field no longer re-raises under a fatal read-error policy: a malformed value defaults its own field for the SQL readers too (warning names Settings.<Column>).",
+        "ost_visualizer/domain/entities/cover_sheet.py": "resolve_bid_status_lock: only None and '' mean no status; integer 0 is an unknown uid and reads locked.",
+        "ost_visualizer/application/services/project_read_service.py": "is_bid_locked: same rule for the early return (None or '')."
       }
     },
     "owner_decisions_needed": {
@@ -45912,18 +45987,18 @@
       "curved_linear_area_sf": "DOCUMENT ONLY (owner decision 2026-11-06). pdf_exporter computes a curved linear takeoff's area_sf from chord x thickness, not the arc (pdf_exporter.py:744-745). The native PDF writer uses area_sf only as a '> 0' gate (pdf_writer.cpp:277, :313); it is not written to the PDF, not exposed in any API/report/MCP tool, and BluebeamPolygon.area_sf is never read. Captions and quantities use the arc. This does NOT understate the Bluebeam measurement (Bluebeam measures the polygon vertices); the earlier wording 'understates the Bluebeam measurement' was wrong. Only observable effect: a curved linear whose start and end coincide has area_sf 0 and gets no /Measure. Documented in AGENTS.md. Evidence: resolution/R3.md and RV3.md (not retained (deleted 2026-11-06); the ledger keeps the conclusions).",
       "uom_arc_orientation": "RESOLVED 2026-11-06: On-Screen Takeoff confirmed arc 0/250/251 at R=100 reads 438.1 (the 251 degree route), so the mod-2pi fix was applied in uom_service._advanced_curve_points and in linear_geom.cpp (arc_sweep helper, both sites) as its own change, with the owner's tie rule: a control point within 1e-9 of the chord length from an endpoint is a straight chord. Native extension ost_linear_geom rebuilt (git-ignored artefact). The two expectedFailure tests now pass and were unmarked. Independently reviewed: see resolution_2026-11-06. Previous text: (cross1+cross2)<0 heuristic picks the minor arc for sweeps >180 deg (arc 0/250/251 at r=100 measures 190.2, not 438.1); the same heuristic is in cpp_extensions/src/linear_geom/linear_geom.cpp. Pinned by two expectedFailure tests plus a test of today's values. Needs a decision on OST compatibility.",
       "other_findings_not_changed": [
-        "ai_takeoff_corpus.py:208 parse_scales accepts a zero-denominator fraction with a whole part (smallest fix: _fraction_value returns None when float(denominator)==0)",
+        "CLOSED 2026-11-07 (stale): tools/ai_takeoff_corpus.py _fraction_value already returns None when the denominator is 0. Original finding: ai_takeoff_corpus.py:208 parse_scales accepts a zero-denominator fraction with a whole part (smallest fix: _fraction_value returns None when float(denominator)==0)",
         "deferred_persistence_manager.cancel_pages reads key[2]/key[3] before the len(key)>2 guard (unreachable through the typed schedule_* entry points)",
         "position_parser.py:67 replace(\" \",\" \") is a no-op (likely a lost no-break space)",
-        "update_layer_name returns True when no row matched",
+        "CLOSED 2026-11-07 (fixed in wave 3): update_layer_name now reports whether its guarded UPDATE matched a row. Original finding: update_layer_name returns True when no row matched",
         "OpenAnnotationViewUseCase logger argument unused",
         "build_loaded_files does not set Project.file_path",
-        "SQL identity \"|\" join collision (practically unreachable)",
-        "is_canonical_hwid(None) raises TypeError",
+        "CLOSED 2026-11-07 (fixed): a '|' in a SQL identity is rejected at input (AGENTS.md). Original finding: SQL identity \"|\" join collision (practically unreachable)",
+        "CLOSED 2026-11-07 (fixed): the HWID type check; is_canonical_hwid(None) no longer raises. Original finding: is_canonical_hwid(None) raises TypeError",
         "Takeoff.is_hole treats parent \"None\" as a hole while compute_page_quantities treats it as root",
         "create_rhombus_points ignores half_depth",
         "DatabaseMutationRequest accepts the .value string but rejects enum members",
-        "NULL JobStatuses.Sequence makes get_job_statuses return []"
+        "CLOSED 2026-11-07 (fixed): NULL, blank or 'NULL' JobStatuses.Sequence is tolerated, and the bid lock read now fails closed. Original finding: NULL JobStatuses.Sequence makes get_job_statuses return []"
       ],
       "agents_md_documentation": "PARTLY DONE 2026-11-06: AGENTS.md now documents OPEN-2, the arc rule and tie rule, curved area_sf, skipped conditions and the SQL '|' identity rule. A4's proposed golden-file / OSTV_SLOW_TESTS text is still NOT applied and still needs review. Previous text: A4 proposed AGENTS.md text for the golden files, their regeneration policy and OSTV_SLOW_TESTS (A4.json proposed_docs). NOT applied; the proposed text was not retained (deleted 2026-11-06) and the ledger does not hold it."
     },
@@ -46187,7 +46262,113 @@
           ]
         }
       },
-      "not_committed_by_me": "ost_visualizer/infrastructure/parsers/position_parser.py: a one-line comment ('The grammar allows spaces between a leading minus...') was deleted from the working tree by someone else after the item 5 commit; left uncommitted."
+      "not_committed_by_me": "ost_visualizer/infrastructure/parsers/position_parser.py: a one-line comment ('The grammar allows spaces between a leading minus...') was deleted from the working tree by someone else after the item 5 commit; left uncommitted.",
+      "validation": {
+        "full_suite": {
+          "command": "QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 .\u000benv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t . (output to a log file)",
+          "run_on": "2026-11-07, tree of commit 484a67d plus the ledgers",
+          "tests_run": 17893,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 44,
+          "seconds": 493.7,
+          "result": "OK",
+          "note": "The first full run found one failure (tests/tools/test_ai_takeoff_corpus_worker.py expected 5 outline vertices; 4 after the ring-start change), fixed in its own commit and re-run green. The affected-suite runs for item 3 had not included tests/tools."
+        },
+        "other": "check_architecture: no violations; compileall exit 0; git diff --check exit 0; inventory 597 modules / 17,911 defined tests, every sha256 matches."
+      }
+    },
+    "wave5_2026-11-07": {
+      "date": "2026-11-07",
+      "nature": "Owner decisions on the open items, each with a failing test first and an in-memory mutation check; docs (AGENTS.md, CHANGELOG.md) updated for the five listed additions.",
+      "rule": "Modules whose tests changed and were Verified are 'Awaiting Verification (wave-5 additions)'; no verifier has seen the additions.",
+      "lock_0_finding": "On a read-only copy of C:\\OCS Documents\\OST\\OST Projects.mdb: 1 Bid (UID 23586) with JobStatusUID 79, which exists in JobStatuses (Pending, not locked); 0 bids with JobStatusUID 0, 0 with NULL, 0 dangling; no JobStatus with UID 0. Per the owner rule, status 0 is therefore not special-cased: it reads as locked. The evidence is one bid only; a legacy OST file with status 0 meaning 'none' would need this revisited.",
+      "items": {
+        "1_pp2_metric_sign": {
+          "mutation": "22 of 22 mutants of the changed lines killed",
+          "rule": "a leading minus before the metres negates metres plus centimetres; '1m -20cm' stays 80 cm, '-1m -20cm' stays -120 cm",
+          "effect": "a stored name '@T -1m 20cm' now reads -120 cm (was -80)"
+        },
+        "2_lock_sql": {
+          "mutation": "46 mutants, 44 killed; the 2 survivors are equivalent (return None)",
+          "empty_snapshot": "possible only transiently while a SQL database is still hydrating; the bid reads locked until REMOTE_HIERARCHY_CHANGED re-resolves it (read from code, plus a test of empty-then-filled)",
+          "open_question": "an int 0 status uid is falsy and reads as 'no status' (unlocked) on both paths; only the text '0' reads locked",
+          "resolved_in_wave6": "integer 0 now reads locked"
+        },
+        "3_lock_0": "see lock_0_finding",
+        "4_settings_defaults": {
+          "mutation": "57 mutants, 56 killed; the survivor widens an except to Exception and is equivalent",
+          "side_effect": "numeric text in a settings field is now returned as a number; SQL readers still raise on a malformed field (open question)",
+          "resolved_in_wave6": "SQL readers fall back per field too"
+        },
+        "5_delete_default_layer": {
+          "mutation": "43 mutants, 39 killed; survivors are equivalent or tuning",
+          "scope": "Access MdbWriter only; no client-side SQL writer path exists",
+          "open_questions": [
+            "built-in defined as uid 1-4 (not 'every locked template layer', which would also refuse app-created default layers because insert_default_layer writes IsLocked=-1)",
+            "the Layers dialog still offers Delete for the built-ins (the user gets a generic failure message)",
+            "the SQL Server procedure behind save_default_layers is outside this repo"
+          ],
+          "resolved_in_wave6": "the dialog no longer offers Delete for built-ins; the SQL-side note is in AGENTS.md; the scope sentence is corrected in wave6_2026-11-07.items.1_layers_dialog_delete.correction_to_wave5"
+        },
+        "6_pp1_pp3": {
+          "mutation": "PP-1 differential run 0 differences in 16,933 inputs; PP-3 8 of 8 killed"
+        },
+        "7_settings_operations_catch": {
+          "result": "no defect; the catch was already covered by a weak test, now a stronger one pins uid, bid, message and the two writes"
+        },
+        "8_logger_and_enum": {
+          "f4": "logger stored like DeleteProjectsUseCase (4 of 4 mutants killed)",
+          "f10": "member accepted, foreign enums still refused (5 of 5 killed)"
+        },
+        "9_reader_normalisation": {
+          "overlay_resized": "11 of 11 mutants killed",
+          "folder_parent": "8 of 8 killed; no consumer relied on '0' or None; BidConditionFolder.parent_uid still defaults to None in the domain entity"
+        },
+        "10_ledger": "F-0, F-3, F-6, F-7, F-11 closed in owner_decisions_needed.other_findings_not_changed; the optional follow-ups, W3-3, F-1 and the redundant setWindowModality call are left open as decided."
+      },
+      "validation": {
+        "full_suite": {
+          "command": "QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 .\u000benv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t . (output to a log file)",
+          "run_on": "2026-11-07, final working tree of the wave (uncommitted)",
+          "tests_run": 17935,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 44,
+          "seconds": 509.0,
+          "result": "OK"
+        },
+        "inventory": "597 modules, 17,953 defined tests, every sha256 matches",
+        "other": "check_architecture, compileall and git diff --check clean (see the final run)"
+      }
+    },
+    "wave6_2026-11-07": {
+      "date": "2026-11-07",
+      "nature": "Three owner follow-ups to wave 5 plus one AGENTS.md note, each with a failing test first and an in-memory mutation check.",
+      "rule": "Modules whose tests changed and were Verified are 'Awaiting Verification (wave-6 additions)'; no verifier has seen the additions.",
+      "untracked_modules_with_new_tests": [
+        "tests/presentation/dialogs/test_layers_dialog.py (LayersDialogBuiltInDeleteTests, 5 tests)",
+        "tests/application/services/test_project_read_service.py (2 tests for integer 0)"
+      ],
+      "items": {
+        "1_layers_dialog_delete": {
+          "rule": "Delete is disabled for a layer that is a locked template with uid 1-4; app-created default layers (uid 5+, also stored as locked templates), unlocked templates and bid layers keep Delete.",
+          "mutation": "7 mutants of _can_delete killed; the two call sites (the Delete button state and _on_delete) killed by routing each back to _can_modify; survivors elsewhere in _on_delete/_update_button_states are old lines this wave did not change.",
+          "correction_to_wave5": "wave5 item 5 said no client-side SQL writer path exists. SqlProjectWriter extends MdbWriter and inherits delete_default_layer, and its write schema has IsTemplate and IsLocked, so the client guard also covers a SQL database. The server-side procedure/permissions behind the save_default_layers write are outside this repo and have no guard here (AGENTS.md says so)."
+        },
+        "2_sql_settings_defaults": {
+          "change": "per-field fallback no longer depends on _record_caught_read_error; connection and query errors still do.",
+          "mutation": "16 mutants of _read_settings_field, 15 killed; the survivor widens the except to Exception and is equivalent for the values this code can see.",
+          "tests": "the wave-5 test that pinned the SQL raise was changed on purpose."
+        },
+        "3_int_zero_lock": {
+          "change": "only None and '' mean no status; integer 0 reads like the text '0' (locked unless a status with uid 0 exists and is unlocked).",
+          "mutation": "helper 17 mutants, 15 killed, 2 equivalent (the final return None); service guard 10 of 10 killed.",
+          "tests_that_pinned_int_0_unlocked": "none: no test passed integer 0; the cases were added.",
+          "caveat": "a real bid never carries an integer: the readers deliver text, so '0' behaviour was already locked; this closes the type-dependent difference."
+        },
+        "4_agents_md": "AGENTS.md: built-in default layers paragraph (client guards, SQL Server side unguarded), settings-defaults paragraph, and the wave-5 lock paragraph now says integer 0 too (added lines only, LF)."
+      }
     }
   },
   "audit_evidence_note": "The audit evidence folder tests/_audit_progress/ (agent, verifier and resolution-phase reports, per-test notes, survivor lists, killer-test drafts, harness copies) was deleted on 2026-11-06 and is not retained anywhere, including git. References to files in it are kept only to identify the source and say 'not retained'. The ledger keeps the conclusions it records (module statuses, owner decisions, the resolution section, per-test notes inside module entries); wave-2 verifier outcomes that were never consolidated into modules{} are not kept (see audit_2026-11-05_checkpoint.resolution_2026-11-06.module_status_note). Wave-3 (2026-11-07) verdicts are recorded in the module entries (second_pass) and in audit_2026-11-05_checkpoint.wave3_2026-11-07."

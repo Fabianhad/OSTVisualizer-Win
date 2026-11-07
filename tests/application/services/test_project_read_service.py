@@ -110,6 +110,34 @@ class ProjectReadServiceTests(unittest.TestCase):
             "treating the bid as locked",
         )
 
+    def test_an_integer_zero_status_uid_reads_like_the_text_zero(self):
+        """0 is an unknown uid, not 'no status': only None and '' mean no status."""
+        for statuses in ([], [JobStatus("1", "Open", locked=False)]):
+            for status_uid in (0, "0"):
+                with self.subTest(status_uid=status_uid, statuses=len(statuses)):
+                    self.reader.get_job_statuses.return_value = statuses
+                    with self.assertLogs(self.service.logger, "WARNING") as logs:
+                        self.assertIs(
+                            self.service.is_bid_locked("a.mdb", status_uid), True
+                        )
+                    self.assertEqual(
+                        logs.records[0].getMessage(),
+                        f"Job status {status_uid!r} of a bid in a.mdb could not be "
+                        "resolved; treating the bid as locked",
+                    )
+
+    def test_a_resolvable_zero_status_reads_its_own_locked_flag(self):
+        for locked in (True, False):
+            for status_uid in (0, "0"):
+                with self.subTest(locked=locked, status_uid=status_uid):
+                    self.reader.get_job_statuses.return_value = [
+                        JobStatus("0", "Zero", locked=locked)
+                    ]
+                    with self.assertNoLogs(self.service.logger, "WARNING"):
+                        self.assertIs(
+                            self.service.is_bid_locked("a.mdb", status_uid), locked
+                        )
+
     def test_resolvable_statuses_and_missing_statuses_read_exactly_as_before(self):
         self.reader.get_job_statuses.return_value = [
             JobStatus("7", "Open", locked=False),

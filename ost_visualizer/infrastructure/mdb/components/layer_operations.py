@@ -5,8 +5,11 @@ from ...database.bid_owned_identity import (
     require_single_bid_scope_for_uids,
     require_unique_bid_owned_uid_matches,
 )
+from ..schema_contract import DEFAULT_LAYER_ROWS
 from .constants import LAYER_REFERENCE_TABLES
 from .identity_allocation import AccessIdentityAllocationMixin
+
+BUILT_IN_DEFAULT_LAYER_UIDS = range(1, len(DEFAULT_LAYER_ROWS) + 1)
 
 
 def _default_layer_update_matched(
@@ -19,6 +22,19 @@ def _default_layer_update_matched(
         f"WHERE [UID] = ? AND [IsTemplate] <> 0 AND {assignment}",
         layer_uid,
         value,
+    )
+    return cursor.fetchone() is not None
+
+
+def _is_locked_built_in_default_layer(cursor, schema, layer_uid: int) -> bool:
+    if layer_uid not in BUILT_IN_DEFAULT_LAYER_UIDS:
+        return False
+    if not schema.column_exists("BidLayers", "IsLocked"):
+        return False
+    cursor.execute(
+        "SELECT [UID] FROM [BidLayers] "
+        "WHERE [UID] = ? AND [IsTemplate] <> 0 AND [IsLocked] <> 0",
+        layer_uid,
     )
     return cursor.fetchone() is not None
 
@@ -218,6 +234,12 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
             )
             row = cursor.fetchone()
             if not row:
+                return False
+            if _is_locked_built_in_default_layer(cursor, schema, int(layer_uid)):
+                self.logger.warning(
+                    "Refused to delete layer %s: it is a locked built-in default layer",
+                    layer_uid,
+                )
                 return False
             deleted_seq = row.Sequence
             cursor.execute(

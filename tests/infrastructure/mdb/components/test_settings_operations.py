@@ -6001,6 +6001,61 @@ class MeasureBaseNormalizationTests(unittest.TestCase):
         self.assertIn("1", messages[0])
         self.assertIn('Broken @B 1/0"', messages[0])
 
+    def test_each_unreadable_elevation_name_is_reported_with_its_own_condition_and_bid(
+        self,
+    ):
+        conn = self._db(
+            (5, 1, 'Broken @B 1/0"', UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+            (6, 1, "Wall @T 9' 6\"", UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+            (9, 1, 'Worse @T 3/0"', UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+            (
+                12,
+                2,
+                'Other bid @B 1/0"',
+                UOM_LINEAR_FEET,
+                0,
+                0,
+                CALC_LINEAR_LENGTH,
+                0,
+                0,
+            ),
+            (13, 1, "Later @T 9' 6\"", UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),
+        )
+        with self.assertLogs(level="WARNING") as logged:
+            self.assertIs(self._change(conn, 1), True)
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, Name, UOM1 FROM BidConditions ORDER BY UID"
+            ).fetchall(),
+            [
+                (5, 'Broken @B 1/0"', UOM_M),
+                (6, "Wall @T 289.56 cm", UOM_M),
+                (9, 'Worse @T 3/0"', UOM_M),
+                (12, 'Other bid @B 1/0"', UOM_LINEAR_FEET),
+                (13, "Later @T 289.56 cm", UOM_M),
+            ],
+        )
+        messages = [record.getMessage() for record in logged.records]
+        self.assertEqual(len(messages), 2)
+        self.assertTrue(
+            messages[0].startswith(
+                "Keeping unreadable elevation in condition 5 ('Broken @B 1/0\"') "
+                "of bid 1: "
+            ),
+            messages[0],
+        )
+        self.assertTrue(
+            messages[1].startswith(
+                "Keeping unreadable elevation in condition 9 ('Worse @T 3/0\"') "
+                "of bid 1: "
+            ),
+            messages[1],
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM WriteLog WHERE Col = 'Name'").fetchone(),
+            (2,),
+        )
+
     def test_a_same_system_save_never_touches_conditions(self):
         conn = self._db(
             (1, 1, "Wall @T 9' 6\"", UOM_LINEAR_FEET, 0, 0, CALC_LINEAR_LENGTH, 0, 0),

@@ -59,12 +59,14 @@ class ConditionFolderOperationsPersistenceTests(unittest.TestCase):
             "CREATE TABLE BidConditionFolders ("
             "UID INTEGER PRIMARY KEY, BidUID INTEGER, Name TEXT)"
         )
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE BidConditions (
                 UID INTEGER PRIMARY KEY,
                 BidConditionFolderUID INTEGER
             )
-            """)
+            """
+        )
         conn.executemany(
             "INSERT INTO BidConditionFolders (UID, BidUID, Name) VALUES (?, 1, ?)",
             ((1, "Used"), (2, "Unused")),
@@ -125,12 +127,14 @@ class ConditionFolderOperationsPersistenceTests(unittest.TestCase):
             "CREATE TABLE BidConditionFolders ("
             "UID INTEGER PRIMARY KEY, BidUID INTEGER, Name TEXT)"
         )
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE BidConditions (
                 UID INTEGER PRIMARY KEY,
                 BidConditionFolderUID INTEGER REFERENCES BidConditionFolders(UID)
             )
-            """)
+            """
+        )
         conn.execute(
             "INSERT INTO BidConditionFolders (UID, BidUID, Name) "
             "VALUES (1, 1, 'Unused')"
@@ -810,7 +814,6 @@ class ConditionFolderDeleteSafetyTests(unittest.TestCase):
 
 class ConditionFolderOperationsRealAccessTests(unittest.TestCase):
     """Real Access: folder scoping, in-use refusal, re-parenting and rollback.
-
     The sqlite stand-ins cannot show how the ACE driver binds the integer
     identifiers and NULL parents, nor that a failed delete rolls its re-parenting
     update back.
@@ -923,7 +926,6 @@ class ConditionFolderOperationsRealAccessTests(unittest.TestCase):
                 }
                 conditions = {301: lf, 302: o, 303: None}
                 expect(read(), (folders, conditions), "seed")
-
                 # Inserts that name an absent bid, an absent parent or a parent of
                 # another bid are refused and add nothing.
                 for args in (
@@ -933,7 +935,6 @@ class ConditionFolderOperationsRealAccessTests(unittest.TestCase):
                 ):
                     expect(writer.insert_condition_folder(source, *args), None, args)
                 expect(read(), (folders, conditions), "after refused inserts")
-
                 expect(
                     writer.rename_condition_folder(source, str(t), "Renamed"),
                     True,
@@ -946,20 +947,17 @@ class ConditionFolderOperationsRealAccessTests(unittest.TestCase):
                     "absent rename",
                 )
                 expect(read(), (folders, conditions), "after rename")
-
                 # Refusals: a folder holding conditions, a batch containing one,
                 # a batch spanning two bids and an absent folder delete nothing.
                 for batch in ([str(lf)], [str(m), str(lf)], [str(t), str(sp)], ["999"]):
                     expect(writer.delete_condition_folders(source, batch), False, batch)
                 expect(read(), (folders, conditions), "after refused deletes")
-
                 # A failure after the re-parenting update rolls that update back.
                 failing = FailingDeleteWriter(manager)
                 expect(
                     failing.delete_condition_folders(source, [str(m)]), False, "failed"
                 )
                 expect(read(), (folders, conditions), "after rolled back delete")
-
                 # Deleting a folder removes only it: the child folder, the grandchild
                 # and every condition survive, the child moves to the root.
                 expect(
@@ -975,7 +973,6 @@ class ConditionFolderOperationsRealAccessTests(unittest.TestCase):
                 )
                 del folders[t]
                 expect(read(), (folders, conditions), "after delete top")
-
                 # A batch larger than one chunk is checked and applied completely.
                 bulk = list(range(5000, 5120))
                 execute_all(

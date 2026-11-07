@@ -78,7 +78,7 @@ def _parse_imperial_elevation(elevation_text: str) -> float:
         return float(feet_val * 12)
     m = re.search(r"(?P<inches>-?\s*(?:\d+(?:\s+\d+/\d+)?|\d+/\d+))\s*\"", text)
     if m:
-        inches_str = m.group("inches").replace(" ", " ").strip()
+        inches_str = m.group("inches").strip()
         return _parse_fractional_inches_text(inches_str)
     return 0.0
 
@@ -89,8 +89,11 @@ def _parse_metric_elevation(elevation_text: str) -> float:
         r"(-?\s*\d+(?:\.\d+)?)\s*m\s*(?:and|\+)?\s*(-?\s*\d+(?:\.\d+)?)\s*cm", text
     )
     if m:
-        meter_part = float(_without_whitespace(m.group(1)))
+        meter_text = _without_whitespace(m.group(1))
+        meter_part = float(meter_text)
         cm_part = float(_without_whitespace(m.group(2)))
+        if meter_text.startswith("-"):
+            return -(abs(meter_part) * 100.0 + abs(cm_part))
         return meter_part * 100.0 + cm_part
     m = re.search(r"(-?\s*\d+(?:\.\d+)?)\s*(?:m|meters?)\b", text)
     if m:
@@ -127,7 +130,7 @@ def extract_z_value_from_name(name: str) -> Tuple[float, bool]:
 
 
 def _format_metric_elevation(inches: float) -> str:
-    cm = inches * 2.54
+    cm = round(inches * 2.54, 2)
     if cm == int(cm):
         return f"{int(cm)} cm"
     return f"{cm:.2f} cm"

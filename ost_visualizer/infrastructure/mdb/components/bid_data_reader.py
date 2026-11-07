@@ -46,6 +46,13 @@ BidPages = Dict[str, BidPageInfo]
 BidPageAreaSelections = Dict[str, Optional[str]]
 CdnTypes = Dict[str, CdnType]
 BidConditionFolders = Dict[str, BidConditionFolder]
+_FLAG_TEXTS = frozenset({"-1", "1", "true"})
+
+
+def _is_stored_flag_set(value: Any) -> bool:
+    if isinstance(value, (str, bytes)):
+        return decode_value(value).strip().casefold() in _FLAG_TEXTS
+    return value in (-1, True)
 
 
 class BidDataReaderMixin:
@@ -750,7 +757,7 @@ class BidDataReaderMixin:
                     overlay_offset_x=parse_float(row.OverlayOffsetX, 0.0),
                     overlay_offset_y=parse_float(row.OverlayOffsetY, 0.0),
                     overlay_rotation=parse_float(row.OverlayRotation, 0.0),
-                    overlay_resized=row.OverlayResized in (-1, True),
+                    overlay_resized=_is_stored_flag_set(row.OverlayResized),
                     deskew_rotation_overlay=parse_float(row.DeskewRotationOverlay, 0.0),
                     overlay_rect=overlay_rect,
                     image_show_mode=int(row.Show) if row.Show is not None else 0,
@@ -1032,7 +1039,9 @@ class BidDataReaderMixin:
                     uid = str(row.UID)
                     name = decode_value(row.Name)
                     parent_uid = (
-                        str(row.ParentUID) if row.ParentUID is not None else None
+                        ""
+                        if row.ParentUID in (None, "", 0, "0")
+                        else str(row.ParentUID)
                     )
                     folders[uid] = BidConditionFolder(
                         uid=uid,

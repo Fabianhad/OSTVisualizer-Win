@@ -893,8 +893,11 @@ class DatabaseMutationRequest:
             operation_id = str(uuid.UUID(str(self.operation_id)))
         except ValueError as exc:
             raise ValueError("Database mutation operation IDs must be UUIDs") from exc
+        requested_type = self.mutation_type
+        if isinstance(requested_type, CollaborationMutationType):
+            requested_type = requested_type.value
         try:
-            mutation_type = CollaborationMutationType(str(self.mutation_type)).value
+            mutation_type = CollaborationMutationType(str(requested_type)).value
         except ValueError as exc:
             raise ValueError("Database mutation types must be canonical") from exc
         request_hash = self.request_hash

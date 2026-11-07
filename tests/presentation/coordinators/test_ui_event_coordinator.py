@@ -29527,16 +29527,86 @@ class Sp3a5gBidLockStateTests(unittest.TestCase):
         cases = (
             ("only matching locked among many", [(1, False), (2, True)], True),
             ("matching unlocked, other locked", [(1, True), (2, False)], False),
-            ("no statuses", [], False),
-            ("unrelated locked", [(3, True)], False),
         )
         for name, rows, expected in cases:
             with self.subTest(case=name):
                 statuses = [SimpleNamespace(uid=uid, locked=lk) for uid, lk in rows]
                 coordinator, calls = self._make(statuses)
-                coordinator._resolve_bid_lock_state(BidRef("db", "1"))
+                with self.assertNoLogs(_UEC, "WARNING"):
+                    coordinator._resolve_bid_lock_state(BidRef("db", "1"))
                 self.assertEqual(calls, [expected])
                 self.assertIs(calls[0], expected)
+
+    def test_sql_bid_with_an_unresolvable_status_reads_as_locked_with_a_warning(self):
+        """Fail closed like ProjectReadService.is_bid_locked: an unknown status
+        must never read as unlocked."""
+        cases = (
+            ("empty snapshot", "2", []),
+            ("unknown uid among others", "2", [(1, False), (3, False)]),
+            ("unrelated locked status only", "2", [(3, True)]),
+            ("uid 0 is just an unknown uid", "0", [(1, False), (2, False)]),
+            ("uid 0 as text with an empty snapshot", "0", []),
+            ("integer uid 0 among others", 0, [(1, False), (2, False)]),
+            ("integer uid 0 with an empty snapshot", 0, []),
+        )
+        for name, bid_status_uid, rows in cases:
+            with self.subTest(case=name):
+                statuses = [SimpleNamespace(uid=uid, locked=lk) for uid, lk in rows]
+                coordinator, calls = self._make(statuses, bid_status_uid)
+                with self.assertLogs(_UEC, "WARNING") as logs:
+                    coordinator._resolve_bid_lock_state(BidRef("db", "1"))
+                self.assertEqual(calls, [True])
+                self.assertIs(calls[0], True)
+                self.assertEqual(len(logs.records), 1)
+                self.assertEqual(
+                    logs.records[0].getMessage(),
+                    f"Job status {bid_status_uid!r} of a bid in db could not be "
+                    "resolved; treating the bid as locked",
+                )
+
+    def test_sql_bid_without_a_status_stays_unlocked_and_silent(self):
+        for status_uid in (None, ""):
+            for rows in ([], [(1, True)]):
+                with self.subTest(status_uid=status_uid, snapshot=rows):
+                    statuses = [SimpleNamespace(uid=u, locked=lk) for u, lk in rows]
+                    coordinator, calls = self._make(statuses, status_uid)
+                    with self.assertNoLogs(_UEC, "WARNING"):
+                        coordinator._resolve_bid_lock_state(BidRef("db", "1"))
+                    self.assertEqual(calls, [False])
+                    self.assertIs(calls[0], False)
+
+    def test_sql_bid_with_a_resolvable_status_reads_its_locked_flag_silently(self):
+        for status_uid, locked in (
+            ("2", True),
+            ("2", False),
+            ("0", True),
+            ("0", False),
+            (0, True),
+            (0, False),
+        ):
+            with self.subTest(status_uid=status_uid, locked=locked):
+                statuses = [
+                    SimpleNamespace(uid=1, locked=not locked),
+                    SimpleNamespace(uid=int(status_uid), locked=locked),
+                ]
+                coordinator, calls = self._make(statuses, status_uid)
+                with self.assertNoLogs(_UEC, "WARNING"):
+                    coordinator._resolve_bid_lock_state(BidRef("db", "1"))
+                self.assertEqual(calls, [locked])
+                self.assertIs(calls[0], locked)
+
+    def test_sql_lock_is_resolved_again_once_the_status_snapshot_arrives(self):
+        """The snapshot is filled by the SQL session-start hydration, which runs
+        after the first lock resolution on a freshly opened database and
+        precedes REMOTE_HIERARCHY_CHANGED; the re-resolve must then unlock."""
+        snapshot = []
+        coordinator, calls = self._make(snapshot)
+        with self.assertLogs(_UEC, "WARNING"):
+            coordinator._resolve_bid_lock_state(BidRef("db", "1"))
+        snapshot.append(SimpleNamespace(uid=2, locked=False))
+        with self.assertNoLogs(_UEC, "WARNING"):
+            coordinator._resolve_bid_lock_state(BidRef("db", "1"))
+        self.assertEqual(calls, [True, False])
 
 
 class Sp3a5gBidLockReverifyTests(unittest.TestCase):

@@ -1087,9 +1087,7 @@ class OutcomeContractTests(unittest.TestCase):
                     DatabaseMutationRequest(**{**valid, **override})
 
     def test_database_request_stores_the_canonical_plain_string_mutation_type(self):
-        # A str subclass carrying a canonical value is normalized to a plain str;
-        # an enum member is NOT accepted (str(member) is "Class.MEMBER"), so callers
-        # must pass the .value (every production caller does).
+        # A str subclass carrying a canonical value is normalized to a plain str.
         class _Text(str):
             pass
 
@@ -1104,10 +1102,35 @@ class OutcomeContractTests(unittest.TestCase):
         )
         self.assertIs(type(request.mutation_type), str)
         self.assertEqual(request.mutation_type, "plan_geometry")
-        with self.assertRaisesRegex(ValueError, "canonical"):
-            DatabaseMutationRequest(
-                mutation_type=CollaborationMutationType.PLAN_GEOMETRY, **kwargs
-            )
+
+    def test_database_request_accepts_the_mutation_type_enum_member_or_its_value(self):
+        kwargs = dict(
+            database_id="database",
+            session_id="session",
+            operation_id=OPERATION_ID,
+            request_hash="c" * 64,
+        )
+        for member in CollaborationMutationType:
+            for spelling in (member, member.value):
+                with self.subTest(member=member.name, spelling=type(spelling).__name__):
+                    request = DatabaseMutationRequest(mutation_type=spelling, **kwargs)
+                    self.assertIs(type(request.mutation_type), str)
+                    self.assertEqual(request.mutation_type, member.value)
+
+    def test_database_request_rejects_a_foreign_enum_member_as_mutation_type(self):
+        class _Foreign(str, enum.Enum):
+            SAME_VALUE = "plan_geometry"
+
+        kwargs = dict(
+            database_id="database",
+            session_id="session",
+            operation_id=OPERATION_ID,
+            request_hash="c" * 64,
+        )
+        for bad in (_Foreign.SAME_VALUE, ChangeOperation.CREATE, "Plan_Geometry", ""):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(ValueError, "canonical"):
+                    DatabaseMutationRequest(mutation_type=bad, **kwargs)
 
 
 class ChangePollResultContractTests(unittest.TestCase):

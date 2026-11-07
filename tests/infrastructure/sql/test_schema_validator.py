@@ -1165,9 +1165,10 @@ class SchemaValidatorRenamedIndexCandidateTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # OPEN-2 characterization (audit): the validator's scope for views, triggers,
 # procedures, functions and extra indexes/constraints. These tests pin what the
-# validator accepts and refuses TODAY; the "accepted today" tests are the ones a
-# future owner decision on the scope would change. No restriction is implemented
-# without that product decision (see the AGENTS.md "Database backends" paragraph).
+# validator accepts and refuses. OPEN-2 is documented only (owner decision
+# 2026-11-06): no restriction is implemented, and the "accepted" tests are the ones
+# a later change of that decision would have to revisit (see the AGENTS.md
+# "Database backends" paragraph).
 # ---------------------------------------------------------------------------
 class SchemaValidatorScopeTests(unittest.TestCase):
     def setUp(self):

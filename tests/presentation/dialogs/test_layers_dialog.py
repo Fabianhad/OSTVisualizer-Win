@@ -745,3 +745,121 @@ class LayersDialogInteractionTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+
+class LayersDialogBuiltInDeleteTests(unittest.TestCase):
+    """The writer refuses the locked built-in default layers (uids 1-4), so the
+    dialog must not offer to delete them."""
+
+    _DELETE_TITLE = "Delete Layer"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _master_data_support__app()
+
+    def _template(
+        self, uid: str, name: str, *, locked: bool = True, template: bool = True
+    ) -> BidLayer:
+        return BidLayer(
+            uid=uid,
+            bid_uid="",
+            name=name,
+            show=True,
+            sequence=int(uid) if uid.isdigit() else 9,
+            is_template=template,
+            is_locked=locked,
+        )
+
+    def _dialog(self, layers, mode=LayersDialogMode.DEFAULT_LAYERS, **callbacks):
+        dialog = _master_data_support_MasterLayersDialog(
+            _master_data_support_FakeIconProvider(),
+            layers=layers,
+            mode=mode,
+            **callbacks,
+        )
+        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(dialog.cleanup)
+        self.addCleanup(dialog.close)
+        return dialog
+
+    def _select(self, dialog, *uids):
+        dialog.tree.clearSelection()
+        for row in range(dialog.tree.topLevelItemCount()):
+            item = dialog.tree.topLevelItem(row)
+            if item.data(0, dialog._UID_ROLE) in uids:
+                item.setSelected(True)
+        dialog._update_button_states()
+
+    def test_each_locked_built_in_default_layer_cannot_be_deleted(self):
+        layers = [self._template(str(uid), f"Built-in {uid}") for uid in range(1, 5)]
+        dialog = self._dialog(layers)
+        for uid in ("1", "2", "3", "4"):
+            with self.subTest(uid=uid):
+                self._select(dialog, uid)
+                self.assertFalse(dialog.btn_delete.isEnabled())
+        self._select(dialog, "1", "2", "3", "4")
+        self.assertFalse(dialog.btn_delete.isEnabled())
+
+    def test_other_default_layers_can_still_be_deleted(self):
+        cases = (
+            ("an app-created locked template", self._template("5", "Mine")),
+            ("a locked template with a non-numeric uid", self._template("d-1", "D")),
+            (
+                "an unlocked template with a built-in uid",
+                self._template("1", "U", locked=False),
+            ),
+        )
+        for label, layer in cases:
+            with self.subTest(label):
+                dialog = self._dialog([layer])
+                self._select(dialog, layer.uid)
+                self.assertTrue(dialog.btn_delete.isEnabled())
+
+    def test_bid_layers_mode_is_unchanged_for_a_layer_with_a_built_in_uid(self):
+        bid_layer = BidLayer("1", "bid-1", "Bid layer", True, 1)
+        dialog = self._dialog([bid_layer], mode=LayersDialogMode.SELECT)
+        self._select(dialog, "1")
+        self.assertTrue(dialog.btn_delete.isEnabled())
+
+    def test_a_mixed_selection_enables_delete_but_only_sends_the_deletable_layers(self):
+        deleted = []
+        layers = [self._template("1", "Default"), self._template("7", "Custom")]
+        dialog = self._dialog(
+            layers,
+            reload_fn=lambda: list(layers),
+            delete_many_fn=lambda uids: deleted.append(list(uids))
+            or BatchWriteResult(
+                requested_uids=list(uids),
+                succeeded_uids=list(uids),
+                failed_uids=[],
+                reload_success=True,
+            ),
+        )
+        self._select(dialog, "1", "7")
+        self.assertTrue(dialog.btn_delete.isEnabled())
+        with patch(
+            "ost_visualizer.presentation.dialogs.layers_dialog.confirm_multi_delete",
+            side_effect=lambda _parent, _title, pairs, _used: list(pairs),
+        ) as confirm:
+            dialog._on_delete()
+        self.assertEqual(confirm.call_args.args[2], [("Custom", "7")])
+        self.assertEqual(deleted, [["7"]])
+
+    def test_only_built_in_layers_selected_never_reaches_the_confirmation(self):
+        layers = [self._template("2", "Annotation")]
+        dialog = self._dialog(
+            layers,
+            delete_many_fn=lambda _uids: self.fail("a built-in layer was deleted"),
+        )
+        self._select(dialog, "2")
+        with (
+            patch(
+                "ost_visualizer.presentation.dialogs.layers_dialog.confirm_multi_delete"
+            ) as confirm,
+            patch(
+                "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
+            ) as warn,
+        ):
+            dialog._on_delete()
+        confirm.assert_not_called()
+        warn.assert_not_called()

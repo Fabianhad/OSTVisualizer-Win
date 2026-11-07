@@ -75,6 +75,17 @@ class BidLayer:
     is_locked: bool = False
 
 
+BUILT_IN_DEFAULT_LAYER_UIDS = frozenset({"1", "2", "3", "4"})
+
+
+def is_locked_built_in_default_layer(layer: BidLayer) -> bool:
+    return bool(
+        layer.is_template
+        and layer.is_locked
+        and str(layer.uid) in BUILT_IN_DEFAULT_LAYER_UIDS
+    )
+
+
 def merge_layers_for_bid(layers: List[BidLayer]) -> List[BidLayer]:
     merged: Dict[str, BidLayer] = {}
     for layer in sorted(layers, key=lambda l: (not l.is_template, l.sequence)):

@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Callable, List, Optional, Set
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
-from ...domain.entities.layer import BidLayer
+from ...domain.entities.layer import BidLayer, is_locked_built_in_default_layer
 from ..config import (
     COMPACT_SPACING,
     LAYERS_BUTTON_WIDTH,
@@ -287,6 +287,9 @@ class LayersDialog(QtWidgets.QDialog):
             return bool(layer and layer.is_template)
         return bool(layer and not layer.is_template and not layer.is_locked)
 
+    def _can_delete(self, layer: Optional[BidLayer]) -> bool:
+        return self._can_modify(layer) and not is_locked_built_in_default_layer(layer)
+
     def _find_layer_by_name(self, name: str) -> Optional[BidLayer]:
         target = name.strip().lower()
         return next(
@@ -487,7 +490,7 @@ class LayersDialog(QtWidgets.QDialog):
         selected = [
             item
             for item in self._selected_items()
-            if self._can_modify(self._layer_for_item(item))
+            if self._can_delete(self._layer_for_item(item))
         ]
         if not selected:
             return
@@ -673,7 +676,7 @@ class LayersDialog(QtWidgets.QDialog):
         self.btn_new.setEnabled(True)
         self.btn_delete.setEnabled(
             bool(selected)
-            and any(self._can_modify(self._layer_for_item(i)) for i in selected)
+            and any(self._can_delete(self._layer_for_item(i)) for i in selected)
         )
         self.btn_move_up.setEnabled(can_modify_selected and selected_row > 0)
         self.btn_move_down.setEnabled(

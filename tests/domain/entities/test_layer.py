@@ -1,8 +1,10 @@
 import unittest
 from ost_visualizer.domain.entities.layer import (
+    BUILT_IN_DEFAULT_LAYER_UIDS,
     BidLayer,
     Layer,
     LayerSet,
+    is_locked_built_in_default_layer,
     merge_layers_for_bid,
 )
 
@@ -179,6 +181,34 @@ class LayerEntityContractTests(unittest.TestCase):
             ]
         )
         self.assertEqual([layer.uid for layer in sorted_output], ["y", "z", "x"])
+
+
+class LockedBuiltInDefaultLayerTests(unittest.TestCase):
+    @staticmethod
+    def _layer(uid, *, template=True, locked=True):
+        return BidLayer(uid, "", "L", True, 1, is_template=template, is_locked=locked)
+
+    def test_built_in_uids_are_the_four_template_layers_of_a_new_database(self):
+        self.assertEqual(BUILT_IN_DEFAULT_LAYER_UIDS, frozenset({"1", "2", "3", "4"}))
+
+    def test_only_a_locked_template_with_a_built_in_uid_is_a_locked_built_in(self):
+        cases = (
+            (self._layer("1"), True),
+            (self._layer("4"), True),
+            (self._layer(2), True),
+            (self._layer("0"), False),
+            (self._layer("5"), False),
+            (self._layer("d-1"), False),
+            (self._layer(""), False),
+            (self._layer("1", locked=False), False),
+            (self._layer("1", template=False), False),
+            (self._layer("1", template=False, locked=False), False),
+        )
+        for layer, expected in cases:
+            with self.subTest(
+                uid=layer.uid, template=layer.is_template, locked=layer.is_locked
+            ):
+                self.assertIs(is_locked_built_in_default_layer(layer), expected)
 
 
 if __name__ == "__main__":

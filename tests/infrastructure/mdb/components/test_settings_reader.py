@@ -51,6 +51,7 @@ from ost_visualizer.infrastructure.mdb.components.bid_operations import (
     BidOperationsMixin,
 )
 import unittest
+from unittest import mock
 import sqlite3
 import logging
 from ost_visualizer.infrastructure.mdb.components.constants import (
@@ -1188,6 +1189,193 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "boom"):
             _FailingOpen(None).get_settings_defaults("x.mdb")
 
+    _STORED_SETTINGS = {
+        "ScaleStyle": 3,
+        "ScaleFactor1": 0.5,
+        "ScaleFactor2": 24.0,
+        "PageWidth": 36.0,
+        "PageHeight": 24.0,
+        "MeasureBase": 2,
+        "TakeoffIncrements": 0.5,
+        "NextBidNo": 15,
+    }
+    _SETTINGS_KEYS = {
+        "ScaleStyle": "scale_style",
+        "ScaleFactor1": "scale_factor1",
+        "ScaleFactor2": "scale_factor2",
+        "PageWidth": "page_width",
+        "PageHeight": "page_height",
+        "MeasureBase": "measure_base",
+        "TakeoffIncrements": "takeoff_increments",
+        "NextBidNo": "next_bid_no",
+    }
+    _BUILT_IN_SETTINGS = {
+        "scale_style": 1,
+        "scale_factor1": 0.125,
+        "scale_factor2": 12.0,
+        "page_width": 42.0,
+        "page_height": 30.0,
+        "measure_base": 0,
+        "takeoff_increments": 1.0,
+        "next_bid_no": 1,
+    }
+
+    def settings_database(self, **overrides):
+        stored = {**self._STORED_SETTINGS, **overrides}
+        connection = self.database(
+            "CREATE TABLE Settings (" + ", ".join(stored) + ")",
+        )
+        connection.execute(
+            "INSERT INTO Settings VALUES (" + ", ".join("?" * len(stored)) + ")",
+            tuple(stored.values()),
+        )
+        return connection
+
+    def expected_settings(self, **defaulted):
+        expected = {
+            self._SETTINGS_KEYS[column]: value
+            for column, value in self._STORED_SETTINGS.items()
+        }
+        for column in defaulted:
+            key = self._SETTINGS_KEYS[column]
+            expected[key] = self._BUILT_IN_SETTINGS[key]
+        return expected
+
+    def test_one_malformed_settings_field_defaults_only_that_field(self):
+        reader = _SqliteSettingsReader(self.settings_database(NextBidNo="abc"))
+        with self.assertLogs("test", level="WARNING") as logs:
+            defaults = reader.get_settings_defaults("x.mdb")
+        self.assertEqual(defaults, self.expected_settings(NextBidNo=None))
+        self.assertEqual(defaults["scale_style"], 3)
+        self.assertEqual(defaults["next_bid_no"], 1)
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            ["Ignoring malformed Settings.NextBidNo value 'abc'; using the default 1"],
+        )
+
+    def test_missing_or_blank_settings_fields_default_without_a_warning(self):
+        for stored in (None, ""):
+            with self.subTest(stored=stored):
+                reader = _SqliteSettingsReader(
+                    self.settings_database(
+                        **{column: stored for column in self._STORED_SETTINGS}
+                    )
+                )
+                with self.assertNoLogs("test", level="WARNING"):
+                    defaults = reader.get_settings_defaults("x.mdb")
+                self.assertEqual(defaults, self._BUILT_IN_SETTINGS)
+
+    def test_every_settings_field_defaults_on_its_own_when_malformed(self):
+        for column in self._STORED_SETTINGS:
+            with self.subTest(column=column):
+                reader = _SqliteSettingsReader(
+                    self.settings_database(**{column: "abc"})
+                )
+                with self.assertLogs("test", level="WARNING") as logs:
+                    defaults = reader.get_settings_defaults("x.mdb")
+                self.assertEqual(defaults, self.expected_settings(**{column: None}))
+                self.assertEqual(len(logs.records), 1)
+                self.assertIn(f"Settings.{column}", logs.records[0].getMessage())
+
+    def test_several_malformed_settings_fields_default_while_the_rest_are_kept(self):
+        reader = _SqliteSettingsReader(
+            self.settings_database(ScaleStyle="x", PageHeight="y", NextBidNo="z")
+        )
+        with self.assertLogs("test", level="WARNING") as logs:
+            defaults = reader.get_settings_defaults("x.mdb")
+        self.assertEqual(
+            defaults,
+            self.expected_settings(ScaleStyle=None, PageHeight=None, NextBidNo=None),
+        )
+        self.assertEqual(
+            sorted(
+                column
+                for column in self._STORED_SETTINGS
+                if any(f"Settings.{column}" in r.getMessage() for r in logs.records)
+            ),
+            ["NextBidNo", "PageHeight", "ScaleStyle"],
+        )
+
+    def test_numeric_text_in_settings_fields_is_read_as_numbers(self):
+        reader = _SqliteSettingsReader(
+            self.settings_database(
+                ScaleStyle="3",
+                ScaleFactor1="0.5",
+                ScaleFactor2="24",
+                PageWidth="36",
+                PageHeight="24.0",
+                MeasureBase="2",
+                TakeoffIncrements="0.5",
+                NextBidNo="15",
+            )
+        )
+        defaults = reader.get_settings_defaults("x.mdb")
+        self.assertEqual(defaults, self.expected_settings())
+        self.assertEqual(
+            [type(defaults[key]) for key in self._SETTINGS_KEYS.values()],
+            [int, float, float, float, float, int, float, int],
+        )
+
+    def test_unconvertible_settings_values_of_any_type_default_their_field(self):
+        row = SimpleNamespace(
+            ScaleStyle=float("inf"),
+            ScaleFactor1=0.5,
+            ScaleFactor2=24.0,
+            PageWidth=36.0,
+            PageHeight=24.0,
+            MeasureBase=[1],
+            TakeoffIncrements=0.5,
+            NextBidNo=15,
+        )
+        reader = _SqliteSettingsReader(
+            self.settings_database(),
+        )
+        with mock.patch(
+            "ost_visualizer.infrastructure.mdb.components.settings_reader."
+            "fetch_optional_global_settings_row",
+            return_value=row,
+        ):
+            with self.assertLogs("test", level="WARNING") as logs:
+                defaults = reader.get_settings_defaults("x.mdb")
+        self.assertEqual(
+            defaults, self.expected_settings(ScaleStyle=None, MeasureBase=None)
+        )
+        self.assertEqual(len(logs.records), 2)
+
+    def test_a_malformed_settings_field_defaults_where_read_errors_are_fatal(self):
+        """SQL readers treat read errors as fatal, but a malformed stored value
+        is data, not a read error: it defaults its own field like the MDB reader."""
+        reader = _FatalReadErrors(self.settings_database(NextBidNo="abc"))
+        with self.assertLogs("test", level="WARNING") as logs:
+            defaults = reader.get_settings_defaults("x.mdb")
+        self.assertEqual(defaults, self.expected_settings(NextBidNo=None))
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            ["Ignoring malformed Settings.NextBidNo value 'abc'; using the default 1"],
+        )
+
+    def test_every_settings_field_defaults_on_its_own_where_read_errors_are_fatal(
+        self,
+    ):
+        for column in self._STORED_SETTINGS:
+            with self.subTest(column=column):
+                reader = _FatalReadErrors(self.settings_database(**{column: "abc"}))
+                with self.assertLogs("test", level="WARNING") as logs:
+                    defaults = reader.get_settings_defaults("x.mdb")
+                self.assertEqual(defaults, self.expected_settings(**{column: None}))
+                self.assertEqual(len(logs.records), 1)
+                self.assertIn(f"Settings.{column}", logs.records[0].getMessage())
+
+    def test_the_hydration_parser_defaults_a_malformed_field_for_a_fatal_reader(self):
+        """SqlRemoteChangeReader calls _parse_settings_defaults directly."""
+        connection = self.settings_database(PageWidth="wide")
+        reader = _FatalReadErrors(connection)
+        with self.assertLogs("test", level="WARNING"):
+            defaults = reader._parse_settings_defaults(
+                _SqliteConnectionWrapper(connection)
+            )
+        self.assertEqual(defaults, self.expected_settings(PageWidth=None))
+
 
 class CoverSheetRealSchemaTests(unittest.TestCase):
     _BID_COLUMNS = (
@@ -1815,7 +2003,6 @@ class JobStatusSequenceBoundaryTests(unittest.TestCase):
 
 class JobStatusLockedContractTests(unittest.TestCase):
     """A status whose lock flag cannot be read is locked: fail closed.
-
     This mirrors the SQL write guard `[Locked] IS NULL OR [Locked]=1` in
     infrastructure/sql/writer.py, so both backends agree on what is locked.
     """

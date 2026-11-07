@@ -1825,7 +1825,6 @@ class UomConditionTypeSupportTests(unittest.TestCase):
 
 def _circumcircle_arc_length(p1, control, p2):
     """Length of the arc p1 -> control -> p2 of the circle through the three points.
-
     Independent oracle: circumcentre from the closed-form determinant formula and the
     travel direction from the orientation of the triple (not from angle ordering).
     """

@@ -280,7 +280,7 @@ class MetricElevationParsingTests(unittest.TestCase):
             ("1m 20cm", 120.0),
             ("1m and 20cm", 120.0),
             ("1m+20cm", 120.0),
-            ("-1m 20cm", -80.0),
+            ("-1m 20cm", -120.0),
             ("2,5 m", 250.0),
             ("2.5m", 250.0),
             ("3 meters", 300.0),
@@ -709,10 +709,12 @@ class MetricSpellingBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(convert_elevation_in_name('Wall @T 6"  ', False), 'Wall @T 6"')
 
-    def test_a_value_near_but_not_at_whole_centimetres_keeps_two_decimals(self):
+    def test_a_value_that_differs_from_whole_centimetres_by_a_hundredth_keeps_two_decimals(
+        self,
+    ):
         fmt = position_parser._format_metric_elevation
-        self.assertEqual(fmt(1.001 / 2.54), "1.00 cm")
-        self.assertEqual(fmt(0.999 / 2.54), "1.00 cm")
+        self.assertEqual(fmt(1.006 / 2.54), "1.01 cm")
+        self.assertEqual(fmt(0.994 / 2.54), "0.99 cm")
         self.assertEqual(fmt(-50.0), "-127 cm")
         self.assertEqual(fmt(-2.5 / 2.54), "-2.50 cm")
 
@@ -754,7 +756,7 @@ class CompoundMetricConversionAndEmptyBaseNameTests(unittest.TestCase):
             ("Wall @T 1m 20cm", "Wall @T 120 cm", "Wall @T 3' 11 1/4\""),
             ("Wall @T 1m and 20cm", "Wall @T 120 cm", "Wall @T 3' 11 1/4\""),
             ("Wall @B 1m+20cm", "Wall @B 120 cm", "Wall @B 3' 11 1/4\""),
-            ("Wall @T -1m 20cm", "Wall @T -80 cm", "Wall @T -2' 7 1/2\""),
+            ("Wall @T -1m 20cm", "Wall @T -120 cm", "Wall @T -3' 11 1/4\""),
             ("Wall @T 1.5m 20cm", "Wall @T 170 cm", "Wall @T 5' 6 7/8\""),
         )
         for name, metric, imperial in table:
@@ -776,7 +778,6 @@ class CompoundMetricConversionAndEmptyBaseNameTests(unittest.TestCase):
 
 class DetachedMinusTests(unittest.TestCase):
     """A minus separated from the number by spaces still negates the whole value.
-
     The elevation grammar (elevation_text) accepts ``-`` followed by whitespace, and an
     attached minus (``-5' 6"``) already negates feet and inches together.
     """
@@ -827,7 +828,7 @@ class DetachedMinusTests(unittest.TestCase):
             ("- 1,5 m", -150.0),
             ("- 20cm", -20.0),
             ("- 3 meters", -300.0),
-            ("- 1m 20cm", -80.0),
+            ("- 1m 20cm", -120.0),
             ("1m - 20cm", 80.0),
             ("- 1m - 20cm", -120.0),
         )
@@ -864,6 +865,174 @@ class DetachedMinusTests(unittest.TestCase):
         self.assertEqual(
             convert_elevation_in_name("Wall @T - 1 m", False), "Wall @T -3' 3 3/8\""
         )
+
+
+class MetricSignAppliesToTheWholeValueTests(unittest.TestCase):
+    """A leading minus before the metres part negates metres plus centimetres."""
+
+    metric = staticmethod(position_parser._parse_metric_elevation)
+
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_a_leading_minus_negates_metres_and_centimetres_together(self):
+        table = (
+            ("-1m 20cm", -120.0),
+            ("-1m and 20cm", -120.0),
+            ("-1m+20cm", -120.0),
+            ("-1.5m 20cm", -170.0),
+            ("-1,5 m 20 cm", -170.0),
+            ("-1m 2.5cm", -102.5),
+            ("-0m 20cm", -20.0),
+            ("- 1m 20cm", -120.0),
+            ("x -1m 20cm", -120.0),
+        )
+        for text, expected in table:
+            with self.subTest(text=text):
+                self.assertEqual(self.metric(text), expected)
+
+    def test_a_minus_on_the_centimetres_alone_still_subtracts(self):
+        table = (
+            ("1m -20cm", 80.0),
+            ("1m and -20cm", 80.0),
+            ("1m+-20cm", 80.0),
+            ("1m - 20cm", 80.0),
+            ("1m -2.5cm", 97.5),
+        )
+        for text, expected in table:
+            with self.subTest(text=text):
+                self.assertEqual(self.metric(text), expected)
+
+    def test_both_parts_signed_stay_negative(self):
+        for text in ("-1m -20cm", "- 1m - 20cm", "-1m and -20cm"):
+            with self.subTest(text=text):
+                self.assertEqual(self.metric(text), -120.0)
+
+    def test_unsigned_and_single_unit_values_are_unchanged(self):
+        table = (
+            ("1m 20cm", 120.0),
+            ("-1m", -100.0),
+            ("-20cm", -20.0),
+            ("-3 meters", -300.0),
+            ("-30 centimeters", -30.0),
+        )
+        for text, expected in table:
+            with self.subTest(text=text):
+                self.assertEqual(self.metric(text), expected)
+
+    def test_the_name_entry_points_apply_the_sign_to_the_whole_value(self):
+        for name, centimetres in (
+            ("Wall @T -1m 20cm", -120.0),
+            ("Wall @B -1m 20cm", -120.0),
+            ("Wall @T - 1m 20cm", -120.0),
+            ("Wall @T -1m -20cm", -120.0),
+            ("Wall @T 1m -20cm", 80.0),
+        ):
+            with self.subTest(name=name):
+                value, is_top = extract_z_value_from_name(name)
+                self.assertAlmostEqual(value, centimetres / 2.54, places=9)
+                self.assertIs(is_top, "@T" in name)
+        table = (
+            ("Wall @T -1m 20cm", "Wall @T -120 cm", "Wall @T -3' 11 1/4\""),
+            ("Wall @T - 1m 20cm", "Wall @T -120 cm", "Wall @T -3' 11 1/4\""),
+            ("Wall @T -1m -20cm", "Wall @T -120 cm", "Wall @T -3' 11 1/4\""),
+            ("Wall @T 1m -20cm", "Wall @T 80 cm", "Wall @T 2' 7 1/2\""),
+        )
+        for name, metric, imperial in table:
+            with self.subTest(name=name):
+                self.assertEqual(convert_elevation_in_name(name, True), metric)
+                self.assertEqual(convert_elevation_in_name(name, False), imperial)
+
+    def test_metric_and_imperial_signs_agree_for_the_same_length(self):
+        self.assertEqual(
+            extract_z_value_from_name("Wall @T -1m 20cm")[0],
+            -extract_z_value_from_name("Wall @T 1m 20cm")[0],
+        )
+        self.assertEqual(
+            position_parser._parse_imperial_elevation("-5' 6\""),
+            -position_parser._parse_imperial_elevation("5' 6\""),
+        )
+
+
+class MetricFormattingDropsRoundingNoiseTests(unittest.TestCase):
+    """A converted length that is a whole number of centimetres prints without decimals."""
+
+    fmt = staticmethod(position_parser._format_metric_elevation)
+
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_one_centimetre_converts_to_a_whole_number(self):
+        self.assertEqual(convert_elevation_in_name("Wall @T 1cm", True), "Wall @T 1 cm")
+        self.assertEqual(
+            convert_elevation_in_name("Wall @B 1 cm", True), "Wall @B 1 cm"
+        )
+
+    def test_every_whole_centimetre_value_prints_without_decimals(self):
+        for whole in range(-500, 501):
+            with self.subTest(cm=whole):
+                self.assertEqual(self.fmt(whole / 2.54), f"{whole} cm")
+                self.assertEqual(
+                    convert_elevation_in_name(f"Wall @T {whole}cm", True),
+                    f"Wall @T {whole} cm",
+                )
+
+    def test_fractional_centimetres_keep_two_decimals(self):
+        table = (
+            (1.5, "1.50 cm"),
+            (-1.5, "-1.50 cm"),
+            (0.25, "0.25 cm"),
+            (102.5, "102.50 cm"),
+            (1.01, "1.01 cm"),
+            (167.64, "167.64 cm"),
+        )
+        for cm, expected in table:
+            with self.subTest(cm=cm):
+                self.assertEqual(self.fmt(cm / 2.54), expected)
+
+    def test_noise_below_a_hundredth_is_rounded_before_the_integer_check(self):
+        table = (
+            (1.004, "1 cm"),
+            (0.996, "1 cm"),
+            (-1.004, "-1 cm"),
+            (1.006, "1.01 cm"),
+            (1.494, "1.49 cm"),
+            (1.496, "1.50 cm"),
+            (0.004, "0 cm"),
+            (-0.004, "0 cm"),
+        )
+        for cm, expected in table:
+            with self.subTest(cm=cm):
+                self.assertEqual(self.fmt(cm / 2.54), expected)
+
+    def test_converting_to_metric_twice_gives_the_same_name(self):
+        names = (
+            "Wall @T 1cm",
+            "Wall @T 1.5cm",
+            "Wall @T 1m 20cm",
+            "Wall @T -1m 20cm",
+            'Wall @T 6"',
+            "Wall @B 5' 6\"",
+            'Wall @B 3 1/2"',
+            "Wall @T 2.55 cm",
+            "Wall @T 0.01 cm",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                once = convert_elevation_in_name(name, True)
+                self.assertEqual(convert_elevation_in_name(once, True), once)
+
+    def test_every_two_decimal_centimetre_value_is_stable_under_repeated_conversion(
+        self,
+    ):
+        for hundredths in range(0, 2001):
+            text = f"Wall @T {hundredths / 100:.2f} cm"
+            with self.subTest(text=text):
+                once = convert_elevation_in_name(text, True)
+                self.assertNotIn(".00 cm", once)
+                self.assertEqual(convert_elevation_in_name(once, True), once)
 
 
 if __name__ == "__main__":

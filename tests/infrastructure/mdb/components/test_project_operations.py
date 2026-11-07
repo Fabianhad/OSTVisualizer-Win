@@ -664,7 +664,6 @@ class ProjectOperationFailurePathTests(unittest.TestCase):
 
 class ProjectOperationsRealAccessTests(unittest.TestCase):
     """Real Access: NULL/Long parameter binding, batching and transaction rollback.
-
     The sqlite stand-ins cannot show how the ACE driver binds NULL and text uids
     against Long columns or that a failed delete rolls its detach updates back.
     """
@@ -757,19 +756,16 @@ class ProjectOperationsRealAccessTests(unittest.TestCase):
                 seeded = {101: (a, None), 102: (a, b), 103: (b, a), 104: (c, None)}
                 names = system | {a: "Alpha", b: "Beta", c: "Gamma"}
                 expect(read(), (names, seeded), "seed")
-
                 # Rename touches only the target project.
                 expect(writer.rename_project(source, pa, "Renamed"), True, "rename")
                 renamed = names | {a: "Renamed"}
                 # Characterisation: renaming an absent project is a silent no-op.
                 expect(writer.rename_project(source, "999", "Ghost"), True, "absent")
                 expect(read(), (renamed, seeded), "after rename")
-
                 # A failed delete rolls the already executed detach updates back.
                 failing = FailingDeleteWriter(manager)
                 expect(failing.delete_projects(source, [pb]), False, "failed delete")
                 expect(read(), (renamed, seeded), "after rolled back delete")
-
                 # A real delete detaches only the bids that reference the project
                 # (either column) and never deletes a bid row.
                 expect(writer.delete_projects(source, [pb]), True, "delete")
@@ -789,7 +785,6 @@ class ProjectOperationsRealAccessTests(unittest.TestCase):
                 expect(writer.delete_projects(source, ["999"]), True, "absent delete")
                 expect(writer.orphan_bids(source, ["999"]), True, "absent orphan")
                 expect(read(), (without_beta, detached), "after absent")
-
                 # Moving binds the project and the restore project to every bid in
                 # the batch and leaves every other bid alone.
                 expect(
@@ -812,7 +807,6 @@ class ProjectOperationsRealAccessTests(unittest.TestCase):
                 expect(read()[1], moved, "after refused moves")
                 expect(writer.orphan_bids(source, ["101"]), True, "orphan")
                 expect(read()[1], moved | {101: (None, a)}, "after orphan")
-
                 # Deleting several projects at once detaches and removes every one
                 # of them (both columns) and leaves the bystander project and bid.
                 pd = int(writer.create_project(source, "Delta"))
@@ -869,7 +863,6 @@ class ProjectOperationsRealAccessTests(unittest.TestCase):
                     {u: v for u, v in before_multi[1].items() if u < 201},
                     "multi bystanders",
                 )
-
                 # Batches larger than one chunk are applied completely.
                 connection = access._connect_mdb(path)
                 try:
@@ -1048,7 +1041,6 @@ class ProjectOperationsLargeBatchTests(unittest.TestCase):
 
 class DeletedBidsProjectGuardTests(unittest.TestCase):
     """The system project "Deleted Bids" (UID 1) cannot be deleted by the writer.
-
     The tree view and the write handler already refuse it; the writer is the last
     line of defence for every other caller (MCP, scripts, a future screen).
     """

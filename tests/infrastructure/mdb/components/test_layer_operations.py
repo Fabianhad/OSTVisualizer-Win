@@ -29,7 +29,12 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
 from ost_visualizer.infrastructure.mdb.components.constants import (
     LAYER_REFERENCE_TABLES,
 )
+from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
+from ost_visualizer.domain.entities.layer import (
+    BUILT_IN_DEFAULT_LAYER_UIDS as DOMAIN_BUILT_IN_DEFAULT_LAYER_UIDS,
+)
 from ost_visualizer.infrastructure.mdb.components.layer_operations import (
+    BUILT_IN_DEFAULT_LAYER_UIDS,
     LayerOperationsMixin,
     _default_layer_update_matched,
 )
@@ -142,7 +147,8 @@ class LayerOperationsPersistenceTests(_StrictTestCase):
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
         conn.execute("INSERT INTO Bids VALUES (1)")
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE BidLayers (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER,
@@ -150,13 +156,16 @@ class LayerOperationsPersistenceTests(_StrictTestCase):
                 IsTemplate INTEGER,
                 IsLocked INTEGER
             )
-            """)
-        conn.execute("""
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE BidAnnotationRects (
                 UID INTEGER PRIMARY KEY,
                 BidLayerUID INTEGER
             )
-            """)
+            """
+        )
         conn.execute(
             "INSERT INTO BidLayers "
             "(UID, BidUID, Sequence, IsTemplate, IsLocked) VALUES (30, 1, 1, 0, 0)"
@@ -864,14 +873,16 @@ class LayerInsertAndDeleteSemanticsTests(_StrictTestCase):
     def test_default_layer_delete_renumbers_only_later_template_layers(self):
         conn = _layer_db(
             [
-                (1, None, "T1", -1, 1, -1, -1),
-                (2, None, "T2", -1, 2, -1, -1),
-                (3, None, "T3", -1, 3, -1, -1),
-                (4, 7, "Bid layer", -1, 3, 0, 0),
+                (30, None, "T1", -1, 1, -1, -1),
+                (31, None, "T2", -1, 2, -1, -1),
+                (32, None, "T3", -1, 3, -1, -1),
+                (40, 7, "Bid layer", -1, 3, 0, 0),
             ]
         )
-        self.assertIsTrue(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "2"))
-        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (3, 2), (4, 3)])
+        self.assertIsTrue(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "31"))
+        self.assertEqual(
+            _layer_rows(conn, "UID, Sequence"), [(30, 1), (32, 2), (40, 3)]
+        )
 
     def test_default_layer_delete_without_sequence_column_deletes_the_row_only(self):
         conn = _layer_db(
@@ -899,6 +910,114 @@ class LayerInsertAndDeleteSemanticsTests(_StrictTestCase):
         with self.assertRaisesRegex(RuntimeError, "BidLayers contains duplicate UID 1"):
             _SqliteMdbOps(conn).delete_default_layer("bid.mdb", "1")
         self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (1, 2)])
+
+    # The four template layers every new database is seeded with (UIDs 1..4, see
+    # DEFAULT_LAYER_ROWS) are the built-in layers; they are created locked.
+    # insert_default_layer also writes IsLocked = -1, so a locked template layer
+    # outside that range is a custom default layer and stays deletable.
+    _BUILT_IN_AND_CUSTOM_DEFAULT_LAYERS = [
+        (1, None, "Default", -1, 2, -1, -1),
+        (2, None, "Annotation", -1, 1, -1, -1),
+        (3, None, "Image", -1, 0, -1, -1),
+        (4, None, "Comments", -1, 3, -1, -1),
+        (10, None, "Custom", -1, 4, -1, -1),
+        (11, None, "Unlocked custom", -1, 5, -1, 0),
+        (20, 7, "Bid layer", -1, 1, 0, 0),
+    ]
+
+    def test_the_built_in_layers_are_the_seeded_default_layer_rows(self):
+        self.assertEqual(
+            [name for name, _show, _locked, _sequence in DEFAULT_LAYER_ROWS],
+            ["Default", "Annotation", "Image", "Comments"],
+        )
+
+    def test_default_layer_delete_refuses_each_locked_built_in_layer_with_a_warning(
+        self,
+    ):
+        for uid in range(1, len(DEFAULT_LAYER_ROWS) + 1):
+            with self.subTest(uid=uid):
+                conn = _layer_db(self._BUILT_IN_AND_CUSTOM_DEFAULT_LAYERS)
+                before = conn.execute("SELECT * FROM BidLayers ORDER BY UID").fetchall()
+                with self.assertLogs("test", "WARNING") as logs:
+                    self.assertIsFalse(
+                        _SqliteMdbOps(conn).delete_default_layer("bid.mdb", str(uid))
+                    )
+                self.assertEqual(len(logs.records), 1)
+                self.assertIn(f"layer {uid}", logs.records[0].getMessage())
+                self.assertIn("built-in", logs.records[0].getMessage())
+                self.assertEqual(
+                    conn.execute("SELECT * FROM BidLayers ORDER BY UID").fetchall(),
+                    before,
+                )
+
+    def test_default_layer_delete_removes_a_locked_custom_default_layer(self):
+        conn = _layer_db(self._BUILT_IN_AND_CUSTOM_DEFAULT_LAYERS)
+        with self.assertNoLogs("test", "WARNING"):
+            self.assertIsTrue(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "10"))
+        self.assertEqual(
+            _layer_rows(conn, "UID, Sequence"),
+            [(1, 2), (2, 1), (3, 0), (4, 3), (11, 4), (20, 1)],
+        )
+
+    def test_default_layer_delete_removes_an_unlocked_custom_default_layer(self):
+        conn = _layer_db(self._BUILT_IN_AND_CUSTOM_DEFAULT_LAYERS)
+        with self.assertNoLogs("test", "WARNING"):
+            self.assertIsTrue(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "11"))
+        self.assertEqual(
+            _layer_rows(conn, "UID, Sequence"),
+            [(1, 2), (2, 1), (3, 0), (4, 3), (10, 4), (20, 1)],
+        )
+
+    def test_default_layer_delete_removes_a_built_in_layer_that_was_unlocked(self):
+        conn = _layer_db(
+            [(1, None, "Default", -1, 2, -1, 0), (2, None, "Annotation", -1, 1, -1, -1)]
+        )
+        with self.assertNoLogs("test", "WARNING"):
+            self.assertIsTrue(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "1"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(2, 1)])
+
+    def test_default_layer_delete_treats_the_first_uid_after_the_built_ins_as_custom(
+        self,
+    ):
+        first_custom = len(DEFAULT_LAYER_ROWS) + 1
+        conn = _layer_db([(first_custom, None, "Custom", -1, 1, -1, -1)])
+        self.assertIsTrue(
+            _SqliteMdbOps(conn).delete_default_layer("bid.mdb", str(first_custom))
+        )
+        self.assertEqual(_layer_rows(conn, "UID"), [])
+
+    def test_default_layer_delete_refusal_of_a_built_in_layer_is_not_a_bid_layer_answer(
+        self,
+    ):
+        conn = _layer_db(
+            [(1, None, "Default", -1, 1, -1, -1), (2, 7, "Bid layer", -1, 1, 0, -1)]
+        )
+        with self.assertNoLogs("test", "WARNING"):
+            self.assertIsFalse(_SqliteMdbOps(conn).delete_default_layer("bid.mdb", "2"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, 1)])
+
+    def test_default_layer_delete_lock_lookup_errors_propagate_without_deleting(self):
+        class _FailingLockCursor(_SqliteCursorWrapper):
+            def execute(self, query, *params):
+                if "[IsLocked] <> 0" in query:
+                    raise RuntimeError("lock lookup failed")
+                return super().execute(query, *params)
+
+        class _FailingLockConnection(_SqliteConnectionWrapper):
+            def cursor(self):
+                return _FailingLockCursor(self._connection)
+
+        class _FailingLockOps(_SqliteMdbOps):
+            def _connection(self, _db_path):
+                return _FailingLockConnection(self._connection_ref)
+
+        conn = _layer_db(self._BUILT_IN_AND_CUSTOM_DEFAULT_LAYERS)
+        before = conn.execute("SELECT * FROM BidLayers ORDER BY UID").fetchall()
+        with self.assertRaisesRegex(RuntimeError, "lock lookup failed"):
+            _FailingLockOps(conn).delete_default_layer("bid.mdb", "1")
+        self.assertEqual(
+            conn.execute("SELECT * FROM BidLayers ORDER BY UID").fetchall(), before
+        )
 
     def test_bid_layer_delete_clears_every_layer_reference_table_and_scopes_renumbering(
         self,
@@ -1636,6 +1755,19 @@ class DefaultLayerNoCountFallbackTests(_StrictTestCase):
         )
 
 
+class BuiltInDefaultLayerUidAgreementTests(unittest.TestCase):
+    def test_the_dialog_rule_and_the_writer_guard_name_the_same_layers(self):
+        """The Layers dialog (domain rule) hides Delete for exactly the layers the
+        writer refuses (uids of the rows DEFAULT_LAYER_ROWS creates)."""
+        self.assertEqual(
+            DOMAIN_BUILT_IN_DEFAULT_LAYER_UIDS,
+            frozenset(str(uid) for uid in BUILT_IN_DEFAULT_LAYER_UIDS),
+        )
+        self.assertEqual(
+            len(DOMAIN_BUILT_IN_DEFAULT_LAYER_UIDS), len(DEFAULT_LAYER_ROWS)
+        )
+
+
 class BulkVisibilityPartialTemplateSchemaTests(_StrictTestCase):
     def test_a_schema_with_only_one_template_marker_never_widens_the_scope(self):
         conn = _layer_db(
@@ -1667,7 +1799,6 @@ class BulkVisibilityPartialTemplateSchemaTests(_StrictTestCase):
 
 class _NumericTextRejectingCursor(_SqliteCursorWrapper):
     """Fails any numeric-text bind, which sqlite would silently coerce.
-
     Real Access also accepts numeric text for a Long column (see
     DuplicateBidRealAccessNumericTextTests in test_bid_operations), so this pins
     the typed-binding convention of the writer, not an Access limitation.
@@ -1793,7 +1924,6 @@ class _NoCountRenameCursor(_Cursor):
 
 class LayerRenameOutcomeTests(_StrictTestCase):
     """update_layer_name's result says whether the name was stored.
-
     The ownership preflight only proves the layer exists in one bid; the UPDATE
     itself is further guarded by IsTemplate = 0 AND IsLocked = 0. Callers treat
     False as "not applied" (the sidebar reloads, a queued rename is rejected), so
@@ -1865,7 +1995,6 @@ class LayerRenameOutcomeTests(_StrictTestCase):
 
 class LayerOperationsRealAccessTests(unittest.TestCase):
     """The layer operations against a real Access/ACE database.
-
     sqlite stands in for Access everywhere else in this module; it cannot show
     how the Jet engine reports an UPDATE's rowcount, evaluates the yes/no
     criteria, or what a rolled-back transaction leaves behind. The scenarios
@@ -1967,7 +2096,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
     @classmethod
     def _fail_then_commit_elsewhere(cls, db_path, writer_class, failing_call, label):
         """Run a failing write, then an unrelated committing write on the same cache.
-
         A rollback that only happens when the connection is closed would let the
         next committed write of the same cached connection persist the failed
         write's partial changes.
@@ -2068,7 +2196,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 ],
                 "names after rename",
             )
-
             # single and bulk visibility
             cls._expect_result(
                 run(lambda w, p: w.update_layer_show(p, "101", False)),
@@ -2131,7 +2258,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 ],
                 "uncaptured visibility covers the bid and the shared layers only",
             )
-
             # insert shifts only the later layers of that bid
             new_uid = run(lambda w, p: w.insert_layer(p, "11", "New", 1))
             if new_uid is None or int(new_uid) in (101, 102, 103, 104, 201, 202):
@@ -2150,7 +2276,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 ],
                 "layers after insert",
             )
-
             # swap exchanges two sequences inside one bid and refuses a cross-bid pair
             cls._expect_result(
                 run(lambda w, p: w.swap_layer_sequence(p, "101", "103")),
@@ -2241,7 +2366,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
             cls._expect_result(
                 run(lambda w, p: w.update_layer_show(p, "202", True)), True, "restore"
             )
-
             # the delete: references of that layer only are cleared, only later
             # layers of that bid are renumbered, guarded layers are refused
             cls._expect_result(
@@ -2303,7 +2427,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
     @classmethod
     def _default_layer_lifecycle_through_real_access(cls):
         import tempfile
-        import pyodbc
         import tests.helpers.mdb.schema_support as access
 
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
@@ -2323,7 +2446,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 seed_connection.commit()
             finally:
                 seed_connection.close()
-
             templates = (
                 "SELECT [UID], [Name], [Show], [Sequence], [IsTemplate], [IsLocked] "
                 "FROM [BidLayers] WHERE [IsTemplate] <> 0 ORDER BY [UID]"
@@ -2331,7 +2453,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
             bid_layer = (
                 "SELECT [Name], [Show], [Sequence] FROM [BidLayers] WHERE [UID] = 101"
             )
-
             name = "Dflt 'q' é"
             cls._expect_result(
                 run(lambda w, p: w.update_default_layer_name(p, "1", name)),
@@ -2372,7 +2493,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
             cls._expect_rows(
                 db_path, bid_layer, [("Bid layer", -1, 9)], "bid layer after edits"
             )
-
             cls._expect_result(
                 run(lambda w, p: w.update_all_default_layers_show(p, False)),
                 True,
@@ -2384,7 +2504,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 [(1, 0), (2, 0), (3, 0), (4, 0), (101, -1)],
                 "show of every default layer",
             )
-
             new_uid = run(lambda w, p: w.insert_default_layer(p, "DNew", 1))
             if new_uid is None or int(new_uid) in (1, 2, 3, 4, 101):
                 raise AssertionError(f"inserted default layer uid {new_uid!r}")
@@ -2400,7 +2519,6 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 ],
                 "default layers after insert",
             )
-
             cls._expect_result(
                 run(lambda w, p: w.swap_default_layer_sequence(p, "1", "3")),
                 True,
@@ -2417,7 +2535,7 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 "default delete of a bid layer",
             )
             cls._expect_result(
-                run(lambda w, p: w.delete_default_layer(p, "3")),
+                run(lambda w, p: w.delete_default_layer(p, new_uid)),
                 True,
                 "default delete",
             )
@@ -2427,24 +2545,23 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 [
                     (1, name, 0, 0, -1, -1),
                     (2, "Annotation", 0, 1, -1, -1),
+                    (3, "Image", 0, 2, -1, -1),
                     (4, "Comments", 0, 3, -1, -1),
-                    (int(new_uid), "DNew", -1, 2, -1, -1),
                 ],
                 "default layers after swap and delete",
             )
-
-            # a default layer that a condition still references is not deleted
-            # (Access enforces the relationship), and nothing is half-deleted
-            cls._expect_raises(
-                pyodbc.Error,
-                lambda: run(lambda w, p: w.delete_default_layer(p, "2")),
-                "referenced default delete",
+            # a locked built-in layer that a condition still references is
+            # refused by the writer, and nothing is half-deleted
+            cls._expect_result(
+                run(lambda w, p: w.delete_default_layer(p, "2")),
+                False,
+                "referenced built-in default delete",
             )
             cls._expect_rows(
                 db_path,
                 "SELECT [UID], [Sequence] FROM [BidLayers] WHERE [IsTemplate] <> 0 "
                 "ORDER BY [UID]",
-                [(1, 0), (2, 1), (4, 3), (int(new_uid), 2)],
+                [(1, 0), (2, 1), (3, 2), (4, 3)],
                 "default layers after the refused delete",
             )
             cls._expect_rows(
@@ -2455,6 +2572,103 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
             )
             cls._expect_rows(
                 db_path, bid_layer, [("Bid layer", -1, 9)], "bid layer after all edits"
+            )
+
+    @classmethod
+    def _default_layer_delete_guard_through_real_access(cls):
+        import tempfile
+        import pyodbc
+        import tests.helpers.mdb.schema_support as access
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            db_path = cls._create_database(
+                folder, ((101, 11, "Bid layer", -1, 9, False),), references=False
+            )
+
+            def run(action):
+                return cls._with_writer(db_path, action)
+
+            templates = (
+                "SELECT [UID], [Name], [Sequence], [IsTemplate], [IsLocked] "
+                "FROM [BidLayers] WHERE [IsTemplate] <> 0 ORDER BY [UID]"
+            )
+            conditions = (
+                "SELECT [UID], [BidLayerUID] FROM [BidConditions] ORDER BY [UID]"
+            )
+            referenced = run(lambda w, p: w.insert_default_layer(p, "Referenced", 3))
+            unlocked = run(lambda w, p: w.insert_default_layer(p, "Unlocked", 4))
+            plain = run(lambda w, p: w.insert_default_layer(p, "Plain", 5))
+            seed_connection = access._connect_mdb(db_path)
+            try:
+                cursor = seed_connection.cursor()
+                cursor.execute(
+                    "UPDATE [BidLayers] SET [IsLocked] = 0 WHERE [UID] = ?",
+                    int(unlocked),
+                )
+                for uid, layer_uid in ((301, 2), (302, int(referenced))):
+                    cursor.execute(
+                        "INSERT INTO [BidConditions] ([UID], [BidUID], "
+                        "[BidLayerUID], [Name]) VALUES (?, 11, ?, 'condition')",
+                        uid,
+                        layer_uid,
+                    )
+                seed_connection.commit()
+            finally:
+                seed_connection.close()
+            seeded = [
+                (1, "Default", 2, -1, -1),
+                (2, "Annotation", 1, -1, -1),
+                (3, "Image", 0, -1, -1),
+                (4, "Comments", 3, -1, -1),
+                (int(referenced), "Referenced", 4, -1, -1),
+                (int(unlocked), "Unlocked", 5, -1, 0),
+                (int(plain), "Plain", 6, -1, -1),
+            ]
+            cls._expect_rows(db_path, templates, seeded, "seeded default layers")
+            seeded_conditions = [(301, 2), (302, int(referenced))]
+            cls._expect_rows(db_path, conditions, seeded_conditions, "seeded refs")
+            # a locked built-in layer is refused, referenced by a condition or not
+            for uid, label in (("1", "unreferenced"), ("2", "referenced")):
+                cls._expect_result(
+                    run(lambda w, p, uid=uid: w.delete_default_layer(p, uid)),
+                    False,
+                    f"{label} locked built-in delete",
+                )
+                cls._expect_rows(db_path, templates, seeded, f"after {label} refusal")
+                cls._expect_rows(
+                    db_path, conditions, seeded_conditions, f"{label} refs"
+                )
+            # a custom default layer a condition references keeps failing in Access
+            cls._expect_raises(
+                pyodbc.Error,
+                lambda: run(lambda w, p: w.delete_default_layer(p, referenced)),
+                "referenced custom default delete",
+            )
+            cls._expect_rows(db_path, templates, seeded, "after the referenced delete")
+            cls._expect_rows(db_path, conditions, seeded_conditions, "refs kept")
+            # bid layers are still not default layers
+            cls._expect_result(
+                run(lambda w, p: w.delete_default_layer(p, "101")),
+                False,
+                "bid layer delete",
+            )
+            cls._expect_rows(db_path, templates, seeded, "after the bid layer delete")
+            # unlocked and locked custom default layers are deleted and renumbered
+            cls._expect_result(
+                run(lambda w, p: w.delete_default_layer(p, unlocked)),
+                True,
+                "unlocked custom delete",
+            )
+            cls._expect_result(
+                run(lambda w, p: w.delete_default_layer(p, plain)),
+                True,
+                "locked custom delete",
+            )
+            cls._expect_rows(
+                db_path,
+                templates,
+                [*seeded[:5]],
+                "default layers after the custom deletes",
             )
 
     def _run_in_child(self, scenario):
@@ -2484,6 +2698,9 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
     def test_default_layer_operations_persist_on_real_access(self):
         self._run_in_child("_default_layer_lifecycle_through_real_access")
 
+    def test_default_layer_delete_refuses_locked_built_ins_on_real_access(self):
+        self._run_in_child("_default_layer_delete_guard_through_real_access")
+
 
 class _FailingRenumberCursor(_SqliteCursorWrapper):
     def execute(self, query, *params):
@@ -2510,10 +2727,10 @@ class LayerFailurePropagationTests(_StrictTestCase):
 
     def test_a_failed_renumbering_after_a_default_layer_delete_propagates(self):
         conn = _layer_db(
-            [(1, None, "T1", -1, 1, -1, -1), (2, None, "T2", -1, 2, -1, -1)]
+            [(30, None, "T1", -1, 1, -1, -1), (31, None, "T2", -1, 2, -1, -1)]
         )
         with self.assertRaisesRegex(RuntimeError, "renumbering failed"):
-            _FailingRenumberOps(conn).delete_default_layer("bid.mdb", "1")
+            _FailingRenumberOps(conn).delete_default_layer("bid.mdb", "30")
 
     def test_a_failed_insert_shift_propagates_before_any_row_is_added(self):
         conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
