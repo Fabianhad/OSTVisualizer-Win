@@ -422,6 +422,83 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
         self.assertTrue(fake_connection.closed)
 
 
+class DatabaseCreatorConnectionTargetTests(unittest.TestCase):
+    """The ODBC connection string and the stored name are assembled from the
+    arguments; fakes of the driver would hide a wrong target, so they are asserted."""
+
+    DRIVER = "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};"
+
+    @staticmethod
+    def _settings_inserts(cursor):
+        return [
+            call
+            for call in cursor.execute.call_args_list
+            if "INSERT INTO [Settings]" in call.args[0]
+        ]
+
+    def _create(self, name):
+        creator = database_creator.DatabaseCreator()
+        connection = Mock()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "created.mdb"
+            with (
+                patch.object(
+                    creator,
+                    "_create_blank_mdb",
+                    side_effect=lambda path: Path(path).touch(),
+                ),
+                patch.object(creator, "_apply_reference_schema_metadata"),
+                patch.object(
+                    database_creator.pyodbc, "connect", return_value=connection
+                ) as connect,
+            ):
+                self.assertIs(creator.create_database(db_path, name), True)
+        return db_path, connect, connection
+
+    def test_the_schema_connection_targets_the_new_file_without_autocommit(self):
+        db_path, connect, _connection = self._create("Created")
+        connect.assert_called_once_with(
+            self.DRIVER + f"DBQ={db_path};", autocommit=False
+        )
+
+    def test_the_requested_database_name_is_stored_in_settings(self):
+        _path, _connect, connection = self._create("Quarry Job 7")
+        inserts = self._settings_inserts(connection.cursor.return_value)
+        self.assertEqual(len(inserts), 1)
+        self.assertEqual(inserts[0].args[1], "Quarry Job 7")
+
+    def test_the_unseeded_schema_connection_also_targets_the_file(self):
+        creator = database_creator.DatabaseCreator()
+        connection = Mock()
+        target = Path("C:/data/unseeded.mdb")
+        with (
+            patch.object(creator, "_apply_reference_schema_metadata"),
+            patch.object(
+                database_creator.pyodbc, "connect", return_value=connection
+            ) as connect,
+        ):
+            creator._create_schema(target)
+        connect.assert_called_once_with(
+            self.DRIVER + f"DBQ={target};", autocommit=False
+        )
+        self.assertEqual(self._settings_inserts(connection.cursor.return_value), [])
+
+    def test_the_standalone_seed_connection_targets_the_given_file_and_name(self):
+        creator = database_creator.DatabaseCreator()
+        connection = Mock()
+        target = Path("C:/data/seeded.mdb")
+        with patch.object(
+            database_creator.pyodbc, "connect", return_value=connection
+        ) as connect:
+            creator._insert_seed_data(target, "Seeded")
+        connect.assert_called_once_with(
+            self.DRIVER + f"DBQ={target};", autocommit=False
+        )
+        inserts = self._settings_inserts(connection.cursor.return_value)
+        self.assertEqual(len(inserts), 1)
+        self.assertEqual(inserts[0].args[1], "Seeded")
+
+
 class DatabaseCreatorSequenceTests(unittest.TestCase):
     def test_creation_makes_the_folders_then_the_file_then_the_schema_in_order(self):
         events = []
@@ -485,12 +562,32 @@ class DatabaseCreatorSequenceTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "", "")
 
         creator = database_creator.DatabaseCreator(logging.getLogger("creator.script"))
+        removal_attempts = []
+
+        def refuse_removal(path, **options):
+            removal_attempts.append((path, options))
+            raise PermissionError("busy")
+
+        # The script file is created in tempfile's directory and, because its
+        # removal is refused here, would stay behind: keep it inside this test's
+        # own folder, which is deleted at the end.
         with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch.object(database_creator.subprocess, "run", side_effect=run):
-                with patch.object(Path, "unlink", side_effect=PermissionError("busy")):
-                    with self.assertLogs("creator.script", level="ERROR") as logs:
-                        creator._create_blank_mdb(Path(tmp_dir) / "x.mdb")
-        self.assertIn("Failed to remove temporary MDB creation script", logs.output[0])
+            with patch.object(tempfile, "tempdir", tmp_dir):
+                with patch.object(database_creator.subprocess, "run", side_effect=run):
+                    with patch.object(
+                        Path, "unlink", autospec=True, side_effect=refuse_removal
+                    ):
+                        with self.assertLogs("creator.script", level="ERROR") as logs:
+                            creator._create_blank_mdb(Path(tmp_dir) / "x.mdb")
+            scripts = sorted(Path(tmp_dir).glob("ost_create_mdb_*.vbs"))
+            self.assertEqual(len(scripts), 1)
+            self.assertEqual(removal_attempts, [(scripts[0], {"missing_ok": True})])
+            self.assertEqual(len(logs.records), 1)
+            self.assertEqual(
+                logs.records[0].getMessage(),
+                f"Failed to remove temporary MDB creation script {scripts[0]}",
+            )
+            self.assertTrue((Path(tmp_dir) / "x.mdb").is_file())
 
     def test_seed_rows_are_written_in_dependency_order_with_the_default_project(self):
         calls = []
@@ -682,7 +779,6 @@ class DatabaseCreatorSequenceTests(unittest.TestCase):
 
 
 _GOLDEN_DDL = Path(__file__).with_name("access_reference_ddl_golden.json")
-
 _SETTINGS_INSERT = (
     "INSERT INTO [Settings] ([Name], [Created], [NextBidNo], "
     "[LoginRequired], [MeasureBase], [PriceUsing], "
@@ -927,9 +1023,7 @@ class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "dao metadata failed"):
                 creator._create_schema("x.mdb", seed_name="Created")
         seed.assert_not_called()
-        self.assertEqual(
-            events, ["commit", "rollback", "cursor-close", "close"]
-        )
+        self.assertEqual(events, ["commit", "rollback", "cursor-close", "close"])
 
     def test_a_seed_failure_after_metadata_rolls_back_the_seed_transaction(self):
         events = []
@@ -1085,7 +1179,9 @@ class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
             def _create_blank_mdb(self, db_path):
                 Path(db_path).write_bytes(b"blank")
 
-            def _create_schema(self, db_path, progress_callback=None, *, seed_name=None):
+            def _create_schema(
+                self, db_path, progress_callback=None, *, seed_name=None
+            ):
                 self._report_progress(progress_callback, "schema tables")
                 raise RuntimeError("dao metadata failed")
 
@@ -1107,7 +1203,9 @@ class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
             def _create_blank_mdb(self, db_path):
                 Path(db_path).write_bytes(b"blank")
 
-            def _create_schema(self, db_path, progress_callback=None, *, seed_name=None):
+            def _create_schema(
+                self, db_path, progress_callback=None, *, seed_name=None
+            ):
                 raise RuntimeError("schema failed")
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1132,3 +1230,521 @@ class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
             blank.assert_not_called()
             schema.assert_not_called()
             self.assertEqual(db_path.read_bytes(), b"precious")
+
+
+class DatabaseCreatorInterruptTests(unittest.TestCase):
+    """KeyboardInterrupt and SystemExit are not Exception: they must still clean up."""
+
+    INTERRUPTS = (KeyboardInterrupt, SystemExit)
+
+    class Connection:
+        def __init__(self, events):
+            self.events = events
+            self.cursor_instance = Mock()
+            self.cursor_instance.close.side_effect = lambda: events.append(
+                "cursor-close"
+            )
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self):
+            self.events.append("commit")
+
+        def rollback(self):
+            self.events.append("rollback")
+
+        def close(self):
+            self.events.append("close")
+
+    class StubBlankCreator(database_creator.DatabaseCreator):
+        def _create_blank_mdb(self, db_path):
+            Path(db_path).write_bytes(b"blank")
+
+    def test_an_interrupt_during_schema_creation_removes_the_half_built_file(self):
+        for interrupt in self.INTERRUPTS:
+            with self.subTest(interrupt=interrupt.__name__):
+
+                class Creator(self.StubBlankCreator):
+                    def _create_schema(
+                        self, db_path, progress_callback=None, *, seed_name=None
+                    ):
+                        raise interrupt()
+
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    db_path = Path(tmp_dir) / "half.mdb"
+                    creator = Creator(logging.getLogger("creator.interrupt.half"))
+                    with self.assertRaises(interrupt):
+                        creator.create_database(db_path, "Half")
+                    self.assertFalse(db_path.exists())
+                    self.assertEqual(list(Path(tmp_dir).iterdir()), [])
+
+    def test_an_interrupt_is_propagated_without_being_logged_as_a_failed_creation(
+        self,
+    ):
+        class Creator(self.StubBlankCreator):
+            def _create_schema(
+                self, db_path, progress_callback=None, *, seed_name=None
+            ):
+                raise KeyboardInterrupt()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            creator = Creator(logging.getLogger("creator.interrupt.quiet"))
+            with self.assertNoLogs("creator.interrupt.quiet", level="ERROR"):
+                with self.assertRaises(KeyboardInterrupt):
+                    creator.create_database(Path(tmp_dir) / "q.mdb", "Quiet")
+
+    def test_an_interrupt_still_propagates_when_the_partial_file_cannot_be_removed(
+        self,
+    ):
+        class Creator(self.StubBlankCreator):
+            def _create_schema(
+                self, db_path, progress_callback=None, *, seed_name=None
+            ):
+                raise KeyboardInterrupt()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "stuck.mdb"
+            creator = Creator(logging.getLogger("creator.interrupt.stuck"))
+            with patch.object(Path, "unlink", side_effect=PermissionError("locked")):
+                with self.assertRaises(KeyboardInterrupt):
+                    creator.create_database(db_path, "Stuck")
+            self.assertEqual(db_path.read_bytes(), b"blank")
+
+    def test_an_interrupt_while_seeding_releases_the_odbc_resources_and_the_file(
+        self,
+    ):
+        events = []
+        connection = self.Connection(events)
+        creator = self.StubBlankCreator(logging.getLogger("creator.interrupt.seed"))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "seed.mdb"
+            with (
+                patch.object(
+                    database_creator.pyodbc, "connect", return_value=connection
+                ),
+                patch.object(creator, "_apply_reference_schema_metadata"),
+                patch.object(
+                    creator, "_insert_seed_rows", side_effect=KeyboardInterrupt()
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    creator.create_database(db_path, "Seed")
+            self.assertFalse(db_path.exists())
+        self.assertEqual(events, ["commit", "cursor-close", "close"])
+
+    def test_an_interrupt_in_the_dao_phase_closes_the_dao_database_before_removal(
+        self,
+    ):
+        events = []
+        creator = self.StubBlankCreator(logging.getLogger("creator.interrupt.dao"))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "dao.mdb"
+
+            def table_defs(_name):
+                raise KeyboardInterrupt()
+
+            dao_database = SimpleNamespace(
+                TableDefs=table_defs, Close=lambda: events.append("dao-close")
+            )
+            engine = SimpleNamespace(OpenDatabase=lambda _path: dao_database)
+            with (
+                patch.object(
+                    database_creator.pyodbc,
+                    "connect",
+                    return_value=self.Connection(events),
+                ),
+                patch("win32com.client.Dispatch", return_value=engine),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    creator.create_database(db_path, "Dao")
+            self.assertFalse(db_path.exists())
+        self.assertIn("dao-close", events)
+
+    def test_an_interrupt_while_cscript_runs_removes_the_script_and_the_file(self):
+        def run(command, **_options):
+            Path(command[3]).write_bytes(b"partial")
+            raise KeyboardInterrupt()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "target" / "x.mdb"
+            with patch.object(tempfile, "tempdir", tmp_dir):
+                with patch.object(database_creator.subprocess, "run", side_effect=run):
+                    with self.assertRaises(KeyboardInterrupt):
+                        database_creator.DatabaseCreator().create_database(
+                            db_path, "Interrupted"
+                        )
+            self.assertFalse(db_path.exists())
+            self.assertEqual(list(Path(tmp_dir).glob("ost_create_mdb_*.vbs")), [])
+
+    def test_a_script_that_cannot_be_written_is_not_left_in_the_temp_folder(self):
+        real_factory = tempfile.NamedTemporaryFile
+        for failure in (OSError("disk full"), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__):
+
+                class Unwritable:
+                    def __init__(self, **options):
+                        self._file = real_factory(**options)
+                        self.name = self._file.name
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *exc_info):
+                        return self._file.__exit__(*exc_info)
+
+                    def write(self, _text):
+                        raise failure
+
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    with (
+                        patch.object(tempfile, "tempdir", tmp_dir),
+                        patch.object(
+                            database_creator.tempfile,
+                            "NamedTemporaryFile",
+                            Unwritable,
+                        ),
+                        patch.object(database_creator.subprocess, "run") as run,
+                    ):
+                        with self.assertRaises(type(failure)):
+                            database_creator.DatabaseCreator()._create_blank_mdb(
+                                Path(tmp_dir) / "x.mdb"
+                            )
+                    run.assert_not_called()
+                    self.assertEqual(
+                        list(Path(tmp_dir).glob("ost_create_mdb_*.vbs")), []
+                    )
+
+    def test_a_database_that_appears_before_creation_starts_is_never_removed(self):
+        for failure in (KeyboardInterrupt, RuntimeError):
+            with self.subTest(failure=failure.__name__):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    db_path = Path(tmp_dir) / "other.mdb"
+
+                    def progress(_description):
+                        db_path.write_bytes(b"created by someone else")
+                        raise failure("stop")
+
+                    creator = self.StubBlankCreator(
+                        logging.getLogger("creator.interrupt.other")
+                    )
+                    with patch.object(creator._logger, "exception"):
+                        try:
+                            creator.create_database(db_path, "Other", progress)
+                        except KeyboardInterrupt:
+                            self.assertIs(failure, KeyboardInterrupt)
+                    self.assertEqual(db_path.read_bytes(), b"created by someone else")
+
+
+class DatabaseCreatorRealAccessInterruptTests(unittest.TestCase):
+    """Real Access/ACE: an interrupt must release the file locks so the file can go."""
+
+    @staticmethod
+    def _interrupted_creations_leave_nothing_behind():
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            for index, stage in enumerate(
+                ("_insert_seed_rows", "_apply_reference_schema_metadata")
+            ):
+                db_path = Path(folder) / f"interrupted_{index}.mdb"
+                creator = database_creator.DatabaseCreator()
+                with patch.object(creator, stage, side_effect=KeyboardInterrupt()):
+                    try:
+                        creator.create_database(db_path, "Interrupted")
+                    except KeyboardInterrupt:
+                        pass
+                    else:
+                        raise AssertionError(f"{stage}: interrupt was swallowed")
+                if db_path.exists():
+                    raise AssertionError(f"{stage}: half-built database remains")
+            leftovers = sorted(path.name for path in Path(folder).iterdir())
+            if leftovers:
+                raise AssertionError(f"leftover files: {leftovers}")
+            good_path = Path(folder) / "good.mdb"
+            if not database_creator.DatabaseCreator().create_database(good_path, "Ok"):
+                raise AssertionError("creation after an interrupt failed")
+
+    def test_interrupted_creations_remove_the_file_and_release_its_locks(self):
+        import sys
+        from tests.helpers.mdb.schema_support import _access_available
+        from tests.paths import REPO_ROOT
+
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX is not available")
+        code = (
+            "from tests.infrastructure.mdb.test_database_creator import "
+            "DatabaseCreatorRealAccessInterruptTests as Tests; "
+            "Tests._interrupted_creations_leave_nothing_behind()"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class DatabaseCreatorCreationRaceTests(unittest.TestCase):
+    """Another process may create the database between the exists() guard and ADOX.
+    ADOX then refuses ("Database already exists" on stderr) but cscript exits 0, so
+    the file that is there belongs to the other party and must never be touched.
+    """
+
+    REFUSAL = (
+        "C:\\Temp\\ost_create_mdb_abc12345.vbs(3, 1) Microsoft Access Database "
+        "Engine: Database already exists.\r\n\r\n"
+    )
+    RIVAL_BYTES = b"valid database of the rival"
+
+    def _rival_wins(self, stderr):
+        def run(command, **_options):
+            Path(command[3]).write_bytes(self.RIVAL_BYTES)
+            return subprocess.CompletedProcess(command, 0, "", stderr)
+
+        return run
+
+    def _create_with(self, stderr, schema_side_effect=None):
+        events = []
+        creator = database_creator.DatabaseCreator(logging.getLogger("creator.race"))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "target" / "race.mdb"
+            with (
+                patch.object(tempfile, "tempdir", tmp_dir),
+                patch.object(
+                    database_creator.subprocess,
+                    "run",
+                    side_effect=self._rival_wins(stderr),
+                ),
+                patch.object(
+                    creator, "_create_schema", side_effect=schema_side_effect
+                ) as schema,
+                patch.object(creator._logger, "exception") as logged,
+            ):
+                outcome = creator.create_database(db_path, "Race", events.append)
+            existing = db_path.read_bytes() if db_path.exists() else None
+            scripts = list(Path(tmp_dir).glob("ost_create_mdb_*.vbs"))
+        return outcome, existing, schema, logged, events, scripts
+
+    def test_a_database_created_by_a_rival_before_adox_runs_is_left_untouched(self):
+        outcome, existing, schema, logged, events, scripts = self._create_with(
+            self.REFUSAL, schema_side_effect=RuntimeError("table already exists")
+        )
+        self.assertIs(outcome, False)
+        self.assertEqual(existing, self.RIVAL_BYTES)
+        schema.assert_not_called()
+        logged.assert_not_called()
+        self.assertEqual(events, ["database file"])
+        self.assertEqual(scripts, [])
+
+    def test_a_refusal_is_recognised_whatever_language_the_message_is_in(self):
+        outcome, existing, schema, _logged, _events, _scripts = self._create_with(
+            "x.vbs(3, 1) Microsoft Access Database Engine: Die Datenbank ist "
+            "bereits vorhanden.\r\n",
+            schema_side_effect=RuntimeError("table already exists"),
+        )
+        self.assertIs(outcome, False)
+        self.assertEqual(existing, self.RIVAL_BYTES)
+        schema.assert_not_called()
+
+    def test_a_clean_exit_without_error_text_still_builds_the_schema(self):
+        for stderr in ("", " \r\n", None):
+            with self.subTest(stderr=stderr):
+                outcome, existing, schema, _logged, events, _scripts = (
+                    self._create_with(stderr)
+                )
+                self.assertIs(outcome, True)
+                self.assertEqual(existing, self.RIVAL_BYTES)
+                schema.assert_called_once()
+                self.assertEqual(events, ["database file", "finalizing"])
+
+    def test_error_text_without_any_file_is_still_a_logged_creation_failure(self):
+        def run(command, **_options):
+            return subprocess.CompletedProcess(command, 0, "", self.REFUSAL)
+
+        creator = database_creator.DatabaseCreator(logging.getLogger("creator.race"))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "none.mdb"
+            with (
+                patch.object(database_creator.subprocess, "run", side_effect=run),
+                patch.object(creator, "_create_schema") as schema,
+                patch.object(creator._logger, "exception") as logged,
+            ):
+                self.assertIs(creator.create_database(db_path, "None"), False)
+            schema.assert_not_called()
+            self.assertFalse(db_path.exists())
+        logged.assert_called_once()
+        self.assertEqual(
+            str(logged.call_args.args[2]),
+            "VBScript completed but MDB file was not created",
+        )
+
+    def test_blank_creation_reports_the_foreign_file_and_removes_the_script(self):
+        creator = database_creator.DatabaseCreator()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "foreign.mdb"
+            with (
+                patch.object(tempfile, "tempdir", tmp_dir),
+                patch.object(
+                    database_creator.subprocess,
+                    "run",
+                    side_effect=self._rival_wins(self.REFUSAL),
+                ),
+            ):
+                with self.assertRaises(database_creator._NotCreatedHere):
+                    creator._create_blank_mdb(db_path)
+            self.assertEqual(db_path.read_bytes(), self.RIVAL_BYTES)
+            self.assertEqual(list(Path(tmp_dir).glob("ost_create_mdb_*.vbs")), [])
+
+    def test_a_nonzero_exit_is_still_a_failure_not_a_foreign_database(self):
+        def run(command, **_options):
+            Path(command[3]).write_bytes(self.RIVAL_BYTES)
+            return subprocess.CompletedProcess(command, 1, "", self.REFUSAL)
+
+        creator = database_creator.DatabaseCreator(logging.getLogger("creator.race"))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.object(database_creator.subprocess, "run", side_effect=run):
+                with self.assertRaises(RuntimeError) as raised:
+                    creator._create_blank_mdb(Path(tmp_dir) / "rc1.mdb")
+        self.assertNotIsInstance(raised.exception, database_creator._NotCreatedHere)
+        self.assertIn("rc=1", str(raised.exception))
+
+
+class DatabaseCreatorRealAccessCreationRaceTests(unittest.TestCase):
+    """Real Access/ADOX: the file another party created must survive our attempt."""
+
+    WORKER = (
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "from ost_visualizer.infrastructure.mdb.database_creator import "
+        "DatabaseCreator\n"
+        "db_path, ready, go = sys.argv[1:4]\n"
+        "creator = DatabaseCreator()\n"
+        "Path(ready).write_text('ready')\n"
+        "while not os.path.exists(go):\n"
+        "    pass\n"
+        "print('RESULT', creator.create_database(Path(db_path), 'Race'))\n"
+    )
+
+    @staticmethod
+    def _assert_valid_database(db_path):
+        if not db_path.exists():
+            raise AssertionError(f"the database {db_path.name} is missing")
+        connection = database_creator.pyodbc.connect(
+            f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={db_path};",
+            autocommit=True,
+        )
+        try:
+            names = {
+                row.table_name for row in connection.cursor().tables(tableType="TABLE")
+            }
+        finally:
+            connection.close()
+        if "Bids" not in names:
+            raise AssertionError(f"{db_path.name} is not a complete database: {names}")
+
+    @classmethod
+    def _rival_finishes_before_adox_runs(cls):
+        real_run = subprocess.run
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            db_path = Path(folder) / "seam.mdb"
+            state = {"rival_done": False}
+
+            def run(command, **options):
+                if not state["rival_done"]:
+                    state["rival_done"] = True
+                    if not database_creator.DatabaseCreator().create_database(
+                        db_path, "Rival"
+                    ):
+                        raise AssertionError("the rival could not create its database")
+                    state["bytes"] = db_path.read_bytes()
+                return real_run(command, **options)
+
+            with patch.object(database_creator.subprocess, "run", side_effect=run):
+                outcome = database_creator.DatabaseCreator().create_database(
+                    db_path, "Loser"
+                )
+            if outcome is not False:
+                raise AssertionError(f"the late creator reported {outcome!r}")
+            if db_path.read_bytes() != state["bytes"]:
+                raise AssertionError("the rival's database was modified")
+            cls._assert_valid_database(db_path)
+
+    @classmethod
+    def _concurrent_creations_keep_the_winner(cls, rounds):
+        import os
+        import sys
+        import time
+        from tests.paths import REPO_ROOT
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            for index in range(rounds):
+                db_path = Path(folder) / f"race_{index}.mdb"
+                go = Path(folder) / f"go_{index}"
+                readies = [Path(folder) / f"ready_{index}_{n}" for n in (0, 1)]
+                workers = [
+                    subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-c",
+                            cls.WORKER,
+                            str(db_path),
+                            str(r),
+                            str(go),
+                        ],
+                        cwd=REPO_ROOT,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    for r in readies
+                ]
+                try:
+                    deadline = time.monotonic() + 90
+                    while not all(r.exists() for r in readies):
+                        if time.monotonic() > deadline or any(
+                            w.poll() is not None for w in workers
+                        ):
+                            raise AssertionError(f"round {index}: workers not ready")
+                    go.write_text("go")
+                    outputs = [w.communicate(timeout=120) for w in workers]
+                finally:
+                    for worker in workers:
+                        if worker.poll() is None:
+                            worker.kill()
+                            worker.communicate()
+                results = sorted(
+                    out.strip().rsplit(" ", 1)[-1] for out, _err in outputs
+                )
+                if [w.returncode for w in workers] != [0, 0] or results != [
+                    "False",
+                    "True",
+                ]:
+                    raise AssertionError(f"round {index}: {results} {outputs}")
+                cls._assert_valid_database(db_path)
+
+    def _run_in_child(self, call, timeout):
+        import sys
+        from tests.helpers.mdb.schema_support import _access_available
+        from tests.paths import REPO_ROOT
+
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX is not available")
+        code = (
+            "from tests.infrastructure.mdb.test_database_creator import "
+            f"DatabaseCreatorRealAccessCreationRaceTests as Tests; Tests.{call}"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_database_completed_by_a_rival_before_adox_runs_survives(self):
+        self._run_in_child("_rival_finishes_before_adox_runs()", timeout=120)
+
+    def test_two_processes_creating_the_same_path_never_destroy_the_winner(self):
+        self._run_in_child("_concurrent_creations_keep_the_winner(6)", timeout=420)

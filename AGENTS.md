@@ -251,8 +251,10 @@ Threading and events:
   descendant ownership, including children retained on another Condition. Queued
   Takeoff property writes retain submission-time resource versions through the
   existing concurrency validator; later hydration cannot advance that baseline.
-  SQL Takeoff preflight conflicts remain optimistic conflicts scoped to that
-  Bid's Takeoff collection, not database-session failures.
+  SQL Takeoff and annotation preflight conflicts remain optimistic conflicts
+  scoped to that Bid's `takeoffs_collection` or `annotations_collection`
+  resource, not database-session failures. An unmapped annotation type remains
+  a session-level failure on the database resource.
   Local snapshot rejection returns the normal failed mutation result. Top-level-
   owned Plan menus validate their originating Plan's native lifetime and cleanup
   state before querying action state or dispatching commands.
@@ -822,6 +824,22 @@ Database backends:
   `SchemaRegistry` remains product data and is not the SQL schema ledger.
 - External unversioned and older OST Visualizer SQL databases are not adopted or
   upgraded by the desktop client.
+- Five SQL statements use `OUTPUT INSERTED...` without `INTO`:
+  `_execute_insert_values`, `create_project` and `_insert_identity_raw` in
+  `infrastructure/sql/writer.py`, and `heartbeat` and `renew_lock` in
+  `collaboration_store.py`. SQL Server rejects such a statement when its target
+  table has an enabled trigger for the same DML action. `SQL_SCHEMA_V1` defines
+  no triggers, so client-created databases are unaffected. A database with an
+  enabled DML trigger on a written table (INSERT on a `dbo` table, UPDATE on
+  `ostv.Sessions` or `ostv.Locks`) is unsupported for writes and collaboration.
+  The schema validator intentionally does not reject it: the inspector exposes
+  only a trigger's name and parent schema, and non-table objects are not
+  validated.
+- A SQL `database_id` derived from server, database and login parts (blank
+  database GUID, no explicit id) joins them with `|`, so `|` is rejected in new
+  database names (`validate_sql_database_name`) and in those parts when
+  `DatabaseDescriptor.for_sql_server` derives an id. Saved descriptors and
+  GUID-based identities are not re-derived or rejected, and ids never change.
 - Presence is informational and separate from locks. SQL write authorization
   must be enforced at the mutation boundary; toolbar/menu state is only a
   projection of the shared capability service. The current bid/page is
@@ -1171,6 +1189,32 @@ State and identity:
   children as cutouts and retains parented Count/Linear geometry. MCP Takeoff
   counts likewise exclude only Area Backouts. Delayed selection and history
   projection require a live Plan Qt owner that has not entered cleanup.
+- Curved Linear arc direction (`uom_service._advanced_curve_points`, used by
+  quantities, and the native `linear_geom` arc builders, which share one rule)
+  is the arc through start, control and end: the sweep runs counter-clockwise
+  from start to end when the control point's counter-clockwise angle from the
+  start is within the start-to-end angle, otherwise clockwise (angles taken
+  modulo 2 pi). A sweep over 180 degrees is measured as the long arc whatever
+  the control point's distance from an endpoint; On-Screen Takeoff confirmed
+  start 0, control 250, end 251 degrees measures the 251 degree arc. A control
+  point equal to an endpoint (within `1e-9` of the chord length) is a straight
+  chord, with the chord's length. Exactly collinear controls keep the quadratic
+  fallback. Python and native must change together; the native extension
+  `ost_linear_geom` is git-ignored and must be rebuilt from `linear_geom.cpp`.
+- `pdf_exporter` computes a curved Linear's `area_sf` from chord x thickness,
+  not the arc. The native PDF writer uses it only as a `> 0` gate (page scale
+  and `/Measure`, annotation `/Measure` and appearance); it is not written to
+  the PDF or exposed in any API. Captions and quantities use the arc. Left
+  as is.
+- `calculate_condition_quantities` raises `UnsupportedConditionTypeError` (a
+  `ValueError`) for a Condition type outside 0-3. `compute_page_quantities` and
+  the OST exporter skip such a Condition with a logger warning (uid, name or
+  type) and report zero quantities, so it appears with zero quantities in
+  summaries, MCP/AI reads and the OST export; the elevation callout keeps its
+  text and drops the cubic-yards line. There is no UI or DTO flag, only the
+  log. Elevation text with a zero denominator (`1/0`) raises `ValueError` from
+  `position_parser`; `bid_data_reader` and `settings_operations` log a warning
+  per Condition and continue.
 - Multi-item movement applies one grid-snapped model-space translation to the
   complete selection. Preview, commit, Access/SQL persistence, and undo/redo
   preserve every item's original offset; do not snap each item independently.

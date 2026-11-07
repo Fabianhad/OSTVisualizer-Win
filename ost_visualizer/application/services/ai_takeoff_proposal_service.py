@@ -1370,7 +1370,11 @@ def _finite_count(segments) -> int:
 
 
 def _segment_cap_hint(lines, kinds, symbols, filters: _RegionFilters) -> str:
-    current = filters.min_width or 0.0
+    current = (
+        0.0
+        if filters.min_width_source == MIN_WIDTH_SUGGESTED
+        else filters.min_width or 0.0
+    )
     widths = sorted(
         {
             float(line.width)

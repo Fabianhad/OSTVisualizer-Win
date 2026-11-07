@@ -746,7 +746,9 @@ class McpServerToolWiringTests(unittest.TestCase):
         self.assertEqual(none["message"], "No pages are selected in OST Visualizer.")
         self.read_service.get_selected_pages_summary.assert_not_called()
 
-    def test_a_live_context_missing_either_the_database_or_the_bid_is_no_active_bid(self):
+    def test_a_live_context_missing_either_the_database_or_the_bid_is_no_active_bid(
+        self,
+    ):
         db_path = self.register_database()
         self.rebuild()
         for tool, key in (
@@ -785,14 +787,19 @@ class McpServerToolWiringTests(unittest.TestCase):
                 self.read_service.resolve_area_name.assert_not_called()
         resolved = self.call(
             "get_current_context",
-            bridge=FakeBridge({"selected_bid_ref": full, "selected_area_uid": "area-1"}),
+            bridge=FakeBridge(
+                {"selected_bid_ref": full, "selected_area_uid": "area-1"}
+            ),
         )["structuredContent"]["data"]
         self.assertEqual(resolved["selected_area_name"], untrusted("Slab area"))
 
     def test_the_saved_page_is_resolved_only_for_a_registered_database_and_a_bid(self):
         db_path = self.register_database()
         for label, node in (
-            ("bid without a registered database", {"file_path": "C:/other/x.mdb", "bid_uid": "b1"}),
+            (
+                "bid without a registered database",
+                {"file_path": "C:/other/x.mdb", "bid_uid": "b1"},
+            ),
             ("database without a bid", {"file_path": str(db_path)}),
         ):
             with self.subTest(case=label):
@@ -808,7 +815,9 @@ class McpServerToolWiringTests(unittest.TestCase):
                 self.assertNotIn("selected_page_uid", data)
                 self.read_service.get_current_page.assert_not_called()
 
-    def test_the_factory_builds_a_real_read_service_and_stdio_serves_the_built_server(self):
+    def test_the_factory_builds_a_real_read_service_and_stdio_serves_the_built_server(
+        self,
+    ):
         registry = DatabaseRegistry(app_data_dir=self.root, logger=self.logger)
         service = server_module.create_read_service(registry, self.logger)
         self.assertIsInstance(service, McpReadService)
@@ -868,9 +877,7 @@ class McpServerToolWiringTests(unittest.TestCase):
         )
         self.assertEqual(payload["database_id"], database_id)
         self.assertEqual(payload["selected_file_basename"], "demo.mdb")
-        self.assertEqual(
-            payload["current_bid_ref"]["database_id"], database_id
-        )
+        self.assertEqual(payload["current_bid_ref"]["database_id"], database_id)
         self.assertEqual(payload["current_bid_ref"]["bid_uid"], "b9")
         self.assertEqual(payload["selected_bid_ref"]["bid_uid"], "b1")
         self.assertNotIn("file_path", payload["current_bid_ref"])
@@ -969,9 +976,7 @@ class McpResultEnvelopeHelperTests(unittest.TestCase):
     def test_exactly_the_summary_dtos_carry_their_own_meta_and_status(self):
         for name in self.SUMMARY_TYPES:
             with self.subTest(dto=name):
-                self.assertIs(
-                    server_module._has_summary_meta(self.summary(name)), True
-                )
+                self.assertIs(server_module._has_summary_meta(self.summary(name)), True)
         for other in ({}, [], "text", None, McpResultMetaDto()):
             with self.subTest(other=type(other).__name__):
                 self.assertIs(server_module._has_summary_meta(other), False)
@@ -1330,7 +1335,6 @@ def advertised_surface(directory):
 
 class ServerSurfaceGoldenTests(unittest.TestCase):
     """What the read-only server advertises is pinned literally.
-
     server_surface_golden.json holds the 38 tools with their schemas and
     descriptions, the 7 prompts (arguments and the text each renders, with only
     the required arguments and with all of them), the static resource and the 4
@@ -1338,12 +1342,9 @@ class ServerSurfaceGoldenTests(unittest.TestCase):
     to the public surface therefore appears as readable text in that file's diff.
     The golden is generated from production: it detects drift, it is not an
     independent specification.
-
     A deliberate change is made in two steps, reviewed together: edit server.py,
     then rewrite the golden with
-
         .\\venv\\Scripts\\python.exe -m tests.mcp_server.test_server --regenerate-surface-golden
-
     Nothing regenerates it implicitly; the command prints which entries changed.
     Never regenerate to make a failing run pass without reading that diff.
     """
@@ -1395,21 +1396,23 @@ def regenerate_surface_golden():
     SURFACE_GOLDEN_PATH.write_text(
         json.dumps(new, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    changed = [
-        key for key in new if old.get(key) != new[key]
-    ]
+    changed = [key for key in new if old.get(key) != new[key]]
     detail = {}
     for key in ("tools", "prompts", "resources", "resource_templates"):
         before = {item.get("name"): item for item in old.get(key, [])}
         detail[key] = [
-            item.get("name") for item in new[key] if before.get(item.get("name")) != item
+            item.get("name")
+            for item in new[key]
+            if before.get(item.get("name")) != item
         ]
     detail["prompt_texts"] = [
         name
         for name, texts in new["prompt_texts"].items()
         if old.get("prompt_texts", {}).get(name) != texts
     ]
-    print(f"wrote {SURFACE_GOLDEN_PATH}; sections changed: {changed}; entries: {detail}")
+    print(
+        f"wrote {SURFACE_GOLDEN_PATH}; sections changed: {changed}; entries: {detail}"
+    )
 
 
 if __name__ == "__main__":

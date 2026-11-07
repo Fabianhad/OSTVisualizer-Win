@@ -1125,7 +1125,9 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
                     "the CdnTypes insert must be rolled back",
                 )
                 self.assertEqual(
-                    connection.execute("SELECT COUNT(*) FROM JobStatuses").fetchone()[0],
+                    connection.execute("SELECT COUNT(*) FROM JobStatuses").fetchone()[
+                        0
+                    ],
                     statuses,
                     "only the pre-existing JobStatuses rows may remain",
                 )
@@ -1143,7 +1145,9 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
         connection.commit()
         raw_data = RawBidData(
             bid_row={"UID": "5"},
-            global_tables={"CdnTypes": [{"UID": "9", "Name": "New", "ExpandState": "0"}]},
+            global_tables={
+                "CdnTypes": [{"UID": "9", "Name": "New", "ExpandState": "0"}]
+            },
         )
         remapped = RawBidData(bid_row={"UID": "5", "JobName": "Imported"})
         with self.assertLogs("test", level="ERROR") as logs:
@@ -1155,7 +1159,9 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM CdnTypes").fetchone()[0], 0
         )
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
+        )
 
     def test_a_non_numeric_uid_in_the_target_stops_the_import_before_any_write(self):
         connection, writer = self._writer(next_bid_numbers=(7,))
@@ -1165,7 +1171,9 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
         connection.commit()
         raw_data = RawBidData(
             bid_row={"UID": "5"},
-            global_tables={"CdnTypes": [{"UID": "9", "Name": "New", "ExpandState": "0"}]},
+            global_tables={
+                "CdnTypes": [{"UID": "9", "Name": "New", "ExpandState": "0"}]
+            },
         )
         remapped = RawBidData(bid_row={"UID": "5", "JobName": "Imported"})
         with self.assertLogs("test", level="ERROR") as logs:
@@ -1177,7 +1185,9 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM CdnTypes").fetchone()[0], 0
         )
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
+        )
         self.assertEqual(
             connection.execute("SELECT NextBidNo FROM Settings").fetchall(), [(7,)]
         )
@@ -1187,7 +1197,9 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
         remapped = RawBidData(bid_row={"UID": "5", "JobName": "Imported"})
         with self.assertNoLogs("test", level="WARNING"):
             outcome = writer.import_ost_data(
-                "target.mdb", RawBidData(bid_row={"UID": "1"}), self._transform_to(remapped)
+                "target.mdb",
+                RawBidData(bid_row={"UID": "1"}),
+                self._transform_to(remapped),
             )
         self.assertIs(outcome, True)
 
@@ -1300,9 +1312,7 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
             for sql in statements
             if sql.startswith("INSERT INTO")
         ]
-        self.assertEqual(
-            inserted, ["Bids", *bid_order, *page_order[1:]]
-        )
+        self.assertEqual(inserted, ["Bids", *bid_order, *page_order[1:]])
 
     def test_rows_for_tables_outside_the_write_order_are_not_written(self):
         connection = sqlite3.connect(":memory:")
@@ -1318,7 +1328,9 @@ class ImportOperationsFailureAndRollbackTests(unittest.TestCase):
             ),
         )
         self.assertEqual(connection.execute("SELECT UID FROM Bids").fetchall(), [(1,)])
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM Unlisted").fetchone()[0], 0)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Unlisted").fetchone()[0], 0
+        )
 
 
 class ImportOperationsUidFloorAndAllocationTests(unittest.TestCase):
@@ -1394,7 +1406,10 @@ class ImportOperationsUidFloorAndAllocationTests(unittest.TestCase):
         self.assertEqual(remapped.bid_row, {"BidNo": "5"})
         self.assertEqual(
             wrapped.statements,
-            ["SELECT [NextBidNo] FROM [Settings]", "UPDATE [Settings] SET [NextBidNo] = ?"],
+            [
+                "SELECT [NextBidNo] FROM [Settings]",
+                "UPDATE [Settings] SET [NextBidNo] = ?",
+            ],
         )
         wrapped.assert_every_cursor_closed(self)
         empty = sqlite3.connect(":memory:")
@@ -1569,7 +1584,9 @@ class ImportOperationsMasterDataContractTests(unittest.TestCase):
             [(1,), (2,)],
         )
 
-    def test_no_incoming_rows_yield_empty_maps_for_access_levels_pay_classes_and_employees(self):
+    def test_no_incoming_rows_yield_empty_maps_for_access_levels_pay_classes_and_employees(
+        self,
+    ):
         connection, writer = self._writer()
         wrapped = _import_export_support__SqliteConnection(connection)
         empty = RawBidData(bid_row={"UID": "1"})
@@ -1617,9 +1634,7 @@ class ImportOperationsMasterDataContractTests(unittest.TestCase):
             ),
             (
                 "Employees",
-                (
-                    "INSERT INTO Employees (UID, EmployeeNo) VALUES (5, 'XX')",
-                ),
+                ("INSERT INTO Employees (UID, EmployeeNo) VALUES (5, 'XX')",),
                 [{"FirstName": "Ann"}, {"UID": "2", "EmployeeNo": "XX"}],
                 {"": "6", "2": "5"},
             ),
@@ -1629,7 +1644,9 @@ class ImportOperationsMasterDataContractTests(unittest.TestCase):
                 connection, writer = self._writer(setup)
                 raw_data = RawBidData(bid_row={"UID": "1"}, global_tables={table: rows})
                 result = self._resolvers()[table](
-                    writer, _import_export_support__SqliteConnection(connection), raw_data
+                    writer,
+                    _import_export_support__SqliteConnection(connection),
+                    raw_data,
                 )
                 self.assertEqual(result, expected)
 
@@ -1706,12 +1723,23 @@ class ImportOperationsMasterDataContractTests(unittest.TestCase):
         for row, expected in (
             ({"EmployeeNo": " E1 "}, "no:e1"),
             ({"EmployeeNo": "E1", "FirstName": "Ann"}, "no:e1"),
-            ({"FirstName": "Ann", "LastName": "Lee", "EMail": "A@X.com"}, "name:ann|lee|a@x.com"),
+            (
+                {"FirstName": "Ann", "LastName": "Lee", "EMail": "A@X.com"},
+                "name:ann|lee|a@x.com",
+            ),
             ({"FirstName": " Ann "}, "name:ann||"),
             ({"LastName": "LEE"}, "name:|lee|"),
             ({"EMail": " a@x "}, "name:||a@x"),
             ({}, ""),
-            ({"EmployeeNo": None, "FirstName": None, "LastName": None, "EMail": None}, ""),
+            (
+                {
+                    "EmployeeNo": None,
+                    "FirstName": None,
+                    "LastName": None,
+                    "EMail": None,
+                },
+                "",
+            ),
             ({"EmployeeNo": " ", "FirstName": "", "LastName": "  ", "EMail": " "}, ""),
         ):
             with self.subTest(row=row):
@@ -1732,8 +1760,18 @@ class ImportOperationsMasterDataContractTests(unittest.TestCase):
             bid_row={"UID": "1"},
             global_tables={
                 "Employees": [
-                    {"UID": "90", "FirstName": "ann", "LastName": "LEE", "EMail": "ANN@x.test"},
-                    {"UID": "91", "FirstName": "Ann", "LastName": "Lee", "EMail": "new@x.test"},
+                    {
+                        "UID": "90",
+                        "FirstName": "ann",
+                        "LastName": "LEE",
+                        "EMail": "ANN@x.test",
+                    },
+                    {
+                        "UID": "91",
+                        "FirstName": "Ann",
+                        "LastName": "Lee",
+                        "EMail": "new@x.test",
+                    },
                 ]
             },
         )
@@ -1762,9 +1800,13 @@ class ImportOperationsMasterDataContractTests(unittest.TestCase):
         self.assertEqual(load(wrapped, "NoName", "Name"), {})
         self.assertEqual(load(wrapped, "NoUid", "Name"), {})
         connection.execute("DROP TABLE Employees")
-        self.assertEqual(writer._load_existing_employee_uid_candidates_by_key(wrapped), {})
+        self.assertEqual(
+            writer._load_existing_employee_uid_candidates_by_key(wrapped), {}
+        )
         connection.execute("CREATE TABLE Employees (EmployeeNo TEXT)")
-        self.assertEqual(writer._load_existing_employee_uid_candidates_by_key(wrapped), {})
+        self.assertEqual(
+            writer._load_existing_employee_uid_candidates_by_key(wrapped), {}
+        )
         self.assertEqual(wrapped.statements, [])
 
     def test_existing_master_loaders_close_their_cursors(self):
@@ -1773,7 +1815,9 @@ class ImportOperationsMasterDataContractTests(unittest.TestCase):
         )
         wrapped = _RecordingConnection(connection)
         self.assertEqual(
-            writer._load_existing_uid_candidates_by_column(wrapped, "PayClasses", "Name"),
+            writer._load_existing_uid_candidates_by_column(
+                wrapped, "PayClasses", "Name"
+            ),
             {"A": ["1"]},
         )
         wrapped.assert_every_cursor_closed(self)
@@ -1809,7 +1853,9 @@ class ImportOperationsRowInsertContractTests(unittest.TestCase):
         wrapped = _RecordingConnection(connection)
         table_info = writer._get_table_info(wrapped, "Sample")
         wrapped.cursors.clear()
-        with self.assertRaisesRegex(pyodbc.Error, "UNIQUE constraint failed: Sample.UID"):
+        with self.assertRaisesRegex(
+            pyodbc.Error, "UNIQUE constraint failed: Sample.UID"
+        ):
             writer._insert_raw_row(
                 wrapped, "Sample", {"UID": "1", "Name": "dup"}, table_info
             )
@@ -1830,7 +1876,9 @@ class ImportOperationsRowInsertContractTests(unittest.TestCase):
         self.assertEqual(writer._get_table_columns(wrapped, "T"), {"A", "B"})
         self.assertIs(cursor.closed, True)
         cursor.closed = False
-        self.assertEqual(writer._get_column_types(wrapped, "T"), {"A": "integer", "B": ""})
+        self.assertEqual(
+            writer._get_column_types(wrapped, "T"), {"A": "integer", "B": ""}
+        )
         self.assertIs(cursor.closed, True)
         self.assertEqual(cursor.requested, ["T", "T"])
 
@@ -1847,3 +1895,188 @@ class ImportOperationsRowInsertContractTests(unittest.TestCase):
                 result = getattr(writer, method)(_ColumnsConnection(cursor), "T")
                 self.assertEqual(result, expected)
                 self.assertIs(cursor.closed, True)
+
+
+class ImportOperationsEmployeeReferenceWiringTests(unittest.TestCase):
+    """Whole-import wiring of the PayClass/AccessLevel maps into imported employees.
+    ``import_ost_data`` hands the pay-class map and the access-level map to
+    ``_resolve_employees`` positionally. The two maps are both ``Dict[str, str]``,
+    so a swapped call site is invisible to the type system and to every test that
+    calls ``_resolve_employees`` directly: each imported employee would silently
+    point at a foreign pay class / access level (or NULL). The fixture below gives
+    the two maps the *same* old uid key with *different* targets so that a swap
+    produces wrong non-NULL references instead of NULLs.
+    """
+
+    def _connection(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        connection.execute("DROP TABLE AccessLevels")
+        connection.execute(
+            "CREATE TABLE AccessLevels (UID INTEGER PRIMARY KEY, Description TEXT)"
+        )
+        connection.execute("ALTER TABLE Employees ADD COLUMN AccessLevelUID INTEGER")
+        connection.executemany(
+            "INSERT INTO PayClasses (UID, Name) VALUES (?, ?)",
+            ((3, "Journeyman"), (4, "Apprentice")),
+        )
+        connection.executemany(
+            "INSERT INTO AccessLevels (UID, Description) VALUES (?, ?)",
+            ((20, "Estimator"), (21, "Admin")),
+        )
+        connection.commit()
+        return connection
+
+    @staticmethod
+    def _raw_data():
+        return RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "PayClasses": [
+                    {"UID": "7", "Name": "Journeyman"},
+                    {"UID": "8", "Name": "Foreman"},
+                ],
+                "AccessLevels": [
+                    {"UID": "7", "Description": "Admin"},
+                    {"UID": "9", "Description": "Viewer"},
+                ],
+                "Employees": [
+                    {
+                        "UID": "300",
+                        "EmployeeNo": "E1",
+                        "PayClassUID": "7",
+                        "AccessLevelUID": "7",
+                    },
+                    {
+                        "UID": "301",
+                        "EmployeeNo": "E2",
+                        "PayClassUID": "8",
+                        "AccessLevelUID": "9",
+                    },
+                    {
+                        "UID": "302",
+                        "EmployeeNo": "E3",
+                        "PayClassUID": "99",
+                        "AccessLevelUID": "98",
+                    },
+                    {
+                        "UID": "303",
+                        "EmployeeNo": "E4",
+                        "PayClassUID": "",
+                        "AccessLevelUID": "",
+                    },
+                ],
+            },
+        )
+
+    def test_imported_employees_are_remapped_through_their_own_reference_maps(self):
+        connection = self._connection()
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        captured = []
+
+        def transform(_raw, _max_uid, _cdn, _status, employee, pay):
+            captured.append((employee, pay))
+            return RawBidData(bid_row={"UID": "50"})
+
+        self.assertIs(
+            writer.import_ost_data("target.mdb", self._raw_data(), transform), True
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT EmployeeNo, PayClassUID, AccessLevelUID "
+                "FROM Employees ORDER BY UID"
+            ).fetchall(),
+            [
+                ("E1", 3, 21),
+                ("E2", 5, 22),
+                ("E3", None, None),
+                ("E4", None, None),
+            ],
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT UID, Name FROM PayClasses ORDER BY UID"
+            ).fetchall(),
+            [(3, "Journeyman"), (4, "Apprentice"), (5, "Foreman")],
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT UID, Description FROM AccessLevels ORDER BY UID"
+            ).fetchall(),
+            [(20, "Estimator"), (21, "Admin"), (22, "Viewer")],
+        )
+        self.assertEqual(
+            captured,
+            [
+                (
+                    {"300": "1", "301": "2", "302": "3", "303": "4"},
+                    {"7": "3", "8": "5"},
+                )
+            ],
+        )
+
+    def test_a_failed_employee_import_leaves_the_reference_tables_untouched(self):
+        connection = self._connection()
+        raw_data = self._raw_data()
+        raw_data.global_tables["Employees"].append(
+            {"UID": "304", "EmployeeNo": "e1", "PayClassUID": "7"}
+        )
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        with self.assertLogs("test", level="ERROR") as logs:
+            result = writer.import_ost_data(
+                "target.mdb", raw_data, lambda *_args: RawBidData(bid_row={"UID": "50"})
+            )
+        self.assertIs(result, False)
+        self.assertIn("matching UIDs 300, 304", logs.output[0])
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Employees").fetchone()[0], 0
+        )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
+        )
+        for table, expected_rows in (("PayClasses", 2), ("AccessLevels", 2)):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0],
+                    expected_rows,
+                )
+
+
+class ImportOperationsValueConversionEdgeTests(unittest.TestCase):
+    """Datetime shape and memo-encoding edges of ``_convert_access_value``."""
+
+    def setUp(self):
+        self.convert = _import_export_support__SqliteMdbWriter(
+            sqlite3.connect(":memory:")
+        )._convert_access_value
+
+    def test_datetime_text_needs_exactly_six_parts_otherwise_it_reads_as_null(self):
+        for bad_date in (
+            "2024",
+            "2024 3 9 14 5",
+            "2024 3 9 14 5 7 1",
+            "2024 3 9 14 5 7 1 2",
+        ):
+            with self.subTest(bad_date=bad_date):
+                self.assertIsNone(self.convert(bad_date, "datetime"))
+        self.assertEqual(
+            self.convert("2024 3 9 14 5 7", "datetime"),
+            datetime.datetime(2024, 3, 9, 14, 5, 7),
+        )
+
+    def test_only_annotation_text_tables_use_the_latin1_name_encoding(self):
+        text = "café"
+        for table in ("BidTexts", "BidCallOuts"):
+            for type_name in ("longbinary", "memo"):
+                with self.subTest(table=table, type_name=type_name):
+                    self.assertEqual(
+                        self.convert(text, type_name, table=table, column="Name"),
+                        text.encode("latin-1"),
+                    )
+        for table in ("BidNotes", "Employees", "BidPages", ""):
+            for type_name in ("longbinary", "memo"):
+                with self.subTest(table=table, type_name=type_name):
+                    self.assertEqual(
+                        self.convert(text, type_name, table=table, column="Name"),
+                        text.encode("utf-8"),
+                    )

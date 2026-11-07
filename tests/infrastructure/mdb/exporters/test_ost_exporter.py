@@ -857,6 +857,55 @@ class TakeoffLifecycleQuantityTests(unittest.TestCase):
         self.assertEqual(quantities["backout"], 0)
         self.assertEqual(quantities["point"], -1)
 
+    def test_ost_export_skips_an_unsupported_condition_type_and_keeps_the_rest(self):
+        conditions = [
+            {
+                "UID": "foreign",
+                "Type": "7",
+                "Quantity1": str(CALC_AREA),
+                "UOM1": str(UOM_SQUARE_INCHES),
+            },
+            {
+                "UID": "area",
+                "Type": "1",
+                "Quantity1": str(CALC_AREA),
+                "UOM1": str(UOM_SQUARE_INCHES),
+            },
+        ]
+        takeoffs = [
+            {
+                "UID": "1",
+                "BidConditionUID": "foreign",
+                "ParentUID": "0",
+                "Position": "0;0;10;0;10;10;0;10",
+            },
+            {
+                "UID": "2",
+                "BidConditionUID": "area",
+                "ParentUID": "0",
+                "Position": "0;0;10;0;10;10;0;10",
+            },
+        ]
+        root = Element("Bid")
+        with self.assertLogs(
+            "ost_visualizer.infrastructure.mdb.exporters.ost_exporter",
+            level="WARNING",
+        ) as logged:
+            OstExporter(uom_service)._build_conditions_section(
+                root, conditions, {}, {"BidTakeoffs": takeoffs}
+            )
+        quantities = {
+            row.get("UID"): float(
+                row.find("./BidAreaConditions/BidAreaCondition").get("Quantity1")
+            )
+            for row in root.findall("./BidConditions/BidCondition")
+        }
+        self.assertEqual(quantities, {"foreign": 0.0, "area": 100.0})
+        messages = [record.getMessage() for record in logged.records]
+        self.assertEqual(len(messages), 1)
+        self.assertIn("foreign", messages[0])
+        self.assertIn("7", messages[0])
+
     def test_ost_export_subtracts_attachment_footprint_only_for_net_area_quantity(self):
         net_area_calc = 12
         conditions = [
@@ -1270,11 +1319,11 @@ class OstExporterHelperContractTests(unittest.TestCase):
             filter_attrs(row, "BidCondition"),
             {"UID": "1", "Color": "", "Origin": "NULL", "Name": ""},
         )
+        self.assertEqual(filter_attrs(row, "BidNamedView"), {"UID": "1", "Name": ""})
         self.assertEqual(
-            filter_attrs(row, "BidNamedView"), {"UID": "1", "Name": ""}
-        )
-        self.assertEqual(
-            filter_attrs({"BFperLF": "2.5", "ALState": "0", "Color": "5"}, "BidNamedView"),
+            filter_attrs(
+                {"BFperLF": "2.5", "ALState": "0", "Color": "5"}, "BidNamedView"
+            ),
             {"BFperLF": "2.5", "ALState": "0", "Color": "5"},
         )
 
@@ -1874,7 +1923,9 @@ class ConditionQuantityContractTests(unittest.TestCase):
                         [{"UID": "10", "Type": condition_type}],
                         [dict(takeoff, ParentUID="0")],
                     )
-                    row = root.find("./BidConditions/BidCondition/BidAreaConditions/BidAreaCondition")
+                    row = root.find(
+                        "./BidConditions/BidCondition/BidAreaConditions/BidAreaCondition"
+                    )
                     self.assertEqual(
                         (
                             row.get("Quantity1"),
@@ -1962,8 +2013,12 @@ class ConditionQuantityContractTests(unittest.TestCase):
                 ("1", "10", "0", "0", "4", "0", "0"),
             ],
         )
-        self.assertEqual(area_rows(conditions[1]), [("5", "11", "0", "0", "0", "0", "0")])
-        self.assertEqual(area_rows(conditions[2]), [("6", "12", "0", "0", "0", "0", "0")])
+        self.assertEqual(
+            area_rows(conditions[1]), [("5", "11", "0", "0", "0", "0", "0")]
+        )
+        self.assertEqual(
+            area_rows(conditions[2]), [("6", "12", "0", "0", "0", "0", "0")]
+        )
         for row in conditions[0].findall("./BidAreaConditions/BidAreaCondition"):
             self.assertEqual(
                 list(row.attrib),
@@ -2001,7 +2056,9 @@ class ConditionQuantityContractTests(unittest.TestCase):
                     ],
                     [{"UID": "1", "BidConditionUID": "10", "Position": "0;0;4;0"}],
                 )
-                row = root.find("./BidConditions/BidCondition/BidAreaConditions/BidAreaCondition")
+                row = root.find(
+                    "./BidConditions/BidCondition/BidAreaConditions/BidAreaCondition"
+                )
                 # 4 inches = 0.333.. ft; rounding up to the 6 inch increment gives 0.5.
                 self.assertAlmostEqual(
                     float(row.get("Quantity1")), 0.5 if rounded else 1 / 3, places=9
@@ -2084,6 +2141,19 @@ class OstExporterNormalizationTests(unittest.TestCase):
             {"MeasureBase": "1"}, untouched
         )
         self.assertEqual(untouched, {"Other": [{"UOM1": "2"}]})
+
+    def test_condition_uom_normalization_reads_only_the_three_quantity_slots(self):
+        # The reference schema has no fourth slot; stray Quantity4/UOM4 text must
+        # neither be parsed (it is not numeric) nor rewritten.
+        row = {"Quantity1": "1", "UOM1": "2", "Quantity4": "n/a", "UOM4": "n/a"}
+        tables = {"BidConditions": [row]}
+        ost_exporter_module._normalize_condition_uoms_for_bid_system(
+            {"MeasureBase": "1"}, tables
+        )
+        self.assertEqual(
+            tables["BidConditions"],
+            [{"Quantity1": "1", "UOM1": "13", "Quantity4": "n/a", "UOM4": "n/a"}],
+        )
 
     def test_null_markers_are_normalized_in_bid_page_global_and_table_rows(self):
         root = self._export_root(
@@ -2279,7 +2349,9 @@ class OstExporterFileWriteTests(unittest.TestCase):
         self.assertIn('JobName="Café ñ"'.encode("utf-8"), raw_bytes)
         self.assertFalse(raw_bytes.startswith(b"\xef\xbb\xbf"))
         self.assertNotIn(b"\r\r", raw_bytes)
-        self.assertTrue(raw_bytes.startswith(b"<XML_ROOT>\r\n<OST Version=\"3.2.0\"/>\r\n"))
+        self.assertTrue(
+            raw_bytes.startswith(b'<XML_ROOT>\r\n<OST Version="3.2.0"/>\r\n')
+        )
         self.assertTrue(raw_bytes.endswith(b"</XML_ROOT>\r\n"))
 
     def test_temp_file_is_created_next_to_the_destination_and_hidden_by_prefix(self):
@@ -2315,7 +2387,9 @@ class OstExporterFileWriteTests(unittest.TestCase):
             result = OstExporter(SimpleNamespace()).export(self.RAW, "relative.ost")
             os.chdir(previous)
             self.assertTrue(result.success, result.error_message)
-            self.assertEqual([p.name for p in Path(temp_dir).iterdir()], ["relative.ost"])
+            self.assertEqual(
+                [p.name for p in Path(temp_dir).iterdir()], ["relative.ost"]
+            )
 
     def test_failed_replace_removes_the_temp_file_and_reports_the_replace_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2417,7 +2491,8 @@ class OstExporterGoldenTableTests(unittest.TestCase):
 
     def test_zero_default_columns_match_the_golden_snapshot(self):
         self.assertEqual(
-            set(ost_exporter_module._ZERO_DEFAULT_FIELDS), set(golden.ZERO_DEFAULT_FIELDS)
+            set(ost_exporter_module._ZERO_DEFAULT_FIELDS),
+            set(golden.ZERO_DEFAULT_FIELDS),
         )
         for field in sorted(golden.ZERO_DEFAULT_FIELDS):
             with self.subTest(field=field):
@@ -2712,6 +2787,33 @@ class ConditionRowDefaultsTests(unittest.TestCase):
                     result.error_message,
                 )
 
+    def test_takeoff_without_uid_fails_the_export_instead_of_being_grouped(self):
+        # A UID-less takeoff would share the blank group key with every parentless
+        # takeoff; the takeoff-graph validation rejects it before any grouping.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = OstExporter(SimpleNamespace()).export(
+                RawBidData(
+                    bid_row={"UID": "1", "JobName": "Bid"},
+                    bid_tables={
+                        "BidConditions": [{"UID": "10", "BidUID": "1"}],
+                        "BidPages": [{"UID": "20", "BidUID": "1"}],
+                    },
+                    page_tables={
+                        "BidTakeoffs": [
+                            {"BidUID": "1", "BidPageUID": "20", "BidConditionUID": "10"}
+                        ]
+                    },
+                ),
+                str(Path(temp_dir) / "invalid.ost"),
+            )
+            self.assertEqual(list(Path(temp_dir).iterdir()), [])
+        self.assertIs(result.success, False)
+        self.assertEqual(
+            result.error_message,
+            "Cannot export invalid takeoff graph: BidTakeoffs.UID=<no UID> has "
+            "malformed UID=<missing>",
+        )
+
 
 class OstExporterSortRowsDefaultsTests(unittest.TestCase):
     def test_rows_without_the_sort_key_sort_as_zero(self):
@@ -2733,9 +2835,7 @@ class OstExporterSortRowsDefaultsTests(unittest.TestCase):
                     ["one", "none"],
                 )
         self.assertEqual(
-            order(
-                "BidConditions", [{"tag": "one", "UID": "1"}, {"tag": "none"}]
-            ),
+            order("BidConditions", [{"tag": "one", "UID": "1"}, {"tag": "none"}]),
             ["none", "one"],
         )
         self.assertEqual(

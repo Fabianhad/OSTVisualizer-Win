@@ -26929,7 +26929,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
     _text_annotation = TakeoffPlanViewTextStylePersistenceTests._text_annotation
     _text_item = TakeoffPlanViewTextStylePersistenceTests._text_item
     _persist_view = TakeoffPlanViewTextStylePersistenceTests._persist_view
-    _dimension_annotation = TakeoffPlanViewTextStylePersistenceTests._dimension_annotation
+    _dimension_annotation = (
+        TakeoffPlanViewTextStylePersistenceTests._dimension_annotation
+    )
 
     def test_resizing_the_view_remembers_the_visible_viewport_size(self):
         view = self._make_plan_view()
@@ -26940,7 +26942,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         view.resize(410, 260)
         QApplication.processEvents()
         self.assertEqual(view._last_visible_viewport_size, view.viewport().size())
-        self.assertEqual(view._last_visible_viewport_size.width(), view.viewport().width())
+        self.assertEqual(
+            view._last_visible_viewport_size.width(), view.viewport().width()
+        )
 
     def test_the_text_toolbar_contains_only_itself_and_its_descendants(self):
         view = self._make_plan_view()
@@ -27029,7 +27033,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertFalse(view.handle_inline_text_shortcut("select_all"))
         self.assertFalse(item.textCursor().hasSelection())
 
-    def test_persisting_without_a_font_color_property_reports_the_annotation_color(self):
+    def test_persisting_without_a_font_color_property_reports_the_annotation_color(
+        self,
+    ):
         view, annotation, item, flushed = self._persist_view()
         del annotation.properties["FontColor"]
         annotation.color = "#112233"
@@ -27067,10 +27073,15 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
                 uid="free", annotation_type="rect", layer_uid=None, position=[0.0, 0.0]
             ),
             "layered": BidAnnotation(
-                uid="layered", annotation_type="rect", layer_uid="L1", position=[0.0, 0.0]
+                uid="layered",
+                annotation_type="rect",
+                layer_uid="L1",
+                position=[0.0, 0.0],
             ),
         }
-        items = {uid: QGraphicsRectItem(0, 0, 5, 5) for uid in view._current_annotations}
+        items = {
+            uid: QGraphicsRectItem(0, 0, 5, 5) for uid in view._current_annotations
+        }
         for item in items.values():
             view._scene.addItem(item)
         view._uid_to_items = {uid: [item] for uid, item in items.items()}
@@ -27091,16 +27102,13 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertIs(view._identity_change_keeps_view(dict(base)), False)
         view._current_render_identity = dict(base)
         self.assertIs(view._identity_change_keeps_view(dict(base)), True)
-        self.assertIs(
-            view._identity_change_keeps_view({**base, keeping[0]: 2}), True
-        )
+        self.assertIs(view._identity_change_keeps_view({**base, keeping[0]: 2}), True)
         self.assertIs(view._identity_change_keeps_view({**base, "rotation": 90}), False)
         self.assertIs(
             view._identity_change_keeps_view({"image_path": "a.pdf", "rotation": 0}),
             False,
         )
         self.assertIs(view._identity_change_keeps_view({**base, "extra": 1}), False)
-
 
     # ---- view state ownership and load cycle ---------------------------------
     def test_view_state_ownership_decides_who_records_the_view_in_the_page(self):
@@ -27171,7 +27179,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         for zoom, expected_restore in ((0.5, True), (0.0, False), (-1.0, False)):
             with self.subTest(zoom=zoom):
                 view._begin_load_cycle(replace(page, zoom_fac=zoom), False)
-                self.assertEqual(view._load_initial_view_mode == "restore", expected_restore)
+                self.assertEqual(
+                    view._load_initial_view_mode == "restore", expected_restore
+                )
 
     def test_finishing_a_page_load_drops_the_saved_scroll_and_preserved_view(self):
         view, page = self._make_page_scale_view()
@@ -27243,7 +27253,11 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         view = self._make_plan_view()
         view._current_takeoffs = {
             uid: Takeoff(
-                uid=uid, condition_uid="c1", page_uid="p1", position=[0.0, 0.0], rotation=0.0
+                uid=uid,
+                condition_uid="c1",
+                page_uid="p1",
+                position=[0.0, 0.0],
+                rotation=0.0,
             )
             for uid in ("t1", "t2")
         }
@@ -27254,7 +27268,11 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
     def test_restoring_positions_skips_unknown_and_empty_entries_without_stopping(self):
         view, rebuilt = self._restore_view()
         view.restore_flushed_positions(
-            [("missing", [1.0, 1.0], [2.0, 2.0]), ("t1", [], [3.0, 3.0]), ("t2", [7.0, 8.0], [9.0, 9.0])],
+            [
+                ("missing", [1.0, 1.0], [2.0, 2.0]),
+                ("t1", [], [3.0, 3.0]),
+                ("t2", [7.0, 8.0], [9.0, 9.0]),
+            ],
             [],
         )
         self.assertEqual(view._current_takeoffs["t2"].position, [7.0, 8.0])
@@ -27295,7 +27313,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
     _clear_view = TakeoffPlanViewClearSweepTests._view
     _clear_stub = TakeoffPlanViewClearSweepTests._stub
 
-    def test_clear_preserving_an_annotation_tool_resets_only_its_in_progress_state(self):
+    def test_clear_preserving_an_annotation_tool_resets_only_its_in_progress_state(
+        self,
+    ):
         view = self._clear_view()
         calls = self._clear_stub(view)
         area = []
@@ -27321,7 +27341,6 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertIn("_exit_annotation_place_mode", calls)
         self.assertNotIn("clear_place_preview", calls)
 
-
     # ---- text annotation item font sizing ---------------------------------------
     def test_text_annotation_item_font_size_defaults_and_minimum(self):
         view = self._make_plan_view()
@@ -27337,7 +27356,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
 
         def point_size(properties):
             ann = BidAnnotation(
-                uid="t", annotation_type="text", position=[0.0, 0.0, 50.0, 20.0],
+                uid="t",
+                annotation_type="text",
+                position=[0.0, 0.0, 50.0, 20.0],
                 properties=properties,
             )
             return view._text_annotation_item_from_properties(ann).font().pointSize()
@@ -27352,7 +27373,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
     _changed_view = TakeoffPlanViewChangedOverlayRefreshSweepTests._view
     _changed_incoming = TakeoffPlanViewChangedOverlayRefreshSweepTests._incoming
     _changed_takeoff_call = TakeoffPlanViewChangedOverlayRefreshSweepTests._takeoff_call
-    _changed_annotation_call = TakeoffPlanViewChangedOverlayRefreshSweepTests._annotation_call
+    _changed_annotation_call = (
+        TakeoffPlanViewChangedOverlayRefreshSweepTests._annotation_call
+    )
 
     def test_a_missing_annotation_list_is_treated_as_no_annotations(self):
         for call in ("annotation", "takeoff"):
@@ -27400,7 +27423,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
                 self.assertNotIn("refresh", self._names())
                 self.assertEqual(self._begin_flag(view), expected)
 
-    def test_a_forced_reload_of_another_page_keeps_the_view_only_when_it_was_applied(self):
+    def test_a_forced_reload_of_another_page_keeps_the_view_only_when_it_was_applied(
+        self,
+    ):
         for applied in (True, False):
             with self.subTest(applied=applied):
                 view = self._load_view()
@@ -27423,7 +27448,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         self._load_prepare(view)
         view._load_view_applied = True
         self._load_call(
-            view, page=replace(self.page, invert=True), bid_ref=BidRef("db.mdb", "bid-2")
+            view,
+            page=replace(self.page, invert=True),
+            bid_ref=BidRef("db.mdb", "bid-2"),
         )
         self.assertIs(self._begin_flag(view), False)
 
@@ -27438,10 +27465,13 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
                 self._load_prepare(view)
                 view._annotation_place_type = place_type
                 bid_ref = BidRef("db.mdb", "bid-2") if project_changed else None
-                self._load_call(view, force_visual_reload=True, **({"bid_ref": bid_ref} if bid_ref else {}))
+                self._load_call(
+                    view,
+                    force_visual_reload=True,
+                    **({"bid_ref": bid_ref} if bid_ref else {}),
+                )
                 clear_call = next(e for e in self.log if e[0] == "clear")
                 self.assertIs(clear_call[2]["preserve_place_session"], expected)
-
 
     # ---- second round: remaining confirmed gaps --------------------------------
     def test_a_pending_view_state_with_a_small_positive_zoom_is_still_used(self):
@@ -27452,7 +27482,9 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertEqual(view._preserved_view_state, (0.5, 5.0, 6.0))
         self.assertIsNone(view._pending_load_view_state)
 
-    def test_overlay_pdf_text_with_no_overlay_size_maps_nothing_even_in_a_tiny_page(self):
+    def test_overlay_pdf_text_with_no_overlay_size_maps_nothing_even_in_a_tiny_page(
+        self,
+    ):
         view = self._make_pdf_view()
         source = (PDF_INTELLIGENCE_SOURCE_OVERLAY, "overlay.pdf", 0)
         char = _pdf_text_support__raw_char("H", 0.1, 0.2, 0.1, 0.2)
@@ -27460,8 +27492,10 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
 
         def info(size):
             return _pdf_text_support__page_info(
-                pdf_width=size, pdf_height=size,
-                media_width=max(size, 0.5), media_height=max(size, 0.5),
+                pdf_width=size,
+                pdf_height=size,
+                media_width=max(size, 0.5),
+                media_height=max(size, 0.5),
             )
 
         self.assertEqual(view._map_pdf_text_runs(runs, info(0.0), source), [])
@@ -27476,11 +27510,15 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
     def test_restoring_annotation_edits_skips_empty_entries_without_stopping(self):
         view = self._make_plan_view()
         first = BidAnnotation(
-            uid="a1", annotation_type="rect", position=[0.0, 0.0, 1.0, 1.0],
+            uid="a1",
+            annotation_type="rect",
+            position=[0.0, 0.0, 1.0, 1.0],
             properties={"Text": "one", "FontColor": 0},
         )
         second = BidAnnotation(
-            uid="a2", annotation_type="rect", position=[0.0, 0.0, 2.0, 2.0],
+            uid="a2",
+            annotation_type="rect",
+            position=[0.0, 0.0, 2.0, 2.0],
             properties={"Text": "two", "FontColor": 0},
         )
         view._current_annotations = {"k1": first, "k2": second}
@@ -27506,13 +27544,18 @@ class TakeoffPlanViewA3GapTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertEqual(second.properties["Text"], "old")
         self.assertIs(
             view._restore_annotation_styles(
-                [("a1", "rect", {}, {"Color": "#111111"}), ("a2", "rect", {"Color": "#222222"}, {})]
+                [
+                    ("a1", "rect", {}, {"Color": "#111111"}),
+                    ("a2", "rect", {"Color": "#222222"}, {}),
+                ]
             ),
             True,
         )
         self.assertNotEqual(first.color, "#222222")
         self.assertEqual(second.color, "#222222")
-        self.assertIs(view._restore_annotation_positions([("a1", "rect", [], [1.0])]), False)
+        self.assertIs(
+            view._restore_annotation_positions([("a1", "rect", [], [1.0])]), False
+        )
 
     def test_the_move_handle_pixmap_is_a_26_pixel_outlined_icon(self):
         view = self._make_plan_view()

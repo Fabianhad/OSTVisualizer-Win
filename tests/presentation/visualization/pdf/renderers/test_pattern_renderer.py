@@ -127,7 +127,9 @@ class PatternRendererGeometryTests(unittest.TestCase):
         colour = QtGui.QColor(10, 20, 30)
         for pattern in pt.LINE_PATTERNS | {pt.NONE}:
             with self.subTest(brush_pattern=pattern):
-                self.assertIsNone(pattern_renderer.get_pattern_fill_brush(pattern, colour))
+                self.assertIsNone(
+                    pattern_renderer.get_pattern_fill_brush(pattern, colour)
+                )
         for pattern in (pt.SOLID, pt.TRANSPARENT):
             brush = pattern_renderer.get_pattern_fill_brush(pattern, colour, 0.25)
             self.assertEqual(
@@ -190,8 +192,7 @@ class PatternRendererGeometryTests(unittest.TestCase):
             + _segments(self.items(path, pt.FORWARD_DIAG, 30.0)),
         )
         directions = {
-            round((end[1] - start[1]) / (end[0] - start[0]))
-            for start, end in diag
+            round((end[1] - start[1]) / (end[0] - start[0])) for start, end in diag
         }
         self.assertEqual(directions, {1, -1})
 
@@ -222,7 +223,12 @@ class PatternRendererGeometryTests(unittest.TestCase):
         )
         self.assertSegments(
             sorted(vertical),
-            [((20, 0), (20, 60)), ((40, 0), (40, 60)), ((60, 0), (60, 60)), ((80, 0), (80, 60))],
+            [
+                ((20, 0), (20, 60)),
+                ((40, 0), (40, 60)),
+                ((60, 0), (60, 60)),
+                ((80, 0), (80, 60)),
+            ],
         )
         quarter = _segments(
             self.items(path, pt.VERTICAL, 20.0, orientation_angle=math.pi / 2)
@@ -262,7 +268,9 @@ class PatternRendererGeometryTests(unittest.TestCase):
                     found.add(None if abs(dx) < 1e-6 else round(dy / dx, 6) + 0.0)
                 self.assertEqual(found, slopes)
         self.assertSegments(
-            _segments(self.items(square, pt.BACKWARD_DIAG, 20.0, orientation_angle=0.0)),
+            _segments(
+                self.items(square, pt.BACKWARD_DIAG, 20.0, orientation_angle=0.0)
+            ),
             [
                 ((31.716, 0), (60, 28.284)),
                 ((3.431, 0), (60, 56.569)),
@@ -288,9 +296,7 @@ class PatternRendererGeometryTests(unittest.TestCase):
         for item in grid:
             self.assertEqual(item.pen().widthF(), 1.5)
             self.assertTrue(item.pen().isCosmetic())
-            self.assertEqual(
-                item.pen().capStyle(), QtCore.Qt.PenCapStyle.FlatCap
-            )
+            self.assertEqual(item.pen().capStyle(), QtCore.Qt.PenCapStyle.FlatCap)
         self.assertEqual(
             pattern_renderer.create_grid_items(
                 QtGui.QPainterPath(), QtGui.QColor("blue"), 30.0, 20.0, 1.0
@@ -507,7 +513,9 @@ class PatternRendererCoverageTests(unittest.TestCase):
         counts = {}
         for pattern in (pt.HORIZONTAL, pt.VERTICAL, pt.BACKWARD_DIAG, pt.FORWARD_DIAG):
             for angle in (None, 0.0):
-                segments = _segments(self.items(path, pattern, 20.0, orientation_angle=angle))
+                segments = _segments(
+                    self.items(path, pattern, 20.0, orientation_angle=angle)
+                )
                 counts[(pattern, angle)] = segments
         for (pattern, angle), segments in counts.items():
             with self.subTest(pattern=pattern, orientation=angle):
@@ -515,7 +523,8 @@ class PatternRendererCoverageTests(unittest.TestCase):
                     segment
                     for segment in segments
                     if any(
-                        30 < (start[0] + end[0]) / 2 < 70 and 30 < (start[1] + end[1]) / 2 < 70
+                        30 < (start[0] + end[0]) / 2 < 70
+                        and 30 < (start[1] + end[1]) / 2 < 70
                         for start, end in (segment,)
                     )
                 ]
@@ -558,13 +567,17 @@ class PatternRendererCoverageTests(unittest.TestCase):
             horizontal,
             [((0.0, 20.0), (50.0, 20.0)), ((0.0, 40.0), (50.0, 40.0))],
         )
-        transposed = _polygon([(0, 0), (0, 100), (20, 100), (20, 50), (60, 50), (60, 0)])
+        transposed = _polygon(
+            [(0, 0), (0, 100), (20, 100), (20, 50), (60, 50), (60, 0)]
+        )
         self.assertEqual(
             _segments(self.items(transposed, pt.VERTICAL, 20.0)),
             [((20.0, 0.0), (20.0, 50.0)), ((40.0, 0.0), (40.0, 50.0))],
         )
         # The oriented generator follows the same half-open rule as the plain one.
-        oriented = _segments(self.items(shape, pt.HORIZONTAL, 20.0, orientation_angle=0.0))
+        oriented = _segments(
+            self.items(shape, pt.HORIZONTAL, 20.0, orientation_angle=0.0)
+        )
         self.assertEqual(
             sorted(tuple(sorted(segment)) for segment in oriented),
             [((0.0, 20.0), (50.0, 20.0)), ((0.0, 40.0), (50.0, 40.0))],
@@ -594,7 +607,9 @@ class PatternRendererCoverageTests(unittest.TestCase):
         path = _rectangle(100, 100)
         path.addRect(30, 30, 40, 40)
         contours = pattern_renderer._extract_path_contours(path)
-        lines = pattern_renderer._create_parallel_lines(contours, 0.0, 20.0, QtGui.QPen())
+        lines = pattern_renderer._create_parallel_lines(
+            contours, 0.0, 20.0, QtGui.QPen()
+        )
         by_row = {}
         for segment in _segments(lines):
             by_row.setdefault(round(segment[0][1]), []).append(
@@ -641,7 +656,9 @@ class PatternRendererCoverageTests(unittest.TestCase):
             Raising(OverflowError()),
         ):
             with self.subTest(coord_system=type(coord_system).__name__):
-                self.assertEqual(pattern_renderer._convert_spacing(2.0, coord_system), 72.0)
+                self.assertEqual(
+                    pattern_renderer._convert_spacing(2.0, coord_system), 72.0
+                )
         for spacing in ("3", 3):
             self.assertEqual(pattern_renderer._convert_spacing(spacing, None), 3.0)
 
@@ -804,20 +821,15 @@ class PatternRendererSlantedEdgeTests(unittest.TestCase):
         from ost_visualizer.domain.entities import pattern as pt
 
         diamond = [(50, 0), (100, 50), (50, 100), (0, 50)]
-
         horizontal_path = QtGui.QPainterPath()
         vertical_path = QtGui.QPainterPath()
         for offset in (0, 120):
             horizontal_path.addPolygon(
-                QtGui.QPolygonF(
-                    [QtCore.QPointF(x + offset, y) for x, y in diamond]
-                )
+                QtGui.QPolygonF([QtCore.QPointF(x + offset, y) for x, y in diamond])
             )
             horizontal_path.closeSubpath()
             vertical_path.addPolygon(
-                QtGui.QPolygonF(
-                    [QtCore.QPointF(x, y + offset) for x, y in diamond]
-                )
+                QtGui.QPolygonF([QtCore.QPointF(x, y + offset) for x, y in diamond])
             )
             vertical_path.closeSubpath()
         row = [((0, 50), (100, 50)), ((120, 50), (220, 50))]

@@ -173,7 +173,8 @@ class PageSwitchToolTests(unittest.TestCase):
                         self.assertEqual(plan._annotation_place_points, [])
                         self.assertFalse(plan._annotation_place_dragging)
             dimension = next(
-                spec for spec in PLAN_ANNOTATION_TOOL_SPECS
+                spec
+                for spec in PLAN_ANNOTATION_TOOL_SPECS
                 if spec.annotation_type == ANNOTATION_TYPE_DIMENSION
             )
             win._plan_tool_actions[dimension.action_key].trigger()

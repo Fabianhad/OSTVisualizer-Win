@@ -95,7 +95,9 @@ class PreparePlanItemsPastePayloadTests(unittest.TestCase):
 
 class PreparePlanItemsPasteEdgeTests(unittest.TestCase):
     def spec(self, annotation_type="hotlink", target="view"):
-        return InsertAnnotationSpec("page", annotation_type, [1.0], "#000000", 1.0, {"BidPageViewUID": target})
+        return InsertAnnotationSpec(
+            "page", annotation_type, [1.0], "#000000", 1.0, {"BidPageViewUID": target}
+        )
 
     def payload(self, *specs, sources=("hotlink/h",), destination="other"):
         return PlanItemsPastePayload(
@@ -105,8 +107,12 @@ class PreparePlanItemsPasteEdgeTests(unittest.TestCase):
             annotation_specs=tuple(specs),
         )
 
-    def test_only_links_to_views_that_are_not_copied_along_are_cleared_across_bids(self):
-        prepared = prepare_plan_items_paste_payload(self.payload(self.spec(target="view")))
+    def test_only_links_to_views_that_are_not_copied_along_are_cleared_across_bids(
+        self,
+    ):
+        prepared = prepare_plan_items_paste_payload(
+            self.payload(self.spec(target="view"))
+        )
         self.assertIsNone(prepared.annotation_specs[0].properties["BidPageViewUID"])
         kept = prepare_plan_items_paste_payload(
             self.payload(
@@ -127,17 +133,31 @@ class PreparePlanItemsPasteEdgeTests(unittest.TestCase):
 
     def test_null_and_zero_targets_and_other_annotation_types_are_left_alone(self):
         for target in (None, "", 0, "0"):
-            prepared = prepare_plan_items_paste_payload(self.payload(self.spec(target=target)))
-            self.assertEqual(prepared.annotation_specs[0].properties["BidPageViewUID"], target)
+            prepared = prepare_plan_items_paste_payload(
+                self.payload(self.spec(target=target))
+            )
+            self.assertEqual(
+                prepared.annotation_specs[0].properties["BidPageViewUID"], target
+            )
         other = self.spec(annotation_type="rect", target="view")
-        prepared = prepare_plan_items_paste_payload(self.payload(other, sources=("rect/r",)))
-        self.assertEqual(prepared.annotation_specs[0].properties["BidPageViewUID"], "view")
+        prepared = prepare_plan_items_paste_payload(
+            self.payload(other, sources=("rect/r",))
+        )
+        self.assertEqual(
+            prepared.annotation_specs[0].properties["BidPageViewUID"], "view"
+        )
 
-    def test_unchanged_cross_bid_payloads_are_returned_as_the_prepared_copy_and_only_changed_specs_differ(self):
+    def test_unchanged_cross_bid_payloads_are_returned_as_the_prepared_copy_and_only_changed_specs_differ(
+        self,
+    ):
         keep = self.spec(annotation_type="rect", target="view")
         clear = self.spec(target="gone")
-        prepared = prepare_plan_items_paste_payload(self.payload(keep, clear, sources=("rect/r", "hotlink/h")))
-        self.assertEqual(prepared.annotation_specs[0].properties["BidPageViewUID"], "view")
+        prepared = prepare_plan_items_paste_payload(
+            self.payload(keep, clear, sources=("rect/r", "hotlink/h"))
+        )
+        self.assertEqual(
+            prepared.annotation_specs[0].properties["BidPageViewUID"], "view"
+        )
         self.assertIsNone(prepared.annotation_specs[1].properties["BidPageViewUID"])
         self.assertEqual(prepared.annotation_specs[1].position, [1.0])
         original = self.payload(keep, sources=("rect/r",))
@@ -153,8 +173,12 @@ class PreparePlanItemsPasteEdgeTests(unittest.TestCase):
                 prepared = prepare_plan_items_paste_payload(
                     self.payload(self.spec(target="view"), destination=destination)
                 )
-                self.assertIsNone(prepared.annotation_specs[0].properties["BidPageViewUID"])
+                self.assertIsNone(
+                    prepared.annotation_specs[0].properties["BidPageViewUID"]
+                )
         same_bid = prepare_plan_items_paste_payload(
             self.payload(self.spec(target="view"), destination="source")
         )
-        self.assertEqual(same_bid.annotation_specs[0].properties["BidPageViewUID"], "view")
+        self.assertEqual(
+            same_bid.annotation_specs[0].properties["BidPageViewUID"], "view"
+        )

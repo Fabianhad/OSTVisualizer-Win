@@ -151,14 +151,22 @@ class AnnotationViewBuilderLoggingAndFallbackTests(unittest.TestCase):
         builder.build()
         handler = container.get("annotation_view_event_handler")
         self.addCleanup(handler.shutdown)
-        for name in ("annotation_view_manager", "view_window_manager", "main_hotlink_view_manager"):
+        for name in (
+            "annotation_view_manager",
+            "view_window_manager",
+            "main_hotlink_view_manager",
+        ):
             container.get(name)
         return container, calls, handler, parent
 
     def test_children_are_given_named_child_loggers_of_the_builder_logger(self):
         container, calls, handler, parent = self.build(True)
-        self.assertEqual({call["logger"].name for call in calls}, {"view-builder-test.ViewManager"})
-        self.assertEqual(handler.logger.name, "view-builder-test.AnnotationViewEventHandler")
+        self.assertEqual(
+            {call["logger"].name for call in calls}, {"view-builder-test.ViewManager"}
+        )
+        self.assertEqual(
+            handler.logger.name, "view-builder-test.AnnotationViewEventHandler"
+        )
 
     def test_the_event_handler_is_started_and_registered_by_build(self):
         container, _calls, handler, _parent = self.build(True)
@@ -178,11 +186,16 @@ class AnnotationViewBuilderLoggingAndFallbackTests(unittest.TestCase):
             view_manager_factory=lambda **_options: object(),
             repository_factory=object,
         )
-        self.assertEqual(builder.logger.name, "ost_visualizer.application.builders.annotation_view_builder")
+        self.assertEqual(
+            builder.logger.name,
+            "ost_visualizer.application.builders.annotation_view_builder",
+        )
 
 
 class AnnotationViewBuilderHotlinkWiringTests(unittest.TestCase):
-    def test_a_hotlink_click_resolves_the_registered_open_view_use_case_at_click_time(self):
+    def test_a_hotlink_click_resolves_the_registered_open_view_use_case_at_click_time(
+        self,
+    ):
         from ost_visualizer.application.events.app_events import AppEvents
 
         container = ServiceContainer()
@@ -201,5 +214,10 @@ class AnnotationViewBuilderHotlinkWiringTests(unittest.TestCase):
             "open_annotation_view_use_case",
             SimpleNamespace(execute_from_hotlink=received.append),
         )
-        bus.publish(AppEvents.HOTLINK_CLICKED, hotlink_uid="h", bid_page_uid="p", target_view_uid="v")
+        bus.publish(
+            AppEvents.HOTLINK_CLICKED,
+            hotlink_uid="h",
+            bid_page_uid="p",
+            target_view_uid="v",
+        )
         self.assertEqual([e.hotlink_uid for e in received], ["h"])

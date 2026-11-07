@@ -11361,7 +11361,10 @@ class DetachedWindowA3GapTests(_DetachedPageViewManagerLifecycleFixture):
         combo = window._named_view_combo
         role = QtCore.Qt.ItemDataRole.UserRole
         self.assertEqual(
-            [(combo.itemText(i), combo.itemData(i, role)) for i in range(combo.count())],
+            [
+                (combo.itemText(i), combo.itemData(i, role))
+                for i in range(combo.count())
+            ],
             [("First", ("p1", "nv1")), ("Third", ("p3", "nv3"))],
         )
 

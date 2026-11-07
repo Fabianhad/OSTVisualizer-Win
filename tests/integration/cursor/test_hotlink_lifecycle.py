@@ -374,7 +374,9 @@ class HotlinkCursorLifecycleTests(unittest.TestCase):
                             self.assertNotEqual(hover(plan.viewport()), ibeam)
                             # Saving enters Named View placement; cancelling returns to
                             # Hotlink placement. Either way the placement tool stays armed.
-                            self.assertEqual(plan._cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+                            self.assertEqual(
+                                plan._cursor_mode, CURSOR_MODE_ANNOTATION_PLACE
+                            )
                             if ending != "save":
                                 self.assertEqual(plan._annotation_place_type, "hotlink")
                     window.close()

@@ -52,7 +52,6 @@ class RenderQualityContractTests(unittest.TestCase):
         self.assertEqual(quantize_render_frame_coordinate(4.1236), 4.124)
 
 
-
 class RenderFrameAlignmentTests(unittest.TestCase):
     def test_frame_origins_snap_to_the_render_pixel_grid_for_any_positive_scale(self):
         from ost_visualizer.application import render_quality as rq

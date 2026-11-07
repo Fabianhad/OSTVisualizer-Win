@@ -2325,6 +2325,217 @@ class MdbConnectionManagerMessageAndNoteContractTests(unittest.TestCase):
         self.assertIs(check(healthy, pyodbc.OperationalError("HY000")), False)
 
 
+class MdbConnectionManagerConnectContractTests(unittest.TestCase):
+    """Third pass: what is handed to the ODBC driver, lease-mode safety,
+    per-database independence and close-error continuation."""
+
+    DRIVER = "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};"
+
+    def setUp(self) -> None:
+        self.connect = _FakeConnect()
+        patcher = patch(
+            "ost_visualizer.infrastructure.mdb.connection_manager.pyodbc.connect",
+            self.connect,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _failing_close(connection):
+        """Make close() raise until state['fail'] is cleared; count the attempts."""
+        original = connection.close
+        state = {"fail": True, "attempts": 0}
+
+        def close():
+            state["attempts"] += 1
+            if state["fail"]:
+                raise pyodbc.OperationalError("HY000", "close failed")
+            original()
+
+        connection.close = close
+        return state
+
+    def test_the_driver_gets_the_absolute_normalized_path_and_the_lease_mode(self):
+        manager = MdbConnectionManager()
+        spelling = "Rel\\..\\Conn.MDB"
+        key = os.path.normcase(os.path.abspath(spelling))
+        self.assertTrue(os.path.isabs(key))
+        with manager.connection(spelling) as reader:
+            read_handle = reader._conn
+        with manager.connection(spelling, autocommit=False) as writer:
+            write_handle = writer._conn
+        expected = self.DRIVER + f"DBQ={key};"
+        self.assertEqual(read_handle.connection_string, expected)
+        self.assertEqual(write_handle.connection_string, expected)
+        self.assertIs(read_handle.autocommit, True)
+        self.assertIs(write_handle.autocommit, False)
+        self.assertEqual(self.connect.connect_attempts, 2)
+        manager.close()
+
+    def test_a_read_lease_nested_in_a_write_lease_is_refused_and_keeps_pending_work(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        key = os.path.normcase(os.path.abspath("nest-wr.mdb"))
+        with manager.connection("nest-wr.mdb", autocommit=False) as outer:
+            outer.cursor().execute("INSERT_PENDING")
+            writer = outer._conn
+            self.assertEqual(writer.pending_rows, ["pending"])
+            with self.assertRaises(RuntimeError) as refused:
+                with manager.connection("nest-wr.mdb"):
+                    self.fail("read lease granted inside a write lease")
+            self.assertEqual(
+                str(refused.exception),
+                "Nested MDB connection leases must use the same mode",
+            )
+            self.assertEqual(writer.pending_rows, ["pending"])
+            self.assertEqual(self.connect.counts.rollbacks, 0)
+            self.assertEqual(manager._active_leases, {key: (False, 1)})
+        self.assertEqual(self.connect.counts.rollbacks, 0)
+        self.assertFalse(writer.closed)
+        manager.close()
+
+    def test_leases_on_different_databases_do_not_block_each_other(self):
+        manager = MdbConnectionManager()
+        first_in = threading.Event()
+        second_in = threading.Event()
+        release_first = threading.Event()
+
+        def first() -> None:
+            with manager.connection("a.mdb"):
+                first_in.set()
+                release_first.wait(timeout=30.0)
+
+        def second() -> None:
+            with manager.connection("b.mdb"):
+                second_in.set()
+
+        holder = threading.Thread(target=first)
+        other = threading.Thread(target=second)
+        holder.start()
+        try:
+            self.assertTrue(first_in.wait(timeout=5.0))
+            other.start()
+            entered = second_in.wait(timeout=5.0)
+        finally:
+            release_first.set()
+            holder.join()
+        other.join()
+        self.assertTrue(entered, "a lease on b.mdb waited for the lease on a.mdb")
+        manager.close()
+
+    def test_close_database_still_closes_the_write_pool_after_the_read_pool_fails(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        with manager.connection("both.mdb"):
+            pass
+        with manager.connection("both.mdb", autocommit=False):
+            pass
+        (reader,) = manager._read_conns.values()
+        (writer,) = manager._write_conns.values()
+        read_state = self._failing_close(reader)
+        write_state = self._failing_close(writer)
+        with self.assertRaises(ExceptionGroup) as raised:
+            manager.close_database("both.mdb")
+        self.assertEqual(len(raised.exception.exceptions), 2)
+        self.assertEqual((read_state["attempts"], write_state["attempts"]), (1, 1))
+        self.assertEqual(len(manager._read_conns), 1)
+        self.assertEqual(len(manager._write_conns), 1)
+        read_state["fail"] = write_state["fail"] = False
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_close_database_with_only_the_read_pool_failing_closes_the_writer(self):
+        manager = MdbConnectionManager()
+        with manager.connection("one.mdb"):
+            pass
+        with manager.connection("one.mdb", autocommit=False):
+            pass
+        (reader,) = manager._read_conns.values()
+        (writer,) = manager._write_conns.values()
+        read_state = self._failing_close(reader)
+        with self.assertRaises(pyodbc.OperationalError):
+            manager.close_database("one.mdb")
+        self.assertTrue(writer.closed)
+        self.assertEqual(manager._write_conns, {})
+        self.assertEqual(len(manager._read_conns), 1)
+        read_state["fail"] = False
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_shutdown_attempts_every_database_when_each_one_fails_in_both_pools(self):
+        manager = MdbConnectionManager()
+        paths = ("p0.mdb", "p1.mdb", "p2.mdb")
+        for path in paths:
+            with manager.connection(path):
+                pass
+            with manager.connection(path, autocommit=False):
+                pass
+        states = [
+            self._failing_close(handle)
+            for pool in (manager._read_conns, manager._write_conns)
+            for handle in pool.values()
+        ]
+        self.assertEqual(len(states), 6)
+        with self.assertRaises(ExceptionGroup) as raised:
+            manager.close()
+        self.assertEqual(raised.exception.message, "Failed to close MDB connections")
+        self.assertEqual(len(raised.exception.exceptions), 3)
+        for per_database in raised.exception.exceptions:
+            self.assertIsInstance(per_database, ExceptionGroup)
+            self.assertEqual(len(per_database.exceptions), 2)
+        self.assertEqual([state["attempts"] for state in states], [1] * 6)
+        self.assertEqual(len(manager._read_conns), 3)
+        self.assertEqual(len(manager._write_conns), 3)
+        for state in states:
+            state["fail"] = False
+        manager.close()
+        self.assertEqual(self.connect.counts.active_connections, 0)
+
+    def test_lifting_the_write_block_keeps_cached_writer_handles(self):
+        manager = MdbConnectionManager()
+        key = os.path.normcase(os.path.abspath("keep.mdb"))
+        with manager.connection("keep.mdb", autocommit=False) as lease:
+            writer = lease._conn
+        manager.set_write_blocked(False)
+        self.assertFalse(manager.is_write_blocked())
+        self.assertFalse(writer.closed)
+        self.assertIs(manager._write_conns[key], writer)
+        with manager.connection("keep.mdb", autocommit=False) as again:
+            self.assertIs(again._conn, writer)
+        self.assertEqual(self.connect.counts.connections_opened, 1)
+        manager.close()
+
+    def test_only_sqlstate_class_08_marks_the_connection_for_replacement(self):
+        healthy = Mock()
+        check = MdbConnectionManager._connection_requires_replacement
+        for state in ("07002", "01000", "42S02", "HY008", "28000", "0"):
+            with self.subTest(state=state):
+                self.assertIs(
+                    check(healthy, pyodbc.OperationalError(state, "x")), False
+                )
+        for state in ("08001", "08S01", "08004"):
+            with self.subTest(state=state):
+                self.assertIs(check(healthy, pyodbc.OperationalError(state, "x")), True)
+
+    def test_exhaustion_needs_the_08004_state_not_just_a_connection_class_marker(
+        self,
+    ):
+        check = MdbConnectionManager._is_client_task_exhaustion
+        for state, text in (
+            ("08001", "-1036"),
+            ("08S01", "Too many client tasks"),
+            ("HY000", "x 08 -1036"),
+        ):
+            with self.subTest(state=state):
+                self.assertIs(check(pyodbc.OperationalError(state, text)), False)
+        self.assertIs(check(pyodbc.OperationalError("08004", "-1036")), True)
+        self.assertIs(
+            check(pyodbc.OperationalError("08004", "Too many client tasks")), True
+        )
+
+
 class _RecordingRawCursor:
     def __init__(self, *, close_error=None):
         self.calls = []
@@ -2469,10 +2680,12 @@ class ConnectionWrapperContractTests(unittest.TestCase):
         self.assertEqual(strict_raw.cursor_calls, [((), {})])
         for args, kwargs in (((1,), {}), ((), {"scrollable": True})):
             with self.subTest(args=args, kwargs=kwargs):
-                with self.assertRaisesRegex(
-                    TypeError, "does not accept cursor options"
-                ):
+                with self.assertRaises(TypeError) as refused:
                     strict.cursor(*args, **kwargs)
+                self.assertEqual(
+                    str(refused.exception),
+                    "This database cursor does not accept cursor options",
+                )
         self.assertEqual(strict_raw.cursor_calls, [((), {})])
         self.assertEqual(len(strict._open_cursors), 1)
 

@@ -754,7 +754,9 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
         )
         request = service._active_requests[request_id]
         result = service._execute_render(request)
-        self.assertEqual((result.request_id, result.success, result.error), (request_id, True, None))
+        self.assertEqual(
+            (result.request_id, result.success, result.error), (request_id, True, None)
+        )
         # Inversion of the page snapshot is applied to the composited image.
         self.assertEqual(result.image.pixelColor(0, 0).name(), "#00ffff")
         ((kind, args, kwargs),) = composites.calls
@@ -780,9 +782,7 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
         self.assertEqual(result.image.pixelColor(0, 0).name(), "#00ffff")
         ((kind, args, kwargs),) = composites.calls
         self.assertEqual(kind, "frame")
-        self.assertEqual(
-            args, (request.page_entity, 1.5, 1.0, 2.0, 30.0, 40.0, 270)
-        )
+        self.assertEqual(args, (request.page_entity, 1.5, 1.0, 2.0, 30.0, 40.0, 270))
         self.assertTrue(kwargs["wait_for_in_flight"])
         self.assertFalse(kwargs["cancelled_check"]())
         request.cancelled.set()
@@ -901,7 +901,10 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
     def test_page_request_applies_bitonal_conversion_unless_deferred(self):
         service = self._service(SolidRenderer())
         results = {}
-        for name, effects in (("applied", {}), ("deferred", {"apply_bitonal_effect": False})):
+        for name, effects in (
+            ("applied", {}),
+            ("deferred", {"apply_bitonal_effect": False}),
+        ):
             results[name] = self._run(
                 lambda callback, effects=effects, name=name: service.render_page_async(
                     f"{name}.pdf", 0, 1.0, 0, callback, bitonal=True, **effects
@@ -926,9 +929,7 @@ class PdfRenderingRequestExecutionTests(unittest.TestCase):
         time.sleep(0.7)
         self.assertTrue(all(thread.is_alive() for thread in service._worker_threads))
         result = self._run(
-            lambda callback: service.render_page_async(
-                "later.pdf", 0, 1.0, 0, callback
-            )
+            lambda callback: service.render_page_async("later.pdf", 0, 1.0, 0, callback)
         )
         self.assertTrue(result.success)
 

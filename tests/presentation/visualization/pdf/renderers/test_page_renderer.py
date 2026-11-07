@@ -347,7 +347,9 @@ class PageRendererNativeDocumentTests(unittest.TestCase):
 
     def test_page_count_size_and_info_come_from_the_native_document(self):
         self.assertEqual(self.renderer.get_page_count(self.three_pages), 3)
-        self.assertEqual(self.renderer.get_page_size(self.three_pages, 1), (200.0, 50.0))
+        self.assertEqual(
+            self.renderer.get_page_size(self.three_pages, 1), (200.0, 50.0)
+        )
         self.assertEqual(self.renderer.get_page_size(self.three_pages), (100.0, 50.0))
         self.assertEqual(
             self.renderer.get_page_info(self.three_pages, 2),
@@ -423,9 +425,7 @@ class PageRendererNativeDocumentTests(unittest.TestCase):
     def test_text_runs_come_from_the_requested_page_of_a_real_pdf(self):
         from tests.presentation.services.ai_takeoff_pdf_support import write_takeoff_pdf
 
-        path = write_takeoff_pdf(
-            self.dir / "text.pdf", texts=[(150, 500, 12, "GRID")]
-        )
+        path = write_takeoff_pdf(self.dir / "text.pdf", texts=[(150, 500, 12, "GRID")])
         runs = self.renderer.extract_text_runs(str(path))
         self.assertEqual([run.text for run in runs], ["GRID"])
         self.assertEqual(self.renderer.extract_text_runs(str(path), 1), [])
@@ -443,7 +443,9 @@ class PageRendererNativeDocumentTests(unittest.TestCase):
         with self.assertNoLogs(_RENDERER_LOGGER, "ERROR"):
             self.assertEqual(self.renderer.get_page_count(str(self.tiff)), 1)
             self.assertEqual(self.renderer.extract_text_runs(str(self.tiff)), [])
-        self.assertEqual(self.renderer.get_page_size(str(self.garbage_tiff)), (0.0, 0.0))
+        self.assertEqual(
+            self.renderer.get_page_size(str(self.garbage_tiff)), (0.0, 0.0)
+        )
 
     def test_missing_files_report_neutral_metadata(self):
         missing = str(self.dir / "missing.pdf")
@@ -535,7 +537,9 @@ class PageRendererNativeDocumentTests(unittest.TestCase):
             with self.subTest(path=path):
                 with self.assertLogs(_RENDERER_LOGGER, "ERROR") as captured:
                     self.assertIsNone(renderer._ensure_pdf_open_locked(path))
-                self.assertEqual([r.getMessage() for r in captured.records], [prefix + path])
+                self.assertEqual(
+                    [r.getMessage() for r in captured.records], [prefix + path]
+                )
 
     def test_rendering_without_a_native_renderer_is_reported_not_raised(self):
         renderer = PageRenderer()
@@ -596,7 +600,8 @@ class PageRendererNativeDocumentTests(unittest.TestCase):
         with self.assertLogs(_RENDERER_LOGGER, "ERROR") as captured:
             self.assertIsNone(self.renderer.render(str(self.garbage_tiff), 0, 1.0, 0))
         self.assertRegex(
-            captured.records[0].getMessage(), r"^Failed to load image: .*garbage\.tif - "
+            captured.records[0].getMessage(),
+            r"^Failed to load image: .*garbage\.tif - ",
         )
 
     def test_unsupported_file_types_are_refused_with_a_warning(self):
@@ -633,4 +638,3 @@ class PageRendererNativeDocumentTests(unittest.TestCase):
         self.assertIsNone(renderer._current_pdf_signature)
         renderer.close()
         self.assertEqual(events, ["close"])
-

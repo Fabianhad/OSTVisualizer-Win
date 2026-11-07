@@ -92,5 +92,5 @@ def build_hwid(identity: MachineIdentity) -> str:
     return f"{HWID_VERSION}:{digest}"
 
 
-def is_canonical_hwid(value: str) -> bool:
-    return bool(_HWID_PATTERN.fullmatch(value))
+def is_canonical_hwid(value: object) -> bool:
+    return isinstance(value, str) and bool(_HWID_PATTERN.fullmatch(value))

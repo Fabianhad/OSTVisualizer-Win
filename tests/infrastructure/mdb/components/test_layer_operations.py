@@ -1021,9 +1021,7 @@ class LayerInsertAndDeleteSemanticsTests(_StrictTestCase):
         )
 
     def test_bid_layer_delete_does_not_renumber_when_the_layer_has_no_sequence(self):
-        conn = _layer_db(
-            [(1, 7, "A", -1, None, 0, 0), (2, 7, "B", -1, 1, 0, 0)]
-        )
+        conn = _layer_db([(1, 7, "A", -1, None, 0, 0), (2, 7, "B", -1, 1, 0, 0)])
         self.assertIsTrue(_SqliteMdbOps(conn).delete_layer("bid.mdb", "1"))
         self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(2, 1)])
 
@@ -1276,7 +1274,9 @@ class _InsertRecordingOps(_SqliteDuplicateOps):
         self._schema_ref = _RecordingSchema(connection)
         self.inserts = []
 
-    def _execute_insert_values(self, cursor, schema, table, values, required, operation):
+    def _execute_insert_values(
+        self, cursor, schema, table, values, required, operation
+    ):
         self.inserts.append((table, tuple(required), operation))
         super()._execute_insert_values(
             cursor, schema, table, values, required, operation
@@ -1367,7 +1367,11 @@ _ALL_LAYER_COLUMN_NAMES = (
 )
 # (operation, call, required BidLayers columns)
 _LAYER_OPERATION_CONTRACTS = (
-    ("update_layer_show", lambda o: o.update_layer_show("db", "1", True), ("UID", "Show")),
+    (
+        "update_layer_show",
+        lambda o: o.update_layer_show("db", "1", True),
+        ("UID", "Show"),
+    ),
     (
         "update_default_layer_show",
         lambda o: o.update_default_layer_show("db", "30", True),
@@ -1399,7 +1403,11 @@ _LAYER_OPERATION_CONTRACTS = (
         lambda o: o.update_all_default_layers_show("db", False),
         ("Show", "IsTemplate"),
     ),
-    ("update_layer_name", lambda o: o.update_layer_name("db", "1", "X"), ("UID", "Name")),
+    (
+        "update_layer_name",
+        lambda o: o.update_layer_name("db", "1", "X"),
+        ("UID", "Name"),
+    ),
     (
         "update_default_layer_name",
         lambda o: o.update_default_layer_name("db", "30", "X"),
@@ -1724,19 +1732,25 @@ class LayerParameterTypingTests(_StrictTestCase):
         for duplicate in ("30", "31"):
             with self.subTest(duplicate=duplicate):
                 conn = self._db()
-                conn.execute(f"INSERT INTO BidLayers VALUES ({duplicate}, NULL, 'dup', -1, 9, -1, -1)")
+                conn.execute(
+                    f"INSERT INTO BidLayers VALUES ({duplicate}, NULL, 'dup', -1, 9, -1, -1)"
+                )
                 before = _layer_rows(conn, "UID, Sequence")
                 with self.assertRaisesRegex(
                     RuntimeError, f"BidLayers contains duplicate UID {duplicate}"
                 ):
-                    _SqliteMdbOps(conn).swap_default_layer_sequence("bid.mdb", "30", "31")
+                    _SqliteMdbOps(conn).swap_default_layer_sequence(
+                        "bid.mdb", "30", "31"
+                    )
                 self.assertEqual(_layer_rows(conn, "UID, Sequence"), before)
 
     def test_swap_layer_sequence_rejects_a_duplicated_uid_on_either_side(self):
         for duplicate in ("1", "3"):
             with self.subTest(duplicate=duplicate):
                 conn = self._db()
-                conn.execute(f"INSERT INTO BidLayers VALUES ({duplicate}, 7, 'dup', -1, 9, 0, 0)")
+                conn.execute(
+                    f"INSERT INTO BidLayers VALUES ({duplicate}, 7, 'dup', -1, 9, 0, 0)"
+                )
                 before = _layer_rows(conn, "UID, Sequence")
                 with self.assertRaisesRegex(
                     RuntimeError, f"BidLayers contains duplicate UID {duplicate}"

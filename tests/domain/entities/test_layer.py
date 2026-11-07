@@ -124,7 +124,9 @@ class LayerEntityContractTests(unittest.TestCase):
             visibility.visible = True
         self.assertEqual(LayerVisibility("7", False), LayerVisibility("7", False))
 
-    def test_resolve_layer_without_uid_is_unassigned_and_visible_but_known_uid_is_exact(self):
+    def test_resolve_layer_without_uid_is_unassigned_and_visible_but_known_uid_is_exact(
+        self,
+    ):
         layers = LayerSet({"5": Layer(uid="5", name="Custom", visible=False)})
         unassigned = layers.resolve_layer(None)
         self.assertEqual(unassigned.as_tuple(), (None, True))
@@ -139,7 +141,9 @@ class LayerEntityContractTests(unittest.TestCase):
             True,
         )
 
-    def test_is_layer_visible_treats_blank_uid_as_visible_even_if_a_layer_is_keyed_that_way(self):
+    def test_is_layer_visible_treats_blank_uid_as_visible_even_if_a_layer_is_keyed_that_way(
+        self,
+    ):
         from ost_visualizer.domain.entities.layer import is_layer_visible
 
         layers = {"": Layer("", "x", False), "0": Layer("0", "y", False)}
@@ -148,7 +152,9 @@ class LayerEntityContractTests(unittest.TestCase):
         # A uid of 0 is a real key: it is only a blank/None uid that bypasses lookup.
         self.assertIs(is_layer_visible(layers, "0"), False)
 
-    def test_get_layer_uid_by_name_returns_the_first_matching_layer_in_mapping_order(self):
+    def test_get_layer_uid_by_name_returns_the_first_matching_layer_in_mapping_order(
+        self,
+    ):
         from ost_visualizer.domain.entities.layer import get_layer_uid_by_name
 
         layers = {

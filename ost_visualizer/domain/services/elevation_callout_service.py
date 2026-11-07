@@ -1,3 +1,4 @@
+import logging
 from math import isfinite
 from ..entities.condition import Condition
 from ..entities.elevation_callout import (
@@ -10,6 +11,8 @@ from ..entities.takeoff import Takeoff
 from .condition_quantity_service import compute_takeoff_cubic_yards
 from .elevation import format_structural_elevation, resolve_condition_elevation_bounds
 from .uom_service import UOM_CUBIC_YARDS, get_uom_label
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_elevation_callout(
@@ -33,8 +36,17 @@ def resolve_elevation_callout(
     if settings.include_bottom:
         lines.append(format_structural_elevation(elevations.bottom))
     if settings.include_cubic_yards:
-        cubic_yards = compute_takeoff_cubic_yards(condition, takeoff, hole_takeoffs)
-        lines.append(f"{cubic_yards:.2f} {get_uom_label(UOM_CUBIC_YARDS)}")
+        try:
+            cubic_yards = compute_takeoff_cubic_yards(condition, takeoff, hole_takeoffs)
+        except ValueError as exc:
+            logger.warning(
+                "Omitting cubic yards from the elevation callout of condition %s (%r): %s",
+                condition.uid,
+                condition.name,
+                exc,
+            )
+        else:
+            lines.append(f"{cubic_yards:.2f} {get_uom_label(UOM_CUBIC_YARDS)}")
     return ElevationCallout(
         x=center[0],
         y=center[1],

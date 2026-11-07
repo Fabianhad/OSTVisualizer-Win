@@ -200,7 +200,9 @@ class HighlightQuadGeometryTests(unittest.TestCase):
         self.assertEqual(canonical_highlight_quads([(0, 0)] * 5), [])
         self.assertEqual(canonical_highlight_quads([(0, 0)] * 6), [])
 
-    def test_wide_rectangle_is_ordered_top_left_top_right_bottom_left_bottom_right(self):
+    def test_wide_rectangle_is_ordered_top_left_top_right_bottom_left_bottom_right(
+        self,
+    ):
         corners = [(0, 0), (80, 0), (80, 40), (0, 40)]
         expected = [((0, 0), (80, 0), (0, 40), (80, 40))]
         self.assertEqual(canonical_highlight_quads(corners), expected)
@@ -312,7 +314,9 @@ class DimensionSegmentTests(unittest.TestCase):
     def test_zero_and_tiny_lengths_have_no_segments(self):
         self.assertEqual(calculate_dimension_segments(3.0, 3.0, 3.0, 3.0, 10.0), [])
         self.assertEqual(calculate_dimension_segments(0.0, 0.0, 1e-10, 0.0, 10.0), [])
-        self.assertEqual(len(calculate_dimension_segments(0.0, 0.0, 1e-8, 0.0, 10.0)), 3)
+        self.assertEqual(
+            len(calculate_dimension_segments(0.0, 0.0, 1e-8, 0.0, 10.0)), 3
+        )
 
 
 class DimensionGeometryTests(unittest.TestCase):
@@ -340,7 +344,9 @@ class DimensionGeometryTests(unittest.TestCase):
         self,
     ):
         annotation = self._annotation([0.0, 0.0, 30.0, 40.0])
-        geometry = calculate_dimension_geometry(annotation, annotation.position, _scale2)
+        geometry = calculate_dimension_geometry(
+            annotation, annotation.position, _scale2
+        )
         self.assertEqual(
             (geometry["x1"], geometry["y1"], geometry["x2"], geometry["y2"]),
             (0.0, 0.0, 60.0, 80.0),
@@ -457,9 +463,9 @@ class AnnotationGeometryTests(unittest.TestCase):
     def test_rotated_oval_unrotates_its_corners_to_find_width_and_height(self):
         # Stored corners p0=(0,0), p1=(10,4) with a 90 degree rotation. About the
         # centre (5, 2) the unrotated corners are (3, 7) and (7, -3).
-        oval = self._geometry(
-            "oval", [0.0, 0.0, 10.0, 4.0, math.pi / 2], _identity
-        )["oval"]
+        oval = self._geometry("oval", [0.0, 0.0, 10.0, 4.0, math.pi / 2], _identity)[
+            "oval"
+        ]
         self.assertAlmostEqual(oval["cx"], 5.0)
         self.assertAlmostEqual(oval["cy"], 2.0)
         self.assertAlmostEqual(oval["w"], 4.0)
@@ -876,3 +882,347 @@ class CloudHelperTests(unittest.TestCase):
         # A chord longer than the diameter puts the centre on the chord itself.
         flat = _compute_centers_from_samples([(0.0, 0.0), (20.0, 0.0)], 5.0, False)
         self.assertEqual(flat[1], (10.0, 0.0))
+
+
+def _rotate(point, degrees, origin=(0.0, 0.0)):
+    cos_a, sin_a = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    dx, dy = point[0] - origin[0], point[1] - origin[1]
+    return (origin[0] + dx * cos_a - dy * sin_a, origin[1] + dx * sin_a + dy * cos_a)
+
+
+def _assert_points_close(testcase, actual, expected, places=9):
+    testcase.assertEqual(len(actual), len(expected))
+    for got, wanted in zip(actual, expected):
+        testcase.assertAlmostEqual(got[0], wanted[0], places=places)
+        testcase.assertAlmostEqual(got[1], wanted[1], places=places)
+
+
+class HighlightQuadOffCentreTests(unittest.TestCase):
+    def test_a_square_keeps_the_top_left_first_order(self):
+        self.assertEqual(
+            canonical_highlight_quads([(0, 0), (40, 0), (40, 40), (0, 40)]),
+            [((0, 0), (40, 0), (0, 40), (40, 40))],
+        )
+        self.assertEqual(
+            canonical_highlight_quads([(0, 40), (40, 40), (40, 0), (0, 0)]),
+            [((0, 0), (40, 0), (0, 40), (40, 40))],
+        )
+
+    def test_a_rectangle_far_from_the_origin_is_ordered_by_its_own_centre(self):
+        self.assertEqual(
+            canonical_highlight_quads([(100, 10), (180, 10), (180, 50), (100, 50)]),
+            [((100, 10), (180, 10), (100, 50), (180, 50))],
+        )
+        self.assertEqual(
+            canonical_highlight_quads([(10, 100), (50, 100), (50, 180), (10, 180)]),
+            [((50, 100), (50, 180), (10, 100), (10, 180))],
+        )
+
+    def test_the_longer_pair_of_edges_decides_even_by_a_hair(self):
+        self.assertEqual(
+            canonical_highlight_quads([(100, 10), (141, 10), (141, 50), (100, 50)]),
+            [((100, 10), (141, 10), (100, 50), (141, 50))],
+        )
+        self.assertEqual(
+            canonical_highlight_quads([(100, 10), (140, 10), (140, 51), (100, 51)]),
+            [((140, 10), (140, 51), (100, 10), (100, 51))],
+        )
+
+    def test_a_rotated_quad_is_ordered_along_its_long_axis(self):
+        wide = [_rotate(p, 30.0) for p in [(0, 0), (100, 0), (100, 20), (0, 20)]]
+        wide = [(200.0 + x, 300.0 + y) for x, y in wide]
+        corners = [wide[0], wide[3], wide[2], wide[1]]
+        for ring in (wide, corners, wide[2:] + wide[:2]):
+            (quad,) = canonical_highlight_quads(ring)
+            _assert_points_close(self, quad, (wide[0], wide[1], wide[3], wide[2]))
+        tall = [_rotate(p, 30.0) for p in [(0, 0), (20, 0), (20, 100), (0, 100)]]
+        tall = [(200.0 + x, 300.0 + y) for x, y in tall]
+        for ring in (tall, tall[::-1]):
+            (quad,) = canonical_highlight_quads(ring)
+            _assert_points_close(self, quad, (tall[1], tall[2], tall[0], tall[3]))
+
+    def test_skewed_quads_pair_the_edges_that_are_longer_by_a_few_percent(self):
+        # |(58, 22)| = 62.03 against |(48, 37)| = 60.6: the (58, 22) edges win.
+        self.assertEqual(
+            canonical_highlight_quads([(58, 35), (116, 57), (68, 20), (10, -2)]),
+            [((10, -2), (68, 20), (58, 35), (116, 57))],
+        )
+        # |(57, 58)| = 81.3 against |(57, -23)| = 61.5.
+        self.assertEqual(
+            canonical_highlight_quads([(57, 20), (0, -38), (-57, -15), (0, 43)]),
+            [((0, -38), (57, 20), (-57, -15), (0, 43))],
+        )
+        # |(-37, 52)| = 63.82 against |(48, 42)| = 63.78: a near tie still has a winner.
+        self.assertEqual(
+            canonical_highlight_quads([(8, 36), (56, 78), (93, 26), (45, -16)]),
+            [((93, 26), (56, 78), (45, -16), (8, 36))],
+        )
+
+    def test_trapezoids_start_along_their_longer_edges(self):
+        self.assertEqual(
+            canonical_highlight_quads([(0, 0), (100, 0), (80, 30), (20, 30)]),
+            [((0, 0), (100, 0), (20, 30), (80, 30))],
+        )
+        self.assertEqual(
+            canonical_highlight_quads([(0, 0), (30, 0), (30, 100), (0, 70)]),
+            [((30, 0), (30, 100), (0, 0), (0, 70))],
+        )
+
+    def test_quad_path_moves_with_the_quad(self):
+        quad = ((0.0, 0.0), (80.0, 0.0), (0.0, 40.0), (80.0, 40.0))
+        base = calculate_highlight_quad_path(quad)
+        moved = calculate_highlight_quad_path(
+            tuple((x + 37.0, y - 11.0) for x, y in quad)
+        )
+        _assert_points_close(self, moved, [(x + 37.0, y - 11.0) for x, y in base])
+        c = 40.0 / 4.2426
+        self.assertAlmostEqual(moved[2][0], 117.0 + c)
+        self.assertAlmostEqual(moved[2][1], -11.0 - c)
+
+    def test_quad_path_controls_follow_an_arbitrary_rotation(self):
+        quad = ((10.0, 20.0), (90.0, 20.0), (10.0, 60.0), (90.0, 60.0))
+        base = calculate_highlight_quad_path(quad)
+        origin = (10.0, 20.0)
+        for degrees in (30.0, 135.0, -70.0):
+            turned = calculate_highlight_quad_path(
+                tuple(_rotate(p, degrees, origin) for p in quad)
+            )
+            _assert_points_close(
+                self, turned, [_rotate(p, degrees, origin) for p in base], places=7
+            )
+
+    def test_quad_path_curve_depth_is_the_left_edge_over_the_divisor(self):
+        quad = ((0.0, 0.0), (100.0, 0.0), (30.0, 40.0), (130.0, 40.0))
+        path = calculate_highlight_quad_path(quad)
+        c = math.hypot(30.0, 40.0) / 4.2426
+        self.assertAlmostEqual(
+            math.hypot(path[2][0] - quad[1][0], path[2][1] - quad[1][1]),
+            c * math.sqrt(2.0),
+            places=9,
+        )
+        self.assertAlmostEqual(
+            math.hypot(path[3][0] - quad[3][0], path[3][1] - quad[3][1]),
+            c * math.sqrt(2.0),
+            places=9,
+        )
+
+
+class DimensionOffOriginTests(unittest.TestCase):
+    def test_a_length_of_exactly_the_tolerance_has_no_segments(self):
+        self.assertEqual(calculate_dimension_segments(0.0, 0.0, 1e-9, 0.0, 10.0), [])
+        self.assertEqual(
+            len(calculate_dimension_segments(0.0, 0.0, 2e-9, 0.0, 10.0)), 3
+        )
+
+    def test_the_label_measures_the_span_between_the_end_points_not_their_sum(self):
+        annotation = BidAnnotation(
+            uid="d", annotation_type="dimension", position=[100.0, 200.0, 130.0, 240.0]
+        )
+        geometry = calculate_dimension_geometry(
+            annotation, annotation.position, _identity
+        )
+        self.assertEqual(geometry["label"], "4' - 2\"")
+        self.assertEqual(
+            (geometry["x1"], geometry["y1"], geometry["x2"], geometry["y2"]),
+            (100.0, 200.0, 130.0, 240.0),
+        )
+        annotation = BidAnnotation(
+            uid="d", annotation_type="dimension", position=[130.0, 240.0, 100.0, 200.0]
+        )
+        reverse = calculate_dimension_geometry(
+            annotation, annotation.position, _identity
+        )
+        self.assertEqual(reverse["label"], "4' - 2\"")
+        self.assertEqual((reverse["x1"], reverse["y1"]), (130.0, 240.0))
+
+    def test_a_span_that_rounds_to_nothing_has_an_empty_label(self):
+        self.assertEqual(format_dimension_distance(0.05), "")
+        self.assertEqual(format_dimension_distance(0.07), '1/8"')
+        self.assertEqual(format_dimension_distance(11.99), "1' - 0\"")
+        self.assertEqual(format_dimension_distance(24.5), "2' - 0 1/2\"")
+
+
+class AnnotationGeometryExtrasTests(unittest.TestCase):
+    def _geometry(self, annotation_type, position, transform=_identity, **kwargs):
+        annotation = BidAnnotation(
+            uid="g1", annotation_type=annotation_type, position=position, **kwargs
+        )
+        return calculate_annotation_geometry(annotation, transform)
+
+    def test_polygon_and_cloud_keep_every_pair_of_an_even_coordinate_list(self):
+        for kind in ("polygon", "cloud"):
+            geometry = self._geometry(kind, [0.0, 0.0, 10.0, 0.0, 10.0, 5.0])
+            self.assertEqual(
+                geometry["points"], [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0)], kind
+            )
+            self.assertEqual(
+                self._geometry(kind, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])[
+                    "points"
+                ],
+                [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0), (7.0, 8.0)],
+            )
+
+    def test_oval_centre_is_the_midpoint_of_its_corners(self):
+        oval = self._geometry("oval", [100.0, 30.0, 140.0, 90.0])["oval"]
+        self.assertEqual(
+            oval, {"cx": 120.0, "cy": 60.0, "w": 40.0, "h": 60.0, "rotation_deg": 0.0}
+        )
+
+    def test_a_rotated_oval_recovers_its_size_and_centre_at_any_angle(self):
+        for degrees in (30.0, 45.0, 120.0, -60.0):
+            with self.subTest(degrees=degrees):
+                centre = (200.0, 150.0)
+                half_w, half_h = 60.0, 20.0
+                p0 = _rotate((centre[0] - half_w, centre[1] - half_h), degrees, centre)
+                p1 = _rotate((centre[0] + half_w, centre[1] + half_h), degrees, centre)
+                oval = self._geometry(
+                    "oval", [p0[0], p0[1], p1[0], p1[1], math.radians(degrees)]
+                )["oval"]
+                self.assertAlmostEqual(oval["cx"], 200.0)
+                self.assertAlmostEqual(oval["cy"], 150.0)
+                self.assertAlmostEqual(oval["w"], 120.0)
+                self.assertAlmostEqual(oval["h"], 40.0)
+                self.assertAlmostEqual(oval["rotation_deg"], degrees)
+
+    def test_an_oval_with_extra_points_still_uses_the_first_two(self):
+        oval = self._geometry("oval", [0.0, 0.0, 10.0, 4.0, 500.0, 900.0])["oval"]
+        self.assertEqual(
+            oval, {"cx": 5.0, "cy": 2.0, "w": 10.0, "h": 4.0, "rotation_deg": 0.0}
+        )
+
+    def test_a_rect_with_more_than_four_points_keeps_only_the_first_four_corners(self):
+        shape = self._geometry(
+            "rect", [1.0, 2.0, 5.0, 2.0, 5.0, 4.0, 1.0, 4.0, 99.0, 98.0]
+        )["shape"]
+        self.assertEqual(
+            shape["corners"], [(1.0, 2.0), (5.0, 2.0), (5.0, 4.0), (1.0, 4.0)]
+        )
+        self.assertEqual(shape["rotation"], 0.0)
+
+    def test_named_view_bounds_of_a_tilted_view_cover_every_corner(self):
+        position = [20.0, 5.0, 60.0, 15.0, 50.0, 55.0, 10.0, 45.0]
+        view = self._geometry("namedview", position, properties={"Text": "Tilt"})[
+            "namedview"
+        ]
+        self.assertEqual(
+            view,
+            {
+                "content": "Tilt",
+                "min_x": 10.0,
+                "min_y": 5.0,
+                "max_x": 60.0,
+                "max_y": 55.0,
+                "width": 50.0,
+                "height": 50.0,
+            },
+        )
+
+
+class RingHelperExtrasTests(unittest.TestCase):
+    def test_ensure_clockwise_orients_lopsided_rings_by_signed_area(self):
+        triangle = [(0.0, 0.0), (60.0, 0.0), (0.0, 30.0)]
+        self.assertEqual(_ensure_clockwise(triangle), triangle)
+        self.assertEqual(_ensure_clockwise(triangle[::-1]), triangle)
+        wide_l = [
+            (0.0, 0.0),
+            (90.0, 0.0),
+            (90.0, 10.0),
+            (10.0, 10.0),
+            (10.0, 50.0),
+            (0.0, 50.0),
+        ]
+        self.assertEqual(_ensure_clockwise(wide_l), wide_l)
+        self.assertEqual(_ensure_clockwise(wide_l[::-1]), wide_l)
+        offset = [(100.0, 200.0), (160.0, 200.0), (100.0, 230.0)]
+        self.assertEqual(_ensure_clockwise(offset), offset)
+        self.assertEqual(_ensure_clockwise(offset[::-1]), offset)
+
+    def test_two_points_make_an_out_and_back_pair_of_edges(self):
+        self.assertEqual(
+            _polygon_perimeter_edges([(0.0, 0.0), (10.0, 0.0)]),
+            [((0.0, 0.0), (10.0, 0.0), 10.0), ((10.0, 0.0), (0.0, 0.0), 10.0)],
+        )
+
+    def test_an_edge_of_exactly_the_tolerance_is_not_an_edge(self):
+        ring = [(0.0, 0.0), (1e-9, 0.0), (3.0, 0.0), (3.0, 4.0)]
+        self.assertEqual(
+            [round(edge[2], 6) for edge in _polygon_perimeter_edges(ring)],
+            [3.0, 4.0, 5.0],
+        )
+
+
+class CloudClosingTests(unittest.TestCase):
+    SQUARE = [(100.0, 200.0), (500.0, 200.0), (500.0, 600.0), (100.0, 600.0)]
+
+    def test_an_open_or_closed_ring_away_from_the_origin_gives_the_same_cloud(self):
+        open_ring = create_cloud_path_points(self.SQUARE)
+        closed = create_cloud_path_points(self.SQUARE + [self.SQUARE[0]])
+        self.assertEqual(len(open_ring), 80)
+        self.assertEqual(open_ring, closed)
+        self.assertEqual(open_ring[0][0], (100.0, 200.0))
+
+    def test_a_ring_whose_last_point_shares_only_one_coordinate_is_still_closed(self):
+        for last in ((100.0, 600.0), (500.0, 200.0)):
+            ring = [(100.0, 200.0), (500.0, 200.0), (500.0, 600.0), last]
+            closed = create_cloud_path_points(ring)
+            self.assertEqual(closed[0][0], (100.0, 200.0))
+            self.assertGreater(len(closed), 6)
+
+    def test_a_last_point_within_the_tolerance_of_the_first_counts_as_closed(self):
+        square = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+        near_closed = create_cloud_path_points(square + [(1e-7, 0.0)])
+        self.assertEqual(len(near_closed), 80)
+        self.assertEqual(near_closed[0][0], (0.0, 0.0))
+
+    def test_a_counter_clockwise_open_ring_still_starts_on_its_first_vertex(self):
+        rings = (
+            [(100.0, 600.0), (500.0, 600.0), (500.0, 200.0), (100.0, 200.0)],
+            [(100.0, 200.0), (100.0, 600.0), (500.0, 600.0), (500.0, 200.0)],
+            [(300.0, 500.0), (100.0, 400.0), (300.0, 100.0), (500.0, 400.0)],
+            # last point level with the first one and above the second one
+            [(100.0, 200.0), (500.0, 400.0), (300.0, 500.0), (500.0, 200.0)],
+        )
+        for ring in rings:
+            with self.subTest(first=ring[0]):
+                segments = create_cloud_path_points(ring)
+                self.assertEqual(segments[0][0], ring[0])
+
+    def test_the_closing_tolerance_is_one_millionth_in_each_axis(self):
+        # A last point 1e-6 from the first one (not more) already closes the ring,
+        # so a counter-clockwise ring is reversed starting from that last point.
+        ring_x = [(0.0, 200.0), (0.0, 600.0), (400.0, 600.0), (400.0, 200.0)]
+        near = create_cloud_path_points(ring_x + [(1e-6, 200.0)])
+        self.assertEqual(near[0][0], (1e-6, 200.0))
+        far = create_cloud_path_points(ring_x + [(2e-6, 200.0)])
+        self.assertEqual(far[0][0], (0.0, 200.0))
+        ring_y = [(200.0, 0.0), (600.0, 0.0), (600.0, 400.0), (200.0, 400.0)]
+        ccw_y = [ring_y[0], ring_y[3], ring_y[2], ring_y[1]]
+        near_y = create_cloud_path_points(ccw_y + [(200.0, 1e-6)])
+        self.assertEqual(near_y[0][0], (200.0, 1e-6))
+        far_y = create_cloud_path_points(ccw_y + [(200.0, 2e-6)])
+        self.assertEqual(far_y[0][0], (200.0, 0.0))
+
+
+class ArcBezierSixtyDegreeTests(unittest.TestCase):
+    def test_sixty_degree_pieces_use_the_tangent_handle_not_the_quarter_circle_one(
+        self,
+    ):
+        # A 60 degree piece needs handles of 4/3 * tan(15 degrees) * r = 0.357 r, well
+        # short of the 0.552 r of a quarter turn.
+        for sweep, count in ((math.pi / 3.0, 1), (2.0 * math.pi / 3.0, 2)):
+            with self.subTest(sweep=sweep):
+                segments = _arc_to_bezier((0.0, 0.0), 10.0, 0.0, sweep)
+                self.assertEqual(len(segments), count)
+                start = (10.0, 0.0)
+                for cp1, cp2, end in segments:
+                    self.assertAlmostEqual(
+                        math.hypot(cp1[0] - start[0], cp1[1] - start[1]),
+                        4.0 / 3.0 * math.tan(math.pi / 12.0) * 10.0,
+                        places=6,
+                    )
+                    self.assertAlmostEqual(
+                        math.hypot(cp2[0] - end[0], cp2[1] - end[1]),
+                        4.0 / 3.0 * math.tan(math.pi / 12.0) * 10.0,
+                        places=6,
+                    )
+                    start = end

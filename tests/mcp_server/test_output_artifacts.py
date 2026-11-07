@@ -419,7 +419,9 @@ class McpOutputContractTests(unittest.TestCase):
         formatted = formatter.format_result("tool-x", "first\nsecond\nthird")
         self.assertEqual(formatted.structured_content["preview"], "first")
 
-    def test_a_preview_stops_once_its_characters_are_used_up_even_before_blank_lines(self):
+    def test_a_preview_stops_once_its_characters_are_used_up_even_before_blank_lines(
+        self,
+    ):
         formatter = self.formatter(inline_max_chars=10, preview_max_chars=10)
         formatted = formatter.format_result("tool-x", "abcdefghi\n\nsecond line here")
         self.assertEqual(formatted.structured_content["preview"], "abcdefghi")

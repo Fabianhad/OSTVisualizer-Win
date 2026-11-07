@@ -152,7 +152,9 @@ class LifecycleShutdownDetailTests(unittest.TestCase):
             orchestrator.set_app_controller(controller)
         return orchestrator, logger
 
-    def test_each_shutdown_failure_is_logged_with_its_message_and_does_not_stop_the_rest(self):
+    def test_each_shutdown_failure_is_logged_with_its_message_and_does_not_stop_the_rest(
+        self,
+    ):
         class Participant:
             def __init__(self, name, error=None):
                 self.name, self.error, self.stopped = name, error, False
@@ -186,10 +188,15 @@ class LifecycleShutdownDetailTests(unittest.TestCase):
         self.assertTrue(bad.stopped and good.stopped and Controller.cleaned)
         self.assertEqual(
             logger.messages,
-            ["Error shutting down bad: boom", "Error cleaning up application controller: cleanup boom"],
+            [
+                "Error shutting down bad: boom",
+                "Error cleaning up application controller: cleanup boom",
+            ],
         )
 
-    def test_a_failed_participant_discovery_is_logged_and_shutdown_still_completes_once(self):
+    def test_a_failed_participant_discovery_is_logged_and_shutdown_still_completes_once(
+        self,
+    ):
         class Container:
             calls = 0
 
@@ -201,10 +208,14 @@ class LifecycleShutdownDetailTests(unittest.TestCase):
         orchestrator.shutdown()
         orchestrator.shutdown()
         self.assertEqual(Container.calls, 1)
-        self.assertEqual(logger.messages, ["Error discovering shutdown participants: discovery boom"])
+        self.assertEqual(
+            logger.messages, ["Error discovering shutdown participants: discovery boom"]
+        )
         self.assertIs(orchestrator._shutdown_performed, True)
 
-    def test_shutdown_releases_every_reference_and_the_event_bus_is_exposed_until_then(self):
+    def test_shutdown_releases_every_reference_and_the_event_bus_is_exposed_until_then(
+        self,
+    ):
         class Container:
             def get_by_interface(self, interface):
                 return []

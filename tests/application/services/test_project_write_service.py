@@ -18149,7 +18149,6 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
         return harness.record_lines()
 
     # -- apply (local)
-
     def test_a_local_apply_writes_every_object_and_records_each_change(self):
         harness = _Harness(self.results(), sql=False)
         commit = harness.service.execute_ai_changeset_local(
@@ -18165,7 +18164,9 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
                 takeoff_uids=("100", "101", "102"),
             ),
         )
-        self.assertEqual((commit.message, commit.locked, commit.conflict), ("", False, False))
+        self.assertEqual(
+            (commit.message, commit.locked, commit.conflict), ("", False, False)
+        )
         spec = CreateConditionSpec(name="Slab")
         self.assertEqual(
             harness.calls,
@@ -18313,7 +18314,8 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
             [("insert_condition", "execute")],
         )
         self.assertEqual(
-            harness.calls[0][2][2], replace(CreateConditionSpec(name="Slab"), folder_uid="3")
+            harness.calls[0][2][2],
+            replace(CreateConditionSpec(name="Slab"), folder_uid="3"),
         )
         self.assertEqual(
             self.records(harness),
@@ -18405,7 +18407,6 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
         self.assertEqual(commit.result.takeoff_uids, ("100", "101"))
 
     # -- locks, outcomes and routing (local)
-
     def test_a_locked_active_bid_blocks_every_local_ai_command_before_any_write(self):
         undo = AiChangesetUndoPlan(("100",), ("91",), "90")
         scale = AiScaleUndoPlan("20", 2.0, 3.0, (("30", (1.0, 2.0, 3.0, 4.0)),))
@@ -18503,7 +18504,6 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
                 self.assertEqual((harness.calls, harness.executor.requests), ([], []))
 
     # -- undo (local)
-
     def test_a_local_undo_removes_takeoffs_conditions_and_folder_in_order(self):
         harness = _Harness({}, sql=False)
         plan = AiChangesetUndoPlan(("100", "101"), ("91",), "90")
@@ -18557,7 +18557,11 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
                 "conditions only",
                 AiChangesetUndoPlan((), ("91",), None),
                 ["delete_conditions"],
-                ["condition:91@7", "conditions_collection:7@7", "takeoffs_collection:7@7"],
+                [
+                    "condition:91@7",
+                    "conditions_collection:7@7",
+                    "takeoffs_collection:7@7",
+                ],
             ),
             (
                 "folder only",
@@ -18597,7 +18601,10 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
         for use_case, message in (
             ("delete_takeoffs", "The AI takeoffs could not be removed."),
             ("delete_conditions", "The AI conditions could not be removed."),
-            ("delete_condition_folders", "The AI condition folder could not be removed."),
+            (
+                "delete_condition_folders",
+                "The AI condition folder could not be removed.",
+            ),
         ):
             with self.subTest(use_case):
                 harness = _Harness({use_case: False}, sql=False)
@@ -18610,7 +18617,6 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
                 self.assertEqual(harness.reloads, [])
 
     # -- scale undo (local)
-
     def test_a_local_scale_undo_restores_the_scale_and_positions(self):
         harness = _Harness({}, sql=False)
         plan = AiScaleUndoPlan(
@@ -18681,9 +18687,7 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
         ):
             with self.subTest(use_case):
                 harness = _Harness({use_case: False}, sql=False)
-                commit = harness.service.execute_ai_scale_undo_local(
-                    self.DB, "7", plan
-                )
+                commit = harness.service.execute_ai_scale_undo_local(self.DB, "7", plan)
                 self.assertEqual(
                     commit, AiChangesetCommit(False, None, message, False, False)
                 )
@@ -18691,7 +18695,6 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
                 self.assertEqual(harness.reloads, [])
 
     # -- queued (SQL)
-
     def test_a_queued_apply_submits_the_plan_and_projects_the_authoritative_result(
         self,
     ):
@@ -18707,7 +18710,9 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
         self.assertEqual(request.bid_uid, 7)
         self.assertEqual(
             request.payload,
-            ProjectWritePayload.from_values("apply_ai_changeset", {"plan": asdict(plan)}),
+            ProjectWritePayload.from_values(
+                "apply_ai_changeset", {"plan": asdict(plan)}
+            ),
         )
         self.assertEqual(request.payload.write_kind, "apply_ai_changeset")
         self.assertEqual(
@@ -18781,7 +18786,9 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
         self.assertEqual(request.bid_uid, 7)
         self.assertEqual(
             request.payload,
-            ProjectWritePayload.from_values("undo_ai_changeset", {"plan": asdict(plan)}),
+            ProjectWritePayload.from_values(
+                "undo_ai_changeset", {"plan": asdict(plan)}
+            ),
         )
         self.assertEqual(request.payload.write_kind, "undo_ai_changeset")
         self.assertEqual(request.dependency_resources, ())
@@ -19347,9 +19354,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
         )
         self.assertEqual(harness.provider.requests, [])
         (row,) = [
-            row
-            for row in _plan_queue_rows()
-            if row[0] == "properties takeoff_text"
+            row for row in _plan_queue_rows() if row[0] == "properties takeoff_text"
         ]
         _label, results, submit, setup = row
         harness = _Harness(results)
@@ -19447,7 +19452,11 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
 
             def insert(_database, _bid, specs, _remap=None, calls=calls):
                 calls.append(len(specs))
-                return [f"9{index}" for index in range(len(specs))] if len(calls) == 1 else []
+                return (
+                    [f"9{index}" for index in range(len(specs))]
+                    if len(calls) == 1
+                    else []
+                )
 
             with self.subTest(label, case="named views"):
                 harness = _Harness({**results, "insert_annotations": lambda *_a: []})
@@ -19504,13 +19513,18 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             ):
                 with self.subTest(label, case=case):
                     calls.clear()
-                    harness = _Harness({**results, "insert_annotations": override}, sql=False)
+                    harness = _Harness(
+                        {**results, "insert_annotations": override}, sql=False
+                    )
                     result = command(harness.service)
                     self.assertEqual(
-                        result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+                        result.outcome_status,
+                        MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
                     )
                     self.assertEqual(result.message, message)
-                    self.assertEqual((harness.reloads, harness.events.published), ([], []))
+                    self.assertEqual(
+                        (harness.reloads, harness.events.published), ([], [])
+                    )
 
     def test_a_paste_whose_takeoffs_are_each_others_parents_is_refused(self):
         def cycle_payload():

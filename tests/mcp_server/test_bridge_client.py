@@ -261,9 +261,7 @@ class McpBridgeWin32ContractTests(unittest.TestCase):
         import win32con
 
         kernel32 = FakeKernel32(reads=[(True, b"{}", 0)])
-        with patch.object(
-            McpBridgeClient, "_kernel32", staticmethod(lambda: kernel32)
-        ):
+        with patch.object(McpBridgeClient, "_kernel32", staticmethod(lambda: kernel32)):
             McpBridgeClient(server_name="OstBridge")._request_windows_pipe(b"x\n")
         self.assertEqual(kernel32.create_flags, win32con.FILE_ATTRIBUTE_NORMAL)
 
@@ -287,16 +285,12 @@ class McpBridgeWin32ContractTests(unittest.TestCase):
 
     def test_pipe_failures_carry_their_operation_in_the_message(self):
         waiting = FakeKernel32(wait_ok=False)
-        with patch.object(
-            McpBridgeClient, "_kernel32", staticmethod(lambda: waiting)
-        ):
+        with patch.object(McpBridgeClient, "_kernel32", staticmethod(lambda: waiting)):
             with self.assertRaises(OSError) as raised:
                 McpBridgeClient(server_name="OstBridge")._request_windows_pipe(b"x")
         self.assertEqual(raised.exception.strerror, "Named pipe is unavailable")
         refused = FakeKernel32(handle=INVALID_HANDLE)
-        with patch.object(
-            McpBridgeClient, "_kernel32", staticmethod(lambda: refused)
-        ):
+        with patch.object(McpBridgeClient, "_kernel32", staticmethod(lambda: refused)):
             with self.assertRaises(OSError) as raised:
                 McpBridgeClient(server_name="OstBridge")._request_windows_pipe(b"x")
         self.assertEqual(raised.exception.strerror, "Failed to open named pipe")

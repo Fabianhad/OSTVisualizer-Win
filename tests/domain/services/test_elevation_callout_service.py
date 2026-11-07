@@ -80,6 +80,35 @@ class ElevationCalloutResolverTests(unittest.TestCase):
                 self.assertIsNotNone(result)
                 self.assertEqual(result.lines[-1], expected)
 
+    def test_an_unsupported_condition_type_keeps_the_callout_but_drops_the_quantity(
+        self,
+    ):
+        for condition_type in (4, 99):
+            with self.subTest(condition_type=condition_type):
+                with self.assertLogs(
+                    "ost_visualizer.domain.services.elevation_callout_service",
+                    level="WARNING",
+                ) as logged:
+                    result = resolve_elevation_callout(
+                        _elevation_support__area_condition(
+                            name="F9 @T 410' 3\"",
+                            thickness=48.0,
+                            height=48.0,
+                            z_value=4923.0,
+                            condition_type=condition_type,
+                        ),
+                        _elevation_support__area_takeoff(),
+                        [],
+                        _elevation_support__outer_ring(),
+                    )
+                self.assertIsNotNone(result)
+                self.assertEqual((result.x, result.y), (30.0, 40.0))
+                self.assertEqual(result.lines[0], "F9")
+                self.assertTrue(all("CY" not in line for line in result.lines))
+                message = logged.records[0].getMessage()
+                self.assertIn("condition-1", message)
+                self.assertIn(str(condition_type), message)
+
     def test_bottom_reference_uses_existing_condition_elevation_direction(self):
         condition = Condition(
             uid="condition-1",

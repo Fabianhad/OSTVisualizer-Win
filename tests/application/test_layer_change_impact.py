@@ -80,24 +80,38 @@ class LayerChangeImpactEdgeTests(unittest.TestCase):
         self.assertIs(layer_rename_preserves_rendering([], []), False)
         self.assertIs(layer_rename_preserves_rendering([layer], []), False)
         self.assertIs(layer_rename_preserves_rendering([], [layer]), False)
-        self.assertIs(layer_rename_preserves_rendering([layer, layer], [renamed, renamed]), False)
-        self.assertIs(layer_rename_preserves_rendering([layer], [renamed, renamed]), False)
-        self.assertIs(layer_rename_preserves_rendering([layer, layer], [renamed]), False)
+        self.assertIs(
+            layer_rename_preserves_rendering([layer, layer], [renamed, renamed]), False
+        )
+        self.assertIs(
+            layer_rename_preserves_rendering([layer], [renamed, renamed]), False
+        )
+        self.assertIs(
+            layer_rename_preserves_rendering([layer, layer], [renamed]), False
+        )
         self.assertIs(layer_rename_preserves_rendering([layer], [layer]), False)
         self.assertIs(layer_rename_preserves_rendering([layer], [renamed]), True)
 
-    def test_a_rename_alongside_an_unchanged_layer_preserves_rendering_and_other_uids_do_not(self):
+    def test_a_rename_alongside_an_unchanged_layer_preserves_rendering_and_other_uids_do_not(
+        self,
+    ):
         walls = BidLayer("1", "8", "Walls", True, 1)
         floors = BidLayer("2", "8", "Floors", True, 2)
         self.assertIs(
-            layer_rename_preserves_rendering([walls, floors], [replace(walls, name="Partitions"), floors]),
+            layer_rename_preserves_rendering(
+                [walls, floors], [replace(walls, name="Partitions"), floors]
+            ),
             True,
         )
         self.assertIs(
-            layer_rename_preserves_rendering([walls, floors], [replace(walls, name="Partitions")]),
+            layer_rename_preserves_rendering(
+                [walls, floors], [replace(walls, name="Partitions")]
+            ),
             False,
         )
         self.assertIs(
-            layer_rename_preserves_rendering([walls], [replace(floors, name="Partitions")]),
+            layer_rename_preserves_rendering(
+                [walls], [replace(floors, name="Partitions")]
+            ),
             False,
         )

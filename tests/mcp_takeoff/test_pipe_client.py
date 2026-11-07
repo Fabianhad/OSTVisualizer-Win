@@ -706,7 +706,9 @@ class Win32WrapperTests(unittest.TestCase):
         self.assertEqual(len(kernel32.wait_calls), 1)
 
     def test_an_open_failure_other_than_busy_is_not_retried(self):
-        kernel32 = ScriptedKernel32(waits=[(True, 0)], opens=[(-1 & 0xFFFFFFFFFFFFFFFF, 5)])
+        kernel32 = ScriptedKernel32(
+            waits=[(True, 0)], opens=[(-1 & 0xFFFFFFFFFFFFFFFF, 5)]
+        )
         with self.assertRaises(OSError) as raised:
             self.client()._open(kernel32, self.PIPE)
         self.assertEqual(raised.exception.errno, 5)

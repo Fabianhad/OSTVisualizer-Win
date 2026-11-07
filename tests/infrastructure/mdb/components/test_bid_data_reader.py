@@ -1554,10 +1554,13 @@ class BidFamilyReaderTests(unittest.TestCase):
     def test_area_family_returns_the_bids_areas_in_sequence_order(self):
         reader = _SqliteFullReader(self._family_db())
         areas = reader.get_area_family("x.mdb", "1")
-        self.assertEqual([(a.uid, a.name, a.sequence) for a in areas], [
-            ("20", "First", 1),
-            ("21", "Second", 2),
-        ])
+        self.assertEqual(
+            [(a.uid, a.name, a.sequence) for a in areas],
+            [
+                ("20", "First", 1),
+                ("21", "Second", 2),
+            ],
+        )
 
     def test_area_family_of_a_missing_bid_is_a_missing_owner_error(self):
         reader = _SqliteFullReader(self._family_db())
@@ -1737,9 +1740,7 @@ class RawBidDataReaderTests(unittest.TestCase):
 
     def test_raw_bid_data_collects_the_bid_page_and_global_sections(self):
         raw = _SqliteBidReader(self._raw_db()).get_raw_bid_data("x.mdb", "1")
-        self.assertEqual(
-            raw.bid_row, {"Name": "First", "Notes": "hello", "UID": "1"}
-        )
+        self.assertEqual(raw.bid_row, {"Name": "First", "Notes": "hello", "UID": "1"})
         self.assertEqual(
             raw.bid_tables["BidPages"],
             [{"BidUID": "1", "Name": "Page", "UID": "10"}],
@@ -1800,11 +1801,18 @@ class RawBidDataReaderTests(unittest.TestCase):
         reader = _SqliteBidReader(conn)
         wrapper = _SqliteConnectionWrapper(conn)
         self.assertEqual(
-            [r["UID"] for r in reader._select_all_filtered(wrapper, "BidPages", "BidUID", "1")],
+            [
+                r["UID"]
+                for r in reader._select_all_filtered(wrapper, "BidPages", "BidUID", "1")
+            ],
             ["10"],
         )
-        self.assertEqual(reader._select_all_filtered(wrapper, "Absent", "BidUID", "1"), [])
-        self.assertEqual(reader._select_all_filtered(wrapper, "Bids", "BidUID", "1"), [])
+        self.assertEqual(
+            reader._select_all_filtered(wrapper, "Absent", "BidUID", "1"), []
+        )
+        self.assertEqual(
+            reader._select_all_filtered(wrapper, "Bids", "BidUID", "1"), []
+        )
 
     def test_unfiltered_reader_returns_every_row_or_nothing_for_a_missing_table(self):
         conn = self._raw_db()
@@ -1816,6 +1824,45 @@ class RawBidDataReaderTests(unittest.TestCase):
         )
         self.assertEqual(reader._select_all_unfiltered(wrapper, "Absent"), [])
 
+    def test_unfiltered_reader_orders_rows_by_uid_regardless_of_insertion_order(self):
+        conn = _db("CREATE TABLE Statuses (UID INTEGER, Name TEXT, Sequence INTEGER)")
+        _insert(
+            conn,
+            "Statuses",
+            ("UID", "Name", "Sequence"),
+            [(30, "c", 1), (20, "b", None), (10, "a", 0)],
+        )
+        reader = _SqliteBidReader(conn)
+        wrapper = _SqliteConnectionWrapper(conn)
+        self.assertEqual(
+            [r["UID"] for r in reader._select_all_unfiltered(wrapper, "Statuses")],
+            ["10", "20", "30"],
+        )
+
+    def test_unfiltered_reader_issues_a_plain_uid_ordered_select(self):
+        conn = _db("CREATE TABLE Statuses (UID INTEGER, Name TEXT)")
+        reader = _SqliteBidReader(conn)
+        statements = []
+        conn.set_trace_callback(statements.append)
+        reader._select_all_unfiltered(_SqliteConnectionWrapper(conn), "Statuses")
+        selects = [s for s in statements if s.startswith("SELECT [Name], [UID]")]
+        self.assertEqual(
+            selects, ["SELECT [Name], [UID] FROM [Statuses] ORDER BY [UID]"]
+        )
+
+    def test_unfiltered_reader_adds_no_ordering_to_a_table_without_a_uid_column(self):
+        conn = _db("CREATE TABLE Plain (Name TEXT)")
+        _insert(conn, "Plain", ("Name",), [("b",), ("a",)])
+        reader = _SqliteBidReader(conn)
+        statements = []
+        conn.set_trace_callback(statements.append)
+        rows = reader._select_all_unfiltered(_SqliteConnectionWrapper(conn), "Plain")
+        self.assertEqual([r["Name"] for r in rows], ["b", "a"])
+        self.assertEqual(
+            [s for s in statements if s.startswith("SELECT [Name]")],
+            ["SELECT [Name] FROM [Plain]"],
+        )
+
     def test_raw_readers_swallow_read_errors_unless_the_policy_records_them(self):
         conn = self._raw_db()
         schema = _SqliteSchema(conn)
@@ -1826,7 +1873,9 @@ class RawBidDataReaderTests(unittest.TestCase):
             (lambda r: r._select_all_filtered(failing, "BidPages", "BidUID", "1"), []),
             (lambda r: r._select_all_unfiltered(failing, "CdnTypes"), []),
             (
-                lambda r: r._select_all_by_bid_or_page(failing, "BidPages", "1", ["10"]),
+                lambda r: r._select_all_by_bid_or_page(
+                    failing, "BidPages", "1", ["10"]
+                ),
                 [],
             ),
         )
@@ -1898,9 +1947,9 @@ class PagesWithTakeoffsTests(unittest.TestCase):
     def test_a_failed_takeoff_read_is_swallowed_unless_the_policy_records_it(self):
         conn = self._takeoff_db()
         self.assertEqual(
-            _SqliteFullReader(conn, fail_tables=("BidTakeoffs",)).get_pages_with_takeoffs(
-                "x.mdb", "7"
-            ),
+            _SqliteFullReader(
+                conn, fail_tables=("BidTakeoffs",)
+            ).get_pages_with_takeoffs("x.mdb", "7"),
             set(),
         )
         with self.assertRaises(pyodbc.Error):
@@ -2024,9 +2073,15 @@ class BidLayerReaderTests(unittest.TestCase):
                 remaining = [c for c in ("UID", "BidUID", "Name") if c != column]
                 conn = _db(f"CREATE TABLE BidLayers ({', '.join(remaining)})")
                 reader = _SqliteBidReader(conn)
-                with self.assertRaisesRegex(RuntimeError, f"Missing BidLayers.{column}$"):
-                    reader._parse_bid_layers_for_bid(_SqliteConnectionWrapper(conn), "7")
-                with self.assertRaisesRegex(RuntimeError, f"Missing BidLayers.{column}$"):
+                with self.assertRaisesRegex(
+                    RuntimeError, f"Missing BidLayers.{column}$"
+                ):
+                    reader._parse_bid_layers_for_bid(
+                        _SqliteConnectionWrapper(conn), "7"
+                    )
+                with self.assertRaisesRegex(
+                    RuntimeError, f"Missing BidLayers.{column}$"
+                ):
                     reader._parse_bid_layers_for_sidebar(
                         _SqliteConnectionWrapper(conn), "7"
                     )
@@ -2062,7 +2117,15 @@ class BidLayerReaderTests(unittest.TestCase):
         layers = _SqliteBidReader(conn).get_bid_layers_for_sidebar("x.mdb", "7")
         self.assertEqual(
             sorted(
-                (l.uid, l.bid_uid, l.name, l.show, l.sequence, l.is_template, l.is_locked)
+                (
+                    l.uid,
+                    l.bid_uid,
+                    l.name,
+                    l.show,
+                    l.sequence,
+                    l.is_template,
+                    l.is_locked,
+                )
                 for l in layers
             ),
             [
@@ -2085,19 +2148,20 @@ class BidLayerReaderTests(unittest.TestCase):
             [(1, 7, "Bid", 0), (30, None, "Shared", -1)],
         )
         layers = _SqliteBidReader(conn).get_bid_layers_for_sidebar("x.mdb", "7")
-        self.assertEqual([(l.uid, l.show, l.sequence, l.is_locked) for l in layers], [
-            ("1", True, 0, False)
-        ])
+        self.assertEqual(
+            [(l.uid, l.show, l.sequence, l.is_locked) for l in layers],
+            [("1", True, 0, False)],
+        )
 
     def test_sidebar_of_a_file_without_layers_is_empty(self):
         reader = _SqliteBidReader(_db("CREATE TABLE Bids (UID INTEGER)"))
         self.assertEqual(reader.get_bid_layers_for_sidebar("x.mdb", "7"), [])
 
     def test_sidebar_rejects_duplicate_layer_uids(self):
-        conn = _db(
-            "CREATE TABLE BidLayers (UID INTEGER, BidUID INTEGER, Name TEXT)"
+        conn = _db("CREATE TABLE BidLayers (UID INTEGER, BidUID INTEGER, Name TEXT)")
+        _insert(
+            conn, "BidLayers", ("UID", "BidUID", "Name"), [(1, 7, "A"), (1, 7, "B")]
         )
-        _insert(conn, "BidLayers", ("UID", "BidUID", "Name"), [(1, 7, "A"), (1, 7, "B")])
         with self.assertRaisesRegex(RuntimeError, "BidLayers contains duplicate UID 1"):
             _SqliteBidReader(conn).get_bid_layers_for_sidebar("x.mdb", "7")
 
@@ -2105,7 +2169,15 @@ class BidLayerReaderTests(unittest.TestCase):
         layers = _SqliteBidReader(self._layer_db()).get_default_layers("x.mdb")
         self.assertEqual(
             [
-                (l.uid, l.bid_uid, l.name, l.show, l.sequence, l.is_template, l.is_locked)
+                (
+                    l.uid,
+                    l.bid_uid,
+                    l.name,
+                    l.show,
+                    l.sequence,
+                    l.is_template,
+                    l.is_locked,
+                )
                 for l in layers
             ],
             [
@@ -2121,11 +2193,17 @@ class BidLayerReaderTests(unittest.TestCase):
             "CREATE TABLE BidLayers (UID INTEGER, Name TEXT, IsTemplate INTEGER)"
         )
         _insert(
-            conn, "BidLayers", ("UID", "Name", "IsTemplate"), [(9, "B", -1), (8, "A", -1), (7, "Bid", 0)]
+            conn,
+            "BidLayers",
+            ("UID", "Name", "IsTemplate"),
+            [(9, "B", -1), (8, "A", -1), (7, "Bid", 0)],
         )
         layers = _SqliteBidReader(conn).get_default_layers("x.mdb")
         self.assertEqual(
-            [(l.uid, l.name, l.bid_uid, l.show, l.sequence, l.is_locked) for l in layers],
+            [
+                (l.uid, l.name, l.bid_uid, l.show, l.sequence, l.is_locked)
+                for l in layers
+            ],
             [("8", "A", "", True, 0, False), ("9", "B", "", True, 0, False)],
         )
 
@@ -2134,13 +2212,22 @@ class BidLayerReaderTests(unittest.TestCase):
         _insert(conn, "BidLayers", ("UID", "Name"), [(1, "A")])
         self.assertEqual(_SqliteBidReader(conn).get_default_layers("x.mdb"), [])
         self.assertEqual(
-            _SqliteBidReader(_db("CREATE TABLE Bids (UID INTEGER)")).get_default_layers("x.mdb"),
+            _SqliteBidReader(_db("CREATE TABLE Bids (UID INTEGER)")).get_default_layers(
+                "x.mdb"
+            ),
             [],
         )
 
     def test_default_layers_reject_duplicate_template_uids(self):
-        conn = _db("CREATE TABLE BidLayers (UID INTEGER, Name TEXT, IsTemplate INTEGER)")
-        _insert(conn, "BidLayers", ("UID", "Name", "IsTemplate"), [(1, "A", -1), (1, "B", -1)])
+        conn = _db(
+            "CREATE TABLE BidLayers (UID INTEGER, Name TEXT, IsTemplate INTEGER)"
+        )
+        _insert(
+            conn,
+            "BidLayers",
+            ("UID", "Name", "IsTemplate"),
+            [(1, "A", -1), (1, "B", -1)],
+        )
         with self.assertRaisesRegex(RuntimeError, "BidLayers contains duplicate UID 1"):
             _SqliteBidReader(conn).get_default_layers("x.mdb")
 
@@ -2150,19 +2237,32 @@ class BidLayerReaderTests(unittest.TestCase):
             Row(5, 0, None, 2, None, 1, None)
         )
         self.assertEqual(
-            (layer.uid, layer.bid_uid, layer.name, layer.show, layer.sequence,
-             layer.is_template, layer.is_locked),
+            (
+                layer.uid,
+                layer.bid_uid,
+                layer.name,
+                layer.show,
+                layer.sequence,
+                layer.is_template,
+                layer.is_locked,
+            ),
             ("5", "", "", False, 0, True, False),
         )
-        layer = BidDataReaderMixin._bid_layer_from_row(
-            Row(6, 7, b"Walls", 1, 3, 0, 2)
-        )
+        layer = BidDataReaderMixin._bid_layer_from_row(Row(6, 7, b"Walls", 1, 3, 0, 2))
         self.assertEqual(
-            (layer.bid_uid, layer.name, layer.show, layer.sequence,
-             layer.is_template, layer.is_locked),
+            (
+                layer.bid_uid,
+                layer.name,
+                layer.show,
+                layer.sequence,
+                layer.is_template,
+                layer.is_locked,
+            ),
             ("7", "Walls", True, 3, False, True),
         )
-        self.assertTrue(BidDataReaderMixin._bid_layer_from_row(Row(7, 1, "n", -1, 0, -1, -1)).show)
+        self.assertTrue(
+            BidDataReaderMixin._bid_layer_from_row(Row(7, 1, "n", -1, 0, -1, -1)).show
+        )
 
 
 class BidPageReaderTests(unittest.TestCase):
@@ -2195,22 +2295,51 @@ class BidPageReaderTests(unittest.TestCase):
         page = pages["7"]
         self.assertEqual(
             (
-                page.name, page.folder_uid, page.sheet_no, page.sequence,
-                page.image_path, page.width_pts, page.height_pts,
-                page.scale_factor1, page.scale_factor2, page.rotation,
-                page.flip_x, page.flip_y, page.page_index, page.image_show_mode,
+                page.name,
+                page.folder_uid,
+                page.sheet_no,
+                page.sequence,
+                page.image_path,
+                page.width_pts,
+                page.height_pts,
+                page.scale_factor1,
+                page.scale_factor2,
+                page.rotation,
+                page.flip_x,
+                page.flip_y,
+                page.page_index,
+                page.image_show_mode,
             ),
             (
-                "Plan A", "11", "A-101", 4, "a.png", 42.0 * 72.0, 30.0 * 72.0,
-                0.25, 0.5, 90, True, True, 2, 2,
+                "Plan A",
+                "11",
+                "A-101",
+                4,
+                "a.png",
+                42.0 * 72.0,
+                30.0 * 72.0,
+                0.25,
+                0.5,
+                90,
+                True,
+                True,
+                2,
+                2,
             ),
         )
         self.assertEqual(
             (
-                page.overlay_image_path, page.overlay_offset_x, page.overlay_offset_y,
-                page.overlay_rotation, page.overlay_resized,
-                page.deskew_rotation_overlay, page.zoom_fac, page.current_x,
-                page.current_y, page.invert, page.bitonal,
+                page.overlay_image_path,
+                page.overlay_offset_x,
+                page.overlay_offset_y,
+                page.overlay_rotation,
+                page.overlay_resized,
+                page.deskew_rotation_overlay,
+                page.zoom_fac,
+                page.current_x,
+                page.current_y,
+                page.invert,
+                page.bitonal,
             ),
             ("o.png", 1.5, 2.5, 3.5, True, 0.75, 1.25, 10.5, 20.5, True, True),
         )
@@ -2222,18 +2351,59 @@ class BidPageReaderTests(unittest.TestCase):
         page = self._read(conn)["7"]
         self.assertEqual(
             (
-                page.name, page.folder_uid, page.sheet_no, page.sequence,
-                page.image_path, page.width_pts, page.height_pts,
-                page.scale_factor1, page.scale_factor2, page.rotation,
-                page.flip_x, page.flip_y, page.page_index, page.image_show_mode,
-                page.overlay_image_path, page.overlay_offset_x,
-                page.overlay_offset_y, page.overlay_rotation, page.overlay_resized,
-                page.deskew_rotation_overlay, page.zoom_fac, page.current_x,
-                page.current_y, page.invert, page.bitonal, page.overlay_rect,
+                page.name,
+                page.folder_uid,
+                page.sheet_no,
+                page.sequence,
+                page.image_path,
+                page.width_pts,
+                page.height_pts,
+                page.scale_factor1,
+                page.scale_factor2,
+                page.rotation,
+                page.flip_x,
+                page.flip_y,
+                page.page_index,
+                page.image_show_mode,
+                page.overlay_image_path,
+                page.overlay_offset_x,
+                page.overlay_offset_y,
+                page.overlay_rotation,
+                page.overlay_resized,
+                page.deskew_rotation_overlay,
+                page.zoom_fac,
+                page.current_x,
+                page.current_y,
+                page.invert,
+                page.bitonal,
+                page.overlay_rect,
             ),
             (
-                "", None, "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, False, 0, 0,
-                None, 0.0, 0.0, 0.0, False, 0.0, 0.0, 0.0, 0.0, False, False,
+                "",
+                None,
+                "",
+                0,
+                None,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0,
+                False,
+                False,
+                0,
+                0,
+                None,
+                0.0,
+                0.0,
+                0.0,
+                False,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                False,
+                False,
                 EMPTY_OVERLAY_RECT,
             ),
         )
@@ -2249,9 +2419,17 @@ class BidPageReaderTests(unittest.TestCase):
         page = self._read(conn)["7"]
         self.assertEqual(
             (
-                page.sequence, page.rotation, page.page_index, page.image_show_mode,
-                page.flip_x, page.flip_y, page.invert, page.bitonal,
-                page.overlay_resized, page.folder_uid, page.image_path,
+                page.sequence,
+                page.rotation,
+                page.page_index,
+                page.image_show_mode,
+                page.flip_x,
+                page.flip_y,
+                page.invert,
+                page.bitonal,
+                page.overlay_resized,
+                page.folder_uid,
+                page.image_path,
                 page.overlay_image_path,
             ),
             (0, 0, 0, 0, False, False, False, False, False, None, None, None),
@@ -2372,8 +2550,13 @@ class BidConditionReaderTests(unittest.TestCase):
             "3.5, 4.5, 5.5, 6, 7, 3, 8, 9.5, 5, ?, ?, ?, ?, ?, ?, 12, 150.0, 1, "
             "6.5, 11, ?, -1, 0.25, -1, -1, -1, 1.5, 2.5, 3.5, -1, -1, -1)",
             (
-                UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET,
-                CALC_LINEAR_LENGTH, CALC_LINEAR_BOTH_SIDES, CALC_VOLUME, b"memo",
+                UOM_LINEAR_FEET,
+                UOM_SQUARE_FEET,
+                UOM_CUBIC_FEET,
+                CALC_LINEAR_LENGTH,
+                CALC_LINEAR_BOTH_SIDES,
+                CALC_VOLUME,
+                b"memo",
             ),
         )
         condition = self._read(
@@ -2383,38 +2566,107 @@ class BidConditionReaderTests(unittest.TestCase):
         )["7"]
         self.assertEqual(
             (
-                condition.condition_type, condition.thickness, condition.height,
-                condition.width, condition.depth, condition.rise, condition.run,
-                condition.shape, condition.color_fill, condition.pattern,
+                condition.condition_type,
+                condition.thickness,
+                condition.height,
+                condition.width,
+                condition.depth,
+                condition.rise,
+                condition.run,
+                condition.shape,
+                condition.color_fill,
+                condition.pattern,
                 condition.spacing,
             ),
             (4, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6, 7, 8, 9.5),
         )
         self.assertEqual(
             (
-                condition.cdn_type_uid, condition.cdn_type_name, condition.layer_uid,
-                condition.layer_visible, condition.folder_uid, condition.uom1,
-                condition.uom2, condition.uom3, condition.calc_type1,
-                condition.calc_type2, condition.calc_type3, condition.ref_no,
-                condition.display_size, condition.drop_run, condition.drop_value,
+                condition.cdn_type_uid,
+                condition.cdn_type_name,
+                condition.layer_uid,
+                condition.layer_visible,
+                condition.folder_uid,
+                condition.uom1,
+                condition.uom2,
+                condition.uom3,
+                condition.calc_type1,
+                condition.calc_type2,
+                condition.calc_type3,
+                condition.ref_no,
+                condition.display_size,
+                condition.drop_run,
+                condition.drop_value,
                 condition.notes,
             ),
             (
-                "3", "Concrete", "5", False, "11", UOM_LINEAR_FEET, UOM_SQUARE_FEET,
-                UOM_CUBIC_FEET, CALC_LINEAR_LENGTH, CALC_LINEAR_BOTH_SIDES,
-                CALC_VOLUME, 12, 150.0, True, 6.5, "memo",
+                "3",
+                "Concrete",
+                "5",
+                False,
+                "11",
+                UOM_LINEAR_FEET,
+                UOM_SQUARE_FEET,
+                UOM_CUBIC_FEET,
+                CALC_LINEAR_LENGTH,
+                CALC_LINEAR_BOTH_SIDES,
+                CALC_VOLUME,
+                12,
+                150.0,
+                True,
+                6.5,
+                "memo",
             ),
         )
         self.assertEqual(
             (
-                condition.round_quantity, condition.round_up, condition.trim,
-                condition.is_curved_segment, condition.grid, condition.grid_size1,
-                condition.grid_size2, condition.gap, condition.display_dimension,
-                condition.display_name, condition.display_grid_while_drawing,
+                condition.round_quantity,
+                condition.round_up,
+                condition.trim,
+                condition.is_curved_segment,
+                condition.grid,
+                condition.grid_size1,
+                condition.grid_size2,
+                condition.gap,
+                condition.display_dimension,
+                condition.display_name,
+                condition.display_grid_while_drawing,
             ),
             (True, 0.25, True, True, True, 1.5, 2.5, 3.5, True, True, True),
         )
         self.assertEqual((condition.z_value, condition.is_top), (114.0, True))
+
+    def test_a_condition_with_an_unreadable_elevation_is_reported_and_the_rest_still_load(
+        self,
+    ):
+        conn = _db(f"CREATE TABLE BidConditions ({self._FULL})")
+        _insert(
+            conn,
+            "BidConditions",
+            ("UID", "BidUID", "Name"),
+            [
+                (6, 1, "Before @T 9' 6\""),
+                (7, 1, 'Broken @B 1/0"'),
+                (8, 1, 'After @B 6 1/0"'),
+                (9, 1, "Last @T 8' 0\""),
+            ],
+        )
+        with self.assertLogs("test.bid_reader", level="WARNING") as logged:
+            conditions = self._read(conn)
+        self.assertEqual(sorted(conditions), ["6", "7", "8", "9"])
+        self.assertEqual(
+            [
+                (conditions[uid].z_value, conditions[uid].is_top)
+                for uid in ("6", "7", "8", "9")
+            ],
+            [(114.0, True), (0.0, False), (0.0, False), (96.0, True)],
+        )
+        self.assertEqual(conditions["7"].name, 'Broken @B 1/0"')
+        messages = [record.getMessage() for record in logged.records]
+        self.assertEqual(len(messages), 2)
+        self.assertIn("7", messages[0])
+        self.assertIn('Broken @B 1/0"', messages[0])
+        self.assertIn("8", messages[1])
 
     def test_stored_units_are_kept_when_no_calculation_is_selected(self):
         conn = _db(f"CREATE TABLE BidConditions ({self._FULL})")
@@ -2435,24 +2687,84 @@ class BidConditionReaderTests(unittest.TestCase):
         condition = self._read(conn)["7"]
         self.assertEqual(
             (
-                condition.condition_type, condition.thickness, condition.height,
-                condition.width, condition.depth, condition.rise, condition.run,
-                condition.shape, condition.color_fill, condition.pattern,
-                condition.spacing, condition.cdn_type_uid, condition.cdn_type_name,
-                condition.layer_uid, condition.layer_visible, condition.folder_uid,
-                condition.uom1, condition.uom2, condition.uom3,
-                condition.calc_type1, condition.calc_type2, condition.calc_type3,
-                condition.ref_no, condition.display_size, condition.drop_run,
-                condition.drop_value, condition.notes, condition.round_quantity,
-                condition.round_up, condition.trim, condition.is_curved_segment,
-                condition.grid, condition.grid_size1, condition.grid_size2,
-                condition.gap, condition.display_dimension, condition.display_name,
+                condition.condition_type,
+                condition.thickness,
+                condition.height,
+                condition.width,
+                condition.depth,
+                condition.rise,
+                condition.run,
+                condition.shape,
+                condition.color_fill,
+                condition.pattern,
+                condition.spacing,
+                condition.cdn_type_uid,
+                condition.cdn_type_name,
+                condition.layer_uid,
+                condition.layer_visible,
+                condition.folder_uid,
+                condition.uom1,
+                condition.uom2,
+                condition.uom3,
+                condition.calc_type1,
+                condition.calc_type2,
+                condition.calc_type3,
+                condition.ref_no,
+                condition.display_size,
+                condition.drop_run,
+                condition.drop_value,
+                condition.notes,
+                condition.round_quantity,
+                condition.round_up,
+                condition.trim,
+                condition.is_curved_segment,
+                condition.grid,
+                condition.grid_size1,
+                condition.grid_size2,
+                condition.gap,
+                condition.display_dimension,
+                condition.display_name,
                 condition.display_grid_while_drawing,
             ),
             (
-                0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0.0, None, "Unknown",
-                None, True, None, 0, 0, 0, 0, 0, 0, 0, 100.0, False, 0.0, "",
-                False, 0.0, False, False, False, 0.0, 0.0, 0.0, False, False, False,
+                0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0,
+                0,
+                0,
+                0.0,
+                None,
+                "Unknown",
+                None,
+                True,
+                None,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                100.0,
+                False,
+                0.0,
+                "",
+                False,
+                0.0,
+                False,
+                False,
+                False,
+                0.0,
+                0.0,
+                0.0,
+                False,
+                False,
+                False,
             ),
         )
 
@@ -2461,34 +2773,76 @@ class BidConditionReaderTests(unittest.TestCase):
             "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, Name TEXT, Type INTEGER)"
         )
         _insert(
-            conn, "BidConditions", ("UID", "BidUID", "Name", "Type"), [(7, 1, "Core", 3)]
+            conn,
+            "BidConditions",
+            ("UID", "BidUID", "Name", "Type"),
+            [(7, 1, "Core", 3)],
         )
         condition = self._read(conn)["7"]
         self.assertEqual(
             (
-                condition.condition_type, condition.thickness, condition.shape,
-                condition.cdn_type_uid, condition.layer_uid, condition.folder_uid,
-                condition.display_size, condition.round_quantity, condition.trim,
-                condition.is_curved_segment, condition.grid, condition.display_name,
-                condition.display_grid_while_drawing, condition.notes,
+                condition.condition_type,
+                condition.thickness,
+                condition.shape,
+                condition.cdn_type_uid,
+                condition.layer_uid,
+                condition.folder_uid,
+                condition.display_size,
+                condition.round_quantity,
+                condition.trim,
+                condition.is_curved_segment,
+                condition.grid,
+                condition.display_name,
+                condition.display_grid_while_drawing,
+                condition.notes,
             ),
-            (3, 0.0, 0, None, None, None, 100.0, False, False, False, False, False, False, ""),
+            (
+                3,
+                0.0,
+                0,
+                None,
+                None,
+                None,
+                100.0,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                "",
+            ),
         )
 
     def test_every_zero_valued_flag_column_reads_false_and_nonzero_reads_true(self):
         flags = (
-            "RoundQuantity", "Trim", "IsCurvedSegment", "Grid", "DisplayDimension",
-            "DisplayName", "DisplayGridWhileDrawing",
+            "RoundQuantity",
+            "Trim",
+            "IsCurvedSegment",
+            "Grid",
+            "DisplayDimension",
+            "DisplayName",
+            "DisplayGridWhileDrawing",
         )
         conn = _db(f"CREATE TABLE BidConditions ({self._FULL})")
-        _insert(conn, "BidConditions", ("UID", "BidUID", "Name"), [(1, 1, "off"), (2, 1, "on")])
+        _insert(
+            conn,
+            "BidConditions",
+            ("UID", "BidUID", "Name"),
+            [(1, 1, "off"), (2, 1, "on")],
+        )
         for flag in flags:
             conn.execute(f"UPDATE BidConditions SET {flag} = 0 WHERE UID = 1")
             conn.execute(f"UPDATE BidConditions SET {flag} = -1 WHERE UID = 2")
         conditions = self._read(conn)
         attributes = (
-            "round_quantity", "trim", "is_curved_segment", "grid",
-            "display_dimension", "display_name", "display_grid_while_drawing",
+            "round_quantity",
+            "trim",
+            "is_curved_segment",
+            "grid",
+            "display_dimension",
+            "display_name",
+            "display_grid_while_drawing",
         )
         for attribute in attributes:
             with self.subTest(attribute=attribute):
@@ -2496,7 +2850,11 @@ class BidConditionReaderTests(unittest.TestCase):
                 self.assertIs(getattr(conditions["2"], attribute), True)
 
     def test_measure_base_one_normalizes_the_unit_system_to_metric(self):
-        for measure_base, expected in ((1, UOM_M), (0, UOM_LINEAR_FEET), (None, UOM_LINEAR_FEET)):
+        for measure_base, expected in (
+            (1, UOM_M),
+            (0, UOM_LINEAR_FEET),
+            (None, UOM_LINEAR_FEET),
+        ):
             with self.subTest(measure_base=measure_base):
                 conn = _db(
                     "CREATE TABLE Bids (UID INTEGER, MeasureBase INTEGER)",
@@ -2542,8 +2900,10 @@ class BidConditionReaderTests(unittest.TestCase):
         self.assertEqual(list(conditions), ["7"])
         self.assertEqual(
             (
-                conditions["7"].layer_uid, conditions["7"].layer_visible,
-                conditions["7"].cdn_type_uid, conditions["7"].cdn_type_name,
+                conditions["7"].layer_uid,
+                conditions["7"].layer_visible,
+                conditions["7"].cdn_type_uid,
+                conditions["7"].cdn_type_name,
             ),
             ("99", True, "98", "Unknown"),
         )
@@ -2588,58 +2948,105 @@ class BidTakeoffReaderTests(unittest.TestCase):
         takeoff = by_uid["4"]
         self.assertEqual(
             (
-                takeoff.condition_uid, takeoff.page_uid, takeoff.area_uid,
-                takeoff.position, takeoff.rotation, takeoff.curve,
-                takeoff.parent_uid, takeoff.is_negative,
+                takeoff.condition_uid,
+                takeoff.page_uid,
+                takeoff.area_uid,
+                takeoff.position,
+                takeoff.rotation,
+                takeoff.curve,
+                takeoff.parent_uid,
+                takeoff.is_negative,
             ),
             ("10", "20", "30", [1.0, 2.0, 3.0, 4.0], 15.5, 2, "3", True),
         )
         self.assertEqual(
             (
-                takeoff.dimension_font_name, takeoff.dimension_font_color,
-                takeoff.dimension_font_size, takeoff.dimension_font_bold,
-                takeoff.dimension_font_italic, takeoff.dimension_font_underline,
+                takeoff.dimension_font_name,
+                takeoff.dimension_font_color,
+                takeoff.dimension_font_size,
+                takeoff.dimension_font_bold,
+                takeoff.dimension_font_italic,
+                takeoff.dimension_font_underline,
             ),
             ("Arial", 255, 72, True, False, True),
         )
         self.assertEqual(
             (
-                takeoff.name_font_name, takeoff.name_font_color,
-                takeoff.name_font_size, takeoff.name_font_bold,
-                takeoff.name_font_italic, takeoff.name_font_underline,
+                takeoff.name_font_name,
+                takeoff.name_font_color,
+                takeoff.name_font_size,
+                takeoff.name_font_bold,
+                takeoff.name_font_italic,
+                takeoff.name_font_underline,
             ),
             ("Calibri", 128, 48, False, True, False),
         )
         self.assertEqual(extras["4"]["Tag"], "extra")
         for typed in (
-            "UID", "BidUID", "BidConditionUID", "BidPageUID", "BidAreaUID", "Position",
-            "Rotation", "Curve", "ParentUID", "IsNegativeQuantity",
+            "UID",
+            "BidUID",
+            "BidConditionUID",
+            "BidPageUID",
+            "BidAreaUID",
+            "Position",
+            "Rotation",
+            "Curve",
+            "ParentUID",
+            "IsNegativeQuantity",
         ):
             self.assertNotIn(typed, extras["4"])
         self.assertEqual(sorted(extras), ["3", "4"])
         sparse = by_uid["3"]
         self.assertEqual(
             (
-                sparse.area_uid, sparse.rotation, sparse.curve, sparse.parent_uid,
-                sparse.is_negative, sparse.dimension_font_name,
-                sparse.dimension_font_color, sparse.dimension_font_size,
-                sparse.dimension_font_bold, sparse.name_font_name,
-                sparse.name_font_color, sparse.name_font_size,
-                sparse.name_font_bold, sparse.name_font_italic,
-                sparse.name_font_underline, sparse.dimension_font_italic,
+                sparse.area_uid,
+                sparse.rotation,
+                sparse.curve,
+                sparse.parent_uid,
+                sparse.is_negative,
+                sparse.dimension_font_name,
+                sparse.dimension_font_color,
+                sparse.dimension_font_size,
+                sparse.dimension_font_bold,
+                sparse.name_font_name,
+                sparse.name_font_color,
+                sparse.name_font_size,
+                sparse.name_font_bold,
+                sparse.name_font_italic,
+                sparse.name_font_underline,
+                sparse.dimension_font_italic,
                 sparse.dimension_font_underline,
             ),
             (
-                "0", 0.0, -1, "0", False, None, None, None, False, None, None,
-                None, False, False, False, False, False,
+                "0",
+                0.0,
+                -1,
+                "0",
+                False,
+                None,
+                None,
+                None,
+                False,
+                None,
+                None,
+                None,
+                False,
+                False,
+                False,
+                False,
+                False,
             ),
         )
 
     def test_each_font_flag_is_read_from_its_own_column(self):
         conn = _db(f"CREATE TABLE BidTakeoffs ({self._COLUMNS})")
         flags = (
-            "FontBold", "FontItalic", "FontUnderline",
-            "NameFontBold", "NameFontItalic", "NameFontUnderline",
+            "FontBold",
+            "FontItalic",
+            "FontUnderline",
+            "NameFontBold",
+            "NameFontItalic",
+            "NameFontUnderline",
         )
         for index, flag in enumerate(flags):
             conn.execute(
@@ -2649,8 +3056,12 @@ class BidTakeoffReaderTests(unittest.TestCase):
             )
         takeoffs, _extras = self._read(conn)
         attributes = (
-            "dimension_font_bold", "dimension_font_italic", "dimension_font_underline",
-            "name_font_bold", "name_font_italic", "name_font_underline",
+            "dimension_font_bold",
+            "dimension_font_italic",
+            "dimension_font_underline",
+            "name_font_bold",
+            "name_font_italic",
+            "name_font_underline",
         )
         for takeoff, own in zip(takeoffs, attributes):
             with self.subTest(attribute=own):
@@ -2669,9 +3080,12 @@ class BidTakeoffReaderTests(unittest.TestCase):
         (takeoff,), _extras = self._read(conn)
         self.assertEqual(
             (
-                takeoff.dimension_font_name, takeoff.dimension_font_color,
-                takeoff.dimension_font_size, takeoff.name_font_name,
-                takeoff.name_font_color, takeoff.name_font_size,
+                takeoff.dimension_font_name,
+                takeoff.dimension_font_color,
+                takeoff.dimension_font_size,
+                takeoff.name_font_name,
+                takeoff.name_font_color,
+                takeoff.name_font_size,
             ),
             (None, 0, None, None, 0, None),
         )
@@ -2689,21 +3103,45 @@ class BidTakeoffReaderTests(unittest.TestCase):
         )
         (takeoff,), extras = self._read(conn)
         self.assertEqual(
-            (takeoff.area_uid, takeoff.rotation, takeoff.curve, takeoff.parent_uid,
-             takeoff.is_negative),
+            (
+                takeoff.area_uid,
+                takeoff.rotation,
+                takeoff.curve,
+                takeoff.parent_uid,
+                takeoff.is_negative,
+            ),
             ("0", 0.0, -1, "0", False),
         )
         self.assertEqual(extras, {"4": {}})
         self.assertEqual(
             (
-                takeoff.dimension_font_name, takeoff.dimension_font_color,
-                takeoff.dimension_font_size, takeoff.dimension_font_bold,
-                takeoff.dimension_font_italic, takeoff.dimension_font_underline,
-                takeoff.name_font_name, takeoff.name_font_color,
-                takeoff.name_font_size, takeoff.name_font_bold,
-                takeoff.name_font_italic, takeoff.name_font_underline,
+                takeoff.dimension_font_name,
+                takeoff.dimension_font_color,
+                takeoff.dimension_font_size,
+                takeoff.dimension_font_bold,
+                takeoff.dimension_font_italic,
+                takeoff.dimension_font_underline,
+                takeoff.name_font_name,
+                takeoff.name_font_color,
+                takeoff.name_font_size,
+                takeoff.name_font_bold,
+                takeoff.name_font_italic,
+                takeoff.name_font_underline,
             ),
-            (None, None, None, False, False, False, None, None, None, False, False, False),
+            (
+                None,
+                None,
+                None,
+                False,
+                False,
+                False,
+                None,
+                None,
+                None,
+                False,
+                False,
+                False,
+            ),
         )
 
     def test_a_failed_takeoff_read_is_always_raised_after_the_policy_is_told(self):
@@ -2759,7 +3197,9 @@ class BidLoadAssemblyTests(unittest.TestCase):
             "BidPageUID INTEGER, ParentUID INTEGER, Position BLOB)",
         )
         _insert(conn, "Bids", ("UID", "MeasureBase"), [(1, 0), (2, 0)])
-        _insert(conn, "BidLayers", ("UID", "BidUID", "Name", "Show"), [(5, 1, "Image", 0)])
+        _insert(
+            conn, "BidLayers", ("UID", "BidUID", "Name", "Show"), [(5, 1, "Image", 0)]
+        )
         _insert(conn, "CdnTypes", ("UID", "Name"), [(3, "Concrete")])
         _insert(
             conn,
@@ -2780,7 +3220,9 @@ class BidLoadAssemblyTests(unittest.TestCase):
             ("UID", "BidUID", "Name", "Type", "CdnTypeUID"),
             [(30, 1, "Wall", 2, 3)],
         )
-        _insert(conn, "BidConditionFolders", ("UID", "BidUID", "Name"), [(50, 1, "Folder")])
+        _insert(
+            conn, "BidConditionFolders", ("UID", "BidUID", "Name"), [(50, 1, "Folder")]
+        )
         _insert(
             conn, "BidSettings", ("UID", "BidUID", "BidPageSelectedUID"), [(1, 1, 11)]
         )
@@ -2799,8 +3241,18 @@ class BidLoadAssemblyTests(unittest.TestCase):
     def test_a_bid_load_assembles_every_section_for_that_bid(self):
         reader = _SqliteFullReader(self._bid_db())
         (
-            conditions, takeoffs, areas, pages, area_selections, cdn_types,
-            annotations, folders, selected_page, extras, cover_sheet, delete_content,
+            conditions,
+            takeoffs,
+            areas,
+            pages,
+            area_selections,
+            cdn_types,
+            annotations,
+            folders,
+            selected_page,
+            extras,
+            cover_sheet,
+            delete_content,
         ) = reader.get_bid_data("x.mdb", "1")
         self.assertEqual(list(conditions), ["30"])
         self.assertEqual(conditions["30"].cdn_type_name, "Concrete")
@@ -2836,20 +3288,24 @@ class BidLoadAssemblyTests(unittest.TestCase):
 
     def test_a_bid_load_refuses_to_start_without_each_required_column(self):
         required = (
-            ("BidPages", "UID"), ("BidPages", "BidUID"), ("BidTakeoffs", "UID"),
-            ("BidTakeoffs", "BidUID"), ("BidTakeoffs", "BidConditionUID"),
-            ("BidTakeoffs", "BidPageUID"), ("BidTakeoffs", "Position"),
-            ("BidConditions", "UID"), ("BidConditions", "BidUID"),
-            ("BidConditions", "Name"), ("BidConditions", "Type"),
+            ("BidPages", "UID"),
+            ("BidPages", "BidUID"),
+            ("BidTakeoffs", "UID"),
+            ("BidTakeoffs", "BidUID"),
+            ("BidTakeoffs", "BidConditionUID"),
+            ("BidTakeoffs", "BidPageUID"),
+            ("BidTakeoffs", "Position"),
+            ("BidConditions", "UID"),
+            ("BidConditions", "BidUID"),
+            ("BidConditions", "Name"),
+            ("BidConditions", "Type"),
         )
         for table, column in required:
             with self.subTest(table=table, column=column):
                 conn = self._bid_db()
                 conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
                 reader = _SqliteFullReader(conn)
-                with self.assertRaisesRegex(
-                    RuntimeError, f"Missing {table}.{column}$"
-                ):
+                with self.assertRaisesRegex(RuntimeError, f"Missing {table}.{column}$"):
                     reader.get_bid_data("x.mdb", "1")
 
     def test_a_takeoff_hole_must_point_at_an_existing_takeoff(self):
@@ -3012,7 +3468,8 @@ class ReaderSchemaInteractionTests(unittest.TestCase):
                 )
                 (query,) = queries
                 self.assertEqual(
-                    " OR ([IsTemplate] <> 0 AND [IsLocked] <> 0)" in query, expect_clause
+                    " OR ([IsTemplate] <> 0 AND [IsLocked] <> 0)" in query,
+                    expect_clause,
                 )
 
 
@@ -3020,7 +3477,9 @@ class ReaderNullAndCoercionTests(unittest.TestCase):
     """Access hands back NULLs and (for some drivers) numeric text; the reader must type them."""
 
     def test_a_text_none_parent_reads_as_a_root_that_is_never_reference_checked(self):
-        conn = _db("CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, ParentUID TEXT)")
+        conn = _db(
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, ParentUID TEXT)"
+        )
         _insert(conn, "BidAreas", ("UID", "BidUID", "ParentUID"), [(5, 1, "None")])
         reader = _SqliteBidReader(conn)
         areas = reader._parse_bid_areas_for_bid(
@@ -3037,11 +3496,21 @@ class ReaderNullAndCoercionTests(unittest.TestCase):
             _SqliteConnectionWrapper(conn), "1", {}, reader._schema_ref
         )["7"]
         floats = (
-            page.width_pts, page.height_pts, page.scale_factor1, page.scale_factor2,
-            page.overlay_offset_x, page.overlay_offset_y, page.overlay_rotation,
-            page.deskew_rotation_overlay, page.zoom_fac, page.current_x, page.current_y,
+            page.width_pts,
+            page.height_pts,
+            page.scale_factor1,
+            page.scale_factor2,
+            page.overlay_offset_x,
+            page.overlay_offset_y,
+            page.overlay_rotation,
+            page.deskew_rotation_overlay,
+            page.zoom_fac,
+            page.current_x,
+            page.current_y,
         )
-        self.assertEqual(floats, (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        self.assertEqual(
+            floats, (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        )
         for value in floats:
             self.assertIsInstance(value, float)
 
@@ -3060,8 +3529,16 @@ class ReaderNullAndCoercionTests(unittest.TestCase):
         page = reader._parse_bid_pages_for_bid(
             _SqliteConnectionWrapper(conn), "1", {}, reader._schema_ref
         )["7"]
-        self.assertEqual((page.sequence, page.rotation, page.page_index, page.image_show_mode), (3, 90, 3, 2))
-        for value in (page.sequence, page.rotation, page.page_index, page.image_show_mode):
+        self.assertEqual(
+            (page.sequence, page.rotation, page.page_index, page.image_show_mode),
+            (3, 90, 3, 2),
+        )
+        for value in (
+            page.sequence,
+            page.rotation,
+            page.page_index,
+            page.image_show_mode,
+        ):
             self.assertIsInstance(value, int)
 
     def test_condition_reader_numeric_text_is_typed_by_the_reader(self):
@@ -3081,19 +3558,38 @@ class ReaderNullAndCoercionTests(unittest.TestCase):
             _SqliteConnectionWrapper(conn), "1", {}, {}, reader._schema_ref
         )["1"]
         ints = (
-            cond.condition_type, cond.shape, cond.color_fill, cond.pattern, cond.uom1,
-            cond.uom2, cond.uom3, cond.calc_type1, cond.calc_type2, cond.calc_type3,
+            cond.condition_type,
+            cond.shape,
+            cond.color_fill,
+            cond.pattern,
+            cond.uom1,
+            cond.uom2,
+            cond.uom3,
+            cond.calc_type1,
+            cond.calc_type2,
+            cond.calc_type3,
             cond.ref_no,
         )
         self.assertEqual(ints, (2, 3, 7, 8, 1, 4, 9, 0, 0, 0, 12))
         for value in ints:
             self.assertIsInstance(value, int)
         floats = (
-            cond.thickness, cond.height, cond.width, cond.depth, cond.rise, cond.run,
-            cond.spacing, cond.drop_value, cond.round_up, cond.grid_size1, cond.grid_size2,
+            cond.thickness,
+            cond.height,
+            cond.width,
+            cond.depth,
+            cond.rise,
+            cond.run,
+            cond.spacing,
+            cond.drop_value,
+            cond.round_up,
+            cond.grid_size1,
+            cond.grid_size2,
             cond.gap,
         )
-        self.assertEqual(floats, (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 9.5, 6.25, 0.25, 1.25, 2.25, 3.25))
+        self.assertEqual(
+            floats, (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 9.5, 6.25, 0.25, 1.25, 2.25, 3.25)
+        )
         for value in floats:
             self.assertIsInstance(value, float)
         self.assertIs(cond.drop_run, False)
@@ -3113,16 +3609,29 @@ class ReaderNullAndCoercionTests(unittest.TestCase):
             _SqliteConnectionWrapper(conn), "1", reader._schema_ref
         )
         self.assertEqual(
-            (takeoff.rotation, takeoff.curve, takeoff.dimension_font_color,
-             takeoff.dimension_font_size, takeoff.name_font_color, takeoff.name_font_size),
+            (
+                takeoff.rotation,
+                takeoff.curve,
+                takeoff.dimension_font_color,
+                takeoff.dimension_font_size,
+                takeoff.name_font_color,
+                takeoff.name_font_size,
+            ),
             (15.5, 2, 255, 72, 128, 48),
         )
         self.assertIsInstance(takeoff.rotation, float)
-        for value in (takeoff.curve, takeoff.dimension_font_color, takeoff.dimension_font_size,
-                      takeoff.name_font_color, takeoff.name_font_size):
+        for value in (
+            takeoff.curve,
+            takeoff.dimension_font_color,
+            takeoff.dimension_font_size,
+            takeoff.name_font_color,
+            takeoff.name_font_size,
+        ):
             self.assertIsInstance(value, int)
 
-    def test_read_failures_report_the_error_and_the_file_to_the_policy_in_that_order(self):
+    def test_read_failures_report_the_error_and_the_file_to_the_policy_in_that_order(
+        self,
+    ):
         class Recording(_SqliteFullReader):
             def __init__(self, connection, **kwargs):
                 super().__init__(connection, **kwargs)
@@ -3153,6 +3662,7 @@ class ReaderNullAndCoercionTests(unittest.TestCase):
         areas = _SqliteFullReader(conn).get_area_family("x.mdb", "1")
         self.assertIsInstance(areas, list)
         self.assertEqual([a.name for a in areas], ["A"])
+
 
 class ReaderTextValueTests(unittest.TestCase):
     def test_area_and_layer_sequences_reported_as_text_are_integers(self):
@@ -3191,7 +3701,11 @@ class ReaderTextValueTests(unittest.TestCase):
         self.assertIsInstance(count, int)
 
     def test_a_measure_base_reported_as_text_selects_the_metric_system(self):
-        for stored, expected in (("1", UOM_M), ("0", UOM_LINEAR_FEET), ("2", UOM_LINEAR_FEET)):
+        for stored, expected in (
+            ("1", UOM_M),
+            ("0", UOM_LINEAR_FEET),
+            ("2", UOM_LINEAR_FEET),
+        ):
             with self.subTest(measure_base=stored):
                 conn = _db(
                     "CREATE TABLE Bids (UID INTEGER, MeasureBase)",

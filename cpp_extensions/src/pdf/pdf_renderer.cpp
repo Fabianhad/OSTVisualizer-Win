@@ -221,8 +221,6 @@ namespace ost_pdf
         {
             ~PDFiumCleanup()
             {
-                // A thread stopped inside PDFium at process exit still owns the
-                // lock; leave the library to the OS instead of tearing it down.
                 PdfiumLock &lock = pdfium_lock();
                 if (!lock.try_lock())
                 {

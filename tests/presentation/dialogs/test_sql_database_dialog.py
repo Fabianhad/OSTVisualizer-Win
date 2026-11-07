@@ -1428,7 +1428,11 @@ class SqlDatabasePropertiesDialogChromeTests(NoModalWarnings, unittest.TestCase)
                         attribute,
                         _Proxy(
                             real,
-                            {signal: _RaisingSignal(error, log, f"{attribute}.{signal}")},
+                            {
+                                signal: _RaisingSignal(
+                                    error, log, f"{attribute}.{signal}"
+                                )
+                            },
                         ),
                     )
                 dialog.password_input.setText("secret")
@@ -1674,6 +1678,18 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
         self.assertIn(
             "Database names must be 1 to 128 characters", self.shown_warnings[0][2]
         )
+
+    def test_a_pipe_in_the_database_name_is_rejected_before_the_creator_prompt(self):
+        dialog = self.dialog()
+        dialog.database_name_input.setText("d|sql_server")
+        dialog._accept_if_valid()
+        self.assertEqual(self.prompted, [])
+        self.assertEqual(self.creator.calls, [])
+        self.assertEqual(
+            [message for _parent, _title, message in self.shown_warnings],
+            ["Database name cannot contain the '|' character."],
+        )
+        self.assertIsNone(dialog.result_data())
 
     def test_a_dialog_destroyed_during_the_setup_cannot_be_completed(self):
         dialog = self.dialog()

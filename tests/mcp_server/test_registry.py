@@ -483,6 +483,39 @@ class DatabaseRegistryValidationTests(unittest.TestCase):
             ["Ignoring invalid configured database path"],
         )
 
+    def test_state_files_that_are_not_valid_utf8_are_treated_like_truncated_json(self):
+        db = self.make_db()
+        for name, raw in (
+            ("invalid utf-8", b"\xff\xfe\x00{"),
+            ("latin-1 text", '{"file_entries": ["café"]}'.encode("latin-1")),
+            ("utf-16", '{"file_entries": []}'.encode("utf-16")),
+            ("truncated json", b'{"file_entries": [{"file_path": '),
+        ):
+            with self.subTest(content=name):
+                (self.root / "file_state.json").write_bytes(raw)
+                (self.root / "workspace_state.json").write_bytes(raw)
+                self.assertEqual(
+                    DatabaseRegistry._read_json(self.root / "file_state.json"), {}
+                )
+                registry = self.registry()
+                self.assertEqual(registry.databases, [])
+                self.assertEqual(registry.workspace_selection, McpWorkspaceSelection())
+        (self.root / "workspace_state.json").unlink()
+        self.write_state(
+            "file_state.json",
+            {"file_entries": [{"file_path": str(db), "is_checked": True}]},
+        )
+        registry = self.registry()
+        self.assertEqual(
+            [item.file_path for item in registry.databases], [str(db.resolve())]
+        )
+        (self.root / "file_state.json").write_bytes(b"\xff\xfe\x00{")
+        registry.reload()
+        self.assertEqual(registry.databases, [])
+        (self.root / "file_state.json").unlink()
+        registry.reload()
+        self.assertEqual(registry.databases, [])
+
     def test_output_artifacts_dir_lives_under_the_app_data_dir(self):
         self.assertEqual(
             self.registry().output_artifacts_dir, self.root / MCP_OUTPUT_DIR_NAME

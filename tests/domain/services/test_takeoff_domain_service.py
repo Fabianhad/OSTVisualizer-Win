@@ -150,7 +150,9 @@ def _tk(uid, condition_uid="c", parent_uid="0", position=None, page_uid="p"):
 
 
 def _cond(uid, condition_type, layer_visible=True):
-    return Condition(uid=uid, condition_type=condition_type, layer_visible=layer_visible)
+    return Condition(
+        uid=uid, condition_type=condition_type, layer_visible=layer_visible
+    )
 
 
 class TakeoffDescendantExpansionTests(unittest.TestCase):
@@ -185,7 +187,9 @@ class TakeoffDescendantExpansionTests(unittest.TestCase):
         )
 
         takeoffs = [_tk(2, parent_uid=1), _tk(3, parent_uid=2)]
-        result = expand_takeoff_uids_with_descendants(iter(takeoffs), iter([1, "ghost"]))
+        result = expand_takeoff_uids_with_descendants(
+            iter(takeoffs), iter([1, "ghost"])
+        )
         self.assertEqual(result, {"1", "2", "3", "ghost"})
 
     def test_cyclic_parentage_terminates_with_each_member_once(self):
@@ -193,7 +197,11 @@ class TakeoffDescendantExpansionTests(unittest.TestCase):
             expand_takeoff_uids_with_descendants,
         )
 
-        takeoffs = [_tk("a", parent_uid="b"), _tk("b", parent_uid="a"), _tk("c", parent_uid="b")]
+        takeoffs = [
+            _tk("a", parent_uid="b"),
+            _tk("b", parent_uid="a"),
+            _tk("c", parent_uid="b"),
+        ]
         self.assertEqual(
             expand_takeoff_uids_with_descendants(takeoffs, ["a"]), {"a", "b", "c"}
         )
@@ -237,17 +245,22 @@ class TakeoffRenderablePositionTests(unittest.TestCase):
         )
 
         self.assertIs(
-            has_renderable_takeoff_position(_tk("t", position=[0.0] * 10), _cond("c", 9)),
+            has_renderable_takeoff_position(
+                _tk("t", position=[0.0] * 10), _cond("c", 9)
+            ),
             False,
         )
         takeoff = _tk("t")
         takeoff.position = None
         for condition_type in range(4):
             self.assertIs(
-                has_renderable_takeoff_position(takeoff, _cond("c", condition_type)), False
+                has_renderable_takeoff_position(takeoff, _cond("c", condition_type)),
+                False,
             )
 
-    def test_area_usage_relevance_requires_condition_visibility_geometry_and_non_hole_area(self):
+    def test_area_usage_relevance_requires_condition_visibility_geometry_and_non_hole_area(
+        self,
+    ):
         conditions = {
             "area": _cond("area", Condition.TYPE_AREA),
             "hidden": _cond("hidden", Condition.TYPE_AREA, layer_visible=False),
@@ -256,18 +269,25 @@ class TakeoffRenderablePositionTests(unittest.TestCase):
         square = [0, 0, 1, 0, 1, 1, 0, 1]
         relevant = is_takeoff_relevant_for_area_usage
         self.assertIs(relevant(_tk("t", "area", position=square), conditions), True)
-        self.assertIs(relevant(_tk("t", "line", position=[0, 0, 1, 1]), conditions), True)
+        self.assertIs(
+            relevant(_tk("t", "line", position=[0, 0, 1, 1]), conditions), True
+        )
         # A backout (hole) under an area condition does not use bid area; a hole of
         # another geometry type still does.
         self.assertIs(
-            relevant(_tk("t", "area", parent_uid="p0", position=square), conditions), False
+            relevant(_tk("t", "area", parent_uid="p0", position=square), conditions),
+            False,
         )
         self.assertIs(
-            relevant(_tk("t", "line", parent_uid="p0", position=[0, 0, 1, 1]), conditions),
+            relevant(
+                _tk("t", "line", parent_uid="p0", position=[0, 0, 1, 1]), conditions
+            ),
             True,
         )
         self.assertIs(relevant(_tk("t", "hidden", position=square), conditions), False)
-        self.assertIs(relevant(_tk("t", "area", position=[0, 0, 1, 1]), conditions), False)
+        self.assertIs(
+            relevant(_tk("t", "area", position=[0, 0, 1, 1]), conditions), False
+        )
         self.assertIs(relevant(_tk("t", "missing", position=square), conditions), False)
 
     def test_is_takeoff_visible_delegates_to_the_entity(self):
@@ -281,7 +301,9 @@ class TakeoffRenderablePositionTests(unittest.TestCase):
 
 
 class TakeoffGroupingTests(unittest.TestCase):
-    def test_takeoffs_group_by_condition_type_with_empty_buckets_and_unknowns_dropped(self):
+    def test_takeoffs_group_by_condition_type_with_empty_buckets_and_unknowns_dropped(
+        self,
+    ):
         from ost_visualizer.domain.services.takeoff_domain_service import (
             group_takeoffs_by_type,
         )
@@ -303,8 +325,10 @@ class TakeoffGroupingTests(unittest.TestCase):
         ]
         grouped = group_takeoffs_by_type(conditions, takeoffs)
         self.assertEqual(sorted(grouped), [0, 1, 2, 3])
-        self.assertEqual({k: [t.uid for t in v] for k, v in grouped.items()},
-                         {0: ["2"], 1: ["1", "3"], 2: [], 3: ["6"]})
+        self.assertEqual(
+            {k: [t.uid for t in v] for k, v in grouped.items()},
+            {0: ["2"], 1: ["1", "3"], 2: [], 3: ["6"]},
+        )
         empty = group_takeoffs_by_type(conditions, [])
         self.assertEqual(empty, {0: [], 1: [], 2: [], 3: []})
         self.assertIsNot(empty[0], empty[1])
@@ -327,8 +351,13 @@ class TakeoffGroupingTests(unittest.TestCase):
         )
         # Non-area takeoffs (including unknown conditions) come first, then area
         # takeoffs that are not claimed as a hole of an area parent.
-        self.assertEqual([t.uid for t in roots], ["line1", "unknown", "parent", "other", "lone"])
-        self.assertEqual({k: [t.uid for t in v] for k, v in holes.items()}, {"parent": ["hole1", "hole2"]})
+        self.assertEqual(
+            [t.uid for t in roots], ["line1", "unknown", "parent", "other", "lone"]
+        )
+        self.assertEqual(
+            {k: [t.uid for t in v] for k, v in holes.items()},
+            {"parent": ["hole1", "hole2"]},
+        )
 
     def test_without_any_area_takeoff_the_input_list_is_returned_unchanged(self):
         from ost_visualizer.domain.services.takeoff_domain_service import (
@@ -366,7 +395,8 @@ class TakeoffReassignEdgeTests(unittest.TestCase):
         ):
             with self.subTest(type=condition_type):
                 self.assertEqual(
-                    condition_reassign_geometry_type(_cond("c", condition_type)), expected
+                    condition_reassign_geometry_type(_cond("c", condition_type)),
+                    expected,
                 )
 
     def test_common_type_requires_every_takeoff_to_agree_and_resolve(self):
@@ -377,7 +407,8 @@ class TakeoffReassignEdgeTests(unittest.TestCase):
             "weird": _cond("weird", 7),
         }
         self.assertEqual(
-            common_reassign_geometry_type([_tk("1", "l1"), _tk("2", "l2")], conditions), 0
+            common_reassign_geometry_type([_tk("1", "l1"), _tk("2", "l2")], conditions),
+            0,
         )
         self.assertIsNone(common_reassign_geometry_type([], conditions))
         self.assertIsNone(
@@ -387,10 +418,14 @@ class TakeoffReassignEdgeTests(unittest.TestCase):
             common_reassign_geometry_type([_tk("1", "a"), _tk("2", "l1")], conditions)
         )
         self.assertIsNone(
-            common_reassign_geometry_type([_tk("1", "l1"), _tk("2", "weird")], conditions)
+            common_reassign_geometry_type(
+                [_tk("1", "l1"), _tk("2", "weird")], conditions
+            )
         )
         self.assertIsNone(
-            common_reassign_geometry_type([_tk("1", "l1"), _tk("2", "gone")], conditions)
+            common_reassign_geometry_type(
+                [_tk("1", "l1"), _tk("2", "gone")], conditions
+            )
         )
 
     def test_matching_and_can_reassign_return_real_booleans(self):
@@ -398,19 +433,35 @@ class TakeoffReassignEdgeTests(unittest.TestCase):
             condition_matches_reassign_geometry,
         )
 
-        conditions = {"l": _cond("l", 0), "l2": _cond("l2", 0), "a": _cond("a", 1), "weird": _cond("weird", 7)}
+        conditions = {
+            "l": _cond("l", 0),
+            "l2": _cond("l2", 0),
+            "a": _cond("a", 1),
+            "weird": _cond("weird", 7),
+        }
         self.assertIs(condition_matches_reassign_geometry(conditions["l"], 0), True)
         self.assertIs(condition_matches_reassign_geometry(conditions["a"], 0), False)
         linear = [_tk("1", "l")]
-        self.assertIs(takeoffs_can_reassign_to_condition(linear, conditions, "l2"), True)
-        self.assertIs(takeoffs_can_reassign_to_condition(linear, conditions, "a"), False)
-        self.assertIs(takeoffs_can_reassign_to_condition(linear, conditions, "missing"), False)
-        # Without a common source type nothing is assignable, even to an unknown-type target.
-        self.assertIs(takeoffs_can_reassign_to_condition([], conditions, "weird"), False)
         self.assertIs(
-            takeoffs_can_reassign_to_condition([_tk("1", "gone")], conditions, "l"), False
+            takeoffs_can_reassign_to_condition(linear, conditions, "l2"), True
+        )
+        self.assertIs(
+            takeoffs_can_reassign_to_condition(linear, conditions, "a"), False
+        )
+        self.assertIs(
+            takeoffs_can_reassign_to_condition(linear, conditions, "missing"), False
+        )
+        # Without a common source type nothing is assignable, even to an unknown-type target.
+        self.assertIs(
+            takeoffs_can_reassign_to_condition([], conditions, "weird"), False
+        )
+        self.assertIs(
+            takeoffs_can_reassign_to_condition([_tk("1", "gone")], conditions, "l"),
+            False,
         )
 
     def test_target_uid_is_looked_up_as_text(self):
         conditions = {"7": _cond("7", 0), "l": _cond("l", 0)}
-        self.assertIs(takeoffs_can_reassign_to_condition([_tk("1", "l")], conditions, 7), True)
+        self.assertIs(
+            takeoffs_can_reassign_to_condition([_tk("1", "l")], conditions, 7), True
+        )

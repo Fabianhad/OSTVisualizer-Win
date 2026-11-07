@@ -43217,12 +43217,12 @@
       "state": "All agents were stopped at their own checkpoint. Their full reports are tests/_audit_progress/*.json (kept locally, OneDrive-synced, not committed)."
     },
     "module_counts": {
-      "Verified": 54,
+      "Verified": 46,
       "Awaiting Verification": 53,
       "In Progress": 27,
       "Partial": 1,
+      "Verification Failed": 9,
       "Blocked": 23,
-      "Verification Failed": 1,
       "Merged into test_pdf_exporter.py": 1,
       "Merged into test_schema_validator.py": 1,
       "Merged into test_server.py": 1
@@ -43432,7 +43432,7 @@
       },
       "tests/application/services/test_ai_changeset_store.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "status": "Verification Failed",
         "verifier": "V4",
         "mutation": {
           "total": 121,
@@ -43441,11 +43441,14 @@
           "equivalent": 0,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/presentation/services/test_ai_takeoff_bridge.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "status": "Verification Failed (minor)",
         "verifier": "V4",
         "mutation": {
           "total": 261,
@@ -43454,7 +43457,10 @@
           "equivalent": 10,
           "excluded": 0,
           "timeouts": 4
-        }
+        },
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/mcp_takeoff/test_pipe_client.py": {
         "auditor": "A4",
@@ -43484,8 +43490,11 @@
       },
       "tests/mcp_takeoff/test_proxy.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
-        "verifier": "V4"
+        "status": "Verification Failed (minor)",
+        "verifier": "V4",
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/mcp_takeoff/test_tool_catalog.py": {
         "auditor": "A4",
@@ -43502,7 +43511,7 @@
       },
       "tests/mcp_server/test_bridge_client.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "status": "Verification Failed",
         "verifier": "V4",
         "mutation": {
           "total": 84,
@@ -43511,11 +43520,14 @@
           "equivalent": 1,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/mcp_server/test_main.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "status": "Verification Failed (minor)",
         "verifier": "V4",
         "mutation": {
           "total": 40,
@@ -43524,11 +43536,14 @@
           "equivalent": 1,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/mcp_server/test_output_artifacts.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "status": "Verification Failed (minor)",
         "verifier": "V4",
         "mutation": {
           "total": 112,
@@ -43537,11 +43552,14 @@
           "equivalent": 4,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/mcp_server/test_registry.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "status": "Verification Failed",
         "verifier": "V4",
         "mutation": {
           "total": 98,
@@ -43550,7 +43568,10 @@
           "equivalent": 2,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/mcp_server/test_serializers.py": {
         "auditor": "A4",
@@ -43606,7 +43627,7 @@
       },
       "tests/application/services/test_ai_takeoff_tokens.py": {
         "auditor": "A4",
-        "status": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "status": "Verification Failed",
         "verifier": "V4",
         "mutation": {
           "total": 57,
@@ -43615,7 +43636,10 @@
           "equivalent": 0,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
+        "second_verifier": "VAI",
+        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. See tests/_audit_progress/VAI_SHUTDOWN.json. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
       },
       "tests/application/services/test_ai_takeoff_sidecar_service.py": {
         "auditor": "A4",
@@ -45111,13 +45135,31 @@
       "ost_visualizer/presentation/visualization/pdf/services/composite_renderer.py": "A6: _draw_overlay_image uses setTransform(transform, True). V6 VERIFIED (reproduced without the fix: 3 tests fail).",
       "ost_visualizer/presentation/components/page_combo.py": "A3: _on_model_data_changed connected to model.dataChanged, disconnected in cleanup(). V3 VERIFIED. The file also carries the owner's own IDE edits (user-authored, excluded from the audit).",
       "ost_visualizer/presentation/coordinators/ui_event_coordinator.py": "USER edit: three comments removed (is_fallback comment, _unpicked_fallback_page_uid comment). Not an agent change; not audited.",
-      "ost_visualizer/infrastructure/mdb/connection_manager.py": "Pool-eviction guard `if pool.get(abs_path) is conn` in MdbConnectionManager.connection(). Made by A5b sub-worker g4a (per the A5b report); fixes a stale unhealthy-flag / id() reuse defect. V5 confirmed it is justified (its regression test fails on HEAD) but checked only the production diff and that one test; test_connection_manager.py is Awaiting Verification, NOT Verified."
+      "ost_visualizer/infrastructure/mdb/connection_manager.py": "Pool-eviction guard `if pool.get(abs_path) is conn` in MdbConnectionManager.connection(). Made by A5b sub-worker g4a (per the A5b report); fixes a stale unhealthy-flag / id() reuse defect. V5 confirmed it is justified (its regression test fails on HEAD) but checked only the production diff and that one test; test_connection_manager.py is Awaiting Verification, NOT Verified.",
+      "resolution_2026-11-06": {
+        "ost_visualizer/domain/services/hardware_identity.py": "is_canonical_hwid returns False for non-str (was TypeError).",
+        "ost_visualizer/application/services/ai_takeoff_proposal_service.py": "_segment_cap_hint: no lower width bound when the width source is 'suggested'.",
+        "ost_visualizer/mcp_server/registry.py": "_read_json catches UnicodeDecodeError.",
+        "tools/ai_takeoff_corpus.py": "_fraction_value returns None for a zero denominator.",
+        "ost_visualizer/infrastructure/mdb/components/settings_reader.py": "NULL JobStatuses.Sequence reads as 0.",
+        "ost_visualizer/infrastructure/parsers/position_parser.py": "Unicode whitespace normalised in inch fractions; zero denominator raises ValueError.",
+        "ost_visualizer/infrastructure/mdb/components/bid_data_reader.py": "per-condition catch of ValueError (elevation text); ORDER BY [UID] last key in _select_all_unfiltered.",
+        "ost_visualizer/infrastructure/mdb/components/settings_operations.py": "per-condition catch of ValueError (elevation text).",
+        "ost_visualizer/domain/services/uom_service.py": "UnsupportedConditionTypeError for condition types outside 0-3; arc orientation mod-2pi fix and straight-chord tie rule.",
+        "ost_visualizer/domain/services/condition_quantity_service.py": "unsupported condition type skipped with a warning and zero quantities.",
+        "ost_visualizer/domain/services/elevation_callout_service.py": "catches the ValueError, drops the cubic-yards line.",
+        "ost_visualizer/infrastructure/mdb/exporters/ost_exporter.py": "unsupported condition type exported with zero quantities and a warning.",
+        "ost_visualizer/infrastructure/mdb/database_creator.py": "interrupt cleanup for BaseException; creation race: _NotCreatedHere via stderr check; vbs path assigned before write.",
+        "ost_visualizer/infrastructure/sql/writer.py": "OPEN-1 option A: status-3 preflight is an optimistic conflict on annotations_collection/<bid>.",
+        "ost_visualizer/domain/entities/database_descriptor.py": "'|' rejected in new SQL database names and when for_sql_server derives an id.",
+        "cpp_extensions/src/linear_geom/linear_geom.cpp": "perp_slope swap fixed (C1); arc_sweep helper at both orientation sites and straight-chord tie rule (A1). ost_linear_geom rebuilt twice; the .pyd is git-ignored and must be rebuilt elsewhere."
+      }
     },
     "owner_decisions_needed": {
-      "OPEN-1": "Annotation preflight conflict (status 3 / unmapped type) is currently a SESSION conflict that blocks the whole database. Option A: optimistic conflict scoped to the Bid's annotations_collection (pin with a test_writer test: kind OPTIMISTIC_CONCURRENCY, resource annotations_collection/<bid>; publisher blocks_database False). Option B: keep and document in AGENTS.md (pin kind SESSION on database/<id>, blocks_database True). Nothing implemented. Evidence: tests/_audit_progress/A7.json (open1_decision).",
-      "OPEN-2": "Schema validator scope. NO restriction is implemented and none may be without an explicit product decision. Evidence (A1, analysis verified by V1): OUTPUT INSERTED.[UID] without INTO appears in five statements (three writer inserts, two collaboration_store updates) and fails with error 334 only on a table with an enabled trigger for that DML action; the inspector does not read is_disabled/event type/INSTEAD OF. Alternatives that reject no database: (1) change the five statements to OUTPUT ... INTO @table, (2) warn-only check with extended inspector metadata, (3) document the limitation. Not confirmable without a live SQL Server. Evidence: tests/_audit_progress/A1.json (open2_decision); the comment at tests/infrastructure/sql/test_schema_validator.py ~line 1170 points there.",
-      "curved_linear_area_sf": "pdf_exporter computes a curved linear takeoff's area_sf from the straight chord, not the arc (understates the Bluebeam measurement). Smallest fix: public wrapper in uom_service around _calc_linear_length, used for the curved branch only. Not changed.",
-      "uom_arc_orientation": "(cross1+cross2)<0 heuristic picks the minor arc for sweeps >180 deg (arc 0/250/251 at r=100 measures 190.2, not 438.1); the same heuristic is in cpp_extensions/src/linear_geom/linear_geom.cpp. Pinned by two expectedFailure tests plus a test of today's values. Needs a decision on OST compatibility.",
+      "OPEN-1": "RESOLVED 2026-11-06 (owner chose Option A, status 3 only): a preflight status 3 is now an optimistic conflict on annotations_collection/<bid_uid> (infrastructure/sql/writer.py); the unmapped annotation type stays a SESSION conflict. Independently reviewed (RW1: Approved). Previous text: Annotation preflight conflict (status 3 / unmapped type) is currently a SESSION conflict that blocks the whole database. Option A: optimistic conflict scoped to the Bid's annotations_collection (pin with a test_writer test: kind OPTIMISTIC_CONCURRENCY, resource annotations_collection/<bid>; publisher blocks_database False). Option B: keep and document in AGENTS.md (pin kind SESSION on database/<id>, blocks_database True). Nothing implemented. Evidence: tests/_audit_progress/A7.json (open1_decision).",
+      "OPEN-2": "RESOLVED 2026-11-06 (owner chose document only): no validator restriction. Documented in AGENTS.md (Database backends). Preferred future fix if ever wanted: OUTPUT ... INTO @table for the five statements (R2.md section 7; needs a live SQL Server check). Previous text: Schema validator scope. NO restriction is implemented and none may be without an explicit product decision. Evidence (A1, analysis verified by V1): OUTPUT INSERTED.[UID] without INTO appears in five statements (three writer inserts, two collaboration_store updates) and fails with error 334 only on a table with an enabled trigger for that DML action; the inspector does not read is_disabled/event type/INSTEAD OF. Alternatives that reject no database: (1) change the five statements to OUTPUT ... INTO @table, (2) warn-only check with extended inspector metadata, (3) document the limitation. Not confirmable without a live SQL Server. Evidence: tests/_audit_progress/A1.json (open2_decision); the comment at tests/infrastructure/sql/test_schema_validator.py ~line 1170 points there.",
+      "curved_linear_area_sf": "DOCUMENT ONLY (owner decision 2026-11-06). pdf_exporter computes a curved linear takeoff's area_sf from chord x thickness, not the arc (pdf_exporter.py:744-745). The native PDF writer uses area_sf only as a '> 0' gate (pdf_writer.cpp:277, :313); it is not written to the PDF, not exposed in any API/report/MCP tool, and BluebeamPolygon.area_sf is never read. Captions and quantities use the arc. This does NOT understate the Bluebeam measurement (Bluebeam measures the polygon vertices); the earlier wording 'understates the Bluebeam measurement' was wrong. Only observable effect: a curved linear whose start and end coincide has area_sf 0 and gets no /Measure. Documented in AGENTS.md. Evidence: tests/_audit_progress/resolution/R3.md, RV3.md.",
+      "uom_arc_orientation": "RESOLVED 2026-11-06: On-Screen Takeoff confirmed arc 0/250/251 at R=100 reads 438.1 (the 251 degree route), so the mod-2pi fix was applied in uom_service._advanced_curve_points and in linear_geom.cpp (arc_sweep helper, both sites) as its own change, with the owner's tie rule: a control point within 1e-9 of the chord length from an endpoint is a straight chord. Native extension ost_linear_geom rebuilt (git-ignored artefact). The two expectedFailure tests now pass and were unmarked. Independently reviewed: see resolution_2026-11-06. Previous text: (cross1+cross2)<0 heuristic picks the minor arc for sweeps >180 deg (arc 0/250/251 at r=100 measures 190.2, not 438.1); the same heuristic is in cpp_extensions/src/linear_geom/linear_geom.cpp. Pinned by two expectedFailure tests plus a test of today's values. Needs a decision on OST compatibility.",
       "other_findings_not_changed": [
         "ai_takeoff_corpus.py:208 parse_scales accepts a zero-denominator fraction with a whole part (smallest fix: _fraction_value returns None when float(denominator)==0)",
         "deferred_persistence_manager.cancel_pages reads key[2]/key[3] before the len(key)>2 guard (unreachable through the typed schedule_* entry points)",
@@ -45132,7 +45174,7 @@
         "DatabaseMutationRequest accepts the .value string but rejects enum members",
         "NULL JobStatuses.Sequence makes get_job_statuses return []"
       ],
-      "agents_md_documentation": "A4 proposed AGENTS.md text for the golden files, their regeneration policy and OSTV_SLOW_TESTS (tests/_audit_progress/A4.json proposed_docs). NOT applied; needs review."
+      "agents_md_documentation": "PARTLY DONE 2026-11-06: AGENTS.md now documents OPEN-2, the arc rule and tie rule, curved area_sf, skipped conditions and the SQL '|' identity rule. A4's proposed golden-file / OSTV_SLOW_TESTS text is still NOT applied and still needs review. Previous text: A4 proposed AGENTS.md text for the golden files, their regeneration policy and OSTV_SLOW_TESTS (tests/_audit_progress/A4.json proposed_docs). NOT applied; needs review."
     },
     "tests": {
       "defined_before": 14641,
@@ -45169,12 +45211,100 @@
     },
     "layout_rule": "tests.architecture.test_test_layout: tests/<dir>/test_<x>.py must mirror ost_visualizer/<dir>/<x>.py (exemptions only under tests/helpers, tests/architecture, tests/integration). New test files must follow it.",
     "not_committed": [
-      "base_ai.json.cov",
-      "base_tk.json.cov (origin unknown: line-coverage dumps, no agent claims them)",
-      "_audit_snapshots/",
-      "tests/_audit_backup_2026-11-05/",
-      "tests/_audit_progress/ (local, OneDrive-synced)"
+      "tests/_audit_progress/ (local, OneDrive-synced, not committed)"
     ],
-    "resume": "See tests/AUDIT_HANDOFF_2026-11-06.md"
+    "resume": "See tests/AUDIT_HANDOFF_2026-11-06.md",
+    "resolution_2026-11-06": {
+      "date": "2026-11-06",
+      "nature": "Open decisions and defects resolution phase (not the general audit; the audit remains incomplete).",
+      "decisions_applied": {
+        "OPEN-1": "Option A for status 3 only (implemented).",
+        "OPEN-2": "document only (AGENTS.md).",
+        "arc_orientation": "mod-2pi fix applied after OST confirmed 438.1; control == endpoint is a straight chord.",
+        "perp_slope": "C++ swap fixed with a failing test first; ost_linear_geom rebuilt (only target containing linear_geom.cpp; ost_pdf and ost_snap do not).",
+        "curved_area_sf": "document only; ledger wording corrected.",
+        "sql_identity_pipe": "'|' rejected at input (database names and id derivation); persisted ids and saved descriptors untouched.",
+        "create_race": "stderr-check fix applied; 40/40 two-process rounds kept the winner's database.",
+        "skipped_condition_flag": "log-only; documented that skipped conditions appear with zero quantities.",
+        "unsupported_condition_type": "ValueError (UnsupportedConditionTypeError); skipped per page with a warning and zero quantities.",
+        "zero_denominator_elevation_text": "ValueError; callers log per condition and continue.",
+        "select_all_unfiltered": "[UID] is the last ORDER BY key."
+      },
+      "findings_not_changed": {
+        "Takeoff.is_hole parent 'None'": "intentional legacy (BidTakeoffs.ParentUID is INTEGER).",
+        "build_loaded_files / Project.file_path": "false positive (no production reader).",
+        "create_rhombus_points half_depth": "intentional legacy.",
+        "_render_rotated_shape corner order": "false positive (producer, renderer and selection handles agree).",
+        "duplicate_bid numeric text": "false positive on real Access (ACE 16, 64-bit); the 'Access rejects numeric text against Long columns' premise is wrong for this driver. Statements relying on it: test_layer_operations ~1664, test_annotation_operations ~3342, test_condition_operations ~807, test_settings_operations ~7169, V5.json, VM1.json:546, AB_SHUTDOWN.json:1154, AR6_SHUTDOWN.json:74, COORDINATOR_LOG.md:63 (not edited)."
+      },
+      "follow_ups_optional": [
+        "registry takeoff_workspace non-dict value raises AttributeError; deeply nested JSON raises RecursionError",
+        "ost_exporter.py:781-819 int(row.get(..) or '0') on serialized NULL (same pattern as the NULL Sequence bug; not reproduced)",
+        "database_guid is not validated as a UUID in the domain (forged guid could collide with a derived id; not a user path)",
+        "refusal path of DatabaseCreator is silent (one logger.warning would help)",
+        "interrupt delivered while cscript runs at the moment a rival wins still removes the rival's file (pinned the other way by an existing test)",
+        "unsupported-condition warning is unthrottled; no UI/DTO flag",
+        "elevation_callout_service catches plain ValueError (could narrow to UnsupportedConditionTypeError)",
+        "a ledger entry for the replaced test LicenseAggregateHwidAndSignatureHelperTests.test_a_provider_returning_none_currently_leaks_a_type_error is removed by the inventory refresh; A7.json and AD.json still mention it"
+      ],
+      "independent_reviews": {
+        "R3 geometry research": "RV3 (confirmed; perp_slope higher priority)",
+        "R4 hwid/is_hole/file_path/identity/rhombus": "RV4 Approved",
+        "R5 database_creator/duplicate_bid": "RV5 Approved (race: owner decision, later applied by S1)",
+        "R6 parsing/settings/condition types + owner decisions": "RV6 Approved",
+        "R7 cap hint/registry/rotated shape": "RV7 Approved",
+        "W1 OPEN-1 option A": "RW1 Approved",
+        "I1 '|' rejection": "RI1 Approved",
+        "C1 perp_slope": "RC1 Approved",
+        "S1 create race": "RS1 Approved",
+        "A1 arc fix": "RA1 Approved (9/9 points)",
+        "not independently reviewed": [
+          "R1 (research only)",
+          "R2 (research only)",
+          "D1 documentation"
+        ]
+      },
+      "reports": "tests/_audit_progress/resolution/ (R1..R7, W1, I1, C1, S1, A1, D1 notes; RV3..RV7, RW1, RI1, RC1, RS1, RA1 reviews; *.diff.txt) and tests/_audit_progress/OPEN_DECISIONS_AND_DEFECTS_RESOLUTION.md",
+      "validation": {
+        "full_suite": {
+          "command": "QT_QPA_PLATFORM=offscreen .\u000benv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t .",
+          "run_on": "2026-11-06, final tree after all resolution-phase changes and independent reviews",
+          "tests_run": 17592,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 44,
+          "expected_failures": 0,
+          "seconds": 426.1,
+          "result": "OK",
+          "skipped_reasons": "environment-gated: SQL integration opt-ins (21), OSTV_SLOW_TESTS (6), POSIX root-only file-mode tests (5), licensed S-100/S101 PDFs (3), Windows cursor/window style (4), live firmware (1), presentation corpus (1), local architecture ledgers absent (3)",
+          "history": "17,116 OK before the phase; a mid-phase run had 1 failure (new UnsupportedConditionTypeError had a bare pass body: fixed with a docstring); a run after the arc fix had 57 skips because pdf_renderer.cpp (user comment-only edit, mtime 22:10) made the ost_pdf binary stale: ost_pdf was rebuilt from current source and those 13 tests run again (44 skips)."
+        },
+        "other_checks": {
+          "tools/check_architecture.py": "No violations found",
+          "python -m compileall -q ost_visualizer tools tests": "exit 0",
+          "git diff --check": "exit 0",
+          "tests.architecture via unittest discover -s tests/architecture -t .": "121 OK, 3 skipped"
+        },
+        "native_rebuilds": {
+          "ost_linear_geom": "rebuilt twice (perp_slope fix by C1; arc fix by A1); artefact is git-ignored; other machines and CI must rebuild it from linear_geom.cpp; backups under %TEMP%\resolution_C1\backup and %TEMP%\resolution_A1\\oldpyd",
+          "ost_pdf": "rebuilt by B1 from current sources (behaviour unchanged: user comment-only edit to pdf_renderer.cpp); backup %TEMP%\resolution_B1\backup",
+          "ost_snap, ost_pdf_writer": "not stale, not rebuilt"
+        },
+        "arc_review": "RA1 Approved (9/9 points)",
+        "inventory": "tests/quality_inventory.json regenerated with tools/inventory_test_quality.py --discover and merged: 597 modules, 17610 defined tests (was 17134), discovery errors none, 54 modules rehashed, reconciliation_2026-11-06_resolution entry added; review statuses unchanged by the inventory refresh."
+      },
+      "module_status_note": "Only the 8 VAI downgrades were applied to module statuses in this update. The remaining wave-2 verifier outcomes in tests/_audit_progress/COORDINATOR_LOG.md (about 41 newly Verified modules, many Awaiting Verification) have NOT been consolidated into modules{}; module_counts therefore still understate wave-2 progress."
+    },
+    "removed_local_artifacts": {
+      "date": "2026-11-06",
+      "by": "owner",
+      "items": [
+        "base_ai.json.cov",
+        "base_tk.json.cov",
+        "_audit_snapshots/",
+        "tests/_audit_backup_2026-11-05/"
+      ],
+      "note": "Deleted by the owner and moved to the Recycle Bin (recoverable from there). They were never under git. No agent removed them."
+    }
   }
 }

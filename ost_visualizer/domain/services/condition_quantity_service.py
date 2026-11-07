@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 from ..entities.condition import Condition
@@ -8,7 +9,10 @@ from .uom_service import (
     UOM_CUBIC_YARDS,
     UOM_EACH,
     calculate_condition_quantities,
+    is_supported_condition_type,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def compute_takeoff_cubic_yards(
@@ -65,6 +69,15 @@ def compute_page_quantities(
     for cond_uid, cond_takeoffs in by_condition.items():
         condition = conditions.get(cond_uid)
         if not condition:
+            continue
+        if not is_supported_condition_type(condition.condition_type):
+            logger.warning(
+                "Skipping quantities for condition %s (%r): unsupported condition type %s",
+                cond_uid,
+                condition.name,
+                condition.condition_type,
+            )
+            result[cond_uid] = (0.0, 0.0, 0.0)
             continue
         total_q1 = 0.0
         total_q2 = 0.0

@@ -299,7 +299,14 @@ def _verifier_for(license_value):
     )
 
 
-def _aggregate(repository, license_value=None, machine=TEST_HWID, verifier=True, logger=None, **kwargs):
+def _aggregate(
+    repository,
+    license_value=None,
+    machine=TEST_HWID,
+    verifier=True,
+    logger=None,
+    **kwargs
+):
     if verifier is True:
         verifier = _verifier_for(license_value or _valid_license())
     return LicenseAggregate(
@@ -325,7 +332,9 @@ class LicenseAggregateLoadAndCacheTests(_LicenseClockFixture):
         aggregate = _aggregate(repository, logger=logger)
         self.assertFalse(aggregate.has_license())
         self.assertEqual(repository.clears, 1)
-        self.assertEqual(logger.records, [("error", "not json; clearing license cache")])
+        self.assertEqual(
+            logger.records, [("error", "not json; clearing license cache")]
+        )
 
     def test_an_unreadable_cache_is_logged_but_not_cleared(self):
         logger = _CapturingLogger()
@@ -333,20 +342,39 @@ class LicenseAggregateLoadAndCacheTests(_LicenseClockFixture):
         aggregate = _aggregate(repository, logger=logger)
         self.assertFalse(aggregate.has_license())
         self.assertEqual(repository.clears, 0)
-        self.assertEqual(logger.records, [("error", "Error reading license cache: locked")])
-
-    def test_clearing_a_corrupt_cache_tolerates_a_missing_file_and_reports_other_failures(self):
-        logger = _CapturingLogger()
-        _aggregate(_ScriptedRepository(load_error=ValueError("bad"), clear_error=FileNotFoundError()), logger=logger)
-        self.assertEqual(logger.records, [("error", "bad; clearing license cache")])
-        logger = _CapturingLogger()
-        _aggregate(_ScriptedRepository(load_error=ValueError("bad"), clear_error=OSError("busy")), logger=logger)
         self.assertEqual(
-            logger.records,
-            [("error", "bad; clearing license cache"), ("warning", "Unable to clear license cache: busy")],
+            logger.records, [("error", "Error reading license cache: locked")]
         )
 
-    def test_a_loaded_license_replaces_the_previous_one_and_reload_follows_the_repository(self):
+    def test_clearing_a_corrupt_cache_tolerates_a_missing_file_and_reports_other_failures(
+        self,
+    ):
+        logger = _CapturingLogger()
+        _aggregate(
+            _ScriptedRepository(
+                load_error=ValueError("bad"), clear_error=FileNotFoundError()
+            ),
+            logger=logger,
+        )
+        self.assertEqual(logger.records, [("error", "bad; clearing license cache")])
+        logger = _CapturingLogger()
+        _aggregate(
+            _ScriptedRepository(
+                load_error=ValueError("bad"), clear_error=OSError("busy")
+            ),
+            logger=logger,
+        )
+        self.assertEqual(
+            logger.records,
+            [
+                ("error", "bad; clearing license cache"),
+                ("warning", "Unable to clear license cache: busy"),
+            ],
+        )
+
+    def test_a_loaded_license_replaces_the_previous_one_and_reload_follows_the_repository(
+        self,
+    ):
         first = _valid_license(license_key="A")
         repository = _ScriptedRepository(first)
         aggregate = _aggregate(repository)
@@ -390,7 +418,14 @@ class LicenseAggregateLoadAndCacheTests(_LicenseClockFixture):
                 aggregate.hwid_version,
                 aggregate.last_validated,
             ),
-            (cached.license_key, cached.expiry_date, "signed", TEST_HWID, HWID_VERSION, NOW),
+            (
+                cached.license_key,
+                cached.expiry_date,
+                "signed",
+                TEST_HWID,
+                HWID_VERSION,
+                NOW,
+            ),
         )
         self.assertEqual(aggregate.offline_grace_hours, 72)
         self.assertIs(aggregate.is_expired(), False)
@@ -405,18 +440,25 @@ class LicenseAggregateValidationOrderTests(_LicenseClockFixture):
     def test_each_failure_is_reported_in_priority_order(self):
         cached = _valid_license()
         self.assertEqual(self.validate(None)[0], LicenseValidationResult.NO_LICENSE)
-        self.assertEqual(self.validate(_valid_license(license_key=""))[0], LicenseValidationResult.NO_LICENSE)
         self.assertEqual(
-            self.validate(_valid_license(hwid_version="v0"))[0], LicenseValidationResult.HWID_VERSION_MISMATCH
+            self.validate(_valid_license(license_key=""))[0],
+            LicenseValidationResult.NO_LICENSE,
         )
         self.assertEqual(
-            self.validate(_valid_license(hwid="short"))[0], LicenseValidationResult.HWID_VERSION_MISMATCH
+            self.validate(_valid_license(hwid_version="v0"))[0],
+            LicenseValidationResult.HWID_VERSION_MISMATCH,
         )
         self.assertEqual(
-            self.validate(_valid_license(hwid=""))[0], LicenseValidationResult.HWID_VERSION_MISMATCH
+            self.validate(_valid_license(hwid="short"))[0],
+            LicenseValidationResult.HWID_VERSION_MISMATCH,
         )
         self.assertEqual(
-            self.validate(_valid_license(expiry_date=NOW - timedelta(seconds=1)))[0], LicenseValidationResult.EXPIRED
+            self.validate(_valid_license(hwid=""))[0],
+            LicenseValidationResult.HWID_VERSION_MISMATCH,
+        )
+        self.assertEqual(
+            self.validate(_valid_license(expiry_date=NOW - timedelta(seconds=1)))[0],
+            LicenseValidationResult.EXPIRED,
         )
         # Expired outranks a bad signature; a bad signature outranks a foreign machine.
         both = _valid_license(expiry_date=NOW - timedelta(days=1), signature="bad")
@@ -425,10 +467,15 @@ class LicenseAggregateValidationOrderTests(_LicenseClockFixture):
             self.validate(_valid_license(signature="bad"), machine="v1:" + "B" * 64)[0],
             LicenseValidationResult.SIGNATURE_INVALID,
         )
-        self.assertEqual(self.validate(cached, machine="v1:" + "B" * 64)[0], LicenseValidationResult.HWID_MISMATCH)
+        self.assertEqual(
+            self.validate(cached, machine="v1:" + "B" * 64)[0],
+            LicenseValidationResult.HWID_MISMATCH,
+        )
         self.assertEqual(self.validate(cached)[0], LicenseValidationResult.VALID)
 
-    def test_validation_stops_before_verifying_or_asking_the_machine_when_earlier_checks_fail(self):
+    def test_validation_stops_before_verifying_or_asking_the_machine_when_earlier_checks_fail(
+        self,
+    ):
         calls = []
         verifier = SignatureVerifier({})
         aggregate = _aggregate(
@@ -441,21 +488,34 @@ class LicenseAggregateValidationOrderTests(_LicenseClockFixture):
 
     def test_without_a_signature_verifier_a_cached_license_is_never_valid(self):
         logger = _CapturingLogger()
-        aggregate = _aggregate(_ScriptedRepository(_valid_license()), verifier=None, logger=logger)
-        self.assertEqual(aggregate.validate(), LicenseValidationResult.SIGNATURE_INVALID)
+        aggregate = _aggregate(
+            _ScriptedRepository(_valid_license()), verifier=None, logger=logger
+        )
+        self.assertEqual(
+            aggregate.validate(), LicenseValidationResult.SIGNATURE_INVALID
+        )
         self.assertFalse(aggregate.has_valid_license())
         self.assertFalse(aggregate.can_use_offline_grace())
         self.assertEqual(
-            {message for _, message in logger.records}, {"No license signature verifier configured"}
+            {message for _, message in logger.records},
+            {"No license signature verifier configured"},
         )
         self.assertEqual({level for level, _ in logger.records}, {"warning"})
 
     def test_the_machine_hwid_must_be_the_same_canonical_value(self):
-        for stored, machine in (("v1:" + "a" * 64, "v1:" + "a" * 64), ("v1:" + "A" * 63, "v1:" + "A" * 63)):
+        # (name kept for ledger stability) Despite the name this pins that a CACHED
+        # hwid that is not canonical (lower-case digits or a wrong length) is a
+        # HWID_VERSION_MISMATCH even when the machine reports the very same text.
+        for stored, machine in (
+            ("v1:" + "a" * 64, "v1:" + "a" * 64),
+            ("v1:" + "A" * 63, "v1:" + "A" * 63),
+        ):
             cached = _valid_license(hwid=stored)
             aggregate = _aggregate(_ScriptedRepository(cached), cached, machine)
             with self.subTest(stored=stored):
-                self.assertEqual(aggregate.validate(), LicenseValidationResult.HWID_VERSION_MISMATCH)
+                self.assertEqual(
+                    aggregate.validate(), LicenseValidationResult.HWID_VERSION_MISMATCH
+                )
         self.assertEqual(
             _aggregate(_ScriptedRepository(_valid_license())).has_valid_license(), True
         )
@@ -463,13 +523,20 @@ class LicenseAggregateValidationOrderTests(_LicenseClockFixture):
     def test_the_signature_payload_uses_empty_strings_for_missing_fields(self):
         aggregate = _aggregate(_ScriptedRepository(None))
         self.assertEqual(
-            aggregate.get_signature_payload(), {"license_key": "", "expiry_date": "", "hwid": ""}
+            aggregate.get_signature_payload(),
+            {"license_key": "", "expiry_date": "", "hwid": ""},
         )
         cached = _valid_license()
-        payload = _aggregate(_ScriptedRepository(cached), cached).get_signature_payload()
+        payload = _aggregate(
+            _ScriptedRepository(cached), cached
+        ).get_signature_payload()
         self.assertEqual(
             payload,
-            {"license_key": "LIC-1", "expiry_date": cached.signed_expiry_date, "hwid": TEST_HWID},
+            {
+                "license_key": "LIC-1",
+                "expiry_date": cached.signed_expiry_date,
+                "hwid": TEST_HWID,
+            },
         )
 
 
@@ -489,9 +556,13 @@ class LicenseAggregateOfflineGraceTests(_LicenseClockFixture):
         self.assertIs(self.grace(expiry_date=NOW - timedelta(seconds=1)), False)
         self.assertIs(self.grace(last_validated=None), False)
         cached = _valid_license()
-        mismatch = _aggregate(_ScriptedRepository(cached), cached, machine="v1:" + "B" * 64)
+        mismatch = _aggregate(
+            _ScriptedRepository(cached), cached, machine="v1:" + "B" * 64
+        )
         self.assertIs(mismatch.can_use_offline_grace(), False)
-        invalid_signature = _aggregate(_ScriptedRepository(_valid_license(signature="bad")), cached)
+        invalid_signature = _aggregate(
+            _ScriptedRepository(_valid_license(signature="bad")), cached
+        )
         self.assertIs(invalid_signature.can_use_offline_grace(), False)
 
     def test_naive_and_foreign_timezone_timestamps_are_compared_as_utc(self):
@@ -502,23 +573,30 @@ class LicenseAggregateOfflineGraceTests(_LicenseClockFixture):
         self.assertIs(self.grace(last_validated=local), True)
         too_old = (NOW - timedelta(hours=73)).astimezone(east)
         self.assertIs(self.grace(last_validated=too_old), False)
-        wrong_if_naive_local = (NOW + timedelta(hours=1)).astimezone(east).replace(tzinfo=None)
+        wrong_if_naive_local = (
+            (NOW + timedelta(hours=1)).astimezone(east).replace(tzinfo=None)
+        )
         self.assertIs(self.grace(last_validated=wrong_if_naive_local), False)
 
     def test_the_grace_window_follows_the_configured_hours(self):
         cached = _valid_license(last_validated=NOW - timedelta(hours=5))
         for hours, expected in ((4, False), (5, True), (6, True), (0, False)):
-            aggregate = _aggregate(_ScriptedRepository(cached), cached, offline_grace_hours=hours)
+            aggregate = _aggregate(
+                _ScriptedRepository(cached), cached, offline_grace_hours=hours
+            )
             with self.subTest(hours=hours):
                 self.assertIs(aggregate.can_use_offline_grace(), expected)
 
     def test_normalizing_datetimes(self):
         normalize = LicenseAggregate._normalize_datetime
         self.assertIsNone(normalize(None))
-        self.assertEqual(normalize(datetime(2026, 1, 1)), datetime(2026, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual(
+            normalize(datetime(2026, 1, 1)), datetime(2026, 1, 1, tzinfo=timezone.utc)
+        )
         east = timezone(timedelta(hours=2))
         self.assertEqual(
-            normalize(datetime(2026, 1, 1, 12, tzinfo=east)), datetime(2026, 1, 1, 10, tzinfo=timezone.utc)
+            normalize(datetime(2026, 1, 1, 12, tzinfo=east)),
+            datetime(2026, 1, 1, 10, tzinfo=timezone.utc),
         )
 
 
@@ -547,7 +625,9 @@ class LicenseAggregateUpdateTests(_LicenseClockFixture):
     def test_a_valid_update_is_saved_reloaded_and_stamped_with_the_current_time(self):
         values = self.new_values()
         repository = _ScriptedRepository()
-        aggregate = _aggregate(repository, machine=TEST_HWID, verifier=self.verifier(values))
+        aggregate = _aggregate(
+            repository, machine=TEST_HWID, verifier=self.verifier(values)
+        )
         aggregate.update(**values)
         self.assertEqual(aggregate.license_key, "LIC-NEW")
         self.assertEqual(aggregate.last_validated, NOW)
@@ -568,7 +648,16 @@ class LicenseAggregateUpdateTests(_LicenseClockFixture):
         self.assertTrue(aggregate.has_valid_license())
 
     def test_non_canonical_hwid_or_version_is_rejected_before_anything_changes(self):
-        for changes in (dict(hwid="short"), dict(hwid_version="v0"), dict(hwid=TEST_HWID.lower()), dict(hwid_version="")):
+        # Versions on both sides of "v1" ("v0" < "v1" < "v2" < "x") pin that the
+        # check is an exact match, not an ordering comparison.
+        for changes in (
+            dict(hwid="short"),
+            dict(hwid_version="v0"),
+            dict(hwid_version="v2"),
+            dict(hwid_version="x"),
+            dict(hwid=TEST_HWID.lower()),
+            dict(hwid_version=""),
+        ):
             values = self.new_values(**changes)
             previous = _valid_license(license_key="OLD")
             repository = _ScriptedRepository(previous)
@@ -576,11 +665,16 @@ class LicenseAggregateUpdateTests(_LicenseClockFixture):
             with self.subTest(changes=changes):
                 with self.assertRaises(ValueError) as raised:
                     aggregate.update(**values)
-                self.assertEqual(str(raised.exception), "License update does not contain a canonical HWID")
+                self.assertEqual(
+                    str(raised.exception),
+                    "License update does not contain a canonical HWID",
+                )
                 self.assertEqual(aggregate.license_key, "OLD")
                 self.assertEqual(repository.saves, [])
 
-    def test_a_cache_that_fails_validation_after_saving_is_rolled_back_and_the_previous_cache_restored(self):
+    def test_a_cache_that_fails_validation_after_saving_is_rolled_back_and_the_previous_cache_restored(
+        self,
+    ):
         values = self.new_values()
         previous = _valid_license(license_key="OLD")
         repository = _ScriptedRepository(previous)
@@ -588,27 +682,38 @@ class LicenseAggregateUpdateTests(_LicenseClockFixture):
         aggregate = _aggregate(repository, machine=TEST_HWID, verifier=wrong_verifier)
         with self.assertRaises(ValueError) as raised:
             aggregate.update(**values)
-        self.assertEqual(str(raised.exception), "Saved license cache failed validation: signature_invalid")
+        self.assertEqual(
+            str(raised.exception),
+            "Saved license cache failed validation: signature_invalid",
+        )
         self.assertEqual(aggregate.license_key, "OLD")
         self.assertEqual(repository.value, previous)
-        self.assertEqual([saved.license_key for saved in repository.saves], ["LIC-NEW", "OLD"])
+        self.assertEqual(
+            [saved.license_key for saved in repository.saves], ["LIC-NEW", "OLD"]
+        )
 
     def test_a_failed_first_activation_clears_the_cache_it_wrote(self):
         values = self.new_values()
         repository = _ScriptedRepository()
-        aggregate = _aggregate(repository, machine=TEST_HWID, verifier=SignatureVerifier({}))
+        aggregate = _aggregate(
+            repository, machine=TEST_HWID, verifier=SignatureVerifier({})
+        )
         with self.assertRaises(ValueError):
             aggregate.update(**values)
         self.assertFalse(aggregate.has_license())
         self.assertEqual(repository.clears, 1)
         self.assertIsNone(repository.value)
 
-    def test_a_save_failure_reraises_restores_the_previous_license_and_logs_a_failed_restore(self):
+    def test_a_save_failure_reraises_restores_the_previous_license_and_logs_a_failed_restore(
+        self,
+    ):
         values = self.new_values()
         previous = _valid_license(license_key="OLD")
         logger = _CapturingLogger()
         repository = _ScriptedRepository(previous, save_error=OSError("disk full"))
-        aggregate = _aggregate(repository, machine=TEST_HWID, verifier=self.verifier(values), logger=logger)
+        aggregate = _aggregate(
+            repository, machine=TEST_HWID, verifier=self.verifier(values), logger=logger
+        )
         with self.assertRaises(OSError):
             aggregate.update(**values)
         self.assertEqual(aggregate.license_key, "OLD")
@@ -626,41 +731,80 @@ class LicenseAggregateUpdateTests(_LicenseClockFixture):
     def test_a_failed_restore_of_an_empty_previous_state_is_also_reported(self):
         values = self.new_values()
         logger = _CapturingLogger()
-        repository = _ScriptedRepository(save_error=OSError("disk full"), clear_error=OSError("busy"))
-        aggregate = _aggregate(repository, machine=TEST_HWID, verifier=self.verifier(values), logger=logger)
+        repository = _ScriptedRepository(
+            save_error=OSError("disk full"), clear_error=OSError("busy")
+        )
+        aggregate = _aggregate(
+            repository, machine=TEST_HWID, verifier=self.verifier(values), logger=logger
+        )
         with self.assertRaises(OSError):
             aggregate.update(**values)
         self.assertFalse(aggregate.has_license())
         self.assertIn(
-            ("warning", "Unable to restore previous license cache after failed update: busy"), logger.records
+            (
+                "warning",
+                "Unable to restore previous license cache after failed update: busy",
+            ),
+            logger.records,
         )
 
 
 class LicenseAggregateHwidAndSignatureHelperTests(_LicenseClockFixture):
-    def test_ensure_hwid_returns_the_machine_hwid_and_pins_it_when_nothing_is_cached(self):
+    def test_ensure_hwid_returns_the_machine_hwid_and_pins_it_when_nothing_is_cached(
+        self,
+    ):
         aggregate = _aggregate(_ScriptedRepository(None))
         self.assertEqual(aggregate.ensure_hwid(), TEST_HWID)
-        self.assertEqual((aggregate.hwid, aggregate.hwid_version), (TEST_HWID, HWID_VERSION))
+        self.assertEqual(
+            (aggregate.hwid, aggregate.hwid_version), (TEST_HWID, HWID_VERSION)
+        )
 
-    def test_ensure_hwid_accepts_a_matching_cached_hwid_and_rejects_a_different_machine(self):
+    def test_a_different_machine_hwid_is_a_mismatch_whether_it_sorts_before_or_after_the_cached_one(
+        self,
+    ):
+        low = "v1:" + "A" * 64
+        high = "v1:" + "C" * 64
+        for cached_hwid, machine in ((low, high), (high, low)):
+            cached = _valid_license(hwid=cached_hwid)
+            aggregate = _aggregate(_ScriptedRepository(cached), cached, machine=machine)
+            with self.subTest(cached=cached_hwid[3:5], machine=machine[3:5]):
+                self.assertEqual(
+                    aggregate.validate(), LicenseValidationResult.HWID_MISMATCH
+                )
+                self.assertIs(aggregate.can_use_offline_grace(), False)
+                with self.assertRaises(HardwareIdentityError):
+                    aggregate.ensure_hwid()
+                self.assertEqual(aggregate.hwid, cached_hwid)
+
+    def test_ensure_hwid_accepts_a_matching_cached_hwid_and_rejects_a_different_machine(
+        self,
+    ):
         cached = _valid_license()
-        self.assertEqual(_aggregate(_ScriptedRepository(cached), cached).ensure_hwid(), TEST_HWID)
+        self.assertEqual(
+            _aggregate(_ScriptedRepository(cached), cached).ensure_hwid(), TEST_HWID
+        )
         other = "v1:" + "C" * 64
         aggregate = _aggregate(_ScriptedRepository(cached), cached, machine=other)
         with self.assertRaises(HardwareIdentityError) as raised:
             aggregate.ensure_hwid()
-        self.assertEqual(str(raised.exception), "The machine HWID does not match the cached license")
+        self.assertEqual(
+            str(raised.exception), "The machine HWID does not match the cached license"
+        )
         self.assertEqual(aggregate.hwid, TEST_HWID)
 
     def test_a_non_canonical_cached_hwid_is_replaced_by_the_machine_hwid(self):
         cached = _valid_license(hwid="legacy", hwid_version="legacy")
         aggregate = _aggregate(_ScriptedRepository(cached), cached)
         self.assertEqual(aggregate.ensure_hwid(), TEST_HWID)
-        self.assertEqual((aggregate.hwid, aggregate.hwid_version), (TEST_HWID, HWID_VERSION))
+        self.assertEqual(
+            (aggregate.hwid, aggregate.hwid_version), (TEST_HWID, HWID_VERSION)
+        )
 
     def test_an_invalid_provider_value_is_refused_with_a_clear_message(self):
         for bad in ("", "v1:abc", "V1:" + "A" * 64):
-            aggregate = _aggregate(_ScriptedRepository(None), machine=lambda bad=bad: bad)
+            aggregate = _aggregate(
+                _ScriptedRepository(None), machine=lambda bad=bad: bad
+            )
             for method in (aggregate.require_canonical_hwid, aggregate.ensure_hwid):
                 with self.subTest(bad=bad, method=method.__name__):
                     with self.assertRaises(HardwareIdentityError) as raised:
@@ -670,17 +814,34 @@ class LicenseAggregateHwidAndSignatureHelperTests(_LicenseClockFixture):
                         "The hardware identity provider returned an invalid HWID",
                     )
 
-    def test_a_provider_returning_none_currently_leaks_a_type_error(self):
-        # Documented owner decision (V7 side finding): is_canonical_hwid(None) calls
-        # re.fullmatch(None) and raises TypeError instead of HardwareIdentityError,
-        # so a provider that returns None is NOT reported with the clear message.
-        # If production is changed to raise HardwareIdentityError, update this test
-        # to expect the message asserted above.
+    def test_a_provider_returning_none_is_refused_with_the_clear_message(self):
+        # is_canonical_hwid is a total boolean predicate (R4 resolution): None and
+        # other non-strings are non-canonical instead of leaking re's TypeError.
         aggregate = _aggregate(_ScriptedRepository(None), machine=lambda: None)
         for method in (aggregate.require_canonical_hwid, aggregate.ensure_hwid):
             with self.subTest(method=method.__name__):
-                with self.assertRaises(TypeError):
+                with self.assertRaises(HardwareIdentityError) as raised:
                     method()
+                self.assertEqual(
+                    str(raised.exception),
+                    "The hardware identity provider returned an invalid HWID",
+                )
+
+    def test_a_cached_license_with_a_non_string_hwid_is_not_valid_instead_of_raising(
+        self,
+    ):
+        # License.from_dict does not type-check "hwid", so a corrupt cache can hold a
+        # truthy non-string (e.g. an int); validation must classify it, not crash.
+        for bad in (12345, ["x"], {"a": 1}):
+            with self.subTest(bad=bad):
+                cached = _valid_license(hwid=bad)
+                aggregate = _aggregate(_ScriptedRepository(cached), cached)
+                self.assertEqual(
+                    aggregate.validate(),
+                    LicenseValidationResult.HWID_VERSION_MISMATCH,
+                )
+                self.assertFalse(aggregate.can_use_offline_grace())
+                self.assertFalse(aggregate.has_valid_license())
 
     def test_response_signatures_need_a_canonical_hwid_and_a_verifier(self):
         cached = _valid_license()
@@ -688,16 +849,36 @@ class LicenseAggregateHwidAndSignatureHelperTests(_LicenseClockFixture):
             {"license_key": "LIC-1", "expiry_date": "2099-01-01", "hwid": TEST_HWID}
         )
         aggregate = _aggregate(_ScriptedRepository(None), verifier=verifier)
-        self.assertTrue(aggregate.verify_response_signature("LIC-1", "2099-01-01", TEST_HWID, "signed"))
-        self.assertFalse(aggregate.verify_response_signature("LIC-1", "2099-01-01", TEST_HWID, "forged"))
-        self.assertFalse(aggregate.verify_response_signature("LIC-2", "2099-01-01", TEST_HWID, "signed"))
+        self.assertTrue(
+            aggregate.verify_response_signature(
+                "LIC-1", "2099-01-01", TEST_HWID, "signed"
+            )
+        )
+        self.assertFalse(
+            aggregate.verify_response_signature(
+                "LIC-1", "2099-01-01", TEST_HWID, "forged"
+            )
+        )
+        self.assertFalse(
+            aggregate.verify_response_signature(
+                "LIC-2", "2099-01-01", TEST_HWID, "signed"
+            )
+        )
         calls = len(verifier.payloads)
-        self.assertFalse(aggregate.verify_response_signature("LIC-1", "2099-01-01", "short", "signed"))
+        self.assertFalse(
+            aggregate.verify_response_signature(
+                "LIC-1", "2099-01-01", "short", "signed"
+            )
+        )
         self.assertEqual(len(verifier.payloads), calls)
         logger = _CapturingLogger()
         bare = _aggregate(_ScriptedRepository(None), verifier=None, logger=logger)
-        self.assertFalse(bare.verify_response_signature("LIC-1", "2099-01-01", TEST_HWID, "signed"))
-        self.assertEqual(logger.records, [("warning", "No license signature verifier configured")])
+        self.assertFalse(
+            bare.verify_response_signature("LIC-1", "2099-01-01", TEST_HWID, "signed")
+        )
+        self.assertEqual(
+            logger.records, [("warning", "No license signature verifier configured")]
+        )
 
     def test_clear_if_invalid_clears_only_for_hwid_failures(self):
         cached = _valid_license()
@@ -716,17 +897,30 @@ class LicenseAggregateHwidAndSignatureHelperTests(_LicenseClockFixture):
                 self.assertEqual(aggregate.has_license(), not cleared)
                 self.assertEqual(repository.clears, 1 if cleared else 0)
                 self.assertEqual(
-                    [r for r in logger.records if r[0] == "warning" and "Canonical HWID" in r[1]],
-                    [("warning", "Canonical HWID validation failed. Clearing invalid cached license.")]
-                    if cleared
-                    else [],
+                    [
+                        r
+                        for r in logger.records
+                        if r[0] == "warning" and "Canonical HWID" in r[1]
+                    ],
+                    (
+                        [
+                            (
+                                "warning",
+                                "Canonical HWID validation failed. Clearing invalid cached license.",
+                            )
+                        ]
+                        if cleared
+                        else []
+                    ),
                 )
         none = _aggregate(_ScriptedRepository(None))
         self.assertIs(none.clear_if_invalid(), False)
 
 
 class LicenseAggregateReloadAndPersistenceTests(_LicenseClockFixture):
-    def test_reloading_after_the_cache_becomes_corrupt_or_unreadable_drops_the_old_license(self):
+    def test_reloading_after_the_cache_becomes_corrupt_or_unreadable_drops_the_old_license(
+        self,
+    ):
         for error in (ValueError("corrupt"), OSError("locked"), FileNotFoundError()):
             with self.subTest(error=type(error).__name__):
                 repository = _ScriptedRepository(_valid_license())
@@ -740,7 +934,12 @@ class LicenseAggregateReloadAndPersistenceTests(_LicenseClockFixture):
         class RoundingRepository(_ScriptedRepository):
             def load(self):
                 loaded = super().load()
-                return replace(loaded, last_validated=loaded.last_validated.replace(microsecond=0, second=0))
+                return replace(
+                    loaded,
+                    last_validated=loaded.last_validated.replace(
+                        microsecond=0, second=0
+                    ),
+                )
 
         values = dict(
             license_key="LIC-NEW",
@@ -751,17 +950,29 @@ class LicenseAggregateReloadAndPersistenceTests(_LicenseClockFixture):
             signed_expiry_date=(NOW + timedelta(days=30)).isoformat(),
         )
         verifier = SignatureVerifier(
-            {"license_key": "LIC-NEW", "expiry_date": values["signed_expiry_date"], "hwid": TEST_HWID}
+            {
+                "license_key": "LIC-NEW",
+                "expiry_date": values["signed_expiry_date"],
+                "hwid": TEST_HWID,
+            }
         )
         later = NOW.replace(second=30)
 
         class LaterDatetime(FixedDatetime):
             @classmethod
             def now(cls, tz=None):
-                return later.astimezone(tz) if tz is not None else later.replace(tzinfo=None)
+                return (
+                    later.astimezone(tz)
+                    if tz is not None
+                    else later.replace(tzinfo=None)
+                )
 
-        with patch("ost_visualizer.domain.aggregates.license_aggregate.datetime", LaterDatetime):
-            aggregate = _aggregate(RoundingRepository(), machine=TEST_HWID, verifier=verifier)
+        with patch(
+            "ost_visualizer.domain.aggregates.license_aggregate.datetime", LaterDatetime
+        ):
+            aggregate = _aggregate(
+                RoundingRepository(), machine=TEST_HWID, verifier=verifier
+            )
             aggregate.update(**values)
         self.assertEqual(aggregate.last_validated, later.replace(second=0))
 
@@ -770,15 +981,21 @@ class LicenseAggregateReloadAndPersistenceTests(_LicenseClockFixture):
             cached = _valid_license(hwid=hwid)
             aggregate = _aggregate(_ScriptedRepository(cached), cached)
             with self.subTest(hwid=hwid):
-                self.assertEqual(aggregate.validate(), LicenseValidationResult.HWID_VERSION_MISMATCH)
+                self.assertEqual(
+                    aggregate.validate(), LicenseValidationResult.HWID_VERSION_MISMATCH
+                )
                 self.assertIs(aggregate.can_use_offline_grace(), False)
 
     def test_negative_results_are_real_booleans(self):
         bare = _aggregate(_ScriptedRepository(_valid_license()), verifier=None)
         self.assertIs(bare.has_valid_cached_signature(), False)
-        self.assertIs(bare.verify_response_signature("LIC-1", "x", TEST_HWID, "signed"), False)
+        self.assertIs(
+            bare.verify_response_signature("LIC-1", "x", TEST_HWID, "signed"), False
+        )
         aggregate = _aggregate(_ScriptedRepository(_valid_license()))
-        self.assertIs(aggregate.verify_response_signature("LIC-1", "x", "short", "signed"), False)
+        self.assertIs(
+            aggregate.verify_response_signature("LIC-1", "x", "short", "signed"), False
+        )
         self.assertIs(aggregate.has_valid_license(), True)
         self.assertIs(_aggregate(_ScriptedRepository(None)).has_valid_license(), False)
         self.assertIs(_aggregate(_ScriptedRepository(None)).has_license(), False)

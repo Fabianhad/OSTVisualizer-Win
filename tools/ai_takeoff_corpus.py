@@ -205,8 +205,9 @@ def sheet_number(lines: Sequence[TextLine], width: float, height: float) -> str:
 def _fraction_value(whole, numerator, denominator, decimal) -> Optional[float]:
     if decimal is not None:
         return float(decimal)
-    value = float(numerator) / float(denominator) if float(denominator) else 0.0
-    return value + (float(whole) if whole else 0.0)
+    if not float(denominator):
+        return None
+    return float(numerator) / float(denominator) + (float(whole) if whole else 0.0)
 
 
 def parse_scales(text: str) -> List[ScaleHit]:
@@ -658,7 +659,9 @@ def run(
         pdf_rows = []
         measured = None
         if max_plan_pages is not None:
-            plans = [int(hint["index"]) for hint in hints if hint.get("kind") == KIND_PLAN]
+            plans = [
+                int(hint["index"]) for hint in hints if hint.get("kind") == KIND_PLAN
+            ]
             measured = set(spread(plans, max_plan_pages))
             measured |= {page - 1 for rel, page in seeds if rel == item["rel"]}
         for page in bid["pages"]:
@@ -827,10 +830,16 @@ def _slow(row: dict) -> bool:
     )
 
 
-def _pentest_sections(rows: Sequence[dict], ids: Dict[str, str], project_ids: Dict[str, str]) -> List[str]:
+def _pentest_sections(
+    rows: Sequence[dict], ids: Dict[str, str], project_ids: Dict[str, str]
+) -> List[str]:
     ok = [row for row in rows if row.get("status") == "ok"]
     plans = [row for row in ok if row.get("kind") == KIND_PLAN]
-    profiled = [row for row in plans if row.get("suggestion_removes_dominant") in ("True", "False")]
+    profiled = [
+        row
+        for row in plans
+        if row.get("suggestion_removes_dominant") in ("True", "False")
+    ]
     seeded = _seeded(plans, "default")
     lines = [
         "",
@@ -867,7 +876,10 @@ def _pentest_sections(rows: Sequence[dict], ids: Dict[str, str], project_ids: Di
             f"{_median([_number(r.get(f'{prefix}_box_ratio')) for r in found])} |"
         )
     outlined = [
-        row for row in ok if (_number(row.get("text_runs")) or 0) == 0 and (_number(row.get("segments")) or 0) > 0
+        row
+        for row in ok
+        if (_number(row.get("text_runs")) or 0) == 0
+        and (_number(row.get("segments")) or 0) > 0
     ]
     outlined_ids = {id(row) for row in outlined}
     lines += [
@@ -892,11 +904,19 @@ def _pentest_sections(rows: Sequence[dict], ids: Dict[str, str], project_ids: Di
                 f"| {prefix} | {percentile(values, .5):.2f} | {percentile(values, .9):.2f} | {max(values):.2f} | "
                 f"{sum(1 for v in values if v > PROXY_TIMEOUT_S / 2.0)} | {sum(1 for v in values if v > PROXY_TIMEOUT_S)} |"
             )
-    proposals = Counter(row["proposal_status"] for row in plans if row.get("proposal_status"))
+    proposals = Counter(
+        row["proposal_status"] for row in plans if row.get("proposal_status")
+    )
     subjects: Counter = Counter()
     for row in plans:
         subjects.update(json.loads(row.get("proposal_subjects") or "{}"))
-    lines += ["", "## Proposal categories (auto-seeded rooms)", "", "| Status | Count |", "| --- | --- |"]
+    lines += [
+        "",
+        "## Proposal categories (auto-seeded rooms)",
+        "",
+        "| Status | Count |",
+        "| --- | --- |",
+    ]
     lines += [f"| {status} | {count} |" for status, count in proposals.most_common()]
     lines += ["", "| Assumption subject | Count |", "| --- | --- |"]
     lines += [f"| {subject} | {count} |" for subject, count in subjects.most_common()]
@@ -911,8 +931,14 @@ def _pentest_sections(rows: Sequence[dict], ids: Dict[str, str], project_ids: Di
     for row in rows:
         by_project[project_ids[_project(row["rel"])]].append(row)
     for project, members in sorted(by_project.items()):
-        project_plans = [r for r in members if r.get("status") == "ok" and r.get("kind") == KIND_PLAN]
-        widths = Counter(r.get("dominant_wall_width") for r in project_plans if r.get("dominant_wall_width"))
+        project_plans = [
+            r for r in members if r.get("status") == "ok" and r.get("kind") == KIND_PLAN
+        ]
+        widths = Counter(
+            r.get("dominant_wall_width")
+            for r in project_plans
+            if r.get("dominant_wall_width")
+        )
         dominant = widths.most_common(1)[0][0] if widths else "n/a"
         lines.append(
             f"| {project} | {len(members)} | {len(project_plans)} | {dominant} | "
@@ -922,16 +948,37 @@ def _pentest_sections(rows: Sequence[dict], ids: Dict[str, str], project_ids: Di
             f"{_rate([r for r in project_plans if r.get('proposal_status')], lambda r: r.get('proposal_status') != 'ok')} |"
         )
     fixes = [
-        ("Wall-width suggestion", [r for r in plans if _true(r, "default_wall_failure") or _true(r, "suggestion_removes_dominant")]),
+        (
+            "Wall-width suggestion",
+            [
+                r
+                for r in plans
+                if _true(r, "default_wall_failure")
+                or _true(r, "suggestion_removes_dominant")
+            ],
+        ),
         ("Leak guard coverage", [r for r in plans if _leak_missed(r)]),
-        ("Outlined-text fallback", outlined + [r for r in plans if _true(r, "callouts_as_lines")]),
+        (
+            "Outlined-text fallback",
+            outlined + [r for r in plans if _true(r, "callouts_as_lines")],
+        ),
         ("Extraction truncation", [r for r in ok if _true(r, "extraction_truncated")]),
-        ("Proposal failures", [r for r in plans if r.get("proposal_status") not in (None, "", "ok")]),
+        (
+            "Proposal failures",
+            [r for r in plans if r.get("proposal_status") not in (None, "", "ok")],
+        ),
         ("Seeded calls over half the proxy timeout", [r for r in plans if _slow(r)]),
-        ("Page crashes, hangs or errors", [r for r in rows if r.get("status") not in ("ok", "not_measured")]),
+        (
+            "Page crashes, hangs or errors",
+            [r for r in rows if r.get("status") not in ("ok", "not_measured")],
+        ),
     ]
     ranked = sorted(
-        ((name, members, index) for index, (name, members) in enumerate(fixes) if members),
+        (
+            (name, members, index)
+            for index, (name, members) in enumerate(fixes)
+            if members
+        ),
         key=lambda item: (-len(item[1]), item[2]),
     )
     lines += ["", "## Prioritized fix list", ""]
@@ -1053,11 +1100,19 @@ def _metrics(rows: Sequence[dict]) -> List[Tuple[str, str]]:
         ),
         (
             "Plan: seeded region found (default width)",
-            _rate(seeded, lambda r: _true(r, "default_found")) if seeded else "not measured",
+            (
+                _rate(seeded, lambda r: _true(r, "default_found"))
+                if seeded
+                else "not measured"
+            ),
         ),
         (
             "Plan: wall-filter failure (default width)",
-            _rate(seeded, lambda r: _true(r, "default_wall_failure")) if seeded else "not measured",
+            (
+                _rate(seeded, lambda r: _true(r, "default_wall_failure"))
+                if seeded
+                else "not measured"
+            ),
         ),
         (
             "Plan: leak not flagged (region touches the box or fills 80%)",

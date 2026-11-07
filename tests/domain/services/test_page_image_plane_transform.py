@@ -105,10 +105,14 @@ class PagePlaneEdgeTests(unittest.TestCase):
     def test_small_but_positive_pages_still_get_a_plane_with_exact_geometry(self):
         for transform in (native_page_plane_transform, threejs_page_plane_transform):
             for width, height in ((0.5, 0.25), (1.0, 1.0), (1e-9, 3.0), (3.0, 0.75)):
-                with self.subTest(transform=transform.__name__, width=width, height=height):
+                with self.subTest(
+                    transform=transform.__name__, width=width, height=height
+                ):
                     plane = transform(width, height, 0.0)
                     self.assertIsNotNone(plane)
-                    self.assertEqual((plane.plane_width, plane.plane_height), (width, height))
+                    self.assertEqual(
+                        (plane.plane_width, plane.plane_height), (width, height)
+                    )
                     self.assertEqual(plane.plane_x, -width / 2.0)
 
     def test_planes_are_frozen_and_floor_elevation_accepts_numeric_text(self):
@@ -131,7 +135,9 @@ class PagePlaneEdgeTests(unittest.TestCase):
             ),
             {"7": 4.5, "x": 0.0},
         )
-        self.assertEqual(resolve_page_floor_elevations([("a", [-1.0, 2.0])]), {"a": -1.0})
+        self.assertEqual(
+            resolve_page_floor_elevations([("a", [-1.0, 2.0])]), {"a": -1.0}
+        )
 
     def test_odd_page_dimensions_are_halved_exactly_not_floored(self):
         native = native_page_plane_transform(3.0, 5.0, 0.0)

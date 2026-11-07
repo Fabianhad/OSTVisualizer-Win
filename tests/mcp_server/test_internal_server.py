@@ -635,7 +635,11 @@ class OstMcpServerUnitTests(unittest.TestCase):
         for method, params, message in (
             ("tools/call", {"name": "TOOLX"}, "Unknown tool: TOOLX"),
             ("prompts/get", {"name": "PROMPTX"}, "Unknown prompt: PROMPTX"),
-            ("resources/read", {"uri": "ost://nowhereX"}, "Unknown resource: ost://nowhereX"),
+            (
+                "resources/read",
+                {"uri": "ost://nowhereX"},
+                "Unknown resource: ost://nowhereX",
+            ),
         ):
             with self.subTest(method=method):
                 self.assertEqual(
@@ -717,6 +721,4 @@ class OstMcpServerValueContractTests(unittest.TestCase):
                 "error": {"code": -32601, "message": "nope"},
             },
         )
-        self.assertEqual(
-            internal_server._error_response(None, -32700, "x")["id"], None
-        )
+        self.assertEqual(internal_server._error_response(None, -32700, "x")["id"], None)

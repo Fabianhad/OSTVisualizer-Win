@@ -434,6 +434,27 @@ def _calc_curve_segments(
     return max(6, min(64, base))
 
 
+_STRAIGHT_CHORD_EPSILON = 1e-9
+
+
+def _control_is_at_an_end(
+    x1: float, y1: float, x2: float, y2: float, cx: float, cy: float
+) -> bool:
+    nearest = min(math.hypot(cx - x1, cy - y1), math.hypot(cx - x2, cy - y2))
+    return nearest <= _STRAIGHT_CHORD_EPSILON * math.hypot(x2 - x1, y2 - y1)
+
+
+def _straight_chord_points(
+    x1: float, y1: float, x2: float, y2: float, segments: int
+) -> List[Tuple[float, float]]:
+    points = []
+    for i in range(segments + 1):
+        t = i / segments
+        u = 1.0 - t
+        points.append((u * x1 + t * x2, u * y1 + t * y2))
+    return points
+
+
 def _advanced_curve_points(
     x1: float,
     y1: float,
@@ -443,6 +464,8 @@ def _advanced_curve_points(
     cy: float,
     segments: int,
 ) -> List[Tuple[float, float]]:
+    if _control_is_at_an_end(x1, y1, x2, y2, cx, cy):
+        return _straight_chord_points(x1, y1, x2, y2, segments)
     mid1_x = (x1 + cx) * 0.5
     mid1_y = (y1 + cy) * 0.5
     mid2_x = (cx + x2) * 0.5
@@ -474,18 +497,13 @@ def _advanced_curve_points(
         if abs(radius1 - radius2) < 0.1 and abs(radius1 - radius_c) < 0.1:
             start_angle = math.atan2(y1 - center_y, x1 - center_x)
             end_angle = math.atan2(y2 - center_y, x2 - center_x)
-            cross1 = (x1 - center_x) * (cy - center_y) - (y1 - center_y) * (
-                cx - center_x
-            )
-            cross2 = (cx - center_x) * (y2 - center_y) - (cy - center_y) * (
-                x2 - center_x
-            )
-            clockwise = (cross1 + cross2) < 0.0
-            if clockwise and end_angle > start_angle:
-                end_angle -= 2.0 * math.pi
-            elif not clockwise and end_angle < start_angle:
-                end_angle += 2.0 * math.pi
-            angle_diff = end_angle - start_angle
+            control_angle = math.atan2(cy - center_y, cx - center_x)
+            ccw_to_end = (end_angle - start_angle) % (2.0 * math.pi)
+            ccw_to_control = (control_angle - start_angle) % (2.0 * math.pi)
+            if ccw_to_control <= ccw_to_end:
+                angle_diff = ccw_to_end
+            else:
+                angle_diff = ccw_to_end - 2.0 * math.pi
             return [
                 (
                     center_x
@@ -664,6 +682,22 @@ def _calc_slope_factor(rise: float, run: float, use_absolute: bool = False) -> f
     return 1.0
 
 
+SUPPORTED_CONDITION_TYPES = (
+    Condition.TYPE_LINEAR,
+    Condition.TYPE_AREA,
+    Condition.TYPE_COUNT,
+    Condition.TYPE_ATTACHMENT,
+)
+
+
+class UnsupportedConditionTypeError(ValueError):
+    """The condition type is not one of the supported takeoff condition types."""
+
+
+def is_supported_condition_type(condition_type: int) -> bool:
+    return condition_type in SUPPORTED_CONDITION_TYPES
+
+
 def calculate_condition_quantities(
     condition_type: int,
     calc_type1: int,
@@ -689,6 +723,10 @@ def calculate_condition_quantities(
     round_quantity: bool = False,
     round_up: float = 0.0,
 ) -> Tuple[float, float, float]:
+    if not is_supported_condition_type(condition_type):
+        raise UnsupportedConditionTypeError(
+            f"Unsupported condition type {condition_type}"
+        )
     pos = position or []
     slope = _calc_slope_factor(
         rise,

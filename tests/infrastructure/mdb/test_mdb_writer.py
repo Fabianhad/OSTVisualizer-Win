@@ -487,7 +487,9 @@ class MdbWriterPlanPreflightTests(unittest.TestCase):
             "CREATE TABLE Bids (UID INTEGER); INSERT INTO Bids VALUES (1);"
             "CREATE TABLE BidAnnotationRects (UID INTEGER); INSERT INTO BidAnnotationRects VALUES (30);"
         )
-        with self.assertRaisesRegex(RuntimeError, r"^Missing BidAnnotationRects\.BidUID$"):
+        with self.assertRaisesRegex(
+            RuntimeError, r"^Missing BidAnnotationRects\.BidUID$"
+        ):
             self.verify(ops, annotations=(("30", "rect"),))
 
 
@@ -774,9 +776,7 @@ class _SqliteWriteManager:
 class _SqliteWriterCase(unittest.TestCase):
     """Runs the production MdbWriter against a real sqlite database."""
 
-    def writer_for(
-        self, *ddl, commit_error=None, rollback_error=None, path=":memory:"
-    ):
+    def writer_for(self, *ddl, commit_error=None, rollback_error=None, path=":memory:"):
         database = sqlite3.connect(path)
         self.addCleanup(database.close)
         for statement in ddl:
@@ -1020,7 +1020,10 @@ class MdbWriterReassignmentPreflightTests(_SqliteWriterCase):
                     self.verify(ddl=ddl)
 
     def test_takeoffs_beyond_one_query_chunk_are_all_verified_in_bounded_queries(self):
-        rows = [f"INSERT INTO BidTakeoffs VALUES ({uid}, 1, 5, 7)" for uid in range(100, 220)]
+        rows = [
+            f"INSERT INTO BidTakeoffs VALUES ({uid}, 1, 5, 7)"
+            for uid in range(100, 220)
+        ]
         ddl = list(self.DDL) + rows
         uids = tuple(str(uid) for uid in range(100, 220))
         writer, database, manager, _schema = self.writer_for(*ddl)
@@ -1033,9 +1036,7 @@ class MdbWriterReassignmentPreflightTests(_SqliteWriterCase):
             if sql.startswith("SELECT [UID], [BidPageUID]")
         ]
         self.assertEqual([len(params) for params in takeoff_selects], [51, 51, 21])
-        self.assertEqual(
-            [params[0] for params in takeoff_selects], [1, 1, 1]
-        )
+        self.assertEqual([params[0] for params in takeoff_selects], [1, 1, 1])
         self.assertEqual(
             [uid for params in takeoff_selects for uid in params[1:]],
             list(range(100, 220)),
@@ -1047,7 +1048,9 @@ class MdbWriterReassignmentPreflightTests(_SqliteWriterCase):
             )
         database.execute("UPDATE BidTakeoffs SET BidPageUID = 6 WHERE UID = 150")
         database.execute("INSERT INTO BidTakeoffs VALUES (219, 1, 5, 7)")
-        with self.assertRaisesRegex(MissingBidOwnedUidError, "changed Page or Condition"):
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, "changed Page or Condition"
+        ):
             writer.verify_takeoff_reassignment(
                 "x.mdb", "1", ConditionTakeoffReassignment("7", "5", uids)
             )
@@ -1071,7 +1074,12 @@ class MdbWriterWriteContractTests(_SqliteWriterCase):
         self.assertIsNone(result)
         self.assertEqual(
             statements,
-            [("INSERT INTO [Items] ([UID], [BidUID], [Name]) VALUES (?, ?, ?)", (4, 1, "n"))],
+            [
+                (
+                    "INSERT INTO [Items] ([UID], [BidUID], [Name]) VALUES (?, ?, ?)",
+                    (4, 1, "n"),
+                )
+            ],
         )
         self.assertEqual(
             schema.skips,
@@ -1117,7 +1125,9 @@ class MdbWriterWriteContractTests(_SqliteWriterCase):
             str(empty.exception),
             "This OST database has no writable columns for add ghost.",
         )
-        self.assertEqual(database.execute("SELECT COUNT(*) FROM Items").fetchone(), (0,))
+        self.assertEqual(
+            database.execute("SELECT COUNT(*) FROM Items").fetchone(), (0,)
+        )
 
     def test_an_optional_value_for_a_missing_column_is_skipped_not_fatal(self):
         writer, database, _manager, schema = self.writer_for(self.DDL)
@@ -1154,7 +1164,11 @@ class MdbWriterWriteContractTests(_SqliteWriterCase):
             )
         self.assertEqual(
             schema.calls,
-            [("table", "Items"), ("column", "Items", "UID"), ("column", "Items", "UID")],
+            [
+                ("table", "Items"),
+                ("column", "Items", "UID"),
+                ("column", "Items", "UID"),
+            ],
         )
 
     def test_updates_set_only_existing_columns_with_parameters_in_clause_order(self):
@@ -1187,7 +1201,9 @@ class MdbWriterWriteContractTests(_SqliteWriterCase):
         )
         self.assertEqual(schema.skips, [("Items", "Ghost", "rename")])
         self.assertEqual(
-            database.execute("SELECT UID, Name, Extra FROM Items ORDER BY UID").fetchall(),
+            database.execute(
+                "SELECT UID, Name, Extra FROM Items ORDER BY UID"
+            ).fetchall(),
             [(1, "new", "set"), (2, "other", "keep")],
         )
 

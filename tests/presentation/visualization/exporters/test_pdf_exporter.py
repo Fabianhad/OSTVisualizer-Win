@@ -1018,9 +1018,7 @@ class PDFOverlayExportTests(unittest.TestCase):
         )
 
     def test_every_export_outcome_reports_the_pdf_format_name(self):
-        logger_name = (
-            "ost_visualizer.presentation.visualization.exporters.pdf_exporter"
-        )
+        logger_name = "ost_visualizer.presentation.visualization.exporters.pdf_exporter"
         outcomes = []
         writer = _overlay_export_support__FakeWriter()
         exporter = _overlay_export_support__make_exporter(writer)
@@ -1061,9 +1059,7 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual({outcome.format_name for outcome in outcomes}, {"PDF"})
 
     def test_the_temporary_export_directory_exists_only_during_the_export(self):
-        logger_name = (
-            "ost_visualizer.presentation.visualization.exporters.pdf_exporter"
-        )
+        logger_name = "ost_visualizer.presentation.visualization.exporters.pdf_exporter"
         for outcome in ("success", "merge failure", "exception"):
             with self.subTest(outcome=outcome):
                 writer = _overlay_export_support__FakeWriter()
@@ -1096,9 +1092,7 @@ class PDFOverlayExportTests(unittest.TestCase):
                         )
                 self.assertEqual(result.success, outcome == "success")
                 self.assertEqual(len(seen), 1)
-                self.assertRegex(
-                    os.path.basename(seen[0]), r"^ost_pdf_export_\w{8}$"
-                )
+                self.assertRegex(os.path.basename(seen[0]), r"^ost_pdf_export_\w{8}$")
                 self.assertEqual(
                     os.path.dirname(seen[0]), os.path.normpath(tempfile.gettempdir())
                 )
@@ -1783,9 +1777,7 @@ class PdfExportQuantityDataTests(unittest.TestCase):
             with self.subTest(takeoffs=len(takeoffs)):
                 polygons, _callouts = self.collect(takeoffs, [self.area_condition()])
                 self.assertEqual(len(polygons), 1)
-                self.assertEqual(
-                    len(polygons[0].vertices), 3 if rings is None else 4
-                )
+                self.assertEqual(len(polygons[0].vertices), 3 if rings is None else 4)
                 if rings is not None:
                     self.assertEqual([len(ring) for ring in polygons[0].holes], rings)
         two_points = Takeoff(
@@ -1798,9 +1790,7 @@ class PdfExportQuantityDataTests(unittest.TestCase):
         area = Takeoff(uid="a", condition_uid="c", position=self.square(12.0))
         polygons, _callouts = self.collect([area], [self.area_condition(thickness=0.6)])
         self.assertAlmostEqual(polygons[0].depth, 0.05)
-        line = Takeoff(
-            uid="t", condition_uid="c", position=[5.0, 7.0, 125.0, 7.0]
-        )
+        line = Takeoff(uid="t", condition_uid="c", position=[5.0, 7.0, 125.0, 7.0])
         condition = Condition(
             uid="c", condition_type=Condition.TYPE_LINEAR, thickness=0.5, height=0.6
         )
@@ -1902,9 +1892,7 @@ class PdfExportQuantityDataTests(unittest.TestCase):
         self.assertAlmostEqual(line[-1][0], end[0], places=6)
         self.assertAlmostEqual(line[-1][1], end[1], places=6)
         control = pdf(80.0, 90.0)
-        self.assertLess(
-            min(math.dist(point, control) for point in line), 3.0
-        )
+        self.assertLess(min(math.dist(point, control) for point in line), 3.0)
         # Seven values: the last one is a sagitta that replaces the control pair
         # (junk control coordinates must not matter), measured to the left of the
         # direction of travel: chord mid (70, 35), unit normal (-0.2425, 0.9701).
@@ -2000,7 +1988,9 @@ class PdfExportQuantityDataTests(unittest.TestCase):
 
     def test_non_area_captions_carry_the_resolved_label(self):
         takeoffs = {
-            "linear": Takeoff(uid="l", condition_uid="linear", position=[0.0, 0.0, 30.0, 40.0]),
+            "linear": Takeoff(
+                uid="l", condition_uid="linear", position=[0.0, 0.0, 30.0, 40.0]
+            ),
             "count": Takeoff(uid="n", condition_uid="count", position=[100.0, 200.0]),
         }
         for ref_no, name, label in (
@@ -2077,7 +2067,9 @@ class PdfExportQuantityDataTests(unittest.TestCase):
         )
         line = Takeoff(uid="t", condition_uid="c", position=[0.0, 0.0, 30.0, 40.0])
         polygons, _callouts = self.collect([line], [linear])
-        self.assertEqual((polygons[0].color, polygons[0].fill_opacity), ([0, 255, 0], 0.5))
+        self.assertEqual(
+            (polygons[0].color, polygons[0].fill_opacity), ([0, 255, 0], 0.5)
+        )
 
     def test_takeoffs_outside_the_selected_page_area_use_the_inactive_colour(self):
         condition = self.area_condition(color_fill=0x00FF0000)
@@ -3311,13 +3303,14 @@ def _rgb(image, x, y):
 
 class PdfPositionedOverlayPixelTests(unittest.TestCase):
     """Pixels of the raster overlay canvas (page cache faked, QPainter real).
-
     The sheet is 72 pt square with a calibration of 64 overlay units per sheet
     inch, so one overlay unit is 3.375 canvas pixels on the 216 px canvas.
     """
 
     def render(self, overlay, *, page_info=None, **page_overrides):
-        exporter = _overlay_export_support__make_exporter(_overlay_export_support__FakeWriter())
+        exporter = _overlay_export_support__make_exporter(
+            _overlay_export_support__FakeWriter()
+        )
         self.cache = _overlay_export_support__RecordingImageCache(overlay)
         exporter._export_page_cache = self.cache
         values = {
@@ -3328,7 +3321,8 @@ class PdfPositionedOverlayPixelTests(unittest.TestCase):
         }
         values.update(page_overrides)
         return exporter._render_positioned_overlay_background(
-            _overlay_export_support__page(**values), page_info or {"width": 72.0, "height": 72.0}
+            _overlay_export_support__page(**values),
+            page_info or {"width": 72.0, "height": 72.0},
         )
 
     def assertColours(self, image, expected):
@@ -3533,7 +3527,13 @@ class PdfPositionedOverlayPixelTests(unittest.TestCase):
         # The rect spans -108..432 px, so its quadrant seams sit at canvas 162.
         self.assertColours(
             image,
-            {(5, 5): _RED, (120, 120): _RED, (210, 5): _GREEN, (5, 210): _BLUE, (210, 210): _YELLOW},
+            {
+                (5, 5): _RED,
+                (120, 120): _RED,
+                (210, 5): _GREEN,
+                (5, 210): _BLUE,
+                (210, 210): _YELLOW,
+            },
         )
 
 
@@ -3544,7 +3544,9 @@ class PdfRasterBackgroundFileTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.temp_dir = temp.name
-        self.exporter = _overlay_export_support__make_exporter(_overlay_export_support__FakeWriter())
+        self.exporter = _overlay_export_support__make_exporter(
+            _overlay_export_support__FakeWriter()
+        )
 
     def test_the_image_is_stretched_over_the_whole_page_without_flipping(self):
         output = self.exporter._write_raster_background_pdf(
@@ -3567,7 +3569,10 @@ class PdfRasterBackgroundFileTests(unittest.TestCase):
             (20, 24): _RED,
             (20, 48): _BLUE,
         }.items():
-            self.assertTrue(_overlay_export_support__near(page.rgb(x, y), colour), (x, y, page.rgb(x, y)))
+            self.assertTrue(
+                _overlay_export_support__near(page.rgb(x, y), colour),
+                (x, y, page.rgb(x, y)),
+            )
 
     def test_the_page_size_comes_from_the_page_info_not_the_pixel_count(self):
         output = self.exporter._write_raster_background_pdf(
@@ -3645,16 +3650,19 @@ class PdfRasterBackgroundFileTests(unittest.TestCase):
                 f"density{size}",
             )
             self.assertIn(
-                "/MediaBox [0 0 72.000000 72.000000]", _overlay_export_support__read_pdf_text(output)
+                "/MediaBox [0 0 72.000000 72.000000]",
+                _overlay_export_support__read_pdf_text(output),
             )
             pages.append(_overlay_export_support__render_pdf_page(output, 1.0))
         for x, y in ((10, 10), (60, 10), (10, 60), (60, 60)):
-            self.assertTrue(_overlay_export_support__near(pages[0].rgb(x, y), pages[1].rgb(x, y)), (x, y))
+            self.assertTrue(
+                _overlay_export_support__near(pages[0].rgb(x, y), pages[1].rgb(x, y)),
+                (x, y),
+            )
 
 
 class PdfRealExportRasterBackgroundTests(unittest.TestCase):
     """Whole export: real PDFExporter, page cache, Qt writer and native merge.
-
     The exported PDF is rendered back with PDFium and its pixels are checked.
     The sheet is 144 x 72 pt at 1 overlay unit per point (scale 1 : 72), so an
     overlay rect is expressed in points and a 2x render has 2 px per point.
@@ -3671,7 +3679,9 @@ class PdfRealExportRasterBackgroundTests(unittest.TestCase):
             UOMDomainService(),
             object(),
         )
-        _pdf_geometry_support__write_pdf(self.dir / "main.pdf", 144, 72, content=b"0 0.5 0 rg 0 0 72 72 re f")
+        _pdf_geometry_support__write_pdf(
+            self.dir / "main.pdf", 144, 72, content=b"0 0.5 0 rg 0 0 72 72 re f"
+        )
         _quadrant_image(40, 20).save(str(self.dir / "main.tif"))
         _quadrant_image(20, 10).save(str(self.dir / "overlay.tif"))
 
@@ -3702,7 +3712,10 @@ class PdfRealExportRasterBackgroundTests(unittest.TestCase):
     def assertPixels(self, page, expected):
         self.assertEqual((page.width, page.height), (288, 144))
         for (x, y), colour in expected.items():
-            self.assertTrue(_overlay_export_support__near(page.rgb(x, y), colour), (x, y, page.rgb(x, y)))
+            self.assertTrue(
+                _overlay_export_support__near(page.rgb(x, y), colour),
+                (x, y, page.rgb(x, y)),
+            )
 
     def test_a_raster_main_image_is_exported_as_a_full_page_picture(self):
         page = self.export(image_path="main.tif", image_show_mode=SHOW_ORIGINAL)
@@ -3779,7 +3792,9 @@ class PdfRealExportRasterBackgroundTests(unittest.TestCase):
         # of either source, and the overlay area is distinguishable from it.
         self.assertNotIn(main_only, (_WHITE, (0, 128, 0)))
         self.assertGreater(main_only[0], main_only[2])
-        overlay_samples = [page.rgb(x, y) for x, y in ((180, 30), (250, 30), (180, 110), (250, 110))]
+        overlay_samples = [
+            page.rgb(x, y) for x, y in ((180, 30), (250, 30), (180, 110), (250, 110))
+        ]
         self.assertTrue(all(sample != main_only for sample in overlay_samples))
         self.assertTrue(any(sample[2] > sample[0] for sample in overlay_samples))
         # Orientation survives the flattening: the yellow quadrant is brighter
@@ -3804,7 +3819,9 @@ class PdfRasterBackgroundSourceTests(unittest.TestCase):
     """Fallbacks of the single-source background helpers (faked page cache)."""
 
     def setUp(self):
-        self.exporter = _overlay_export_support__make_exporter(_overlay_export_support__FakeWriter())
+        self.exporter = _overlay_export_support__make_exporter(
+            _overlay_export_support__FakeWriter()
+        )
         self.page_info = {"width": 72.0, "height": 72.0}
 
     def test_an_absent_main_or_overlay_path_is_never_requested_from_the_cache(self):
@@ -3813,7 +3830,10 @@ class PdfRasterBackgroundSourceTests(unittest.TestCase):
         data = type("Data", (), {})()
         self.assertFalse(
             self.exporter._try_main_background(
-                data, _overlay_export_support__page(image_path=None), self.page_info, "unused"
+                data,
+                _overlay_export_support__page(image_path=None),
+                self.page_info,
+                "unused",
             )
         )
         # A calibrated overlay without a size yet counts as full page, which is
@@ -3821,7 +3841,9 @@ class PdfRasterBackgroundSourceTests(unittest.TestCase):
         self.assertFalse(
             self.exporter._try_overlay_background(
                 data,
-                _overlay_export_support__page(overlay_image_path=None, overlay_rect=(0.0, 0.0, 0.0, 0.0)),
+                _overlay_export_support__page(
+                    overlay_image_path=None, overlay_rect=(0.0, 0.0, 0.0, 0.0)
+                ),
                 self.page_info,
                 "unused",
             )
@@ -3854,7 +3876,9 @@ class PdfRasterBackgroundSourceTests(unittest.TestCase):
         self.assertFalse(hasattr(data, "source_pdf"))
 
     def test_raster_sources_are_written_with_their_role_as_file_prefix(self):
-        self.exporter._export_page_cache = _overlay_export_support__ImageCache(_quadrant_image(4, 4))
+        self.exporter._export_page_cache = _overlay_export_support__ImageCache(
+            _quadrant_image(4, 4)
+        )
         prefixes = []
         self.exporter._write_raster_background_pdf = (
             lambda _image, _page_info, temp_dir, prefix: prefixes.append(prefix)
@@ -3863,14 +3887,19 @@ class PdfRasterBackgroundSourceTests(unittest.TestCase):
         data = type("Data", (), {})()
         self.assertTrue(
             self.exporter._try_main_background(
-                data, _overlay_export_support__page(image_path="main.tif"), self.page_info, "tmp"
+                data,
+                _overlay_export_support__page(image_path="main.tif"),
+                self.page_info,
+                "tmp",
             )
         )
         self.assertEqual(data.source_pdf, "tmp/image.pdf")
         self.assertTrue(
             self.exporter._try_overlay_background(
                 data,
-                _overlay_export_support__page(overlay_image_path="overlay.tif", overlay_rect=(0.0, 0.0, 0.0, 0.0)),
+                _overlay_export_support__page(
+                    overlay_image_path="overlay.tif", overlay_rect=(0.0, 0.0, 0.0, 0.0)
+                ),
                 self.page_info,
                 "tmp",
             )
@@ -3893,7 +3922,9 @@ class PdfRasterBackgroundSourceTests(unittest.TestCase):
         self.assertEqual(cache.requests, [])
 
     def test_a_rasterized_overlay_is_written_with_the_overlay_prefix(self):
-        self.exporter._export_page_cache = _overlay_export_support__ImageCache(_quadrant_image(4, 4))
+        self.exporter._export_page_cache = _overlay_export_support__ImageCache(
+            _quadrant_image(4, 4)
+        )
         calls = []
         self.exporter._write_raster_background_pdf = (
             lambda image, page_info, temp_dir, prefix: calls.append(

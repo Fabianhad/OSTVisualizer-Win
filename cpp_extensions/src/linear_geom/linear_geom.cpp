@@ -28,17 +28,51 @@ namespace ost_linear
     }
     static double perp_slope(double dx, double dy)
     {
-        if (dx == 0.0)
-            return std::numeric_limits<double>::infinity();
         if (dy == 0.0)
+            return std::numeric_limits<double>::infinity();
+        if (dx == 0.0)
             return 0.0;
         return -dx / dy;
+    }
+    static double arc_sweep(double a_s, double a_e, double a_c)
+    {
+        constexpr double TWO_PI = 2.0 * M_PI;
+        double ccw_to_end = std::fmod(a_e - a_s, TWO_PI);
+        if (ccw_to_end < 0.0)
+            ccw_to_end += TWO_PI;
+        double ccw_to_ctl = std::fmod(a_c - a_s, TWO_PI);
+        if (ccw_to_ctl < 0.0)
+            ccw_to_ctl += TWO_PI;
+        return ccw_to_ctl <= ccw_to_end ? ccw_to_end : ccw_to_end - TWO_PI;
+    }
+    static bool control_is_at_an_end(double x1, double y1, double x2, double y2,
+                                     double cx, double cy)
+    {
+        constexpr double STRAIGHT_CHORD_EPSILON = 1e-9;
+        double nearest = std::min(std::hypot(cx - x1, cy - y1),
+                                  std::hypot(cx - x2, cy - y2));
+        return nearest <= STRAIGHT_CHORD_EPSILON * std::hypot(x2 - x1, y2 - y1);
+    }
+    static std::vector<Vec2> straight_chord_pts(double x1, double y1, double x2,
+                                                double y2, int segs)
+    {
+        std::vector<Vec2> pts;
+        pts.reserve(static_cast<size_t>(segs) + 1);
+        for (int i = 0; i <= segs; ++i)
+        {
+            double t = static_cast<double>(i) / segs;
+            double u = 1.0 - t;
+            pts.push_back({u * x1 + t * x2, u * y1 + t * y2});
+        }
+        return pts;
     }
     static std::vector<Vec2> curve_pts_impl(
         double x1, double y1, double x2, double y2,
         double cx, double cy, int segs)
     {
         require_positive_segments(segs);
+        if (control_is_at_an_end(x1, y1, x2, y2, cx, cy))
+            return straight_chord_pts(x1, y1, x2, y2, segs);
         double m1x = (x1 + cx) * 0.5, m1y = (y1 + cy) * 0.5;
         double m2x = (cx + x2) * 0.5, m2y = (cy + y2) * 0.5;
         double ps1 = perp_slope(cx - x1, cy - y1);
@@ -74,22 +108,8 @@ namespace ost_linear
                 double r = r1;
                 double a_s = std::atan2(y1 - ctr_y, x1 - ctr_x);
                 double a_e = std::atan2(y2 - ctr_y, x2 - ctr_x);
-                double cross1 = (x1 - ctr_x) * (cy - ctr_y) -
-                                (y1 - ctr_y) * (cx - ctr_x);
-                double cross2 = (cx - ctr_x) * (y2 - ctr_y) -
-                                (cy - ctr_y) * (x2 - ctr_x);
-                bool clockwise = (cross1 + cross2) < 0;
-                if (clockwise)
-                {
-                    if (a_e > a_s)
-                        a_e -= 2.0 * M_PI;
-                }
-                else
-                {
-                    if (a_e < a_s)
-                        a_e += 2.0 * M_PI;
-                }
-                double a_diff = a_e - a_s;
+                double a_c = std::atan2(cy - ctr_y, cx - ctr_x);
+                double a_diff = arc_sweep(a_s, a_e, a_c);
                 std::vector<Vec2> pts;
                 pts.reserve(static_cast<size_t>(segs) + 1);
                 for (int i = 0; i <= segs; ++i)
@@ -146,6 +166,8 @@ namespace ost_linear
                                         double cx, double cy, int segments)
     {
         require_positive_segments(segments);
+        if (control_is_at_an_end(x1, y1, x2, y2, cx, cy))
+            return straight_chord_pts(x1, y1, x2, y2, segments);
         double m1x = (x1 + cx) * 0.5, m1y = (y1 + cy) * 0.5;
         double m2x = (cx + x2) * 0.5, m2y = (cy + y2) * 0.5;
         double ps1 = perp_slope(cx - x1, cy - y1);
@@ -184,22 +206,8 @@ namespace ost_linear
                 double r = r1;
                 double a_s = std::atan2(y1 - ctr_y, x1 - ctr_x);
                 double a_e = std::atan2(y2 - ctr_y, x2 - ctr_x);
-                double cross1 = (x1 - ctr_x) * (cy - ctr_y) -
-                                (y1 - ctr_y) * (cx - ctr_x);
-                double cross2 = (cx - ctr_x) * (y2 - ctr_y) -
-                                (cy - ctr_y) * (x2 - ctr_x);
-                bool clockwise = (cross1 + cross2) < 0;
-                if (clockwise)
-                {
-                    if (a_e > a_s)
-                        a_e -= 2.0 * M_PI;
-                }
-                else
-                {
-                    if (a_e < a_s)
-                        a_e += 2.0 * M_PI;
-                }
-                double a_diff = a_e - a_s;
+                double a_c = std::atan2(cy - ctr_y, cx - ctr_x);
+                double a_diff = arc_sweep(a_s, a_e, a_c);
                 std::vector<Vec2> pts;
                 pts.reserve(static_cast<size_t>(segments) + 1);
                 for (int i = 0; i <= segments; ++i)

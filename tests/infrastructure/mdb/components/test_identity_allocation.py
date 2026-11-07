@@ -119,7 +119,9 @@ class IdentityAllocationScopeTests(unittest.TestCase):
         self.assertEqual(self._alloc(conn, "BidPages"), 41)
         self.assertEqual(self._alloc(conn, "BidLayers"), 501)
 
-    def test_dangling_child_references_reserve_the_highest_referenced_uid_plus_one(self):
+    def test_dangling_child_references_reserve_the_highest_referenced_uid_plus_one(
+        self,
+    ):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE BidLayers (UID INTEGER)")
         conn.execute("CREATE TABLE BidComments (UID INTEGER, BidLayerUID INTEGER)")
@@ -180,7 +182,9 @@ class IdentityAllocationReferenceEdgeTests(unittest.TestCase):
         conn.execute("INSERT INTO BidComments VALUES (1, 1)")
         self.assertEqual(self._alloc(conn, "BidLayers"), 2)
 
-    def test_a_blank_reference_in_one_child_table_does_not_hide_a_later_dangling_one(self):
+    def test_a_blank_reference_in_one_child_table_does_not_hide_a_later_dangling_one(
+        self,
+    ):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE BidLayers (UID INTEGER)")
         conn.execute("CREATE TABLE BidConditions (UID INTEGER, BidLayerUID INTEGER)")
@@ -197,7 +201,9 @@ class IdentityAllocationReferenceEdgeTests(unittest.TestCase):
         conn.execute("INSERT INTO BidZones VALUES (1, 60)")
         self.assertEqual(self._alloc(conn, "BidLayers"), 61)
 
-    def test_every_blank_spelling_of_a_reference_is_skipped_not_just_the_first_table(self):
+    def test_every_blank_spelling_of_a_reference_is_skipped_not_just_the_first_table(
+        self,
+    ):
         for blank in ("''", "0", "'0'", "NULL"):
             with self.subTest(blank=blank):
                 conn = sqlite3.connect(":memory:")
@@ -216,7 +222,9 @@ class IdentityAllocationReferenceEdgeTests(unittest.TestCase):
         # already queried. That guard (and its checked.add) is only unobservable
         # while the relationship list never repeats a reference for one parent.
         from collections import Counter
-        from ost_visualizer.infrastructure.mdb.raw_bid_integrity import BID_RELATIONSHIPS
+        from ost_visualizer.infrastructure.mdb.raw_bid_integrity import (
+            BID_RELATIONSHIPS,
+        )
 
         counts = Counter(
             (r.parent_table, r.parent_column, r.child_table, r.child_column)

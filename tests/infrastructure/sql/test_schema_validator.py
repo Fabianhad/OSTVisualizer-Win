@@ -39,8 +39,8 @@ from ost_visualizer.infrastructure.sql.schema_validator import (
     _matches_type,
     _normalize_filter,
 )
-
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlModuleInventory
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
@@ -1169,7 +1169,6 @@ class SchemaValidatorRenamedIndexCandidateTests(unittest.TestCase):
 # future owner decision on the scope would change. No restriction is implemented
 # without that product decision (see tests/_audit_progress/A1.json open2_decision).
 # ---------------------------------------------------------------------------
-
 class SchemaValidatorScopeTests(unittest.TestCase):
     def setUp(self):
         self.validator = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema)
@@ -1286,7 +1285,6 @@ class SchemaValidatorScopeTests(unittest.TestCase):
         # SQL Server restriction. Source-text guard: a third statement of this
         # shape must be classified before this count changes.
         import inspect
-
         from ost_visualizer.infrastructure.sql import collaboration_store
 
         source = inspect.getsource(collaboration_store)
@@ -1365,7 +1363,9 @@ class SchemaValidatorScopeTests(unittest.TestCase):
         with_column = replace(
             self.canonical, columns=self.canonical.columns + (extra_nullable_column,)
         )
-        self.assertEqual(self.problems(with_column), ("dbo.BidLayers.Notes.unexpected",))
+        self.assertEqual(
+            self.problems(with_column), ("dbo.BidLayers.Notes.unexpected",)
+        )
         extra_ostv_column = SqlColumnInventory(
             "ostv", "Sessions", "Notes", "nvarchar", 100, 0, True, False, False, ""
         )

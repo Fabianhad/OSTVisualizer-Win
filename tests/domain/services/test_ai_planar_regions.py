@@ -1433,7 +1433,8 @@ class DeadlineCadenceTests(unittest.TestCase):
     def assert_cadence(self, values):
         self.assertGreaterEqual(len(values), 2)
         self.assertEqual(
-            values, list(range(0, DEADLINE_CHECK_EVERY * len(values), DEADLINE_CHECK_EVERY))
+            values,
+            list(range(0, DEADLINE_CHECK_EVERY * len(values), DEADLINE_CHECK_EVERY)),
         )
 
     def test_the_cadence_constant_is_two_hundred_fifty_six(self):
@@ -1462,8 +1463,12 @@ class DeadlineCadenceTests(unittest.TestCase):
         for index in range(30):
             angle = math.pi * index / 30
             star.append(
-                (-100 * math.cos(angle), -100 * math.sin(angle),
-                 100 * math.cos(angle), 100 * math.sin(angle))
+                (
+                    -100 * math.cos(angle),
+                    -100 * math.sin(angle),
+                    100 * math.cos(angle),
+                    100 * math.sin(angle),
+                )
             )
         sites = _record_cadence(
             lambda: find_planar_regions_report(star, TOLERANCE, 0.0, deadline=1e18)
@@ -1486,12 +1491,17 @@ class DeadlineCadenceTests(unittest.TestCase):
         )
         self.assert_cadence(sites[("opening_candidates", "checked")])
         ring = tuple(
-            (100 * math.cos(2 * math.pi * i / 300), 100 * math.sin(2 * math.pi * i / 300))
+            (
+                100 * math.cos(2 * math.pi * i / 300),
+                100 * math.sin(2 * math.pi * i / 300),
+            )
             for i in range(300)
         )
         closed = [(*ring[i], *ring[(i + 1) % 300]) for i in range(300)]
         sites = _record_cadence(
-            lambda: opening_candidates(closed, TOLERANCE, 1.0, 50.0, ring, deadline=1e18)
+            lambda: opening_candidates(
+                closed, TOLERANCE, 1.0, 50.0, ring, deadline=1e18
+            )
         )
         self.assert_cadence(sites[("opening_candidates", "checked")])
 
@@ -1546,7 +1556,9 @@ class VertexIndexNeighbourhoodTests(unittest.TestCase):
                 self.assertEqual(index.find(second), vertex)
                 self.assertEqual(len(index.points), 1)
 
-    def test_a_point_exactly_the_tolerance_away_joins_and_one_just_beyond_does_not(self):
+    def test_a_point_exactly_the_tolerance_away_joins_and_one_just_beyond_does_not(
+        self,
+    ):
         index = _VertexIndex(0.5)
         vertex = index.add((0.0, 0.0))
         self.assertEqual(index.add((0.5, 0.0)), vertex)
@@ -1622,24 +1634,42 @@ class PairCellContractTests(unittest.TestCase):
 
     def _cell_pairs(self, segments, buckets, members=None, window=5.0):
         boxes = [
-            (min(a[0], b[0]) - 1, min(a[1], b[1]) - 1, max(a[0], b[0]) + 1, max(a[1], b[1]) + 1)
+            (
+                min(a[0], b[0]) - 1,
+                min(a[1], b[1]) - 1,
+                max(a[0], b[0]) + 1,
+                max(a[1], b[1]) + 1,
+            )
             for a, b in segments
         ]
         found = set()
         examined = planar._cell_pairs(
             members if members is not None else list(range(len(segments))),
-            segments, buckets, boxes, (0.0, 0.0), window, found,
+            segments,
+            buckets,
+            boxes,
+            (0.0, 0.0),
+            window,
+            found,
         )
         return examined, found
 
     def test_segments_of_different_directions_are_each_examined_once(self):
-        segments = [((0.0, 0.0), (5.0, 0.0)), ((2.0, -2.0), (2.0, 3.0)), ((0.0, 0.0), (3.0, 3.0))]
+        segments = [
+            ((0.0, 0.0), (5.0, 0.0)),
+            ((2.0, -2.0), (2.0, 3.0)),
+            ((0.0, 0.0), (3.0, 3.0)),
+        ]
         examined, found = self._cell_pairs(segments, [0, 90, 45])
         self.assertEqual(examined, 3)
         self.assertEqual(found, {(0, 1), (0, 2), (1, 2)})
 
     def test_point_like_segments_are_compared_with_every_other_point(self):
-        points = [((0.0, 0.0), (0.0, 0.0)), ((0.5, 0.0), (0.5, 0.0)), ((1.0, 0.0), (1.0, 0.0))]
+        points = [
+            ((0.0, 0.0), (0.0, 0.0)),
+            ((0.5, 0.0), (0.5, 0.0)),
+            ((1.0, 0.0), (1.0, 0.0)),
+        ]
         examined, found = self._cell_pairs(points, [None, None, None])
         self.assertEqual(examined, 3)
         self.assertEqual(found, {(0, 1), (0, 2), (1, 2)})
@@ -1649,7 +1679,11 @@ class PairCellContractTests(unittest.TestCase):
     def test_parallel_segments_are_only_compared_when_their_offsets_are_within_the_window(
         self,
     ):
-        segments = [((0.0, 0.0), (5.0, 0.0)), ((0.0, 1.0), (5.0, 1.0)), ((0.0, 50.0), (5.0, 50.0))]
+        segments = [
+            ((0.0, 0.0), (5.0, 0.0)),
+            ((0.0, 1.0), (5.0, 1.0)),
+            ((0.0, 50.0), (5.0, 50.0)),
+        ]
         examined, found = self._cell_pairs(segments, [0, 0, 0], window=1.0)
         self.assertEqual(examined, 1)
         self.assertEqual(found, {(0, 1)})
@@ -1678,7 +1712,10 @@ class NearParallelPairingTests(unittest.TestCase):
         segments = []
         base = rng.choice((0.0, 45.0, 90.0, 12.3))
         for _ in range(count):
-            angle = math.radians(base + rng.choice((0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, -0.5, -1.0)))
+            angle = math.radians(
+                base
+                + rng.choice((0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, -0.5, -1.0))
+            )
             length = rng.uniform(150.0, 600.0)
             x, y = rng.uniform(0.0, 300.0), rng.uniform(0.0, 300.0)
             segments.append(
@@ -1706,8 +1743,12 @@ class NearParallelPairingTests(unittest.TestCase):
                 angle = math.radians(degrees)
                 segments = [
                     (0.0, 0.0, 800.0, 0.0),
-                    (400.0 - 300.0 * math.cos(angle), -300.0 * math.sin(angle),
-                     400.0 + 300.0 * math.cos(angle), 300.0 * math.sin(angle)),
+                    (
+                        400.0 - 300.0 * math.cos(angle),
+                        -300.0 * math.sin(angle),
+                        400.0 + 300.0 * math.cos(angle),
+                        300.0 * math.sin(angle),
+                    ),
                 ]
                 segments += [(i * 37.0, 90.0, i * 37.0 + 3.0, 90.0) for i in range(20)]
                 clean = _finite_pairs(segments)
@@ -1737,9 +1778,15 @@ class PlanarInputAndOutputShapeTests(unittest.TestCase):
             self.assertIs(type(x), float)
             self.assertIs(type(y), float)
         closing = find_planar_regions_report(
-            [("0", "0", "10", "0"), ("10", "0", "10", "10"), ("10", "10", "0", "10"),
-             ("0", "10", "0", "4.5"), ("0", "4", "0", "0")],
-            "0.001", "1",
+            [
+                ("0", "0", "10", "0"),
+                ("10", "0", "10", "10"),
+                ("10", "10", "0", "10"),
+                ("0", "10", "0", "4.5"),
+                ("0", "4", "0", "0"),
+            ],
+            "0.001",
+            "1",
         )
         self.assertEqual(len(closing.regions[0].gaps), 1)
 
@@ -1755,7 +1802,9 @@ class PlanarInputAndOutputShapeTests(unittest.TestCase):
                 self.assertIs(type(value), float)
 
     def test_non_finite_segments_are_dropped_even_when_written_as_text(self):
-        self.assertEqual(_finite_pairs([("nan", "0", "1", "1"), ("0", "0", "inf", "1")]), [])
+        self.assertEqual(
+            _finite_pairs([("nan", "0", "1", "1"), ("0", "0", "inf", "1")]), []
+        )
         self.assertEqual(len(_finite_pairs([("0", "0", "1", "1")])), 1)
 
     def test_a_region_smaller_than_one_unit_is_found_with_the_default_area_floor(self):
@@ -1776,7 +1825,9 @@ class PlanarInputAndOutputShapeTests(unittest.TestCase):
 
     def test_report_collections_are_tuples(self):
         gap = _rect(0, 0, 10, 10)[:3] + [(0, 10, 0, 4.5), (0, 4, 0, 0)]
-        report = find_planar_regions_report(gap + _rect(2, 2, 3, 3), 0.001, 1.0, symbol_max=2.0)
+        report = find_planar_regions_report(
+            gap + _rect(2, 2, 3, 3), 0.001, 1.0, symbol_max=2.0
+        )
         self.assertIs(type(report.regions), tuple)
         self.assertIs(type(report.suppressed), tuple)
         self.assertTrue(report.suppressed)
@@ -1798,7 +1849,9 @@ class PlanarInputAndOutputShapeTests(unittest.TestCase):
     def test_the_deadline_is_checked_for_every_candidate_region(self):
         three = []
         for offset in (0, 20, 40):
-            three += [(x1 + offset, y1, x2 + offset, y2) for x1, y1, x2, y2 in self._SQUARE]
+            three += [
+                (x1 + offset, y1, x2 + offset, y2) for x1, y1, x2, y2 in self._SQUARE
+            ]
         with mock.patch.object(planar, "check_deadline") as check:
             find_planar_regions_report(three, 0.001, 0.0)
         # one per scan phase (split, trace) plus one per candidate face and per
@@ -1828,13 +1881,17 @@ class RunsAlongAnEdgeTests(unittest.TestCase):
         self.assertIs(self.along(points, {0: set(), 1: {2}, 2: {1}}, 0, 1), True)
 
     def test_without_neighbours_nothing_runs_along_an_edge(self):
-        self.assertIs(self.along([(0.0, 0.0), (1.0, 0.0)], {0: set(), 1: set()}, 0, 1), False)
+        self.assertIs(
+            self.along([(0.0, 0.0), (1.0, 0.0)], {0: set(), 1: set()}, 0, 1), False
+        )
 
 
 class OpeningBoundaryTests(unittest.TestCase):
     """The length limits are inclusive at the top and exclusive at the bottom."""
 
-    def test_a_drawn_line_across_a_gap_exactly_as_long_as_the_limit_still_blocks_it(self):
+    def test_a_drawn_line_across_a_gap_exactly_as_long_as_the_limit_still_blocks_it(
+        self,
+    ):
         crossing = _two_rooms() + [(90.0, 45.0, 110.0, 45.0)]
         self.assertEqual(_openings(crossing, max_length=30.0), [])
 
@@ -1844,7 +1901,9 @@ class OpeningBoundaryTests(unittest.TestCase):
             _openings(segments, max_length=40.0), [((100.0, 60.0), (100.0, 100.0))]
         )
 
-    def test_a_jamb_pair_exactly_as_far_apart_as_the_limits_is_kept_only_at_the_top(self):
+    def test_a_jamb_pair_exactly_as_far_apart_as_the_limits_is_kept_only_at_the_top(
+        self,
+    ):
         segments = _capped_rooms()
         merged = _smallest_containing(find_planar_regions(segments, 0.5, 0.0), (50, 50))
         self.assertEqual(
@@ -1855,8 +1914,285 @@ class OpeningBoundaryTests(unittest.TestCase):
 
     def test_the_snap_tolerance_never_drops_below_a_micro_unit(self):
         small = [
-            (x1 * 0.01, y1 * 0.01, x2 * 0.01, y2 * 0.01) for x1, y1, x2, y2 in _two_rooms()
+            (x1 * 0.01, y1 * 0.01, x2 * 0.01, y2 * 0.01)
+            for x1, y1, x2, y2 in _two_rooms()
         ]
         (found,) = opening_candidates(small, 0.0, 0.01, 0.5)
         for got, want in zip(found, (1.0, 0.3, 1.0, 0.6)):
             self.assertAlmostEqual(got, want)
+
+
+# ---------------------------------------------------------------------------
+# Second-pass additions (AB): exact messages, boundary values of small helpers,
+# the opening search against the ring box and its angle limit, hand-derived
+# pairing work counters and an integer-lattice pairing oracle.
+# ---------------------------------------------------------------------------
+class SearchMessageTests(unittest.TestCase):
+    def test_the_timeout_and_complexity_errors_carry_their_exact_sentences(self):
+        with self.assertRaises(RegionSearchTimeout) as caught:
+            planar.check_deadline(0.0)
+        self.assertEqual(str(caught.exception), "The region search ran out of time")
+        with self.assertRaises(RegionTooComplex) as caught:
+            planar.check_segment_count(MAX_REGION_SEGMENTS + 1)
+        self.assertEqual(
+            str(caught.exception),
+            f"More than {MAX_REGION_SEGMENTS} line segments; use a smaller bounding box.",
+        )
+        planar.check_segment_count(MAX_REGION_SEGMENTS)
+        planar.check_deadline(None)
+
+
+class SmallHelperBoundaryTests(unittest.TestCase):
+    def test_a_point_like_segment_has_parameter_zero_and_the_distance_to_its_point(
+        self,
+    ):
+        self.assertEqual(
+            _segment_point_parameter((1.0, 1.0), (1.0, 1.0), (4.0, 5.0)), (0.0, 5.0)
+        )
+
+    def test_a_denominator_of_exactly_the_threshold_still_intersects(self):
+        hit = _intersection((0.0, 0.0), (1.0, 0.0), (0.5, 0.0), (1.5, 1e-12))
+        self.assertEqual(hit, (0.5, (0.5, 0.0)))
+
+    def test_a_vertex_added_as_integers_is_stored_as_floats(self):
+        index = _VertexIndex(1.0)
+        self.assertEqual(index.add((1, 2)), 0)
+        self.assertEqual(index.points, [(1.0, 2.0)])
+        self.assertEqual([type(value) for value in index.points[0]], [float, float])
+
+    def test_the_cell_size_is_the_typical_length_capped_by_the_page_extent_and_floored_by_the_padding(
+        self,
+    ):
+        size = planar._pair_cell_size
+        self.assertAlmostEqual(
+            size(
+                [
+                    ((2.0, 9.0), (12.0, 9.0)),
+                    ((3.0, 4.0), (3.0, 6.0)),
+                    ((0.0, 0.0), (0.0, 1.0)),
+                ],
+                0.01,
+            ),
+            min(2.0, 12.0 / math.sqrt(3.0)),
+        )
+        self.assertAlmostEqual(size([((0.0, 0.0), (1.0, 0.0))], 1.0), 8.0)
+        self.assertAlmostEqual(size([((0.0, 0.0), (1.0, 0.0))], 0.0), 1.0)
+        self.assertAlmostEqual(size([((0.0, 0.0), (0.0, 0.0))], 0.0), 1e-6)
+        self.assertAlmostEqual(
+            size([((5.0, 7.0), (25.0, 7.0)), ((5.0, 7.0), (5.0, 9.0))], 0.0),
+            min(20.0, 20.0 / math.sqrt(2.0)),
+        )
+
+    def test_the_pairing_cell_floor_is_eight_paddings(self):
+        self.assertEqual(planar.PAIR_CELL_MIN_PADDINGS, 8.0)
+        self.assertEqual(planar.PAIR_ANGLE_BUCKET_DEG, 1.0)
+
+
+class PairingWorkOnKnownSegmentsTests(unittest.TestCase):
+    # One horizontal 10-unit segment with padding 0.5: the cell is the segment length
+    # (10), the reach is just above 0.5, so the segment spans 3 columns and 2 rows.
+    SEGMENT = [((0.0, 0.0), (10.0, 0.0))]
+
+    def test_a_segment_registers_in_every_cell_its_padded_box_touches(self):
+        pairs, work = _candidate_pairs_with_work(self.SEGMENT, 0.5)
+        self.assertEqual(pairs, [])
+        self.assertEqual(
+            (work.registered, work.longest_walk, work.oversized, work.examined),
+            (6, 6, 0, 0),
+        )
+
+    def test_the_cell_cap_is_inclusive_for_the_walk_estimate(self):
+        # estimate = rows + 3 * columns = 2 + 3 * 3
+        self.assertEqual(planar._walk_estimate((0.0, 0.0), (10.0, 0.0), 0.5, 10.0), 11)
+        with mock.patch.object(planar, "PAIR_MAX_CELLS_PER_SEGMENT", 11):
+            _pairs, work = _candidate_pairs_with_work(self.SEGMENT, 0.5)
+        self.assertEqual((work.oversized, work.registered), (0, 6))
+        with mock.patch.object(planar, "PAIR_MAX_CELLS_PER_SEGMENT", 10):
+            _pairs, work = _candidate_pairs_with_work(self.SEGMENT, 0.5)
+        self.assertEqual((work.oversized, work.registered), (1, 0))
+
+    def test_the_walk_estimate_counts_the_cells_of_the_padded_box(self):
+        estimate = planar._walk_estimate
+        self.assertEqual(estimate((0.0, 0.0), (10.0, 0.0), 0.5, 10.0), 11)
+        self.assertEqual(estimate((10.0, 0.0), (0.0, 0.0), 0.5, 10.0), 11)
+        self.assertEqual(estimate((0.0, 0.0), (0.0, 10.0), 0.5, 10.0), 3 + 3 * 2)
+        self.assertEqual(estimate((5.0, 5.0), (5.0, 5.0), 0.5, 10.0), 1 + 3 * 1)
+        self.assertEqual(estimate((0.0, 0.0), (30.0, 20.0), 1.0, 10.0), 4 + 3 * 5)
+
+    def test_an_oversized_segment_is_compared_with_every_other_segment(self):
+        segments = [
+            ((0.0, 0.0), (10.0, 0.0)),
+            ((100.0, 100.0), (100.0, 101.0)),
+            ((200.0, 200.0), (200.0, 201.0)),
+        ]
+        with mock.patch.object(planar, "PAIR_MAX_CELLS_PER_SEGMENT", 10):
+            pairs, work = _candidate_pairs_with_work(segments, 0.5)
+        self.assertEqual(pairs, [])
+        self.assertEqual(work.oversized, 1)
+        self.assertEqual(work.examined, 2)
+
+    def test_a_cell_floor_of_eight_paddings_sets_the_cell_of_short_segments(self):
+        # A 7.5-unit segment with padding 1.0 gets 8-unit cells: it reaches 3 columns x 2 rows.
+        pairs, work = _candidate_pairs_with_work([((0.0, 0.0), (7.5, 0.0))], 1.0)
+        self.assertEqual((work.registered, work.longest_walk), (6, 6))
+
+
+class PairingLatticeOracleTests(unittest.TestCase):
+    """Integer endpoints make many boxes touch exactly; the pairing must keep every such pair."""
+
+    def test_candidates_cover_every_pair_within_the_padding_on_an_integer_lattice(self):
+        rng = random.Random(20261106)
+        for padding in (0.5, 1.0, 2.0):
+            for page in range(25):
+                segments = []
+                for _ in range(rng.randint(8, 40)):
+                    a = (float(rng.randint(0, 24)), float(rng.randint(0, 24)))
+                    b = (float(rng.randint(0, 24)), float(rng.randint(0, 24)))
+                    segments.append((a, b))
+                boxes = [
+                    (
+                        min(a[0], b[0]) - padding,
+                        min(a[1], b[1]) - padding,
+                        max(a[0], b[0]) + padding,
+                        max(a[1], b[1]) + padding,
+                    )
+                    for a, b in segments
+                ]
+                expected = sorted(
+                    (i, j)
+                    for i in range(len(boxes))
+                    for j in range(i + 1, len(boxes))
+                    if boxes[i][0] <= boxes[j][2]
+                    and boxes[j][0] <= boxes[i][2]
+                    and boxes[i][1] <= boxes[j][3]
+                    and boxes[j][1] <= boxes[i][3]
+                )
+                with self.subTest(padding=padding, page=page):
+                    got = _candidate_pairs(segments, padding)
+                    # every pair of segments within the padding of each other (distance
+                    # inclusive: lattice points hit it exactly) must be present; nothing
+                    # outside the padded boxes may be.
+                    needed = [
+                        pair
+                        for pair in expected
+                        if _segment_distance(*segments[pair[0]], *segments[pair[1]])
+                        <= padding
+                    ]
+                    self.assertTrue(set(needed) <= set(got))
+                    self.assertTrue(set(got) <= set(expected))
+
+
+class OpeningRingBoxTests(unittest.TestCase):
+    """A wall end counts only if it lies inside the ring box widened by the snap tolerance."""
+
+    RING = ((0.0, 20.0), (10.0, 20.0), (10.0, 30.0), (0.0, 30.0))
+
+    def _found(self, walls):
+        return _openings(walls, min_length=0.5, max_length=5.0, ring=self.RING)
+
+    @staticmethod
+    def _vertical_stubs(x):
+        # two collinear stubs, each hanging off a cross wall, facing each other across (24, 26)
+        return [
+            (x - 5.0, 15.0, x + 5.0, 15.0),
+            (x, 15.0, x, 24.0),
+            (x - 5.0, 35.0, x + 5.0, 35.0),
+            (x, 35.0, x, 26.0),
+        ]
+
+    @staticmethod
+    def _horizontal_stubs(y):
+        return [
+            (-1.0, y - 5.0, -1.0, y + 5.0),
+            (-1.0, y, 4.0, y),
+            (11.0, y - 5.0, 11.0, y + 5.0),
+            (11.0, y, 6.0, y),
+        ]
+
+    def test_wall_ends_on_the_right_and_left_limits_of_the_box_still_count(self):
+        self.assertEqual(
+            self._found(self._vertical_stubs(10.5)), [((10.5, 24.0), (10.5, 26.0))]
+        )
+        self.assertEqual(
+            self._found(self._vertical_stubs(-0.5)), [((-0.5, 24.0), (-0.5, 26.0))]
+        )
+
+    def test_wall_ends_on_the_top_and_bottom_limits_of_the_box_still_count(self):
+        self.assertEqual(
+            self._found(self._horizontal_stubs(19.5)), [((4.0, 19.5), (6.0, 19.5))]
+        )
+        self.assertEqual(
+            self._found(self._horizontal_stubs(30.5)), [((4.0, 30.5), (6.0, 30.5))]
+        )
+
+    def test_wall_ends_just_beyond_the_widened_box_are_ignored(self):
+        for walls in (
+            self._vertical_stubs(10.6),
+            self._vertical_stubs(-0.6),
+            self._horizontal_stubs(19.4),
+            self._horizontal_stubs(30.6),
+        ):
+            self.assertEqual(self._found(walls), [])
+
+    def test_wall_ends_well_inside_the_box_count(self):
+        self.assertEqual(
+            self._found(self._vertical_stubs(5.0)), [((5.0, 24.0), (5.0, 26.0))]
+        )
+        self.assertEqual(
+            self._found(self._horizontal_stubs(25.0)), [((4.0, 25.0), (6.0, 25.0))]
+        )
+
+
+class OpeningAngleLimitTests(unittest.TestCase):
+    @staticmethod
+    def _omega(degrees, gap):
+        # One open outline whose two ends face each other across `gap`; the second end is
+        # `degrees` off the first end's axis.
+        angle = math.radians(degrees)
+        bx, by = gap * math.cos(angle), gap * math.sin(angle)
+        return _polyline(
+            [
+                (0.0, 0.0),
+                (-10.0, 0.0),
+                (-10.0, 10.0),
+                (20.0, 10.0),
+                (20.0, by),
+                (bx, by),
+            ]
+        )
+
+    @staticmethod
+    def _found(segments, **kwargs):
+        return opening_candidates(segments, 0.01, 0.1, kwargs.get("max_length", 5.0))
+
+    def test_the_default_limits_are_fifteen_degrees_and_a_neck_ratio_of_three(self):
+        self.assertEqual(planar.OPENING_ANGLE_DEG, 15.0)
+        self.assertEqual(planar.OPENING_NECK_RATIO, 3.0)
+
+    def test_ends_facing_each_other_within_the_limit_are_an_opening(self):
+        self.assertEqual(len(self._found(self._omega(14.5, 2.0))), 1)
+
+    def test_ends_offset_beyond_the_limit_are_not_an_opening(self):
+        self.assertEqual(self._found(self._omega(15.5, 2.0)), [])
+
+    def test_a_gap_shorter_than_one_unit_is_judged_by_angle_not_by_distance(self):
+        self.assertEqual(len(self._found(self._omega(0.0, 0.5))), 1)
+        self.assertEqual(len(self._found(self._omega(10.0, 0.5))), 1)
+        self.assertEqual(self._found(self._omega(20.0, 0.5)), [])
+
+    def test_a_chord_exactly_along_the_wall_passes_with_a_zero_degree_limit(self):
+        capped = _capped_rooms()
+        ring = _smallest_containing(
+            find_planar_regions(capped, 0.5, 0.0), (50, 50)
+        ).outer
+        with mock.patch.object(planar, "OPENING_ANGLE_DEG", 0.0):
+            facing = self._found(self._omega(0.0, 2.0))
+            foot = opening_candidates(
+                _rect(0, 0, 200, 100) + [(100, 0, 100, 60)], 0.5, 1.0, 50.0
+            )
+            jambs = _openings(capped, min_length=1.0, max_length=30.0, ring=ring)
+        self.assertEqual(len(facing), 1)
+        self.assertEqual(foot, [(100.0, 60.0, 100.0, 100.0)])
+        self.assertEqual(
+            jambs, [((92.0, 30.0), (92.0, 60.0)), ((108.0, 30.0), (108.0, 60.0))]
+        )

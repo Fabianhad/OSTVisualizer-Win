@@ -67,11 +67,16 @@ class AnnotationCaptionDtoValueTests(unittest.TestCase):
         )
 
         resolved = ResolvedAnnotationCaptionDto()
-        self.assertEqual((resolved.lines, resolved.label, resolved.measurement_types), ((), "", 0))
+        self.assertEqual(
+            (resolved.lines, resolved.label, resolved.measurement_types), ((), "", 0)
+        )
         with self.assertRaises(FrozenInstanceError):
             resolved.label = "x"
         with self.assertRaises(FrozenInstanceError):
             AnnotationCaptionSettingsDto(True, ()).enabled = False
         with self.assertRaises(FrozenInstanceError):
             AnnotationCaptionSpec("t", 1, "p").title = "x"
-        self.assertEqual(AnnotationCaptionSettingsDto(True, ()), AnnotationCaptionSettingsDto(True, ()))
+        self.assertEqual(
+            AnnotationCaptionSettingsDto(True, ()),
+            AnnotationCaptionSettingsDto(True, ()),
+        )

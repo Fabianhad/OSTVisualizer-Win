@@ -183,7 +183,6 @@ class McpLoggingContractTests(unittest.TestCase):
 
     def test_running_the_module_as_a_script_parses_its_arguments(self):
         import subprocess
-
         from tests.paths import REPO_ROOT
 
         completed = subprocess.run(

@@ -10,10 +10,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.presentation.services import ai_takeoff_pdf_source
 from ost_visualizer.presentation.services.ai_takeoff_pdf_source import (
     MAX_PAGE_PATH_ITEMS,
+    PATH_CACHE_PAGES,
     PageCachePdfSource,
 )
 from ost_visualizer.presentation.visualization.pdf import ost_pdf
 from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+from ost_visualizer.presentation.visualization.pdf.pdfium_lock import pdfium_lock
 from tests.presentation.services.ai_takeoff_pdf_support import (
     write_content_pdf,
     write_takeoff_pdf,
@@ -388,6 +390,184 @@ class PageCachePdfSourceTests(unittest.TestCase):
         self.assertEqual((image.width(), image.height()), (200, 100))
         cached = self.cache.get_frame(str(self.pdf), 0, 2.0, 72.0, 72.0, 100.0, 50.0, 0)
         self.assertIs(cached, image)
+
+
+class PathCacheEvictionTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.pdf = write_content_pdf(
+            Path(directory.name) / "boxed.pdf",
+            "10 10 m 50 10 l S 300 300 m 340 300 l S",
+            page_boxes="/MediaBox [0 0 612 792] /CropBox [5 5 607 787]",
+        )
+        self.cache = PageCache()
+        self.addCleanup(self.cache.clear)
+
+    def test_only_the_two_most_recently_used_extractions_are_kept(self):
+        self.assertEqual(PATH_CACHE_PAGES, 2)
+        calls = []
+        source = PageCachePdfSource(
+            self.cache, renderer_factory=lambda: _RecordingRenderer(calls)
+        )
+        path = str(self.pdf)
+        box_a, box_b, box_c = (
+            (0.0, 0.0, 100.0, 100.0),
+            (1.0, 1.0, 101.0, 101.0),
+            (
+                2.0,
+                2.0,
+                102.0,
+                102.0,
+            ),
+        )
+        first_a = source.get_path_segments(path, 0, box_a)
+        source.get_path_segments(path, 0, box_b)
+        self.assertEqual(calls.count("open"), 2)
+        # Reading A again makes it the most recently used entry.
+        self.assertIs(source.get_path_segments(path, 0, box_a), first_a)
+        self.assertEqual(calls.count("open"), 2)
+        # C pushes out B, the least recently used one, and C itself is kept.
+        third = source.get_path_segments(path, 0, box_c)
+        self.assertEqual(calls.count("open"), 3)
+        self.assertIs(source.get_path_segments(path, 0, box_c), third)
+        self.assertIs(source.get_path_segments(path, 0, box_a), first_a)
+        self.assertEqual(calls.count("open"), 3)
+        source.get_path_segments(path, 0, box_b)
+        self.assertEqual(calls.count("open"), 4)
+
+
+class PathBoxEdgeTests(unittest.TestCase):
+    def test_each_edge_of_the_box_is_shifted_by_the_visible_box_origin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_content_pdf(
+                Path(directory) / "boxed.pdf",
+                "10 10 m 50 10 l S 300 300 m 340 300 l S",
+                page_boxes="/MediaBox [0 0 612 792] /CropBox [5 5 607 787]",
+            )
+            cache = PageCache()
+            self.addCleanup(cache.clear)
+            source = PageCachePdfSource(cache)
+
+            def found(box):
+                result = source.get_path_segments(str(pdf), 0, box)
+                return [(s.x1, s.y1, s.x2, s.y2) for s in result.segments]
+
+            hit = [(295.0, 295.0, 335.0, 295.0)]
+            self.assertEqual(found((334.0, 290.0, 400.0, 300.0)), hit)
+            self.assertEqual(found((336.0, 290.0, 400.0, 300.0)), [])
+            self.assertEqual(found((290.0, 294.0, 340.0, 310.0)), hit)
+            self.assertEqual(found((290.0, 296.0, 340.0, 310.0)), [])
+            self.assertEqual(found((290.0, 290.0, 296.0, 300.0)), hit)
+            self.assertEqual(found((290.0, 290.0, 294.0, 300.0)), [])
+            self.assertEqual(found((290.0, 290.0, 340.0, 296.0)), hit)
+            self.assertEqual(found((290.0, 290.0, 340.0, 294.0)), [])
+
+
+class _FailingExtractRenderer(_RecordingRenderer):
+    def __init__(self, calls, error):
+        super().__init__(calls)
+        self._error = error
+
+    def extract_path_items(self, page_index, max_items, box=None):
+        self._calls.append("extract")
+        raise self._error
+
+
+class ExtractionFailureCleanupTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.pdf = write_content_pdf(
+            Path(directory.name) / "one.pdf", "10 10 m 50 10 l S"
+        )
+        self.cache = PageCache()
+        self.addCleanup(self.cache.clear)
+
+    def test_an_extraction_that_fails_after_opening_still_closes_the_renderer(self):
+        for error in (
+            OSError("io"),
+            RuntimeError("rt"),
+            TypeError("ty"),
+            ValueError("va"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                calls = []
+                source = PageCachePdfSource(
+                    self.cache,
+                    renderer_factory=lambda: _FailingExtractRenderer(calls, error),
+                )
+                with self.assertLogs(
+                    "ost_visualizer.presentation.services.ai_takeoff_pdf_source",
+                    "WARNING",
+                ) as logs:
+                    result = source.get_path_segments(str(self.pdf), 0)
+                self.assertEqual(result.segments, ())
+                self.assertFalse(result.truncated)
+                self.assertEqual(calls, ["open", "extract", "close"])
+                self.assertEqual(
+                    logs.output,
+                    [
+                        "WARNING:ost_visualizer.presentation.services."
+                        "ai_takeoff_pdf_source:PDF vector extraction failed: "
+                        + type(error).__name__
+                    ],
+                )
+                self.assertTrue(pdfium_lock.acquire(blocking=False))
+                pdfium_lock.release()
+
+    def test_an_unexpected_error_propagates_but_releases_the_renderer_and_lock(self):
+        calls = []
+        source = PageCachePdfSource(
+            self.cache,
+            renderer_factory=lambda: _FailingExtractRenderer(calls, KeyError("boom")),
+        )
+        with self.assertRaises(KeyError):
+            source.get_path_segments(str(self.pdf), 0)
+        self.assertEqual(calls, ["open", "extract", "close"])
+        self.assertTrue(pdfium_lock.acquire(blocking=False))
+        pdfium_lock.release()
+
+    def test_a_failed_extraction_is_not_cached(self):
+        calls = []
+        source = PageCachePdfSource(
+            self.cache,
+            renderer_factory=lambda: _FailingExtractRenderer(calls, OSError("io")),
+        )
+        with self.assertLogs(
+            "ost_visualizer.presentation.services.ai_takeoff_pdf_source", "WARNING"
+        ):
+            source.get_path_segments(str(self.pdf), 0)
+            source.get_path_segments(str(self.pdf), 0)
+        self.assertEqual(calls.count("open"), 2)
+
+
+class VisibleOriginFallbackTests(unittest.TestCase):
+    def test_an_unreadable_page_geometry_leaves_coordinates_unshifted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = write_content_pdf(
+                Path(directory) / "offset.pdf",
+                "300 300 m 340 300 l S",
+                page_boxes="/MediaBox [0 0 612 792] /CropBox [5 5 607 787]",
+            )
+            cache = PageCache()
+            self.addCleanup(cache.clear)
+
+            def broken_reader():
+                raise OSError("no geometry")
+
+            shifted = PageCachePdfSource(cache).get_path_segments(str(pdf), 0).segments
+            self.assertEqual((shifted[0].x1, shifted[0].y1), (295.0, 295.0))
+            with self.assertLogs(
+                "ost_visualizer.presentation.visualization.pdf.pdf_visible_origin",
+                "WARNING",
+            ):
+                raw = (
+                    PageCachePdfSource(cache, geometry_reader_factory=broken_reader)
+                    .get_path_segments(str(pdf), 0)
+                    .segments
+                )
+            self.assertEqual((raw[0].x1, raw[0].y1, raw[0].x2), (300.0, 300.0, 340.0))
 
 
 if __name__ == "__main__":

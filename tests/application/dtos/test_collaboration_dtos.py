@@ -1099,7 +1099,9 @@ class OutcomeContractTests(unittest.TestCase):
             operation_id=OPERATION_ID,
             request_hash="c" * 64,
         )
-        request = DatabaseMutationRequest(mutation_type=_Text("plan_geometry"), **kwargs)
+        request = DatabaseMutationRequest(
+            mutation_type=_Text("plan_geometry"), **kwargs
+        )
         self.assertIs(type(request.mutation_type), str)
         self.assertEqual(request.mutation_type, "plan_geometry")
         with self.assertRaisesRegex(ValueError, "canonical"):
@@ -1135,7 +1137,8 @@ class ChangePollResultContractTests(unittest.TestCase):
         ):
             with self.subTest(override=override):
                 with self.assertRaisesRegex(
-                    ValueError, r"^Observed and hydrated SQL change batches must match\.$"
+                    ValueError,
+                    r"^Observed and hydrated SQL change batches must match\.$",
                 ):
                     DatabaseChangePollResult(
                         observed, HydratedDatabaseChangeBatch(self._batch(**override))
@@ -1584,25 +1587,67 @@ class CollaborationVocabularyTests(unittest.TestCase):
         from ost_visualizer.application.dtos import collaboration_dtos as module
 
         expected = {
-            "ChangeOperation": ["create", "update", "delete", "move", "reorder", "bulk_refresh"],
+            "ChangeOperation": [
+                "create",
+                "update",
+                "delete",
+                "move",
+                "reorder",
+                "bulk_refresh",
+            ],
             "ChangeSourceKind": ["ost_visualizer", "external"],
             "CollaborationMutationType": [
-                "takeoff_placement", "plan_items_delete", "plan_geometry", "takeoff_properties",
-                "annotation_update", "plan_items_paste", "page_settings", "project_write", "project_import",
+                "takeoff_placement",
+                "plan_items_delete",
+                "plan_geometry",
+                "takeoff_properties",
+                "annotation_update",
+                "plan_items_paste",
+                "page_settings",
+                "project_write",
+                "project_import",
             ],
-            "CollaborationShutdownState": ["running", "stop_requested", "draining", "closed", "cleanup_failed"],
+            "CollaborationShutdownState": [
+                "running",
+                "stop_requested",
+                "draining",
+                "closed",
+                "cleanup_failed",
+            ],
             "MutationOutcomeStatus": [
-                "committed", "rejected", "conflict", "failed_before_commit", "committed_projection_failed",
-                "commit_status_unknown", "cancelled_before_start",
+                "committed",
+                "rejected",
+                "conflict",
+                "failed_before_commit",
+                "committed_projection_failed",
+                "commit_status_unknown",
+                "cancelled_before_start",
             ],
             "MutationRejectionReason": ["bid_locked"],
-            "PendingMutationState": ["queued", "executing", "projecting", "recovering", "uncertain"],
+            "PendingMutationState": [
+                "queued",
+                "executing",
+                "projecting",
+                "recovering",
+                "uncertain",
+            ],
             "PresenceMode": ["viewing", "editing"],
             "ReconciliationFailureKind": ["malformed_payload"],
-            "SynchronizationConflictKind": ["optimistic_concurrency", "lease", "session"],
+            "SynchronizationConflictKind": [
+                "optimistic_concurrency",
+                "lease",
+                "session",
+            ],
             "SynchronizationState": [
-                "stopped", "connecting", "catching_up", "healthy", "disconnected", "credential_required",
-                "read_only", "conflicted", "reconciliation_required",
+                "stopped",
+                "connecting",
+                "catching_up",
+                "healthy",
+                "disconnected",
+                "credential_required",
+                "read_only",
+                "conflicted",
+                "reconciliation_required",
             ],
         }
         for name, values in expected.items():
@@ -1613,8 +1658,10 @@ class CollaborationVocabularyTests(unittest.TestCase):
                     self.assertIs(enum_class(value), enum_class(value))
                     self.assertEqual(enum_class(value).value, value)
         found = {
-            n for n in dir(module)
-            if isinstance(getattr(module, n), type) and issubclass(getattr(module, n), enum.Enum)
+            n
+            for n in dir(module)
+            if isinstance(getattr(module, n), type)
+            and issubclass(getattr(module, n), enum.Enum)
             and getattr(module, n).__module__ == module.__name__
         }
         self.assertEqual(found, set(expected))
@@ -1626,13 +1673,19 @@ class CanonicalMutationHashTests(unittest.TestCase):
 
     def test_hash_is_the_sha256_of_compact_sorted_ascii_json(self):
         payload = {"b": [1, 2.5, "é", None, True], "a": {"z": b"\x01", "y": {3, 1, 2}}}
-        expected = '{"a":{"y":[1,2,3],"z":{"bytes":"01"}},"b":[1,2.5,"\\u00e9",null,true]}'
-        self.assertEqual(canonical_mutation_request_hash(payload), self.digest(expected))
+        expected = (
+            '{"a":{"y":[1,2,3],"z":{"bytes":"01"}},"b":[1,2.5,"\\u00e9",null,true]}'
+        )
+        self.assertEqual(
+            canonical_mutation_request_hash(payload), self.digest(expected)
+        )
         self.assertEqual(canonical_mutation_request_hash([]), self.digest("[]"))
         self.assertEqual(canonical_mutation_request_hash({}), self.digest("{}"))
         self.assertEqual(canonical_mutation_request_hash(None), self.digest("null"))
 
-    def test_logically_equal_payloads_hash_equally_regardless_of_container_kind_or_order(self):
+    def test_logically_equal_payloads_hash_equally_regardless_of_container_kind_or_order(
+        self,
+    ):
         self.assertEqual(
             canonical_mutation_request_hash({"b": 1, "a": (1, 2)}),
             canonical_mutation_request_hash({"a": [1, 2], "b": 1}),
@@ -1642,15 +1695,25 @@ class CanonicalMutationHashTests(unittest.TestCase):
             canonical_mutation_request_hash({"s": frozenset({2, 3, 10})}),
         )
         self.assertNotEqual(
-            canonical_mutation_request_hash({"a": [1, 2]}), canonical_mutation_request_hash({"a": [2, 1]})
+            canonical_mutation_request_hash({"a": [1, 2]}),
+            canonical_mutation_request_hash({"a": [2, 1]}),
         )
-        self.assertNotEqual(canonical_mutation_request_hash(1), canonical_mutation_request_hash("1"))
-        self.assertNotEqual(canonical_mutation_request_hash(b"a"), canonical_mutation_request_hash("a"))
+        self.assertNotEqual(
+            canonical_mutation_request_hash(1), canonical_mutation_request_hash("1")
+        )
+        self.assertNotEqual(
+            canonical_mutation_request_hash(b"a"), canonical_mutation_request_hash("a")
+        )
 
     def test_normalization_of_each_supported_value_kind(self):
         norm = collaboration_dtos._canonical_mutation_value
-        self.assertEqual(norm({"b": b"\xab", "a": {2, 1}, "c": (1, 2)}), {"a": [1, 2], "b": {"bytes": "ab"}, "c": [1, 2]})
-        self.assertEqual(norm({"s": {"b", "a"}, "n": {3, 10, 2}}), {"n": [10, 2, 3], "s": ["a", "b"]})
+        self.assertEqual(
+            norm({"b": b"\xab", "a": {2, 1}, "c": (1, 2)}),
+            {"a": [1, 2], "b": {"bytes": "ab"}, "c": [1, 2]},
+        )
+        self.assertEqual(
+            norm({"s": {"b", "a"}, "n": {3, 10, 2}}), {"n": [10, 2, 3], "s": ["a", "b"]}
+        )
         self.assertEqual(norm({(1, 2), (0, 1)}), [[0, 1], [1, 2]])
         self.assertEqual(norm({5: "x", "a": 1}), {"5": "x", "a": 1})
         self.assertEqual(norm(MutationOutcomeStatus.COMMITTED), "committed")
@@ -1659,9 +1722,13 @@ class CanonicalMutationHashTests(unittest.TestCase):
         self.assertIsInstance(norm(reference), dict)
         self.assertIs(norm(True), True)
         self.assertEqual(norm(0), 0)
-        with self.assertRaisesRegex(TypeError, "^Unsupported collaboration mutation payload value: object$"):
+        with self.assertRaisesRegex(
+            TypeError, "^Unsupported collaboration mutation payload value: object$"
+        ):
             norm(object())
-        with self.assertRaisesRegex(TypeError, "Unsupported collaboration mutation payload value: complex"):
+        with self.assertRaisesRegex(
+            TypeError, "Unsupported collaboration mutation payload value: complex"
+        ):
             canonical_mutation_request_hash({"a": 1j})
 
     def test_non_finite_numbers_cannot_be_hashed(self):
@@ -1673,17 +1740,34 @@ class CanonicalMutationHashTests(unittest.TestCase):
 
 class SessionIdentityComparisonTests(unittest.TestCase):
     def test_session_ids_compare_as_uuids_and_anything_unusable_never_matches(self):
-        from ost_visualizer.application.dtos.collaboration_dtos import session_identities_equal
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            session_identities_equal,
+        )
 
         text = "12345678-1234-5678-1234-567812345678"
         self.assertIs(session_identities_equal(text, text), True)
         self.assertIs(session_identities_equal(text, text.upper()), True)
         self.assertIs(session_identities_equal(text, "{" + text + "}"), True)
         self.assertIs(session_identities_equal(text, text.replace("-", "")), True)
-        self.assertIs(session_identities_equal(text, "12345678-1234-5678-1234-567812345679"), False)
-        for left, right in ((None, text), (text, None), ("", text), (text, ""), (None, None), ("", "")):
+        self.assertIs(
+            session_identities_equal(text, "12345678-1234-5678-1234-567812345679"),
+            False,
+        )
+        for left, right in (
+            (None, text),
+            (text, None),
+            ("", text),
+            (text, ""),
+            (None, None),
+            ("", ""),
+        ):
             self.assertIs(session_identities_equal(left, right), False)
-        for left, right in (("not-a-uuid", text), (text, "not-a-uuid"), ("x", "x"), ("1" * 10, "1" * 10)):
+        for left, right in (
+            ("not-a-uuid", text),
+            (text, "not-a-uuid"),
+            ("x", "x"),
+            ("1" * 10, "1" * 10),
+        ):
             self.assertIs(session_identities_equal(left, right), False)
 
 
@@ -1715,35 +1799,67 @@ class PayloadValidationMessageTests(unittest.TestCase):
                 "Unsupported queued project write",
             )
         self.assertEqual(
-            self.failure(lambda: ProjectWritePayload(write_kind="create_bid", values_json="{")),
+            self.failure(
+                lambda: ProjectWritePayload(write_kind="create_bid", values_json="{")
+            ),
             "Project write values must be valid JSON",
         )
         self.assertEqual(
-            self.failure(lambda: ProjectWritePayload(write_kind="create_bid", values_json=None)),
+            self.failure(
+                lambda: ProjectWritePayload(write_kind="create_bid", values_json=None)
+            ),
             "Project write values must be valid JSON",
         )
         for text in ("[]", "1", "null", '"x"'):
             self.assertEqual(
-                self.failure(lambda text=text: ProjectWritePayload(write_kind="create_bid", values_json=text)),
+                self.failure(
+                    lambda text=text: ProjectWritePayload(
+                        write_kind="create_bid", values_json=text
+                    )
+                ),
                 "Project write values must be a JSON object",
             )
-        self.assertEqual(ProjectWritePayload.from_values("create_bid", {"é": 1}).values_json, '{"\\u00e9":1}')
+        self.assertEqual(
+            ProjectWritePayload.from_values("create_bid", {"é": 1}).values_json,
+            '{"\\u00e9":1}',
+        )
 
     def test_page_setting_and_plan_property_payloads_state_their_rules(self):
         for factory, kind_message, json_message, list_message in (
-            (PageSettingsPayload, "Unsupported page setting mutation", "Page setting updates must be valid JSON", "Page setting updates must be a non-empty list"),
+            (
+                PageSettingsPayload,
+                "Unsupported page setting mutation",
+                "Page setting updates must be valid JSON",
+                "Page setting updates must be a non-empty list",
+            ),
         ):
             for text in ("[]", "{}", "1"):
                 self.assertEqual(
-                    self.failure(lambda text=text: factory(setting_kind="scale", updates_json=text)),
+                    self.failure(
+                        lambda text=text: factory(
+                            setting_kind="scale", updates_json=text
+                        )
+                    ),
                     list_message,
                 )
-            self.assertEqual(self.failure(lambda: factory(setting_kind="scale", updates_json="[")), json_message)
-            self.assertEqual(self.failure(lambda: factory(setting_kind="not-a-kind", updates_json='[{"a":1}]')), kind_message)
+            self.assertEqual(
+                self.failure(lambda: factory(setting_kind="scale", updates_json="[")),
+                json_message,
+            )
+            self.assertEqual(
+                self.failure(
+                    lambda: factory(setting_kind="not-a-kind", updates_json='[{"a":1}]')
+                ),
+                kind_message,
+            )
 
     def test_plan_item_paste_payload_states_each_alignment_and_identity_rule(self):
-        from ost_visualizer.application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
-        from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+        from ost_visualizer.application.dtos.insert_takeoff_spec_dto import (
+            InsertTakeoffSpec,
+        )
 
         def takeoff(parent=None):
             return InsertTakeoffSpec("c", "p", "0", [1.0, 2.0], parent_uid=parent)
@@ -1752,50 +1868,96 @@ class PayloadValidationMessageTests(unittest.TestCase):
             return InsertAnnotationSpec("p", kind, [1.0], "#000000", 1.0)
 
         def build(**kwargs):
-            return lambda: PlanItemsPastePayload(source_bid_uid="s", destination_bid_uid="d", **kwargs)
+            return lambda: PlanItemsPastePayload(
+                source_bid_uid="s", destination_bid_uid="d", **kwargs
+            )
 
         self.assertEqual(
             self.failure(build(takeoff_source_uids=("a",), takeoff_specs=())),
             "Paste takeoff sources and specifications must align",
         )
         self.assertEqual(
-            self.failure(build(annotation_source_uids=("rect/1",), annotation_specs=())),
+            self.failure(
+                build(annotation_source_uids=("rect/1",), annotation_specs=())
+            ),
             "Paste annotation sources and specifications must align",
         )
-        self.assertEqual(self.failure(build()), "A plan-item paste requires at least one item")
         self.assertEqual(
-            self.failure(build(takeoff_source_uids=("a", "a"), takeoff_specs=(takeoff(), takeoff()))),
+            self.failure(build()), "A plan-item paste requires at least one item"
+        )
+        self.assertEqual(
+            self.failure(
+                build(
+                    takeoff_source_uids=("a", "a"), takeoff_specs=(takeoff(), takeoff())
+                )
+            ),
             "Paste takeoff source identities must be unique",
         )
         for external in (("zz",), ("a", "a")):
             self.assertEqual(
-                self.failure(build(takeoff_source_uids=("a", "b"), takeoff_specs=(takeoff(), takeoff()), takeoff_external_parent_sources=external)),
+                self.failure(
+                    build(
+                        takeoff_source_uids=("a", "b"),
+                        takeoff_specs=(takeoff(), takeoff()),
+                        takeoff_external_parent_sources=external,
+                    )
+                ),
                 "Existing-parent bindings must name unique paste Takeoff sources",
             )
         for parent in (None, "", "0", "None"):
             self.assertEqual(
-                self.failure(build(takeoff_source_uids=("a",), takeoff_specs=(takeoff(parent),), takeoff_external_parent_sources=("a",))),
+                self.failure(
+                    build(
+                        takeoff_source_uids=("a",),
+                        takeoff_specs=(takeoff(parent),),
+                        takeoff_external_parent_sources=("a",),
+                    )
+                ),
                 "An existing-parent binding requires a parent UID",
             )
         PlanItemsPastePayload(
-            source_bid_uid="s", destination_bid_uid="d",
-            takeoff_source_uids=("a", "b"), takeoff_specs=(takeoff("7"), takeoff(None)),
+            source_bid_uid="s",
+            destination_bid_uid="d",
+            takeoff_source_uids=("a", "b"),
+            takeoff_specs=(takeoff("7"), takeoff(None)),
             takeoff_external_parent_sources=("a",),
         )
         self.assertEqual(
-            self.failure(build(annotation_source_uids=("rect/1", "rect/1"), annotation_specs=(annotation(), annotation()))),
+            self.failure(
+                build(
+                    annotation_source_uids=("rect/1", "rect/1"),
+                    annotation_specs=(annotation(), annotation()),
+                )
+            ),
             "Paste annotation source identities must be unique",
         )
         self.assertEqual(
-            self.failure(build(annotation_source_uids=("oval/1",), annotation_specs=(annotation("rect"),))),
+            self.failure(
+                build(
+                    annotation_source_uids=("oval/1",),
+                    annotation_specs=(annotation("rect"),),
+                )
+            ),
             "Paste annotation sources must use type-qualified identities",
         )
 
     def test_resource_ref_and_concurrency_token_state_their_limits(self):
-        self.assertEqual(self.failure(lambda: ResourceRef("", "1")), "Resource type must contain 1 to 64 characters")
-        self.assertEqual(self.failure(lambda: ResourceRef("t" * 65, "1")), "Resource type must contain 1 to 64 characters")
-        self.assertEqual(self.failure(lambda: ResourceRef("page", "")), "Resource ID must contain 1 to 128 characters")
-        self.assertEqual(self.failure(lambda: ResourceRef("page", "i" * 129)), "Resource ID must contain 1 to 128 characters")
+        self.assertEqual(
+            self.failure(lambda: ResourceRef("", "1")),
+            "Resource type must contain 1 to 64 characters",
+        )
+        self.assertEqual(
+            self.failure(lambda: ResourceRef("t" * 65, "1")),
+            "Resource type must contain 1 to 64 characters",
+        )
+        self.assertEqual(
+            self.failure(lambda: ResourceRef("page", "")),
+            "Resource ID must contain 1 to 128 characters",
+        )
+        self.assertEqual(
+            self.failure(lambda: ResourceRef("page", "i" * 129)),
+            "Resource ID must contain 1 to 128 characters",
+        )
         ResourceRef("page", "i" * 128)
         self.assertEqual(
             self.failure(lambda: ConcurrencyToken.from_database(b"1234567")),
@@ -1809,14 +1971,20 @@ class PayloadValidationMessageTests(unittest.TestCase):
     def test_edit_lease_results_require_a_handle_exactly_when_granted(self):
         expected = "A granted edit lease requires its handle, and a denial cannot carry a handle."
         self.assertEqual(self.failure(lambda: EditLeaseResult(granted=True)), expected)
-        self.assertEqual(self.failure(lambda: EditLeaseResult(granted=False, handle=object())), expected)
+        self.assertEqual(
+            self.failure(lambda: EditLeaseResult(granted=False, handle=object())),
+            expected,
+        )
         self.assertIs(EditLeaseResult(granted=False).granted, False)
 
 
 class CanonicalSetOrderingTests(unittest.TestCase):
     def test_set_members_are_ordered_by_their_ascii_escaped_json_text(self):
         # "\u00e9" sorts before "z" only because ordering uses the escaped (ASCII) form.
-        self.assertEqual(collaboration_dtos._canonical_mutation_value({"z", "\u00e9"}), ["\u00e9", "z"])
+        self.assertEqual(
+            collaboration_dtos._canonical_mutation_value({"z", "\u00e9"}),
+            ["\u00e9", "z"],
+        )
         self.assertEqual(
             canonical_mutation_request_hash({"z", "\u00e9"}),
             hashlib.sha256(rb'["\u00e9","z"]').hexdigest(),
@@ -1827,5 +1995,6 @@ class CanonicalSetSeparatorOrderingTests(unittest.TestCase):
     def test_set_members_compare_using_compact_json_text(self):
         # "[1,2]" < "[1.5]" because "," sorts before "." in the compact form.
         self.assertEqual(
-            collaboration_dtos._canonical_mutation_value({(1, 2), (1.5,)}), [[1, 2], [1.5]]
+            collaboration_dtos._canonical_mutation_value({(1, 2), (1.5,)}),
+            [[1, 2], [1.5]],
         )

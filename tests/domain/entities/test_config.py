@@ -269,8 +269,12 @@ def custom_config():
         ai_takeoff_enabled=True,
         default_text_font=FontDefinition("Calibri", "Italic", 14, 400, True, False),
         default_area_label_font=FontDefinition("Verdana", "Bold", 9, 700, False, True),
-        default_dimension_annotation_font=FontDefinition("Tahoma", "Regular", 20, 400, False, False),
-        default_style_label_font=FontDefinition("Consolas", "Bold Italic", 8, 700, True, True),
+        default_dimension_annotation_font=FontDefinition(
+            "Tahoma", "Regular", 20, 400, False, False
+        ),
+        default_style_label_font=FontDefinition(
+            "Consolas", "Bold Italic", 8, 700, True, True
+        ),
         default_text_color="#0a0b0c",
         default_area_label_color="#0d0e0f",
         default_dimension_annotation_color="#101112",
@@ -284,7 +288,11 @@ def custom_config():
 class ConfigConstantTests(unittest.TestCase):
     def test_class_constants_are_the_persisted_vocabulary_and_defaults(self):
         self.assertEqual(
-            (Config.DISPLAY_MODE_SOLID, Config.DISPLAY_MODE_ORIGINAL, Config.DISPLAY_MODE_TRANSPARENT),
+            (
+                Config.DISPLAY_MODE_SOLID,
+                Config.DISPLAY_MODE_ORIGINAL,
+                Config.DISPLAY_MODE_TRANSPARENT,
+            ),
             ("Solid", "Original", "Transparent"),
         )
         self.assertEqual(
@@ -292,7 +300,11 @@ class ConfigConstantTests(unittest.TestCase):
             ("touching", "inclusive"),
         )
         self.assertEqual(
-            (Config.HOTLINK_TARGET_ANNOTATION, Config.HOTLINK_TARGET_VIEW, Config.HOTLINK_TARGET_MAIN),
+            (
+                Config.HOTLINK_TARGET_ANNOTATION,
+                Config.HOTLINK_TARGET_VIEW,
+                Config.HOTLINK_TARGET_MAIN,
+            ),
             ("annotation", "view", "main"),
         )
         self.assertEqual(Config.DEFAULT_DISPLAY_MODE, "Original")
@@ -307,10 +319,22 @@ class ConfigConstantTests(unittest.TestCase):
         self.assertEqual(Config.DEFAULT_ELEVATION_CALLOUT_COLOR, "#ff0000")
 
     def test_font_defaults_match_the_original_ost_labels(self):
-        self.assertEqual(Config.DEFAULT_TEXT_FONT, FontDefinition("Arial", "Bold", 12, 700, False, False))
-        self.assertEqual(Config.DEFAULT_AREA_LABEL_FONT, FontDefinition("Arial", "Bold", 10, 700, False, False))
-        self.assertEqual(Config.DEFAULT_DIMENSION_ANNOTATION_FONT, FontDefinition("Arial", "Bold", 12, 700, False, False))
-        self.assertEqual(Config.DEFAULT_STYLE_LABEL_FONT, FontDefinition("Arial", "Bold", 12, 700, False, False))
+        self.assertEqual(
+            Config.DEFAULT_TEXT_FONT,
+            FontDefinition("Arial", "Bold", 12, 700, False, False),
+        )
+        self.assertEqual(
+            Config.DEFAULT_AREA_LABEL_FONT,
+            FontDefinition("Arial", "Bold", 10, 700, False, False),
+        )
+        self.assertEqual(
+            Config.DEFAULT_DIMENSION_ANNOTATION_FONT,
+            FontDefinition("Arial", "Bold", 12, 700, False, False),
+        )
+        self.assertEqual(
+            Config.DEFAULT_STYLE_LABEL_FONT,
+            FontDefinition("Arial", "Bold", 12, 700, False, False),
+        )
 
     def test_defaults_that_are_not_pinned_elsewhere(self):
         config = Config()
@@ -325,7 +349,9 @@ class ConfigConstantTests(unittest.TestCase):
 
 
 class ConfigFullRoundTripTests(unittest.TestCase):
-    def test_every_persisted_field_round_trips_individually_from_a_non_default_value(self):
+    def test_every_persisted_field_round_trips_individually_from_a_non_default_value(
+        self,
+    ):
         custom = custom_config()
         defaults = Config()
         from dataclasses import fields as dataclass_fields
@@ -335,16 +361,22 @@ class ConfigFullRoundTripTests(unittest.TestCase):
                 getattr(custom, field.name), getattr(defaults, field.name), field.name
             )
         payload = custom.to_dict()
-        self.assertEqual({field.name for field in dataclass_fields(Config)}, set(payload))
+        self.assertEqual(
+            {field.name for field in dataclass_fields(Config)}, set(payload)
+        )
         self.assertEqual(Config.from_dict(payload), custom)
         for field in dataclass_fields(Config):
             with self.subTest(field=field.name):
                 partial = Config.from_dict({field.name: payload[field.name]})
-                self.assertEqual(getattr(partial, field.name), getattr(custom, field.name))
+                self.assertEqual(
+                    getattr(partial, field.name), getattr(custom, field.name)
+                )
                 for other in dataclass_fields(Config):
                     if other.name != field.name:
                         self.assertEqual(
-                            getattr(partial, other.name), getattr(defaults, other.name), other.name
+                            getattr(partial, other.name),
+                            getattr(defaults, other.name),
+                            other.name,
                         )
 
     def test_payload_uses_plain_json_types(self):
@@ -356,7 +388,14 @@ class ConfigFullRoundTripTests(unittest.TestCase):
         self.assertEqual(payload["pdf_annotation_caption_ids"], ["area", "slope"])
         self.assertEqual(
             payload["default_text_font"],
-            {"family": "Calibri", "style_name": "Italic", "point_size": 14, "weight": 400, "italic": True, "underline": False},
+            {
+                "family": "Calibri",
+                "style_name": "Italic",
+                "point_size": 14,
+                "weight": 400,
+                "italic": True,
+                "underline": False,
+            },
         )
 
     def test_empty_or_missing_payload_gives_defaults_without_sharing_state(self):
@@ -369,7 +408,11 @@ class ConfigFullRoundTripTests(unittest.TestCase):
     def test_every_boolean_field_rejects_non_boolean_values_naming_the_key(self):
         from dataclasses import fields as dataclass_fields
 
-        bool_fields = [f.name for f in dataclass_fields(Config) if isinstance(getattr(Config(), f.name), bool)]
+        bool_fields = [
+            f.name
+            for f in dataclass_fields(Config)
+            if isinstance(getattr(Config(), f.name), bool)
+        ]
         self.assertEqual(len(bool_fields), 24)
         for name in bool_fields:
             for value in ("true", 1, 0, None, "false"):
@@ -399,11 +442,20 @@ class ConfigFullRoundTripTests(unittest.TestCase):
             }
         )
         self.assertEqual(
-            (config.display_mode_3d, config.display_mode_2d, config.roping_selection_method, config.hotlink_target),
+            (
+                config.display_mode_3d,
+                config.display_mode_2d,
+                config.roping_selection_method,
+                config.hotlink_target,
+            ),
             ("5", "None", "7", "8"),
         )
         self.assertEqual(
-            (config.crosshair_color, config.html_elevation_callout_color, config.pdf_elevation_callout_color),
+            (
+                config.crosshair_color,
+                config.html_elevation_callout_color,
+                config.pdf_elevation_callout_color,
+            ),
             ("9", "10", "11"),
         )
         self.assertEqual(
@@ -423,7 +475,9 @@ class ConfigFullRoundTripTests(unittest.TestCase):
             with self.assertRaises((TypeError, ValueError)):
                 Config.from_dict({"default_auto_zoom_level": value})
 
-    def test_default_color_fields_are_stored_without_coercion_for_the_aggregate_to_validate(self):
+    def test_default_color_fields_are_stored_without_coercion_for_the_aggregate_to_validate(
+        self,
+    ):
         config = Config.from_dict(
             {
                 "default_text_color": "blue",
@@ -450,7 +504,8 @@ class ConfigFullRoundTripTests(unittest.TestCase):
 
     def test_hidden_toolbar_items_are_trimmed_deduplicated_sorted_and_blank_free(self):
         self.assertEqual(
-            Config.normalize_hidden_toolbar_items([" b ", "a", "b", "", "  ", "a "]), ("a", "b")
+            Config.normalize_hidden_toolbar_items([" b ", "a", "b", "", "  ", "a "]),
+            ("a", "b"),
         )
         self.assertEqual(Config.normalize_hidden_toolbar_items(("z", "y")), ("y", "z"))
         self.assertEqual(Config.normalize_hidden_toolbar_items([]), ())
@@ -459,41 +514,61 @@ class ConfigFullRoundTripTests(unittest.TestCase):
                 with self.assertRaises(TypeError) as raised:
                     Config.normalize_hidden_toolbar_items(bad)
                 self.assertEqual(
-                    str(raised.exception), "hidden_takeoff_toolbar_items must be a list of strings"
+                    str(raised.exception),
+                    "hidden_takeoff_toolbar_items must be a list of strings",
                 )
         loaded = Config.from_dict({"hidden_takeoff_toolbar_items": [" b", "a", "b"]})
         self.assertEqual(loaded.hidden_takeoff_toolbar_items, ("a", "b"))
 
     def test_caption_ids_must_be_a_list_and_are_kept_as_text_in_order(self):
-        loaded = Config.from_dict({"pdf_annotation_caption_ids": ["slope", 3, "area", "area"]})
-        self.assertEqual(loaded.pdf_annotation_caption_ids, ("slope", "3", "area", "area"))
+        loaded = Config.from_dict(
+            {"pdf_annotation_caption_ids": ["slope", 3, "area", "area"]}
+        )
         self.assertEqual(
-            Config.from_dict({"pdf_annotation_caption_ids": ("area",)}).pdf_annotation_caption_ids,
+            loaded.pdf_annotation_caption_ids, ("slope", "3", "area", "area")
+        )
+        self.assertEqual(
+            Config.from_dict(
+                {"pdf_annotation_caption_ids": ("area",)}
+            ).pdf_annotation_caption_ids,
             ("area",),
         )
         for bad in ("area", None, 5, {"area"}):
             with self.subTest(bad=bad):
                 with self.assertRaises(TypeError) as raised:
                     Config.from_dict({"pdf_annotation_caption_ids": bad})
-                self.assertEqual(str(raised.exception), "pdf_annotation_caption_ids must be a list")
+                self.assertEqual(
+                    str(raised.exception), "pdf_annotation_caption_ids must be a list"
+                )
 
     def test_font_payloads_that_are_not_objects_become_the_invalid_empty_font(self):
-        config = Config.from_dict({"default_text_font": None, "default_style_label_font": "Arial"})
+        config = Config.from_dict(
+            {"default_text_font": None, "default_style_label_font": "Arial"}
+        )
         empty = FontDefinition("", "", 0, 0, False, False)
         self.assertEqual(config.default_text_font, empty)
         self.assertEqual(config.default_style_label_font, empty)
         self.assertEqual(config.default_area_label_font, Config.DEFAULT_AREA_LABEL_FONT)
 
-    def test_font_definition_round_trips_and_keeps_wrong_typed_members_for_validation(self):
+    def test_font_definition_round_trips_and_keeps_wrong_typed_members_for_validation(
+        self,
+    ):
         font = FontDefinition("Calibri", "Italic", 14, 400, True, False)
         self.assertEqual(FontDefinition.from_dict(font.to_dict()), font)
         loose = FontDefinition.from_dict({"family": 5, "point_size": "x"})
-        self.assertEqual((loose.family, loose.style_name, loose.point_size), (5, None, "x"))
+        self.assertEqual(
+            (loose.family, loose.style_name, loose.point_size), (5, None, "x")
+        )
 
     def test_elevation_callout_settings_view_follows_the_include_flags(self):
         settings = custom_config().elevation_callout_settings()
         self.assertEqual(
-            (settings.include_condition, settings.include_top, settings.include_bottom, settings.include_cubic_yards),
+            (
+                settings.include_condition,
+                settings.include_top,
+                settings.include_bottom,
+                settings.include_cubic_yards,
+            ),
             (False, False, False, False),
         )
         self.assertFalse(settings.has_content)
@@ -503,15 +578,25 @@ class ConfigFullRoundTripTests(unittest.TestCase):
             "elevation_callout_include_bottom",
             "elevation_callout_include_cubic_yards",
         ):
-            only = Config(**{
-                "elevation_callout_include_condition": False,
-                "elevation_callout_include_top": False,
-                "elevation_callout_include_bottom": False,
-                "elevation_callout_include_cubic_yards": False,
-                flag: True,
-            }).elevation_callout_settings()
+            only = Config(
+                **{
+                    "elevation_callout_include_condition": False,
+                    "elevation_callout_include_top": False,
+                    "elevation_callout_include_bottom": False,
+                    "elevation_callout_include_cubic_yards": False,
+                    flag: True,
+                }
+            ).elevation_callout_settings()
             with self.subTest(flag=flag):
                 self.assertTrue(only.has_content)
                 self.assertEqual(
-                    sum([only.include_condition, only.include_top, only.include_bottom, only.include_cubic_yards]), 1
+                    sum(
+                        [
+                            only.include_condition,
+                            only.include_top,
+                            only.include_bottom,
+                            only.include_cubic_yards,
+                        ]
+                    ),
+                    1,
                 )

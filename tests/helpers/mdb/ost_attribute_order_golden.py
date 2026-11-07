@@ -1,9 +1,9 @@
 """Golden snapshot of the native OST attribute order and null-default columns.
-
 Transcribed as literals from the audited exporter so that a typo in any single
 column name of the ordering tables is detected (tests/infrastructure/mdb/exporters/
 test_ost_exporter.py). Update deliberately when the OST format knowledge changes.
 """
+
 PRIORITY_ATTRS = (
     "UID",
     "BidUID",
@@ -18,7 +18,6 @@ PRIORITY_ATTRS = (
     "ParentUID",
     "CdnTypeUID",
 )
-
 ATTRIBUTE_ORDER_BY_ELEMENT = {
     "BidCondition": (
         "UID",
@@ -407,7 +406,6 @@ ATTRIBUTE_ORDER_BY_ELEMENT = {
         "Position",
     ),
 }
-
 ZERO_DEFAULT_FIELDS = frozenset(
     {
         "AccessLevelUID",

@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
@@ -171,7 +172,13 @@ class DatabaseDescriptorEnumsAndDefaultsTests(unittest.TestCase):
         self.assertEqual(descriptor.schema_version, 0)
         text = repr(descriptor)
         self.assertTrue(text.startswith("DatabaseDescriptor("))
-        for name in ("database_id", "backend", "display_name", "location", "schema_version"):
+        for name in (
+            "database_id",
+            "backend",
+            "display_name",
+            "location",
+            "schema_version",
+        ):
             self.assertIn(f"{name}={getattr(descriptor, name)!r}", text)
 
 
@@ -190,14 +197,18 @@ class DatabaseDescriptorAccessFactoryTests(unittest.TestCase):
             DatabaseDescriptor.for_access(r"C:\data\Other.mdb").database_id,
         )
 
+    @unittest.skipUnless(
+        os.name == "nt", "Access paths are normalised by the Windows path rules"
+    )
     def test_access_id_ignores_case_and_redundant_path_segments(self):
-        import os
-
         spelled = DatabaseDescriptor.for_access(r"C:\Data\sub\..\Sample.MDB")
         canonical = DatabaseDescriptor.for_access(r"c:\data\sample.mdb")
-        if os.name == "nt":
-            self.assertEqual(spelled.database_id, canonical.database_id)
+        self.assertEqual(spelled.database_id, canonical.database_id)
+
+    def test_access_location_keeps_the_path_exactly_as_given(self):
+        spelled = DatabaseDescriptor.for_access(r"C:\Data\sub\..\Sample.MDB")
         self.assertEqual(spelled.location.file_path, r"C:\Data\sub\..\Sample.MDB")
+        self.assertEqual(spelled.access_path, r"C:\Data\sub\..\Sample.MDB")
 
     def test_explicit_name_id_and_schema_version_are_used_and_empty_name_falls_back(
         self,
@@ -295,14 +306,18 @@ class DatabaseDescriptorSqlFactoryTests(unittest.TestCase):
         ):
             DatabaseDescriptor.for_sql_server(_sql_location(), schema_version=-1)
 
-    def test_derived_ids_are_pinned_because_saved_entries_are_matched_by_them(self):
-        import os
+    @unittest.skipUnless(
+        os.name == "nt", "the pinned Access id is derived from a Windows path"
+    )
+    def test_the_derived_access_id_is_pinned_because_saved_entries_are_matched_by_it(
+        self,
+    ):
+        self.assertEqual(
+            DatabaseDescriptor.for_access(r"C:\data\a.mdb").database_id,
+            "9e1523b8-ef1f-5842-b001-9ac08a084aa6",
+        )
 
-        if os.name == "nt":
-            self.assertEqual(
-                DatabaseDescriptor.for_access(r"C:\data\a.mdb").database_id,
-                "9e1523b8-ef1f-5842-b001-9ac08a084aa6",
-            )
+    def test_derived_sql_ids_are_pinned_because_saved_entries_are_matched_by_them(self):
         self.assertEqual(
             DatabaseDescriptor.for_sql_server(
                 _sql_location(server="Srv", database="DB", username="U"),
@@ -317,6 +332,92 @@ class DatabaseDescriptorSqlFactoryTests(unittest.TestCase):
             ).database_id,
             "6983f2e8-9cc5-5443-8cdd-5f81f5fe978c",
         )
+
+    def test_a_pipe_in_a_derived_identity_part_is_rejected_so_ids_cannot_collide(self):
+        windows_user_in_database = _sql_location(
+            server="s", database="d|sql_server", username="u"
+        )
+        sql_user_with_pipe = _sql_location(
+            server="s",
+            database="d",
+            authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+            username="windows|u",
+        )
+        for label, location in (
+            ("database", windows_user_in_database),
+            ("username", sql_user_with_pipe),
+            ("server", _sql_location(server="a|b", database="c")),
+            ("padded", _sql_location(server=" s ", database=" d| ")),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "^SQL Server connection details cannot contain the '[|]' "
+                    "character without a database id.$",
+                ):
+                    DatabaseDescriptor.for_sql_server(location, schema_version=1)
+
+    def test_ordinary_punctuation_still_derives_a_stable_id(self):
+        sql = SqlAuthenticationMode.SQL_SERVER
+        cases = (
+            (
+                _sql_location(
+                    server="HOST\\INST",
+                    database="db.v1-x",
+                    username="u",
+                    authentication_mode=sql,
+                ),
+                "006ea5f3-7a62-5919-b9d1-f8e78b4266ae",
+            ),
+            (
+                _sql_location(server="h%7Ca", database="100%_ok"),
+                "04ac30e8-e5d3-5d20-ad34-edec1d7451b3",
+            ),
+            (
+                _sql_location(server="Srv", database="DB", username="U"),
+                "30dbc71e-85fe-5a4c-b472-29e8ee45de4e",
+            ),
+        )
+        for location, expected in cases:
+            with self.subTest(server=location.server):
+                self.assertEqual(
+                    DatabaseDescriptor.for_sql_server(
+                        location, schema_version=1
+                    ).database_id,
+                    expected,
+                )
+
+    def test_a_pipe_is_tolerated_where_a_guid_or_saved_id_already_identifies_it(self):
+        with_guid = DatabaseDescriptor.for_sql_server(
+            _sql_location(
+                server="s|1",
+                database="d|b",
+                authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+                username="u|x",
+                database_guid="AB-1",
+            ),
+            schema_version=1,
+        )
+        self.assertEqual(with_guid.database_id, "6983f2e8-9cc5-5443-8cdd-5f81f5fe978c")
+        explicit = DatabaseDescriptor.for_sql_server(
+            _sql_location(database="d|b"), database_id="saved-id", schema_version=1
+        )
+        self.assertEqual(explicit.database_id, "saved-id")
+
+    def test_a_saved_descriptor_with_a_pipe_still_loads_and_keeps_its_id(self):
+        saved = {
+            "database_id": "5f14ce68-eac8-52c3-8d5c-4fc67f5379d0",
+            "backend": "sql_server",
+            "display_name": "d|sql_server",
+            "location": _sql_location(
+                server="s", database="d|sql_server", username="u"
+            ).to_dict(),
+            "schema_version": 1,
+        }
+        loaded = DatabaseDescriptor.from_dict(saved)
+        self.assertEqual(loaded.database_id, saved["database_id"])
+        self.assertEqual(loaded.sql_location.database, "d|sql_server")
+        self.assertEqual(loaded.to_dict(), saved)
 
     def test_access_and_sql_ids_never_collide_for_the_same_text(self):
         access = DatabaseDescriptor.for_access("same")
@@ -570,6 +671,25 @@ class DatabaseDescriptorNameValidationTests(unittest.TestCase):
                 ):
                     validate_sql_database_name(name)
         validate_sql_database_name("a\x7fb")
+
+    def test_a_pipe_is_rejected_in_a_new_database_name_but_other_punctuation_is_not(
+        self,
+    ):
+        for name in ("a|b", "|", "d|sql_server"):
+            for validate in (
+                validate_sql_database_name,
+                validate_sql_database_creation_name,
+            ):
+                with self.subTest(name=name, validate=validate.__name__):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "^Database name cannot contain the '[|]' character.$",
+                    ):
+                        validate(name)
+        for name in ("a.b", "a-b", "a%b", "a%7Cb", "a\\b", "a]b[", "a_b 1"):
+            with self.subTest(name=name):
+                validate_sql_database_name(name)
+                validate_sql_database_creation_name(name)
 
     def test_every_system_database_is_rejected_case_insensitively(self):
         for name in ("master", "MODEL", "MsDb", "tempdb", "TempDB"):

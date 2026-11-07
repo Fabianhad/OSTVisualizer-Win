@@ -330,12 +330,16 @@ class SqlProjectWriter(MdbWriter):
                     message="The takeoff relationship graph changed before the Plan mutation started.",
                 )
             if status == 3:
-                raise SqlInfrastructureError(
-                    SqlErrorDetails(
-                        SqlErrorCode.CONFLICT,
-                        "An annotation changed or was deleted before this "
-                        "operation started.",
-                    )
+                raise _OptimisticConflict(
+                    ResourceRef(
+                        CollaborationResourceType.ANNOTATIONS_COLLECTION.value,
+                        str(bid_uid),
+                        int(bid_uid),
+                    ),
+                    None,
+                    None,
+                    message="An annotation changed or was deleted before this "
+                    "operation started.",
                 )
             if status != 0:
                 raise RuntimeError(

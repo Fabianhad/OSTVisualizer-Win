@@ -632,8 +632,12 @@ class HierarchyRealSchemaTests(unittest.TestCase):
         self.assertEqual(
             loose,
             [
-                HierarchyPageInfo("30", "", "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, False, 0),
-                HierarchyPageInfo("31", "", "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, False, 0),
+                HierarchyPageInfo(
+                    "30", "", "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, False, 0
+                ),
+                HierarchyPageInfo(
+                    "31", "", "", 0, None, 0.0, 0.0, 1.0, 1.0, 0, False, False, 0
+                ),
             ],
         )
 
@@ -673,7 +677,9 @@ class HierarchyRealSchemaTests(unittest.TestCase):
         self.assertEqual([page.uid for page in folders["15"].pages], ["23"])
         self.assertEqual(folders["15"].parent_uid, "999")
         top = folders["10"]
-        self.assertEqual((top.name, top.description, top.parent_uid), ("Zeta", "zd", None))
+        self.assertEqual(
+            (top.name, top.description, top.parent_uid), ("Zeta", "zd", None)
+        )
         self.assertEqual(top.pages, [])
         self.assertEqual(list(top.subfolders), ["13", "12"])
         self.assertEqual(
@@ -870,13 +876,19 @@ class HierarchyRealSchemaTests(unittest.TestCase):
                 HierarchyBidInfo(
                     uid="8", name="Earlier", bid_no=0, takeoff_increments=1.0
                 ),
-                HierarchyBidInfo(uid="9", name="Only", bid_no=0, takeoff_increments=1.0),
+                HierarchyBidInfo(
+                    uid="9", name="Only", bid_no=0, takeoff_increments=1.0
+                ),
             ],
         )
 
     def test_status_and_employee_maps_require_their_identity_columns(self):
         for load, table, setup in (
-            ("_load_status_map", "JobStatuses", "CREATE TABLE JobStatuses (UID INTEGER)"),
+            (
+                "_load_status_map",
+                "JobStatuses",
+                "CREATE TABLE JobStatuses (UID INTEGER)",
+            ),
             (
                 "_load_status_map",
                 "JobStatuses",
@@ -971,6 +983,30 @@ class HierarchyRealSchemaTests(unittest.TestCase):
         connection = self.connection(
             "CREATE TABLE BidPages (BidUID INTEGER, Name TEXT)",
             "INSERT INTO BidPages VALUES (1, 'orphan row')",
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "BidPages contains malformed UID <missing>"
+        ):
+            self.structure(connection)
+
+    def test_pages_with_equal_sequence_and_name_are_ordered_by_uid(self):
+        connection = self.connection(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "Sequence INTEGER)",
+            "INSERT INTO BidPages VALUES (32, 1, 'Same', 4)",
+            "INSERT INTO BidPages VALUES (30, 1, 'Same', 4)",
+            "INSERT INTO BidPages VALUES (31, 1, 'Same', 4)",
+        )
+        _folders, loose = self.structure(connection)
+        self.assertEqual([page.uid for page in loose], ["30", "31", "32"])
+
+    def test_page_query_without_any_sort_column_reaches_the_uid_guard(self):
+        # Without Sequence, Name and UID the ORDER BY fallback "[UID]" resolves to
+        # the NULL default alias, so the malformed-UID guard (not an SQL error)
+        # reports it.
+        connection = self.connection(
+            "CREATE TABLE BidPages (BidUID INTEGER)",
+            "INSERT INTO BidPages VALUES (1)",
         )
         with self.assertRaisesRegex(
             RuntimeError, "BidPages contains malformed UID <missing>"

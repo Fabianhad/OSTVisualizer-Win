@@ -109,9 +109,13 @@ class ReferenceSchemaMetadataFixtureTests(unittest.TestCase):
         irregular = {
             ("BidNotes_Bids1", "BidNotes", "BidUID", "Bids", "UID"),
         }
-        for name, child, column, parent, parent_column in (
-            metadata.REFERENCE_RELATIONSHIPS
-        ):
+        for (
+            name,
+            child,
+            column,
+            parent,
+            parent_column,
+        ) in metadata.REFERENCE_RELATIONSHIPS:
             with self.subTest(relation=name):
                 self.assertEqual(parent_column, "UID")
                 if (name, child, column, parent, parent_column) in irregular:
@@ -150,11 +154,13 @@ class ReferenceSchemaMetadataDdlConsistencyTests(unittest.TestCase):
             for field in fields:
                 with self.subTest(index=name, field=field):
                     self.assertIn(field.casefold(), self.columns[table.casefold()])
-        for name, child, child_column, parent, parent_column in (
-            metadata.REFERENCE_RELATIONSHIPS
-        ):
+        for (
+            name,
+            child,
+            child_column,
+            parent,
+            parent_column,
+        ) in metadata.REFERENCE_RELATIONSHIPS:
             with self.subTest(relation=name):
                 self.assertIn(child_column.casefold(), self.columns[child.casefold()])
-                self.assertIn(
-                    parent_column.casefold(), self.columns[parent.casefold()]
-                )
+                self.assertIn(parent_column.casefold(), self.columns[parent.casefold()])

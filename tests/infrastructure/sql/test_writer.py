@@ -657,7 +657,7 @@ class WriterSqlCleanupTests(unittest.TestCase):
             (
                 3,
                 "An annotation changed or was deleted before this operation started.",
-                False,
+                True,
             ),
         ):
             with self.subTest(status=status):
@@ -671,7 +671,15 @@ class WriterSqlCleanupTests(unittest.TestCase):
                 if optimistic:
                     self.assertEqual(
                         raised.exception.resource,
-                        ResourceRef("takeoffs_collection", "8", 8),
+                        ResourceRef(
+                            (
+                                "annotations_collection"
+                                if status == 3
+                                else "takeoffs_collection"
+                            ),
+                            "8",
+                            8,
+                        ),
                     )
         with self.assertRaisesRegex(
             RuntimeError, "^SQL plan-item validation returned an invalid result[.]$"
@@ -684,6 +692,7 @@ class WriterSqlCleanupTests(unittest.TestCase):
         with self.assertRaises(SqlInfrastructureError) as raised:
             verify((0,), (("5", "not-an-annotation-type"),))
         self.assertEqual(raised.exception.details.code, SqlErrorCode.CONFLICT)
+        self.assertNotIsInstance(raised.exception, _OptimisticConflict)
         self.assertEqual(
             str(raised.exception),
             "An annotation changed or was deleted before this operation started.",
@@ -7305,7 +7314,11 @@ class WriterStrictBatchProtocolTests(unittest.TestCase):
         server.assert_everything_closed()
 
     def test_a_preflight_status_aborts_the_mutation_as_an_optimistic_conflict(self):
-        for status, optimistic in ((1, True), (2, True), (3, False)):
+        for status, resource_type in (
+            (1, "takeoffs_collection"),
+            (2, "takeoffs_collection"),
+            (3, "annotations_collection"),
+        ):
             with self.subTest(status=status):
                 server = self._server()
                 server.rules.insert(
@@ -7329,14 +7342,37 @@ class WriterStrictBatchProtocolTests(unittest.TestCase):
                 self.assertEqual(result.outcome_status, MutationOutcomeStatus.CONFLICT)
                 self.assertEqual(
                     result.conflict.kind,
-                    (
-                        SynchronizationConflictKind.OPTIMISTIC_CONCURRENCY
-                        if optimistic
-                        else SynchronizationConflictKind.SESSION
-                    ),
+                    SynchronizationConflictKind.OPTIMISTIC_CONCURRENCY,
+                )
+                self.assertEqual(
+                    result.conflict.resource, ResourceRef(resource_type, "8", 8)
                 )
                 raw = server.connections[0]
                 self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
+
+    def test_an_unmapped_annotation_type_aborts_the_mutation_as_a_session_conflict(
+        self,
+    ):
+        def operation(writer, descriptor, recorder):
+            writer.verify_plan_items_exist(
+                descriptor.database_id, "8", (), (("5", "not-an-annotation-type"),)
+            )
+            recorder.record(ResourceRef("takeoff", "7", 8), ChangeOperation.UPDATE)
+            return True
+
+        result, server = self._execute(self._server(), operation)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.CONFLICT)
+        self.assertEqual(result.conflict.kind, SynchronizationConflictKind.SESSION)
+        self.assertEqual(
+            result.conflict.resource,
+            ResourceRef("database", result.conflict.database_id),
+        )
+        self.assertEqual(
+            result.conflict.reason,
+            "An annotation changed or was deleted before this operation started.",
+        )
+        raw = server.connections[0]
+        self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
 
     def test_a_takeoff_deletion_is_one_batch_with_deduplicated_uids(self):
         server = self._server()
@@ -8251,7 +8287,9 @@ class WriterVerifierReworkTests(unittest.TestCase):
             return True
 
         with server.patched():
-            result = writer.execute(self._request(descriptor, resources=(resource,)), mutate)
+            result = writer.execute(
+                self._request(descriptor, resources=(resource,)), mutate
+            )
         self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         finish = next(
             params
@@ -8292,9 +8330,7 @@ class WriterVerifierReworkTests(unittest.TestCase):
                 self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
                 raw = server.connections[0]
                 self.assertEqual((raw.commits, raw.rollbacks), (1, 0))
-                self.assertIn(
-                    "@value=NULL", " ".join(server.statements(raw.number))
-                )
+                self.assertIn("@value=NULL", " ".join(server.statements(raw.number)))
 
     def test_resource_locks_are_requested_bids_first_then_by_type_and_id(self):
         from ost_visualizer.infrastructure.sql import writer as writer_module
@@ -8366,7 +8402,10 @@ class WriterVerifierReworkTests(unittest.TestCase):
             with self.subTest(table=table, column=column):
                 connection = _ScriptedConnection(lambda _sql, _params: [(41,)])
                 writer._insert_identity_raw(
-                    connection, table, {"UID": "5", column: word}, schema.table_info(table)
+                    connection,
+                    table,
+                    {"UID": "5", column: word},
+                    schema.table_info(table),
                 )
                 ((sql, params),) = connection.executed
                 self.assertEqual(
@@ -8433,7 +8472,8 @@ class WriterVerifierReworkTests(unittest.TestCase):
                 ],
             )
         self.assertEqual(
-            str(raised.exception), "Imported employee references an unknown PayClassUID."
+            str(raised.exception),
+            "Imported employee references an unknown PayClassUID.",
         )
 
     def test_create_project_requires_uid_then_name_before_inserting(self):

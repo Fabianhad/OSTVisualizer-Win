@@ -102,19 +102,28 @@ class LicenseActivationIdentityValidationTests(unittest.TestCase):
 
     def test_constants_and_immutability(self):
         from dataclasses import FrozenInstanceError
-        from ost_visualizer.application.dtos import license_activation_identity_dto as module
+        from ost_visualizer.application.dtos import (
+            license_activation_identity_dto as module,
+        )
 
         self.assertEqual(module.LICENSE_ACTIVATION_IDENTITY_VERSION, "v1")
-        self.assertEqual(module.LICENSE_ACTIVATION_IDENTITY_PAYLOAD_FIELD, "activation_identity")
         self.assertEqual(
-            [member.value for member in WindowsJoinType], ["unjoined", "workgroup", "domain"]
+            module.LICENSE_ACTIVATION_IDENTITY_PAYLOAD_FIELD, "activation_identity"
+        )
+        self.assertEqual(
+            [member.value for member in WindowsJoinType],
+            ["unjoined", "workgroup", "domain"],
         )
         with self.assertRaises(FrozenInstanceError):
             self._identity().computer_name = "x"
 
     def test_each_invalid_part_reports_its_own_message(self):
-        self.assertEqual(self.failure(version="v2"), "Invalid license activation identity version")
-        self.assertEqual(self.failure(version=None), "Invalid license activation identity version")
+        self.assertEqual(
+            self.failure(version="v2"), "Invalid license activation identity version"
+        )
+        self.assertEqual(
+            self.failure(version=None), "Invalid license activation identity version"
+        )
         self.assertEqual(self.failure(windows_account=""), "Invalid Windows account")
         self.assertEqual(self.failure(computer_name=""), "Invalid computer name")
         self.assertEqual(self.failure(join_type="domain"), "Invalid Windows join type")
@@ -129,12 +138,30 @@ class LicenseActivationIdentityValidationTests(unittest.TestCase):
         )
 
     def test_values_must_be_clean_text_within_their_length_limits(self):
-        limits = (("windows_account", 512, "Windows account"), ("computer_name", 255, "computer name"), ("join_name", 255, "Windows join name"))
+        limits = (
+            ("windows_account", 512, "Windows account"),
+            ("computer_name", 255, "computer name"),
+            ("join_name", 255, "Windows join name"),
+        )
         for field, maximum, label in limits:
             with self.subTest(field=field):
                 self._identity(**{field: "a" * maximum})
-                self.assertEqual(self.failure(**{field: "a" * (maximum + 1)}), f"Invalid {label}")
-                for bad in (" lead", "trail ", "a\x00b", "a\x1fb", "a\tb", "a\nb", None, 5, b"x"):
-                    self.assertEqual(self.failure(**{field: bad}), f"Invalid {label}", repr(bad))
+                self.assertEqual(
+                    self.failure(**{field: "a" * (maximum + 1)}), f"Invalid {label}"
+                )
+                for bad in (
+                    " lead",
+                    "trail ",
+                    "a\x00b",
+                    "a\x1fb",
+                    "a\tb",
+                    "a\nb",
+                    None,
+                    5,
+                    b"x",
+                ):
+                    self.assertEqual(
+                        self.failure(**{field: bad}), f"Invalid {label}", repr(bad)
+                    )
                 self._identity(**{field: "a b"})
                 self._identity(**{field: "a\x7fb"})

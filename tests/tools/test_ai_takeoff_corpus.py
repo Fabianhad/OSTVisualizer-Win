@@ -1190,6 +1190,13 @@ class FailureCategoryTests(unittest.TestCase):
             self.names(status="crash", sheet_number=""), {"page failed: crash ()"}
         )
 
+    def test_a_row_without_a_status_is_a_failure_with_an_empty_status(self):
+        row = {"rel": "a.pdf", "page": "1", "kind": KIND_NOTES, "sheet_number": "S-1"}
+        self.assertEqual(
+            [name for name, _members in corpus.failure_categories([row])],
+            ["page failed:  ()"],
+        )
+
     def test_page_content_categories_follow_their_flags_exactly(self):
         cases = (
             ({"content": "raster_only"}, "raster-only page (no vectors, no text)"),
@@ -1968,43 +1975,138 @@ class RunCsvContractTests(unittest.TestCase):
     """The run CSV header is what summary and compare read back by name."""
 
     COLUMNS = (
-        "rel", "page", "status", "seconds",
-        "peak_mb", "pages_in_pdf", "width_pts", "height_pts",
-        "scale_used", "rotation", "visible_offset", "page_size_class",
-        "text_runs", "segments", "curves", "extraction_truncated",
-        "content", "outlined_text", "kind", "title",
-        "sheets_status", "sheet_number", "sheet_number_source", "sheet_number_legacy",
-        "text_extractable", "text_reason", "title_block_crop", "scale_status",
-        "scale_label", "scale_hits", "plan_scale_status", "plan_scale_label",
-        "scale_candidates", "scale_views", "kinds_wall", "kinds_dashed",
-        "kinds_thin", "kinds_symbol", "dash_arrays", "widths",
-        "heavy_threshold", "list_status", "list_seconds", "list_regions",
-        "list_leaks", "list_gaps", "list_suppressed", "list_excluded",
-        "list_min_width", "list_min_width_source", "list_extraction_scope", "box_quadrants_truncated",
-        "filtered_status", "filtered_seconds", "filtered_regions", "filtered_leaks",
-        "filtered_excluded", "filtered_gaps", "filtered_suppressed", "seed_source",
-        "seed_status", "seed_seconds", "seed_method", "seed_area_sf",
-        "seed_gaps", "seed_leak", "seed_unlocated", "proposal_status",
-        "proposal_assumptions", "proposal_subjects", "dominant_wall_width", "heaviest_long_width",
-        "long_width_histogram", "suggested_min_width", "suggestion_removes_dominant", "drawing_text_runs",
-        "callouts_as_lines", "default_status", "default_seconds", "default_min_width",
-        "default_found", "default_segments", "default_method", "default_area_sf",
-        "default_touches_edge", "default_box_ratio", "default_leak", "default_open_gaps",
-        "default_dashed_outline", "default_wall_failure", "zero_status", "zero_seconds",
-        "zero_min_width", "zero_found", "zero_segments", "zero_method",
-        "zero_area_sf", "zero_touches_edge", "zero_box_ratio", "zero_leak",
-        "zero_open_gaps", "zero_dashed_outline", "zero_wall_failure", "heavy_status",
-        "heavy_seconds", "heavy_min_width", "heavy_found", "heavy_segments",
-        "heavy_method", "heavy_area_sf", "heavy_touches_edge", "heavy_box_ratio",
-        "heavy_leak", "heavy_open_gaps", "heavy_dashed_outline", "heavy_wall_failure",
-        "proposal_outline_vertices", "proposal_hole_vertices", "proposal_area_change_pct", "proposal_holes_dropped",
-        "hand_expected_sf", "hand_error_pct", "error",
+        "rel",
+        "page",
+        "status",
+        "seconds",
+        "peak_mb",
+        "pages_in_pdf",
+        "width_pts",
+        "height_pts",
+        "scale_used",
+        "rotation",
+        "visible_offset",
+        "page_size_class",
+        "text_runs",
+        "segments",
+        "curves",
+        "extraction_truncated",
+        "content",
+        "outlined_text",
+        "kind",
+        "title",
+        "sheets_status",
+        "sheet_number",
+        "sheet_number_source",
+        "sheet_number_legacy",
+        "text_extractable",
+        "text_reason",
+        "title_block_crop",
+        "scale_status",
+        "scale_label",
+        "scale_hits",
+        "plan_scale_status",
+        "plan_scale_label",
+        "scale_candidates",
+        "scale_views",
+        "kinds_wall",
+        "kinds_dashed",
+        "kinds_thin",
+        "kinds_symbol",
+        "dash_arrays",
+        "widths",
+        "heavy_threshold",
+        "list_status",
+        "list_seconds",
+        "list_regions",
+        "list_leaks",
+        "list_gaps",
+        "list_suppressed",
+        "list_excluded",
+        "list_min_width",
+        "list_min_width_source",
+        "list_extraction_scope",
+        "box_quadrants_truncated",
+        "filtered_status",
+        "filtered_seconds",
+        "filtered_regions",
+        "filtered_leaks",
+        "filtered_excluded",
+        "filtered_gaps",
+        "filtered_suppressed",
+        "seed_source",
+        "seed_status",
+        "seed_seconds",
+        "seed_method",
+        "seed_area_sf",
+        "seed_gaps",
+        "seed_leak",
+        "seed_unlocated",
+        "proposal_status",
+        "proposal_assumptions",
+        "proposal_subjects",
+        "dominant_wall_width",
+        "heaviest_long_width",
+        "long_width_histogram",
+        "suggested_min_width",
+        "suggestion_removes_dominant",
+        "drawing_text_runs",
+        "callouts_as_lines",
+        "default_status",
+        "default_seconds",
+        "default_min_width",
+        "default_found",
+        "default_segments",
+        "default_method",
+        "default_area_sf",
+        "default_touches_edge",
+        "default_box_ratio",
+        "default_leak",
+        "default_open_gaps",
+        "default_dashed_outline",
+        "default_wall_failure",
+        "zero_status",
+        "zero_seconds",
+        "zero_min_width",
+        "zero_found",
+        "zero_segments",
+        "zero_method",
+        "zero_area_sf",
+        "zero_touches_edge",
+        "zero_box_ratio",
+        "zero_leak",
+        "zero_open_gaps",
+        "zero_dashed_outline",
+        "zero_wall_failure",
+        "heavy_status",
+        "heavy_seconds",
+        "heavy_min_width",
+        "heavy_found",
+        "heavy_segments",
+        "heavy_method",
+        "heavy_area_sf",
+        "heavy_touches_edge",
+        "heavy_box_ratio",
+        "heavy_leak",
+        "heavy_open_gaps",
+        "heavy_dashed_outline",
+        "heavy_wall_failure",
+        "proposal_outline_vertices",
+        "proposal_hole_vertices",
+        "proposal_area_change_pct",
+        "proposal_holes_dropped",
+        "hand_expected_sf",
+        "hand_error_pct",
+        "error",
     )
 
     def test_the_run_csv_columns_and_their_order(self):
         self.assertEqual(corpus.RUN_COLUMNS, self.COLUMNS)
         self.assertEqual(len(set(corpus.RUN_COLUMNS)), len(corpus.RUN_COLUMNS))
-        self.assertEqual(corpus.HAND_VALUE_COLUMNS, ("pdf", "page", "seed_x", "seed_y", "expected_sf"))
+        self.assertEqual(
+            corpus.HAND_VALUE_COLUMNS,
+            ("pdf", "page", "seed_x", "seed_y", "expected_sf"),
+        )
 
     def test_spread_keeps_the_ends_and_a_requested_count_in_order(self):
         self.assertEqual(corpus.spread(list(range(5)), 5), [0, 1, 2, 3, 4])
@@ -2041,14 +2143,11 @@ class HarnessConstantTests(unittest.TestCase):
                 "unknown",
             ),
         )
-        self.assertEqual(
-            corpus.WIDTH_BUCKETS, (0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0)
-        )
+        self.assertEqual(corpus.WIDTH_BUCKETS, (0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0))
 
     def test_the_default_root_is_under_local_app_data_or_the_home_folder(self):
         import os
         import subprocess
-
         from tests.paths import REPO_ROOT
 
         def root_with(local_app_data):
@@ -2102,9 +2201,7 @@ class LineGroupingBoundaryTests(unittest.TestCase):
     def test_a_run_exactly_half_a_line_height_away_joins_the_line(self):
         joined = text_lines([self.run_at(100.0, "A"), self.run_at(105.0, "B", left=30)])
         self.assertEqual([line.text for line in joined], ["A B"])
-        apart = text_lines(
-            [self.run_at(100.0, "A"), self.run_at(105.5, "B", left=30)]
-        )
+        apart = text_lines([self.run_at(100.0, "A"), self.run_at(105.5, "B", left=30)])
         self.assertEqual([line.text for line in apart], ["A", "B"])
 
     def test_the_line_position_is_the_mean_of_every_run_already_in_it(self):
@@ -2127,7 +2224,12 @@ class LineGroupingBoundaryTests(unittest.TestCase):
 class TitleBlockBoundaryTests(unittest.TestCase):
     def test_degenerate_pages_have_no_title_block(self):
         line = _line("X", left=0.0, top=0.0)
-        for width, height in ((0.0, 100.0), (100.0, 0.0), (-50.0, 100.0), (100.0, -50.0)):
+        for width, height in (
+            (0.0, 100.0),
+            (100.0, 0.0),
+            (-50.0, 100.0),
+            (100.0, -50.0),
+        ):
             with self.subTest(width=width, height=height):
                 self.assertIs(corpus.in_title_block(line, width, height), False)
         corner = _line("X", left=0.9, top=0.9)
@@ -2146,17 +2248,23 @@ class TitleBlockBoundaryTests(unittest.TestCase):
         ):
             with self.subTest(left=left, top=top):
                 self.assertIs(
-                    corpus.in_title_block(_line("X", left=left, top=top), width, height),
+                    corpus.in_title_block(
+                        _line("X", left=left, top=top), width, height
+                    ),
                     expected,
                 )
 
 
 class PageKindDecisionTests(unittest.TestCase):
     def test_a_title_block_hit_counts_three_times_a_drawing_hit(self):
-        views = [_line("TYPICAL SECTION", top=100.0 + 40.0 * index) for index in range(2)]
+        views = [
+            _line("TYPICAL SECTION", top=100.0 + 40.0 * index) for index in range(2)
+        ]
         title = _title("FRAMING PLAN")
         self.assertEqual(classify_page(views + [title], WIDTH, HEIGHT)[0], KIND_PLAN)
-        more = [_line("TYPICAL SECTION", top=100.0 + 40.0 * index) for index in range(4)]
+        more = [
+            _line("TYPICAL SECTION", top=100.0 + 40.0 * index) for index in range(4)
+        ]
         self.assertEqual(classify_page(more + [title], WIDTH, HEIGHT)[0], KIND_SECTION)
 
     def test_a_tie_goes_to_the_earlier_kind(self):
@@ -2164,7 +2272,9 @@ class PageKindDecisionTests(unittest.TestCase):
         self.assertEqual(classify_page(lines, WIDTH, HEIGHT)[0], KIND_PLAN)
         self.assertEqual(classify_page(lines[::-1], WIDTH, HEIGHT)[0], KIND_PLAN)
 
-    def test_titles_are_kept_up_to_eighty_characters_and_the_first_of_equal_height(self):
+    def test_titles_are_kept_up_to_eighty_characters_and_the_first_of_equal_height(
+        self,
+    ):
         eighty = "FOUNDATION PLAN " + "X" * 64
         self.assertEqual(len(eighty), 80)
         self.assertEqual(
@@ -2213,7 +2323,30 @@ class ScaleParsingBoundaryTests(unittest.TestCase):
         self.assertEqual(parse_scales("1\" = 0'"), [])
 
     def test_a_fraction_with_a_zero_denominator_is_not_a_scale(self):
-        self.assertEqual(parse_scales("1/0\" = 1'-0\""), [])
+        self.assertEqual(parse_scales('1/0" = 1\'-0"'), [])
+
+    def test_a_mixed_number_with_a_zero_denominator_is_not_a_scale(self):
+        for text in (
+            '1 1/0"=1\'-0"',
+            '2 3/0" = 1\'-0"',
+            '1 1/00"=1\'-0"',
+            '0 1/0"=1\'-0"',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(parse_scales(text), [])
+
+    def test_valid_mixed_and_zero_numerator_fractions_keep_their_value(self):
+        for text, value in (
+            ('2 3/4"=1\'-0"', 2.75),
+            ('1 0/8"=1\'-0"', 1.0),
+            ('1/8"=1\'-0"', 0.125),
+        ):
+            with self.subTest(text=text):
+                (hit,) = parse_scales(text)
+                self.assertEqual((hit.label, hit.sf1, hit.sf2), (text, value, 12.0))
+
+    def test_a_zero_numerator_without_a_whole_part_is_not_a_scale(self):
+        self.assertEqual(parse_scales('0/8"=1\'-0"'), [])
 
 
 class SamplingPolicyTests(unittest.TestCase):
@@ -2280,7 +2413,6 @@ class SamplingPolicyTests(unittest.TestCase):
             chosen = corpus.stratified_sample(rows, 3, seed=seed)
             first_2023_projects.add(Path(chosen[1]["rel"]).parts[1])
         self.assertGreaterEqual(len(first_2023_projects), 3)
-
 
 
 class _FlushCounter(io.StringIO):
@@ -2386,15 +2518,30 @@ class RunLoopContractTests(unittest.TestCase):
                 [
                     ["PY", "-m", module, "prepare", str(pdf), str(work), str(prepared)],
                     [
-                        "PY", "-m", module, "sheets", str(prepared),
+                        "PY",
+                        "-m",
+                        module,
+                        "sheets",
+                        str(prepared),
                         str(work / f"{stem}_sheets.json"),
                     ],
                     [
-                        "PY", "-m", module, "page", str(prepared), "u0", "[]",
+                        "PY",
+                        "-m",
+                        module,
+                        "page",
+                        str(prepared),
+                        "u0",
+                        "[]",
                         str(work / f"{stem}_p1.json"),
                     ],
                     [
-                        "PY", "-m", module, "page", str(prepared), "u1",
+                        "PY",
+                        "-m",
+                        module,
+                        "page",
+                        str(prepared),
+                        "u1",
                         json.dumps([{"seed_pts": [1.5, 2.5], "expected_sf": 120.5}]),
                         str(work / f"{stem}_p2.json"),
                     ],
@@ -2405,8 +2552,14 @@ class RunLoopContractTests(unittest.TestCase):
             self.assertEqual(
                 [
                     (
-                        r["rel"], r["page"], r["pages_in_pdf"], r["status"], r["kind"],
-                        r["seconds"], r["sheet_number"], r["hand_expected_sf"],
+                        r["rel"],
+                        r["page"],
+                        r["pages_in_pdf"],
+                        r["status"],
+                        r["kind"],
+                        r["seconds"],
+                        r["sheet_number"],
+                        r["hand_expected_sf"],
                     )
                     for r in corpus.read_csv(path)
                 ],
@@ -2491,7 +2644,13 @@ class RunLoopContractTests(unittest.TestCase):
             rows = corpus.read_csv(path)
         self.assertEqual(
             [
-                (r["status"], r["error"], r["kind"], r["sheets_status"], r["sheet_number"])
+                (
+                    r["status"],
+                    r["error"],
+                    r["kind"],
+                    r["sheets_status"],
+                    r["sheet_number"],
+                )
                 for r in rows
             ],
             [
@@ -2627,6 +2786,40 @@ class CopySampleContractTests(unittest.TestCase):
         )
         self.assertEqual(printed.flushes, 1)
         self.assertEqual(sorted(row["rel"] for row in copied), sorted(self.RELS[1:]))
+
+    def selection_rounds(self, present):
+        """Copy with the given files on the share; return the rels offered to each selection round."""
+        rounds = []
+        real = corpus.stratified_sample
+
+        def counted(rows, count, **kwargs):
+            rounds.append([row["rel"] for row in rows])
+            if len(rounds) > 4:
+                raise AssertionError("copy_sample keeps selecting")
+            return real(rows, count, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.share(directory, present)
+            out = Path(directory) / "out"
+            with mock.patch.object(corpus, "stratified_sample", counted):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    copied = corpus.copy_sample(
+                        source, out, self.rows(), 3, float("inf")
+                    )
+        return rounds, sorted(row["rel"] for row in copied)
+
+    def test_the_sample_is_selected_again_only_after_a_round_with_unreadable_files(
+        self,
+    ):
+        everything = [row["rel"] for row in self.rows()]
+        self.assertEqual(
+            self.selection_rounds((0, 1, 2)), ([everything], sorted(self.RELS))
+        )
+        self.assertEqual(
+            self.selection_rounds((1, 2)),
+            ([everything, self.RELS[1:]], sorted(self.RELS[1:])),
+        )
+        self.assertEqual(self.selection_rounds(()), ([everything, []], []))
 
 
 class WriteCsvContractTests(unittest.TestCase):
@@ -2804,13 +2997,27 @@ def _fix_rows():
     other = "2025\\B\\b.pdf"
     return [
         _plan_row(
-            1, **failing, default_found=True, default_leak=False,
-            default_box_ratio=0.3, default_segments=5, default_seconds=2.0,
-            zero_found=True, zero_box_ratio=0.2, zero_segments=9, zero_seconds=3.0,
-            heavy_found=False, heavy_segments=0, heavy_seconds=4.0,
-            proposal_status="ok", proposal_subjects='{"closing_segment": 2}',
-            hand_expected_sf=100, seed_area_sf=100.2, hand_error_pct=0.2,
-            dominant_wall_width=2.0, dash_arrays=3,
+            1,
+            **failing,
+            default_found=True,
+            default_leak=False,
+            default_box_ratio=0.3,
+            default_segments=5,
+            default_seconds=2.0,
+            zero_found=True,
+            zero_box_ratio=0.2,
+            zero_segments=9,
+            zero_seconds=3.0,
+            heavy_found=False,
+            heavy_segments=0,
+            heavy_seconds=4.0,
+            proposal_status="ok",
+            proposal_subjects='{"closing_segment": 2}',
+            hand_expected_sf=100,
+            seed_area_sf=100.2,
+            hand_error_pct=0.2,
+            dominant_wall_width=2.0,
+            dash_arrays=3,
         ),
         _plan_row(2, **failing, proposal_status="ok"),
         _plan_row(3, **failing, suggestion_removes_dominant=False),
@@ -2819,8 +3026,13 @@ def _fix_rows():
         _plan_row(6, proposal_status="ok", default_seconds=60),
         _plan_row(7, proposal_status="", suggestion_removes_dominant=True),
         {
-            "rel": "2025\\A\\a.pdf", "page": "8", "status": "ok", "kind": KIND_UNKNOWN,
-            "text_runs": "0", "segments": "5", "content": "vector",
+            "rel": "2025\\A\\a.pdf",
+            "page": "8",
+            "status": "ok",
+            "kind": KIND_UNKNOWN,
+            "text_runs": "0",
+            "segments": "5",
+            "content": "vector",
         },
         _plan_row(9, callouts_as_lines=True, heavy_seconds=100),
         _plan_row(
@@ -2858,18 +3070,41 @@ class PrioritizedFixListTests(unittest.TestCase):
 class PerProjectTableTests(unittest.TestCase):
     def test_each_project_row_counts_its_own_pages_plans_and_failures(self):
         rows = [
-            _plan_row(1, dominant_wall_width=2.0, dash_arrays=4, default_found=True,
-                      default_wall_failure=True, proposal_status="ok"),
-            _plan_row(2, dominant_wall_width=2.0, dash_arrays=1, default_found=True,
-                      default_wall_failure=False, proposal_status="changeset_too_large"),
+            _plan_row(
+                1,
+                dominant_wall_width=2.0,
+                dash_arrays=4,
+                default_found=True,
+                default_wall_failure=True,
+                proposal_status="ok",
+            ),
+            _plan_row(
+                2,
+                dominant_wall_width=2.0,
+                dash_arrays=1,
+                default_found=True,
+                default_wall_failure=False,
+                proposal_status="changeset_too_large",
+            ),
             _plan_row(3, dominant_wall_width=1.0, proposal_status="ok"),
-            {"rel": "2025\\A\\a.pdf", "page": "4", "status": "ok", "kind": KIND_UNKNOWN,
-             "dash_arrays": "3", "dominant_wall_width": "9.0"},
+            {
+                "rel": "2025\\A\\a.pdf",
+                "page": "4",
+                "status": "ok",
+                "kind": KIND_UNKNOWN,
+                "dash_arrays": "3",
+                "dominant_wall_width": "9.0",
+            },
             {"rel": "2025\\A\\a.pdf", "page": "5", "status": "crash"},
             {"rel": "2025\\A\\a.pdf", "page": "6", "status": "not_measured"},
             _plan_row(1, rel="2026\\B\\b.pdf"),
-            {"rel": "2026\\B\\b.pdf", "page": "2", "status": "ok", "kind": KIND_UNKNOWN,
-             "dominant_wall_width": "1.5"},
+            {
+                "rel": "2026\\B\\b.pdf",
+                "page": "2",
+                "status": "ok",
+                "kind": KIND_UNKNOWN,
+                "dominant_wall_width": "1.5",
+            },
         ]
         lines = _report_lines(rows)
         section = lines[lines.index("## Per project (firm proxy)") :]
@@ -2906,7 +3141,9 @@ class ReportThresholdTests(unittest.TestCase):
             _plan_row(2, zero_seconds=120),
             _plan_row(3, zero_seconds=121),
         ]
-        heading = f"## Seeded call time vs the {corpus.PROXY_TIMEOUT_S:g} s proxy timeout"
+        heading = (
+            f"## Seeded call time vs the {corpus.PROXY_TIMEOUT_S:g} s proxy timeout"
+        )
         row = self.table_row(_report_lines(rows), heading, "zero")
         self.assertEqual(row[-2:], ["2", "1"])
         self.assertEqual(row[3], "121.00")
@@ -2914,7 +3151,9 @@ class ReportThresholdTests(unittest.TestCase):
     def test_pass_rates_use_each_definitions_own_boundary(self):
         def ok(page, **values):
             return {
-                "rel": "a.pdf", "page": str(page), "status": "ok",
+                "rel": "a.pdf",
+                "page": str(page),
+                "status": "ok",
                 **{key: str(value) for key, value in values.items()},
             }
 
@@ -2928,7 +3167,9 @@ class ReportThresholdTests(unittest.TestCase):
         ]
         lines = _report_lines(rows)
         self.assertIn("| Vector content | 2/6 (33%) |", lines)
-        self.assertIn("| Plan: regions found with wall-width filter | 2/3 (67%) |", lines)
+        self.assertIn(
+            "| Plan: regions found with wall-width filter | 2/3 (67%) |", lines
+        )
         self.assertIn(
             "| Vector pages without any text (outlined text) | 1/6 (17%) |", lines
         )
@@ -2938,7 +3179,9 @@ class ReportThresholdTests(unittest.TestCase):
         start = lines.index("## Seeded regions by width setting")
         end = lines.index("## Outlined text")
         names = [
-            line.split("|")[1].strip() for line in lines[start:end] if line.startswith("| ")
+            line.split("|")[1].strip()
+            for line in lines[start:end]
+            if line.startswith("| ")
         ]
         self.assertEqual(names, ["Width", "---", "default"])
 
@@ -2954,8 +3197,12 @@ class ReportThresholdTests(unittest.TestCase):
             [
                 f"- {name}: blank 2"
                 for name in (
-                    "kind", "content", "scale_status", "page_size_class",
-                    "rotation", "visible_offset",
+                    "kind",
+                    "content",
+                    "scale_status",
+                    "page_size_class",
+                    "rotation",
+                    "visible_offset",
                 )
             ],
         )
@@ -2976,7 +3223,8 @@ class CompareContractTests(unittest.TestCase):
         self.assertEqual(lines[0], "# AI takeoff corpus: corpus_run_a vs corpus_run_b")
         self.assertEqual(lines[1], "")
         self.assertEqual(
-            lines[2], "Metrics only. Plan pages are the same page-kind guess in both runs."
+            lines[2],
+            "Metrics only. Plan pages are the same page-kind guess in both runs.",
         )
         self.assertEqual(lines[3], "")
         self.assertEqual(lines[4], "| Metric | Before | After |")
@@ -3015,7 +3263,6 @@ class PlanScaleResolutionTests(unittest.TestCase):
 
 class ReportMarkdownStructureTests(unittest.TestCase):
     """The summary is read by people and pasted into documents: pin its skeleton.
-
     Section names, table columns and block layout are the contract; the numbers inside
     the tables are pinned by the semantic tests above.
     """
@@ -3042,8 +3289,15 @@ class ReportMarkdownStructureTests(unittest.TestCase):
         ["Project", "Pages", "wall", "dashed", "thin", "symbol", "width histogram"],
         ["Metric", "Rate"],
         [
-            "Width", "Seeded", "Found", "leak_risk", "Open gaps", "Dashed outline",
-            "Touches box edge", "Above 80% of box", "Wall-filter failure",
+            "Width",
+            "Seeded",
+            "Found",
+            "leak_risk",
+            "Open gaps",
+            "Dashed outline",
+            "Touches box edge",
+            "Above 80% of box",
+            "Wall-filter failure",
             "Median area / box",
         ],
         ["Metric", "Rate"],
@@ -3051,8 +3305,14 @@ class ReportMarkdownStructureTests(unittest.TestCase):
         ["Status", "Count"],
         ["Assumption subject", "Count"],
         [
-            "Project", "Pages", "Plans", "Dominant wall width", "Dash arrays",
-            "Page failures", "Wall-filter failures", "Proposal failures",
+            "Project",
+            "Pages",
+            "Plans",
+            "Dominant wall width",
+            "Dash arrays",
+            "Page failures",
+            "Wall-filter failures",
+            "Proposal failures",
         ],
     ]
     PROSE = (
@@ -3104,7 +3364,8 @@ class ReportMarkdownStructureTests(unittest.TestCase):
                 index = end
             elif line.startswith("- ") or re.match(r"^\d+\. \*\*", line):
                 self.assertTrue(
-                    lines[index - 1] == "" or lines[index - 1][:2] == line[:2]
+                    lines[index - 1] == ""
+                    or lines[index - 1][:2] == line[:2]
                     or re.match(r"^\d+\. ", lines[index - 1]),
                     line,
                 )
@@ -3155,7 +3416,9 @@ class CommandLineMessageTests(unittest.TestCase):
                 ),
                 error,
             )
-            code, _out, error = self.run_main(["run", "--out", str(Path(directory) / "out")])
+            code, _out, error = self.run_main(
+                ["run", "--out", str(Path(directory) / "out")]
+            )
             self.assertEqual(code, 2)
             self.assertTrue(
                 error.endswith(
@@ -3170,7 +3433,8 @@ class CommandLineMessageTests(unittest.TestCase):
             code, output, _error = self.run_main(["--help"])
         self.assertEqual(code, 0)
         self.assertIn(
-            "Offline corpus harness for the AI takeoff tools (measurement only).", output
+            "Offline corpus harness for the AI takeoff tools (measurement only).",
+            output,
         )
         self.assertNotIn("Confidentiality", output)
 
@@ -3184,12 +3448,24 @@ class CommandLineMessageTests(unittest.TestCase):
                 ["report", "--out", out, "--run", str(run_csv)]
             )
             self.assertEqual(code, 0)
-            self.assertEqual(Path(printed.strip()), Path(directory) / "corpus_summary_run_1.md")
+            self.assertEqual(
+                Path(printed.strip()), Path(directory) / "corpus_summary_run_1.md"
+            )
             code, printed, _error = self.run_main(
-                ["compare", "--out", out, "--before", str(run_csv), "--run", str(run_csv)]
+                [
+                    "compare",
+                    "--out",
+                    out,
+                    "--before",
+                    str(run_csv),
+                    "--run",
+                    str(run_csv),
+                ]
             )
             self.assertEqual(code, 0)
-            self.assertEqual(Path(printed.strip()), Path(directory) / "corpus_compare_run_1.md")
+            self.assertEqual(
+                Path(printed.strip()), Path(directory) / "corpus_compare_run_1.md"
+            )
 
 
 if __name__ == "__main__":

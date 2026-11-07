@@ -208,7 +208,21 @@ class PageEntityDefaultsTests(unittest.TestCase):
                 page.invert,
                 page.bitonal,
             ),
-            (None, 0.0, 0.0, 0.0, False, 0.0, (0.0, 0.0, 0.0, 0.0), 0, 0.0, 0.0, 0.0, False, False),
+            (
+                None,
+                0.0,
+                0.0,
+                0.0,
+                False,
+                0.0,
+                (0.0, 0.0, 0.0, 0.0),
+                0,
+                0.0,
+                0.0,
+                0.0,
+                False,
+                False,
+            ),
         )
         page.takeoffs.append(object())
         self.assertEqual(Page(uid="q", name="Q").takeoffs, [])
@@ -219,25 +233,55 @@ class PageEntityDefaultsTests(unittest.TestCase):
         self.assertIs(Page(uid="p", name="N", image_path="a.pdf").has_image, True)
         self.assertIs(Page(uid="p", name="N").has_overlay, False)
         self.assertIs(Page(uid="p", name="N", overlay_image_path="").has_overlay, False)
-        self.assertIs(Page(uid="p", name="N", overlay_image_path="o.tif").has_overlay, True)
+        self.assertIs(
+            Page(uid="p", name="N", overlay_image_path="o.tif").has_overlay, True
+        )
 
     def test_only_quarter_turns_of_90_and_270_swap_the_effective_dimensions(self):
-        for rotation, swapped in ((0, False), (90, True), (180, False), (270, True), (45, False), (271, False), (89, False)):
+        for rotation, swapped in (
+            (0, False),
+            (90, True),
+            (180, False),
+            (270, True),
+            (45, False),
+            (271, False),
+            (89, False),
+        ):
             with self.subTest(rotation=rotation):
-                page = Page(uid="p", name="N", width_pts=100.0, height_pts=40.0, rotation=rotation)
+                page = Page(
+                    uid="p",
+                    name="N",
+                    width_pts=100.0,
+                    height_pts=40.0,
+                    rotation=rotation,
+                )
                 self.assertEqual(
                     (page.effective_width_pts, page.effective_height_pts),
                     (40.0, 100.0) if swapped else (100.0, 40.0),
                 )
 
     def test_overlay_units_per_sheet_inch_uses_the_scale_ratio(self):
-        self.assertEqual(Page(uid="p", name="N", scale_factor1=0.125, scale_factor2=12.0).overlay_units_per_sheet_inch, 96.0)
-        self.assertIsNone(Page(uid="p", name="N", scale_factor1=0.0).overlay_units_per_sheet_inch)
+        self.assertEqual(
+            Page(
+                uid="p", name="N", scale_factor1=0.125, scale_factor2=12.0
+            ).overlay_units_per_sheet_inch,
+            96.0,
+        )
+        self.assertIsNone(
+            Page(uid="p", name="N", scale_factor1=0.0).overlay_units_per_sheet_inch
+        )
 
 
 class PageCoordinateConversionTests(unittest.TestCase):
     def page(self, **changes):
-        values = dict(uid="p", name="N", width_pts=72.0, height_pts=144.0, scale_factor1=1.0, scale_factor2=96.0)
+        values = dict(
+            uid="p",
+            name="N",
+            width_pts=72.0,
+            height_pts=144.0,
+            scale_factor1=1.0,
+            scale_factor2=96.0,
+        )
         values.update(changes)
         return Page(**values)
 
@@ -251,11 +295,23 @@ class PageCoordinateConversionTests(unittest.TestCase):
     def test_each_conversion_uses_its_own_unit_system(self):
         # Page is 72 x 144 pt: 96 x 192 OST page pixels, and (ratio 96) 96 x 192 overlay units.
         page = self.page(scale_factor1=1.0, scale_factor2=192.0)
-        self.assertEqual(page.ost_page_pixels_to_canvas_point(48.0, 96.0, 100.0, 200.0), (50.0, 100.0))
-        self.assertEqual(page.canvas_point_to_ost_page_pixels(50.0, 100.0, 100.0, 200.0), (48.0, 96.0))
+        self.assertEqual(
+            page.ost_page_pixels_to_canvas_point(48.0, 96.0, 100.0, 200.0),
+            (50.0, 100.0),
+        )
+        self.assertEqual(
+            page.canvas_point_to_ost_page_pixels(50.0, 100.0, 100.0, 200.0),
+            (48.0, 96.0),
+        )
         # With a 192 units-per-inch overlay calibration the page spans 192 x 384 units.
-        self.assertEqual(page.overlay_rect_units_to_canvas_point(96.0, 192.0, 100.0, 200.0), (50.0, 100.0))
-        self.assertEqual(page.canvas_point_to_overlay_rect_units(50.0, 100.0, 100.0, 200.0), (96.0, 192.0))
+        self.assertEqual(
+            page.overlay_rect_units_to_canvas_point(96.0, 192.0, 100.0, 200.0),
+            (50.0, 100.0),
+        )
+        self.assertEqual(
+            page.canvas_point_to_overlay_rect_units(50.0, 100.0, 100.0, 200.0),
+            (96.0, 192.0),
+        )
 
     def test_each_conversion_scales_x_and_y_independently_and_keeps_the_sign(self):
         page = self.page()
@@ -274,7 +330,10 @@ class PageCoordinateConversionTests(unittest.TestCase):
         page = self.page(scale_factor1=0.25, scale_factor2=24.0)
         for forward, back in (
             ("ost_page_pixels_to_canvas_point", "canvas_point_to_ost_page_pixels"),
-            ("overlay_rect_units_to_canvas_point", "canvas_point_to_overlay_rect_units"),
+            (
+                "overlay_rect_units_to_canvas_point",
+                "canvas_point_to_overlay_rect_units",
+            ),
         ):
             point = getattr(page, forward)(33.0, 17.0, 800.0, 600.0)
             x, y = getattr(page, back)(*point, 800.0, 600.0)
@@ -286,10 +345,28 @@ class PageCoordinateConversionTests(unittest.TestCase):
         nan, inf = float("nan"), float("inf")
         for method in self.METHODS:
             convert = getattr(page, method)
-            for canvas in ((0, 10), (10, 0), (-1, 10), (10, -1), (nan, 10), (10, nan), (inf, 10), (10, inf), ("x", 10), (10, None)):
+            for canvas in (
+                (0, 10),
+                (10, 0),
+                (-1, 10),
+                (10, -1),
+                (nan, 10),
+                (10, nan),
+                (inf, 10),
+                (10, inf),
+                ("x", 10),
+                (10, None),
+            ):
                 with self.subTest(method=method, canvas=canvas):
                     self.assertIsNone(convert(1.0, 1.0, *canvas))
-            for point in ((nan, 1.0), (1.0, nan), (inf, 1.0), (1.0, -inf), ("x", 1.0), (1.0, None)):
+            for point in (
+                (nan, 1.0),
+                (1.0, nan),
+                (inf, 1.0),
+                (1.0, -inf),
+                ("x", 1.0),
+                (1.0, None),
+            ):
                 with self.subTest(method=method, point=point):
                     self.assertIsNone(convert(*point, 10.0, 10.0))
             self.assertIsNotNone(convert("1.5", "2", "10", "10"))
@@ -308,20 +385,39 @@ class PageCoordinateConversionTests(unittest.TestCase):
             for method in self.METHODS:
                 with self.subTest(changes=changes, method=method):
                     self.assertIsNone(getattr(page, method)(1.0, 1.0, 10.0, 10.0))
-        for changes in (dict(scale_factor1=0.0), dict(scale_factor1=-1.0), dict(scale_factor2=0.0), dict(scale_factor2=-5.0)):
+        for changes in (
+            dict(scale_factor1=0.0),
+            dict(scale_factor1=-1.0),
+            dict(scale_factor2=0.0),
+            dict(scale_factor2=-5.0),
+        ):
             page = self.page(**changes)
-            self.assertIsNone(page.overlay_rect_units_to_canvas_point(1.0, 1.0, 10.0, 10.0))
-            self.assertIsNone(page.canvas_point_to_overlay_rect_units(1.0, 1.0, 10.0, 10.0))
-            self.assertIsNotNone(page.ost_page_pixels_to_canvas_point(1.0, 1.0, 10.0, 10.0))
+            self.assertIsNone(
+                page.overlay_rect_units_to_canvas_point(1.0, 1.0, 10.0, 10.0)
+            )
+            self.assertIsNone(
+                page.canvas_point_to_overlay_rect_units(1.0, 1.0, 10.0, 10.0)
+            )
+            self.assertIsNotNone(
+                page.ost_page_pixels_to_canvas_point(1.0, 1.0, 10.0, 10.0)
+            )
 
     def test_tiny_but_positive_sizes_are_valid(self):
         page = self.page(width_pts=0.5, height_pts=0.25)
         self.assertIsNotNone(page.ost_page_pixels_to_canvas_point(0.1, 0.1, 0.5, 0.5))
-        self.assertIsNotNone(self.page().ost_page_pixels_to_canvas_point(0.1, 0.1, 0.5, 0.25))
+        self.assertIsNotNone(
+            self.page().ost_page_pixels_to_canvas_point(0.1, 0.1, 0.5, 0.25)
+        )
 
     def test_overlay_rect_canvas_converts_origin_and_size_and_degrades_to_zeros(self):
-        page = self.page(scale_factor1=1.0, scale_factor2=192.0, overlay_rect=(96.0, 192.0, 192.0, 384.0))
-        self.assertEqual(page.overlay_rect_canvas(100.0, 200.0), (50.0, 100.0, 100.0, 200.0))
+        page = self.page(
+            scale_factor1=1.0,
+            scale_factor2=192.0,
+            overlay_rect=(96.0, 192.0, 192.0, 384.0),
+        )
+        self.assertEqual(
+            page.overlay_rect_canvas(100.0, 200.0), (50.0, 100.0, 100.0, 200.0)
+        )
         self.assertEqual(page.overlay_rect_page_points(), (36.0, 72.0, 72.0, 144.0))
         page.overlay_rect = (1.0, 2.0)
         self.assertEqual(page.overlay_rect_canvas(100.0, 200.0), (0.0, 0.0, 0.0, 0.0))
@@ -330,7 +426,12 @@ class PageCoordinateConversionTests(unittest.TestCase):
         page.overlay_rect = (1.0, 2.0, float("nan"), 4.0)
         self.assertEqual(page.overlay_rect_canvas(100.0, 200.0), (0.0, 0.0, 0.0, 0.0))
         page.overlay_rect = (1.0, 2.0, 3.0, 4.0)
-        self.assertEqual(self.page(scale_factor1=0.0, overlay_rect=(1, 2, 3, 4)).overlay_rect_canvas(10, 10), (0.0, 0.0, 0.0, 0.0))
+        self.assertEqual(
+            self.page(scale_factor1=0.0, overlay_rect=(1, 2, 3, 4)).overlay_rect_canvas(
+                10, 10
+            ),
+            (0.0, 0.0, 0.0, 0.0),
+        )
         self.assertEqual(page.overlay_rect_canvas(0.0, 100.0), (0.0, 0.0, 0.0, 0.0))
 
     def test_overlay_rect_page_points_use_the_rotated_page_dimensions(self):
@@ -385,11 +486,32 @@ class BuildPagesFromBidDataTests(unittest.TestCase):
         pages = build_pages_from_bid_data({"p1": info}, takeoffs)
         page = pages["p1"]
         for name in (
-            "name", "sheet_no", "sequence", "image_path", "width_pts", "height_pts",
-            "scale_factor1", "scale_factor2", "rotation", "flip_x", "flip_y", "page_index",
-            "layer_visible", "overlay_image_path", "overlay_offset_x", "overlay_offset_y",
-            "overlay_rotation", "overlay_resized", "deskew_rotation_overlay", "overlay_rect",
-            "image_show_mode", "zoom_fac", "current_x", "current_y", "invert", "bitonal",
+            "name",
+            "sheet_no",
+            "sequence",
+            "image_path",
+            "width_pts",
+            "height_pts",
+            "scale_factor1",
+            "scale_factor2",
+            "rotation",
+            "flip_x",
+            "flip_y",
+            "page_index",
+            "layer_visible",
+            "overlay_image_path",
+            "overlay_offset_x",
+            "overlay_offset_y",
+            "overlay_rotation",
+            "overlay_resized",
+            "deskew_rotation_overlay",
+            "overlay_rect",
+            "image_show_mode",
+            "zoom_fac",
+            "current_x",
+            "current_y",
+            "invert",
+            "bitonal",
             "folder_uid",
         ):
             with self.subTest(field=name):
@@ -397,7 +519,9 @@ class BuildPagesFromBidDataTests(unittest.TestCase):
         self.assertEqual(page.uid, "p1")
         self.assertEqual([t.uid for t in page.takeoffs], ["t1", "t2"])
 
-    def test_takeoffs_for_unknown_pages_get_placeholder_pages_and_pageless_ones_the_no_page_bucket(self):
+    def test_takeoffs_for_unknown_pages_get_placeholder_pages_and_pageless_ones_the_no_page_bucket(
+        self,
+    ):
         from ost_visualizer.domain.entities.takeoff import Takeoff
 
         takeoffs = [
@@ -414,14 +538,18 @@ class BuildPagesFromBidDataTests(unittest.TestCase):
         self.assertEqual([t.uid for t in pages["ghost"].takeoffs], ["a", "c"])
         self.assertEqual(pages["p1"].takeoffs, [])
 
-    def test_no_synthetic_pages_without_orphan_takeoffs_and_input_infos_are_not_changed(self):
+    def test_no_synthetic_pages_without_orphan_takeoffs_and_input_infos_are_not_changed(
+        self,
+    ):
         info = BidPageInfo(name="Real", sequence=2)
         pages = build_pages_from_bid_data({"p1": info}, [])
         self.assertEqual(list(pages), ["p1"])
         self.assertEqual(build_pages_from_bid_data({}, []), {})
         self.assertEqual((info.name, info.sequence), ("Real", 2))
 
-    def test_a_page_named_like_the_no_page_bucket_is_replaced_by_the_synthetic_bucket(self):
+    def test_a_page_named_like_the_no_page_bucket_is_replaced_by_the_synthetic_bucket(
+        self,
+    ):
         from ost_visualizer.domain.entities.takeoff import Takeoff
 
         pages = build_pages_from_bid_data(
@@ -441,3 +569,17 @@ class PageCoordinateSizeGuardTests(unittest.TestCase):
             with self.subTest(units_per_inch=bad):
                 self.assertIsNone(page._page_coordinate_size(bad))
         self.assertEqual(page._page_coordinate_size("96"), (96.0, 192.0))
+
+    def test_a_non_positive_resolution_is_refused_even_when_the_page_size_is_negative_too(
+        self,
+    ):
+        # A negative page size times a negative resolution is a positive coordinate size,
+        # so only the resolution check itself can refuse it.
+        negative_page = Page(uid="p", name="N", width_pts=-612.0, height_pts=-792.0)
+        self.assertIsNone(negative_page._page_coordinate_size(-96.0))
+        self.assertIsNone(negative_page._page_coordinate_size(0.0))
+        self.assertIsNone(negative_page._page_coordinate_size(96.0))
+        self.assertIsNone(negative_page._page_coordinate_size(float("inf")))
+        self.assertIsNone(negative_page._page_coordinate_size(float("-inf")))
+        positive_page = Page(uid="p", name="N", width_pts=612.0, height_pts=792.0)
+        self.assertIsNone(positive_page._page_coordinate_size(-96.0))

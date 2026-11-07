@@ -667,7 +667,17 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 uom_values["UOM2"] = new_u2
             if "UOM3" in uom_columns and new_u3 != old_u3:
                 uom_values["UOM3"] = new_u3
-            new_name = convert_elevation_in_name(name or "", metric)
+            try:
+                new_name = convert_elevation_in_name(name or "", metric)
+            except ValueError as exc:
+                self.logger.warning(
+                    "Keeping unreadable elevation in condition %s (%r) of bid %s: %s",
+                    uid,
+                    name,
+                    bid_uid_int,
+                    exc,
+                )
+                new_name = name or ""
             name_changed = bool(name) and new_name != name
             if not uom_values and not name_changed:
                 continue

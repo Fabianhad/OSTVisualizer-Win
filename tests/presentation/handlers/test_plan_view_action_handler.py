@@ -19791,7 +19791,10 @@ class PlanViewActionHandlerA3GapTests(_PlanViewActionHandlerFixture):
         data.page_names = {"p1": "Page One"}
         handler = self._handler(data)
         self.assertEqual(
-            [(choice[0], choice[3]) for choice in handler._collect_named_view_choices()],
+            [
+                (choice[0], choice[3])
+                for choice in handler._collect_named_view_choices()
+            ],
             [("nv1", "First"), ("nv2", "Second")],
         )
 
@@ -19800,7 +19803,9 @@ class PlanViewActionHandlerA3GapTests(_PlanViewActionHandlerFixture):
         write = FakeWriteService()
         handler = self._handler(data, write)
         handler.on_reassign_condition(["missing", "t1", "t2"], "42")
-        self.assertEqual(write.condition_calls, [("bid.mdb", ["t1", "t2"], "42", False)])
+        self.assertEqual(
+            write.condition_calls, [("bid.mdb", ["t1", "t2"], "42", False)]
+        )
         handler.on_set_curved(["missing", "t1", "t2"], True)
         self.assertEqual([call[1] for call in write.curve_calls], ["t1", "t2"])
 
@@ -19831,7 +19836,9 @@ class PlanViewActionHandlerA3GapTests(_PlanViewActionHandlerFixture):
             )
         )
         other = str(uuid.uuid4())
-        handler._mark_sql_completion_applied(result(MutationOutcomeStatus.CONFLICT, other))
+        handler._mark_sql_completion_applied(
+            result(MutationOutcomeStatus.CONFLICT, other)
+        )
         self.assertNotIn(other, handler._completed_sql_mutation_ids)
 
     def test_a_lease_loss_clears_the_pending_request_id(self):
@@ -19884,7 +19891,9 @@ class PlanViewActionHandlerA3GapTests(_PlanViewActionHandlerFixture):
                 plan_uids={"t1"},
                 takeoff_uids={"t1"},
             )
-        self.assertEqual(handler._pending_plan_takeoff_uids_by_bid.get(bid, set()), set())
+        self.assertEqual(
+            handler._pending_plan_takeoff_uids_by_bid.get(bid, set()), set()
+        )
         self.assertEqual(handler._undo_svc.forward_mutations, [])
 
     def test_the_preparation_unwind_runs_every_step_even_when_one_fails(self):
@@ -19978,7 +19987,9 @@ class PlanViewActionHandlerA3GapTests(_PlanViewActionHandlerFixture):
         handler.on_set_curved(["missing"], True)
         self.assertEqual(write.curve_calls, [])
 
-    def test_selection_is_restored_without_a_revision_and_only_for_the_current_one(self):
+    def test_selection_is_restored_without_a_revision_and_only_for_the_current_one(
+        self,
+    ):
         data = self._data("t1")
         handler = self._handler(data)
         bid = handler._ui_state.get_selected_bid_ref()

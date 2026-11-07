@@ -162,10 +162,14 @@ class TakeoffEntityContractTests(unittest.TestCase):
         from decimal import Decimal
         from fractions import Fraction
 
-        self.assertTrue(self.valid(position=[1, 2.0, 3, 4], rotation=1).has_valid_contract())
+        self.assertTrue(
+            self.valid(position=[1, 2.0, 3, 4], rotation=1).has_valid_contract()
+        )
         for bad in (Decimal("1"), Fraction(1, 2), complex(1, 0)):
             with self.subTest(bad=bad):
-                self.assertFalse(self.valid(position=[bad, 2, 3, 4]).has_valid_contract())
+                self.assertFalse(
+                    self.valid(position=[bad, 2, 3, 4]).has_valid_contract()
+                )
                 self.assertFalse(self.valid(rotation=bad).has_valid_contract())
 
     def test_visibility_follows_the_conditions_layer_and_defaults_to_visible(self):
@@ -184,16 +188,51 @@ class TakeoffEntityContractTests(unittest.TestCase):
         self.assertIsNone(self.valid().get_condition({"x": condition}))
 
     def test_has_valid_position_needs_at_least_two_points(self):
-        for length, expected in ((0, False), (2, False), (3, False), (4, True), (5, True)):
+        for length, expected in (
+            (0, False),
+            (2, False),
+            (3, False),
+            (4, True),
+            (5, True),
+        ):
             with self.subTest(length=length):
                 self.assertIs(
                     self.valid(position=[0.0] * length).has_valid_position, expected
                 )
 
     def test_root_parent_sentinels_are_only_blank_and_zero(self):
-        for parent, expected in (("0", False), ("", False), ("00", True), (" ", True), ("7", True)):
+        for parent, expected in (
+            ("0", False),
+            ("", False),
+            ("00", True),
+            (" ", True),
+            ("7", True),
+        ):
             with self.subTest(parent=parent):
                 self.assertIs(self.valid(parent_uid=parent).is_hole, expected)
+
+    def test_none_representations_are_not_a_valid_root_marker_for_a_takeoff(self):
+        # R4 resolution (characterisation, not an endorsement of 'None' as data):
+        # BidTakeoffs.ParentUID is an INTEGER column and the MDB reader maps NULL/0
+        # to "0", so neither Python None nor the text 'None' is ever persisted or
+        # read; both only arise from a str(None)/unset leak. The entity contract is
+        # parent_uid: str with roots {"", "0"}: Python None fails has_valid_contract
+        # and both None forms are treated as a hole, never as a root.
+        none_parent = self.valid()
+        none_parent.parent_uid = None
+        self.assertFalse(none_parent.has_valid_contract())
+        self.assertTrue(none_parent.is_hole)
+        text_none = self.valid(parent_uid="None")
+        self.assertTrue(text_none.has_valid_contract())
+        self.assertTrue(text_none.is_hole)
+        for root in ("0", ""):
+            with self.subTest(root=root):
+                record = self.valid(parent_uid=root)
+                self.assertTrue(record.has_valid_contract())
+                self.assertFalse(record.is_hole)
+        child = self.valid(uid="2", parent_uid="1")
+        self.assertTrue(child.has_valid_contract())
+        self.assertTrue(child.is_hole)
 
 
 class TakeoffRelationshipHelperTests(unittest.TestCase):
@@ -202,8 +241,22 @@ class TakeoffRelationshipHelperTests(unittest.TestCase):
             find_takeoff_parent_page_mismatches,
         )
 
-        parents = {"child": "parent", "ok": "parent", "root": "0", "blank": "", "orphan": "gone", "nopage": "parent"}
-        pages = {"parent": "p1", "child": "p2", "ok": "p1", "root": "p9", "blank": "p9", "orphan": "p3"}
+        parents = {
+            "child": "parent",
+            "ok": "parent",
+            "root": "0",
+            "blank": "",
+            "orphan": "gone",
+            "nopage": "parent",
+        }
+        pages = {
+            "parent": "p1",
+            "child": "p2",
+            "ok": "p1",
+            "root": "p9",
+            "blank": "p9",
+            "orphan": "p3",
+        }
         self.assertEqual(
             find_takeoff_parent_page_mismatches(parents, pages), {"child", "nopage"}
         )
@@ -223,7 +276,9 @@ class TakeoffRelationshipHelperTests(unittest.TestCase):
         self.assertEqual(find_takeoff_parent_cycle_uids(parents), {"a", "b", "c", "d"})
         self.assertEqual(find_takeoff_parent_cycle_uids({1: 2, 2: 1}), {"1", "2"})
 
-    def test_page_mismatch_never_treats_a_root_sentinel_as_a_parent_even_if_a_page_has_that_uid(self):
+    def test_page_mismatch_never_treats_a_root_sentinel_as_a_parent_even_if_a_page_has_that_uid(
+        self,
+    ):
         from ost_visualizer.domain.entities.takeoff import (
             find_takeoff_parent_page_mismatches,
         )

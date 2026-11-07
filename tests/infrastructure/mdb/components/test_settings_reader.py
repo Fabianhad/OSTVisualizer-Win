@@ -777,7 +777,9 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
             "INSERT INTO Employees VALUES (13, NULL)",
         )
         reader = _SqliteSettingsReader(connection)
-        self.assertEqual(reader.get_master_data_uids_in_use("x.mdb", "employees"), {"10"})
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "employees"), {"10"}
+        )
         self.assertEqual(
             reader.get_master_data_uids_in_use("x.mdb", "job_statuses"), {"5"}
         )
@@ -786,9 +788,13 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
         )
         self.assertEqual(reader.get_employee_uids_in_use("x.mdb"), {"10"})
         connection.execute("DROP TABLE Employees")
-        self.assertEqual(reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), set())
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), set()
+        )
         connection.execute("CREATE TABLE Employees (UID INTEGER)")
-        self.assertEqual(reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), set())
+        self.assertEqual(
+            reader.get_master_data_uids_in_use("x.mdb", "pay_classes"), set()
+        )
         for kind in ("bids", "", "Employees"):
             with self.subTest(kind=kind):
                 with self.assertRaisesRegex(
@@ -805,7 +811,9 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
 
                 Reader.error = error
                 with self.assertLogs("test", level="WARNING") as logs:
-                    self.assertEqual(Reader(None).get_employee_uids_in_use("x.mdb"), set())
+                    self.assertEqual(
+                        Reader(None).get_employee_uids_in_use("x.mdb"), set()
+                    )
                 self.assertEqual(len(logs.records), 1)
                 self.assertIs(
                     logs.records[0]
@@ -905,10 +913,87 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
         )
         self.assertEqual(
             _SqliteSettingsReader(connection).get_job_statuses("x.mdb"),
-            [JobStatus("2", "B", False, 0), JobStatus("1", "A", False, 0)],
+            [JobStatus("1", "A", False, 0), JobStatus("2", "B", False, 0)],
         )
         connection.execute("DROP TABLE JobStatuses")
-        self.assertEqual(_SqliteSettingsReader(connection).get_job_statuses("x.mdb"), [])
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_job_statuses("x.mdb"), []
+        )
+
+    def test_a_null_sequence_reads_as_zero_like_every_other_sequence_column(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (3, 'Won', 1, 3)",
+            "INSERT INTO JobStatuses VALUES (1, 'Open', 0, 1)",
+            "INSERT INTO JobStatuses VALUES (2, 'Lost', 0, NULL)",
+        )
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_job_statuses("x.mdb"),
+            [
+                JobStatus("2", "Lost", False, 0),
+                JobStatus("1", "Open", False, 1),
+                JobStatus("3", "Won", True, 3),
+            ],
+        )
+
+    def test_null_and_zero_sequences_tie_in_row_order(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (4, 'Null first', 0, NULL)",
+            "INSERT INTO JobStatuses VALUES (5, 'Zero', 0, 0)",
+            "INSERT INTO JobStatuses VALUES (6, 'Null last', 0, NULL)",
+        )
+        self.assertEqual(
+            [
+                s.uid
+                for s in _SqliteSettingsReader(connection).get_job_statuses("x.mdb")
+            ],
+            ["4", "5", "6"],
+        )
+
+    def test_sequence_ties_resolve_by_uid_even_when_rows_were_inserted_in_reverse(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (9, 'Tie 9 null', 0, NULL)",
+            "INSERT INTO JobStatuses VALUES (8, 'Tie 8 zero', 0, 0)",
+            "INSERT INTO JobStatuses VALUES (7, 'Tie 7 null', 0, NULL)",
+            "INSERT INTO JobStatuses VALUES (6, 'Tie 6 zero', 0, 0)",
+            "INSERT INTO JobStatuses VALUES (5, 'Later', 0, 2)",
+            "INSERT INTO JobStatuses VALUES (4, 'Later tie', 0, 2)",
+        )
+        self.assertEqual(
+            [
+                s.uid
+                for s in _SqliteSettingsReader(connection).get_job_statuses("x.mdb")
+            ],
+            ["6", "7", "8", "9", "4", "5"],
+        )
+
+    def test_only_null_sequences_still_return_every_row(self):
+        connection = self.database(
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (1, 'A', 0, NULL)",
+            "INSERT INTO JobStatuses VALUES (2, 'B', 0, NULL)",
+        )
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_job_statuses("x.mdb"),
+            [JobStatus("1", "A", False, 0), JobStatus("2", "B", False, 0)],
+        )
+
+    def test_a_null_sequence_does_not_break_the_cover_sheet(self):
+        connection = self.database(
+            "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER, JobName TEXT)",
+            "INSERT INTO Bids VALUES (7, 2, 'Job')",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT)",
+            "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT, Locked, Sequence INTEGER)",
+            "INSERT INTO JobStatuses VALUES (2, 'Lost', 0, NULL)",
+            "INSERT INTO JobStatuses VALUES (1, 'Open', 0, 1)",
+        )
+        data = _SqliteSettingsReader(connection).get_cover_sheet_data("x.mdb", "7")
+        self.assertEqual(
+            data.job_statuses,
+            [JobStatus("2", "Lost", False, 0), JobStatus("1", "Open", False, 1)],
+        )
 
     def test_job_status_read_failures_warn_or_propagate(self):
         connection = self.database(
@@ -917,11 +1002,15 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
             "INSERT INTO JobStatuses VALUES (7, 'B')",
         )
         with self.assertLogs("test", level="WARNING") as logs:
-            self.assertEqual(_SqliteSettingsReader(connection).get_job_statuses("x.mdb"), [])
+            self.assertEqual(
+                _SqliteSettingsReader(connection).get_job_statuses("x.mdb"), []
+            )
         self.assertEqual(
             logs.records[0].getMessage(), "Could not load job statuses from x.mdb"
         )
-        with self.assertRaisesRegex(RuntimeError, "JobStatuses contains duplicate UID 7"):
+        with self.assertRaisesRegex(
+            RuntimeError, "JobStatuses contains duplicate UID 7"
+        ):
             _FatalReadErrors(connection).get_job_statuses("x.mdb")
 
     def test_employees_and_pay_classes_map_every_column(self):
@@ -961,9 +1050,7 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
                 Employee(uid="8"),
             ],
         )
-        self.assertEqual(
-            pay_classes, [PayClass("4", "Journeyman"), PayClass("5", "")]
-        )
+        self.assertEqual(pay_classes, [PayClass("4", "Journeyman"), PayClass("5", "")])
 
     def test_employee_read_failures_warn_with_empty_results_or_propagate(self):
         connection = self.database(
@@ -973,7 +1060,9 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
         )
         with self.assertLogs("test", level="WARNING") as logs:
             self.assertEqual(
-                _SqliteSettingsReader(connection).get_employees_and_pay_classes("x.mdb"),
+                _SqliteSettingsReader(connection).get_employees_and_pay_classes(
+                    "x.mdb"
+                ),
                 ([], []),
             )
         self.assertEqual(
@@ -1006,7 +1095,9 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
                 ),
             ],
         )
-        connection.execute("INSERT INTO BidAreas VALUES (13, 7, 999, 'Dangling', 3, NULL)")
+        connection.execute(
+            "INSERT INTO BidAreas VALUES (13, 7, 999, 'Dangling', 3, NULL)"
+        )
         with self.assertLogs("test", level="WARNING") as logs:
             self.assertEqual(reader.get_bid_areas("x.mdb", "7"), [])
         self.assertEqual(
@@ -1034,7 +1125,9 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
             "next_bid_no": 1,
         }
         self.assertEqual(reader.get_settings_defaults("x.mdb"), defaults)
-        connection.execute("INSERT INTO Settings VALUES (3, 0.5, 24, 36, 24, 2, 0.5, 15)")
+        connection.execute(
+            "INSERT INTO Settings VALUES (3, 0.5, 24, 36, 24, 2, 0.5, 15)"
+        )
         self.assertEqual(
             reader.get_settings_defaults("x.mdb"),
             {
@@ -1193,7 +1286,12 @@ class CoverSheetRealSchemaTests(unittest.TestCase):
             ("", "", "", "", "", "", "", 0, 1.0, 1, 0.25, 12.0, 42.0, 30.0),
         )
         self.assertEqual(
-            (data.folders, data.pages_without_folder, data.job_statuses, data.employees),
+            (
+                data.folders,
+                data.pages_without_folder,
+                data.job_statuses,
+                data.employees,
+            ),
             ({}, [], [], []),
         )
         self.assertEqual(data.used_job_status_uids, set())
@@ -1244,11 +1342,7 @@ class CoverSheetRealSchemaTests(unittest.TestCase):
         self.assertEqual(folders["10"].subfolders["12"].name, "12")
         self.assertEqual(
             folders["11"].pages,
-            [
-                CoverSheetPage(
-                    "21", "", "", 0.0, 0.0, 1.0, 1.0, "", "", 1, 0, 0
-                )
-            ],
+            [CoverSheetPage("21", "", "", 0.0, 0.0, 1.0, 1.0, "", "", 1, 0, 0)],
         )
         self.assertEqual(folders["13"].pages, [])
         self.assertEqual(
@@ -1319,7 +1413,10 @@ class CoverSheetRealSchemaTests(unittest.TestCase):
             ),
             (
                 "BidPages",
-                ("INSERT INTO BidPages VALUES (5, 7)", "INSERT INTO BidPages VALUES (5, 7)"),
+                (
+                    "INSERT INTO BidPages VALUES (5, 7)",
+                    "INSERT INTO BidPages VALUES (5, 7)",
+                ),
             ),
         ):
             with self.subTest(table=table):
@@ -1335,8 +1432,22 @@ class CoverSheetRealSchemaTests(unittest.TestCase):
                         _SqliteConnectionWrapper(connection), "7"
                     )
 
+    def test_cover_sheet_rejects_a_page_without_a_uid_value(self):
+        connection = self.database(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT)",
+            "INSERT INTO BidPages VALUES (NULL, 7, 'No uid')",
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "BidPages contains malformed UID <missing>"
+        ):
+            _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+                _SqliteConnectionWrapper(connection), "7"
+            )
+
     def test_cover_sheet_driver_errors_return_empty_trees_unless_fatal(self):
-        connection = self.database("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        connection = self.database(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)"
+        )
         failing = _FailingConnection(connection)
         self.assertEqual(
             _SqliteSettingsReader(connection)._query_cover_sheet_pages(failing, "7"),

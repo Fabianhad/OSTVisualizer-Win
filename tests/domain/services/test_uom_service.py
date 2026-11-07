@@ -157,9 +157,22 @@ class UomCodeTableTests(unittest.TestCase):
 
     def test_labels_cover_every_uom_and_unknown_codes_have_no_label(self):
         expected = {
-            0: "EA", 1: "IN", 2: "LF", 3: "LY", 4: "IN²", 5: "SF", 6: "SY",
-            7: "SQ", 8: "CF", 9: "CY", 11: "mm", 12: "mm²", 13: "m",
-            14: "m²", 15: "mm³", 16: "m³",
+            0: "EA",
+            1: "IN",
+            2: "LF",
+            3: "LY",
+            4: "IN²",
+            5: "SF",
+            6: "SY",
+            7: "SQ",
+            8: "CF",
+            9: "CY",
+            11: "mm",
+            12: "mm²",
+            13: "m",
+            14: "m²",
+            15: "mm³",
+            16: "m³",
         }
         self.assertEqual(uom.UOM_LABELS, expected)
         for code, label in expected.items():
@@ -272,7 +285,9 @@ class UomCodeTableTests(unittest.TestCase):
                 seen += 1
                 imperial, metric = expected(label)
                 with self.subTest(calc_type=calc_type, label=label):
-                    self.assertEqual(uom.get_valid_uoms_for_calc_type(calc_type), imperial)
+                    self.assertEqual(
+                        uom.get_valid_uoms_for_calc_type(calc_type), imperial
+                    )
                     self.assertEqual(
                         uom.get_valid_uoms_for_calc_type(calc_type, metric=True), metric
                     )
@@ -311,7 +326,17 @@ class UomValidUnitTests(unittest.TestCase):
                 )
 
     def test_system_normalization_maps_each_unit_to_its_counterpart(self):
-        imperial_to_metric = {1: 13, 2: 13, 3: 13, 4: 14, 5: 14, 6: 14, 7: 14, 8: 16, 9: 16}
+        imperial_to_metric = {
+            1: 13,
+            2: 13,
+            3: 13,
+            4: 14,
+            5: 14,
+            6: 14,
+            7: 14,
+            8: 16,
+            9: 16,
+        }
         for code, expected in imperial_to_metric.items():
             with self.subTest(code=code):
                 self.assertEqual(uom.normalize_uom_for_system(code, True), expected)
@@ -330,7 +355,9 @@ class UomValidUnitTests(unittest.TestCase):
         self.assertEqual(uom.normalize_uoms_for_system((13, 14, 0), False), (2, 5, 0))
         self.assertEqual(uom.normalize_uoms_for_system((), True), ())
 
-    def test_calculation_normalization_keeps_valid_units_and_falls_back_to_the_first_valid(self):
+    def test_calculation_normalization_keeps_valid_units_and_falls_back_to_the_first_valid(
+        self,
+    ):
         norm = uom.normalize_uom_for_calculation
         # calc type 0 only converts between systems.
         self.assertEqual(norm(0, 2, True), 13)
@@ -390,16 +417,20 @@ class UomConversionTests(unittest.TestCase):
             uom.UOM_CUBIC_YARDS: 1 / 46656,
             uom.UOM_MM: 25.4,
             uom.UOM_M: 0.0254,
-            uom.UOM_MM2: 25.4 ** 2,
-            uom.UOM_M2: 25.4 ** 2 / 1_000_000,
-            uom.UOM_MM3: 25.4 ** 3,
-            uom.UOM_M3: 25.4 ** 3 / 1_000_000_000,
+            uom.UOM_MM2: 25.4**2,
+            uom.UOM_M2: 25.4**2 / 1_000_000,
+            uom.UOM_MM3: 25.4**3,
+            uom.UOM_M3: 25.4**3 / 1_000_000_000,
         }
         for code, per_unit in expectations.items():
             with self.subTest(code=code):
-                self.assertAlmostEqual(uom.convert_to_uom(1.0, code) / per_unit, 1.0, places=12)
                 self.assertAlmostEqual(
-                    uom.convert_to_uom(3456.0, code) / (3456.0 * per_unit), 1.0, places=12
+                    uom.convert_to_uom(1.0, code) / per_unit, 1.0, places=12
+                )
+                self.assertAlmostEqual(
+                    uom.convert_to_uom(3456.0, code) / (3456.0 * per_unit),
+                    1.0,
+                    places=12,
                 )
         self.assertEqual(uom.convert_to_uom(5.0, 99), 5.0)
         self.assertEqual(uom.convert_to_uom(0.0, uom.UOM_SQUARE_FEET), 0.0)
@@ -415,9 +446,16 @@ class UomConversionTests(unittest.TestCase):
         self.assertAlmostEqual(convert(13.0, uom.UOM_INCHES, True, 0.5), 13.0)
         self.assertAlmostEqual(convert(13.2, uom.UOM_INCHES, True, 0.5), 13.5)
 
-    def test_rounding_is_skipped_without_the_flag_or_with_a_non_positive_increment(self):
+    def test_rounding_is_skipped_without_the_flag_or_with_a_non_positive_increment(
+        self,
+    ):
         convert = uom.convert_and_round_quantity
-        for flag, increment in ((False, 12.0), (True, 0.0), (True, -12.0), (False, 0.0)):
+        for flag, increment in (
+            (False, 12.0),
+            (True, 0.0),
+            (True, -12.0),
+            (False, 0.0),
+        ):
             with self.subTest(flag=flag, increment=increment):
                 self.assertAlmostEqual(
                     convert(13.0, uom.UOM_INCHES, flag, increment), 13.0
@@ -450,7 +488,9 @@ class UomGeometryHelperTests(unittest.TestCase):
 
     def test_net_area_subtracts_holes_clamps_at_zero_and_reports_square_feet(self):
         self.assertAlmostEqual(uom.calculate_net_area_sf(SQUARE_12), 1.0)
-        self.assertAlmostEqual(uom.calculate_net_area_sf(SQUARE_12, [HOLE_6]), 108 / 144)
+        self.assertAlmostEqual(
+            uom.calculate_net_area_sf(SQUARE_12, [HOLE_6]), 108 / 144
+        )
         self.assertAlmostEqual(
             uom.calculate_net_area_sf(SQUARE_12, [HOLE_6, HOLE_6]), 72 / 144
         )
@@ -471,7 +511,9 @@ class UomGeometryHelperTests(unittest.TestCase):
         self.assertEqual(uom._calc_polygon_perimeter([]), 0.0)
         self.assertEqual(uom._calc_polygon_area_sq_inches([0, 0, 4, 0]), 0.0)
 
-    def test_slope_factor_is_the_hypotenuse_over_run_and_ignores_flat_or_unset_slopes(self):
+    def test_slope_factor_is_the_hypotenuse_over_run_and_ignores_flat_or_unset_slopes(
+        self,
+    ):
         self.assertEqual(uom._calc_slope_factor(3, 4), 1.25)
         self.assertEqual(uom._calc_slope_factor(0, 4), 1.0)
         self.assertEqual(uom._calc_slope_factor(3, 0), 1.0)
@@ -506,9 +548,13 @@ class UomCountQuantityTests(unittest.TestCase):
         for calc_type, expected in table.items():
             for condition_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
                 with self.subTest(calc_type=calc_type, condition_type=condition_type):
-                    self.assertEqual(_quantities(condition_type, calc_type, **dims)[0], expected)
+                    self.assertEqual(
+                        _quantities(condition_type, calc_type, **dims)[0], expected
+                    )
 
-    def test_all_three_quantity_slots_are_computed_independently_with_their_own_units(self):
+    def test_all_three_quantity_slots_are_computed_independently_with_their_own_units(
+        self,
+    ):
         result = uom.calculate_condition_quantities(
             Condition.TYPE_COUNT,
             uom.CALC_WIDTH_SIDE,
@@ -531,18 +577,20 @@ class UomCountQuantityTests(unittest.TestCase):
 
 class UomLinearQuantityTests(unittest.TestCase):
     def test_every_linear_calculation_uses_length_height_and_thickness(self):
+        # length 5 (3-4-5), height 7, thickness 3. Thickness 3 on purpose: with 2,
+        # `2 * thickness` and `2 + thickness` coincide and hid a mutant.
         table = {
             0: 0.0,
             uom.CALC_LINEAR_LENGTH: 5.0,
             2: 1.0,
             3: 35.0,
             uom.CALC_LINEAR_BOTH_SIDES: 70.0,
-            5: 10.0,
-            6: 20.0,
-            7: 14.0,
-            uom.CALC_LINEAR_BOTH_ENDS: 28.0,
-            9: 90.0,
-            20: 70.0,
+            5: 15.0,
+            6: 30.0,
+            7: 21.0,
+            uom.CALC_LINEAR_BOTH_ENDS: 42.0,
+            9: 100.0,
+            20: 105.0,
             99: 0.0,
         }
         for calc_type, expected in table.items():
@@ -552,14 +600,34 @@ class UomLinearQuantityTests(unittest.TestCase):
                     calc_type,
                     position=[0, 0, 3, 4],
                     height=7.0,
-                    thickness=2.0,
+                    thickness=3.0,
                 )
                 self.assertEqual(result[0], expected)
 
+    def test_a_linear_condition_ignores_calculation_codes_of_other_condition_types(
+        self,
+    ):
+        # Codes 10-19, 21 and 23-30 belong to count/area conditions; for a linear
+        # condition every one of them is "not a linear calculation" and yields 0.
+        for calc_type in (10, 11, 12, 13, 15, 17, 19, 21, 23, 24, 29, 30):
+            with self.subTest(calc_type=calc_type):
+                result = _quantities(
+                    Condition.TYPE_LINEAR,
+                    calc_type,
+                    position=[0, 0, 3, 4],
+                    height=7.0,
+                    thickness=3.0,
+                )
+                self.assertEqual(result, (0.0, 0.0, 0.0))
+
     def test_segment_lengths_are_summed_every_seven_coordinates(self):
         self.assertEqual(uom._calc_linear_length([0, 0, 3, 4]), 5.0)
-        self.assertEqual(uom._calc_linear_length([0, 0, 3, 4, 9, 9, 9, 10, 10, 13, 14]), 10.0)
-        self.assertEqual(uom._calc_linear_length([0, 0, 3, 4, 9, 9, 9, 10, 10, 13]), 5.0)
+        self.assertEqual(
+            uom._calc_linear_length([0, 0, 3, 4, 9, 9, 9, 10, 10, 13, 14]), 10.0
+        )
+        self.assertEqual(
+            uom._calc_linear_length([0, 0, 3, 4, 9, 9, 9, 10, 10, 13]), 5.0
+        )
         self.assertEqual(uom._calc_linear_length([0, 0, 3]), 0.0)
         self.assertEqual(uom._calc_linear_length([]), 0.0)
         self.assertEqual(uom._calc_linear_length([0, 0, 3, 4, 1, 2], curve=-1), 5.0)
@@ -571,9 +639,13 @@ class UomLinearQuantityTests(unittest.TestCase):
         self.assertEqual(_quantities(Condition.TYPE_LINEAR, 1, **flat)[0], 12.0)
 
     def test_linear_quantity_converts_to_the_requested_unit(self):
-        feet = _quantities(Condition.TYPE_LINEAR, 1, uom.UOM_LINEAR_FEET, position=[0, 0, 24, 0])
+        feet = _quantities(
+            Condition.TYPE_LINEAR, 1, uom.UOM_LINEAR_FEET, position=[0, 0, 24, 0]
+        )
         self.assertAlmostEqual(feet[0], 2.0)
-        metres = _quantities(Condition.TYPE_LINEAR, 1, uom.UOM_M, position=[0, 0, 100, 0])
+        metres = _quantities(
+            Condition.TYPE_LINEAR, 1, uom.UOM_M, position=[0, 0, 100, 0]
+        )
         self.assertAlmostEqual(metres[0], 2.54)
 
     def test_a_missing_position_yields_zero(self):
@@ -582,7 +654,9 @@ class UomLinearQuantityTests(unittest.TestCase):
                 _quantities(Condition.TYPE_LINEAR, 1, position=position)[0], 0.0
             )
 
-    def test_a_curve_through_three_collinear_points_measures_the_straight_distance(self):
+    def test_a_curve_through_three_collinear_points_measures_the_straight_distance(
+        self,
+    ):
         length = uom._calc_linear_length([0, 0, 100, 0, 50, 0], curve=0)
         self.assertAlmostEqual(length, 100.0, places=6)
         vertical = uom._calc_linear_length([0, 0, 0, 100, 0, 50], curve=0)
@@ -591,9 +665,12 @@ class UomLinearQuantityTests(unittest.TestCase):
     def test_a_curve_through_three_points_of_a_circle_measures_the_arc(self):
         radius = 100.0
         quarter = [
-            radius, 0.0,
-            0.0, radius,
-            radius * math.cos(math.pi / 4), radius * math.sin(math.pi / 4),
+            radius,
+            0.0,
+            0.0,
+            radius,
+            radius * math.cos(math.pi / 4),
+            radius * math.sin(math.pi / 4),
         ]
         self.assertAlmostEqual(
             uom._calc_linear_length(quarter, curve=0), radius * math.pi / 2, delta=0.05
@@ -601,7 +678,9 @@ class UomLinearQuantityTests(unittest.TestCase):
         # Reversed travel direction measures the same arc.
         reversed_quarter = [0.0, radius, radius, 0.0, *quarter[4:]]
         self.assertAlmostEqual(
-            uom._calc_linear_length(reversed_quarter, curve=0), radius * math.pi / 2, delta=0.05
+            uom._calc_linear_length(reversed_quarter, curve=0),
+            radius * math.pi / 2,
+            delta=0.05,
         )
         # Half circle through the top point.
         half = [radius, 0.0, -radius, 0.0, 0.0, radius]
@@ -697,6 +776,15 @@ class UomAreaQuantityTests(unittest.TestCase):
             with self.subTest(calc_type=calc_type):
                 self.assertAlmostEqual(self.area(calc_type), expected)
 
+    def test_an_area_condition_ignores_calculation_codes_of_other_condition_types(self):
+        # Codes 1-10, 13, 20 and 24-32 belong to linear/count conditions. Every one is
+        # "not an area calculation" and yields 0 even with grid cells, thickness and
+        # attachments available (checked in increasing order, so each lower code would
+        # be caught by a `<=` where `==` is meant).
+        for calc_type in (*range(1, 11), 13, 20, 24, 25, 29, 30, 31, 32, 36):
+            with self.subTest(calc_type=calc_type):
+                self.assertEqual(self.area(calc_type), 0.0)
+
     def test_grid_calculations_return_zero_when_a_cell_has_no_positive_size(self):
         for calc_type in (16, 17, 18):
             for overrides in (
@@ -709,42 +797,59 @@ class UomAreaQuantityTests(unittest.TestCase):
                     self.assertEqual(self.area(calc_type, **overrides), 0.0)
 
     def test_grid_gap_adds_to_each_cell_size(self):
-        self.assertAlmostEqual(self.area(16, grid_size1=5.0, grid_size2=2.0, gap=1.0), 2 * 12 + 4 * 12)
-        self.assertAlmostEqual(self.area(18, grid_size1=5.0, grid_size2=2.0, gap=1.0), 2 * 4)
-        self.assertAlmostEqual(self.area(17, grid_size1=5.0, grid_size2=2.0, gap=1.0), 108 / 18)
+        self.assertAlmostEqual(
+            self.area(16, grid_size1=5.0, grid_size2=2.0, gap=1.0), 2 * 12 + 4 * 12
+        )
+        self.assertAlmostEqual(
+            self.area(18, grid_size1=5.0, grid_size2=2.0, gap=1.0), 2 * 4
+        )
+        self.assertAlmostEqual(
+            self.area(17, grid_size1=5.0, grid_size2=2.0, gap=1.0), 108 / 18
+        )
 
     def test_holes_accumulate_and_are_optional(self):
         self.assertAlmostEqual(self.area(uom.CALC_AREA, hole_positions=None), 144.0)
         self.assertAlmostEqual(self.area(uom.CALC_AREA, hole_positions=[]), 144.0)
-        self.assertAlmostEqual(self.area(uom.CALC_AREA, hole_positions=[HOLE_6, HOLE_6]), 72.0)
-        self.assertAlmostEqual(self.area(uom.CALC_AREA_PERIMETER, hole_positions=[HOLE_6, HOLE_6]), 96.0)
+        self.assertAlmostEqual(
+            self.area(uom.CALC_AREA, hole_positions=[HOLE_6, HOLE_6]), 72.0
+        )
+        self.assertAlmostEqual(
+            self.area(uom.CALC_AREA_PERIMETER, hole_positions=[HOLE_6, HOLE_6]), 96.0
+        )
 
     def test_slope_scales_area_perimeter_and_hole_measures_and_uses_magnitudes(self):
         self.assertAlmostEqual(self.area(uom.CALC_AREA, rise=3, run=4), 108 * 1.25)
         self.assertAlmostEqual(self.area(uom.CALC_AREA, rise=-3, run=-4), 108 * 1.25)
         self.assertAlmostEqual(self.area(14, rise=3, run=4), 48 * 1.25)
-        self.assertAlmostEqual(self.area(uom.CALC_AREA_PERIMETER, rise=3, run=4), 72 * 1.25)
+        self.assertAlmostEqual(
+            self.area(uom.CALC_AREA_PERIMETER, rise=3, run=4), 72 * 1.25
+        )
         self.assertAlmostEqual(self.area(34, rise=3, run=4), 144 * 1.25)
         # The bounding box (grid counts) is not slope scaled.
         self.assertAlmostEqual(self.area(18, rise=3, run=4), 6.0)
 
     def test_area_converts_to_the_requested_unit_and_rounds_up(self):
         self.assertAlmostEqual(self.area(uom.CALC_AREA, uom.UOM_SQUARE_FEET), 108 / 144)
-        self.assertAlmostEqual(self.area(uom.CALC_AREA, uom.UOM_SQUARE_YARDS), 108 / 1296)
+        self.assertAlmostEqual(
+            self.area(uom.CALC_AREA, uom.UOM_SQUARE_YARDS), 108 / 1296
+        )
         rounded = self.area(
             uom.CALC_AREA, uom.UOM_SQUARE_FEET, round_quantity=True, round_up=144.0
         )
         self.assertAlmostEqual(rounded, 1.0)
 
-    def test_a_missing_or_degenerate_polygon_yields_zero_area_but_keeps_a_two_point_perimeter(self):
+    def test_a_missing_or_degenerate_polygon_yields_zero_area_but_keeps_a_two_point_perimeter(
+        self,
+    ):
         for position in (None, [], [0, 0, 1, 1]):
             with self.subTest(position=position):
                 self.assertEqual(
-                    self.area(uom.CALC_AREA, position=position, hole_positions=None), 0.0
+                    self.area(uom.CALC_AREA, position=position, hole_positions=None),
+                    0.0,
                 )
         self.assertEqual(self.area(14, position=None, hole_positions=None), 0.0)
         self.assertAlmostEqual(
-            self.area(14, position=[0, 0, 1, 1], hole_positions=None), 2 * 2 ** 0.5
+            self.area(14, position=[0, 0, 1, 1], hole_positions=None), 2 * 2**0.5
         )
 
 
@@ -762,10 +867,11 @@ class UomCurvedArcTests(unittest.TestCase):
         angle = math.radians(degrees)
         return radius * math.cos(angle), radius * math.sin(angle)
 
-    def test_arc_length_matches_the_circle_for_the_listed_orientations_and_chord_directions(self):
-        # Not "every" orientation: arcs whose control point lies close to one end of an
-        # arc longer than 180 degrees are measured on the wrong side by production
-        # (see UomArcKnownLimitationTests, an owner decision).
+    def test_arc_length_matches_the_circle_for_the_listed_orientations_and_chord_directions(
+        self,
+    ):
+        # Arcs longer than 180 degrees with the control point near an end are covered by
+        # UomArcControlPointSideTests and UomArcSideAndStraightChordTests.
         radius = 100.0
         cases = (
             (0, 45, 90),
@@ -791,10 +897,14 @@ class UomCurvedArcTests(unittest.TestCase):
                 position = [*p1, *p2, *c]
                 expected = _arc_length(radius, start, through, end)
                 self.assertAlmostEqual(
-                    uom._calc_linear_length(position, curve=0), expected, delta=expected * 0.004
+                    uom._calc_linear_length(position, curve=0),
+                    expected,
+                    delta=expected * 0.004,
                 )
 
-    def test_arcs_with_axis_aligned_chord_segments_use_the_dedicated_center_formulas(self):
+    def test_arcs_with_axis_aligned_chord_segments_use_the_dedicated_center_formulas(
+        self,
+    ):
         radius = 100.0
         s = radius * math.sqrt(0.5)
         # first segment horizontal, second segment horizontal, vertical segments
@@ -824,7 +934,9 @@ class UomCurvedArcTests(unittest.TestCase):
         self.assertAlmostEqual(cx, 0.25)
         self.assertAlmostEqual(cy, 2.0)
 
-    def test_segment_count_adds_the_control_point_offset_from_the_chord_clamped_to_the_chord(self):
+    def test_segment_count_adds_the_control_point_offset_from_the_chord_clamped_to_the_chord(
+        self,
+    ):
         self.assertEqual(uom._calc_curve_segments(0, 0, 60, 80, 10, 50), 24)
         self.assertEqual(uom._calc_curve_segments(0, 0, 100, 0, 150, 30), 44)
         self.assertEqual(uom._calc_curve_segments(0, 0, 100, 0, -50, 30), 44)
@@ -832,7 +944,9 @@ class UomCurvedArcTests(unittest.TestCase):
         self.assertEqual(uom._calc_curve_segments(0, 0, 100, 0, 50, 5), 21)
         self.assertEqual(uom._calc_curve_segments(0, 0, 100, 0, 50, 4.9), 20)
 
-    def test_collinear_control_points_fall_back_to_the_quadratic_and_measure_its_path(self):
+    def test_collinear_control_points_fall_back_to_the_quadratic_and_measure_its_path(
+        self,
+    ):
         # Control point beyond the end: the quadratic overshoots to 112.5 and returns.
         horizontal = uom._calc_linear_length([0, 0, 100, 0, 150, 0], curve=0)
         self.assertAlmostEqual(horizontal, 125.0, delta=0.1)
@@ -841,17 +955,23 @@ class UomCurvedArcTests(unittest.TestCase):
         diagonal = uom._calc_linear_length([0, 0, 60, 80, 90, 120], curve=0)
         self.assertAlmostEqual(diagonal, 125.0, delta=0.1)
 
-    def test_an_off_chord_control_point_measures_the_circle_through_all_three_points(self):
+    def test_an_off_chord_control_point_measures_the_circle_through_all_three_points(
+        self,
+    ):
         # (0,0), (50,40), (100,0) lie on a circle of radius 51.25 centred 11.25 below the chord.
         radius = 51.25
         sweep = 2 * math.atan2(50.0, 11.25)
         self.assertAlmostEqual(
-            uom._calc_linear_length([0, 0, 100, 0, 50, 40], curve=0), radius * sweep, delta=0.3
+            uom._calc_linear_length([0, 0, 100, 0, 50, 40], curve=0),
+            radius * sweep,
+            delta=0.3,
         )
 
 
 class UomDefaultArgumentTests(unittest.TestCase):
-    def test_optional_inputs_default_to_no_slope_no_holes_no_attachments_and_no_rounding(self):
+    def test_optional_inputs_default_to_no_slope_no_holes_no_attachments_and_no_rounding(
+        self,
+    ):
         square = [0, 0, 12, 0, 12, 12, 0, 12]
         for calc_type, expected in (
             (uom.CALC_AREA, 144.0),
@@ -883,7 +1003,18 @@ class UomDefaultArgumentTests(unittest.TestCase):
 
     def test_default_curve_is_a_straight_polyline_and_default_rounding_is_off(self):
         result = uom.calculate_condition_quantities(
-            Condition.TYPE_LINEAR, 1, 0, 0, 1, 0, 0, 0.0, 0.0, 0.0, 0.0, [0, 0, 100, 0, 50, 40]
+            Condition.TYPE_LINEAR,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            [0, 0, 100, 0, 50, 40],
         )
         self.assertEqual(result, (100.0, 0.0, 0.0))
         rounded_by_default = uom.calculate_condition_quantities(
@@ -893,13 +1024,21 @@ class UomDefaultArgumentTests(unittest.TestCase):
 
     def test_unit_size_and_sub_unit_grid_cells_are_valid_cells(self):
         base = dict(position=[0, 0, 12, 0, 12, 12, 0, 12], hole_positions=None)
-        one = _quantities(Condition.TYPE_AREA, 17, grid_size1=0.5, grid_size2=0.5, gap=0.5, **base)
+        one = _quantities(
+            Condition.TYPE_AREA, 17, grid_size1=0.5, grid_size2=0.5, gap=0.5, **base
+        )
         self.assertAlmostEqual(one[0], 144.0)
-        half = _quantities(Condition.TYPE_AREA, 17, grid_size1=0.25, grid_size2=0.25, gap=0.25, **base)
+        half = _quantities(
+            Condition.TYPE_AREA, 17, grid_size1=0.25, grid_size2=0.25, gap=0.25, **base
+        )
         self.assertAlmostEqual(half[0], 144.0 / 0.25)
-        small = _quantities(Condition.TYPE_AREA, 16, grid_size1=0.5, grid_size2=0.5, gap=0.0, **base)
+        small = _quantities(
+            Condition.TYPE_AREA, 16, grid_size1=0.5, grid_size2=0.5, gap=0.0, **base
+        )
         self.assertAlmostEqual(small[0], 24 * 12 + 24 * 12)
-        tiles = _quantities(Condition.TYPE_AREA, 18, grid_size1=0.5, grid_size2=0.5, gap=0.0, **base)
+        tiles = _quantities(
+            Condition.TYPE_AREA, 18, grid_size1=0.5, grid_size2=0.5, gap=0.0, **base
+        )
         self.assertAlmostEqual(tiles[0], 24 * 24)
 
     def test_slope_factor_with_fractional_rise_and_run(self):
@@ -911,7 +1050,10 @@ class UomDefaultArgumentTests(unittest.TestCase):
     def test_triangle_polygon_has_area_and_helper_handles_exactly_three_vertices(self):
         self.assertEqual(uom._calc_polygon_area_sq_inches([0, 0, 4, 0, 0, 3]), 6.0)
         result = _quantities(
-            Condition.TYPE_AREA, uom.CALC_AREA, position=[0, 0, 4, 0, 0, 3], hole_positions=None
+            Condition.TYPE_AREA,
+            uom.CALC_AREA,
+            position=[0, 0, 4, 0, 0, 3],
+            hole_positions=None,
         )
         self.assertEqual(result[0], 6.0)
 
@@ -955,7 +1097,9 @@ class UomTranslatedArcTests(unittest.TestCase):
                         delta=expected * 0.004,
                     )
 
-    def test_arc_points_start_and_end_on_the_chord_ends_pass_the_control_point_and_stay_on_the_circle(self):
+    def test_arc_points_start_and_end_on_the_chord_ends_pass_the_control_point_and_stay_on_the_circle(
+        self,
+    ):
         radius = 100.0
         for center in self.CENTERS:
             for start, through, end in self.CASES:
@@ -969,7 +1113,9 @@ class UomTranslatedArcTests(unittest.TestCase):
                     self.assertAlmostEqual(points[-1][0], p2[0], delta=1e-6)
                     self.assertAlmostEqual(points[-1][1], p2[1], delta=1e-6)
                     for x, y in points:
-                        self.assertAlmostEqual(math.hypot(x - center[0], y - center[1]), radius, delta=1e-6)
+                        self.assertAlmostEqual(
+                            math.hypot(x - center[0], y - center[1]), radius, delta=1e-6
+                        )
                     sweep = _arc_length(radius, start, through, end) / radius
                     step = radius * sweep / segments
                     nearest = min(math.hypot(x - c[0], y - c[1]) for x, y in points)
@@ -990,13 +1136,19 @@ class UomTranslatedArcTests(unittest.TestCase):
             base = uom._calc_curve_segments(*case)
             for dx, dy in ((1000.0, -500.0), (-37.5, 12.25)):
                 shifted = (
-                    case[0] + dx, case[1] + dy, case[2] + dx,
-                    case[3] + dy, case[4] + dx, case[5] + dy,
+                    case[0] + dx,
+                    case[1] + dy,
+                    case[2] + dx,
+                    case[3] + dy,
+                    case[4] + dx,
+                    case[5] + dy,
                 )
                 with self.subTest(case=case, shift=(dx, dy)):
                     self.assertEqual(uom._calc_curve_segments(*shifted), base)
 
-    def test_short_chords_still_add_the_control_point_offset_and_the_total_is_capped(self):
+    def test_short_chords_still_add_the_control_point_offset_and_the_total_is_capped(
+        self,
+    ):
         self.assertEqual(uom._calc_curve_segments(0, 0, 0.5, 0, 0.25, 50), 26)
         self.assertEqual(uom._calc_curve_segments(0, 0, 1000, 0, 500, 500), 64)
         self.assertEqual(uom._calc_curve_segments(0, 0, 100, 0, 50, 1000), 64)
@@ -1005,7 +1157,9 @@ class UomTranslatedArcTests(unittest.TestCase):
 
     def test_collinear_curves_are_unaffected_by_translation(self):
         for dx, dy in ((0.0, 0.0), (500.0, 300.0), (-77.0, 123.0)):
-            horizontal = uom._calc_linear_length([dx, dy, 100 + dx, dy, 150 + dx, dy], curve=0)
+            horizontal = uom._calc_linear_length(
+                [dx, dy, 100 + dx, dy, 150 + dx, dy], curve=0
+            )
             self.assertAlmostEqual(horizontal, 125.0, delta=0.1)
             diagonal = uom._calc_linear_length(
                 [dx, dy, 60 + dx, 80 + dy, 90 + dx, 120 + dy], curve=0
@@ -1018,12 +1172,77 @@ class UomRawAreaDefaultTests(unittest.TestCase):
         for calc_type in (16, 17, 18):
             with self.subTest(calc_type=calc_type):
                 self.assertEqual(
-                    uom._calc_raw_for_area(calc_type, 2.0, 144.0, 0.0, 48.0, 0.0, 0.0, 0.0),
+                    uom._calc_raw_for_area(
+                        calc_type, 2.0, 144.0, 0.0, 48.0, 0.0, 0.0, 0.0
+                    ),
                     0.0,
                 )
         self.assertEqual(
-            uom._calc_raw_for_area(uom.CALC_AREA, 2.0, 144.0, 36.0, 48.0, 24.0, 0.0, 0.0),
+            uom._calc_raw_for_area(
+                uom.CALC_AREA, 2.0, 144.0, 36.0, 48.0, 24.0, 0.0, 0.0
+            ),
             108.0,
+        )
+
+    def test_grid_length_with_a_missing_bounding_box_extent_has_nothing_to_cover(self):
+        # Valid cell sizes but one extent of the bounding box not passed: that extent
+        # defaults to 0, so there is no length and no tiles. (The only production
+        # call site always passes both, so this documents the helper's own default.)
+        for calc_type in (16, 18):
+            for given in ({}, {"bbox_h": 12.0}, {"bbox_w": 12.0}):
+                with self.subTest(calc_type=calc_type, given=given):
+                    self.assertEqual(
+                        uom._calc_raw_for_area(
+                            calc_type,
+                            0.0,
+                            144.0,
+                            0.0,
+                            48.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            4.0,
+                            4.0,
+                            1.0,
+                            **given,
+                        ),
+                        0.0,
+                    )
+
+
+class UomRoundingDefaultsTests(unittest.TestCase):
+    def test_an_increment_without_the_rounding_flag_never_rounds_but_with_it_rounds_up(
+        self,
+    ):
+        def length(**rounding):
+            return uom.calculate_condition_quantities(
+                Condition.TYPE_LINEAR,
+                1,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                [0, 0, 13.5, 0],
+                **rounding,
+            )[0]
+
+        self.assertEqual(length(round_up=12.0), 13.5)
+        self.assertEqual(length(round_quantity=True, round_up=12.0), 24.0)
+        self.assertEqual(length(round_quantity=False, round_up=12.0), 13.5)
+
+    def test_an_increment_that_underflows_to_zero_in_the_target_unit_is_ignored(self):
+        # 5e-324 inches divided by 14400 square inches per square is 0.0: the quantity
+        # must stay unrounded instead of dividing by a zero increment.
+        self.assertAlmostEqual(
+            uom.convert_and_round_quantity(
+                14400.0, uom.UOM_SQUARE_ROOFING, True, 5e-324
+            ),
+            1.0,
         )
 
 
@@ -1068,7 +1287,19 @@ class UomSecondReviewGapTests(unittest.TestCase):
         # the length formula and floor(12/5) = 2 whole cells per axis for the tile count.
         def raw(calc_type, size1, size2, gap):
             return uom._calc_raw_for_area(
-                calc_type, 0.0, 144.0, 0.0, 48.0, 0.0, 0.0, 0.0, size1, size2, gap, 12.0, 12.0
+                calc_type,
+                0.0,
+                144.0,
+                0.0,
+                48.0,
+                0.0,
+                0.0,
+                0.0,
+                size1,
+                size2,
+                gap,
+                12.0,
+                12.0,
             )
 
         self.assertEqual(raw(16, 4.0, 4.0, 1.0), 3 * 12 + 3 * 12)
@@ -1076,14 +1307,38 @@ class UomSecondReviewGapTests(unittest.TestCase):
         self.assertEqual(raw(18, 4.0, 4.0, 1.0), 2 * 2)
         self.assertAlmostEqual(raw(17, 4.0, 4.0, 1.0), 144.0 / 25.0)
 
+    def test_decimal_cells_that_fit_a_one_inch_box_exactly_count_whole_cells(self):
+        # 1.0 / 0.1 is 10.0 in floating point but 1.0 // 0.1 is 9.0: the counts must
+        # come from true division (10 cells per side, 100 tiles).
+        square = [0, 0, 1, 0, 1, 1, 0, 1]
+        cells = dict(position=square, grid_size1=0.1, grid_size2=0.1)
+        self.assertAlmostEqual(self.quantity(Condition.TYPE_AREA, 16, **cells)[0], 20.0)
+        self.assertAlmostEqual(
+            self.quantity(Condition.TYPE_AREA, 18, **cells)[0], 100.0
+        )
+        self.assertAlmostEqual(
+            self.quantity(Condition.TYPE_AREA, 17, **cells)[0], 100.0
+        )
+
     def test_a_negative_cell_size_is_not_a_cell(self):
         for calc_type in (16, 17, 18):
             for size1, size2 in ((-5.0, 2.0), (2.0, -5.0)):
                 with self.subTest(calc_type=calc_type, sizes=(size1, size2)):
                     self.assertEqual(
                         uom._calc_raw_for_area(
-                            calc_type, 0.0, 144.0, 0.0, 48.0, 0.0, 0.0, 0.0,
-                            size1, size2, 1.0, 12.0, 12.0,
+                            calc_type,
+                            0.0,
+                            144.0,
+                            0.0,
+                            48.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            size1,
+                            size2,
+                            1.0,
+                            12.0,
+                            12.0,
                         ),
                         0.0,
                     )
@@ -1107,16 +1362,18 @@ class UomSecondReviewGapTests(unittest.TestCase):
 
     def test_a_slope_needs_both_rise_and_run(self):
         self.assertEqual(
-            self.quantity(Condition.TYPE_AREA, 11, position=self.SQUARE, run=4.0)[0], 144.0
+            self.quantity(Condition.TYPE_AREA, 11, position=self.SQUARE, run=4.0)[0],
+            144.0,
         )
         self.assertEqual(
-            self.quantity(Condition.TYPE_AREA, 11, position=self.SQUARE, rise=3.0)[0], 144.0
+            self.quantity(Condition.TYPE_AREA, 11, position=self.SQUARE, rise=3.0)[0],
+            144.0,
         )
         for only in ({"run": 4.0}, {"rise": 3.0}):
             self.assertEqual(
-                self.quantity(
-                    Condition.TYPE_LINEAR, 1, position=[0, 0, 12, 0], **only
-                )[0],
+                self.quantity(Condition.TYPE_LINEAR, 1, position=[0, 0, 12, 0], **only)[
+                    0
+                ],
                 12.0,
             )
 
@@ -1137,7 +1394,9 @@ class UomSecondReviewGapTests(unittest.TestCase):
         length = uom._calc_linear_length([0, 0, 100, 0, 0, 0, -50, 1, 1, 2, 2], curve=0)
         self.assertAlmostEqual(length, 50 * math.pi, delta=0.1)
 
-    def test_coincident_end_points_with_a_far_control_point_measure_the_out_and_back_path(self):
+    def test_coincident_end_points_with_a_far_control_point_measure_the_out_and_back_path(
+        self,
+    ):
         # Start and end are the same point (-5, 0); the quadratic through a control at
         # (5, 0) goes out to x = 0 and back: 5 + 5.
         self.assertAlmostEqual(
@@ -1148,12 +1407,65 @@ class UomSecondReviewGapTests(unittest.TestCase):
         # Three points that are collinear to within floating point error define a
         # circle with a meaningless huge radius; the length must stay near the chord.
         triples = (
-            (-15.05766633024992, 102.25967331254812, 27072.542757617703,
-             -2214.0656632762107, 20067.03261395505, -1615.0077775681077),
-            (3.2626032666664124, 369.36683081795644, -70452.7258311968,
-             -30699.856722606186, -15689.96504820314, -6550.930634790724),
-            (-179.919479464134, 60.15739467281006, 54892.68210123489,
-             7084.611892722189, 20583.415063180953, 2708.4996654084894),
+            (
+                -15.05766633024992,
+                102.25967331254812,
+                27072.542757617703,
+                -2214.0656632762107,
+                20067.03261395505,
+                -1615.0077775681077,
+            ),
+            (
+                3.2626032666664124,
+                369.36683081795644,
+                -70452.7258311968,
+                -30699.856722606186,
+                -15689.96504820314,
+                -6550.930634790724,
+            ),
+            (
+                -179.919479464134,
+                60.15739467281006,
+                54892.68210123489,
+                7084.611892722189,
+                20583.415063180953,
+                2708.4996654084894,
+            ),
+            # Triples found by random search for which radius1 - radius2 (the next two)
+            # or radius1 - radius_c (the last two) comes out NEGATIVE by more than the
+            # 0.1 tolerance: only an absolute-value comparison rejects such a circle.
+            (
+                296.0400574287478,
+                -161.74591924037009,
+                99222.97200211308,
+                3244.546671967867,
+                53411.49945461752,
+                1667.1473081719344,
+            ),
+            (
+                449.75051153891013,
+                217.53465753309206,
+                -47229.77133589611,
+                4848.248563504065,
+                -42052.1321720158,
+                4345.387696856169,
+            ),
+            (
+                205.39841524991493,
+                18.092321669440935,
+                -34543.942674898884,
+                13400.592997815456,
+                -20955.700756124465,
+                8167.554011437886,
+            ),
+            (
+                148.10713847092245,
+                121.8096587122202,
+                86192.14185719546,
+                -26713.382355153783,
+                33808.93792628607,
+                -10376.24358153916,
+            ),
         )
         for triple in triples:
             with self.subTest(triple=triple):
@@ -1163,16 +1475,14 @@ class UomSecondReviewGapTests(unittest.TestCase):
                 )
 
 
-class UomArcKnownLimitationTests(unittest.TestCase):
-    """Documented defect, OWNER DECISION: the arc side is chosen with
-    clockwise = (cross1 + cross2) < 0 (uom_service._advanced_curve_points and the
-    same expression in cpp_extensions/src/linear_geom/linear_geom.cpp). The sum of the
-    two partial sines is negative when the control point is close to one end of an
-    arc longer than 180 degrees, so the minor arc is measured instead of the arc
-    through the control point. These tests state the CORRECT expectation and are
-    marked as expected failures until the owner decides whether original OST has
-    the same behavior (compatibility) or the formula should be fixed in Python and
-    C++ together. When fixed, remove the decorators."""
+class UomArcControlPointSideTests(unittest.TestCase):
+    """The arc runs from the start through the control point to the end, whatever its
+    sweep. The side used to be chosen with clockwise = (cross1 + cross2) < 0, which
+    measured the minor arc when the control point sat close to one end of an arc longer
+    than 180 degrees. On-Screen Takeoff confirmed the arc through the control point
+    (owner decision 2026-11-06: start 0, control 250, end 251 degrees at R=100 measures
+    438.1); the fix is the same in uom_service._advanced_curve_points and
+    cpp_extensions/src/linear_geom/linear_geom.cpp."""
 
     @staticmethod
     def measured(start, through, end, radius=100.0):
@@ -1185,27 +1495,263 @@ class UomArcKnownLimitationTests(unittest.TestCase):
             radius, start, through, end
         )
 
-    @unittest.expectedFailure
-    def test_control_point_close_to_the_end_of_a_major_arc_is_measured_on_the_major_arc(self):
+    def test_control_point_close_to_the_end_of_a_major_arc_is_measured_on_the_major_arc(
+        self,
+    ):
         measured, expected = self.measured(0, 250, 251)
-        self.assertAlmostEqual(measured, expected, delta=expected * 0.01)  # ~438.1, got ~190.2
+        self.assertAlmostEqual(
+            measured, expected, delta=expected * 0.01
+        )  # ~438.1 (was 190.2)
 
-    @unittest.expectedFailure
     def test_control_point_beyond_a_short_chord_is_measured_on_the_arc_through_it(self):
         measured, expected = self.measured(0, 110, 100)
-        self.assertAlmostEqual(measured, expected, delta=expected * 0.01)  # ~453.8, got ~174.5
+        self.assertAlmostEqual(
+            measured, expected, delta=expected * 0.01
+        )  # ~453.8 (was 174.5)
 
-    def test_the_current_production_values_for_those_arcs_are_recorded(self):
-        # Pins today's behavior so a deliberate fix is noticed (and the two
-        # expected-failure tests above are then switched on).
+    def test_the_measured_values_for_those_arcs_are_the_major_arc_lengths(self):
+        # Pins the corrected values (tessellated into at most 64 segments, so a hair
+        # under the analytic 438.08 and 453.79).
         measured, _expected = self.measured(0, 250, 251)
-        self.assertAlmostEqual(measured, 190.2, delta=0.5)
+        self.assertAlmostEqual(measured, 438.1, delta=0.5)
         measured, _expected = self.measured(0, 110, 100)
-        self.assertAlmostEqual(measured, 174.5, delta=0.5)
+        self.assertAlmostEqual(measured, 453.8, delta=0.5)
+
+
+class UomArcSideAndStraightChordTests(unittest.TestCase):
+    """Arc side (any sweep, any direction, any wrap of the angles) and the rule for a
+    control point that coincides with an end point (a straight chord)."""
+
+    RADIUS = 100.0
+    CENTER = (500.0, 500.0)
+
+    def at(self, degrees, radius=None, center=None):
+        radius = self.RADIUS if radius is None else radius
+        center = self.CENTER if center is None else center
+        angle = math.radians(degrees)
+        return center[0] + radius * math.cos(angle), center[1] + radius * math.sin(
+            angle
+        )
+
+    def position(self, start, through, end, **kwargs):
+        return [
+            *self.at(start, **kwargs),
+            *self.at(end, **kwargs),
+            *self.at(through, **kwargs),
+        ]
+
+    def assert_arc(self, start, through, end, **kwargs):
+        radius = kwargs.get("radius") or self.RADIUS
+        measured = uom._calc_linear_length(
+            self.position(start, through, end, **kwargs), curve=0
+        )
+        expected = _arc_length(radius, start, through, end)
+        self.assertAlmostEqual(measured, expected, delta=expected * 0.005)
+
+    @staticmethod
+    def legacy_sweep_is_counter_clockwise(center, p1, pc, p2):
+        # The pre-fix rule, evaluated around the true centre: counter-clockwise unless
+        # (cross1 + cross2) < 0.
+        cross1 = (p1[0] - center[0]) * (pc[1] - center[1]) - (p1[1] - center[1]) * (
+            pc[0] - center[0]
+        )
+        cross2 = (pc[0] - center[0]) * (p2[1] - center[1]) - (pc[1] - center[1]) * (
+            p2[0] - center[0]
+        )
+        return not (cross1 + cross2) < 0.0
+
+    def test_the_ost_confirmed_arc_measures_the_251_degree_route_through_the_service_and_the_public_path(
+        self,
+    ):
+        # On-Screen Takeoff: start 0, control 250, end 251 degrees at R=100 -> 438.1.
+        position = self.position(0, 250, 251)
+        expected = self.RADIUS * math.radians(251.0)
+        self.assertAlmostEqual(expected, 438.08, places=2)
+        measured = uom._calc_linear_length(position, curve=0)
+        self.assertAlmostEqual(measured, expected, delta=expected * 0.005)
+        public, _second, _third = _quantities(
+            Condition.TYPE_LINEAR,
+            uom.CALC_LINEAR_LENGTH,
+            uom.UOM_INCHES,
+            position=position,
+            curve=0,
+        )
+        self.assertAlmostEqual(public, expected, delta=expected * 0.005)
+
+    def test_the_arc_direction_is_the_side_of_the_chord_the_control_is_on(self):
+        # Reversed direction (clockwise) and the same arcs with the end points swapped.
+        for start, through, end in (
+            (251, 250, 0),
+            (0, -110, -251),
+            (0, 110, 100),
+            (100, 110, 0),
+            (0, -250, -251),
+        ):
+            with self.subTest(arc=(start, through, end)):
+                self.assert_arc(start, through, end)
+
+    def test_major_arcs_with_the_control_point_near_either_end(self):
+        for sweep in (200.0, 250.0, 300.0):
+            for fraction in (0.01, 0.03, 0.05, 0.5, 0.95, 0.97, 0.99):
+                for direction in (1.0, -1.0):
+                    for start in (0.0, 100.0, 200.0, 310.0):
+                        with self.subTest(
+                            sweep=sweep,
+                            fraction=fraction,
+                            direction=direction,
+                            start=start,
+                        ):
+                            self.assert_arc(
+                                start,
+                                start + direction * sweep * fraction,
+                                start + direction * sweep,
+                            )
+
+    def test_arcs_whose_angles_wrap_past_plus_or_minus_180_degrees(self):
+        for start in (-175.0, 170.0, 175.0, 179.5, 180.0, 185.0, 359.5):
+            for sweep in (90.0, 200.0, 260.0):
+                for fraction in (0.04, 0.5, 0.96):
+                    for direction in (1.0, -1.0):
+                        with self.subTest(
+                            start=start,
+                            sweep=sweep,
+                            fraction=fraction,
+                            direction=direction,
+                        ):
+                            self.assert_arc(
+                                start,
+                                start + direction * sweep * fraction,
+                                start + direction * sweep,
+                            )
+
+    def test_sweeps_up_to_180_degrees_are_measured_on_the_arc_through_the_control_point(
+        self,
+    ):
+        for sweep in (20.0, 60.0, 120.0, 170.0):
+            for fraction in (0.05, 0.3, 0.5, 0.7, 0.95):
+                for direction in (1.0, -1.0):
+                    with self.subTest(
+                        sweep=sweep, fraction=fraction, direction=direction
+                    ):
+                        self.assert_arc(
+                            30.0,
+                            30.0 + direction * sweep * fraction,
+                            30.0 + direction * sweep,
+                        )
+
+    def test_a_control_point_on_the_bisector_gives_the_value_the_legacy_rule_gave(self):
+        # Controls on the perpendicular bisector of the chord (everything the app writes):
+        # the legacy rule is right there, so old == new == the circle, up to 350 degrees.
+        for sweep in (30.0, 90.0, 179.0, 181.0, 250.0, 300.0, 350.0):
+            for direction in (1.0, -1.0):
+                start = 40.0
+                end = start + direction * sweep
+                through = start + direction * sweep / 2.0
+                p1, pc, p2 = self.at(start), self.at(through), self.at(end)
+                with self.subTest(sweep=sweep, direction=direction):
+                    ccw = self.legacy_sweep_is_counter_clockwise(
+                        self.CENTER, p1, pc, p2
+                    )
+                    self.assertEqual(ccw, direction > 0)
+                    self.assert_arc(start, through, end)
+
+    def test_a_control_point_equal_to_an_end_point_is_a_straight_chord(self):
+        for rotation in range(0, 360, 15):
+            for chord in (0.5, 100.0, 5000.0):
+                angle = math.radians(rotation)
+                p1 = (500.0, -300.0)
+                p2 = (p1[0] + chord * math.cos(angle), p1[1] + chord * math.sin(angle))
+                for name, control in (("start", p1), ("end", p2)):
+                    with self.subTest(rotation=rotation, chord=chord, control=name):
+                        length = uom._calc_linear_length([*p1, *p2, *control], curve=0)
+                        self.assertAlmostEqual(length, chord, delta=chord * 1e-9)
+                        segments = uom._calc_curve_segments(*p1, *p2, *control)
+                        points = uom._advanced_curve_points(
+                            *p1, *p2, *control, segments
+                        )
+                        self.assertEqual(len(points), segments + 1)
+                        self.assertEqual(points[0], p1)
+                        self.assertEqual(points[-1], p2)
+                        for i, (x, y) in enumerate(points):
+                            t = i / segments
+                            self.assertAlmostEqual(
+                                x, p1[0] + t * (p2[0] - p1[0]), delta=chord * 1e-9
+                            )
+                            self.assertAlmostEqual(
+                                y, p1[1] + t * (p2[1] - p1[1]), delta=chord * 1e-9
+                            )
+
+    def test_a_coincident_control_is_a_chord_through_the_seven_value_and_closed_loop_edges(
+        self,
+    ):
+        self.assertEqual(
+            uom._calc_linear_length([0, 0, 60, 80, 60, 80], curve=0), 100.0
+        )
+        self.assertEqual(uom._calc_linear_length([0, 0, 60, 80, 0, 0], curve=0), 100.0)
+        # Start == end == control: a zero-length chord, no failure.
+        self.assertEqual(uom._calc_linear_length([5, 5, 5, 5, 5, 5], curve=0), 0.0)
+
+    def test_a_control_point_within_a_tiny_relative_epsilon_of_an_end_is_still_that_end(
+        self,
+    ):
+        chord = 100.0
+        for offset in (0.0, 1e-12, 1e-10):
+            with self.subTest(offset=offset):
+                length = uom._calc_linear_length(
+                    [0, 0, 60, 80, offset, -offset], curve=0
+                )
+                self.assertAlmostEqual(length, chord, delta=1e-6)
+                length = uom._calc_linear_length(
+                    [0, 0, 60, 80, 60 + offset, 80 - offset], curve=0
+                )
+                self.assertAlmostEqual(length, chord, delta=1e-6)
+
+    def test_the_end_point_epsilon_is_relative_to_the_chord_length(self):
+        # 1e-4 away from an end of a 1e6 chord is 1e-10 of it (inside the 1e-9 epsilon): the
+        # points are the evenly spaced straight chord, not the quadratic fallback.
+        p1, p2 = (0.0, 0.0), (6e5, 8e5)
+        for control in ((1e-4, 0.0), (6e5 - 1e-4, 8e5)):
+            with self.subTest(control=control):
+                segments = uom._calc_curve_segments(*p1, *p2, *control)
+                points = uom._advanced_curve_points(*p1, *p2, *control, segments)
+                for i, (x, y) in enumerate(points):
+                    self.assertAlmostEqual(x, p2[0] * i / segments, delta=1e-3)
+                    self.assertAlmostEqual(y, p2[1] * i / segments, delta=1e-3)
+
+    def test_a_control_point_that_is_near_but_not_equal_to_an_end_still_follows_the_arc(
+        self,
+    ):
+        # Control 0.2 degrees (0.35 units, 2e-3 of the chord) after the start of a 250 degree arc.
+        for start, through, end in (
+            (0, 0.2, 250),
+            (0, 249.8, 250),
+            (90, 90.2, 340),
+            (0, -0.2, -250),
+            (0, 0.01, 250),
+            (0, 1e-5, 250),
+            (0, 249.99999, 250),
+            (0, -1e-5, -250),
+        ):
+            with self.subTest(arc=(start, through, end)):
+                self.assert_arc(start, through, end)
+
+    def test_collinear_controls_keep_the_quadratic_fallback(self):
+        for position, expected in (
+            ([0, 0, 100, 0, 50, 0], 100.0),
+            ([0, 0, 100, 0, 150, 0], 124.943),
+            ([0, 0, 100, 0, -50, 0], 124.943),
+            ([0, 0, 0, 100, 0, 50], 100.0),
+        ):
+            with self.subTest(position=position):
+                self.assertAlmostEqual(
+                    uom._calc_linear_length(position, curve=0), expected, places=2
+                )
 
 
 class UomArcOrientationRegressionTests(unittest.TestCase):
-    def test_large_and_small_arcs_with_a_far_origin_are_measured_on_the_arc_through_the_control_point(self):
+    def test_large_and_small_arcs_with_a_far_origin_are_measured_on_the_arc_through_the_control_point(
+        self,
+    ):
         for radius, center, start, through, end in (
             (100.0, (6.0, 17.5), 33.1, 235.4, 73.3),
             (100.0, (-431.2, 220.2), 69.8, 343.2, 90.4),
@@ -1213,6 +1759,7 @@ class UomArcOrientationRegressionTests(unittest.TestCase):
             (5.0, (-445.3, -358.3), 61.9, 263.4, 285.0),
         ):
             with self.subTest(arc=(radius, start, through, end)):
+
                 def at(degrees):
                     angle = math.radians(degrees)
                     return (
@@ -1223,5 +1770,54 @@ class UomArcOrientationRegressionTests(unittest.TestCase):
                 position = [*at(start), *at(end), *at(through)]
                 expected = _arc_length(radius, start, through, end)
                 self.assertAlmostEqual(
-                    uom._calc_linear_length(position, curve=0), expected, delta=expected * 0.01 + 0.2
+                    uom._calc_linear_length(position, curve=0),
+                    expected,
+                    delta=expected * 0.01 + 0.2,
                 )
+
+
+class UomConditionTypeSupportTests(unittest.TestCase):
+    SUPPORTED = (
+        Condition.TYPE_LINEAR,
+        Condition.TYPE_AREA,
+        Condition.TYPE_COUNT,
+        Condition.TYPE_ATTACHMENT,
+    )
+
+    def test_the_supported_types_are_exactly_linear_area_count_and_attachment(self):
+        self.assertEqual(self.SUPPORTED, (0, 1, 2, 3))
+        for condition_type in range(-2, 8):
+            with self.subTest(condition_type=condition_type):
+                self.assertIs(
+                    uom.is_supported_condition_type(condition_type),
+                    condition_type in self.SUPPORTED,
+                )
+
+    def test_every_supported_type_is_calculated_without_error(self):
+        for condition_type in self.SUPPORTED:
+            with self.subTest(condition_type=condition_type):
+                result = _quantities(
+                    condition_type,
+                    uom.CALC_COUNT,
+                    position=[0, 0, 12, 0, 12, 12, 0, 12],
+                )
+                self.assertEqual(len(result), 3)
+
+    def test_a_type_outside_the_supported_set_is_a_value_error(self):
+        for condition_type in (-1, 4, 7, 99):
+            with self.subTest(condition_type=condition_type):
+                with self.assertRaises(ValueError) as caught:
+                    _quantities(
+                        condition_type,
+                        uom.CALC_AREA,
+                        position=[0, 0, 12, 0, 12, 12, 0, 12],
+                    )
+                self.assertIsInstance(
+                    caught.exception, uom.UnsupportedConditionTypeError
+                )
+                self.assertIn(str(condition_type), str(caught.exception))
+                self.assertNotIsInstance(caught.exception, UnboundLocalError)
+
+    def test_an_unsupported_type_is_refused_even_without_geometry(self):
+        with self.assertRaises(ValueError):
+            _quantities(5, 0)

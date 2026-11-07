@@ -18,8 +18,18 @@ def cm_to_inches(cm: float) -> float:
     return cm / 2.54
 
 
+def _fraction_value(numerator_text: str, denominator_text: str) -> float:
+    numerator = float(numerator_text)
+    denominator = float(denominator_text)
+    if denominator == 0.0:
+        raise ValueError(
+            f"zero denominator in fraction {numerator_text}/{denominator_text}"
+        )
+    return numerator / denominator
+
+
 def _parse_fractional_inches_text(inch_text: str) -> float:
-    inch_text = inch_text.strip()
+    inch_text = " ".join(inch_text.split())
     negative = inch_text.startswith("-")
     if negative:
         inch_text = inch_text[1:].strip()
@@ -31,13 +41,13 @@ def _parse_fractional_inches_text(inch_text: str) -> float:
             whole = 0.0
         if "/" in frac_part:
             num, den = frac_part.split("/", 1)
-            frac = float(num) / float(den)
+            frac = _fraction_value(num, den)
         else:
             frac = float(frac_part)
         value = whole + frac
     elif "/" in inch_text:
         num, den = inch_text.split("/", 1)
-        value = float(num) / float(den)
+        value = _fraction_value(num, den)
     else:
         value = float(inch_text)
     return -value if negative else value

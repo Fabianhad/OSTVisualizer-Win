@@ -51,7 +51,9 @@ class DimensionDisplayTableTests(unittest.TestCase):
         ):
             with self.subTest(eighths=eighths):
                 self.assertEqual(inches_to_display(eighths / 8), text)
-                self.assertEqual(inches_to_display(-eighths / 8), f"-{text}" if text else "")
+                self.assertEqual(
+                    inches_to_display(-eighths / 8), f"-{text}" if text else ""
+                )
 
     def test_inches_and_feet_layouts_for_every_combination_of_parts(self):
         for inches, text in (
@@ -83,7 +85,9 @@ class DimensionDisplayTableTests(unittest.TestCase):
         self.assertEqual(inches_to_display(0.0), "")
         self.assertEqual(inches_to_display(-0.0), "")
 
-    def test_metric_display_drops_a_trailing_zero_and_keeps_six_significant_digits(self):
+    def test_metric_display_drops_a_trailing_zero_and_keeps_six_significant_digits(
+        self,
+    ):
         for mm, text in (
             (0.0, ""),
             (-0.0, ""),
@@ -109,7 +113,7 @@ class DimensionParsingTableTests(unittest.TestCase):
             ("5", 5.0),
             ("5.5", 5.5),
             ('5"', 5.0),
-            ("  5 \" ", 5.0),
+            ('  5 " ', 5.0),
             ("-5", -5.0),
             ("- 5.25", -5.25),
             ("1/2", 0.5),
@@ -238,7 +242,9 @@ class DimensionParsingTableTests(unittest.TestCase):
         for mm in (0.0, 1.0, -7.5, 250.25):
             self.assertEqual(display_to_mm(mm_to_display(mm)), mm)
             self.assertAlmostEqual(
-                display_to_inches(inches_to_display(mm_to_inches(mm), metric=True), metric=True),
+                display_to_inches(
+                    inches_to_display(mm_to_inches(mm), metric=True), metric=True
+                ),
                 mm_to_inches(mm),
             )
 

@@ -1,3 +1,4 @@
+import os
 import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.aggregates.file_state_aggregate import FileStateAggregate
@@ -101,7 +102,9 @@ class FileStateLoadAndReloadTests(unittest.TestCase):
         self.assertEqual(aggregate.file_entries, [])
         self.assertEqual(logger.errors, [])
 
-    def test_unsupported_saved_state_is_logged_with_its_reason_and_keeps_empty_state(self):
+    def test_unsupported_saved_state_is_logged_with_its_reason_and_keeps_empty_state(
+        self,
+    ):
         logger = _RecordingLogger()
         aggregate = FileStateAggregate(
             _ScriptedRepository(ValueError("unsupported saved version")), logger
@@ -113,9 +116,7 @@ class FileStateLoadAndReloadTests(unittest.TestCase):
 
     def test_unreadable_state_file_is_logged_and_keeps_empty_state(self):
         logger = _RecordingLogger()
-        aggregate = FileStateAggregate(
-            _ScriptedRepository(OSError("locked")), logger
-        )
+        aggregate = FileStateAggregate(_ScriptedRepository(OSError("locked")), logger)
         self.assertEqual(aggregate.file_entries, [])
         self.assertEqual(logger.errors, ["Error reading file state: locked"])
 
@@ -156,14 +157,23 @@ class FileStateLoadAndReloadTests(unittest.TestCase):
 
 
 class FileStateContainsPathAndSaveTests(unittest.TestCase):
-    def test_contains_path_is_true_for_a_known_path_in_any_normalized_spelling(self):
+    def test_contains_path_is_true_only_for_the_known_path(self):
         entry = FileEntry("C:/projects/Active.mdb")
         aggregate = FileStateAggregate(
             _ScriptedRepository(FileState(file_entries=[entry]))
         )
         self.assertIs(aggregate.contains_path("C:/projects/Active.mdb"), True)
-        self.assertIs(aggregate.contains_path(r"c:\projects\.\ACTIVE.MDB"), True)
         self.assertIs(aggregate.contains_path("C:/projects/other.mdb"), False)
+
+    @unittest.skipUnless(
+        os.name == "nt", "path case and separators are normalised by the Windows rules"
+    )
+    def test_contains_path_ignores_case_separators_and_dot_segments_on_windows(self):
+        entry = FileEntry("C:/projects/Active.mdb")
+        aggregate = FileStateAggregate(
+            _ScriptedRepository(FileState(file_entries=[entry]))
+        )
+        self.assertIs(aggregate.contains_path(r"c:\projects\.\ACTIVE.MDB"), True)
 
     def test_update_deduplicates_before_saving_and_retains_the_saved_state(self):
         repository = _ScriptedRepository(FileState())

@@ -285,6 +285,29 @@ class SchemaInspectorCatalogQueryTests(unittest.TestCase):
             inspector.table_exists("BidPages")
         self.assertEqual(inspector.report.detected_tables, set())
 
+    def test_non_odbc_errors_while_listing_columns_are_not_swallowed(self):
+        class _FlakyCursor(_RecordingCursor):
+            def columns(self, **kwargs):
+                if not self._connection.column_calls:
+                    self._connection.column_calls.append(kwargs)
+                    raise RuntimeError("connection lost")
+                return super().columns(**kwargs)
+
+        class _FlakyConnection(_RecordingConnection):
+            def cursor(self):
+                return _FlakyCursor(self)
+
+        connection = _FlakyConnection([], {"BidPages": {"UID"}})
+        inspector = MdbSchemaInspector(connection)
+        with self.assertRaisesRegex(RuntimeError, "connection lost"):
+            inspector.get_columns("BidPages")
+        self.assertEqual(connection.closed_cursors, 1)
+        self.assertEqual(inspector.report.missing_required_columns, set())
+        # The failure was not cached as "table has no columns": asking again
+        # queries the catalog again and now sees the real columns.
+        self.assertEqual(inspector.get_columns("BidPages"), {"UID"})
+        self.assertEqual(len(connection.column_calls), 2)
+
     def test_optional_column_without_alias_defaults_to_column_name_alias(self):
         inspector = MdbSchemaInspector(
             _RecordingConnection(["BidPages"], {"BidPages": {"UID"}})
@@ -327,8 +350,21 @@ class SchemaInspectorDatabaseKeyTests(unittest.TestCase):
         inspector = MdbSchemaInspector(connection)
         self.assertEqual(inspector._database_key(), str(id(connection)))
 
+    def test_other_getinfo_errors_are_not_swallowed(self):
+        logger = Mock()
+        connection = _RecordingConnection(
+            [], {}, database_name=RuntimeError("driver crashed")
+        )
+        inspector = MdbSchemaInspector(connection, logger=logger)
+        with self.assertRaisesRegex(RuntimeError, "driver crashed"):
+            inspector.log_optional_write_skip("BidPages", "Name", "rename")
+        logger.warning.assert_not_called()
+        self.assertEqual(MdbSchemaInspector._logged_optional_write_skips, set())
+
     def test_database_key_stringifies_non_string_names(self):
-        inspector = MdbSchemaInspector(_RecordingConnection([], {}, database_name=12345))
+        inspector = MdbSchemaInspector(
+            _RecordingConnection([], {}, database_name=12345)
+        )
         self.assertEqual(inspector._database_key(), "12345")
 
     def test_same_named_database_logs_each_skip_once_across_connections(self):

@@ -1775,16 +1775,20 @@ class OstImporterParsingAndRemapContractTests(unittest.TestCase):
         self.assertEqual(
             [row["UID"] for row in raw.bid_tables["BidNamedViews"]], ["50"]
         )
-        self.assertEqual(
-            [row["UID"] for row in raw.bid_tables["BidHotLinks"]], ["60"]
-        )
+        self.assertEqual([row["UID"] for row in raw.bid_tables["BidHotLinks"]], ["60"])
         self.assertNotIn("BidTakeoffs", raw.bid_tables)
         self.assertEqual(
-            {name: [row["UID"] for row in rows] for name, rows in raw.page_tables.items()},
+            {
+                name: [row["UID"] for row in rows]
+                for name, rows in raw.page_tables.items()
+            },
             {"BidTakeoffs": ["30", "31"], "BidComments": ["40"]},
         )
         self.assertEqual(
-            {name: [row["UID"] for row in rows] for name, rows in raw.global_tables.items()},
+            {
+                name: [row["UID"] for row in rows]
+                for name, rows in raw.global_tables.items()
+            },
             {
                 "Employees": ["7"],
                 "PayClasses": ["3", "4"],
@@ -1952,13 +1956,16 @@ class OstImporterParsingAndRemapContractTests(unittest.TestCase):
     def test_validate_page_references_returns_exact_booleans_and_logs_issues(self):
         importer = OstImporter(None)
         good = RawBidData(
-            bid_row={"UID": "1"}, bid_tables={"BidPages": [{"UID": "20", "BidUID": "1"}]}
+            bid_row={"UID": "1"},
+            bid_tables={"BidPages": [{"UID": "20", "BidUID": "1"}]},
         )
         with self.assertNoLogs(_OST_LOGGER, level="ERROR"):
             self.assertIs(importer._validate_page_references(good), True)
         bad = RawBidData(
             bid_row={"UID": "1"},
-            bid_tables={"BidPages": [{"UID": "20", "BidUID": "1", "MasterPageUID": "99"}]},
+            bid_tables={
+                "BidPages": [{"UID": "20", "BidUID": "1", "MasterPageUID": "99"}]
+            },
         )
         with self.assertLogs(_OST_LOGGER, level="ERROR") as logs:
             self.assertIs(importer._validate_page_references(bad), False)
@@ -2027,7 +2034,8 @@ class OstImporterParsingAndRemapContractTests(unittest.TestCase):
             with self.subTest(case=label):
                 with self.assertLogs(_OST_LOGGER, level="ERROR") as logs:
                     with self.assertRaisesRegex(
-                        ValueError, "^The imported project contains invalid references[.]$"
+                        ValueError,
+                        "^The imported project contains invalid references[.]$",
                     ):
                         self._validated(xml(attributes))
                 self.assertEqual(len(logs.records), 1)
@@ -2036,14 +2044,16 @@ class OstImporterParsingAndRemapContractTests(unittest.TestCase):
     def test_a_named_view_for_missing_page_one_is_discarded_as_stale(self):
         xml = (
             '<XML_ROOT><Bid UID="1"><BidPages><BidPage UID="20" BidUID="1"/>'
-            '</BidPages><BidNamedViews>'
+            "</BidPages><BidNamedViews>"
             '<BidNamedView UID="30" BidUID="1" BidPageUID="1"/>'
             '<BidNamedView UID="31" BidUID="1" BidPageUID="20"/>'
             "</BidNamedViews></Bid></XML_ROOT>"
         )
         with self.assertLogs(_OST_LOGGER, level="WARNING") as logs:
             raw = self._validated(xml)
-        self.assertEqual([row["UID"] for row in raw.bid_tables["BidNamedViews"]], ["31"])
+        self.assertEqual(
+            [row["UID"] for row in raw.bid_tables["BidNamedViews"]], ["31"]
+        )
         self.assertIn(
             "Discarded 1 stale Named View(s) and 0 dependent Hot Link(s)",
             logs.records[0].getMessage(),

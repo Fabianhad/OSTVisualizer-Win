@@ -23,14 +23,11 @@ from PySide6 import QtGui
 from ost_visualizer.presentation.visualization.utils.source_signature import (
     invalidate_source_files,
 )
-
-
 import functools
 
 
 def _fail_instead_of_hanging(seconds=20.0):
     """Class decorator: run each test body in a daemon thread with a deadline.
-
     A regression that turns an eviction or wait loop into an endless loop then
     fails the test instead of hanging the whole suite.
     """
@@ -1099,10 +1096,10 @@ class PageCacheEvictionTests(unittest.TestCase):
                     1.913,
                 )
 
+
 @_fail_instead_of_hanging()
 class PageCacheShippedBudgetTests(unittest.TestCase):
     """The shipped cache limits, driven through the public lookups.
-
     Image sizes are faked (images stay 2x2) so no real 80 MiB buffers exist.
     """
 
@@ -1276,7 +1273,9 @@ class PageCacheShippedBudgetTests(unittest.TestCase):
             first = cache._get_renderer()
             self.assertIs(cache._get_renderer(), first)
             other = []
-            thread = threading.Thread(target=lambda: other.append(cache._get_renderer()))
+            thread = threading.Thread(
+                target=lambda: other.append(cache._get_renderer())
+            )
             thread.start()
             thread.join(timeout=2.0)
         self.assertIsNot(other[0], first)
@@ -1475,7 +1474,9 @@ class PageCacheInterleavedStoreTests(unittest.TestCase):
 
         cache._store_cache_image = store_then_interleave
 
-    def test_a_page_waiter_moves_the_key_it_waited_for_to_the_most_recent_position(self):
+    def test_a_page_waiter_moves_the_key_it_waited_for_to_the_most_recent_position(
+        self,
+    ):
         renderer = _BlockingPageRenderer()
         cache = PageCache()
         cache._get_renderer = lambda: renderer
@@ -1487,7 +1488,8 @@ class PageCacheInterleavedStoreTests(unittest.TestCase):
         self.assertTrue(renderer.first_render_started.wait(timeout=2.0))
         results = []
         waiter = threading.Thread(
-            target=lambda: results.append(cache.get_page("p.pdf", 0, 1.0, 0)), daemon=True
+            target=lambda: results.append(cache.get_page("p.pdf", 0, 1.0, 0)),
+            daemon=True,
         )
         waiter.start()
         waiter.join(0.3)
@@ -1501,7 +1503,9 @@ class PageCacheInterleavedStoreTests(unittest.TestCase):
         self.assertEqual(keys[-1].file_path, "p.pdf")
         self.assertEqual(keys[0], "interleaved")
 
-    def test_a_frame_waiter_moves_the_key_it_waited_for_to_the_most_recent_position(self):
+    def test_a_frame_waiter_moves_the_key_it_waited_for_to_the_most_recent_position(
+        self,
+    ):
         renderer = _BlockingFrameRenderer()
         cache = PageCache()
         cache._get_renderer = lambda: renderer

@@ -312,9 +312,7 @@ class MdbReaderCdnTypeAndParseFileTests(unittest.TestCase):
         )
 
     def test_cdn_types_are_keyed_by_text_uid_and_decode_names(self):
-        connection = self._cdn_connection(
-            [(7, "Walls"), (8, b"Fl\xf6ors"), (9, None)]
-        )
+        connection = self._cdn_connection([(7, "Walls"), (8, b"Fl\xf6ors"), (9, None)])
         reader, _manager = self._reader(connection)
         cdn_types = reader._parse_cdn_types(connection)
         self.assertEqual(list(cdn_types), ["7", "8", "9"])

@@ -860,6 +860,10 @@ def get_reference_seed_data():
 _DEFAULT_LAYERS = DEFAULT_LAYER_ROWS
 
 
+class _NotCreatedHere(Exception):
+    """ADOX refused because a database already exists: that file is not ours."""
+
+
 class DatabaseCreator:
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self._logger = logger or logging.getLogger(__name__)
@@ -873,9 +877,11 @@ class DatabaseCreator:
         db_path = Path(db_path)
         if db_path.exists():
             return False
+        creation_started = False
         try:
             db_path.parent.mkdir(parents=True, exist_ok=True)
             self._report_progress(progress_callback, "database file")
+            creation_started = True
             self._create_blank_mdb(db_path)
             self._create_schema(
                 db_path,
@@ -884,14 +890,24 @@ class DatabaseCreator:
             )
             self._report_progress(progress_callback, "finalizing")
             return True
+        except _NotCreatedHere:
+            return False
         except Exception as exc:
             self._logger.exception("Failed to create database %s: %s", db_path, exc)
-            if db_path.exists():
-                try:
-                    db_path.unlink()
-                except OSError:
-                    pass
+            if creation_started:
+                self._discard_partial_database(db_path)
             return False
+        except BaseException:
+            if creation_started:
+                self._discard_partial_database(db_path)
+            raise
+
+    def _discard_partial_database(self, db_path: Path) -> None:
+        if db_path.exists():
+            try:
+                db_path.unlink()
+            except OSError:
+                pass
 
     def _report_progress(
         self,
@@ -918,8 +934,8 @@ class DatabaseCreator:
                 suffix=".vbs",
                 delete=False,
             ) as vbs_file:
-                vbs_file.write(vbs_script)
                 vbs_path = Path(vbs_file.name)
+                vbs_file.write(vbs_script)
             result = subprocess.run(
                 ["cscript", "//NoLogo", str(vbs_path), str(db_path)],
                 capture_output=True,
@@ -930,6 +946,12 @@ class DatabaseCreator:
                 raise RuntimeError(
                     f"VBScript failed (rc={result.returncode}): {result.stderr}"
                 )
+            if (
+                isinstance(result.stderr, str)
+                and result.stderr.strip()
+                and db_path.exists()
+            ):
+                raise _NotCreatedHere(result.stderr.strip())
             if not db_path.exists():
                 raise RuntimeError("VBScript completed but MDB file was not created")
         finally:

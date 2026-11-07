@@ -262,16 +262,19 @@ class FileStateContainsAndDeduplicateTests(unittest.TestCase):
 
     def test_normalize_path_collapses_segments_and_case(self):
         import os
-
         from ost_visualizer.domain.entities.file_state import normalize_path
 
         self.assertEqual(
             normalize_path("C:/A/./B/../Plan.MDB"),
             os.path.normcase(os.path.normpath("C:/A/./B/../Plan.MDB")),
         )
-        self.assertEqual(normalize_path("C:/A/B/../Plan.MDB"), normalize_path("c:/a/plan.mdb"))
+        self.assertEqual(
+            normalize_path("C:/A/B/../Plan.MDB"), normalize_path("c:/a/plan.mdb")
+        )
 
-    def test_deduplicate_keeps_first_position_and_checks_if_any_duplicate_is_checked(self):
+    def test_deduplicate_keeps_first_position_and_checks_if_any_duplicate_is_checked(
+        self,
+    ):
         from ost_visualizer.domain.entities.file_state import deduplicate_entries
 
         entries = [
@@ -298,9 +301,13 @@ class FileStateContainsAndDeduplicateTests(unittest.TestCase):
                 FileEntry("C:/a.mdb", is_checked=True),
             ]
         )
-        self.assertEqual([(e.file_path, e.is_checked) for e in result], [("C:/a.mdb", True)])
+        self.assertEqual(
+            [(e.file_path, e.is_checked) for e in result], [("C:/a.mdb", True)]
+        )
 
-    def test_deduplicate_treats_sql_ids_case_insensitively_and_separately_from_paths(self):
+    def test_deduplicate_treats_sql_ids_case_insensitively_and_separately_from_paths(
+        self,
+    ):
         from ost_visualizer.domain.entities.file_state import deduplicate_entries
 
         descriptor = _sql_descriptor()

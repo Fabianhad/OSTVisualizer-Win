@@ -31,7 +31,9 @@ class ElevationCalloutSettingsTests(unittest.TestCase):
         self.assertEqual([getattr(settings, name) for name in self.FLAGS], [True] * 4)
         self.assertEqual(DEFAULT_ELEVATION_CALLOUT_SETTINGS, settings)
 
-    def test_has_content_is_true_for_each_single_flag_and_false_only_when_all_are_off(self):
+    def test_has_content_is_true_for_each_single_flag_and_false_only_when_all_are_off(
+        self,
+    ):
         none = {name: False for name in self.FLAGS}
         self.assertIs(ElevationCalloutSettings(**none).has_content, False)
         for name in self.FLAGS:

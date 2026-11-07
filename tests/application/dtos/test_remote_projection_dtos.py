@@ -346,15 +346,23 @@ class RemoteProjectionBarrierMessageTests(unittest.TestCase):
         results = []
         barrier = _barrier(results.append)
         other = _barrier(results.append)
-        with self.assertRaisesRegex(ValueError, "^A remote projection surface ID is required$"):
+        with self.assertRaisesRegex(
+            ValueError, "^A remote projection surface ID is required$"
+        ):
             barrier.register("")
         token = barrier.register("main")
-        with self.assertRaisesRegex(ValueError, "^Remote projection surface is already registered: main$"):
+        with self.assertRaisesRegex(
+            ValueError, "^Remote projection surface is already registered: main$"
+        ):
             barrier.register("main")
-        with self.assertRaisesRegex(ValueError, "^The projection token belongs to another barrier$"):
+        with self.assertRaisesRegex(
+            ValueError, "^The projection token belongs to another barrier$"
+        ):
             other.complete(token, True)
         barrier.seal()
-        with self.assertRaisesRegex(RuntimeError, "^Remote projection registration is already sealed$"):
+        with self.assertRaisesRegex(
+            RuntimeError, "^Remote projection registration is already sealed$"
+        ):
             barrier.register("detached")
         token.complete(True)
         self.assertEqual(results, [True])
@@ -378,7 +386,9 @@ class RemoteProjectionBarrierMessageTests(unittest.TestCase):
         self.assertEqual(results, [True])
         self.assertIs(barrier._failed, False)
 
-    def test_sealing_with_pending_surfaces_publishes_nothing_until_the_last_one_completes(self):
+    def test_sealing_with_pending_surfaces_publishes_nothing_until_the_last_one_completes(
+        self,
+    ):
         results = []
         barrier = _barrier(results.append)
         first = barrier.register("a")

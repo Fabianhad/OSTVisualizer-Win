@@ -69,7 +69,7 @@ class SettingsReaderMixin:
                     uid=_clean_optional_text(row.get("UID", "")),
                     name=_clean_optional_text(row.get("Name", "")),
                     locked=row.get("Locked", "0") not in ("0", "False", ""),
-                    sequence=int(row.get("Sequence") or 0),
+                    sequence=int(_clean_optional_text(row.get("Sequence")) or 0),
                 )
                 for row in rows
             ],

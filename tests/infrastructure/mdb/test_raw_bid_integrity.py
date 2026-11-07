@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import unittest
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.mdb import raw_bid_integrity
@@ -30,6 +31,7 @@ from tests.helpers.mdb.import_export_support import (
     _orphan_named_view_hotlink_raw_data as _import_export_support__orphan_named_view_hotlink_raw_data,
     _raw_data_with_row as _import_export_support__raw_data_with_row,
 )
+from tests.paths import FIXTURES_ROOT
 
 
 class RawBidIntegrityRelationshipTests(unittest.TestCase):
@@ -487,7 +489,6 @@ STSTransactionHistory.BidUID Bids
 Employees.PayClassUID PayClasses
 Employees.AccessLevelUID AccessLevels
 """
-
 _RAW_TABLES = frozenset(
     {
         "Bids",
@@ -575,8 +576,7 @@ class RelationshipCatalogLiteralTests(unittest.TestCase):
         self.assertEqual(len(expected), 144)
         self.assertEqual(len(set(expected)), 144)
         actual = [
-            (r.child_table, r.child_column, r.parent_table)
-            for r in BID_RELATIONSHIPS
+            (r.child_table, r.child_column, r.parent_table) for r in BID_RELATIONSHIPS
         ]
         self.assertEqual(actual, expected)
         for relationship in BID_RELATIONSHIPS:
@@ -584,11 +584,7 @@ class RelationshipCatalogLiteralTests(unittest.TestCase):
 
     def test_only_takeoff_page_and_condition_edges_are_required(self):
         self.assertEqual(
-            [
-                (r.child_table, r.child_column)
-                for r in BID_RELATIONSHIPS
-                if r.required
-            ],
+            [(r.child_table, r.child_column) for r in BID_RELATIONSHIPS if r.required],
             [("BidTakeoffs", "BidPageUID"), ("BidTakeoffs", "BidConditionUID")],
         )
         for relationship in BID_RELATIONSHIPS:
@@ -675,6 +671,68 @@ class RelationshipCatalogLiteralTests(unittest.TestCase):
                 )
 
 
+class ReferenceSchemaCrossCheckTests(unittest.TestCase):
+    """The reference fixture is an independent record of the real OST schema."""
+
+    # ConditionSets / ConditionSetStyles are user-level condition-set tables, not
+    # part of a bid bundle, so the bid relationship catalog deliberately omits them.
+    _NON_BID_TABLES = frozenset({"conditionsets", "conditionsetstyles"})
+
+    @classmethod
+    def setUpClass(cls):
+        cls.reference = json.loads(
+            (FIXTURES_ROOT / "reference_mdb_schema.json").read_text(encoding="utf-8")
+        )
+
+    @staticmethod
+    def _folded(child_table, child_column, parent_table, parent_column):
+        return (
+            child_table.casefold(),
+            child_column.casefold(),
+            parent_table.casefold(),
+            parent_column.casefold(),
+        )
+
+    def test_catalog_contains_every_bid_relationship_of_the_reference_schema(self):
+        catalog = {
+            self._folded(r.child_table, r.child_column, r.parent_table, r.parent_column)
+            for r in BID_RELATIONSHIPS
+        }
+        bid_relationships = [
+            r
+            for r in self.reference["relationships"]
+            if r["child_table"].casefold() not in self._NON_BID_TABLES
+        ]
+        self.assertEqual(len(self.reference["relationships"]), 83)
+        self.assertEqual(len(bid_relationships), 80)
+        for relationship in bid_relationships:
+            with self.subTest(relationship=relationship["name"]):
+                self.assertIn(
+                    self._folded(
+                        relationship["child_table"],
+                        relationship["child_column"],
+                        relationship["parent_table"],
+                        relationship["parent_column"],
+                    ),
+                    catalog,
+                )
+
+    def test_every_catalog_table_is_a_uid_table_of_the_reference_schema(self):
+        reference_tables = {
+            table.casefold() for table in self.reference["uid_required_tables"]
+        }
+        catalog_tables = {
+            table
+            for r in BID_RELATIONSHIPS
+            for table in (r.child_table, r.parent_table)
+        }
+        self.assertEqual(len(catalog_tables), 56)
+        self.assertEqual(
+            sorted(t for t in catalog_tables if t.casefold() not in reference_tables),
+            [],
+        )
+
+
 class IssueFormattingTests(unittest.TestCase):
     def test_integrity_issue_format_names_row_column_value_and_parent(self):
         issue = RawBidIntegrityIssue(
@@ -687,7 +745,9 @@ class IssueFormattingTests(unittest.TestCase):
         self.assertEqual(
             issue.format(), "BidTakeoffs.UID=7 BidPageUID=99 missing BidPages.UID"
         )
-        anonymous = RawBidIntegrityIssue("BidTakeoffs", "", "BidPageUID", "9", "BidPages")
+        anonymous = RawBidIntegrityIssue(
+            "BidTakeoffs", "", "BidPageUID", "9", "BidPages"
+        )
         self.assertEqual(
             anonymous.format(),
             "BidTakeoffs.UID=<no UID> BidPageUID=9 missing BidPages.UID",
@@ -754,8 +814,12 @@ class IssueFormattingTests(unittest.TestCase):
         self.assertEqual(empty.missing_parent_roots, ())
         self.assertEqual(empty.dependent_descendants, ())
         self.assertEqual(empty.skipped_count, 0)
-        root = RawBidIntegrityIssue("BidTakeoffs", "7", "ParentUID", "99", "BidTakeoffs")
-        child = RawBidIntegrityIssue("BidTakeoffs", "8", "ParentUID", "7", "BidTakeoffs")
+        root = RawBidIntegrityIssue(
+            "BidTakeoffs", "7", "ParentUID", "99", "BidTakeoffs"
+        )
+        child = RawBidIntegrityIssue(
+            "BidTakeoffs", "8", "ParentUID", "7", "BidTakeoffs"
+        )
         grandchild = RawBidIntegrityIssue(
             "BidTakeoffs", "9", "ParentUID", "8", "BidTakeoffs"
         )
@@ -833,6 +897,7 @@ class RawTableHelperTests(unittest.TestCase):
             raw_bid_table_rows(raw_data)["BidPages"][0],
             raw_data.bid_tables["BidPages"][0],
         )
+        self.assertIs(raw_bid_table_rows(raw_data)["Bids"][0], raw_data.bid_row)
 
 
 class ValidateUidRuleTests(unittest.TestCase):
@@ -873,7 +938,9 @@ class ValidateUidRuleTests(unittest.TestCase):
             ["Bids.UID=0 has malformed UID=0"],
         )
         self.assertEqual(validate_raw_bid_integrity(RawBidData()), [])
-        self.assertEqual(validate_raw_bid_integrity(RawBidData(bid_row={"UID": "12"})), [])
+        self.assertEqual(
+            validate_raw_bid_integrity(RawBidData(bid_row={"UID": "12"})), []
+        )
 
     def test_authoritative_uids_are_compared_numerically_so_padding_collides(self):
         raw_data = RawBidData(
@@ -924,7 +991,8 @@ class ValidateUidRuleTests(unittest.TestCase):
             bid_row={"UID": "1"},
             bid_tables={
                 "BidAreas": [
-                    {"UID": uid, "BidUID": "1"} for uid in ("9", "10", "9", "10", "2", "2")
+                    {"UID": uid, "BidUID": "1"}
+                    for uid in ("9", "10", "9", "10", "2", "2")
                 ]
             },
         )
@@ -958,7 +1026,7 @@ class ValidateUidRuleTests(unittest.TestCase):
 
 
 class ValidateGraphRuleTests(unittest.TestCase):
-    def test_issue_groups_are_reported_in_a_fixed_order(self):
+    def test_issue_kinds_are_reported_in_a_fixed_order(self):
         raw_data = RawBidData(
             bid_row={"UID": "1"},
             bid_tables={
@@ -1036,6 +1104,96 @@ class ValidateGraphRuleTests(unittest.TestCase):
             ],
         )
 
+    def test_long_hierarchy_cycle_is_reported_in_uid_text_order(self):
+        # Cycle members also come back as a set; see the many-mismatch test.
+        ring = ("100", "11", "9", "8", "20", "99", "7", "1000")
+        rows = [
+            {"UID": uid, "BidUID": "1", "ParentUID": ring[(index + 1) % len(ring)]}
+            for index, uid in enumerate(ring)
+        ]
+        raw_data = RawBidData(bid_row={"UID": "1"}, bid_tables={"BidAreas": rows})
+        self.assertEqual(
+            [issue.format() for issue in validate_raw_bid_integrity(raw_data)],
+            [
+                f"BidAreas.UID={uid} participates in a ParentUID cycle"
+                for uid in ("100", "1000", "11", "20", "7", "8", "9", "99")
+            ],
+        )
+
+    def test_cycles_in_several_hierarchy_tables_are_reported_table_by_table(self):
+        def two_cycle(first, second):
+            return [
+                {"UID": first, "BidUID": "1", "ParentUID": second},
+                {"UID": second, "BidUID": "1", "ParentUID": first},
+            ]
+
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={
+                "BidPageFolders": two_cycle("5", "6"),
+                "BidConditionFolders": two_cycle("3", "4"),
+                "BidAreas": two_cycle("1", "2"),
+            },
+        )
+        self.assertEqual(
+            [issue.format() for issue in validate_raw_bid_integrity(raw_data)],
+            [
+                "BidAreas.UID=1 participates in a ParentUID cycle",
+                "BidAreas.UID=2 participates in a ParentUID cycle",
+                "BidConditionFolders.UID=3 participates in a ParentUID cycle",
+                "BidConditionFolders.UID=4 participates in a ParentUID cycle",
+                "BidPageFolders.UID=5 participates in a ParentUID cycle",
+                "BidPageFolders.UID=6 participates in a ParentUID cycle",
+            ],
+        )
+
+    def test_uid_problems_in_several_tables_follow_the_raw_table_order(self):
+        # Which table is reported first decides what the ten-item preview of
+        # format_integrity_issues shows, so the table order is part of the
+        # contract: Bids, bid tables, BidPages, named views and hot links,
+        # page tables, then the global master tables.
+        def duplicated():
+            return [{"UID": "5", "BidUID": "1"}, {"UID": "5", "BidUID": "1"}]
+
+        raw_data = RawBidData(
+            bid_row={"UID": "0"},
+            bid_tables={
+                "BidPages": duplicated(),
+                "BidLayers": duplicated(),
+                "BidAreas": duplicated(),
+                "BidHotLinks": duplicated(),
+                "BidNamedViews": duplicated(),
+            },
+            page_tables={
+                "BidTexts": duplicated(),
+                "BidHighlights": duplicated(),
+            },
+            global_tables={
+                "PayClasses": duplicated(),
+                "Employees": duplicated(),
+            },
+        )
+        issues = validate_raw_bid_integrity(raw_data, relationships=())
+        self.assertEqual(
+            [issue.table for issue in issues],
+            [
+                "Bids",
+                "BidAreas",
+                "BidLayers",
+                "BidPages",
+                "BidNamedViews",
+                "BidHotLinks",
+                "BidHighlights",
+                "BidTexts",
+                "Employees",
+                "PayClasses",
+            ],
+        )
+        self.assertEqual(
+            [type(issue) for issue in issues],
+            [RawBidMalformedUid] + [RawBidDuplicateUid] * 9,
+        )
+
     def test_cycles_are_only_checked_for_the_three_hierarchy_tables(self):
         raw_data = RawBidData(
             bid_row={"UID": "1"},
@@ -1072,6 +1230,25 @@ class ValidateGraphRuleTests(unittest.TestCase):
             [
                 "BidTakeoffs.UID=10 has a parent on another Page",
                 "BidTakeoffs.UID=9 has a parent on another Page",
+            ],
+        )
+
+    def test_many_cross_page_mismatches_are_reported_in_uid_text_order(self):
+        # The mismatching UIDs come back from the domain helper as a set, so the
+        # report order must come from the sort and not from set iteration order
+        # (which varies with the hash seed); eight members make a coincidental
+        # match with the expected order practically impossible.
+        child_uids = ("100", "11", "9", "8", "20", "99", "7", "1000")
+        raw_data = _takeoff_raw_data(
+            _takeoff("50", parent="0", page="3"),
+            *(_takeoff(uid, parent="50", page="4") for uid in child_uids),
+            pages=("3", "4"),
+        )
+        self.assertEqual(
+            [issue.format() for issue in validate_raw_bid_integrity(raw_data)],
+            [
+                f"BidTakeoffs.UID={uid} has a parent on another Page"
+                for uid in ("100", "1000", "11", "20", "7", "8", "9", "99")
             ],
         )
 
@@ -1119,9 +1296,7 @@ class ValidateRelationshipRuleTests(unittest.TestCase):
         )
         self.assertEqual(validate_raw_bid_integrity(raw_data, relationships=()), [])
         only_area_parent = (RawBidRelationship("BidAreas", "ParentUID", "BidAreas"),)
-        self.assertEqual(
-            validate_raw_bid_integrity(raw_data, only_area_parent), []
-        )
+        self.assertEqual(validate_raw_bid_integrity(raw_data, only_area_parent), [])
 
     def test_custom_parent_column_is_used_for_the_lookup_set(self):
         raw_data = RawBidData(
@@ -1133,9 +1308,7 @@ class ValidateRelationshipRuleTests(unittest.TestCase):
                 "BidZones": [{"UID": "3", "BidUID": "1", "Code": "7"}],
             },
         )
-        relationships = (
-            RawBidRelationship("BidAreas", "BidUID", "BidZones", "Code"),
-        )
+        relationships = (RawBidRelationship("BidAreas", "BidUID", "BidZones", "Code"),)
         self.assertEqual(
             [
                 issue.format()
@@ -1218,7 +1391,9 @@ class ValidateRelationshipRuleTests(unittest.TestCase):
 
     def test_required_reference_without_row_uid_formats_as_no_uid(self):
         relationships = (
-            RawBidRelationship("BidEmployees", "PayClassUID", "PayClasses", required=True),
+            RawBidRelationship(
+                "BidEmployees", "PayClassUID", "PayClasses", required=True
+            ),
         )
         raw_data = RawBidData(bid_tables={"BidEmployees": [{}]})
         issues = validate_raw_bid_integrity(raw_data, relationships)
@@ -1275,11 +1450,18 @@ class ValidateRelationshipRuleTests(unittest.TestCase):
             bid_row={"UID": "1"},
             bid_tables={
                 "BidEmployees": [
-                    {"UID": "2", "BidUID": "1", "EmployeeUID": "50", "PayClassUID": "60"}
+                    {
+                        "UID": "2",
+                        "BidUID": "1",
+                        "EmployeeUID": "50",
+                        "PayClassUID": "60",
+                    }
                 ]
             },
             global_tables={
-                "Employees": [{"UID": "50", "PayClassUID": "61", "AccessLevelUID": "70"}],
+                "Employees": [
+                    {"UID": "50", "PayClassUID": "61", "AccessLevelUID": "70"}
+                ],
                 "PayClasses": [{"UID": "60"}],
                 "AccessLevels": [{"UID": "70"}],
             },
@@ -1429,6 +1611,23 @@ class ResolveTakeoffGraphTests(unittest.TestCase):
         self.assertEqual(resolution.dependent_descendants, ())
         self.assertEqual(raw_data.page_tables["BidTakeoffs"], rows)
 
+    def test_long_parent_cycle_is_reported_in_uid_text_order(self):
+        ring = ("100", "11", "9", "8", "20", "99", "7", "1000")
+        raw_data = _takeoff_raw_data(
+            *(
+                _takeoff(uid, parent=ring[(index + 1) % len(ring)])
+                for index, uid in enumerate(ring)
+            )
+        )
+        resolution = resolve_takeoff_graph(raw_data)
+        self.assertEqual(
+            resolution.fatal_issues,
+            tuple(
+                RawBidParentCycle("BidTakeoffs", uid)
+                for uid in ("100", "1000", "11", "20", "7", "8", "9", "99")
+            ),
+        )
+
     def test_missing_parent_prunes_the_row_and_all_descendants_breadth_first(self):
         rows = [
             _takeoff("20", parent="0"),
@@ -1453,9 +1652,7 @@ class ResolveTakeoffGraphTests(unittest.TestCase):
             ),
         )
         self.assertEqual(resolution.skipped_count, 5)
-        self.assertEqual(
-            raw_data.page_tables["BidTakeoffs"], [rows[0], rows[6]]
-        )
+        self.assertEqual(raw_data.page_tables["BidTakeoffs"], [rows[0], rows[6]])
         self.assertIs(raw_data.page_tables["BidTakeoffs"][0], rows[0])
 
     def test_each_missing_parent_root_is_reported_in_row_order(self):
@@ -1489,9 +1686,7 @@ class ResolveTakeoffGraphTests(unittest.TestCase):
         ]
         raw_data = RawBidData(page_tables={"BidTakeoffs": list(rows)})
         resolution = resolve_takeoff_graph(raw_data)
-        self.assertEqual(
-            resolution.missing_parent_roots, (_graph_issue("7", "99"),)
-        )
+        self.assertEqual(resolution.missing_parent_roots, (_graph_issue("7", "99"),))
         self.assertEqual(resolution.dependent_descendants, (_graph_issue("8", "7"),))
         self.assertEqual(raw_data.page_tables["BidTakeoffs"], [rows[2]])
 
@@ -1545,7 +1740,9 @@ class ClearMissingReferenceTests(unittest.TestCase):
         )
 
     def test_null_present_and_non_decimal_selections_are_left_alone(self):
-        values = ("", "0", "NULL", "20", "abc", "-5", "2.5")
+        # "\u00b2" (superscript two) and "\u2460" (circled digit one) are digits
+        # for str.isdigit() but not decimal numbers, so they are not references.
+        values = ("", "0", "NULL", "20", "abc", "-5", "2.5", "\u00b2", "\u2460")
         raw_data = self._settings_data(*values)
         self.assertEqual(clear_missing_selected_page_references(raw_data), [])
         self.assertEqual(
@@ -1587,9 +1784,7 @@ class ClearMissingReferenceTests(unittest.TestCase):
         )
 
     def test_row_without_uid_reports_a_blank_row_uid(self):
-        raw_data = RawBidData(
-            bid_tables={"BidSettings": [{"BidPageSelectedUID": "9"}]}
-        )
+        raw_data = RawBidData(bid_tables={"BidSettings": [{"BidPageSelectedUID": "9"}]})
         cleared = clear_missing_selected_page_references(raw_data)
         self.assertEqual(cleared[0].row_uid, "")
         self.assertEqual(
@@ -1643,7 +1838,7 @@ class ClearMissingAnnotationTakeoffReferenceTests(unittest.TestCase):
         )
 
     def test_null_present_non_decimal_and_other_table_values_are_left_alone(self):
-        endpoints = ("", "0", "NULL", "7", "abc", "-3", "4.5")
+        endpoints = ("", "0", "NULL", "7", "abc", "-3", "4.5", "\u00b3", "\u2460")
         rows = [
             {"UID": str(n), "BidTakeoffFromUID": value, "BidTakeoffToUID": value}
             for n, value in enumerate(endpoints)
@@ -1684,9 +1879,7 @@ class ClearMissingAnnotationTakeoffReferenceTests(unittest.TestCase):
         raw_data = RawBidData(
             page_tables={
                 "BidTakeoffs": [{"UID": 7}],
-                "BidArrows": [
-                    {"UID": 1, "BidTakeoffFromUID": 7, "BidTakeoffToUID": 8}
-                ],
+                "BidArrows": [{"UID": 1, "BidTakeoffFromUID": 7, "BidTakeoffToUID": 8}],
             }
         )
         cleared = clear_missing_annotation_takeoff_references(raw_data)
@@ -1731,9 +1924,7 @@ class PrepareExportTests(unittest.TestCase):
     def test_rows_with_dangling_non_clearable_references_are_dropped_not_kept(self):
         raw_data = self._bundle()
         prepared = prepare_raw_bid_data_for_export(raw_data)
-        self.assertEqual(
-            [row["UID"] for row in prepared.bid_tables["BidPages"]], ["3"]
-        )
+        self.assertEqual([row["UID"] for row in prepared.bid_tables["BidPages"]], ["3"])
         self.assertEqual(
             [row["UID"] for row in raw_data.bid_tables["BidPages"]], ["3", "4"]
         )
@@ -1763,7 +1954,10 @@ class PrepareExportTests(unittest.TestCase):
                 )
                 prepared = prepare_raw_bid_data_for_export(raw_data)
                 self.assertEqual(
-                    [r["BidPageSelectedUID"] for r in prepared.bid_tables["BidSettings"]],
+                    [
+                        r["BidPageSelectedUID"]
+                        for r in prepared.bid_tables["BidSettings"]
+                    ],
                     ["0", "3", "NULL", ""],
                 )
 
@@ -1856,11 +2050,18 @@ class PrepareExportTests(unittest.TestCase):
             bid_row={"UID": "1"},
             bid_tables={
                 "BidEmployees": [
-                    {"UID": "2", "BidUID": "1", "EmployeeUID": "77", "PayClassUID": "78"}
+                    {
+                        "UID": "2",
+                        "BidUID": "1",
+                        "EmployeeUID": "77",
+                        "PayClassUID": "78",
+                    }
                 ],
             },
             global_tables={
-                "Employees": [{"UID": "50", "PayClassUID": "99", "AccessLevelUID": "98"}],
+                "Employees": [
+                    {"UID": "50", "PayClassUID": "99", "AccessLevelUID": "98"}
+                ],
             },
         )
         prepared = prepare_raw_bid_data_for_export(raw_data)
@@ -1990,9 +2191,7 @@ class AuthoritativeUidScopeTests(unittest.TestCase):
                 raw_data = RawBidData()
                 _add_row(raw_data, table, {"UID": "0"})
                 issues = validate_raw_bid_integrity(raw_data, relationships=())
-                self.assertEqual(
-                    issues, [RawBidMalformedUid(table, "0", "UID", "0")]
-                )
+                self.assertEqual(issues, [RawBidMalformedUid(table, "0", "UID", "0")])
                 if table == "Bids":
                     continue
                 padded = RawBidData()
@@ -2057,12 +2256,22 @@ class MissingKeyDefaultTests(unittest.TestCase):
     def test_takeoff_without_uid_is_matched_to_its_parent_page_under_a_blank_uid(self):
         same_page = _takeoff_raw_data(
             _takeoff("7", parent="0", page="3"),
-            {"BidUID": "1", "BidConditionUID": "5", "BidPageUID": "3", "ParentUID": "7"},
+            {
+                "BidUID": "1",
+                "BidConditionUID": "5",
+                "BidPageUID": "3",
+                "ParentUID": "7",
+            },
         )
         self.assertEqual(validate_raw_bid_integrity(same_page), [])
         other_page = _takeoff_raw_data(
             _takeoff("7", parent="0", page="3"),
-            {"BidUID": "1", "BidConditionUID": "5", "BidPageUID": "4", "ParentUID": "7"},
+            {
+                "BidUID": "1",
+                "BidConditionUID": "5",
+                "BidPageUID": "4",
+                "ParentUID": "7",
+            },
             pages=("3", "4"),
         )
         self.assertEqual(

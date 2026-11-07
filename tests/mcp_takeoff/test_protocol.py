@@ -325,15 +325,15 @@ class JsonRpcWireContractTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(json.loads(_server().handle_line(line)), expected)
 
-    def test_a_failing_tool_is_an_internal_error_that_names_only_the_exception_type(self):
+    def test_a_failing_tool_is_an_internal_error_that_names_only_the_exception_type(
+        self,
+    ):
         response = json.loads(
             _server(failure=ValueError("secret")).handle_line(
                 _request("tools/call", {"name": "list_sheets"})
             )
         )
-        self.assertEqual(
-            response, self.error(1, -32603, "Internal error: ValueError")
-        )
+        self.assertEqual(response, self.error(1, -32603, "Internal error: ValueError"))
 
     def test_replies_are_compact_json_with_the_request_id(self):
         line = _server().handle_line(_request("ping", request_id="r1"))

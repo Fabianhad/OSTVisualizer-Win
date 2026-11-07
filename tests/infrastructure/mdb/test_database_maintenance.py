@@ -483,6 +483,24 @@ class ReplaceFileTests(unittest.TestCase):
         self.assertEqual(source.read_bytes(), b"original")
         self.assertEqual([path.name for path in self.folder.iterdir()], ["db.mdb"])
 
+    def test_the_replacement_is_requested_without_any_ignore_error_flag(self):
+        # dwReplaceFlags 2 (IGNORE_MERGE_ERRORS) and 4 (IGNORE_ACL_ERRORS) would let
+        # a partially applied replacement be reported as a success; no real-file
+        # scenario produces those errors hermetically, so the call is inspected.
+        calls = []
+
+        def replace_file_w(*arguments):
+            calls.append(arguments)
+            return 1
+
+        library = Mock(ReplaceFileW=Mock(side_effect=replace_file_w))
+        with patch(f"{_MODULE}.ctypes.WinDLL", return_value=library) as load:
+            _replace_file(Path("source.mdb"), Path("compacted.mdb"), Path("b.bak"))
+        load.assert_called_once_with("kernel32", use_last_error=True)
+        self.assertEqual(
+            calls, [("source.mdb", "compacted.mdb", "b.bak", 0, None, None)]
+        )
+
 
 class AccessMaintenanceFailureTests(unittest.TestCase):
     def setUp(self):
@@ -894,3 +912,138 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
             str(raised.exception),
             "Access reported repair errors; the original database was not replaced.",
         )
+
+    def _change_only(self, component):
+        """Change exactly one component of the source file's signature."""
+        before = self.source.stat()
+        if component == "mtime":
+            os.utime(
+                self.source,
+                ns=(before.st_atime_ns, before.st_mtime_ns + 2_000_000_000),
+            )
+        elif component == "size":
+            self.source.write_bytes(self.source.read_bytes() + b"+")
+            os.utime(self.source, ns=(before.st_atime_ns, before.st_mtime_ns))
+        else:
+            twin = self.folder / "twin.mdb"
+            twin.write_bytes(self.source.read_bytes())
+            os.utime(twin, ns=(before.st_atime_ns, before.st_mtime_ns))
+            os.replace(twin, self.source)
+        after = self.source.stat()
+        differing = {
+            name
+            for name in ("st_ino", "st_size", "st_mtime_ns")
+            if getattr(before, name) != getattr(after, name)
+        }
+        expected = {"mtime": "st_mtime_ns", "size": "st_size", "inode": "st_ino"}
+        self.assertEqual(differing, {expected[component]})
+
+    def test_the_signature_is_device_file_index_size_and_modification_time(self):
+        stat = self.source.stat()
+        self.assertEqual(
+            _signature(self.source),
+            (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns),
+        )
+
+    def test_each_signature_component_alone_makes_the_captured_target_stale(self):
+        for component in ("mtime", "size", "inode"):
+            with self.subTest(changed=component):
+                target = self.backend.capture_target(str(self.source))
+                try:
+                    self.assertIs(
+                        self.backend.is_target_current(str(self.source), target), True
+                    )
+                    self._change_only(component)
+                    self.assertIs(
+                        self.backend.is_target_current(str(self.source), target),
+                        False,
+                    )
+                    with self.assertRaises(RuntimeError) as refused:
+                        self.backend.prepare(str(self.source), target)
+                    self.assertEqual(
+                        str(refused.exception),
+                        "The selected database changed; start maintenance again.",
+                    )
+                finally:
+                    target.close()
+                self.assertEqual(self.manager._maintenance_paths, set())
+
+    def test_each_signature_component_alone_stops_the_commit_before_the_swap(self):
+        for component in ("mtime", "size", "inode"):
+            with self.subTest(changed=component):
+                prepared = self.stage()
+                try:
+                    self._change_only(component)
+                    untouched = self.source.read_bytes()
+                    with self.assertRaises(RuntimeError) as refused:
+                        prepared.commit()
+                    self.assertEqual(
+                        str(refused.exception),
+                        "The source database changed during maintenance; "
+                        "it was not replaced.",
+                    )
+                    self.assertEqual(self.source.read_bytes(), untouched)
+                finally:
+                    prepared.close()
+                self.assertEqual(list(self.folder.iterdir()), [self.source])
+                self.assertEqual(self.manager._maintenance_paths, set())
+
+    def test_an_interrupt_while_capturing_releases_the_maintenance_reservation(self):
+        readings = []
+
+        def interrupted_second_reading(path):
+            readings.append(path)
+            if len(readings) == 2:
+                raise KeyboardInterrupt()
+            return (1, 2, 3, 4)
+
+        reserved = None
+        with patch(f"{_MODULE}._signature", interrupted_second_reading):
+            try:
+                self.backend.capture_target(str(self.source))
+            except KeyboardInterrupt:
+                # Looked at while the traceback still keeps the half-built lease
+                # alive, so that garbage collection cannot hide a leaked
+                # reservation.
+                reserved = set(self.manager._maintenance_paths)
+        self.assertEqual(len(readings), 2)
+        self.assertEqual(reserved, set())
+        target = self.backend.capture_target(str(self.source))
+        self.addCleanup(target.close)
+        self.assertTrue(target.active)
+
+    def test_an_interrupt_while_compacting_releases_the_lease_and_the_work_folder(
+        self,
+    ):
+        self.counts.side_effect = [{"Data": 1}, KeyboardInterrupt()]
+        target = self.backend.capture_target(str(self.source))
+        with patch(f"{_MODULE}.pythoncom") as com:
+            with self.assertRaises(KeyboardInterrupt):
+                self.backend.prepare(str(self.source), target)
+        com.CoInitialize.assert_called_once_with()
+        com.CoUninitialize.assert_called_once_with()
+        self.assertFalse(target.active)
+        self.assertEqual(self.manager._maintenance_paths, set())
+        self.assertEqual(self.work_dirs(), [])
+        self.assertEqual(self.source.read_bytes(), b"original")
+
+    def test_a_database_with_an_upper_case_extension_is_available(self):
+        for name in ("PROJECT.MDB", "Mixed.Mdb"):
+            with self.subTest(name=name):
+                upper = self.folder / name
+                upper.write_bytes(b"x")
+                self.assertEqual(self.backend.unavailable_reason(str(upper)), "")
+
+    def test_a_locked_work_folder_reports_the_failure_and_can_be_cleaned_up_later(
+        self,
+    ):
+        prepared = self.stage()
+        self.addCleanup(prepared.close)
+        (work,) = self.work_dirs()
+        with open(work / "locked.tmp", "wb"):
+            with self.assertRaises(PermissionError):
+                prepared.close()
+            self.assertTrue(work.is_dir())
+            self.assertEqual(self.manager._maintenance_paths, set())
+        prepared.close()
+        self.assertEqual(self.work_dirs(), [])

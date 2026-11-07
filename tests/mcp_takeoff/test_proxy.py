@@ -412,7 +412,9 @@ class OutputNamingAndSummaryTests(unittest.TestCase):
         self.assertTrue(response["isError"])
 
     def test_the_failure_preview_is_cut_on_a_character_boundary(self):
-        prefix = "Output from list_text was too large to show inline and saving it failed: "
+        prefix = (
+            "Output from list_text was too large to show inline and saving it failed: "
+        )
         pad = "x" if (1000 - 64 - len(prefix)) % 2 == 0 else ""
         unicode_error = OSError(pad + "\u00e9" * 600)
         with patch.object(Path, "open", side_effect=unicode_error):
@@ -583,13 +585,17 @@ class TakeoffMainLoggingContractTests(unittest.TestCase):
             ("CRITICAL", logging.CRITICAL),
         ):
             with self.subTest(level=name):
-                self.assertEqual(main_module.parse_args(["--log-level", name]).log_level, name)
+                self.assertEqual(
+                    main_module.parse_args(["--log-level", name]).log_level, name
+                )
                 self.drop_handlers()
                 with contextlib.redirect_stderr(io.StringIO()):
                     logger = main_module._configure_logging(self.directory, name)
                 self.assertEqual(logger.level, level)
                 self.assertEqual(len(logger.handlers), 2)
-                self.assertEqual({handler.level for handler in logger.handlers}, {level})
+                self.assertEqual(
+                    {handler.level for handler in logger.handlers}, {level}
+                )
                 self.assertFalse(logger.propagate)
 
     def test_both_handlers_use_the_timestamped_format_and_the_folder_is_created(self):
@@ -621,7 +627,9 @@ class TakeoffMainLoggingContractTests(unittest.TestCase):
 
     def test_stale_handlers_are_removed_and_closed_when_logging_is_configured(self):
         self.directory.parent.mkdir(parents=True, exist_ok=True)
-        stale = logging.FileHandler(self.directory.parent / "stale.log", encoding="utf-8")
+        stale = logging.FileHandler(
+            self.directory.parent / "stale.log", encoding="utf-8"
+        )
         self.addCleanup(stale.close)
         main_module.LOGGER.addHandler(stale)
         with contextlib.redirect_stderr(io.StringIO()):
@@ -658,7 +666,9 @@ class TakeoffMainLoggingContractTests(unittest.TestCase):
                 )
         self.assertEqual(main_module.LOGGER.handlers, [])
         written = (self.directory / "mcp_takeoff.log").read_text(encoding="utf-8")
-        self.assertIn("INFO ost_visualizer.mcp_takeoff: AI takeoff MCP proxy started", written)
+        self.assertIn(
+            "INFO ost_visualizer.mcp_takeoff: AI takeoff MCP proxy started", written
+        )
 
     def test_a_real_stdin_is_read_as_utf8_with_a_bom_and_bad_bytes_replaced(self):
         class FakeStdin(io.StringIO):

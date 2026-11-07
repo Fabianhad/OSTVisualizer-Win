@@ -1,7 +1,11 @@
 import dataclasses
 import hashlib
 import unittest
+from unittest import mock
 from ost_visualizer.application.dtos.collaboration_dtos import ResourceRef
+from ost_visualizer.application.dtos import (
+    collaboration_resource_catalog as catalog_module,
+)
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     AREA_RESOURCE_TYPES,
     BID_CONTENT_ENTITY_RESOURCE_TYPES,
@@ -350,6 +354,53 @@ class CollaborationResourceCatalogContractTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_a_definition_without_reconciliation_support_is_checksummed_as_controlled_reload(
+        self,
+    ):
+        # No shipped definition disables reconciliation, so the branch is reached
+        # by substituting a catalog where one entry does.
+        patched = dict(COLLABORATION_RESOURCE_CATALOG)
+        patched["condition"] = dataclasses.replace(
+            COLLABORATION_RESOURCE_CATALOG["condition"], reconciliation_supported=False
+        )
+        with mock.patch.object(
+            catalog_module, "COLLABORATION_RESOURCE_CATALOG", patched
+        ):
+            changed = catalog_module._catalog_checksum()
+        self.assertNotEqual(changed, COLLABORATION_RESOURCE_CATALOG_CHECKSUM)
+        rows = []
+        for name, definition in sorted(patched.items()):
+            rows.append(
+                "|".join(
+                    (
+                        name,
+                        definition.family.value,
+                        "collection" if definition.collection else "entity",
+                        "bid" if definition.bid_scoped else "database",
+                        definition.entity_table,
+                        definition.entity_uid_column,
+                        definition.entity_bid_column,
+                        definition.seed_filter,
+                        (
+                            definition.coalesce_type.value
+                            if definition.coalesce_type is not None
+                            else ""
+                        ),
+                        (
+                            "reconcile"
+                            if definition.reconciliation_supported
+                            else "controlled_reload"
+                        ),
+                    )
+                )
+            )
+        self.assertEqual(
+            changed, hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
+        )
+        self.assertEqual(
+            catalog_module._catalog_checksum(), COLLABORATION_RESOURCE_CATALOG_CHECKSUM
+        )
+
 
 class AnnotationResourceIdentityMessageTests(unittest.TestCase):
     def test_malformed_identities_use_the_exact_identity_message(self):
@@ -358,9 +409,18 @@ class AnnotationResourceIdentityMessageTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 with self.assertRaisesRegex(ValueError, message):
                     parse_annotation_resource_id(bad)
-        for bad_type, bad_uid in (("", "7"), ("rect", ""), (None, "7"), ("rect", None), ("", "")):
+        for bad_type, bad_uid in (
+            ("", "7"),
+            ("rect", ""),
+            (None, "7"),
+            ("rect", None),
+            ("", ""),
+        ):
             with self.subTest(type=bad_type, uid=bad_uid):
                 with self.assertRaisesRegex(ValueError, message):
                     annotation_resource_id(bad_type, bad_uid)
         self.assertEqual(annotation_resource_id(5, 6), "5/6")
-        self.assertEqual(parse_annotation_resource_id(annotation_resource_id("rect", "a/b")), ("rect", "a/b"))
+        self.assertEqual(
+            parse_annotation_resource_id(annotation_resource_id("rect", "a/b")),
+            ("rect", "a/b"),
+        )

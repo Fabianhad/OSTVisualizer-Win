@@ -35058,7 +35058,6 @@ class Sp3a5jRenameLeaseOrderTests(unittest.TestCase):
 
 class A3SecondPassMutationGapTests(unittest.TestCase):
     """Second-pass (A3) tests for survivors of a full ui_event_coordinator mutation sweep.
-
     Each test pins a negative path or state transition that no earlier test
     observed: the 2D selection reset that keeps ownership but not the
     highlight, the first no-bid selection, a missing page with a pending
@@ -35075,7 +35074,9 @@ class A3SecondPassMutationGapTests(unittest.TestCase):
         self.assertIs(result, False)
         # the sidebar keeps showing the Condition, but the takeoff no longer owns it
         self.assertEqual(coordinator.conditions_sidebar.highlights, [])
-        self.assertEqual(coordinator.ui_state_manager.highlighted_condition_uids, {"c1"})
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c1"}
+        )
         self.assertEqual(coordinator._selection_projected_condition_uids, set())
 
     def test_the_first_no_bid_selection_still_clears_the_workspace(self):
@@ -35098,11 +35099,13 @@ class A3SecondPassMutationGapTests(unittest.TestCase):
         self.assertEqual(saves, ["save"])
 
     def test_no_page_to_save_never_cancels_the_selected_page_write_for_a_fallback(self):
-        coordinator, _pages = DeferredPersistenceCoordinatorTests._make_view_state_coordinator(
-            None
+        coordinator, _pages = (
+            DeferredPersistenceCoordinatorTests._make_view_state_coordinator(None)
         )
         coordinator.plan_view = SimpleNamespace(
-            current_page_uid=None, is_view_state_stable=True, get_view_state=lambda: (1, 0, 0)
+            current_page_uid=None,
+            is_view_state_stable=True,
+            get_view_state=lambda: (1, 0, 0),
         )
         coordinator.ui_state_manager.active_page_uid = None
         coordinator._unpicked_fallback_page_uid = "p1"

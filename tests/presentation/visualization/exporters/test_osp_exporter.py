@@ -829,8 +829,8 @@ class OspExporterProgressTests(unittest.TestCase):
                     ]
                 }
             )
-            _package, sources, missing = self._make_osp_exporter()._prepare_package_data(
-                raw_data
+            _package, sources, missing = (
+                self._make_osp_exporter()._prepare_package_data(raw_data)
             )
             expected = {
                 f"TempImages!.tmp\\page_"

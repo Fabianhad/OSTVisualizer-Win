@@ -53,7 +53,6 @@ class AnnotationCreationFactoryTests(unittest.TestCase):
             self.assertEqual(third, _spec("annotation-layer"))
 
 
-
 class AnnotationCreationFactoryEmptyDefaultTests(unittest.TestCase):
     def test_without_an_annotation_layer_the_spec_layer_stays_unset(self):
         for factory_layer in (None, ""):

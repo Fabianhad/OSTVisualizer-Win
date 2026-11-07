@@ -1,5 +1,4 @@
 """sqlite stand-ins for annotation writes that keep the production contracts.
-
 ``_DimensionWriteOps`` (tests.integration.annotations.dimension_support) reports
 every table and column as present and skips the declared required columns, so
 schema-presence branches of ``AnnotationOperationsMixin`` never run there.
@@ -11,7 +10,6 @@ raises, like ``MdbWriter._connection`` does for a top-level transaction.
 
 import logging
 import sqlite3
-
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )

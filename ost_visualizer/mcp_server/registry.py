@@ -195,5 +195,5 @@ class DatabaseRegistry:
             return payload if isinstance(payload, dict) else {}
         except FileNotFoundError:
             return {}
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return {}

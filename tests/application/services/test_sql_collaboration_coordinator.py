@@ -10618,6 +10618,25 @@ class SqlCollaborationPublicQueryTests(_SecondPassBase):
         self.assertEqual(status.conflicted_resources, frozenset({resource}))
         self.assertEqual(status.state, SynchronizationState.CONFLICTED)
 
+    def test_an_annotations_collection_conflict_is_marked_and_cleared_by_a_refresh(
+        self,
+    ):
+        coordinator, runtime = self.ready_coordinator()
+        resource = ResourceRef("annotations_collection", "8", 8)
+        coordinator.enter_resource_conflict(
+            runtime.database_id, resource, "An annotation changed."
+        )
+        status = coordinator.status(runtime.database_id)
+        self.assertEqual(status.state, SynchronizationState.CONFLICTED)
+        self.assertEqual(status.message, "An annotation changed.")
+        self.assertEqual(status.conflicted_resources, frozenset({resource}))
+        coordinator._event_bus.publish(
+            AppEvents.DATABASE_REFRESHED, file_path=runtime.database_id
+        )
+        status = coordinator.status(runtime.database_id)
+        self.assertEqual(status.conflicted_resources, frozenset())
+        self.assertEqual(status.state, SynchronizationState.CONNECTING)
+
     def test_only_registered_sql_databases_use_sql_collaboration(self):
         coordinator, runtime = self.ready_coordinator()
         access = DatabaseDescriptor.for_access("C:/second-pass-query.mdb")

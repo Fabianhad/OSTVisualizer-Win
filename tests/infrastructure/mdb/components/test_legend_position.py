@@ -117,9 +117,7 @@ class RescaleLegendPositionScalingTests(unittest.TestCase):
                 self.assertEqual(result, f'<Legends dX="{expected}" />'.encode())
 
     def test_attribute_order_and_unrelated_attributes_are_preserved(self):
-        result = rescale_legend_position(
-            b'<Legends Z="1" dY="2" A="x" dX="3"/>', 2.0
-        )
+        result = rescale_legend_position(b'<Legends Z="1" dY="2" A="x" dX="3"/>', 2.0)
         self.assertEqual(result, b'<Legends Z="1" dY="4" A="x" dX="6" />')
 
     def test_comments_and_processing_instructions_survive_the_rewrite(self):

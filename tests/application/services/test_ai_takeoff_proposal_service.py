@@ -1,4 +1,5 @@
 import dataclasses
+import itertools
 import math
 import os
 import re
@@ -24,6 +25,7 @@ from ost_visualizer.application.services.ai_changeset_store import (
 from ost_visualizer.application.services import ai_takeoff_proposal_service as module
 from ost_visualizer.domain.services import ai_planar_regions as planar_module
 from ost_visualizer.domain.services.ai_dashed_outline import DashedAnalysisTimeout
+from ost_visualizer.domain.services.ai_linework import LineSegment
 from ost_visualizer.domain.services.ai_planar_regions import RegionSearchTimeout
 from ost_visualizer.application.services.ai_takeoff_proposal_service import (
     DASHED_MATCH_SHARE,
@@ -550,10 +552,10 @@ class ScaleProposalTests(ProposalTestCase):
         )["data"]
         return data
 
-    def test_a_dimension_is_measured_from_the_actual_first_point_not_a_mirrored_one(self):
-        data = self.dimension_check(
-            290.0, first=(100, 300), second=(532, 300), x=150.0
-        )
+    def test_a_dimension_is_measured_from_the_actual_first_point_not_a_mirrored_one(
+        self,
+    ):
+        data = self.dimension_check(290.0, first=(100, 300), second=(532, 300), x=150.0)
         self.assertIsNotNone(data["scale"]["dimension_check"])
 
     def test_of_two_equally_near_dimensions_the_first_one_read_is_used(self):
@@ -605,6 +607,58 @@ class ScaleProposalTests(ProposalTestCase):
         near = self.dimension_check(90.0, text="24'-5 1/2\"")
         self.assertTrue(near["scale"]["dimension_check"]["agrees"])
         self.assertNotIn("dimension", near["assumptions"][0]["reason"]["value"])
+
+    def test_a_dimension_exactly_two_percent_off_still_agrees(self):
+        # The catalog says a dimension "agrees within 2%". 1:3672 is 51 in per point
+        # and 416'-8" over 100 points implies 50, so the error is exactly 2.0 in
+        # floating point; one inch less on the dimension tips it over.
+        for text, real_in, error_pct, agrees in (
+            ("416'-8\"", 5000.0, 2.0, True),
+            ("416'-7\"", 4999.0, 2.0204, False),
+        ):
+            with self.subTest(text=text):
+                self.setUp()
+                self.dimension_text(text, x=130.0, y=90.0)
+                data = self.service_m1b.propose_scale(
+                    "p1", [100, 100], [200, 100], preset="1:3672"
+                )["data"]
+                check = data["scale"]["dimension_check"]
+                self.assertEqual(
+                    (check["real_in"], check["error_pct"], check["agrees"]),
+                    (real_in, error_pct, agrees),
+                )
+                self.assertEqual(
+                    "dimension" in data["assumptions"][0]["reason"]["value"],
+                    not agrees,
+                )
+
+    def test_a_configured_preset_with_negative_factors_is_out_of_range(self):
+        # Two negative factors would give a positive inches-per-point ratio; the
+        # guard on the second factor refuses them whichever way the preset is picked.
+        service = AiTakeoffProposalService(
+            read_service=self.service,
+            proposals=self.proposals,
+            presets=[(-1.0, -0.5, "mirrored")],
+            raster_fill=self._raster,
+        )
+        for label, call in (
+            (
+                "by name",
+                lambda: service.propose_scale(
+                    "p1", [0, 0], [100, 0], preset="mirrored"
+                ),
+            ),
+            (
+                "by measured distance",
+                lambda: service.propose_scale(
+                    "p1", [0, 0], [100, 0], real_in=0.5 / 72.0 * 100.0
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                error = self.assert_error("invalid_argument", call)
+                self.assertEqual(error.message, "The proposed scale is out of range")
+        self.assertEqual(self.proposals_count(), 0)
 
     def test_the_stated_reason_leads_the_dimension_warning(self):
         data = self.dimension_check(
@@ -1804,6 +1858,101 @@ class FindRegionFilterTests(ProposalTestCase):
         self.assertEqual(region["method"], "vector")
         self.assertEqual(len(region["gaps"]), 1)
 
+    def test_the_closures_pass_adds_only_the_sealed_openings(self):
+        # Step 2 reruns the vector pass with the sealed openings and nothing else: a
+        # 0.8 pt break elsewhere in the wall stays open, so the fill outline is
+        # reported instead (the gap closing of step 3 cannot span the 54 pt door).
+        ring = ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0))
+        self.raster_result = RasterResult(ring, False, 4.0)
+        rest = [
+            (400.0, 100.0, 400.0, 300.0),
+            (100.0, 300.0, 100.0, 100.0),
+            (100.0, 300.0, 200.0, 300.0),
+            (254.0, 300.0, 400.0, 300.0),
+        ]
+        for label, top, method in (
+            ("whole top wall", [(100.0, 100.0, 400.0, 100.0)], "vector"),
+            (
+                "top wall broken by 0.8 pt",
+                [(100.0, 100.0, 299.6, 100.0), (300.4, 100.0, 400.0, 100.0)],
+                "raster",
+            ),
+        ):
+            with self.subTest(label):
+                self.pdf.segments = [_styled(*segment) for segment in top + rest]
+                (region,) = self.find(seed_pts=[250, 200], max_gap_in=51.0 * K)["data"][
+                    "regions"
+                ]
+                self.assertEqual(region["method"], method)
+                (gap,) = region["gaps"]
+                self.assertEqual(
+                    sorted([gap["p1_pts"], gap["p2_pts"]]),
+                    [[200.0, 300.0], [254.0, 300.0]],
+                )
+
+    def test_the_closed_vector_region_is_kept_within_a_quarter_of_the_fill_area(self):
+        # AGENTS.md: the vector pass with the sealed openings is "kept if its area is
+        # within 25% of the raster area". The room is 240 x 200 = 48000; a fill
+        # outline pulled in by 24 pt on both sides (inside the 30 pt tolerance of a
+        # 0.1 px/pt fill) is 192 x 200 = 38400, so the difference (9600) is exactly
+        # 0.25 * 38400.
+        self.pdf.segments = [
+            _styled(*segment)
+            for segment in (
+                (100.0, 100.0, 340.0, 100.0),
+                (340.0, 100.0, 340.0, 300.0),
+                (100.0, 300.0, 100.0, 100.0),
+                (100.0, 300.0, 150.0, 300.0),
+                (280.0, 300.0, 340.0, 300.0),
+            )
+        ]
+        for inset, method in ((23.0, "vector"), (24.0, "vector"), (24.5, "raster")):
+            with self.subTest(inset=inset):
+                self.raster_result = RasterResult(
+                    (
+                        (100.0 + inset, 100.0),
+                        (340.0 - inset, 100.0),
+                        (340.0 - inset, 300.0),
+                        (100.0 + inset, 300.0),
+                    ),
+                    False,
+                    0.1,
+                )
+                (region,) = self.find(seed_pts=[220, 200], max_gap_in=20.0)["data"][
+                    "regions"
+                ]
+                self.assertEqual(region["method"], method)
+                width = 240.0 if method == "vector" else 240.0 - 2 * inset
+                area_pts = width * 200.0
+                self.assertEqual(region["area_sf"], round(area_pts * K * K / 144.0, 4))
+                (gap,) = region["gaps"]
+                self.assertEqual(
+                    sorted([gap["p1_pts"], gap["p2_pts"]]),
+                    [[150.0, 300.0], [280.0, 300.0]],
+                )
+
+    def test_a_seeded_search_runs_the_bridged_pass_only_when_a_gap_was_asked_for(self):
+        self.pdf.segments = [
+            _styled(100, 100, 400, 100),
+            _styled(400, 100, 400, 300),
+            _styled(100, 300, 100, 100),
+        ]
+        real = module.find_planar_regions_report
+        for max_gap_in, expected in ((None, [0.0]), (30.0, [0.0, 30.0 / K])):
+            with self.subTest(max_gap_in=max_gap_in):
+                gaps = []
+
+                def counted(segments, snap, gap_close, *args, **kwargs):
+                    # One entry per planar pass; a gap of 0 or less bridges nothing.
+                    gaps.append(max(gap_close, 0.0))
+                    return real(segments, snap, gap_close, *args, **kwargs)
+
+                options = {} if max_gap_in is None else {"max_gap_in": max_gap_in}
+                with mock.patch.object(module, "find_planar_regions_report", counted):
+                    result = self.find(seed_pts=[250, 200], **options)
+                self.assertEqual(result["data"]["regions"], [])
+                self.assertEqual(gaps, expected)
+
     def test_a_vector_outline_that_disagrees_with_the_fill_is_not_used(self):
         self.pdf.segments = _door_room()
         ring = (
@@ -2862,6 +3011,58 @@ class LeakGuardTests(ProposalTestCase):
         (opening,) = region["open_gaps"]
         self.assertAlmostEqual(opening["length_in"], 39.0, places=6)
 
+    def test_only_a_gap_longer_than_one_point_is_an_opening(self):
+        # AGENTS.md: the guard looks for openings "longer than 1 pt".
+        for gap, reported in ((0.8, False), (1.0, False), (1.2, True), (3.0, True)):
+            with self.subTest(gap=gap):
+                self.pdf.segments = _two_rooms(gap=gap)
+                (region,) = self.find()["data"]["regions"]
+                self.assertEqual(len(region["open_gaps"]), int(reported))
+                self.assertEqual(region["leak_risk"], reported)
+                if reported:
+                    self.assertAlmostEqual(
+                        region["open_gaps"][0]["length_in"], gap * K, places=6
+                    )
+
+    def test_the_opening_check_does_not_bridge_gaps_the_region_was_not_traced_with(
+        self,
+    ):
+        # The wall stub at x=200 ends 0.8 pt short of the floor. Bridging it in the
+        # opening check would cut the seed's side off from the opening at x=300, so
+        # the check must split the region under the same (unbridged) geometry.
+        self.pdf.segments = [
+            _styled(100, 100, 500, 100),
+            _styled(500, 100, 500, 300),
+            _styled(500, 300, 200, 300),
+            _styled(200, 300, 100, 300),
+            _styled(100, 300, 100, 100),
+            _styled(300, 100, 300, 150),
+            _styled(300, 150 + GAP_PTS, 300, 300),
+            _styled(200, 100, 200, 299.2),
+        ]
+        (region,) = self.find(seed=(150, 200))["data"]["regions"]
+        self.assertAlmostEqual(region["area_sf"], _sf(400 * 200), places=3)
+        (opening,) = region["open_gaps"]
+        self.assertAlmostEqual(opening["length_in"], 39.0, places=6)
+
+    def test_an_opening_is_reported_when_the_area_beyond_it_is_exactly_five_percent(
+        self,
+    ):
+        # AGENTS.md: reported "when the seed's face shrinks by at least 5% and the
+        # area beyond that opening ... is at least 5% of the region". The region is
+        # 400 x 200 = 80000, so a partition at x=480 leaves exactly 76000 and 4000.
+        for partition, reported in ((478, True), (480, True), (482, False)):
+            with self.subTest(partition=partition):
+                self.pdf.segments = [
+                    _styled(*segment)
+                    for segment in mat.rect_segments((100, 100, 500, 300))
+                ] + [
+                    _styled(partition, 100, partition, 150),
+                    _styled(partition, 150 + GAP_PTS, partition, 300),
+                ]
+                (region,) = self.find()["data"]["regions"]
+                self.assertEqual(len(region["open_gaps"]), int(reported))
+
     def test_an_opening_the_region_closed_is_not_reported_again(self):
         self.pdf.segments = [
             _styled(100, 100, 500, 100),
@@ -3517,9 +3718,9 @@ class ArgumentNameInErrorTests(ProposalTestCase):
         return self.assert_error(code, call).message
 
     def changeset(self):
-        return self.service_m1b.propose_element(
-            "slab", "p1", polygon_ost=self.SQUARE
-        )["data"]["changeset_id"]
+        return self.service_m1b.propose_element("slab", "p1", polygon_ost=self.SQUARE)[
+            "data"
+        ]["changeset_id"]
 
     def test_scale_arguments_are_named(self):
         propose = self.service_m1b.propose_scale
@@ -3632,7 +3833,10 @@ class ArgumentNameInErrorTests(ProposalTestCase):
         propose = self.service_m1b.propose_element
         square = self.SQUARE
         cases = {
-            "kind": (lambda: propose("wall", "p1", polygon_ost=square), "kind must be slab"),
+            "kind": (
+                lambda: propose("wall", "p1", polygon_ost=square),
+                "kind must be slab",
+            ),
             "geometry source": (
                 lambda: propose("slab", "p1"),
                 "Give exactly one of polygon_ost or region_id",
@@ -3654,9 +3858,7 @@ class ArgumentNameInErrorTests(ProposalTestCase):
                 "top_elev_in must be a number",
             ),
             "elevation range": (
-                lambda: propose(
-                    "slab", "p1", polygon_ost=square, top_elev_in=10**9
-                ),
+                lambda: propose("slab", "p1", polygon_ost=square, top_elev_in=10**9),
                 "top_elev_in is out of range",
             ),
             "level": (
@@ -3735,9 +3937,7 @@ class ArgumentNameInErrorTests(ProposalTestCase):
                 "value must be text",
             ),
             "add reason": (
-                lambda: update(
-                    uid, "add", subject="other", target_key="c1", reason=5
-                ),
+                lambda: update(uid, "add", subject="other", target_key="c1", reason=5),
                 "reason must be text",
             ),
             "add sheet": (
@@ -3924,12 +4124,20 @@ class ProposalContractTests(ProposalTestCase):
 
 
 class ProposalWordingTests(ProposalTestCase):
-    def test_missing_thickness_and_elevation_become_open_assumptions_with_their_reason(self):
+    def test_missing_thickness_and_elevation_become_open_assumptions_with_their_reason(
+        self,
+    ):
         data = self.service_m1b.propose_element(
             "slab", "p1", polygon_ost=[0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0]
         )["data"]
         rows = [
-            (a["subject"], a["target_key"], a["value"]["value"], a["reason"]["value"], a["sheet_ref"]["value"])
+            (
+                a["subject"],
+                a["target_key"],
+                a["value"]["value"],
+                a["reason"]["value"],
+                a["sheet_ref"]["value"],
+            )
             for a in data["assumptions"]
         ]
         self.assertEqual(
@@ -3963,9 +4171,9 @@ class RegionRefusalReasonTests(ProposalTestCase):
 
     def found_region(self):
         self.pdf.segments = _rect(100, 100, 200, 200)
-        return self.service_m1b.find_regions(self.snapshot(), [0, 0, 600, 700])[
-            "data"
-        ]["regions"][0]
+        return self.service_m1b.find_regions(self.snapshot(), [0, 0, 600, 700])["data"][
+            "regions"
+        ][0]
 
     def with_scale_error(self, relative):
         page = self.project.pages[1]
@@ -4025,7 +4233,9 @@ class RegionRefusalReasonTests(ProposalTestCase):
 
 
 class FindResultShapeTests(ProposalTestCase):
-    def test_a_raster_page_answers_not_pdf_with_only_its_page_and_the_coordinate_spaces(self):
+    def test_a_raster_page_answers_not_pdf_with_only_its_page_and_the_coordinate_spaces(
+        self,
+    ):
         result = self.service_m1b.find_regions(self.snapshot("p3"), [0, 0, 600, 700])
         self.assertEqual(result["status"], "not_pdf")
         self.assertEqual(
@@ -4090,7 +4300,9 @@ class FindResultShapeTests(ProposalTestCase):
         outline = types.SimpleNamespace(outer=((0, 0), (200, 0), (200, 200), (0, 200)))
         exactly_half_a_percent = ((0, 0), (199, 0), (199, 200), (0, 200))
         beyond = ((0, 0), (198.9, 0), (198.9, 200), (0, 200))
-        self.assertIsNone(module._ignored_outline_sf(outline, exactly_half_a_percent, 1.0))
+        self.assertIsNone(
+            module._ignored_outline_sf(outline, exactly_half_a_percent, 1.0)
+        )
         self.assertAlmostEqual(
             module._ignored_outline_sf(outline, beyond, 1.0), 40000 / 144.0
         )
@@ -4108,7 +4320,9 @@ class GapBridgingTests(ProposalTestCase):
             _raw(100, 200, 100, 100),
         ]
 
-    def test_an_unbridged_search_does_not_close_a_gap_wider_than_the_snap_tolerance(self):
+    def test_an_unbridged_search_does_not_close_a_gap_wider_than_the_snap_tolerance(
+        self,
+    ):
         self.broken_square(0.8)
         result = self.service_m1b.find_regions(
             self.snapshot(), [0, 0, 600, 700], seed_pts=[150, 150]
@@ -4178,6 +4392,22 @@ class DashedLoopTests(unittest.TestCase):
         region = self.outline([self.RECTANGLE, inner], (150.0, 150.0))
         self.assertAlmostEqual(abs(module.ring_area(region.outer)), 40.0 * 40.0)
 
+    def test_a_loop_is_found_whichever_way_its_segments_are_drawn(self):
+        # A PDF draws each dash from either end, so no end of a segment is the "first"
+        # or the "last" one. The triangle sits far from the origin on both axes and
+        # its extreme corners are the start (or the end) of both their segments in
+        # some of the eight drawings, so a bounding box built from only some of the
+        # coordinates would reject the seed that sits inside the loop.
+        a, b, c = (5000.0, 0.0), (5100.0, 40.0), (5040.0, 100.0)
+        seed = (5068.0, 30.0)
+        edges = [(a, b), (b, c), (c, a)]
+        for flips in itertools.product((False, True), repeat=3):
+            loop = [(q + p) if flip else (p + q) for (p, q), flip in zip(edges, flips)]
+            with self.subTest(flips=flips):
+                region = self.outline([loop], seed)
+                self.assertIsNotNone(region)
+                self.assertAlmostEqual(abs(module.ring_area(region.outer)), 4200.0)
+
 
 class OpeningGeometryTests(unittest.TestCase):
     RING = ((0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0))
@@ -4212,7 +4442,9 @@ class OpeningGeometryTests(unittest.TestCase):
             [(40.0, 0.0, 48.0, 0.0)],
         )
 
-    def test_the_pen_width_sets_how_long_an_opening_may_be_and_how_far_its_ends_snap(self):
+    def test_the_pen_width_sets_how_long_an_opening_may_be_and_how_far_its_ends_snap(
+        self,
+    ):
         # (gap start, gap end, px per pt, pen): openings found / not found, measured on
         # the current heuristic; the thresholds pin the tolerance and reach formulas.
         cases = (
@@ -4253,6 +4485,44 @@ class OpeningGeometryTests(unittest.TestCase):
             [],
         )
 
+    def test_an_outline_rounded_back_from_the_wall_ends_snaps_up_to_half_the_pen(self):
+        # A wide pen bridges the door and the grown outline leaves the wall about 11 pt
+        # before each wall end. Those ends are 11 pt from the run's ends, beyond the
+        # three-tolerance floor, so the half-pen reach finds them; a reach as wide as
+        # the whole pen would instead pick the stub end nearer the seed, which no
+        # drawn line continues, and a reach of a quarter would find nothing.
+        ring = (
+            (0.0, 0.0),
+            (29.0, 0.0),
+            (29.0, 6.0),
+            (71.0, 6.0),
+            (71.0, 0.0),
+            (100.0, 0.0),
+            (100.0, 100.0),
+            (0.0, 100.0),
+        )
+        stub = (45.0, 35.0, 45.0, 80.0)
+        segments = self.square_with_bottom_gap(40, 60) + [stub]
+        self.assertEqual(
+            module._sealed_openings(
+                RasterResult(ring, False, 0.0), segments, 40.0, (50.0, 50.0)
+            ),
+            [(40.0, 0.0, 60.0, 0.0)],
+        )
+
+    def test_the_angle_limit_itself_still_counts_as_continuing_the_line(self):
+        # sin(15 degrees) is not exactly representable, so a drawing cannot hit the
+        # limit to the last bit; with the limit at 90 degrees the sine is exactly 1
+        # and a perpendicular other end sits exactly on it ("within" is inclusive).
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        wall = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        self.assertIs(module._continues_a_line((10.0, 0.0), (10.0, 7.0), wall), False)
+        with mock.patch.object(module, "OPENING_LINE_ANGLE_DEG", 90.0):
+            self.assertIs(
+                module._continues_a_line((10.0, 0.0), (10.0, 7.0), wall), True
+            )
+
     def test_a_line_continues_through_a_point_only_when_the_other_end_is_within_fifteen_degrees(
         self,
     ):
@@ -4274,7 +4544,9 @@ class OpeningGeometryTests(unittest.TestCase):
         """101+ segments over a 1100 x 1100 sheet: 11 grid cells of 100 per side."""
         from ost_visualizer.domain.services.ai_linework import SegmentGrid
 
-        fillers = [(i * 11.0, i * 11.0, i * 11.0 + 1.0, i * 11.0 + 1.0) for i in range(100)]
+        fillers = [
+            (i * 11.0, i * 11.0, i * 11.0 + 1.0, i * 11.0 + 1.0) for i in range(100)
+        ]
         fillers.append((1099.0, 1099.0, 1100.0, 1100.0))
         return SegmentGrid(fillers + list(extra))
 
@@ -4317,6 +4589,149 @@ class OpeningGeometryTests(unittest.TestCase):
         )
         self.assertEqual(
             module._snap_to_linework((5.0, 0.0), two, 1.5, (50.0, 100.0)), (6.0, 0.0)
+        )
+
+
+class SegmentCapHintTests(unittest.TestCase):
+    """The over-the-cap hint on a tiny cap: the real one needs 20000 segments."""
+
+    CAP = 5
+
+    def hint(self, lines, symbols=None, kinds=None, **options):
+        filters = module._RegionFilters(
+            max_gap_in=0.0,
+            min_width=options.pop("min_width", None),
+            exclude_dashed=False,
+            exclude_thin_curves=False,
+            colors=None,
+            min_area_sf=0.0,
+            symbol_max_pts=48.0,
+            **options,
+        )
+        kinds = kinds or [module.KIND_WALL] * len(lines)
+        with mock.patch.object(module, "MAX_REGION_SEGMENTS", self.CAP):
+            return module._segment_cap_hint(lines, kinds, symbols or {}, filters)
+
+    @staticmethod
+    def walls(width, count, group=""):
+        return [
+            LineSegment(
+                10.0 * index, 0.0, 10.0 * index + 5.0, 0.0, width=width, group=group
+            )
+            for index in range(count)
+        ]
+
+    def test_the_hint_names_the_smallest_width_that_keeps_the_page_under_the_cap(self):
+        lines = self.walls(0.5, 6) + self.walls(1.0, 2) + self.walls(2.0, 1)
+        self.assertEqual(
+            self.hint(lines), "min_width 1 keeps 3 line segments and would pass."
+        )
+
+    def test_there_is_no_hint_when_no_width_passes_or_the_passing_one_keeps_nothing(
+        self,
+    ):
+        self.assertEqual(self.hint(self.walls(0.5, 6)), "")
+        symbol = LineSegment(0.0, 0.0, 4.0, 0.0, width=2.0, group="tag")
+        self.assertEqual(
+            self.hint(
+                self.walls(0.5, 6) + [symbol],
+                symbols={"tag": (0.0, 0.0, 4.0, 4.0)},
+                kinds=[module.KIND_WALL] * 6 + [module.KIND_SYMBOL],
+            ),
+            "",
+        )
+
+
+class SegmentCapHintSuggestedWidthTests(unittest.TestCase):
+    """The hint names the smallest width that passes, also when a width was suggested.
+    A suggested min_width exempts dashed pieces from the width filter while the
+    same width passed explicitly does not, so the applied width is itself a
+    candidate and so is any thinner stroke width that passes once dashed pieces
+    are no longer exempt.
+    """
+
+    CAP = 5
+
+    def hint(self, lines, kinds, min_width, source):
+        filters = module._RegionFilters(
+            max_gap_in=0.0,
+            min_width=min_width,
+            exclude_dashed=False,
+            exclude_thin_curves=False,
+            colors=None,
+            min_area_sf=0.0,
+            symbol_max_pts=48.0,
+            min_width_source=source,
+        )
+        with mock.patch.object(module, "MAX_REGION_SEGMENTS", self.CAP):
+            return module._segment_cap_hint(lines, kinds, {}, filters)
+
+    @staticmethod
+    def strokes(width, count, start):
+        return [
+            LineSegment(
+                10.0 * (start + index),
+                0.0,
+                10.0 * (start + index) + 5.0,
+                0.0,
+                width=width,
+            )
+            for index in range(count)
+        ]
+
+    def test_the_applied_suggested_width_is_named_when_given_explicitly_it_passes(self):
+        lines = (
+            self.strokes(0.25, 4, 0)
+            + self.strokes(0.5, 3, 10)
+            + self.strokes(1.0, 2, 20)
+        )
+        kinds = [module.KIND_DASHED] * 4 + [module.KIND_WALL] * 5
+        self.assertEqual(
+            self.hint(lines, kinds, 0.5, module.MIN_WIDTH_SUGGESTED),
+            "min_width 0.5 keeps 5 line segments and would pass.",
+        )
+
+    def test_a_given_width_that_is_over_the_cap_is_not_named_again(self):
+        lines = (
+            self.strokes(0.25, 4, 0)
+            + self.strokes(0.5, 3, 10)
+            + self.strokes(1.0, 2, 20)
+        )
+        kinds = [module.KIND_WALL] * 9
+        self.assertEqual(
+            self.hint(lines, kinds, 0.25, module.MIN_WIDTH_GIVEN),
+            "min_width 0.5 keeps 5 line segments and would pass.",
+        )
+        self.assertEqual(
+            self.hint(lines, kinds, 0.5, module.MIN_WIDTH_GIVEN),
+            "min_width 1 keeps 2 line segments and would pass.",
+        )
+
+    def test_a_count_at_the_cap_passes_and_one_above_it_does_not(self):
+        at_cap = self.strokes(0.5, 3, 0) + self.strokes(1.0, 2, 10)
+        above_cap = self.strokes(0.5, 4, 0) + self.strokes(1.0, 2, 10)
+        self.assertEqual(
+            self.hint(at_cap, [module.KIND_WALL] * 5, 0.0, module.MIN_WIDTH_SUGGESTED),
+            "min_width 0.5 keeps 5 line segments and would pass.",
+        )
+        self.assertEqual(
+            self.hint(
+                above_cap, [module.KIND_WALL] * 6, 0.0, module.MIN_WIDTH_SUGGESTED
+            ),
+            "min_width 1 keeps 2 line segments and would pass.",
+        )
+
+    def test_a_thinner_stroke_width_than_the_suggested_one_can_be_the_smallest(self):
+        lines = (
+            self.strokes(0.25, 4, 0)
+            + self.strokes(0.3, 1, 10)
+            + self.strokes(0.5, 2, 20)
+            + self.strokes(1.0, 2, 30)
+        )
+        kinds = [module.KIND_DASHED] * 4 + [module.KIND_WALL] * 5
+        self.assertEqual(
+            self.hint(lines, kinds, 0.5, module.MIN_WIDTH_SUGGESTED),
+            "min_width 0.3 keeps 5 line segments and would pass.",
         )
 
 

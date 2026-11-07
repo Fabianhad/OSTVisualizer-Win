@@ -353,6 +353,56 @@ class WorkspaceFontColorCompatibilityTests(unittest.TestCase):
         self.assertEqual(serialized["rect"]["color"], "#abcdef")
 
 
+class WorkspaceAnnotationStyleKeyTests(unittest.TestCase):
+    STYLE = {"color": "#112233", "line_width": 5, "font_bold": True, "text_align": 2}
+
+    def test_only_the_text_key_is_reduced_to_its_alignment_whatever_other_keys_sort_like(
+        self,
+    ):
+        # Persisted JSON can carry any key; keys sorting before and after "text" keep the full style.
+        payload = {
+            "annotation_styles": {
+                key: dict(self.STYLE) for key in ("arrow", "text", "textx", "zzz")
+            }
+        }
+        state = TakeoffWorkspaceState.from_dict(payload)
+        text_align = state.annotation_styles["text"].text_align
+        self.assertEqual(text_align, 2)
+        self.assertEqual(state.annotation_styles["text"].color, "#ff0000")
+        self.assertIs(state.annotation_styles["text"].font_bold, False)
+        serialized = state.to_dict()["annotation_styles"]
+        self.assertEqual(serialized["text"], {"text_align": 2})
+        for key in ("arrow", "textx", "zzz"):
+            with self.subTest(key=key):
+                loaded = state.annotation_styles[key]
+                self.assertEqual(
+                    (loaded.color, loaded.line_width, loaded.text_align),
+                    ("#112233", 5.0, 2),
+                )
+                self.assertIs(loaded.font_bold, True)
+                self.assertEqual(serialized[key]["color"], "#112233")
+                self.assertIs(serialized[key]["font_bold"], True)
+                self.assertEqual(serialized[key]["line_width"], 5.0)
+
+    def test_a_style_object_under_a_late_sorting_key_keeps_its_full_style_on_write(
+        self,
+    ):
+        from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
+
+        state = TakeoffWorkspaceState(
+            annotation_styles={
+                "text": AnnotationStyle(color="#445566", text_align=1),
+                "zzz": AnnotationStyle(color="#778899", line_width=4.0),
+            }
+        )
+        serialized = state.to_dict()["annotation_styles"]
+        self.assertEqual(serialized["text"], {"text_align": 1})
+        self.assertEqual(
+            serialized["zzz"],
+            AnnotationStyle(color="#778899", line_width=4.0).to_dict(),
+        )
+
+
 class WorkspaceCorruptDimensionTests(unittest.TestCase):
     def test_nonfinite_schema_version_uses_current_schema_without_losing_other_state(
         self,
@@ -406,7 +456,9 @@ from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 
 def custom_workspace():
     state = WorkspaceState()
-    state.main_window = ws.MainWindowWorkspaceState("Z2VvbQ==", "c3RhdGU=", False, False)
+    state.main_window = ws.MainWindowWorkspaceState(
+        "Z2VvbQ==", "c3RhdGU=", False, False
+    )
     state.takeoff_workspace = TakeoffWorkspaceState(
         active_view="2d",
         view_2d_tab_visible=False,
@@ -436,7 +488,9 @@ def custom_workspace():
         view_window=ws.DetachedWindowState(False, "dmlldw==", True, True),
     )
     state.header_layouts = {
-        "tree": HeaderLayoutState({"name": 120, "qty": 80}, ["name", "qty"], "qty", True)
+        "tree": HeaderLayoutState(
+            {"name": 120, "qty": 80}, ["name", "qty"], "qty", True
+        )
     }
     state.dialog_sizes = {"layers": [640, 480]}
     state.dialog_maximized = {"layers": True, "areas": False}
@@ -444,7 +498,9 @@ def custom_workspace():
 
 
 class WorkspaceStateFullRoundTripTests(unittest.TestCase):
-    def test_every_section_round_trips_from_a_non_default_value_with_the_stored_key_names(self):
+    def test_every_section_round_trips_from_a_non_default_value_with_the_stored_key_names(
+        self,
+    ):
         state = custom_workspace()
         payload = state.to_dict()
         self.assertEqual(
@@ -464,28 +520,57 @@ class WorkspaceStateFullRoundTripTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], 3)
         self.assertEqual(
             payload["main_window"],
-            {"geometry_b64": "Z2VvbQ==", "state_b64": "c3RhdGU=", "is_maximized": False, "status_bar_visible": False},
+            {
+                "geometry_b64": "Z2VvbQ==",
+                "state_b64": "c3RhdGU=",
+                "is_maximized": False,
+                "status_bar_visible": False,
+            },
         )
         self.assertEqual(
             payload["toolbar_visibility"],
-            {"main_toolbar_visible": False, "view_toolbar_visible": False, "plan_tools_toolbar_visible": False},
+            {
+                "main_toolbar_visible": False,
+                "view_toolbar_visible": False,
+                "plan_tools_toolbar_visible": False,
+            },
         )
         self.assertEqual(
             payload["project_workspace"],
             {
                 "expanded_node_keys": ["db:1", "bid:2"],
                 "group_by_job_status": True,
-                "selected_node": {"kind": "bid", "file_path": "C:/a.mdb", "bid_uid": "7", "project_uid": None},
+                "selected_node": {
+                    "kind": "bid",
+                    "file_path": "C:/a.mdb",
+                    "bid_uid": "7",
+                    "project_uid": None,
+                },
             },
         )
         self.assertEqual(
             payload["detached_windows"]["annotation_view"],
-            {"open": True, "geometry_b64": "YW5u", "is_maximized": False, "is_fullscreen": True},
+            {
+                "open": True,
+                "geometry_b64": "YW5u",
+                "is_maximized": False,
+                "is_fullscreen": True,
+            },
         )
-        self.assertEqual(set(payload["detached_windows"]), {"mesh_view", "annotation_view", "view_window"})
+        self.assertEqual(
+            set(payload["detached_windows"]),
+            {"mesh_view", "annotation_view", "view_window"},
+        )
         self.assertEqual(
             payload["header_layouts"],
-            {"tree": {"widths": {"name": 120, "qty": 80}, "order": ["name", "qty"], "sort_column": "qty", "sort_descending": True}},
+            {
+                "tree": {
+                    "widths": {"name": 120, "qty": 80},
+                    "order": ["name", "qty"],
+                    "sort_column": "qty",
+                    "sort_descending": True,
+                }
+            },
         )
         self.assertEqual(payload["dialog_sizes"], {"layers": [640, 480]})
         self.assertEqual(payload["dialog_maximized"], {"layers": True, "areas": False})
@@ -529,7 +614,12 @@ class WorkspaceStateFullRoundTripTests(unittest.TestCase):
         self.assertEqual(state.schema_version, 3)
         self.assertEqual(WorkspaceState.CURRENT_SCHEMA_VERSION, 3)
         self.assertEqual(
-            (state.main_window.geometry_b64, state.main_window.state_b64, state.main_window.is_maximized, state.main_window.status_bar_visible),
+            (
+                state.main_window.geometry_b64,
+                state.main_window.state_b64,
+                state.main_window.is_maximized,
+                state.main_window.status_bar_visible,
+            ),
             (None, None, True, True),
         )
         takeoff = state.takeoff_workspace
@@ -549,18 +639,50 @@ class WorkspaceStateFullRoundTripTests(unittest.TestCase):
             ("3d", True, True, True, True, False, True, True, True, False),
         )
         self.assertEqual(
-            (takeoff.takeoff_splitter_sizes, takeoff.left_splitter_sizes, takeoff.left_column_pan_first_sizes, takeoff.dropdown_popup_sizes, takeoff.annotation_styles),
+            (
+                takeoff.takeoff_splitter_sizes,
+                takeoff.left_splitter_sizes,
+                takeoff.left_column_pan_first_sizes,
+                takeoff.dropdown_popup_sizes,
+                takeoff.annotation_styles,
+            ),
             ([], [], [], {}, {}),
         )
         project = state.project_workspace
-        self.assertEqual((project.expanded_node_keys, project.group_by_job_status, project.selected_node), (None, False, None))
         self.assertEqual(
-            (state.toolbar_visibility.main_toolbar_visible, state.toolbar_visibility.view_toolbar_visible, state.toolbar_visibility.plan_tools_toolbar_visible),
+            (
+                project.expanded_node_keys,
+                project.group_by_job_status,
+                project.selected_node,
+            ),
+            (None, False, None),
+        )
+        self.assertEqual(
+            (
+                state.toolbar_visibility.main_toolbar_visible,
+                state.toolbar_visibility.view_toolbar_visible,
+                state.toolbar_visibility.plan_tools_toolbar_visible,
+            ),
             (True, True, True),
         )
-        for window in (state.detached_windows.mesh_view, state.detached_windows.annotation_view, state.detached_windows.view_window):
-            self.assertEqual((window.open, window.geometry_b64, window.is_maximized, window.is_fullscreen), (False, None, False, False))
-        self.assertEqual((state.header_layouts, state.dialog_sizes, state.dialog_maximized), ({}, {}, {}))
+        for window in (
+            state.detached_windows.mesh_view,
+            state.detached_windows.annotation_view,
+            state.detached_windows.view_window,
+        ):
+            self.assertEqual(
+                (
+                    window.open,
+                    window.geometry_b64,
+                    window.is_maximized,
+                    window.is_fullscreen,
+                ),
+                (False, None, False, False),
+            )
+        self.assertEqual(
+            (state.header_layouts, state.dialog_sizes, state.dialog_maximized),
+            ({}, {}, {}),
+        )
         self.assertIsNot(WorkspaceState().takeoff_workspace, state.takeoff_workspace)
 
     def test_empty_and_non_object_documents_load_as_defaults(self):
@@ -580,26 +702,49 @@ class WorkspaceStateFullRoundTripTests(unittest.TestCase):
                 with self.subTest(section=section.__name__, value=value):
                     self.assertEqual(section.from_dict(value), section())
 
-    def test_schema_version_is_at_least_one_and_unusable_values_use_the_current_version(self):
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": 5}).schema_version, 5)
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": "2"}).schema_version, 2)
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": 0}).schema_version, 1)
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": -4}).schema_version, 1)
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": 1}).schema_version, 1)
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": "x"}).schema_version, 3)
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": None}).schema_version, 3)
+    def test_schema_version_is_at_least_one_and_unusable_values_use_the_current_version(
+        self,
+    ):
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": 5}).schema_version, 5
+        )
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": "2"}).schema_version, 2
+        )
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": 0}).schema_version, 1
+        )
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": -4}).schema_version, 1
+        )
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": 1}).schema_version, 1
+        )
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": "x"}).schema_version, 3
+        )
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": None}).schema_version, 3
+        )
         # The written version is always the current schema, whatever was read.
-        self.assertEqual(WorkspaceState.from_dict({"schema_version": 9}).to_dict()["schema_version"], 3)
+        self.assertEqual(
+            WorkspaceState.from_dict({"schema_version": 9}).to_dict()["schema_version"],
+            3,
+        )
 
 
 class WorkspaceStateCoercionTests(unittest.TestCase):
-    def test_optional_text_treats_empty_and_none_as_absent_and_stringifies_the_rest(self):
+    def test_optional_text_treats_empty_and_none_as_absent_and_stringifies_the_rest(
+        self,
+    ):
         self.assertIsNone(ws._coerce_optional_str(None))
         self.assertIsNone(ws._coerce_optional_str(""))
         self.assertEqual(ws._coerce_optional_str(5), "5")
         self.assertEqual(ws._coerce_optional_str(0), "0")
         self.assertEqual(ws._coerce_optional_str(" x "), " x ")
-        main = ws.MainWindowWorkspaceState.from_dict({"geometry_b64": "", "state_b64": 7})
+        main = ws.MainWindowWorkspaceState.from_dict(
+            {"geometry_b64": "", "state_b64": 7}
+        )
         self.assertEqual((main.geometry_b64, main.state_b64), (None, "7"))
 
     def test_booleans_must_be_real_booleans_otherwise_the_field_default_applies(self):
@@ -610,7 +755,9 @@ class WorkspaceStateCoercionTests(unittest.TestCase):
         self.assertIs(ws._coerce_bool(True, False), True)
 
     def test_integer_lists_clamp_negatives_skip_junk_and_reject_non_lists(self):
-        self.assertEqual(ws._coerce_int_list([5, "7", 3.9, -2, None, "x", [1]]), [5, 7, 3, 0])
+        self.assertEqual(
+            ws._coerce_int_list([5, "7", 3.9, -2, None, "x", [1]]), [5, 7, 3, 0]
+        )
         self.assertEqual(ws._coerce_int_list([]), [])
         for value in (None, (1, 2), "12", {"a": 1}, 5):
             self.assertEqual(ws._coerce_int_list(value), [])
@@ -619,7 +766,17 @@ class WorkspaceStateCoercionTests(unittest.TestCase):
     def test_size_dictionaries_keep_only_positive_pairs_truncated_to_two_values(self):
         self.assertEqual(
             ws._coerce_size_dict(
-                {"ok": [640, 480], "long": [1, 2, 3], "zero_w": [0, 5], "zero_h": [5, 0], "neg": [-5, 5], "short": [5], "text": "x", 3: [2, 2], "strs": ["7", "8"]}
+                {
+                    "ok": [640, 480],
+                    "long": [1, 2, 3],
+                    "zero_w": [0, 5],
+                    "zero_h": [5, 0],
+                    "neg": [-5, 5],
+                    "short": [5],
+                    "text": "x",
+                    3: [2, 2],
+                    "strs": ["7", "8"],
+                }
             ),
             {"ok": [640, 480], "long": [1, 2], "3": [2, 2], "strs": [7, 8]},
         )
@@ -635,9 +792,23 @@ class WorkspaceStateCoercionTests(unittest.TestCase):
         for value in (None, [], "x", 5):
             self.assertEqual(ws._coerce_bool_dict(value), {})
 
-    def test_positive_integer_dictionaries_convert_text_and_drop_non_positive_values(self):
+    def test_positive_integer_dictionaries_convert_text_and_drop_non_positive_values(
+        self,
+    ):
         self.assertEqual(
-            ws._coerce_positive_int_dict({"a": 5, "b": "7", "c": 0, "d": -3, "e": "x", "f": None, "g": 1, "h": 2.9, 4: 6}),
+            ws._coerce_positive_int_dict(
+                {
+                    "a": 5,
+                    "b": "7",
+                    "c": 0,
+                    "d": -3,
+                    "e": "x",
+                    "f": None,
+                    "g": 1,
+                    "h": 2.9,
+                    4: 6,
+                }
+            ),
             {"a": 5, "b": 7, "g": 1, "h": 2, "4": 6},
         )
         self.assertEqual(ws._coerce_positive_int_dict({"inf": float("inf")}), {})
@@ -645,7 +816,9 @@ class WorkspaceStateCoercionTests(unittest.TestCase):
             self.assertEqual(ws._coerce_positive_int_dict(value), {})
 
     def test_string_lists_drop_empty_items_and_stringify_the_rest(self):
-        self.assertEqual(ws._coerce_str_list(["a", "", None, 3, 0, "b"]), ["a", "3", "0", "b"])
+        self.assertEqual(
+            ws._coerce_str_list(["a", "", None, 3, 0, "b"]), ["a", "3", "0", "b"]
+        )
         for value in (None, "ab", ("a",), {"a"}, 5):
             self.assertEqual(ws._coerce_str_list(value), [])
         self.assertEqual(ws._coerce_str_list([]), [])
@@ -655,7 +828,16 @@ class WorkspaceStateCoercionTests(unittest.TestCase):
         self.assertEqual(ws._coerce_header_order([]), [])
         returned = ["a"]
         self.assertIsNot(ws._coerce_header_order(returned), returned)
-        for value in (None, "ab", ("a",), ["a", "a"], ["a", ""], ["a", 1], [None], ["", ""]):
+        for value in (
+            None,
+            "ab",
+            ("a",),
+            ["a", "a"],
+            ["a", ""],
+            ["a", 1],
+            [None],
+            ["", ""],
+        ):
             self.assertIsNone(ws._coerce_header_order(value), value)
 
 
@@ -669,50 +851,125 @@ class WorkspaceStateSectionTests(unittest.TestCase):
         self.assertEqual(payload["dialog_sizes"], {"ok": [640, 480], "long": [1, 2]})
         self.assertEqual(payload["dialog_maximized"], {"a": True})
         loaded = WorkspaceState.from_dict(
-            {"dialog_sizes": {"x": [5, 6, 7], "y": [1]}, "dialog_maximized": {"x": False, "y": "no"}}
+            {
+                "dialog_sizes": {"x": [5, 6, 7], "y": [1]},
+                "dialog_maximized": {"x": False, "y": "no"},
+            }
         )
-        self.assertEqual((loaded.dialog_sizes, loaded.dialog_maximized), ({"x": [5, 6]}, {"x": False}))
+        self.assertEqual(
+            (loaded.dialog_sizes, loaded.dialog_maximized),
+            ({"x": [5, 6]}, {"x": False}),
+        )
         for key in ("dialog_sizes", "dialog_maximized", "header_layouts"):
             for bad in (None, [], "x"):
                 self.assertEqual(getattr(WorkspaceState.from_dict({key: bad}), key), {})
 
-    def test_header_layout_widths_are_limited_to_30_through_2000_and_sort_is_normalized(self):
+    def test_header_layout_widths_are_limited_to_30_through_2000_and_sort_is_normalized(
+        self,
+    ):
         layout = HeaderLayoutState.from_dict(
             {
-                "widths": {"lo": 29, "min": 30, "mid": 100, "max": 2000, "hi": 2001, "text": "250", "bad": "x", "zero": 0},
+                "widths": {
+                    "lo": 29,
+                    "min": 30,
+                    "mid": 100,
+                    "max": 2000,
+                    "hi": 2001,
+                    "text": "250",
+                    "bad": "x",
+                    "zero": 0,
+                },
                 "order": ["a", "b"],
                 "sort_column": 5,
                 "sort_descending": True,
             }
         )
-        self.assertEqual(layout.widths, {"min": 30, "mid": 100, "max": 2000, "text": 250})
-        self.assertEqual((layout.order, layout.sort_column, layout.sort_descending), (["a", "b"], "5", True))
-        written = HeaderLayoutState({"lo": 29, "min": 30, "max": 2000, "hi": 2001}, ["a"], "", 1).to_dict()
-        self.assertEqual(written, {"widths": {"min": 30, "max": 2000}, "order": ["a"], "sort_column": None, "sort_descending": True})
-        self.assertIs(HeaderLayoutState.from_dict({"order": [], "sort_descending": 1}).sort_descending, False)
+        self.assertEqual(
+            layout.widths, {"min": 30, "mid": 100, "max": 2000, "text": 250}
+        )
+        self.assertEqual(
+            (layout.order, layout.sort_column, layout.sort_descending),
+            (["a", "b"], "5", True),
+        )
+        written = HeaderLayoutState(
+            {"lo": 29, "min": 30, "max": 2000, "hi": 2001}, ["a"], "", 1
+        ).to_dict()
+        self.assertEqual(
+            written,
+            {
+                "widths": {"min": 30, "max": 2000},
+                "order": ["a"],
+                "sort_column": None,
+                "sort_descending": True,
+            },
+        )
+        self.assertIs(
+            HeaderLayoutState.from_dict(
+                {"order": [], "sort_descending": 1}
+            ).sort_descending,
+            False,
+        )
         self.assertIs(HeaderLayoutState().sort_descending, False)
 
     def test_a_corrupt_header_order_resets_the_layout_on_read_and_write(self):
-        self.assertEqual(HeaderLayoutState.from_dict({"order": ["a", "a"], "widths": {"a": 100}}), HeaderLayoutState())
         self.assertEqual(
-            HeaderLayoutState(widths={"a": 100}, order=["a", "a"], sort_column="a", sort_descending=True).to_dict(),
+            HeaderLayoutState.from_dict({"order": ["a", "a"], "widths": {"a": 100}}),
+            HeaderLayoutState(),
+        )
+        self.assertEqual(
+            HeaderLayoutState(
+                widths={"a": 100},
+                order=["a", "a"],
+                sort_column="a",
+                sort_descending=True,
+            ).to_dict(),
             {"widths": {}, "order": [], "sort_column": None, "sort_descending": False},
         )
         self.assertEqual(HeaderLayoutState.from_dict({"widths": {"a": 100}}).order, [])
 
-    def test_selected_node_requires_a_known_kind_a_path_and_the_identifier_its_kind_needs(self):
+    def test_selected_node_requires_a_known_kind_a_path_and_the_identifier_its_kind_needs(
+        self,
+    ):
         parse = ws.ProjectTreeSelectionState.from_dict
-        self.assertEqual(parse({"kind": "database", "file_path": "C:/a.mdb"}), ws.ProjectTreeSelectionState("database", "C:/a.mdb"))
         self.assertEqual(
-            parse({"kind": "bid", "file_path": "C:/a.mdb", "bid_uid": 7, "project_uid": "9"}),
-            ws.ProjectTreeSelectionState("bid", "C:/a.mdb", bid_uid="7", project_uid=None),
+            parse({"kind": "database", "file_path": "C:/a.mdb"}),
+            ws.ProjectTreeSelectionState("database", "C:/a.mdb"),
         )
         self.assertEqual(
-            parse({"kind": "project", "file_path": "C:/a.mdb", "bid_uid": "3", "project_uid": "9"}),
-            ws.ProjectTreeSelectionState("project", "C:/a.mdb", bid_uid=None, project_uid="9"),
+            parse(
+                {
+                    "kind": "bid",
+                    "file_path": "C:/a.mdb",
+                    "bid_uid": 7,
+                    "project_uid": "9",
+                }
+            ),
+            ws.ProjectTreeSelectionState(
+                "bid", "C:/a.mdb", bid_uid="7", project_uid=None
+            ),
         )
         self.assertEqual(
-            parse({"kind": "database", "file_path": "C:/a.mdb", "bid_uid": "3", "project_uid": "9"}),
+            parse(
+                {
+                    "kind": "project",
+                    "file_path": "C:/a.mdb",
+                    "bid_uid": "3",
+                    "project_uid": "9",
+                }
+            ),
+            ws.ProjectTreeSelectionState(
+                "project", "C:/a.mdb", bid_uid=None, project_uid="9"
+            ),
+        )
+        self.assertEqual(
+            parse(
+                {
+                    "kind": "database",
+                    "file_path": "C:/a.mdb",
+                    "bid_uid": "3",
+                    "project_uid": "9",
+                }
+            ),
             ws.ProjectTreeSelectionState("database", "C:/a.mdb"),
         )
         rejected = (
@@ -739,27 +996,60 @@ class WorkspaceStateSectionTests(unittest.TestCase):
             {"kind": "bid", "file_path": "p", "bid_uid": "7", "project_uid": None},
         )
 
-    def test_project_workspace_distinguishes_missing_from_empty_expansion_and_cleans_items(self):
-        loaded = ws.ProjectWorkspaceState.from_dict({"expanded_node_keys": ["a", "", None, 3], "group_by_job_status": 1})
+    def test_project_workspace_distinguishes_missing_from_empty_expansion_and_cleans_items(
+        self,
+    ):
+        loaded = ws.ProjectWorkspaceState.from_dict(
+            {"expanded_node_keys": ["a", "", None, 3], "group_by_job_status": 1}
+        )
         self.assertEqual(loaded.expanded_node_keys, ["a", "3"])
         self.assertIs(loaded.group_by_job_status, False)
-        self.assertEqual(ws.ProjectWorkspaceState.from_dict({"expanded_node_keys": []}).expanded_node_keys, [])
+        self.assertEqual(
+            ws.ProjectWorkspaceState.from_dict(
+                {"expanded_node_keys": []}
+            ).expanded_node_keys,
+            [],
+        )
         self.assertIsNone(ws.ProjectWorkspaceState.from_dict({}).expanded_node_keys)
-        self.assertEqual(ws.ProjectWorkspaceState.from_dict({"expanded_node_keys": "ab"}).expanded_node_keys, [])
-        self.assertIs(ws.ProjectWorkspaceState.from_dict({"group_by_job_status": True}).group_by_job_status, True)
+        self.assertEqual(
+            ws.ProjectWorkspaceState.from_dict(
+                {"expanded_node_keys": "ab"}
+            ).expanded_node_keys,
+            [],
+        )
+        self.assertIs(
+            ws.ProjectWorkspaceState.from_dict(
+                {"group_by_job_status": True}
+            ).group_by_job_status,
+            True,
+        )
         selected = {"kind": "database", "file_path": "C:/a.mdb"}
         state = ws.ProjectWorkspaceState.from_dict({"selected_node": selected})
-        self.assertEqual(state.selected_node, ws.ProjectTreeSelectionState("database", "C:/a.mdb"))
-        self.assertEqual(state.to_dict()["selected_node"], {"kind": "database", "file_path": "C:/a.mdb", "bid_uid": None, "project_uid": None})
+        self.assertEqual(
+            state.selected_node, ws.ProjectTreeSelectionState("database", "C:/a.mdb")
+        )
+        self.assertEqual(
+            state.to_dict()["selected_node"],
+            {
+                "kind": "database",
+                "file_path": "C:/a.mdb",
+                "bid_uid": None,
+                "project_uid": None,
+            },
+        )
         self.assertIsNone(ws.ProjectWorkspaceState().to_dict()["selected_node"])
         keys = ["x"]
-        written = ws.ProjectWorkspaceState(expanded_node_keys=keys).to_dict()["expanded_node_keys"]
+        written = ws.ProjectWorkspaceState(expanded_node_keys=keys).to_dict()[
+            "expanded_node_keys"
+        ]
         self.assertEqual(written, ["x"])
         self.assertIsNot(written, keys)
 
     def test_each_boolean_scalar_has_its_own_default_when_invalid(self):
         bad = 1
-        main = ws.MainWindowWorkspaceState.from_dict({"is_maximized": bad, "status_bar_visible": bad})
+        main = ws.MainWindowWorkspaceState.from_dict(
+            {"is_maximized": bad, "status_bar_visible": bad}
+        )
         self.assertEqual((main.is_maximized, main.status_bar_visible), (True, True))
         takeoff = TakeoffWorkspaceState.from_dict(
             {
@@ -779,15 +1069,32 @@ class WorkspaceStateSectionTests(unittest.TestCase):
         )
         self.assertEqual(takeoff, TakeoffWorkspaceState())
         toolbar = ws.ToolbarVisibilityState.from_dict(
-            {"main_toolbar_visible": bad, "view_toolbar_visible": bad, "plan_tools_toolbar_visible": bad}
+            {
+                "main_toolbar_visible": bad,
+                "view_toolbar_visible": bad,
+                "plan_tools_toolbar_visible": bad,
+            }
         )
         self.assertEqual(toolbar, ws.ToolbarVisibilityState())
-        window = ws.DetachedWindowState.from_dict({"open": bad, "is_maximized": bad, "is_fullscreen": bad, "geometry_b64": ""})
+        window = ws.DetachedWindowState.from_dict(
+            {"open": bad, "is_maximized": bad, "is_fullscreen": bad, "geometry_b64": ""}
+        )
         self.assertEqual(window, ws.DetachedWindowState())
         explicit = ws.ToolbarVisibilityState.from_dict(
-            {"main_toolbar_visible": False, "view_toolbar_visible": False, "plan_tools_toolbar_visible": False}
+            {
+                "main_toolbar_visible": False,
+                "view_toolbar_visible": False,
+                "plan_tools_toolbar_visible": False,
+            }
         )
-        self.assertEqual((explicit.main_toolbar_visible, explicit.view_toolbar_visible, explicit.plan_tools_toolbar_visible), (False, False, False))
+        self.assertEqual(
+            (
+                explicit.main_toolbar_visible,
+                explicit.view_toolbar_visible,
+                explicit.plan_tools_toolbar_visible,
+            ),
+            (False, False, False),
+        )
 
     def test_detached_windows_load_each_window_independently(self):
         loaded = ws.DetachedWindowsState.from_dict(
@@ -797,11 +1104,19 @@ class WorkspaceStateSectionTests(unittest.TestCase):
                 "view_window": {"is_fullscreen": True},
             }
         )
-        self.assertEqual(loaded.mesh_view, ws.DetachedWindowState(True, "m", False, False))
-        self.assertEqual(loaded.annotation_view, ws.DetachedWindowState(False, None, True, False))
-        self.assertEqual(loaded.view_window, ws.DetachedWindowState(False, None, False, True))
+        self.assertEqual(
+            loaded.mesh_view, ws.DetachedWindowState(True, "m", False, False)
+        )
+        self.assertEqual(
+            loaded.annotation_view, ws.DetachedWindowState(False, None, True, False)
+        )
+        self.assertEqual(
+            loaded.view_window, ws.DetachedWindowState(False, None, False, True)
+        )
         self.assertEqual(ws.DetachedWindowState.from_dict({}), ws.DetachedWindowState())
-        self.assertEqual(ws.DetachedWindowsState.from_dict({}), ws.DetachedWindowsState())
+        self.assertEqual(
+            ws.DetachedWindowsState.from_dict({}), ws.DetachedWindowsState()
+        )
 
     def test_takeoff_workspace_lists_and_dropdown_sizes_follow_the_coercion_rules(self):
         loaded = TakeoffWorkspaceState.from_dict(
@@ -818,10 +1133,19 @@ class WorkspaceStateSectionTests(unittest.TestCase):
         self.assertEqual(loaded.left_column_pan_first_sizes, [4])
         self.assertEqual(loaded.dropdown_popup_sizes, {"a": [10, 20]})
         self.assertEqual(loaded.active_view, "3d")
-        self.assertEqual(TakeoffWorkspaceState.from_dict({"active_view": "2D"}).active_view, "2d")
-        self.assertEqual(TakeoffWorkspaceState.from_dict({"active_view": "3D"}).active_view, "3d")
         self.assertEqual(
-            TakeoffWorkspaceState(dropdown_popup_sizes={1: [3, 4]}).to_dict()["dropdown_popup_sizes"], {"1": [3, 4]}
+            TakeoffWorkspaceState.from_dict({"active_view": "2D"}).active_view, "2d"
         )
-        lists = TakeoffWorkspaceState(takeoff_splitter_sizes=[1, 2]).to_dict()["takeoff_splitter_sizes"]
+        self.assertEqual(
+            TakeoffWorkspaceState.from_dict({"active_view": "3D"}).active_view, "3d"
+        )
+        self.assertEqual(
+            TakeoffWorkspaceState(dropdown_popup_sizes={1: [3, 4]}).to_dict()[
+                "dropdown_popup_sizes"
+            ],
+            {"1": [3, 4]},
+        )
+        lists = TakeoffWorkspaceState(takeoff_splitter_sizes=[1, 2]).to_dict()[
+            "takeoff_splitter_sizes"
+        ]
         self.assertEqual(lists, [1, 2])

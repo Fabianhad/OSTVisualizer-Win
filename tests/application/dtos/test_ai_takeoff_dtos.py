@@ -331,13 +331,15 @@ class WireContractLiteralsTests(unittest.TestCase):
         }
         self.assertEqual(dtos.AI_TAKEOFF_COMMANDS, tuple(expected))
         self.assertEqual(
-            {name: set(args) for name, args in dtos.AI_TAKEOFF_COMMAND_ARGUMENTS.items()},
+            {
+                name: set(args)
+                for name, args in dtos.AI_TAKEOFF_COMMAND_ARGUMENTS.items()
+            },
             expected,
         )
         self.assertEqual(dtos.M1A_COMMANDS, tuple(expected)[:7])
         self.assertEqual(dtos.M1B_COMMANDS, tuple(expected)[7:])
         self.assertEqual(dtos.LINE_KIND_NAMES, ("wall", "dashed", "thin", "symbol"))
-
 
     def test_status_error_and_sidecar_codes(self):
         from ost_visualizer.application.dtos import ai_takeoff_dtos as dtos
@@ -401,7 +403,11 @@ class WireContractLiteralsTests(unittest.TestCase):
         down, up, inches = "page_pts_y_down", "pdf_pts_y_up", "ost_inches"
         self.assertEqual(dtos.COORDINATE_SPACE_KEY, "coordinate_space")
         self.assertEqual(
-            (dtos.COORD_PDF_PTS_Y_UP, dtos.COORD_PAGE_PTS_Y_DOWN, dtos.COORD_OST_INCHES),
+            (
+                dtos.COORD_PDF_PTS_Y_UP,
+                dtos.COORD_PAGE_PTS_Y_DOWN,
+                dtos.COORD_OST_INCHES,
+            ),
             (up, down, inches),
         )
         self.assertEqual(dtos.COORD_MODEL_UNITS, "model_units")
@@ -458,11 +464,11 @@ class WireContractLiteralsTests(unittest.TestCase):
     ):
         from ost_visualizer.application.dtos.ai_takeoff_dtos import UntrustedText
 
-        bidi = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
-        self.assertEqual(UntrustedText.of("a" + bidi + "b").value, "ab")
-        self.assertEqual(
-            UntrustedText.of("a\tb\nc\rd\x0be\x0cf").value, "a b c d e f"
+        bidi = (
+            "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
         )
+        self.assertEqual(UntrustedText.of("a" + bidi + "b").value, "ab")
+        self.assertEqual(UntrustedText.of("a\tb\nc\rd\x0be\x0cf").value, "a b c d e f")
         self.assertEqual(UntrustedText.of("AXB X").value, "AXB X")
 
 

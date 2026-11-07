@@ -7,6 +7,7 @@ from typing import Mapping, Optional, Union
 
 _ACCESS_DATABASE_NAMESPACE = uuid.UUID("c6e62f04-915a-4b50-bf67-80bdb299f9b5")
 _SQL_DATABASE_NAMESPACE = uuid.UUID("be25d43e-289f-41ad-958e-ad0f7950b00a")
+_IDENTITY_SEPARATOR = "|"
 
 
 class DatabaseBackend(str, Enum):
@@ -176,15 +177,19 @@ class DatabaseDescriptor:
         schema_version: int,
     ) -> "DatabaseDescriptor":
         identity = location.database_guid.strip().lower()
-        if not identity:
-            identity = "|".join(
-                (
-                    location.server.strip().casefold(),
-                    location.database.strip().casefold(),
-                    location.authentication_mode.value,
-                    location.username.strip().casefold(),
-                )
+        if not identity and not database_id:
+            parts = (
+                location.server.strip().casefold(),
+                location.database.strip().casefold(),
+                location.authentication_mode.value,
+                location.username.strip().casefold(),
             )
+            if any(_IDENTITY_SEPARATOR in part for part in parts):
+                raise ValueError(
+                    "SQL Server connection details cannot contain the "
+                    f"'{_IDENTITY_SEPARATOR}' character without a database id."
+                )
+            identity = _IDENTITY_SEPARATOR.join(parts)
         if schema_version < 0:
             raise ValueError("Database schema version cannot be negative")
         stable_id = database_id or str(uuid.uuid5(_SQL_DATABASE_NAMESPACE, identity))
@@ -273,6 +278,10 @@ def validate_sql_database_name(name: str) -> None:
         )
     if any(ord(character) < 32 for character in name):
         raise ValueError("Database name contains a control character.")
+    if _IDENTITY_SEPARATOR in name:
+        raise ValueError(
+            f"Database name cannot contain the '{_IDENTITY_SEPARATOR}' character."
+        )
     if name.casefold() in {"master", "model", "msdb", "tempdb"}:
         raise ValueError("A SQL Server system database cannot be used.")
 

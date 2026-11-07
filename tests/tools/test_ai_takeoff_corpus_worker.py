@@ -12,6 +12,7 @@ from unittest import mock
 from tests.integration.ai_takeoff import s101_fixture as fx
 from tests.paths import REPO_ROOT
 from tests.presentation.services.ai_takeoff_pdf_support import write_content_pdf
+from tools import ai_takeoff_corpus as corpus
 from tools import ai_takeoff_corpus_worker as worker
 from tools.ai_takeoff_corpus import RUN_COLUMNS, TextRun
 import tests.helpers.mdb.schema_support as access
@@ -595,8 +596,15 @@ class WorkerProcessTests(unittest.TestCase):
         pdf = write_content_pdf(work / "plan.pdf", fx.s101_content() + TITLE)
         cls.plan_path = work / "plan.json"
         completed = subprocess.run(
-            [sys.executable, "-m", "tools.ai_takeoff_corpus_worker", "prepare",
-             str(pdf), str(work), str(cls.plan_path)],
+            [
+                sys.executable,
+                "-m",
+                "tools.ai_takeoff_corpus_worker",
+                "prepare",
+                str(pdf),
+                str(work),
+                str(cls.plan_path),
+            ],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -1114,7 +1122,6 @@ class WorkerProcessTests(unittest.TestCase):
         self.assertEqual(row["segments"], 1)
 
 
-
 class WorkerSupportTests(unittest.TestCase):
     """Small seams of the worker that need no PDF and no Access database."""
 
@@ -1129,6 +1136,8 @@ class WorkerSupportTests(unittest.TestCase):
         class Read:
             def list_text(self, snapshot, cursor=None, limit=None):
                 calls.append((snapshot, cursor, limit))
+                if len(calls) > len(pages):
+                    raise AssertionError("page_runs keeps asking for pages")
                 following, items = pages[cursor]
                 meta = {"next_cursor": following} if following else {}
                 return {
@@ -1161,7 +1170,10 @@ class WorkerSupportTests(unittest.TestCase):
                 return {
                     "data": {
                         "runs": [
-                            {"text": {"value": "FRAMING PLAN"}, "bbox_pts": [500, 700, 590, 712]}
+                            {
+                                "text": {"value": "FRAMING PLAN"},
+                                "bbox_pts": [500, 700, 590, 712],
+                            }
                         ]
                     },
                     "meta": {},
@@ -1218,10 +1230,16 @@ class WorkerSupportTests(unittest.TestCase):
                 "ost_visualizer.infrastructure.mdb.connection_manager.MdbConnectionManager",
                 Connections,
             ),
-            mock.patch("ost_visualizer.infrastructure.mdb.mdb_reader.MdbReader", Reader),
-            mock.patch("ost_visualizer.domain.entities.page.build_pages_from_bid_data", build),
+            mock.patch(
+                "ost_visualizer.infrastructure.mdb.mdb_reader.MdbReader", Reader
+            ),
+            mock.patch(
+                "ost_visualizer.domain.entities.page.build_pages_from_bid_data", build
+            ),
         )
-        with tempfile.TemporaryDirectory() as sidecars, patches[0], patches[1], patches[2]:
+        with tempfile.TemporaryDirectory() as sidecars, patches[0], patches[1], patches[
+            2
+        ]:
             service, pages = worker._scratch_read_service(prepared, sidecars, object())
             self.assertEqual([page.uid for page in pages], ["p"])
             self.assertEqual(built, [({"p": record}, [])])
@@ -1243,13 +1261,58 @@ class WorkerSupportTests(unittest.TestCase):
                 ("bid-1", "Corpus scratch", []),
             )
 
+    def test_a_worker_that_cannot_open_the_pdf_fails_with_an_error_the_harness_classifies(
+        self,
+    ):
+        # The harness classifies a failed worker from its exit code and the last
+        # stderr line, so the uncaught RuntimeError must cross the process boundary
+        # as exit 1 with the exception name at the start of that line, and must not
+        # leave a prepared file or a scratch database behind.
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            bad = work / "bad.pdf"
+            bad.write_bytes(b"not a pdf")
+            prepared = work / "bad.json"
+            command = [
+                sys.executable,
+                "-m",
+                "tools.ai_takeoff_corpus_worker",
+                "prepare",
+                str(bad),
+                str(work),
+                str(prepared),
+            ]
+            done = subprocess.run(
+                command,
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
+            )
+            last = [line for line in done.stderr.splitlines() if line.strip()][-1]
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(last, "RuntimeError: PDF did not open")
+            self.assertEqual(corpus._exception_name(last), "RuntimeError")
+            self.assertEqual(
+                corpus._run_child(command, 120),
+                {"status": "error", "error": "exit 1: RuntimeError"},
+            )
+            self.assertEqual(sorted(path.name for path in work.iterdir()), ["bad.pdf"])
+
     def test_the_memory_counters_structure_has_the_win32_layout(self):
         word = worker.ctypes.sizeof(worker.ctypes.c_size_t)
         names = (
-            "cb", "PageFaultCount", "PeakWorkingSetSize", "WorkingSetSize",
-            "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage",
-            "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage",
-            "PagefileUsage", "PeakPagefileUsage",
+            "cb",
+            "PageFaultCount",
+            "PeakWorkingSetSize",
+            "WorkingSetSize",
+            "QuotaPeakPagedPoolUsage",
+            "QuotaPagedPoolUsage",
+            "QuotaPeakNonPagedPoolUsage",
+            "QuotaNonPagedPoolUsage",
+            "PagefileUsage",
+            "PeakPagefileUsage",
         )
         offsets = [0, 4] + [8 + index * word for index in range(len(names) - 2)]
         self.assertEqual(
@@ -1277,7 +1340,9 @@ class WorkerSupportTests(unittest.TestCase):
     ):
         def platform(choice):
             environment = {
-                key: value for key, value in os.environ.items() if key != "QT_QPA_PLATFORM"
+                key: value
+                for key, value in os.environ.items()
+                if key != "QT_QPA_PLATFORM"
             }
             if choice:
                 environment["QT_QPA_PLATFORM"] = choice
@@ -1328,8 +1393,16 @@ class MeasurementBoundaryTests(unittest.TestCase):
         f"BT /F1 6 Tf 40 60 Td ({LONG_TITLE}) Tj ET\n" + _synthetic_lines(3),
         fx.s101_content() + TITLE,
     ]
-    (FEWER_SEGMENTS, CALLOUTS_AT_CAP, FEWEST_RUNS, ENOUGH_RUNS, WIDTH_ORDER,
-     NO_TEXT, LONG_TITLE_PAGE, ROOM) = range(8)
+    (
+        FEWER_SEGMENTS,
+        CALLOUTS_AT_CAP,
+        FEWEST_RUNS,
+        ENOUGH_RUNS,
+        WIDTH_ORDER,
+        NO_TEXT,
+        LONG_TITLE_PAGE,
+        ROOM,
+    ) = range(8)
 
     @classmethod
     def setUpClass(cls):
@@ -1341,8 +1414,15 @@ class MeasurementBoundaryTests(unittest.TestCase):
         pdf = _pages_pdf(work / "boundaries.pdf", cls.PAGES)
         prepared = work / "boundaries.json"
         completed = subprocess.run(
-            [sys.executable, "-m", "tools.ai_takeoff_corpus_worker", "prepare",
-             str(pdf), str(work), str(prepared)],
+            [
+                sys.executable,
+                "-m",
+                "tools.ai_takeoff_corpus_worker",
+                "prepare",
+                str(pdf),
+                str(work),
+                str(prepared),
+            ],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -1354,17 +1434,25 @@ class MeasurementBoundaryTests(unittest.TestCase):
         cls.prepared = json.loads(prepared.read_text(encoding="utf-8"))
 
     def measure(self, index):
-        return worker.measure_page(self.prepared, self.prepared["pages"][index]["uid"], [])
+        return worker.measure_page(
+            self.prepared, self.prepared["pages"][index]["uid"], []
+        )
 
     def test_callouts_need_fewer_than_ten_drawing_runs_and_at_least_500_segments(self):
         rows = [
             self.measure(index)
             for index in (
-                self.FEWER_SEGMENTS, self.CALLOUTS_AT_CAP, self.FEWEST_RUNS, self.ENOUGH_RUNS
+                self.FEWER_SEGMENTS,
+                self.CALLOUTS_AT_CAP,
+                self.FEWEST_RUNS,
+                self.ENOUGH_RUNS,
             )
         ]
         self.assertEqual(
-            [(r["segments"], r["drawing_text_runs"], r["callouts_as_lines"]) for r in rows],
+            [
+                (r["segments"], r["drawing_text_runs"], r["callouts_as_lines"])
+                for r in rows
+            ],
             [(499, 0, False), (500, 0, True), (500, 9, True), (500, 10, False)],
         )
 

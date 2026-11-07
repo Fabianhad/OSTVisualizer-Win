@@ -185,7 +185,9 @@ class _ScriptedConfigRepository:
 
 def _loaded(config, logger=None, **kwargs):
     repository = _ScriptedConfigRepository(config, **kwargs)
-    aggregate = ConfigAggregate(repository, logger) if logger else ConfigAggregate(repository)
+    aggregate = (
+        ConfigAggregate(repository, logger) if logger else ConfigAggregate(repository)
+    )
     return aggregate, repository
 
 
@@ -231,7 +233,9 @@ class ConfigAggregatePropertyTests(unittest.TestCase):
         "inactive_object_color",
     )
 
-    def test_every_property_reports_the_loaded_value_and_a_valid_config_is_not_re_saved(self):
+    def test_every_property_reports_the_loaded_value_and_a_valid_config_is_not_re_saved(
+        self,
+    ):
         # display modes cannot differ while synced, so load the unsynced variant.
         custom = custom_config()
         aggregate, repository = _loaded(custom)
@@ -266,23 +270,56 @@ class ConfigAggregateBoundsTests(unittest.TestCase):
                 self.assertEqual(len(repository.saved), 1 if changed else 0)
 
     def test_auto_zoom_is_clamped_to_zero_through_1600(self):
-        self.assertEqual((ConfigAggregate.MIN_AUTO_ZOOM_LEVEL, ConfigAggregate.MAX_AUTO_ZOOM_LEVEL), (0, 1600))
+        self.assertEqual(
+            (ConfigAggregate.MIN_AUTO_ZOOM_LEVEL, ConfigAggregate.MAX_AUTO_ZOOM_LEVEL),
+            (0, 1600),
+        )
         self.check(
             "default_auto_zoom_level",
-            ((-1, 0, True), (0, 0, False), (1, 1, False), (1599, 1599, False), (1600, 1600, False), (1601, 1600, True), (-500, 0, True), (99999, 1600, True)),
+            (
+                (-1, 0, True),
+                (0, 0, False),
+                (1, 1, False),
+                (1599, 1599, False),
+                (1600, 1600, False),
+                (1601, 1600, True),
+                (-500, 0, True),
+                (99999, 1600, True),
+            ),
         )
 
     def test_crosshair_thickness_is_clamped_to_one_through_ten(self):
         self.assertEqual(
-            (ConfigAggregate.MIN_CROSSHAIR_LINE_THICKNESS, ConfigAggregate.MAX_CROSSHAIR_LINE_THICKNESS), (1, 10)
+            (
+                ConfigAggregate.MIN_CROSSHAIR_LINE_THICKNESS,
+                ConfigAggregate.MAX_CROSSHAIR_LINE_THICKNESS,
+            ),
+            (1, 10),
         )
         self.check(
             "crosshair_line_thickness",
-            ((0, 1, True), (1, 1, False), (2, 2, False), (9, 9, False), (10, 10, False), (11, 10, True), (-3, 1, True), (400, 10, True)),
+            (
+                (0, 1, True),
+                (1, 1, False),
+                (2, 2, False),
+                (9, 9, False),
+                (10, 10, False),
+                (11, 10, True),
+                (-3, 1, True),
+                (400, 10, True),
+            ),
         )
 
-    def test_each_snap_threshold_accepts_zero_through_100_and_falls_back_to_the_default(self):
-        self.assertEqual((ConfigAggregate.MIN_SNAP_THRESHOLD_PX, ConfigAggregate.MAX_SNAP_THRESHOLD_PX), (0, 100))
+    def test_each_snap_threshold_accepts_zero_through_100_and_falls_back_to_the_default(
+        self,
+    ):
+        self.assertEqual(
+            (
+                ConfigAggregate.MIN_SNAP_THRESHOLD_PX,
+                ConfigAggregate.MAX_SNAP_THRESHOLD_PX,
+            ),
+            (0, 100),
+        )
         for field in (
             "snap_to_grid_threshold_px",
             "snap_to_pdf_lines_threshold_px",
@@ -291,7 +328,15 @@ class ConfigAggregateBoundsTests(unittest.TestCase):
         ):
             self.check(
                 field,
-                ((-1, 8, True), (0, 0, False), (1, 1, False), (99, 99, False), (100, 100, False), (101, 8, True), (5000, 8, True)),
+                (
+                    (-1, 8, True),
+                    (0, 0, False),
+                    (1, 1, False),
+                    (99, 99, False),
+                    (100, 100, False),
+                    (101, 8, True),
+                    (5000, 8, True),
+                ),
             )
 
     def test_snap_thresholds_are_validated_independently_of_each_other(self):
@@ -315,30 +360,64 @@ class ConfigAggregateBoundsTests(unittest.TestCase):
         )
         self.assertEqual(len(repository.saved), 1)
 
-    def test_snap_angles_must_be_one_of_the_supported_values_otherwise_each_uses_its_own_default(self):
+    def test_snap_angles_must_be_one_of_the_supported_values_otherwise_each_uses_its_own_default(
+        self,
+    ):
         for angle in sorted(ConfigAggregate.VALID_MOUSE_SNAP_ANGLES):
             with self.subTest(angle=angle):
                 aggregate, repository = _loaded(
-                    replace(Config(), mouse_unpressed_snap_angle=angle, mouse_pressed_snap_angle=angle)
+                    replace(
+                        Config(),
+                        mouse_unpressed_snap_angle=angle,
+                        mouse_pressed_snap_angle=angle,
+                    )
                 )
                 self.assertEqual(
-                    (aggregate.mouse_unpressed_snap_angle, aggregate.mouse_pressed_snap_angle), (angle, angle)
+                    (
+                        aggregate.mouse_unpressed_snap_angle,
+                        aggregate.mouse_pressed_snap_angle,
+                    ),
+                    (angle, angle),
                 )
                 self.assertEqual(repository.saved, [])
         for angle in (-1, 6, 7, 20, 44, 91, 180):
             with self.subTest(invalid=angle):
                 aggregate, repository = _loaded(
-                    replace(Config(), mouse_unpressed_snap_angle=angle, mouse_pressed_snap_angle=angle)
+                    replace(
+                        Config(),
+                        mouse_unpressed_snap_angle=angle,
+                        mouse_pressed_snap_angle=angle,
+                    )
                 )
                 self.assertEqual(
-                    (aggregate.mouse_unpressed_snap_angle, aggregate.mouse_pressed_snap_angle),
-                    (Config.DEFAULT_MOUSE_UNPRESSED_SNAP_ANGLE, Config.DEFAULT_MOUSE_PRESSED_SNAP_ANGLE),
+                    (
+                        aggregate.mouse_unpressed_snap_angle,
+                        aggregate.mouse_pressed_snap_angle,
+                    ),
+                    (
+                        Config.DEFAULT_MOUSE_UNPRESSED_SNAP_ANGLE,
+                        Config.DEFAULT_MOUSE_PRESSED_SNAP_ANGLE,
+                    ),
                 )
                 self.assertEqual(len(repository.saved), 1)
-        aggregate, repository = _loaded(replace(Config(), mouse_unpressed_snap_angle=44, mouse_pressed_snap_angle=45))
-        self.assertEqual((aggregate.mouse_unpressed_snap_angle, aggregate.mouse_pressed_snap_angle), (15, 45))
+        aggregate, repository = _loaded(
+            replace(
+                Config(), mouse_unpressed_snap_angle=44, mouse_pressed_snap_angle=45
+            )
+        )
+        self.assertEqual(
+            (aggregate.mouse_unpressed_snap_angle, aggregate.mouse_pressed_snap_angle),
+            (15, 45),
+        )
         logger = _RecordingLogger()
-        _loaded(replace(Config(), mouse_unpressed_snap_angle=44, snap_to_takeoffs_threshold_px=700), logger)
+        _loaded(
+            replace(
+                Config(),
+                mouse_unpressed_snap_angle=44,
+                snap_to_takeoffs_threshold_px=700,
+            ),
+            logger,
+        )
         self.assertEqual(
             logger.messages(),
             [
@@ -349,47 +428,104 @@ class ConfigAggregateBoundsTests(unittest.TestCase):
 
 
 class ConfigAggregateChoiceTests(unittest.TestCase):
-    def test_display_modes_default_when_invalid_and_each_mode_is_corrected_on_its_own(self):
+    def test_display_modes_default_when_invalid_and_each_mode_is_corrected_on_its_own(
+        self,
+    ):
         logger = _RecordingLogger()
         aggregate, repository = _loaded(
-            replace(Config(), display_modes_synced=False, display_mode_3d="Bogus", display_mode_2d="Solid"), logger
+            replace(
+                Config(),
+                display_modes_synced=False,
+                display_mode_3d="Bogus",
+                display_mode_2d="Solid",
+            ),
+            logger,
         )
-        self.assertEqual((aggregate.display_mode_3d, aggregate.display_mode_2d), ("Original", "Solid"))
+        self.assertEqual(
+            (aggregate.display_mode_3d, aggregate.display_mode_2d),
+            ("Original", "Solid"),
+        )
         self.assertEqual(len(repository.saved), 1)
         self.assertEqual(
-            logger.messages(), ["Invalid display_mode_3d 'Bogus' in config; using default 'Original'"]
+            logger.messages(),
+            ["Invalid display_mode_3d 'Bogus' in config; using default 'Original'"],
         )
         logger = _RecordingLogger()
         aggregate, repository = _loaded(
-            replace(Config(), display_modes_synced=False, display_mode_3d="Transparent", display_mode_2d=""), logger
+            replace(
+                Config(),
+                display_modes_synced=False,
+                display_mode_3d="Transparent",
+                display_mode_2d="",
+            ),
+            logger,
         )
-        self.assertEqual((aggregate.display_mode_3d, aggregate.display_mode_2d), ("Transparent", "Original"))
-        self.assertEqual(logger.messages(), ["Invalid display_mode_2d '' in config; using default 'Original'"])
+        self.assertEqual(
+            (aggregate.display_mode_3d, aggregate.display_mode_2d),
+            ("Transparent", "Original"),
+        )
+        self.assertEqual(
+            logger.messages(),
+            ["Invalid display_mode_2d '' in config; using default 'Original'"],
+        )
         self.assertEqual(len(repository.saved), 1)
 
     def test_synced_modes_follow_the_3d_mode_and_unsynced_modes_stay_independent(self):
         aggregate, repository = _loaded(
-            replace(Config(), display_modes_synced=True, display_mode_3d="Solid", display_mode_2d="Transparent")
+            replace(
+                Config(),
+                display_modes_synced=True,
+                display_mode_3d="Solid",
+                display_mode_2d="Transparent",
+            )
         )
-        self.assertEqual((aggregate.display_mode_3d, aggregate.display_mode_2d), ("Solid", "Solid"))
+        self.assertEqual(
+            (aggregate.display_mode_3d, aggregate.display_mode_2d), ("Solid", "Solid")
+        )
         self.assertEqual(len(repository.saved), 1)
         aggregate, repository = _loaded(
-            replace(Config(), display_modes_synced=False, display_mode_3d="Solid", display_mode_2d="Transparent")
+            replace(
+                Config(),
+                display_modes_synced=False,
+                display_mode_3d="Solid",
+                display_mode_2d="Transparent",
+            )
         )
-        self.assertEqual((aggregate.display_mode_3d, aggregate.display_mode_2d), ("Solid", "Transparent"))
+        self.assertEqual(
+            (aggregate.display_mode_3d, aggregate.display_mode_2d),
+            ("Solid", "Transparent"),
+        )
         self.assertEqual(repository.saved, [])
-        aggregate, repository = _loaded(replace(Config(), display_modes_synced=True, display_mode_3d="Solid", display_mode_2d="Solid"))
+        aggregate, repository = _loaded(
+            replace(
+                Config(),
+                display_modes_synced=True,
+                display_mode_3d="Solid",
+                display_mode_2d="Solid",
+            )
+        )
         self.assertEqual(repository.saved, [])
 
     def test_the_synced_flag_is_coerced_to_a_boolean(self):
         aggregate, _ = _loaded(replace(Config(), display_modes_synced=1))
         self.assertIs(aggregate.display_modes_synced, True)
-        aggregate, _ = _loaded(replace(Config(), display_modes_synced=0, display_mode_3d="Solid", display_mode_2d="Original"))
+        aggregate, _ = _loaded(
+            replace(
+                Config(),
+                display_modes_synced=0,
+                display_mode_3d="Solid",
+                display_mode_2d="Original",
+            )
+        )
         self.assertIs(aggregate.display_modes_synced, False)
 
-    def test_roping_and_hotlink_choices_fall_back_to_their_defaults_with_a_warning(self):
+    def test_roping_and_hotlink_choices_fall_back_to_their_defaults_with_a_warning(
+        self,
+    ):
         for value in sorted(ConfigAggregate.VALID_ROPING_SELECTION_METHODS):
-            aggregate, repository = _loaded(replace(Config(), roping_selection_method=value))
+            aggregate, repository = _loaded(
+                replace(Config(), roping_selection_method=value)
+            )
             self.assertEqual(aggregate.roping_selection_method, value)
             self.assertEqual(repository.saved, [])
         for value in sorted(ConfigAggregate.VALID_HOTLINK_TARGETS):
@@ -397,8 +533,16 @@ class ConfigAggregateChoiceTests(unittest.TestCase):
             self.assertEqual(aggregate.hotlink_target, value)
             self.assertEqual(repository.saved, [])
         logger = _RecordingLogger()
-        aggregate, repository = _loaded(replace(Config(), roping_selection_method="Touching", hotlink_target="elsewhere"), logger)
-        self.assertEqual((aggregate.roping_selection_method, aggregate.hotlink_target), ("touching", "annotation"))
+        aggregate, repository = _loaded(
+            replace(
+                Config(), roping_selection_method="Touching", hotlink_target="elsewhere"
+            ),
+            logger,
+        )
+        self.assertEqual(
+            (aggregate.roping_selection_method, aggregate.hotlink_target),
+            ("touching", "annotation"),
+        )
         self.assertEqual(
             logger.messages(),
             [
@@ -409,8 +553,12 @@ class ConfigAggregateChoiceTests(unittest.TestCase):
         self.assertEqual(len(repository.saved), 1)
 
     def test_valid_choice_sets_are_exactly_the_documented_vocabulary(self):
-        self.assertEqual(ConfigAggregate.VALID_ROPING_SELECTION_METHODS, {"touching", "inclusive"})
-        self.assertEqual(ConfigAggregate.VALID_HOTLINK_TARGETS, {"annotation", "view", "main"})
+        self.assertEqual(
+            ConfigAggregate.VALID_ROPING_SELECTION_METHODS, {"touching", "inclusive"}
+        )
+        self.assertEqual(
+            ConfigAggregate.VALID_HOTLINK_TARGETS, {"annotation", "view", "main"}
+        )
 
     def test_boolean_fields_are_coerced_to_real_booleans(self):
         aggregate, _ = _loaded(
@@ -435,9 +583,15 @@ class ConfigAggregateChoiceTests(unittest.TestCase):
     def test_caption_ids_keep_only_supported_ones_deduplicated_in_canonical_order(self):
         logger = _RecordingLogger()
         aggregate, repository = _loaded(
-            replace(Config(), pdf_annotation_caption_ids=("slope", "bogus", "area", "area", "label")), logger
+            replace(
+                Config(),
+                pdf_annotation_caption_ids=("slope", "bogus", "area", "area", "label"),
+            ),
+            logger,
         )
-        self.assertEqual(aggregate.snapshot().pdf_annotation_caption_ids, ("label", "area", "slope"))
+        self.assertEqual(
+            aggregate.snapshot().pdf_annotation_caption_ids, ("label", "area", "slope")
+        )
         self.assertEqual(len(repository.saved), 1)
         self.assertEqual(
             logger.messages(),
@@ -446,23 +600,32 @@ class ConfigAggregateChoiceTests(unittest.TestCase):
                 "using the supported identifiers in canonical order"
             ],
         )
-        aggregate, repository = _loaded(replace(Config(), pdf_annotation_caption_ids=("label", "area")))
+        aggregate, repository = _loaded(
+            replace(Config(), pdf_annotation_caption_ids=("label", "area"))
+        )
         self.assertEqual(repository.saved, [])
         aggregate, _ = _loaded(replace(Config(), pdf_annotation_caption_ids=()))
         self.assertEqual(aggregate.snapshot().pdf_annotation_caption_ids, ())
 
     def test_hidden_toolbar_items_are_normalized_on_load(self):
-        aggregate, _ = _loaded(replace(Config(), hidden_takeoff_toolbar_items=("b", "a")))
+        aggregate, _ = _loaded(
+            replace(Config(), hidden_takeoff_toolbar_items=("b", "a"))
+        )
         self.assertEqual(aggregate.snapshot().hidden_takeoff_toolbar_items, ("a", "b"))
         logger = _RecordingLogger()
         aggregate, repository = _loaded(
-            replace(Config(), show_toolbar_text=False, hidden_takeoff_toolbar_items="text"), logger
+            replace(
+                Config(), show_toolbar_text=False, hidden_takeoff_toolbar_items="text"
+            ),
+            logger,
         )
         # An unusable value is a load failure: everything resets to defaults and is saved.
         self.assertEqual(aggregate.snapshot(), Config())
         self.assertEqual(
             logger.messages(),
-            ["hidden_takeoff_toolbar_items must be a list of strings; resetting to defaults"],
+            [
+                "hidden_takeoff_toolbar_items must be a list of strings; resetting to defaults"
+            ],
         )
         self.assertEqual(repository.saved, [Config()])
 
@@ -470,7 +633,9 @@ class ConfigAggregateChoiceTests(unittest.TestCase):
 class ConfigAggregateCorrectionSaveTests(unittest.TestCase):
     GOOD_FONT = FontDefinition("Arial", "Bold", 12, 700, False, False)
 
-    def test_every_single_correction_is_saved_by_itself_and_leaves_other_fields_alone(self):
+    def test_every_single_correction_is_saved_by_itself_and_leaves_other_fields_alone(
+        self,
+    ):
         corrections = (
             ("display_mode_3d", "Bogus", "Original"),
             ("display_mode_2d", "Bogus", "Original"),
@@ -494,9 +659,21 @@ class ConfigAggregateCorrectionSaveTests(unittest.TestCase):
             ("default_highlight_color", "red", "#ffff00"),
             ("default_hotlink_color", "red", "#ff0000"),
             ("inactive_object_color", "red", "#d0d0d0"),
-            ("default_text_font", FontDefinition("", "Bold", 12, 700, False, False), Config.DEFAULT_TEXT_FONT),
-            ("default_area_label_font", FontDefinition("", "Bold", 12, 700, False, False), Config.DEFAULT_AREA_LABEL_FONT),
-            ("default_dimension_annotation_font", None, Config.DEFAULT_DIMENSION_ANNOTATION_FONT),
+            (
+                "default_text_font",
+                FontDefinition("", "Bold", 12, 700, False, False),
+                Config.DEFAULT_TEXT_FONT,
+            ),
+            (
+                "default_area_label_font",
+                FontDefinition("", "Bold", 12, 700, False, False),
+                Config.DEFAULT_AREA_LABEL_FONT,
+            ),
+            (
+                "default_dimension_annotation_font",
+                None,
+                Config.DEFAULT_DIMENSION_ANNOTATION_FONT,
+            ),
             ("default_style_label_font", "Arial", Config.DEFAULT_STYLE_LABEL_FONT),
             ("crosshair_color", "#ABCDEF", "#abcdef"),
             ("default_text_color", "  #abcdef ", "#abcdef"),
@@ -552,35 +729,77 @@ class ConfigAggregateColorTests(unittest.TestCase):
         self.assertEqual(self.color("#6789aB"), ("#6789ab", 1))
         self.assertEqual(self.color("  #123456\t"), ("#123456", 1))
 
-    def test_everything_else_falls_back_to_the_default_and_logs_the_field_and_value(self):
-        for value in ("#abcde", "#abcdef0", "abcdef0", "#ggg000", "#12345G", "#XXXXXX", "#g12345", "#1g2345", "#12 456", "", "   ", None, 5, 1.5, ("#123456",)):
+    def test_everything_else_falls_back_to_the_default_and_logs_the_field_and_value(
+        self,
+    ):
+        for value in (
+            "#abcde",
+            "#abcdef0",
+            "abcdef0",
+            "#ggg000",
+            "#12345G",
+            "#XXXXXX",
+            "#g12345",
+            "#1g2345",
+            "#12 456",
+            "",
+            "   ",
+            None,
+            5,
+            1.5,
+            ("#123456",),
+        ):
             with self.subTest(value=value):
                 logger = _RecordingLogger()
-                aggregate, repository = _loaded(replace(Config(), default_hotlink_color=value), logger)
-                self.assertEqual(aggregate.default_hotlink_color, Config.DEFAULT_HOTLINK_COLOR)
+                aggregate, repository = _loaded(
+                    replace(Config(), default_hotlink_color=value), logger
+                )
+                self.assertEqual(
+                    aggregate.default_hotlink_color, Config.DEFAULT_HOTLINK_COLOR
+                )
                 self.assertEqual(len(repository.saved), 1)
                 self.assertEqual(
                     logger.messages(),
-                    [f"Invalid default_hotlink_color '{value}' in config; using default '#ff0000'"],
+                    [
+                        f"Invalid default_hotlink_color '{value}' in config; using default '#ff0000'"
+                    ],
                 )
 
     def test_colors_are_validated_independently(self):
-        config = replace(Config(), default_text_color="red", default_area_label_color="#ABCDEF", inactive_object_color="#111111")
+        config = replace(
+            Config(),
+            default_text_color="red",
+            default_area_label_color="#ABCDEF",
+            inactive_object_color="#111111",
+        )
         aggregate, _ = _loaded(config)
         self.assertEqual(
-            (aggregate.default_text_color, aggregate.default_area_label_color, aggregate.inactive_object_color),
+            (
+                aggregate.default_text_color,
+                aggregate.default_area_label_color,
+                aggregate.inactive_object_color,
+            ),
             ("#ff0000", "#abcdef", "#111111"),
         )
 
 
 class ConfigAggregateFontTests(unittest.TestCase):
     def font(self, **changes):
-        values = dict(family="Arial", style_name="Bold", point_size=12, weight=700, italic=False, underline=False)
+        values = dict(
+            family="Arial",
+            style_name="Bold",
+            point_size=12,
+            weight=700,
+            italic=False,
+            underline=False,
+        )
         values.update(changes)
         return FontDefinition(**values)
 
     def loaded_font(self, font, logger=None):
-        aggregate, repository = _loaded(replace(Config(), default_text_font=font), logger)
+        aggregate, repository = _loaded(
+            replace(Config(), default_text_font=font), logger
+        )
         return aggregate.default_text_font, len(repository.saved)
 
     def test_sizes_weights_and_flags_are_validated_at_their_boundaries(self):
@@ -629,9 +848,16 @@ class ConfigAggregateFontTests(unittest.TestCase):
             with self.subTest(font=font):
                 self.assertEqual(self.loaded_font(font), (Config.DEFAULT_TEXT_FONT, 1))
 
-    def test_valid_fonts_have_their_family_and_style_trimmed_and_that_counts_as_a_correction(self):
-        font, saved = self.loaded_font(self.font(family="  Segoe UI ", style_name=" Bold Italic\t", italic=True))
-        self.assertEqual((font.family, font.style_name, font.italic), ("Segoe UI", "Bold Italic", True))
+    def test_valid_fonts_have_their_family_and_style_trimmed_and_that_counts_as_a_correction(
+        self,
+    ):
+        font, saved = self.loaded_font(
+            self.font(family="  Segoe UI ", style_name=" Bold Italic\t", italic=True)
+        )
+        self.assertEqual(
+            (font.family, font.style_name, font.italic),
+            ("Segoe UI", "Bold Italic", True),
+        )
         self.assertEqual(saved, 1)
 
     def test_invalid_fonts_are_logged_with_field_name_and_value(self):
@@ -647,7 +873,9 @@ class ConfigAggregateFontTests(unittest.TestCase):
                 "underline=False)' in config; using canonical default"
             ],
         )
-        self.assertEqual(aggregate.default_style_label_font, Config.DEFAULT_STYLE_LABEL_FONT)
+        self.assertEqual(
+            aggregate.default_style_label_font, Config.DEFAULT_STYLE_LABEL_FONT
+        )
 
     def test_each_font_field_is_validated_separately_and_corrections_accumulate(self):
         config = replace(
@@ -655,14 +883,22 @@ class ConfigAggregateFontTests(unittest.TestCase):
             default_text_font=self.font(family=""),
             default_area_label_font=self.font(family="Verdana", point_size=9),
             default_dimension_annotation_font=self.font(point_size=999),
-            default_style_label_font=self.font(family=" Mono ", style_name="Regular", weight=400),
+            default_style_label_font=self.font(
+                family=" Mono ", style_name="Regular", weight=400
+            ),
         )
         aggregate, repository = _loaded(config)
         self.assertEqual(aggregate.default_text_font, Config.DEFAULT_TEXT_FONT)
-        self.assertEqual(aggregate.default_area_label_font, self.font(family="Verdana", point_size=9))
-        self.assertEqual(aggregate.default_dimension_annotation_font, Config.DEFAULT_DIMENSION_ANNOTATION_FONT)
         self.assertEqual(
-            aggregate.default_style_label_font, self.font(family="Mono", style_name="Regular", weight=400)
+            aggregate.default_area_label_font, self.font(family="Verdana", point_size=9)
+        )
+        self.assertEqual(
+            aggregate.default_dimension_annotation_font,
+            Config.DEFAULT_DIMENSION_ANNOTATION_FONT,
+        )
+        self.assertEqual(
+            aggregate.default_style_label_font,
+            self.font(family="Mono", style_name="Regular", weight=400),
         )
         self.assertEqual(len(repository.saved), 1)
         # A later-listed font that is already valid must not hide an earlier correction.
@@ -689,36 +925,60 @@ class ConfigAggregateLoadFailureTests(unittest.TestCase):
                 aggregate, repository = _loaded(error, logger)
                 self.assertEqual(aggregate.snapshot(), Config())
                 self.assertEqual(repository.saved, [Config()])
-                self.assertEqual(logger.records, [("error", f"{error}; resetting to defaults")])
+                self.assertEqual(
+                    logger.records, [("error", f"{error}; resetting to defaults")]
+                )
 
-    def test_an_unreadable_file_is_logged_and_defaults_are_used_without_overwriting_it(self):
+    def test_an_unreadable_file_is_logged_and_defaults_are_used_without_overwriting_it(
+        self,
+    ):
         logger = _RecordingLogger()
         aggregate, repository = _loaded(OSError("locked"), logger)
         self.assertEqual(aggregate.snapshot(), Config())
         self.assertEqual(repository.saved, [])
-        self.assertEqual(logger.records, [("error", "Error reading configuration: locked")])
+        self.assertEqual(
+            logger.records, [("error", "Error reading configuration: locked")]
+        )
 
-    def test_failing_to_write_the_defaults_is_logged_with_the_path_and_does_not_raise(self):
+    def test_failing_to_write_the_defaults_is_logged_with_the_path_and_does_not_raise(
+        self,
+    ):
         logger = _RecordingLogger()
-        aggregate, repository = _loaded(FileNotFoundError("none"), logger, save_error=OSError("read-only"))
+        aggregate, repository = _loaded(
+            FileNotFoundError("none"), logger, save_error=OSError("read-only")
+        )
         self.assertEqual(aggregate.snapshot(), Config())
         self.assertEqual(
             logger.records,
-            [("exception", "Failed to save default configuration to scripted-config.json: read-only")],
+            [
+                (
+                    "exception",
+                    "Failed to save default configuration to scripted-config.json: read-only",
+                )
+            ],
         )
 
     def test_without_an_injected_logger_the_module_logger_is_used(self):
-        with self.assertLogs("ost_visualizer.domain.aggregates.config_aggregate", level="ERROR") as captured:
+        with self.assertLogs(
+            "ost_visualizer.domain.aggregates.config_aggregate", level="ERROR"
+        ) as captured:
             ConfigAggregate(_ScriptedConfigRepository(OSError("locked")))
         self.assertEqual(
-            [record.getMessage() for record in captured.records], ["Error reading configuration: locked"]
+            [record.getMessage() for record in captured.records],
+            ["Error reading configuration: locked"],
         )
 
 
 class ConfigAggregateUpdateDetailTests(unittest.TestCase):
-    def test_updates_are_validated_but_corrections_are_reported_as_changes_and_saved_once(self):
+    def test_updates_are_validated_but_corrections_are_reported_as_changes_and_saved_once(
+        self,
+    ):
         aggregate, repository = _loaded(Config())
-        draft = replace(aggregate.snapshot(), default_auto_zoom_level=5000, crosshair_color="#ABCDEF")
+        draft = replace(
+            aggregate.snapshot(),
+            default_auto_zoom_level=5000,
+            crosshair_color="#ABCDEF",
+        )
         changed = aggregate.update_options(draft)
         self.assertEqual(changed, ["default_auto_zoom_level", "crosshair_color"])
         self.assertEqual(aggregate.default_auto_zoom_level, 1600)
@@ -726,7 +986,9 @@ class ConfigAggregateUpdateDetailTests(unittest.TestCase):
         self.assertEqual(len(repository.saved), 1)
         self.assertEqual(repository.saved[0], aggregate.snapshot())
 
-    def test_a_draft_that_validates_to_the_current_config_changes_and_saves_nothing(self):
+    def test_a_draft_that_validates_to_the_current_config_changes_and_saves_nothing(
+        self,
+    ):
         aggregate, repository = _loaded(Config())
         draft = replace(aggregate.snapshot(), default_auto_zoom_level=-3)
         self.assertEqual(aggregate.update_options(draft), [])
@@ -743,14 +1005,26 @@ class ConfigAggregateUpdateDetailTests(unittest.TestCase):
         aggregate, repository = _loaded(Config(), logger)
         repository.save_error = OSError("disk full")
         with self.assertRaises(OSError):
-            aggregate.update_options(replace(aggregate.snapshot(), show_toolbar_text=False))
+            aggregate.update_options(
+                replace(aggregate.snapshot(), show_toolbar_text=False)
+            )
         self.assertEqual(aggregate.snapshot(), Config())
-        self.assertEqual(logger.records, [("error", "Error saving configuration: disk full")])
+        self.assertEqual(
+            logger.records, [("error", "Error saving configuration: disk full")]
+        )
         self.assertEqual(repository.saved, [])
 
-    def test_an_update_is_not_saved_while_an_invalid_value_is_only_corrected_in_memory_first(self):
+    def test_an_update_is_not_saved_while_an_invalid_value_is_only_corrected_in_memory_first(
+        self,
+    ):
         aggregate, repository = _loaded(Config())
-        aggregate.update_options(replace(aggregate.snapshot(), hotlink_target="elsewhere", show_toolbar_text=False))
+        aggregate.update_options(
+            replace(
+                aggregate.snapshot(),
+                hotlink_target="elsewhere",
+                show_toolbar_text=False,
+            )
+        )
         self.assertEqual(aggregate.hotlink_target, "annotation")
         self.assertFalse(aggregate.show_toolbar_text)
         self.assertEqual(len(repository.saved), 1)

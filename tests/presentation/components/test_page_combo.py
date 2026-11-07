@@ -1746,10 +1746,15 @@ class PageComboRemainingContractTests(_ComboTestCase):
             mock.patch.object(combo._tree, "indexAt", return_value=index),
             mock.patch.object(combo, "_is_click_on_checkbox", return_value=True),
         ):
-            combo.eventFilter(viewport, event(QtCore.QEvent.Type.MouseButtonPress, left))
+            combo.eventFilter(
+                viewport, event(QtCore.QEvent.Type.MouseButtonPress, left)
+            )
             handled = combo.eventFilter(
                 viewport,
-                event(QtCore.QEvent.Type.MouseButtonRelease, QtCore.Qt.MouseButton.NoButton),
+                event(
+                    QtCore.QEvent.Type.MouseButtonRelease,
+                    QtCore.Qt.MouseButton.NoButton,
+                ),
             )
         self.assertIs(handled, True)
         self.assertEqual(

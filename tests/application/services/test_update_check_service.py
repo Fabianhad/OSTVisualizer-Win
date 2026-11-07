@@ -129,7 +129,9 @@ class UpdateCheckServiceVersionAndLogTests(unittest.TestCase):
             return self.result
 
     def service(self, result=None, error=None):
-        from ost_visualizer.application.services.update_check_service import UpdateCheckService
+        from ost_visualizer.application.services.update_check_service import (
+            UpdateCheckService,
+        )
 
         logger = self._Logger()
         return UpdateCheckService(self._Client(result, error), logger), logger
@@ -155,19 +157,47 @@ class UpdateCheckServiceVersionAndLogTests(unittest.TestCase):
         self.assertEqual(len(logger.records), 1)
         level, message = logger.records[0]
         self.assertEqual(level, "warning")
-        self.assertTrue(message.startswith("Failed to parse version strings: 1.x vs 1.0 ("))
+        self.assertTrue(
+            message.startswith("Failed to parse version strings: 1.x vs 1.0 (")
+        )
         service, logger = self.service()
         self.assertIs(service._is_version_newer(None, "1.0"), False)
         self.assertEqual(len(logger.records), 1)
 
-    def test_server_problems_are_reported_with_distinct_log_messages_and_no_update(self):
+    def test_server_problems_are_reported_with_distinct_log_messages_and_no_update(
+        self,
+    ):
         for result, error, expected in (
-            ((False, {"latest_version": "9.9"}), None, ("warning", "Failed to check for updates: no response from server")),
-            ((True, {}), None, ("warning", "Failed to check for updates: no response from server")),
-            ((True, None), None, ("warning", "Failed to check for updates: no response from server")),
-            ((True, {"latest_version": "  "}), None, ("warning", "Server response missing version information")),
-            ((True, {"latest_version": 5}), None, ("warning", "Server response missing version information")),
-            (None, RuntimeError("down"), ("exception", "Error checking for updates: down")),
+            (
+                (False, {"latest_version": "9.9"}),
+                None,
+                ("warning", "Failed to check for updates: no response from server"),
+            ),
+            (
+                (True, {}),
+                None,
+                ("warning", "Failed to check for updates: no response from server"),
+            ),
+            (
+                (True, None),
+                None,
+                ("warning", "Failed to check for updates: no response from server"),
+            ),
+            (
+                (True, {"latest_version": "  "}),
+                None,
+                ("warning", "Server response missing version information"),
+            ),
+            (
+                (True, {"latest_version": 5}),
+                None,
+                ("warning", "Server response missing version information"),
+            ),
+            (
+                None,
+                RuntimeError("down"),
+                ("exception", "Error checking for updates: down"),
+            ),
         ):
             service, logger = self.service(result, error)
             with self.subTest(result=result, error=error):
@@ -178,7 +208,9 @@ class UpdateCheckServiceVersionAndLogTests(unittest.TestCase):
 
     def test_the_current_version_is_the_application_version(self):
         from ost_visualizer.application.dtos.application_info import APPLICATION_VERSION
-        from ost_visualizer.application.services.update_check_service import UpdateCheckService
+        from ost_visualizer.application.services.update_check_service import (
+            UpdateCheckService,
+        )
 
         self.assertEqual(UpdateCheckService.CURRENT_VERSION, APPLICATION_VERSION)
         self.assertTrue(APPLICATION_VERSION)

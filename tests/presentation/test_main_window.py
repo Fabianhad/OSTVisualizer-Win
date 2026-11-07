@@ -496,7 +496,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             _collaboration_shutdown_complete=False,
             _application_shutdown_finalized=False,
             _shutdown_deferred_callbacks={},
-            update_dialog_requested=SimpleNamespace(emit=lambda info: emitted.append(info)),
+            update_dialog_requested=SimpleNamespace(
+                emit=lambda info: emitted.append(info)
+            ),
         )
         window._application_shutdown_terminal = lambda: (
             MainWindow._application_shutdown_terminal(window)
@@ -852,7 +854,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             )
         )
         window._deferred_persistence_manager = manager
-        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service("sql_collaboration_coordinator", collaboration)
+        )
         window.show = lambda: self.fail("A noncritical view-state failure reopened UI")
         with self.assertNoLogs("tests.close_pending_page_view", level="WARNING"):
             MainWindow._begin_application_shutdown(window)
@@ -920,7 +924,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             )
         )
         window._deferred_persistence_manager = manager
-        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service("sql_collaboration_coordinator", collaboration)
+        )
         window.show = lambda: None
         with patch("ost_visualizer.presentation.main_window.show_critical") as critical:
             MainWindow._begin_application_shutdown(window)
@@ -956,7 +962,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
-        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service("sql_collaboration_coordinator", collaboration)
+        )
         window.hide = lambda: calls.append("hide")
         window.show = lambda: calls.append("show")
         window.setEnabled = lambda _enabled: self.fail(
@@ -997,7 +1005,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
         window._flush_deferred_persistence_before_close = lambda: True
-        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service("sql_collaboration_coordinator", collaboration)
+        )
         window.show = lambda: self.fail("A healthy asynchronous drain must stay hidden")
         MainWindow._begin_application_shutdown(window)
         self.assertEqual(len(drain_callbacks), 1)
@@ -1171,7 +1181,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_pdf_source = SimpleNamespace(
             release=lambda: calls.append("ai_pdf_release")
         )
-        window.app_controller = SimpleNamespace(get_service=_strict_service("lifecycle_orchestrator", lifecycle))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service("lifecycle_orchestrator", lifecycle)
+        )
         first = FakeCloseEvent()
         second = FakeCloseEvent()
         with patch.object(
@@ -1254,7 +1266,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             cleanup=cleanup("ai_undo_notice_cleanup")
         )
         window._ai_pdf_source = SimpleNamespace(release=cleanup("ai_pdf_release"))
-        window.app_controller = SimpleNamespace(get_service=_strict_service("lifecycle_orchestrator", lifecycle))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service("lifecycle_orchestrator", lifecycle)
+        )
         event = FakeCloseEvent()
         with self.assertLogs(
             "ost_visualizer.presentation.main_window", level="ERROR"
@@ -1349,7 +1363,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window.event_coordinator = SimpleNamespace(cleanup=failing("event_cleanup"))
         window.handlers = SimpleNamespace(
             ui_event=SimpleNamespace(cleanup=failing("ui_cleanup")),
-            file_ops=SimpleNamespace(maintenance_pending=False, sql_creation_pending=False),
+            file_ops=SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            ),
         )
         window.license_coordinator = SimpleNamespace(cleanup=failing("license_cleanup"))
         window.ui_access_manager = SimpleNamespace(cleanup=failing("access_cleanup"))
@@ -1357,7 +1373,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._ai_takeoff_bridge = SimpleNamespace(cleanup=failing("takeoff_cleanup"))
         window._ai_approval = SimpleNamespace(cleanup=failing("ai_review_cleanup"))
         window._ai_rebind_prompt = SimpleNamespace(cleanup=failing("ai_rebind_cleanup"))
-        window._ai_undo_notice = SimpleNamespace(cleanup=failing("ai_undo_notice_cleanup"))
+        window._ai_undo_notice = SimpleNamespace(
+            cleanup=failing("ai_undo_notice_cleanup")
+        )
         window._ai_pdf_source = SimpleNamespace(release=failing("ai_pdf_release"))
         window.app_controller = SimpleNamespace(
             get_service=_strict_service(
@@ -1366,9 +1384,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         )
         with self.assertLogs(
             "ost_visualizer.presentation.main_window", level="ERROR"
-        ) as captured, patch.object(
-            MainWindow.__mro__[1], "closeEvent"
-        ), patch.object(QtCore.QCoreApplication, "quit"):
+        ) as captured, patch.object(MainWindow.__mro__[1], "closeEvent"), patch.object(
+            QtCore.QCoreApplication, "quit"
+        ):
             MainWindow.closeEvent(window, FakeCloseEvent())
         self.assertEqual(
             [record.getMessage() for record in captured.records],
@@ -1394,7 +1412,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
-        window.app_controller = SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration))
+        window.app_controller = SimpleNamespace(
+            get_service=_strict_service("sql_collaboration_coordinator", collaboration)
+        )
         window._deferred_persistence_manager = SimpleNamespace(
             begin_shutdown=lambda: calls.append("begin_shutdown"),
             cancel_for_file=lambda _database_id: calls.append("cancel"),
@@ -1502,7 +1522,11 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
                     )
                 )
             ),
-            app_controller=SimpleNamespace(get_service=_strict_service("sql_collaboration_coordinator", collaboration)),
+            app_controller=SimpleNamespace(
+                get_service=_strict_service(
+                    "sql_collaboration_coordinator", collaboration
+                )
+            ),
             show=lambda: events.append("show"),
             close=lambda: events.append("close"),
             _resume_shutdown_deferred_callbacks=lambda: events.append("resume"),
@@ -4408,8 +4432,9 @@ from ost_visualizer.presentation.config import (
 class _A3Access:
     """UiAccessManager double: every query is recorded and answers are explicit."""
 
-    def __init__(self, allowed=(), *, delete_bids=True, delete_projects=True,
-                 clipboard=True):
+    def __init__(
+        self, allowed=(), *, delete_bids=True, delete_projects=True, clipboard=True
+    ):
         self.allowed = set(allowed)
         self.delete_bids = delete_bids
         self.delete_projects = delete_projects
@@ -4488,7 +4513,9 @@ class MainWindowA3EditCommandTests(unittest.TestCase):
         window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
         window._copy_selected()
         self.assertEqual(window.log, [])
-        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS}))
+        window = self._window(
+            TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS})
+        )
         window._copy_selected()
         self.assertEqual([entry[0] for entry in window.log], ["plan.copy"])
         window = self._window(TAB_INDEX_SUMMARY)
@@ -4496,7 +4523,9 @@ class MainWindowA3EditCommandTests(unittest.TestCase):
         self.assertEqual([entry[0] for entry in window.log], ["summary.copy"])
         self.assertFalse(window._bid_clipboard.has_content())
 
-    def test_project_tree_copy_stores_same_database_bids_and_refreshes_the_toolbar(self):
+    def test_project_tree_copy_stores_same_database_bids_and_refreshes_the_toolbar(
+        self,
+    ):
         window = self._window(access=_A3Access({Feature.COPY_BID}))
         window._copy_selected()
         self.assertEqual(window._bid_clipboard.bid_refs, [self.A, self.B])
@@ -4584,32 +4613,44 @@ class MainWindowA3EditCommandTests(unittest.TestCase):
         self.assertEqual(window.log, [])
 
     def test_select_all_only_acts_on_the_takeoff_tab_with_selection_access(self):
-        window = self._window(TAB_INDEX_PROJECTS, access=_A3Access({Feature.SELECT_PLAN_ITEMS}))
+        window = self._window(
+            TAB_INDEX_PROJECTS, access=_A3Access({Feature.SELECT_PLAN_ITEMS})
+        )
         window._select_all()
         self.assertEqual(window.log, [])
         window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
         window._select_all()
         self.assertEqual(window.log, [])
         window = self._window(
-            TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS}), inline=True
+            TAB_INDEX_TAKEOFF,
+            access=_A3Access({Feature.SELECT_PLAN_ITEMS}),
+            inline=True,
         )
         window._select_all()
         self.assertEqual(window.log, [("inline", ("select_all",), {})])
-        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS}))
+        window = self._window(
+            TAB_INDEX_TAKEOFF, access=_A3Access({Feature.SELECT_PLAN_ITEMS})
+        )
         window._select_all()
-        self.assertEqual([entry[0] for entry in window.log], ["plan.select_all", "toolbar"])
+        self.assertEqual(
+            [entry[0] for entry in window.log], ["plan.select_all", "toolbar"]
+        )
 
     def test_delete_routes_by_tab_and_permission(self):
         window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
         window._delete_selected()
         self.assertEqual(window.log, [])
-        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.EDIT_PLAN_ITEMS}))
+        window = self._window(
+            TAB_INDEX_TAKEOFF, access=_A3Access({Feature.EDIT_PLAN_ITEMS})
+        )
         window._delete_selected()
         self.assertEqual([entry[0] for entry in window.log], ["plan.delete"])
         window = self._window(TAB_INDEX_SUMMARY, access=_A3Access())
         window._delete_selected()
         self.assertEqual(window.log, [])
-        window = self._window(TAB_INDEX_SUMMARY, access=_A3Access({Feature.DELETE_CONDITION}))
+        window = self._window(
+            TAB_INDEX_SUMMARY, access=_A3Access({Feature.DELETE_CONDITION})
+        )
         window._delete_selected()
         self.assertEqual([entry[0] for entry in window.log], ["summary.delete"])
 
@@ -4619,9 +4660,7 @@ class MainWindowA3EditCommandTests(unittest.TestCase):
         self.assertEqual(window.log, [])
         window = self._window()
         window._delete_selected()
-        self.assertEqual(
-            window.log, [("tree.delete", ("replacement",), {})]
-        )
+        self.assertEqual(window.log, [("tree.delete", ("replacement",), {})])
         for path, allowed in ((None, True), ("C:/jobs/a.mdb", False)):
             with self.subTest(path=path, allowed=allowed):
                 window = self._window(access=_A3Access(delete_projects=allowed))
@@ -4644,7 +4683,9 @@ class MainWindowA3EditCommandTests(unittest.TestCase):
         window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access())
         window._duplicate_selected()
         self.assertEqual(window.log, [])
-        window = self._window(TAB_INDEX_TAKEOFF, access=_A3Access({Feature.EDIT_PLAN_ITEMS}))
+        window = self._window(
+            TAB_INDEX_TAKEOFF, access=_A3Access({Feature.EDIT_PLAN_ITEMS})
+        )
         window._duplicate_selected()
         self.assertEqual([entry[0] for entry in window.log], ["plan.duplicate"])
         window = self._window(TAB_INDEX_SUMMARY, access=_A3Access(set(Feature)))
@@ -4699,7 +4740,9 @@ class MainWindowA3EditCommandTests(unittest.TestCase):
             window._can_paste_project_bids("C:/jobs/a.mdb", _A3_DELETED_UID), False
         )
         self.assertEqual(window.ui_access_manager.calls, [])
-        self.assertIs(window._can_paste_project_bids("C:/jobs/other.mdb", "proj"), False)
+        self.assertIs(
+            window._can_paste_project_bids("C:/jobs/other.mdb", "proj"), False
+        )
         self.assertIs(window._can_paste_project_bids("", "proj"), False)
         self.assertEqual(window.ui_access_manager.calls, [])
         window.ui_access_manager.clipboard = False
@@ -4765,7 +4808,9 @@ class MainWindowA3EditCommandTests(unittest.TestCase):
         self.assertEqual(stale._bid_clipboard.bid_refs, [self.B])
         self.assertEqual(stale.log, [])
 
-    def test_paste_target_needs_a_file_path_and_a_selected_bid_inside_the_selection(self):
+    def test_paste_target_needs_a_file_path_and_a_selected_bid_inside_the_selection(
+        self,
+    ):
         window = MainWindow.__new__(MainWindow)
         state = SimpleNamespace(
             selected_project_uids=["p1"],
@@ -4800,7 +4845,9 @@ class MainWindowA3ProjectTreeCommandTests(unittest.TestCase):
         window.handlers = SimpleNamespace(
             delete=SimpleNamespace(
                 duplicate_bid=lambda ref: calls.append(("duplicate", ref)),
-                update_bid_job_status=lambda ref, uid: calls.append(("status", ref, uid)),
+                update_bid_job_status=lambda ref, uid: calls.append(
+                    ("status", ref, uid)
+                ),
                 restore_bids=lambda refs: calls.append(("restore", refs)),
                 move_bids=lambda refs, target: calls.append(("move", refs, target)),
             )
@@ -4842,7 +4889,9 @@ class MainWindowA3ProjectTreeCommandTests(unittest.TestCase):
         window._move_project_bids([ref], "proj")
         self.assertEqual(window.calls, [])
 
-    def test_a_move_needs_bids_one_database_structure_access_and_a_creatable_target(self):
+    def test_a_move_needs_bids_one_database_structure_access_and_a_creatable_target(
+        self,
+    ):
         ref = BidRef("C:/jobs/a.mdb", "b1")
         other = BidRef("C:/jobs/other.mdb", "b2")
         created = []
@@ -4857,7 +4906,9 @@ class MainWindowA3ProjectTreeCommandTests(unittest.TestCase):
             return window
 
         self.assertIs(make()._can_move_project_bids([], "proj"), False)
-        self.assertIs(make(structure=False)._can_move_project_bids([ref], "proj"), False)
+        self.assertIs(
+            make(structure=False)._can_move_project_bids([ref], "proj"), False
+        )
         self.assertIs(make()._can_move_project_bids([ref, other], "proj"), False)
         created.clear()
         self.assertIs(make(create=False)._can_move_project_bids([ref], "proj"), False)
@@ -4900,14 +4951,17 @@ class MainWindowA3ProjectTreeCommandTests(unittest.TestCase):
         log = []
         window.ui_state_manager = SimpleNamespace(
             set_bid_multi_selection=lambda refs: log.append(("bids", refs)),
-            set_project_multi_selection=lambda uids, path: log.append(("projects", uids, path)),
+            set_project_multi_selection=lambda uids, path: log.append(
+                ("projects", uids, path)
+            ),
         )
         window.handlers = SimpleNamespace(
             ui_event=SimpleNamespace(refresh_toolbar=lambda: log.append(("toolbar",)))
         )
         window._on_project_multi_selection(["ref"], ["p1"], "C:/jobs/a.mdb")
         self.assertEqual(
-            log, [("bids", ["ref"]), ("projects", ["p1"], "C:/jobs/a.mdb"), ("toolbar",)]
+            log,
+            [("bids", ["ref"]), ("projects", ["p1"], "C:/jobs/a.mdb"), ("toolbar",)],
         )
 
     def test_the_context_bid_owns_the_active_bid_only_when_uid_and_path_all_match(self):
@@ -4915,7 +4969,9 @@ class MainWindowA3ProjectTreeCommandTests(unittest.TestCase):
         current = BidRef("c:\\jobs\\a.mdb", "b1")
         window = MainWindow.__new__(MainWindow)
         window.ui_state_manager = SimpleNamespace(get_selected_bid_ref=lambda: selected)
-        window._project_data_service = SimpleNamespace(get_current_bid_ref=lambda: current)
+        window._project_data_service = SimpleNamespace(
+            get_current_bid_ref=lambda: current
+        )
         self.assertIs(
             window._project_tree_context_owns_active_bid(BidRef("C:/jobs/a.mdb", "b1")),
             True,
@@ -4941,7 +4997,9 @@ class MainWindowA3ProjectTreeCommandTests(unittest.TestCase):
             False,
         )
         window.ui_state_manager = SimpleNamespace(get_selected_bid_ref=lambda: None)
-        window._project_data_service = SimpleNamespace(get_current_bid_ref=lambda: current)
+        window._project_data_service = SimpleNamespace(
+            get_current_bid_ref=lambda: current
+        )
         self.assertIs(
             window._project_tree_context_owns_active_bid(BidRef("C:/jobs/a.mdb", "b1")),
             False,
@@ -5004,7 +5062,9 @@ class MainWindowA3ImportProgressDialogTests(unittest.TestCase):
 
     def _run(self, window, args):
         with patch.object(
-            main_window_module, "ProgressDialog", _startup_import_FakeStartupProgressDialog
+            main_window_module,
+            "ProgressDialog",
+            _startup_import_FakeStartupProgressDialog,
         ):
             return MainWindow._import_project_files_with_progress(window, args)
 
@@ -5014,9 +5074,7 @@ class MainWindowA3ImportProgressDialogTests(unittest.TestCase):
         args = self._args("one.ost")
         result = self._run(window, args)
         (dialog,) = _startup_import_FakeStartupProgressDialog.instances
-        self.assertIs(
-            dialog.window_modality, QtCore.Qt.WindowModality.ApplicationModal
-        )
+        self.assertIs(dialog.window_modality, QtCore.Qt.WindowModality.ApplicationModal)
         self.assertIs(dialog.parent, window)
         self.assertEqual(dialog.cleanup_calls, 1)
         self.assertEqual(dialog.delete_later_calls, 1)
@@ -5047,7 +5105,9 @@ class MainWindowA3ImportProgressDialogTests(unittest.TestCase):
         )
         self.assertEqual(result.target_db_path, "target.mdb")
 
-    def test_an_accepted_dialog_without_a_batch_result_is_a_failure_and_logs_the_error(self):
+    def test_an_accepted_dialog_without_a_batch_result_is_a_failure_and_logs_the_error(
+        self,
+    ):
         executed = []
         window = self._window(executed)
 
@@ -5058,7 +5118,9 @@ class MainWindowA3ImportProgressDialogTests(unittest.TestCase):
                 return self.result_code
 
         args = self._args("one.ost")
-        with patch.object(main_window_module, "ProgressDialog", NoResult), self.assertLogs(
+        with patch.object(
+            main_window_module, "ProgressDialog", NoResult
+        ), self.assertLogs(
             "ost_visualizer.presentation.main_window", level="ERROR"
         ) as captured:
             result = MainWindow._import_project_files_with_progress(window, args)
@@ -5067,7 +5129,9 @@ class MainWindowA3ImportProgressDialogTests(unittest.TestCase):
         _startup_import_FakeStartupProgressDialog.result_code = (
             QtWidgets.QDialog.DialogCode.Rejected
         )
-        with self.assertNoLogs("ost_visualizer.presentation.main_window", level="ERROR"):
+        with self.assertNoLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ):
             quiet = self._run(self._window(executed), args)
         self.assertEqual([item.success for item in quiet.results], [False])
 
@@ -5172,11 +5236,15 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
         window = _startup_import__startup_import_window()
         MainWindow._show_project_file_import_result(
             window,
-            self._result(rejected=[_A3Rejected(value="bad.txt", reason="Unsupported.")]),
+            self._result(
+                rejected=[_A3Rejected(value="bad.txt", reason="Unsupported.")]
+            ),
         )
         self.assertEqual(calls, [("critical", "Import Error", "bad.txt: Unsupported.")])
 
-    def test_a_committed_import_whose_projection_failed_is_a_warning_not_a_success(self):
+    def test_a_committed_import_whose_projection_failed_is_a_warning_not_a_success(
+        self,
+    ):
         calls = self._recorders()
         window = _startup_import__startup_import_window()
         item = import_args_use_case.ProjectFileImportResult(
@@ -5205,7 +5273,9 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
         log = []
         window.project_view = SimpleNamespace(
             restore_bid_selection=lambda ref: log.append(("bid", ref)),
-            restore_project_selection=lambda uid, path: log.append(("project", uid, path)),
+            restore_project_selection=lambda uid, path: log.append(
+                ("project", uid, path)
+            ),
             restore_file_selection=lambda path: log.append(("file", path)),
         )
         selected = {"ref": None, "loaded": True}
@@ -5219,14 +5289,14 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
                 else selected["loaded"]
             )
         )
-        select = lambda result: MainWindow._select_project_file_import_result(window, result)
+        select = lambda result: MainWindow._select_project_file_import_result(
+            window, result
+        )
         select(self._result(selected_project_uid="p1", target_db_path="t.mdb"))
         select(self._result(selected_project_uid="p1"))
         select(self._result(selected_project_uid=None, target_db_path="t.mdb"))
         select(self._result())
-        self.assertEqual(
-            log, [("project", "p1", "t.mdb"), ("file", "t.mdb")]
-        )
+        self.assertEqual(log, [("project", "p1", "t.mdb"), ("file", "t.mdb")])
         log.clear()
         selected["ref"] = BidRef("t.mdb", "b1")
         select(self._result(selected_project_uid="p1", target_db_path="t.mdb"))
@@ -5262,9 +5332,7 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
             window._project_file_import_scheduled = False
             window._project_file_import_running = False
             window._schedule_pending_project_file_imports()
-            self.assertEqual(
-                scheduled, [(0, window._run_pending_project_file_imports)]
-            )
+            self.assertEqual(scheduled, [(0, window._run_pending_project_file_imports)])
             self.assertTrue(window._project_file_import_scheduled)
 
     def test_a_pending_run_reschedules_instead_of_overlapping_a_running_import(self):
@@ -5276,7 +5344,9 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
         window._project_file_import_scheduled = True
         scheduled = []
         with patch.object(
-            QtCore.QTimer, "singleShot", side_effect=lambda delay, cb: scheduled.append(delay)
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda delay, cb: scheduled.append(delay),
         ):
             window._run_pending_project_file_imports()
         self.assertFalse(window._project_file_import_scheduled)
@@ -5356,10 +5426,14 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
         ]
         window._collaboration_shutdown_pending = True
         window._schedule_pending_project_file_imports()
-        self.assertEqual(list(window._shutdown_deferred_callbacks), ["schedule_project_file_imports"])
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["schedule_project_file_imports"]
+        )
         window._shutdown_deferred_callbacks.clear()
         window._run_pending_project_file_imports()
-        self.assertEqual(list(window._shutdown_deferred_callbacks), ["run_project_file_imports"])
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["run_project_file_imports"]
+        )
         window._shutdown_deferred_callbacks.clear()
         window._collaboration_shutdown_pending = False
         result = self._result()
@@ -5370,10 +5444,14 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
 
         window._import_project_files_with_progress = import_then_start_shutdown
         window._run_pending_project_file_imports()
-        self.assertIn("complete_project_file_imports", window._shutdown_deferred_callbacks)
+        self.assertIn(
+            "complete_project_file_imports", window._shutdown_deferred_callbacks
+        )
         window._shutdown_deferred_callbacks.clear()
         window._collaboration_shutdown_pending = False
-        refreshing = import_args_use_case.ProjectFileImportBatchResult(refresh_pending=True)
+        refreshing = import_args_use_case.ProjectFileImportBatchResult(
+            refresh_pending=True
+        )
         window._pending_project_file_args = [
             import_args_use_case.ProjectFileArgs(files=[], rejected=[])
         ]
@@ -5383,9 +5461,13 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
             window._collaboration_shutdown_pending = True
             return result
 
-        window._import_project_files_from_args = SimpleNamespace(refresh_import_result=refresh)
+        window._import_project_files_from_args = SimpleNamespace(
+            refresh_import_result=refresh
+        )
         window._run_pending_project_file_imports()
-        self.assertIn("complete_project_file_imports", window._shutdown_deferred_callbacks)
+        self.assertIn(
+            "complete_project_file_imports", window._shutdown_deferred_callbacks
+        )
 
     def test_an_async_completion_deferred_by_a_shutdown_is_keyed_by_its_name(self):
         _app()
@@ -5412,11 +5494,15 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
             window._collaboration_shutdown_pending = True
             return result
 
-        window._import_project_files_from_args = SimpleNamespace(refresh_import_result=refresh)
+        window._import_project_files_from_args = SimpleNamespace(
+            refresh_import_result=refresh
+        )
         window._complete_async_project_file_imports(
             import_args_use_case.ProjectFileImportBatchResult(refresh_pending=True)
         )
-        self.assertIn("complete_project_file_imports", window._shutdown_deferred_callbacks)
+        self.assertIn(
+            "complete_project_file_imports", window._shutdown_deferred_callbacks
+        )
 
     def test_config_load_projects_a_loaded_catalog_or_asks_for_a_first_database(self):
         for loaded, has_databases, prompt in (
@@ -5454,7 +5540,9 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
                     timers, [(0, window._restore_deferred_workspace_state), "schedule"]
                 )
 
-    def test_showing_the_main_window_schedules_update_check_and_first_database_prompt(self):
+    def test_showing_the_main_window_schedules_update_check_and_first_database_prompt(
+        self,
+    ):
         window = _startup_import__startup_import_window()
         log = []
         window._workspace_state_coordinator = SimpleNamespace(
@@ -5473,7 +5561,8 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
             window._show_main_window()
         self.assertEqual(log, ["show", "raise", "activate"])
         self.assertEqual(
-            timers, [(0, window._check_for_updates), (0, window._prompt_create_database)]
+            timers,
+            [(0, window._check_for_updates), (0, window._prompt_create_database)],
         )
         self.assertFalse(window._needs_create_database_prompt)
         window._update_service = None
@@ -5497,9 +5586,15 @@ class MainWindowA3ShutdownBookkeepingTests(unittest.TestCase):
 
     def test_the_shutdown_is_terminal_when_either_final_flag_is_set(self):
         self.assertIs(self._window()._application_shutdown_terminal(), False)
-        self.assertIs(self._window(pending=True)._application_shutdown_terminal(), False)
-        self.assertIs(self._window(complete=True)._application_shutdown_terminal(), True)
-        self.assertIs(self._window(finalized=True)._application_shutdown_terminal(), True)
+        self.assertIs(
+            self._window(pending=True)._application_shutdown_terminal(), False
+        )
+        self.assertIs(
+            self._window(complete=True)._application_shutdown_terminal(), True
+        )
+        self.assertIs(
+            self._window(finalized=True)._application_shutdown_terminal(), True
+        )
 
     def test_callbacks_are_deferred_only_while_a_shutdown_is_in_progress(self):
         callback = lambda: None
@@ -5513,7 +5608,9 @@ class MainWindowA3ShutdownBookkeepingTests(unittest.TestCase):
         self.assertIs(terminal._defer_during_application_shutdown("k", callback), True)
         self.assertEqual(terminal._shutdown_deferred_callbacks, {})
 
-    def test_resuming_after_an_abort_shows_hidden_windows_once_and_replays_with_zero_delay(self):
+    def test_resuming_after_an_abort_shows_hidden_windows_once_and_replays_with_zero_delay(
+        self,
+    ):
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         owned = QtWidgets.QWidget()
         stranger = QtWidgets.QWidget()
@@ -5560,7 +5657,9 @@ class MainWindowA3ShutdownBookkeepingTests(unittest.TestCase):
             with self.subTest(result=result):
                 emitted = []
                 window = self._window()
-                window._update_service = SimpleNamespace(check_for_updates=lambda r=result: r)
+                window._update_service = SimpleNamespace(
+                    check_for_updates=lambda r=result: r
+                )
                 window.update_dialog_requested = SimpleNamespace(emit=emitted.append)
                 with patch(
                     "ost_visualizer.presentation.main_window.threading.Thread"
@@ -5594,7 +5693,9 @@ class MainWindowA3ShutdownBookkeepingTests(unittest.TestCase):
         for widget in (window, visible, hidden):
             self.addCleanup(widget.deleteLater)
         window.handlers = SimpleNamespace(
-            file_ops=SimpleNamespace(maintenance_pending=False, sql_creation_pending=False)
+            file_ops=SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            )
         )
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
@@ -5807,8 +5908,17 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
 
     BID = BidRef("C:/jobs/a.mdb", "b1")
 
-    def _window(self, *, takeoff=True, bid=True, page="p1", annotation_open=False,
-                view_open=False, view_lifecycle=False, annotation_lifecycle=False):
+    def _window(
+        self,
+        *,
+        takeoff=True,
+        bid=True,
+        page="p1",
+        annotation_open=False,
+        view_open=False,
+        view_lifecycle=False,
+        annotation_lifecycle=False,
+    ):
         window = MainWindow.__new__(MainWindow)
         self.log = []
         log = self.log
@@ -5841,7 +5951,9 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
             get_window=lambda: "annotation-window",
             has_active_view_lifecycle=lambda: annotation_lifecycle,
             get_active_view=lambda: annotation_view,
-            open_view=lambda *args, **kwargs: log.append(("annotation.open", args, kwargs)),
+            open_view=lambda *args, **kwargs: log.append(
+                ("annotation.open", args, kwargs)
+            ),
             close_view=lambda: log.append(("annotation.close",)),
         )
         window._view_window_manager = SimpleNamespace(
@@ -5868,7 +5980,9 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         self.assertIs(window.is_view_window_open(), True)
         self.assertTrue(window.can_open_view_window())
         self.assertTrue(window.can_restore_view_window())
-        self.assertFalse(self._window(takeoff=False, annotation_open=True).can_restore_view_window())
+        self.assertFalse(
+            self._window(takeoff=False, annotation_open=True).can_restore_view_window()
+        )
         self.assertFalse(self._window(takeoff=False).can_restore_annotation_window())
         self.assertTrue(self._window(takeoff=False).can_open_annotation_window())
         self.assertFalse(self._window(bid=False).can_open_annotation_window())
@@ -5891,7 +6005,9 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         self.assertFalse(window._view_window_action.signalsBlocked())
         self.assertEqual(self.log, [])
 
-    def test_opening_the_annotation_window_checks_the_action_silently_and_opens_once(self):
+    def test_opening_the_annotation_window_checks_the_action_silently_and_opens_once(
+        self,
+    ):
         window = self._window()
         window.set_annotation_window_visible(True)
         self.assertTrue(window._annotation_window_action.isChecked())
@@ -5914,7 +6030,9 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         window.set_annotation_window_visible(True)
         self.assertEqual(self.log, [])
 
-    def test_saved_detached_state_is_restored_only_when_no_explicit_state_is_given(self):
+    def test_saved_detached_state_is_restored_only_when_no_explicit_state_is_given(
+        self,
+    ):
         for explicit in (False, True):
             with self.subTest(explicit=explicit):
                 window = self._window()
@@ -5949,14 +6067,18 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         window.set_view_window_visible = lambda visible: calls.append(
             ("view.visible", visible)
         )
-        window._annotation_view_manager.close_view = lambda: calls.append("annotation.close")
+        window._annotation_view_manager.close_view = lambda: calls.append(
+            "annotation.close"
+        )
         window.set_annotation_window_visible(False)
         self.assertEqual(calls, [("view.visible", False), "annotation.close"])
         self.assertFalse(window._annotation_window_action.isChecked())
         window = self._window(annotation_open=True, view_lifecycle=False)
         calls = []
         window.set_view_window_visible = lambda visible: calls.append("never")
-        window._annotation_view_manager.close_view = lambda: calls.append("annotation.close")
+        window._annotation_view_manager.close_view = lambda: calls.append(
+            "annotation.close"
+        )
         window.set_annotation_window_visible(False)
         self.assertEqual(calls, ["annotation.close"])
 
@@ -5986,7 +6108,9 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         self.assertEqual(self.log, [("view.close",)])
         self.assertFalse(window._view_window_action.isChecked())
 
-    def test_the_view_window_falls_back_to_the_selection_without_an_annotation_view(self):
+    def test_the_view_window_falls_back_to_the_selection_without_an_annotation_view(
+        self,
+    ):
         window = self._window(annotation_open=True)
         window._annotation_view_manager.get_active_view = lambda: None
         window.set_view_window_visible(True)
@@ -6042,7 +6166,9 @@ class MainWindowA3TabChangeTests(unittest.TestCase):
             on_main_tab_changed=lambda: log.append("tab-changed"),
         )
         window.menu_controller = (
-            SimpleNamespace(update_menu_states=lambda: log.append("menus")) if menu else None
+            SimpleNamespace(update_menu_states=lambda: log.append("menus"))
+            if menu
+            else None
         )
         return window
 
@@ -6091,7 +6217,9 @@ class MainWindowA3PassThroughAndStateTests(unittest.TestCase):
         )
         window._page_settings_bar = SimpleNamespace(
             get_dropdown_popup_sizes=lambda: {"page_settings": [1, 2]},
-            set_dropdown_popup_sizes=lambda sizes: restored.setdefault("bar", dict(sizes)),
+            set_dropdown_popup_sizes=lambda sizes: restored.setdefault(
+                "bar", dict(sizes)
+            ),
         )
 
         def detached(name, sizes):
@@ -6102,7 +6230,9 @@ class MainWindowA3PassThroughAndStateTests(unittest.TestCase):
                 ),
             )
 
-        windows = {"annotation": detached("annotation", {"annotation_named_views": [3, 4]})}
+        windows = {
+            "annotation": detached("annotation", {"annotation_named_views": [3, 4]})
+        }
         window.get_annotation_window = lambda: windows["annotation"]
         window.get_view_window = lambda: None
         self.assertEqual(
@@ -6131,7 +6261,9 @@ class MainWindowA3PassThroughAndStateTests(unittest.TestCase):
                 loaded_files=[_A3HierarchyFileEntry(file_path="c:\\jobs\\a.mdb")]
             )
         )
-        self.assertEqual(window.get_selected_database_context_file_path(), "C:/Jobs/A.mdb")
+        self.assertEqual(
+            window.get_selected_database_context_file_path(), "C:/Jobs/A.mdb"
+        )
         node["file_path"] = "C:/Jobs/Other.mdb"
         self.assertIsNone(window.get_selected_database_context_file_path())
         node["file_path"] = ""
@@ -6143,20 +6275,30 @@ class MainWindowA3PassThroughAndStateTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         log = []
         window.project_view = SimpleNamespace(
-            set_group_by_job_status=lambda enabled, notify: log.append(("job", enabled, notify))
+            set_group_by_job_status=lambda enabled, notify: log.append(
+                ("job", enabled, notify)
+            )
         )
         window._conditions_sidebar = SimpleNamespace(
-            set_group_by_type=lambda enabled, notify: log.append(("type", enabled, notify))
+            set_group_by_type=lambda enabled, notify: log.append(
+                ("type", enabled, notify)
+            )
         )
         window._condition_summary_tab = SimpleNamespace(
-            set_grouping=lambda grouping, notify: log.append(("summary", grouping, notify))
+            set_grouping=lambda grouping, notify: log.append(
+                ("summary", grouping, notify)
+            )
         )
         window.set_project_group_by_job_status(True)
         window.set_conditions_group_by_type(False)
         window.set_summary_grouping("by-type")
         self.assertEqual(
             log,
-            [("job", True, False), ("type", False, False), ("summary", "by-type", False)],
+            [
+                ("job", True, False),
+                ("type", False, False),
+                ("summary", "by-type", False),
+            ],
         )
 
     def test_detached_refreshes_reach_both_managers(self):
@@ -6218,7 +6360,9 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
     def test_adding_a_page_from_the_takeoff_tab_needs_every_condition(self):
         def make(allow=True, cover=True, locked=False, bid=True):
             window = MainWindow.__new__(MainWindow)
-            window._config_model = SimpleNamespace(allow_add_page_from_takeoff_tab=allow)
+            window._config_model = SimpleNamespace(
+                allow_add_page_from_takeoff_tab=allow
+            )
             window.ui_access_manager = SimpleNamespace(
                 is_allowed=lambda feature: cover and feature == Feature.COVER_SHEET
             )
@@ -6388,7 +6532,9 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
         self.assertFalse(window._mesh_window_action.signalsBlocked())
         calls.clear()
         window.set_mesh_window_visible(
-            True, initial_geometry=QtCore.QByteArray(b"explicit"), initial_is_maximized=True
+            True,
+            initial_geometry=QtCore.QByteArray(b"explicit"),
+            initial_is_maximized=True,
         )
         self.assertEqual(bytes(calls[0][1]["initial_geometry"]), b"explicit")
         self.assertIs(calls[0][1]["initial_is_maximized"], True)
@@ -6433,7 +6579,9 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
         self.assertIs(context.parent, window)
         self.assertIs(context.plan_view, self.plan)
         self.assertEqual(context.area_uid, "area-1")
-        self.assertIsNone(self._resolve(self._area_window(area_uid=""), active=None).plan_view)
+        self.assertIsNone(
+            self._resolve(self._area_window(area_uid=""), active=None).plan_view
+        )
         window = self._area_window(area_uid="")
         self.assertIsNone(self._resolve(window, active=window).area_uid)
 
@@ -6596,7 +6744,9 @@ class MainWindowA3ShellLayoutTests(unittest.TestCase):
         )
         return window
 
-    def test_toolbars_are_shown_by_preference_and_the_takeoff_ones_only_on_takeoff(self):
+    def test_toolbars_are_shown_by_preference_and_the_takeoff_ones_only_on_takeoff(
+        self,
+    ):
         window = self._window(TAB_INDEX_TAKEOFF)
         window._apply_workspace_toolbar_visibility()
         toolbars = (
@@ -6644,10 +6794,14 @@ class MainWindowA3ShellLayoutTests(unittest.TestCase):
     def test_user_toolbar_changes_are_remembered_unless_the_window_is_syncing(self):
         window = self._window()
         window._on_workspace_toolbar_visibility_changed(window.VIEW_TOOLBAR_KEY, False)
-        self.assertIs(window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False)
+        self.assertIs(
+            window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False
+        )
         window._syncing_toolbar_visibility = True
         window._on_workspace_toolbar_visibility_changed(window.VIEW_TOOLBAR_KEY, True)
-        self.assertIs(window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False)
+        self.assertIs(
+            window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False
+        )
 
     def test_a_toolbar_preference_is_applied_and_saved(self):
         window = self._window()
@@ -6668,16 +6822,22 @@ class MainWindowA3ShellLayoutTests(unittest.TestCase):
         window = self._window()
         snapshot = window.get_workspace_toolbar_visibility_state()
         snapshot[window.MAIN_TOOLBAR_KEY] = False
-        self.assertIs(window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY], True)
+        self.assertIs(
+            window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY], True
+        )
         window.set_workspace_toolbar_visibility_state(
             {window.VIEW_TOOLBAR_KEY: 0, "unknown": True}
         )
-        self.assertIs(window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False)
+        self.assertIs(
+            window._workspace_toolbar_visibility[window.VIEW_TOOLBAR_KEY], False
+        )
         self.assertNotIn("unknown", window._workspace_toolbar_visibility)
         self.assertTrue(window._view_toolbar.isHidden())
         self.assertEqual(self.saves, [])
 
-    def test_the_toolbar_popup_menu_lists_every_toolbar_and_toggles_the_preference(self):
+    def test_the_toolbar_popup_menu_lists_every_toolbar_and_toggles_the_preference(
+        self,
+    ):
         window = self._window(TAB_INDEX_PROJECTS)
         window._workspace_toolbar_visibility[window.OVERLAY_TOOLS_TOOLBAR_KEY] = False
         menu = window.createPopupMenu()
@@ -6697,7 +6857,9 @@ class MainWindowA3ShellLayoutTests(unittest.TestCase):
         self.assertEqual([a.isChecked() for a in actions], [True, True, True, False])
         self.assertEqual([a.isEnabled() for a in actions], [True, False, False, False])
         actions[0].setChecked(False)
-        self.assertIs(window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY], False)
+        self.assertIs(
+            window._workspace_toolbar_visibility[window.MAIN_TOOLBAR_KEY], False
+        )
         self.assertTrue(window._main_toolbar.isHidden())
         self.assertEqual(self.saves, ["save"])
         self.tab = TAB_INDEX_TAKEOFF
@@ -6759,7 +6921,9 @@ class MainWindowA3ShellLayoutTests(unittest.TestCase):
         log = []
         window.handlers = SimpleNamespace(
             ui_event=SimpleNamespace(
-                navigate_to_takeoff_page=lambda page, view: log.append(("go", page, view)),
+                navigate_to_takeoff_page=lambda page, view: log.append(
+                    ("go", page, view)
+                ),
                 apply_pending_hotlink_view_focus=lambda: log.append("focus"),
             )
         )
@@ -6805,7 +6969,13 @@ class MainWindowA3ShellLayoutTests(unittest.TestCase):
 
     def test_the_left_column_is_shown_for_any_visible_left_sidebar_or_the_pan(self):
         window = self._sidebar_window()
-        for conditions_hidden, layers_hidden, pan_hidden, left_hidden, column_hidden in (
+        for (
+            conditions_hidden,
+            layers_hidden,
+            pan_hidden,
+            left_hidden,
+            column_hidden,
+        ) in (
             (True, True, True, True, True),
             (False, True, True, False, False),
             (True, False, True, False, False),
@@ -6827,12 +6997,27 @@ class MainWindowA3ShellLayoutTests(unittest.TestCase):
     def test_sidebar_toggles_change_the_action_first_and_only_then_the_pane(self):
         window = self._sidebar_window()
         for setter, getter, action_name, widget_name, ensured in (
-            ("set_pan_sidebar_visible", "is_pan_sidebar_visible",
-             "_pan_toggle_action", "_pan_sidebar", ["column", "pan"]),
-            ("set_layers_sidebar_visible", "is_layers_sidebar_visible",
-             "_layers_toggle_action", "_bid_layers_sidebar", [1]),
-            ("set_conditions_sidebar_visible", "is_conditions_sidebar_visible",
-             "_conditions_toggle_action", "_conditions_sidebar", [0]),
+            (
+                "set_pan_sidebar_visible",
+                "is_pan_sidebar_visible",
+                "_pan_toggle_action",
+                "_pan_sidebar",
+                ["column", "pan"],
+            ),
+            (
+                "set_layers_sidebar_visible",
+                "is_layers_sidebar_visible",
+                "_layers_toggle_action",
+                "_bid_layers_sidebar",
+                [1],
+            ),
+            (
+                "set_conditions_sidebar_visible",
+                "is_conditions_sidebar_visible",
+                "_conditions_toggle_action",
+                "_conditions_sidebar",
+                [0],
+            ),
         ):
             with self.subTest(setter=setter):
                 action = getattr(window, action_name)
@@ -7019,11 +7204,37 @@ class MainWindowA3SplitterBoundaryTests(unittest.TestCase):
             ([0, 3], 0, [1, 3], [1, 2]),
             ([0, 3], 0, [3, 1], [2, 1]),
             ([0, 200], 0, [1, 1], [100, 100]),
-            ([0, 200], 0, [0, 5], [min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199), 200 - min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199)]),
-            ([0, 200], 0, [5, 0], [min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199), 200 - min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199)]),
+            (
+                [0, 200],
+                0,
+                [0, 5],
+                [
+                    min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199),
+                    200 - min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199),
+                ],
+            ),
+            (
+                [0, 200],
+                0,
+                [5, 0],
+                [
+                    min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199),
+                    200 - min(max(1, _A3_PAN_DEFAULT_HEIGHT), 199),
+                ],
+            ),
             ([0, 10], 500, [1, 3], [125, 375]),
-            ([0, 1000], 0, [5, 0], [_A3_PAN_DEFAULT_HEIGHT, 1000 - _A3_PAN_DEFAULT_HEIGHT]),
-            ([0, 1000], 0, [0, 5], [_A3_PAN_DEFAULT_HEIGHT, 1000 - _A3_PAN_DEFAULT_HEIGHT]),
+            (
+                [0, 1000],
+                0,
+                [5, 0],
+                [_A3_PAN_DEFAULT_HEIGHT, 1000 - _A3_PAN_DEFAULT_HEIGHT],
+            ),
+            (
+                [0, 1000],
+                0,
+                [0, 5],
+                [_A3_PAN_DEFAULT_HEIGHT, 1000 - _A3_PAN_DEFAULT_HEIGHT],
+            ),
             # saved ratio rounds up to the whole height: clamped to total - 1
             ([0, 2], 0, [3, 1], [1, 1]),
             ([0, 3], 0, [7, 1], [2, 1]),
@@ -7161,10 +7372,14 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
         self.assertIsNone(result)
         result = update(_A3_HIGHLIGHT, color="#112233", font_changed=True)
         self.assertEqual(result.default_highlight_color, "#112233")
-        self.assertEqual(result.default_hotlink_color, self.config.default_hotlink_color)
+        self.assertEqual(
+            result.default_hotlink_color, self.config.default_hotlink_color
+        )
         result = update(_A3_HOTLINK, color="#112233", font_changed=False)
         self.assertEqual(result.default_hotlink_color, "#112233")
-        self.assertEqual(result.default_highlight_color, self.config.default_highlight_color)
+        self.assertEqual(
+            result.default_highlight_color, self.config.default_highlight_color
+        )
         self.assertIsNone(update(_A3_HIGHLIGHT, color=None, font_changed=True))
         self.assertIsNone(update(_A3_HOTLINK, color=None, font_changed=True))
         self.assertIsNone(update("rectangle", color="#112233", font_changed=True))
@@ -7172,7 +7387,9 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
     def test_setting_a_style_refreshes_controls_and_persists_the_matching_default(self):
         window = self._window()
         refreshed = []
-        window._refresh_annotation_style_controls = lambda kind=None: refreshed.append(kind)
+        window._refresh_annotation_style_controls = lambda kind=None: refreshed.append(
+            kind
+        )
         style = _A3AnnotationStyle(color="#445566")
         calls = []
         with patch.object(
@@ -7208,7 +7425,13 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
         self.assertEqual(self.saves, ["save"])
 
     def test_every_font_attribute_counts_as_a_font_change_and_persist_can_be_off(self):
-        for field in ("font_name", "font_size", "font_bold", "font_italic", "font_underline"):
+        for field in (
+            "font_name",
+            "font_size",
+            "font_bold",
+            "font_italic",
+            "font_underline",
+        ):
             with self.subTest(field=field):
                 window = self._window()
                 window._refresh_annotation_style_controls = lambda kind=None: None
@@ -7228,9 +7451,12 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
                     window.set_annotation_style_for_tool(_A3_TEXT, **{field: value})
                 (update,) = self.updates
                 self.assertEqual(
-                    update.default_text_font, MainWindow._font_definition_for_style(style)
+                    update.default_text_font,
+                    MainWindow._font_definition_for_style(style),
                 )
-                self.assertEqual(update.default_text_color, self.config.default_text_color)
+                self.assertEqual(
+                    update.default_text_color, self.config.default_text_color
+                )
         window = self._window()
         window._refresh_annotation_style_controls = lambda kind=None: None
         with patch.object(
@@ -7238,7 +7464,9 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
             "set_active_annotation_style_for_tool",
             return_value=_A3AnnotationStyle(),
         ):
-            window.set_annotation_style_for_tool(_A3_TEXT, color="#000000", persist=False)
+            window.set_annotation_style_for_tool(
+                _A3_TEXT, color="#000000", persist=False
+            )
             self.assertEqual((self.updates, self.saves), ([], []))
             window.set_annotation_style_for_tool("rectangle", line_width=2.0)
         self.assertEqual((self.updates, self.saves), ([], ["save"]))
@@ -7246,12 +7474,16 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
     def test_a_color_only_change_does_not_persist_the_font(self):
         window = self._window()
         window._refresh_annotation_style_controls = lambda kind=None: None
-        style = _A3AnnotationStyle(color="#778899", font_name="Courier New", font_size=31)
+        style = _A3AnnotationStyle(
+            color="#778899", font_name="Courier New", font_size=31
+        )
         self.assertNotEqual(
             MainWindow._font_definition_for_style(style), self.config.default_text_font
         )
         with patch.object(
-            main_window_module, "set_active_annotation_style_for_tool", return_value=style
+            main_window_module,
+            "set_active_annotation_style_for_tool",
+            return_value=style,
         ):
             window.set_annotation_style_for_tool(_A3_TEXT, color="#778899")
         (update,) = self.updates
@@ -7262,7 +7494,9 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
         window = self._window()
         window._config_model = SimpleNamespace(snapshot=lambda: "config-snapshot")
         refreshed = []
-        window._refresh_annotation_style_controls = lambda kind=None: refreshed.append(kind)
+        window._refresh_annotation_style_controls = lambda kind=None: refreshed.append(
+            kind
+        )
         applied = []
         styles = {_A3_TEXT: _A3AnnotationStyle()}
         with patch.object(
@@ -7277,7 +7511,9 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
         self.assertEqual(refreshed, [None, None])
         self.assertEqual(self.saves, ["save"])
 
-    def test_style_controls_refresh_the_toolbar_icons_and_every_open_detached_window(self):
+    def test_style_controls_refresh_the_toolbar_icons_and_every_open_detached_window(
+        self,
+    ):
         window = self._window()
         window._plan_tool_actions = {"actions": True}
         refreshed = []
@@ -7286,7 +7522,9 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
         )
         window.get_annotation_window = lambda: annotation
         window.get_view_window = lambda: None
-        with patch.object(main_window_module, "apply_annotation_tool_icon_color") as colors:
+        with patch.object(
+            main_window_module, "apply_annotation_tool_icon_color"
+        ) as colors:
             window._refresh_annotation_style_controls(_A3_TEXT)
             window._refresh_annotation_style_controls()
         self.assertEqual(
@@ -7298,9 +7536,13 @@ class MainWindowA3AnnotationStyleTests(unittest.TestCase):
     def test_style_getters_read_the_active_styles(self):
         window = MainWindow.__new__(MainWindow)
         with patch.object(
-            main_window_module, "get_active_annotation_style_for_tool", return_value="one"
+            main_window_module,
+            "get_active_annotation_style_for_tool",
+            return_value="one",
         ) as one, patch.object(
-            main_window_module, "get_active_annotation_styles_by_tool", return_value="all"
+            main_window_module,
+            "get_active_annotation_styles_by_tool",
+            return_value="all",
         ):
             self.assertEqual(window.get_annotation_style_for_tool(_A3_TEXT), "one")
             self.assertEqual(window.get_annotation_styles_by_tool(), "all")
@@ -7327,9 +7569,7 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
             window.showEvent(QtGui.QShowEvent())
         self.assertEqual(finished, [window])
         self.assertIsNone(window.splash_screen)
-        self.assertEqual(
-            scheduled, [(0, window._mark_main_window_ready)] * 2
-        )
+        self.assertEqual(scheduled, [(0, window._mark_main_window_ready)] * 2)
 
     def test_marking_the_window_ready_releases_waiting_imports(self):
         window = MainWindow.__new__(MainWindow)
@@ -7350,7 +7590,9 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
         window.app_controller = SimpleNamespace(get_service=missing)
         self.assertIsNone(window._resolve_update_service())
         window.app_controller = SimpleNamespace(get_service=lambda name: (name, "svc"))
-        self.assertEqual(window._resolve_update_service(), ("update_check_service", "svc"))
+        self.assertEqual(
+            window._resolve_update_service(), ("update_check_service", "svc")
+        )
 
     def test_delegating_accessors_return_the_owned_widgets_and_services(self):
         window = MainWindow.__new__(MainWindow)
@@ -7398,7 +7640,9 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
         self.assertEqual(window.get_project_selected_node(), {"n": 1})
         window.set_project_selected_node({"n": 2})
         self.assertEqual(window._node, {"n": 2})
-        window._conditions_sidebar = SimpleNamespace(is_group_by_type_enabled=lambda: True)
+        window._conditions_sidebar = SimpleNamespace(
+            is_group_by_type_enabled=lambda: True
+        )
         self.assertIs(window.is_conditions_group_by_type_enabled(), True)
         window._condition_summary_tab = SimpleNamespace(grouping="g")
         self.assertEqual(window.get_summary_grouping(), "g")
@@ -7411,7 +7655,9 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
         window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_PROJECTS)
         self.assertIs(window.is_summary_tab_active(), False)
         log = []
-        window.license_coordinator = SimpleNamespace(show_dialog=lambda: log.append("dialog"))
+        window.license_coordinator = SimpleNamespace(
+            show_dialog=lambda: log.append("dialog")
+        )
         window.show_license_dialog()
         window._takeoff_toolbar_visibility = SimpleNamespace(
             apply_hidden_items=lambda items: log.append(items)
@@ -7433,7 +7679,8 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            text.splitlines()[0], "Successfully imported 2 project files into the database."
+            text.splitlines()[0],
+            "Successfully imported 2 project files into the database.",
         )
         self.assertEqual(len(text.splitlines()), 2)
         self.assertIn("orphaned", text.splitlines()[1])
@@ -7460,7 +7707,6 @@ import logging as _a3_logging
 import tempfile as _a3_tempfile
 from contextlib import ExitStack as _A3ExitStack
 from pathlib import Path as _A3Path
-
 from ost_visualizer.config.di_config import configure_application as _a3_configure
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.presentation.handlers.export_handler import ExportHandler
@@ -7626,9 +7872,7 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
             (_A3CoverSheetHandler, "open_cover_sheet", "cover_sheet.open"),
             (_A3AiSidecarRebindPrompt, "offer", "ai_rebind.offer"),
         ):
-            stack.enter_context(
-                patch.object(owner, name, class_spy(owner, name, tag))
-            )
+            stack.enter_context(patch.object(owner, name, class_spy(owner, name, tag)))
         cls.container = _a3_configure(log_dir=root / "logs")
         cls.controller = cls.container.get("app_controller")
         cls.saved_rect_style = _A3AnnotationStyle(color="#123456", line_width=7.0)
@@ -7743,7 +7987,9 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
 
     def test_detached_window_managers_notify_the_main_window(self):
         window = self.window
-        with patch.object(window, "_sync_annotation_window_action") as annotation_sync, patch.object(
+        with patch.object(
+            window, "_sync_annotation_window_action"
+        ) as annotation_sync, patch.object(
             window, "_sync_view_window_action"
         ) as view_sync:
             window._annotation_view_manager._visibility_changed_callback(False)
@@ -7778,22 +8024,27 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
             ("on_import_project_file", window.handlers.import_.import_project_file),
             ("on_rename_project", window.handlers.delete.rename_project),
             ("on_renumber_conditions", window.handlers.ui_event.renumber_conditions),
-            ("on_can_renumber_conditions", window.handlers.ui_event.can_renumber_conditions),
+            (
+                "on_can_renumber_conditions",
+                window.handlers.ui_event.can_renumber_conditions,
+            ),
             ("on_can_duplicate_bid", window.ui_access_manager.can_duplicate_bid),
             ("on_can_close_database", window.ui_access_manager.can_close_database),
             ("on_can_delete_bids", window.ui_access_manager.can_delete_bids),
             ("on_can_delete_projects", window.ui_access_manager.can_delete_projects),
             ("on_can_create_bid", window.ui_access_manager.can_create_bid),
             ("on_can_create_project", window.ui_access_manager.can_create_project),
-            ("on_can_update_bid_job_status", window.ui_access_manager.can_edit_bid_job_status),
+            (
+                "on_can_update_bid_job_status",
+                window.ui_access_manager.can_edit_bid_job_status,
+            ),
         ):
             with self.subTest(attribute=attribute):
                 self.assertEqual(getattr(tree, attribute), expected)
         self.assertEqual(tree.top_tree.on_move_bids, window._move_project_bids)
         self.assertEqual(tree.top_tree.on_can_move_bids, window._can_move_project_bids)
         self.assertTrue(
-            tree.on_can_import_project_file("ost", "C:/x.mdb", None)
-            in (True, False)
+            tree.on_can_import_project_file("ost", "C:/x.mdb", None) in (True, False)
         )
 
     def test_ui_event_coordinator_receives_the_composed_widgets(self):
@@ -7844,8 +8095,17 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
         self.assertEqual(
             controllers[0]._column_keys,
             (
-                "number", "name", "status", "bid_date", "job_number", "estimator",
-                "pages", "conditions", "notes", "copy_from", "copy_timestamp",
+                "number",
+                "name",
+                "status",
+                "bid_date",
+                "job_number",
+                "estimator",
+                "pages",
+                "conditions",
+                "notes",
+                "copy_from",
+                "copy_timestamp",
             ),
         )
         self.assertEqual(
@@ -7862,9 +8122,13 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
         self.assertIs(controllers[2]._view, window._bid_layers_sidebar.table)
         self.assertIs(controllers[3]._view, window._condition_summary_tab.tree)
         for controller in controllers:
-            self.assertIs(controller._workspace_state_model, window._workspace_state_model)
+            self.assertIs(
+                controller._workspace_state_model, window._workspace_state_model
+            )
 
-    def test_the_layers_header_keeps_a_fixed_visibility_column_and_a_free_name_column(self):
+    def test_the_layers_header_keeps_a_fixed_visibility_column_and_a_free_name_column(
+        self,
+    ):
         header = self.window._bid_layers_sidebar.table.header()
         self.assertFalse(header.stretchLastSection())
         self.assertEqual(
@@ -7885,7 +8149,6 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
         self.assertFalse(summary_controller._columns_updating)
         for other in window._header_controllers[:-1]:
             self.assertFalse(other._columns_updating)
-
 
     # ---- constructor state and one-shot wiring ---------------------------------
     def test_a_new_window_starts_with_no_pending_startup_work(self):
@@ -8017,7 +8280,8 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
                 view._context_menu_command_trigger, controller.trigger_menu_action
             )
         self.assertEqual(
-            window.plan_view._context_menu_action_state, controller.get_menu_action_state
+            window.plan_view._context_menu_action_state,
+            controller.get_menu_action_state,
         )
 
     def test_update_dialog_requests_reach_the_update_dialog(self):
@@ -8034,7 +8298,6 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
         self.assertEqual(
             self.calls, [("_on_ai_changeset_finished", ("c-1", "rejected"))]
         )
-
 
     def test_saved_annotation_styles_become_the_active_styles_at_startup(self):
         style = self.window.get_annotation_style_for_tool("rect")
@@ -8072,22 +8335,28 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
     def test_the_composed_services_and_handlers_are_attached(self):
         window = self.window
         controller = self.controller
-        self.assertIs(window._ai_audit_log, controller.get_service("ai_takeoff_audit_log"))
+        self.assertIs(
+            window._ai_audit_log, controller.get_service("ai_takeoff_audit_log")
+        )
         self.assertIsInstance(window.handlers.export, ExportHandler)
-        self.assertIs(window.handlers.delete._ui_event_coordinator, window.handlers.ui_event)
+        self.assertIs(
+            window.handlers.delete._ui_event_coordinator, window.handlers.ui_event
+        )
         self.assertIs(
             window.handlers.cover_sheet._ui_event_coordinator, window.handlers.ui_event
         )
         self.assertIs(window._pan_sidebar._plan_view, window.plan_view)
         self.assertIs(
-            window.handlers.ui_event.condition_summary_tab, window._condition_summary_tab
+            window.handlers.ui_event.condition_summary_tab,
+            window._condition_summary_tab,
         )
         self.assertIs(
             window.handlers.ui_event._sidebar.condition_summary_tab,
             window._condition_summary_tab,
         )
-        self.assertIs(window.project_view.top_tree._ui_access_manager, window.ui_access_manager)
-
+        self.assertIs(
+            window.project_view.top_tree._ui_access_manager, window.ui_access_manager
+        )
 
     def test_transaction_monitor_messages_are_parented_to_the_window(self):
         window = self.window
@@ -8128,7 +8397,9 @@ class MainWindowA3BaseClassDelegationTests(unittest.TestCase):
         window = self._window()
         seen = []
         with patch.object(
-            QtWidgets.QMainWindow, "changeEvent", lambda self, event: seen.append(event.type())
+            QtWidgets.QMainWindow,
+            "changeEvent",
+            lambda self, event: seen.append(event.type()),
         ), patch.object(main_window_module, "rebuild_all_icons") as rebuild:
             window.changeEvent(QtCore.QEvent(QtCore.QEvent.Type.EnabledChange))
             window.changeEvent(QtCore.QEvent(QtCore.QEvent.Type.PaletteChange))

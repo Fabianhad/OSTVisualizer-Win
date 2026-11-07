@@ -136,7 +136,14 @@ class SqlConnectionDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
         cases = (
             ("blank server", "   ", False, "", "", server_warning),
             ("missing login", "localhost", True, "", "temporary-secret", login_warning),
-            ("blank login", "localhost", True, "   ", "temporary-secret", login_warning),
+            (
+                "blank login",
+                "localhost",
+                True,
+                "   ",
+                "temporary-secret",
+                login_warning,
+            ),
             ("missing password", "localhost", True, "test-user", "", login_warning),
         )
         for label, server, sql_auth, username, password, warned in cases:
@@ -611,7 +618,11 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
                         attribute,
                         _Proxy(
                             real,
-                            {signal: _RaisingSignal(error, log, f"{attribute}.{signal}")},
+                            {
+                                signal: _RaisingSignal(
+                                    error, log, f"{attribute}.{signal}"
+                                )
+                            },
                         ),
                     )
                 dialog.password_input.setText("secret")

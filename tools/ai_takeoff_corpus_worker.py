@@ -256,7 +256,12 @@ def wall_profile(lines) -> dict:
     lengths: dict = {}
     counts: Counter = Counter()
     for line in lines:
-        if not line.stroked or line.width is None or line.has_dash or line.length < LONG_LINE_PTS:
+        if (
+            not line.stroked
+            or line.width is None
+            or line.has_dash
+            or line.length < LONG_LINE_PTS
+        ):
             continue
         key = round(float(line.width), 2)
         lengths[key] = lengths.get(key, 0.0) + line.length
@@ -264,7 +269,9 @@ def wall_profile(lines) -> dict:
     common = [key for key in lengths if counts[key] >= MIN_LONG_LINES]
     walls = [key for key in common if key >= heavy - 1e-9]
     return {
-        "dominant_wall_width": max(walls, key=lambda key: lengths[key]) if walls else None,
+        "dominant_wall_width": (
+            max(walls, key=lambda key: lengths[key]) if walls else None
+        ),
         "heaviest_long_width": max(common) if common else None,
         "long_width_histogram": json.dumps(
             {str(key): round(value, 1) for key, value in sorted(lengths.items())},
@@ -281,11 +288,16 @@ def seed_region(regions, k: float, width: float, height: float):
 
 
 def removes_dominant(suggested, dominant) -> bool:
-    return suggested is not None and dominant is not None and suggested > dominant + 1e-9
+    return (
+        suggested is not None and dominant is not None and suggested > dominant + 1e-9
+    )
 
 
 def region_shape(polygon_ost, k: float, width: float, height: float) -> tuple:
-    points = [(polygon_ost[i] / k, polygon_ost[i + 1] / k) for i in range(0, len(polygon_ost) - 1, 2)]
+    points = [
+        (polygon_ost[i] / k, polygon_ost[i + 1] / k)
+        for i in range(0, len(polygon_ost) - 1, 2)
+    ]
     if len(points) < 3 or width <= 0.0 or height <= 0.0:
         return False, 0.0
     xs = [x for x, _y in points]
@@ -296,9 +308,15 @@ def region_shape(polygon_ost, k: float, width: float, height: float) -> tuple:
         or max(xs) >= width - EDGE_TOLERANCE_PTS
         or max(ys) >= height - EDGE_TOLERANCE_PTS
     )
-    area = abs(
-        sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(points, points[1:] + points[:1]))
-    ) / 2.0
+    area = (
+        abs(
+            sum(
+                a[0] * b[1] - b[0] * a[1]
+                for a, b in zip(points, points[1:] + points[:1])
+            )
+        )
+        / 2.0
+    )
     return touches, round(area / (width * height), 4)
 
 
@@ -599,7 +617,9 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
             seed = seeds[0]["seed_pts"]
             expected = seeds[0]["expected_sf"]
             row["seed_source"] = "hand"
-        elif filtered is not None and seed_region(filtered["data"]["regions"], k, width, height):
+        elif filtered is not None and seed_region(
+            filtered["data"]["regions"], k, width, height
+        ):
             region = seed_region(filtered["data"]["regions"], k, width, height)
             seed = _interior_point(region["polygon_ost"], k)
             row["seed_source"] = "largest_region"
@@ -611,7 +631,13 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
         if profile["heaviest_long_width"] is not None:
             row.update(
                 _seeded_variant(
-                    "heavy", proposal, snapshot, whole, seed, profile["heaviest_long_width"], k
+                    "heavy",
+                    proposal,
+                    snapshot,
+                    whole,
+                    seed,
+                    profile["heaviest_long_width"],
+                    k,
                 )
             )
         timing, seeded = _timed(
@@ -655,7 +681,9 @@ def measure_page(prepared: dict, page_uid: str, seeds: list) -> dict:
             geometry = proposed["data"]["geometry"]
             row.update(
                 proposal_subjects=json.dumps(
-                    Counter(item["subject"] for item in proposed["data"]["assumptions"]),
+                    Counter(
+                        item["subject"] for item in proposed["data"]["assumptions"]
+                    ),
                     sort_keys=True,
                 ),
                 proposal_assumptions=len(proposed["data"]["assumptions"]),

@@ -66,7 +66,9 @@ METADATA_FIELDS = "cdn_type_uid condition_folder condition_type_catalog folder_u
 
 
 class ConditionFieldClassificationTableTests(unittest.TestCase):
-    def test_every_classified_field_has_the_documented_mesh_and_plan_impact_on_its_own(self):
+    def test_every_classified_field_has_the_documented_mesh_and_plan_impact_on_its_own(
+        self,
+    ):
         for field in MESH_FIELDS:
             with self.subTest(mesh_field=field):
                 self.assertIs(condition_changes_require_mesh_refresh([field]), True)
@@ -86,30 +88,67 @@ class ConditionFieldClassificationTableTests(unittest.TestCase):
         self.assertEqual(len(names), 16 + 20 + 6)
 
     def test_a_mixed_change_set_uses_the_most_demanding_member(self):
-        self.assertIs(condition_changes_require_mesh_refresh(["name", "notes", "width"]), True)
+        self.assertIs(
+            condition_changes_require_mesh_refresh(["name", "notes", "width"]), True
+        )
         self.assertIs(condition_changes_require_mesh_refresh(["name", "notes"]), False)
-        self.assertIs(condition_changes_require_plan_refresh(["notes", "ref_no", "name"]), True)
-        self.assertIs(condition_changes_require_plan_refresh(["notes", "ref_no", "folder_uid"]), False)
-        self.assertIs(condition_changes_require_mesh_refresh(["name", "brand_new"]), True)
-        self.assertIs(condition_changes_require_plan_refresh(["notes", "brand_new"]), True)
+        self.assertIs(
+            condition_changes_require_plan_refresh(["notes", "ref_no", "name"]), True
+        )
+        self.assertIs(
+            condition_changes_require_plan_refresh(["notes", "ref_no", "folder_uid"]),
+            False,
+        )
+        self.assertIs(
+            condition_changes_require_mesh_refresh(["name", "brand_new"]), True
+        )
+        self.assertIs(
+            condition_changes_require_plan_refresh(["notes", "brand_new"]), True
+        )
 
-    def test_blank_field_names_and_operations_are_ignored_and_inputs_may_be_any_iterable(self):
-        self.assertIs(condition_changes_require_mesh_refresh(["", None, "notes"]), False)
-        self.assertIs(condition_changes_require_plan_refresh(["", None, "notes"]), False)
+    def test_blank_field_names_and_operations_are_ignored_and_inputs_may_be_any_iterable(
+        self,
+    ):
+        self.assertIs(
+            condition_changes_require_mesh_refresh(["", None, "notes"]), False
+        )
+        self.assertIs(
+            condition_changes_require_plan_refresh(["", None, "notes"]), False
+        )
         self.assertIs(condition_changes_require_mesh_refresh(iter(["width"])), True)
-        self.assertIs(condition_changes_require_mesh_refresh(["notes"], ["", None]), False)
-        self.assertIs(condition_changes_require_plan_refresh(["notes"], iter(["", None])), False)
-        self.assertIs(condition_changes_require_mesh_refresh(["notes"], ["update"]), False)
+        self.assertIs(
+            condition_changes_require_mesh_refresh(["notes"], ["", None]), False
+        )
+        self.assertIs(
+            condition_changes_require_plan_refresh(["notes"], iter(["", None])), False
+        )
+        self.assertIs(
+            condition_changes_require_mesh_refresh(["notes"], ["update"]), False
+        )
 
-    def test_operations_only_matter_when_no_fields_are_named_except_delete_and_create_for_plan(self):
-        self.assertIs(condition_changes_require_mesh_refresh(["notes"], ["create"]), False)
-        self.assertIs(condition_changes_require_mesh_refresh(["notes"], ["reorder"]), False)
-        self.assertIs(condition_changes_require_mesh_refresh([], ["create", "reorder"]), False)
+    def test_operations_only_matter_when_no_fields_are_named_except_delete_and_create_for_plan(
+        self,
+    ):
+        self.assertIs(
+            condition_changes_require_mesh_refresh(["notes"], ["create"]), False
+        )
+        self.assertIs(
+            condition_changes_require_mesh_refresh(["notes"], ["reorder"]), False
+        )
+        self.assertIs(
+            condition_changes_require_mesh_refresh([], ["create", "reorder"]), False
+        )
         self.assertIs(condition_changes_require_mesh_refresh([], ["reorder"]), False)
         self.assertIs(condition_changes_require_mesh_refresh([], ["delete"]), True)
-        self.assertIs(condition_changes_require_plan_refresh(["notes"], ["reorder"]), False)
-        self.assertIs(condition_changes_require_plan_refresh(["notes"], ["update"]), False)
-        self.assertIs(condition_changes_require_plan_refresh([], ["reorder", "reorder"]), False)
+        self.assertIs(
+            condition_changes_require_plan_refresh(["notes"], ["reorder"]), False
+        )
+        self.assertIs(
+            condition_changes_require_plan_refresh(["notes"], ["update"]), False
+        )
+        self.assertIs(
+            condition_changes_require_plan_refresh([], ["reorder", "reorder"]), False
+        )
         self.assertIs(condition_changes_require_plan_refresh([], ["create"]), True)
         self.assertIs(condition_changes_require_plan_refresh([], ["delete"]), True)
         self.assertIs(condition_changes_require_plan_refresh([], ["update"]), True)

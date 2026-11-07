@@ -119,14 +119,18 @@ class PageSelectionQueryTests(unittest.TestCase):
         self.service.get_all_takeoffs().append(self.t3)
         self.assertEqual(len(self.p1.takeoffs), 2)
 
-    def test_has_takeoffs_for_pages_is_true_only_when_one_listed_page_has_takeoffs(self):
+    def test_has_takeoffs_for_pages_is_true_only_when_one_listed_page_has_takeoffs(
+        self,
+    ):
         self.assertIs(self.service.has_takeoffs_for_pages(["p3", "ghost"]), False)
         self.assertIs(self.service.has_takeoffs_for_pages(["p3", "p2"]), True)
         self.assertIs(self.service.has_takeoffs_for_pages([]), False)
         self.assertIs(self.service.has_takeoffs_for_pages(iter(["p1"])), True)
 
     def test_selection_deduplicates_drops_blank_uids_and_can_be_cleared(self):
-        self.assertEqual(self.service.select_pages(["", None, "p1", "p1", "p2"]), ["p1", "p2"])
+        self.assertEqual(
+            self.service.select_pages(["", None, "p1", "p1", "p2"]), ["p1", "p2"]
+        )
         self.service.clear_selection()
         self.assertEqual(self.service.get_selected_pages(), [])
         self.assertEqual(self.service.select_pages([]), [])
@@ -141,7 +145,9 @@ class PageSelectionQueryTests(unittest.TestCase):
 
     def test_clear_removes_pages_selection_and_annotations(self):
         self.service.select_pages(["p1"])
-        self.service.set_annotations([BidAnnotation(uid="a", annotation_type="rect", page_uid="p1")])
+        self.service.set_annotations(
+            [BidAnnotation(uid="a", annotation_type="rect", page_uid="p1")]
+        )
         self.service.clear()
         self.assertEqual(
             (
@@ -177,9 +183,12 @@ class PageSelectionAnnotationCollectionTests(unittest.TestCase):
     def test_page_annotations_compare_page_uids_as_text(self):
         service = PageSelectionService()
         service.set_annotations(
-            self.annotations() + [BidAnnotation(uid="n", annotation_type="rect", page_uid=7)]
+            self.annotations()
+            + [BidAnnotation(uid="n", annotation_type="rect", page_uid=7)]
         )
-        self.assertEqual([a.uid for a in service.get_page_annotations("p1")], ["a1", "a2"])
+        self.assertEqual(
+            [a.uid for a in service.get_page_annotations("p1")], ["a1", "a2"]
+        )
         self.assertEqual([a.uid for a in service.get_page_annotations("7")], ["n"])
         self.assertEqual([a.uid for a in service.get_page_annotations(7)], ["n"])
         self.assertEqual(service.get_page_annotations("none-such"), [])
@@ -191,11 +200,19 @@ class PageSelectionAnnotationCollectionTests(unittest.TestCase):
         service.add_annotations(None)
         self.assertEqual(len(service.get_all_annotations()), 5)
 
-    def test_removal_reports_each_affected_page_once_in_order_and_skips_pageless_items(self):
+    def test_removal_reports_each_affected_page_once_in_order_and_skips_pageless_items(
+        self,
+    ):
         service = PageSelectionService()
         service.set_annotations(self.annotations())
         reported = service.remove_annotations_by_keys(
-            [("a3", "oval"), ("a1", "rect"), ("a2", "rect"), ("a4", "oval"), ("a5", "oval")]
+            [
+                ("a3", "oval"),
+                ("a1", "rect"),
+                ("a2", "rect"),
+                ("a4", "oval"),
+                ("a5", "oval"),
+            ]
         )
         self.assertEqual(reported, ["p1", "p2"])
         self.assertEqual(service.get_all_annotations(), [])
@@ -211,6 +228,8 @@ class PageSelectionAnnotationCollectionTests(unittest.TestCase):
 
     def test_keys_match_uid_and_type_as_text(self):
         service = PageSelectionService()
-        service.set_annotations([BidAnnotation(uid=5, annotation_type="rect", page_uid="p")])
+        service.set_annotations(
+            [BidAnnotation(uid=5, annotation_type="rect", page_uid="p")]
+        )
         self.assertEqual(service.remove_annotations_by_keys([("5", "rect")]), ["p"])
         self.assertEqual(service.get_all_annotations(), [])

@@ -31,7 +31,9 @@ class ConditionTypeTests(unittest.TestCase):
             (0, 1, 2, 3),
         )
 
-    def test_exactly_one_type_predicate_is_true_per_known_type_and_none_for_unknown(self):
+    def test_exactly_one_type_predicate_is_true_per_known_type_and_none_for_unknown(
+        self,
+    ):
         predicates = ("is_linear", "is_area", "is_count", "is_attachment")
         for condition_type, expected in (
             (0, "is_linear"),

@@ -52,9 +52,10 @@ class AnnotationViewEventHandlerLifecycleTests(unittest.TestCase):
             ],
         )
         handler.shutdown()
-        event_bus.publish(
-            AppEvents.HOTLINK_CLICKED, hotlink_uid="late", bid_page_uid="page"
-        )
+        with self.assertNoLogs("test", level="DEBUG"):
+            event_bus.publish(
+                AppEvents.HOTLINK_CLICKED, hotlink_uid="late", bid_page_uid="page"
+            )
         self.assertEqual(len(events), 2)
         self.assertFalse(handler._subscribed)
         self.assertIsNone(handler._use_case)
@@ -90,7 +91,10 @@ class AnnotationViewEventHandlerLifecycleTests(unittest.TestCase):
         )
         handler.shutdown()
         handler.shutdown()
-        bus.publish(AppEvents.HOTLINK_CLICKED, hotlink_uid="late", bid_page_uid="page")
+        with self.assertNoLogs("test", level="DEBUG"):
+            bus.publish(
+                AppEvents.HOTLINK_CLICKED, hotlink_uid="late", bid_page_uid="page"
+            )
         self.assertEqual([event.hotlink_uid for event in events], ["first", "retained"])
         self.assertEqual(bus.attempts, 2)
 
@@ -134,6 +138,30 @@ class AnnotationViewEventHandlerLifecycleTests(unittest.TestCase):
                 )
                 self.assertEqual(len(calls), 2 if failure_stage == "factory" else 1)
 
+    def test_shutdown_removes_exactly_the_handlers_own_subscription_and_leaves_others(
+        self,
+    ):
+        bus = EventBus()
+        other_received = []
+        bus.subscribe(
+            AppEvents.HOTLINK_CLICKED,
+            lambda **payload: other_received.append(payload["hotlink_uid"]),
+        )
+        handler = AnnotationViewEventHandler(
+            bus,
+            lambda: SimpleNamespace(execute_from_hotlink=lambda event: None),
+            logging.getLogger("test-annotation-shutdown"),
+        )
+        handler.start()
+        self.assertEqual(len(bus._subscribers[AppEvents.HOTLINK_CLICKED]), 2)
+        handler.shutdown()
+        self.assertEqual(len(bus._subscribers[AppEvents.HOTLINK_CLICKED]), 1)
+        with self.assertNoLogs("test-annotation-shutdown", level="DEBUG"):
+            bus.publish(
+                AppEvents.HOTLINK_CLICKED, hotlink_uid="late", bid_page_uid="page"
+            )
+        self.assertEqual(other_received, ["late"])
+
 
 class AnnotationViewEventHandlerDefaultsAndErrorTests(unittest.TestCase):
     class _Logger:
@@ -143,17 +171,27 @@ class AnnotationViewEventHandlerDefaultsAndErrorTests(unittest.TestCase):
         def exception(self, message, *args):
             self.messages.append(message % args)
 
-    def test_a_click_without_details_opens_nothing_particular_with_zero_positions_and_no_target(self):
+    def test_a_click_without_details_opens_nothing_particular_with_zero_positions_and_no_target(
+        self,
+    ):
         events = []
         handler = AnnotationViewEventHandler(
             event_bus=EventBus(),
-            use_case_factory=lambda: SimpleNamespace(execute_from_hotlink=events.append),
+            use_case_factory=lambda: SimpleNamespace(
+                execute_from_hotlink=events.append
+            ),
             logger=logging.getLogger("test"),
         )
         handler._on_hotlink_clicked()
         (event,) = events
         self.assertEqual(
-            (event.hotlink_uid, event.bid_page_uid, event.target_view_uid, event.position_x, event.position_y),
+            (
+                event.hotlink_uid,
+                event.bid_page_uid,
+                event.target_view_uid,
+                event.position_x,
+                event.position_y,
+            ),
             ("", "", None, 0, 0),
         )
         self.assertEqual((event.position_x, event.position_y), (0.0, 0.0))
@@ -180,7 +218,9 @@ class AnnotationViewEventHandlerDefaultsAndErrorTests(unittest.TestCase):
         self.assertEqual(calls, ["bad", "good"])
         self.assertEqual(logger.messages, ["Error handling HOTLINK_CLICKED"])
 
-    def test_a_failing_use_case_factory_is_also_contained_and_retried_on_the_next_click(self):
+    def test_a_failing_use_case_factory_is_also_contained_and_retried_on_the_next_click(
+        self,
+    ):
         attempts = []
 
         def factory():
@@ -188,7 +228,9 @@ class AnnotationViewEventHandlerDefaultsAndErrorTests(unittest.TestCase):
             raise RuntimeError("no graph")
 
         logger = self._Logger()
-        handler = AnnotationViewEventHandler(event_bus=EventBus(), use_case_factory=factory, logger=logger)
+        handler = AnnotationViewEventHandler(
+            event_bus=EventBus(), use_case_factory=factory, logger=logger
+        )
         handler._on_hotlink_clicked(hotlink_uid="a")
         handler._on_hotlink_clicked(hotlink_uid="b")
         self.assertEqual(len(attempts), 2)

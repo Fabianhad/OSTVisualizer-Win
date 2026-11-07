@@ -541,11 +541,13 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         schema = _dimension_support__annotation_reader_schema()
         for table in sorted(ANNOTATION_TABLES):
             with self.subTest(table=table):
-                annotations = _dimension_support__Reader()._parse_bid_annotations_for_bid(
-                    _RecordingConnection(rows_by_table, failing_table=table),
-                    "1",
-                    {},
-                    schema,
+                annotations = (
+                    _dimension_support__Reader()._parse_bid_annotations_for_bid(
+                        _RecordingConnection(rows_by_table, failing_table=table),
+                        "1",
+                        {},
+                        schema,
+                    )
                 )
                 expected_uids = {"13", "68459"} - {
                     {"BidAnnotationRects": "13", "BidHotLinks": "68459"}.get(table)
@@ -923,7 +925,6 @@ _SQLITE_READER_DDL = {
 
 class SqliteBackedAnnotationReaderTests(unittest.TestCase):
     """Reads real sqlite tables that carry exactly the columns the reader selects.
-
     A wrong table name, a selected column that does not exist, or a missing
     ``BidUID`` filter changes what comes back, unlike the fake-cursor tests above.
     """

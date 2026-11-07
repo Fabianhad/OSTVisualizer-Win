@@ -74,7 +74,9 @@ class BidDefaultsAndFolderUidTests(unittest.TestCase):
         bid.pages_without_folder.append(Page(uid="p", name="P"))
         self.assertEqual((other.folders, other.pages_without_folder), ({}, []))
 
-    def test_a_page_without_a_folder_is_never_assigned_to_a_folder_whose_uid_is_none_text(self):
+    def test_a_page_without_a_folder_is_never_assigned_to_a_folder_whose_uid_is_none_text(
+        self,
+    ):
         folder = Folder(uid="None", name="Literal None")
         bid = Bid(uid="1", name="N", folders={"None": folder})
         unassigned = Page(uid="p1", name="Loose", folder_uid=None)

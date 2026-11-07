@@ -58,6 +58,20 @@ class ShapePointTests(unittest.TestCase):
             [(10, 16), (12.3, 20), (10, 24), (7.7, 20)],
         )
 
+    def test_rhombus_half_depth_is_a_retained_but_unused_parameter(self):
+        # R4 resolution: half_depth has been accepted-and-ignored since the first
+        # commit; the 2D footprint and the 3D prism (calc_rhombus_mesh_verts) are both
+        # derived from the width only, and the only production caller omits it.
+        baseline = create_rhombus_points(10, 20, 4, rotation=0.3)
+        for half_depth in (None, 0, 1, 99, -5):
+            with self.subTest(half_depth=half_depth):
+                self.assertEqual(
+                    create_rhombus_points(10, 20, 4, half_depth, 0.3), baseline
+                )
+        self.assertEqual(
+            create_rhombus_points(10, 20, 4, 1), create_rhombus_points(10, 20, 4)
+        )
+
 
 class ShapeConstantTests(unittest.TestCase):
     def test_shape_ids_are_the_stored_access_codes(self):
@@ -102,14 +116,20 @@ class ShapeConstantTests(unittest.TestCase):
                 self.assertIs(spec.is_ellipse, ellipse)
                 self.assertIs(spec.is_polygon, polygon)
                 self.assertEqual(spec.polygon_params is not None, polygon)
-        self.assertEqual(ShapeSpec(shape.TRIANGLE, 1, 1).polygon_params, (3, math.pi / 6))
-        self.assertEqual(ShapeSpec(shape.OCTAGON, 1, 1).polygon_params, (8, math.pi / 8))
+        self.assertEqual(
+            ShapeSpec(shape.TRIANGLE, 1, 1).polygon_params, (3, math.pi / 6)
+        )
+        self.assertEqual(
+            ShapeSpec(shape.OCTAGON, 1, 1).polygon_params, (8, math.pi / 8)
+        )
 
     def test_spec_is_frozen_halves_dimensions_and_defaults_to_no_rotation(self):
         from dataclasses import FrozenInstanceError
 
         spec = ShapeSpec(RECTANGLE, 7, 3)
-        self.assertEqual((spec.rotation, spec.half_width, spec.half_depth), (0.0, 3.5, 1.5))
+        self.assertEqual(
+            (spec.rotation, spec.half_width, spec.half_depth), (0.0, 3.5, 1.5)
+        )
         with self.assertRaises(FrozenInstanceError):
             spec.width = 1
         self.assertEqual(ShapeSpec(RECTANGLE, 7, 3, 0.5).rotation, 0.5)
@@ -122,7 +142,9 @@ class ShapeUnrotatedAndRotatedPointTests(unittest.TestCase):
             self.assertAlmostEqual(actual_point[0], expected_point[0])
             self.assertAlmostEqual(actual_point[1], expected_point[1])
 
-    def test_unrotated_rectangle_triangle_and_rhombus_are_axis_aligned_around_the_center(self):
+    def test_unrotated_rectangle_triangle_and_rhombus_are_axis_aligned_around_the_center(
+        self,
+    ):
         self.assert_points(
             create_rectangle_points(10, 20, 4, 2),
             [(6, 18), (14, 18), (14, 22), (6, 22)],
@@ -160,13 +182,19 @@ class ShapeUnrotatedAndRotatedPointTests(unittest.TestCase):
         top = (0.0, -2.0)
         self.assert_points(
             rotated[:1],
-            [(top[0] * math.cos(angle) - top[1] * math.sin(angle),
-              top[0] * math.sin(angle) + top[1] * math.cos(angle))],
+            [
+                (
+                    top[0] * math.cos(angle) - top[1] * math.sin(angle),
+                    top[0] * math.sin(angle) + top[1] * math.cos(angle),
+                )
+            ],
         )
         self.assertAlmostEqual(rotated[1][0], 2 * 0.575 * math.cos(angle))
         self.assertAlmostEqual(rotated[1][1], 2 * 0.575 * math.sin(angle))
 
-    def test_unrotated_polygon_points_start_at_the_angle_offset_and_run_counter_clockwise(self):
+    def test_unrotated_polygon_points_start_at_the_angle_offset_and_run_counter_clockwise(
+        self,
+    ):
         self.assert_points(
             create_polygon_points(0, 0, 2, 4, 0),
             [(2, 0), (0, 2), (-2, 0), (0, -2)],

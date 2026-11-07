@@ -62,11 +62,13 @@ class MachineIdentityContractTests(unittest.TestCase):
         self.assertEqual(HWID_VERSION, "v1")
         self.assertEqual(hw.HWID_DIGEST_LENGTH, 64)
         self.assertEqual(hw.HWID_EXTERNAL_LENGTH, 67)
+        self.assertEqual(len(build_hwid(self.identity())), hw.HWID_EXTERNAL_LENGTH)
         self.assertEqual(
-            len(build_hwid(self.identity())), hw.HWID_EXTERNAL_LENGTH
+            HardwareIdentitySource.SMBIOS_SYSTEM_UUID.value, "smbios_system_uuid"
         )
-        self.assertEqual(HardwareIdentitySource.SMBIOS_SYSTEM_UUID.value, "smbios_system_uuid")
-        self.assertEqual(HardwareIdentitySource.INSTALLATION_UUID.value, "installation_uuid")
+        self.assertEqual(
+            HardwareIdentitySource.INSTALLATION_UUID.value, "installation_uuid"
+        )
         self.assertEqual(
             HardwareIdentitySource("installation_uuid"),
             HardwareIdentitySource.INSTALLATION_UUID,
@@ -84,10 +86,14 @@ class MachineIdentityContractTests(unittest.TestCase):
         self.assertEqual(len({smbios, installed, other}), 3)
         self.assertEqual(
             installed,
-            "v1:" + __import__("hashlib").sha256(
+            "v1:"
+            + __import__("hashlib")
+            .sha256(
                 b"OST_VISUALIZER_HWID|v1|installation_uuid|"
                 b"00112233-4455-6677-8899-AABBCCDDEEFF"
-            ).hexdigest().upper(),
+            )
+            .hexdigest()
+            .upper(),
         )
         self.assertEqual(build_hwid(self.identity()), smbios)
 
@@ -108,6 +114,27 @@ class MachineIdentityContractTests(unittest.TestCase):
         ):
             with self.subTest(value=value):
                 self.assertFalse(is_canonical_hwid(value))
+
+    def test_is_canonical_hwid_is_a_total_boolean_predicate_for_non_strings(self):
+        # A corrupt license cache can carry any JSON type in "hwid"; the predicate
+        # must answer False instead of leaking the re module's TypeError.
+        canonical = "v1:" + "A" * 64
+        for value in (
+            None,
+            123,
+            1.5,
+            True,
+            b"v1:" + b"A" * 64,
+            bytearray(b"v1:" + b"A" * 64),
+            ["v1:" + "A" * 64],
+            {"hwid": canonical},
+            object(),
+        ):
+            with self.subTest(value=repr(value)[:40]):
+                self.assertIs(is_canonical_hwid(value), False)
+        self.assertIs(is_canonical_hwid(canonical), True)
+        self.assertIs(is_canonical_hwid(""), False)
+        self.assertIs(is_canonical_hwid("not-an-hwid"), False)
 
     def test_create_uppercases_the_identifier_and_rejects_generic_uuids(self):
         identity = self.identity()
@@ -137,7 +164,10 @@ class MachineIdentityContractTests(unittest.TestCase):
         text = str(SYSTEM_UUID).upper()
         cases = (
             (("v2", source, text), "Invalid machine identity version"),
-            ((HWID_VERSION, "smbios_system_uuid", text), "Invalid machine identity source"),
+            (
+                (HWID_VERSION, "smbios_system_uuid", text),
+                "Invalid machine identity source",
+            ),
             ((HWID_VERSION, source, None), "Invalid machine identity UUID"),
             ((HWID_VERSION, source, 5), "Invalid machine identity UUID"),
             ((HWID_VERSION, source, "not-a-uuid"), "Invalid machine identity UUID"),
@@ -159,7 +189,9 @@ class MachineIdentityContractTests(unittest.TestCase):
 
     def test_unparseable_uuid_text_chains_the_original_parse_error(self):
         with self.assertRaises(ValueError) as raised:
-            MachineIdentity(HWID_VERSION, HardwareIdentitySource.SMBIOS_SYSTEM_UUID, "x")
+            MachineIdentity(
+                HWID_VERSION, HardwareIdentitySource.SMBIOS_SYSTEM_UUID, "x"
+            )
         self.assertIsInstance(raised.exception.__cause__, ValueError)
 
     def test_identity_is_frozen_and_round_trips_through_its_dict(self):
@@ -193,7 +225,9 @@ class MachineIdentityContractTests(unittest.TestCase):
             with self.subTest(source=source):
                 with self.assertRaises(ValueError) as raised:
                     MachineIdentity.from_dict({**good, "source": source})
-                self.assertEqual(str(raised.exception), "Invalid machine identity source")
+                self.assertEqual(
+                    str(raised.exception), "Invalid machine identity source"
+                )
         missing_source = dict(good)
         del missing_source["source"]
         with self.assertRaisesRegex(ValueError, "^Invalid machine identity source$"):
@@ -202,7 +236,10 @@ class MachineIdentityContractTests(unittest.TestCase):
             ("version", "Invalid machine identity version"),
             ("identifier", "Invalid machine identity UUID"),
         ):
-            for payload in ({**good, key: "bad"}, {k: v for k, v in good.items() if k != key}):
+            for payload in (
+                {**good, key: "bad"},
+                {k: v for k, v in good.items() if k != key},
+            ):
                 with self.subTest(key=key, payload=payload):
                     with self.assertRaises(ValueError) as raised:
                         MachineIdentity.from_dict(payload)

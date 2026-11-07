@@ -705,7 +705,9 @@ class TakeoffOperationsPersistenceTests(unittest.TestCase):
                     "save_takeoffs_area": operations.save_takeoffs_area,
                 }[method_name]
                 with self.assertLogs("test", level="ERROR") as logs:
-                    self.assertIs(update("malformed.mdb", ["1", "2"], target_uid), False)
+                    self.assertIs(
+                        update("malformed.mdb", ["1", "2"], target_uid), False
+                    )
                 self.assertIn(owner_message, logs.output[0])
                 original = 10 if expected_column == "BidConditionUID" else 30
                 self.assertEqual(
@@ -716,7 +718,9 @@ class TakeoffOperationsPersistenceTests(unittest.TestCase):
                 )
                 # Control: a same-bid target updates the whole selected set.
                 same_bid_target = "12" if expected_column == "BidConditionUID" else "32"
-                self.assertIs(update("malformed.mdb", ["1", "2"], same_bid_target), True)
+                self.assertIs(
+                    update("malformed.mdb", ["1", "2"], same_bid_target), True
+                )
                 self.assertEqual(
                     conn.execute(
                         f"SELECT [{expected_column}] FROM BidTakeoffs ORDER BY UID"
@@ -936,7 +940,8 @@ class TakeoffOperationsPersistenceTests(unittest.TestCase):
         )
         ops = _RecordingTakeoffOps(schema=schema)
         self.assertIs(
-            ops.delete_takeoffs("bid.mdb", [str(uid) for uid in range(1, 102)]), True)
+            ops.delete_takeoffs("bid.mdb", [str(uid) for uid in range(1, 102)]), True
+        )
         self.assertEqual(ops.connection_count, 1)
         self.assertEqual(ops.commits, 1)
         self.assertEqual(ops.rollbacks, 0)
@@ -980,7 +985,9 @@ class TakeoffOperationsPersistenceTests(unittest.TestCase):
         self.assertIn("[BidTakeoffFromUID]", ops.executions[0][0])
         self.assertIn("[BidTakeoffUID]", ops.executions[3][0])
         self.assertIn("WHERE [ParentUID] IN", ops.executions[6][0])
-        self.assertIs(ops.executions[2][0].endswith("WHERE [BidTakeoffFromUID]=?"), True)
+        self.assertIs(
+            ops.executions[2][0].endswith("WHERE [BidTakeoffFromUID]=?"), True
+        )
         self.assertIs(ops.executions[11][0].endswith("WHERE [UID]=?"), True)
 
     def test_delete_takeoffs_covers_both_endpoints_and_every_self_reference(self):
@@ -1485,7 +1492,9 @@ class TakeoffInsertPersistenceTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            conn.execute("SELECT UID, ParentUID FROM BidTakeoffs WHERE UID=7").fetchall(),
+            conn.execute(
+                "SELECT UID, ParentUID FROM BidTakeoffs WHERE UID=7"
+            ).fetchall(),
             [(7, 0)],
         )
 
@@ -1495,9 +1504,7 @@ class TakeoffInsertPersistenceTests(unittest.TestCase):
             "x.mdb", "1", [InsertTakeoffSpec("5", "3", None, [0.1234567, 100.0005])]
         )
         self.assertEqual(result, ["8"])
-        self.assertEqual(
-            self.rows(conn, "Position"), [(b"0.1234567;100.0005\n",)]
-        )
+        self.assertEqual(self.rows(conn, "Position"), [(b"0.1234567;100.0005\n",)])
 
     def test_zero_like_parent_uids_store_zero_without_validation(self):
         conn = self.database()
@@ -1510,7 +1517,9 @@ class TakeoffInsertPersistenceTests(unittest.TestCase):
             ],
         )
         self.assertEqual(result, ["8", "9", "10", "11"])
-        self.assertEqual(self.rows(conn, "UID, ParentUID"), [(8, 0), (9, 0), (10, 0), (11, 0)])
+        self.assertEqual(
+            self.rows(conn, "UID, ParentUID"), [(8, 0), (9, 0), (10, 0), (11, 0)]
+        )
 
     _EXTRAS = {
         # Typed and undeclared columns come first: skipping them must not stop the scan.
@@ -1531,6 +1540,7 @@ class TakeoffInsertPersistenceTests(unittest.TestCase):
         "BidTypAreaUID": 6,
         "TypGroupTakeoffUID": 7,
         "TypPageTakeoffUID": 8,
+        "TypGroupMarkerUID": 9,
         "FontName": "Arial",
     }
 
@@ -1559,7 +1569,7 @@ class TakeoffInsertPersistenceTests(unittest.TestCase):
                     "UID, BidUID, BidConditionUID, BidPageUID, BidAreaUID, Position, "
                     "Rotation, Curve, ParentUID, IsNegativeQuantity, BidZoneUID, "
                     "TypGroupUID, BidTypAreaUID, TypGroupTakeoffUID, "
-                    "TypPageTakeoffUID, FontName, GUID",
+                    "TypPageTakeoffUID, TypGroupMarkerUID, FontName, GUID",
                 )
                 self.assertEqual(
                     [row[:-1] for row in rows],
@@ -1580,6 +1590,7 @@ class TakeoffInsertPersistenceTests(unittest.TestCase):
                             6,
                             7,
                             8,
+                            9,
                             "Arial",
                         )
                         for uid in (8, 9)
@@ -1637,7 +1648,9 @@ class TakeoffInsertPersistenceTests(unittest.TestCase):
             def _connection(self, _db_path):
                 raise AssertionError("must not connect")
 
-        self.assertEqual(Unreachable(self.database()).insert_takeoffs("x.mdb", "1", []), [])
+        self.assertEqual(
+            Unreachable(self.database()).insert_takeoffs("x.mdb", "1", []), []
+        )
 
     def test_malformed_bid_uid_is_reported_without_inserting(self):
         conn = self.database()
@@ -1880,7 +1893,10 @@ class TakeoffFieldSavePersistenceTests(unittest.TestCase):
         )
         self.addCleanup(conn.close)
         for call, column in (
-            (lambda ops: ops.save_takeoff_positions("x.mdb", [(1, [1, 2])]), "Position"),
+            (
+                lambda ops: ops.save_takeoff_positions("x.mdb", [(1, [1, 2])]),
+                "Position",
+            ),
             (lambda ops: ops.save_takeoff_rotations("x.mdb", [(1, 1.0)]), "Rotation"),
         ):
             with self.subTest(column=column):
@@ -1900,7 +1916,9 @@ class TakeoffFieldSavePersistenceTests(unittest.TestCase):
                 "x.mdb", [(99, {"name_font_name": "N"})]
             ),
         ):
-            with self.assertRaisesRegex(RuntimeError, "BidTakeoffs has no row for UID 99"):
+            with self.assertRaisesRegex(
+                RuntimeError, "BidTakeoffs has no row for UID 99"
+            ):
                 call()
 
     def test_text_properties_write_only_known_keys_for_each_takeoff(self):
@@ -1929,9 +1947,7 @@ class TakeoffFieldSavePersistenceTests(unittest.TestCase):
             ),
             True,
         )
-        self.assertEqual(
-            self.rows(conn, "UID, NameFontName")[0], (1, "Arial")
-        )
+        self.assertEqual(self.rows(conn, "UID, NameFontName")[0], (1, "Arial"))
         self.assertEqual(
             ops.skips, [("BidTakeoffs", "FontBold", "save_takeoff_text_properties")]
         )
@@ -2157,7 +2173,9 @@ class TakeoffDeleteSchemaVariantTests(unittest.TestCase):
             "INSERT INTO BidPercents VALUES (11, 2)",
         )
         self.assertIs(RealContractOps(conn).delete_takeoffs("x.mdb", ["1"]), True)
-        self.assertEqual(conn.execute("SELECT UID FROM BidPercents").fetchall(), [(11,)])
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidPercents").fetchall(), [(11,)]
+        )
         legacy = self.database(
             "CREATE TABLE BidPercents (UID INTEGER, Other INTEGER)",
             "INSERT INTO BidPercents VALUES (10, 1)",
@@ -2221,9 +2239,7 @@ class TakeoffChunkedWriteRecoveryTests(unittest.TestCase):
 
     def test_resource_exhaustion_midway_retries_row_by_row_and_finishes(self):
         conn = self.database()
-        ops = _PlannedFailureOps(
-            conn, lambda index: _hy001() if index == 1 else None
-        )
+        ops = _PlannedFailureOps(conn, lambda index: _hy001() if index == 1 else None)
         with self.assertLogs("test", level="WARNING") as logs:
             result = ops.save_takeoffs_area(
                 "x.mdb", [str(uid) for uid in range(1, self.COUNT + 1)], "30"
@@ -2296,9 +2312,7 @@ class TakeoffChunkedWriteRecoveryTests(unittest.TestCase):
 
     def test_delete_retries_row_by_row_after_resource_exhaustion(self):
         conn = self.database()
-        ops = _PlannedFailureOps(
-            conn, lambda index: _hy001() if index == 4 else None
-        )
+        ops = _PlannedFailureOps(conn, lambda index: _hy001() if index == 4 else None)
         with self.assertLogs("test", level="WARNING") as logs:
             result = ops.delete_takeoffs(
                 "x.mdb", [str(uid) for uid in range(1, self.COUNT + 1)]
@@ -2313,7 +2327,9 @@ class TakeoffChunkedWriteRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(ops.events, ["rollback", "commit"])
         self.assertEqual(
-            conn.execute("SELECT UID, ParentUID FROM BidTakeoffs ORDER BY UID").fetchall(),
+            conn.execute(
+                "SELECT UID, ParentUID FROM BidTakeoffs ORDER BY UID"
+            ).fetchall(),
             [(500, None), (501, None)],
         )
         self.assertEqual(
@@ -2360,9 +2376,11 @@ class TakeoffChunkedWriteRecoveryTests(unittest.TestCase):
                 self.assertEqual(ops.events, ["rollback"] * rollbacks)
                 self.assertEqual(
                     logs.records[-1].getMessage(),
-                    "Failed to delete takeoffs in x.mdb"
-                    if rollbacks == 1
-                    else "Failed to delete takeoffs row-by-row in x.mdb",
+                    (
+                        "Failed to delete takeoffs in x.mdb"
+                        if rollbacks == 1
+                        else "Failed to delete takeoffs row-by-row in x.mdb"
+                    ),
                 )
                 self.assertEqual(snapshot(), before)
 

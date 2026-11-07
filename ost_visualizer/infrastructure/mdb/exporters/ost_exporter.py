@@ -15,6 +15,7 @@ from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.condition import Condition
 from ....domain.services.uom_service import (
     convert_and_round_quantity,
+    is_supported_condition_type,
     normalize_uoms_for_calculations,
 )
 from ....domain.utils.position import parse_position
@@ -817,6 +818,14 @@ class OstExporter:
             height = float(cdn_row.get("Height", "0") or "0")
             thickness = float(cdn_row.get("Thickness", "0") or "0")
             condition_takeoffs = takeoffs_by_condition.get(cdn_uid, [])
+            if condition_takeoffs and not is_supported_condition_type(condition_type):
+                logger.warning(
+                    "Exporting condition %s with zero quantities: unsupported "
+                    "condition type %s",
+                    cdn_uid,
+                    condition_type,
+                )
+                condition_takeoffs = []
             area_container = SubElement(cdn_elem, "BidAreaConditions")
             area_totals: Dict[Tuple[str, str], List[float]] = {}
             if condition_takeoffs:

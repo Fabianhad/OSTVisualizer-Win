@@ -72,9 +72,10 @@ class AnnotationSnapshotTransformTests(unittest.TestCase):
                     self.assertEqual(values, original)
 
 
-
 class PageScaleRatioTests(unittest.TestCase):
-    def test_ratio_is_second_over_first_with_identity_for_missing_or_unusable_scales(self):
+    def test_ratio_is_second_over_first_with_identity_for_missing_or_unusable_scales(
+        self,
+    ):
         from ost_visualizer.domain.services.page_scale_transform import page_scale_ratio
 
         self.assertEqual(page_scale_ratio((0.125, 12.0)), 96.0)
@@ -93,7 +94,9 @@ class PageScaleRatioTests(unittest.TestCase):
         self.assertEqual(page_scale_ratio((1.0, None)), 0.0)
         self.assertEqual(page_scale_ratio((1.0, 0.0)), 0.0)
 
-    def test_factor_between_scales_is_target_over_source_with_identity_for_degenerate_source(self):
+    def test_factor_between_scales_is_target_over_source_with_identity_for_degenerate_source(
+        self,
+    ):
         factor = position_rescale_factor_between_page_scales
         self.assertEqual(factor((1, 96), (1, 48)), 0.5)
         self.assertEqual(factor(None, (1, 2)), 2.0)
@@ -117,7 +120,9 @@ class PageScaleRescaleTests(unittest.TestCase):
         )
 
     def test_changed_scales_multiply_every_numeric_value_and_keep_others(self):
-        scaled = rescale_position_between_page_scales([2, "4", None, "n"], (1, 12), (1, 6))
+        scaled = rescale_position_between_page_scales(
+            [2, "4", None, "n"], (1, 12), (1, 6)
+        )
         self.assertEqual(scaled, [1.0, 2.0, None, "n"])
         self.assertEqual(
             rescale_position_between_page_scales([1.0, 2.0], (1, 1), (1, 3)), [3.0, 6.0]
@@ -125,9 +130,13 @@ class PageScaleRescaleTests(unittest.TestCase):
         self.assertEqual(rescale_position_between_page_scales([], (1, 1), (1, 3)), [])
 
     def test_a_tiny_factor_difference_is_treated_as_unchanged(self):
-        scaled = rescale_position_between_page_scales(["5"], (1.0, 1.0), (1.0, 1.0 + 1e-12))
+        scaled = rescale_position_between_page_scales(
+            ["5"], (1.0, 1.0), (1.0, 1.0 + 1e-12)
+        )
         self.assertEqual(scaled, ["5"])
-        scaled = rescale_position_between_page_scales([5], (1.0, 1.0), (1.0, 1.0 + 1e-6))
+        scaled = rescale_position_between_page_scales(
+            [5], (1.0, 1.0), (1.0, 1.0 + 1e-6)
+        )
         self.assertAlmostEqual(scaled[0], 5 * (1.0 + 1e-6))
 
     def test_scale_values_are_not_mutated_for_unknown_annotation_types(self):
@@ -137,12 +146,16 @@ class PageScaleRescaleTests(unittest.TestCase):
 
         values = [10.0, 20.0, 30.0, 40.0]
         self.assertEqual(
-            rescale_annotation_position_between_page_scales("hotlink", values, (1, 2), (1, 4)),
+            rescale_annotation_position_between_page_scales(
+                "hotlink", values, (1, 2), (1, 4)
+            ),
             [20.0, 40.0, 60.0, 80.0],
         )
         self.assertEqual(values, [10.0, 20.0, 30.0, 40.0])
         self.assertEqual(
-            rescale_annotation_position_between_page_scales("rect", values, (1, 2), (1, 2)),
+            rescale_annotation_position_between_page_scales(
+                "rect", values, (1, 2), (1, 2)
+            ),
             values,
         )
 

@@ -258,7 +258,11 @@ class ConditionFolderOperationsPersistenceTests(unittest.TestCase):
                 )
             )
         self.assertIs(logs.records[0].exc_info[0], RuntimeError)
-        self.assertIn("hierarchy persistence", str(logs.records[0].exc_info[1]))
+        self.assertEqual(
+            str(logs.records[0].exc_info[1]),
+            "This OST database does not support Condition folder "
+            "hierarchy persistence.",
+        )
         self.assertEqual(
             conn.execute(
                 "SELECT UID, BidUID, Name FROM BidConditionFolders ORDER BY UID"
@@ -390,7 +394,11 @@ class _LoggedCursor(ListParamCursor):
     log = None
 
     def execute(self, query, *params):
-        flat = tuple(params[0]) if len(params) == 1 and isinstance(params[0], (list, tuple)) else params
+        flat = (
+            tuple(params[0])
+            if len(params) == 1 and isinstance(params[0], (list, tuple))
+            else params
+        )
         self.log.append((" ".join(query.split()), flat))
         return super().execute(query, *params)
 
@@ -420,7 +428,10 @@ class _StrictOps(RealContractOps):
         return True
 
 
-def _folder_db(folders="UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT, ExpandState INTEGER", *extra):
+def _folder_db(
+    folders="UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT, ExpandState INTEGER",
+    *extra,
+):
     return contract_db(
         "CREATE TABLE Bids (UID INTEGER)",
         "INSERT INTO Bids VALUES (1)",
@@ -443,7 +454,11 @@ class ConditionFolderContractTests(unittest.TestCase):
             [(1, 1, None, "Root", -1), (2, 1, 1, "Kid", -1)],
         )
         self.assertEqual(ops.skips, [])
-        inserts = [params for sql, params in ops.log if sql.startswith("INSERT INTO [BidConditionFolders]")]
+        inserts = [
+            params
+            for sql, params in ops.log
+            if sql.startswith("INSERT INTO [BidConditionFolders]")
+        ]
         self.assertEqual(len(inserts), 2)
         for params in inserts:
             self.assertEqual(params[1], 1)
@@ -471,7 +486,9 @@ class ConditionFolderContractTests(unittest.TestCase):
             with self.subTest(missing=missing):
                 conn = _folder_db(columns)
                 with self.assertLogs("test", "ERROR"):
-                    self.assertIsNone(RealContractOps(conn).insert_condition_folder("x.mdb", "1", "N"))
+                    self.assertIsNone(
+                        RealContractOps(conn).insert_condition_folder("x.mdb", "1", "N")
+                    )
                 with self.assertRaises(Exception) as caught:
                     _StrictOps(conn).insert_condition_folder("x.mdb", "1", "N")
                 self.assertIn(missing, str(caught.exception))
@@ -481,49 +498,84 @@ class ConditionFolderContractTests(unittest.TestCase):
         conn.execute("INSERT INTO BidConditionFolders VALUES (5, 1, NULL, 'Old', -1)")
         ops = _LoggedOps(conn)
         self.assertIs(ops.rename_condition_folder("x.mdb", "5", "New"), True)
-        self.assertEqual(conn.execute("SELECT Name FROM BidConditionFolders").fetchall(), [("New",)])
-        (update,) = [params for sql, params in ops.log if sql.startswith("UPDATE [BidConditionFolders]")]
+        self.assertEqual(
+            conn.execute("SELECT Name FROM BidConditionFolders").fetchall(), [("New",)]
+        )
+        (update,) = [
+            params
+            for sql, params in ops.log
+            if sql.startswith("UPDATE [BidConditionFolders]")
+        ]
         self.assertEqual(update, ("New", 5))
         self.assertIs(type(update[1]), int)
 
     def test_rename_and_delete_need_the_columns_they_write(self):
         for call, columns, missing in (
-            (lambda ops: ops.rename_condition_folder("x.mdb", "5", "N"), "BidUID INTEGER, Name TEXT", "UID"),
-            (lambda ops: ops.rename_condition_folder("x.mdb", "5", "N"), "UID INTEGER, BidUID INTEGER", "Name"),
-            (lambda ops: ops.delete_condition_folders("x.mdb", ["5"]), "BidUID INTEGER, Name TEXT", "UID"),
+            (
+                lambda ops: ops.rename_condition_folder("x.mdb", "5", "N"),
+                "BidUID INTEGER, Name TEXT",
+                "UID",
+            ),
+            (
+                lambda ops: ops.rename_condition_folder("x.mdb", "5", "N"),
+                "UID INTEGER, BidUID INTEGER",
+                "Name",
+            ),
+            (
+                lambda ops: ops.delete_condition_folders("x.mdb", ["5"]),
+                "BidUID INTEGER, Name TEXT",
+                "UID",
+            ),
         ):
             with self.subTest(missing=missing, call=call):
                 conn = _folder_db(columns)
                 with self.assertRaises(Exception) as caught:
                     call(_StrictOps(conn))
-                self.assertEqual(str(caught.exception), f"Missing BidConditionFolders.{missing}")
+                self.assertEqual(
+                    str(caught.exception), f"Missing BidConditionFolders.{missing}"
+                )
 
     def test_failures_return_false_and_follow_the_error_policy(self):
         conn = _folder_db()
         with self.assertLogs("test", "ERROR"):
-            self.assertIs(RealContractOps(conn).rename_condition_folder("x.mdb", "99", "N"), False)
+            self.assertIs(
+                RealContractOps(conn).rename_condition_folder("x.mdb", "99", "N"), False
+            )
         with self.assertRaises(MissingBidOwnedUidError):
             _StrictOps(conn).rename_condition_folder("x.mdb", "99", "N")
         with self.assertLogs("test", "WARNING"):
-            self.assertIs(RealContractOps(conn).delete_condition_folders("x.mdb", ["x"]), False)
-        with self.assertRaisesRegex(ValueError, "^Invalid BidConditionFolders UID: 'x'$"):
+            self.assertIs(
+                RealContractOps(conn).delete_condition_folders("x.mdb", ["x"]), False
+            )
+        with self.assertRaisesRegex(
+            ValueError, "^Invalid BidConditionFolders UID: 'x'$"
+        ):
             _StrictOps(conn).delete_condition_folders("x.mdb", ["x"])
         with self.assertLogs("test", "ERROR"):
-            self.assertIs(RealContractOps(conn).delete_condition_folders("x.mdb", ["99"]), False)
+            self.assertIs(
+                RealContractOps(conn).delete_condition_folders("x.mdb", ["99"]), False
+            )
 
     def test_a_folder_in_use_is_refused_with_false(self):
         conn = _folder_db()
         conn.execute("INSERT INTO BidConditionFolders VALUES (5, 1, NULL, 'Used', -1)")
         conn.execute("INSERT INTO BidConditions VALUES (1, 5)")
         with self.assertLogs("test", "WARNING"):
-            self.assertIs(RealContractOps(conn).delete_condition_folders("x.mdb", ["5"]), False)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidConditionFolders").fetchall(), [(1,)])
+            self.assertIs(
+                RealContractOps(conn).delete_condition_folders("x.mdb", ["5"]), False
+            )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidConditionFolders").fetchall(), [(1,)]
+        )
 
     def test_an_unused_folder_is_deleted_and_its_children_move_to_the_root(self):
         conn = _folder_db()
         conn.execute("INSERT INTO BidConditionFolders VALUES (5, 1, NULL, 'Gone', -1)")
         conn.execute("INSERT INTO BidConditionFolders VALUES (6, 1, 5, 'Kid', -1)")
-        self.assertIs(RealContractOps(conn).delete_condition_folders("x.mdb", ["5"]), True)
+        self.assertIs(
+            RealContractOps(conn).delete_condition_folders("x.mdb", ["5"]), True
+        )
         self.assertEqual(
-            conn.execute("SELECT UID, ParentUID FROM BidConditionFolders").fetchall(), [(6, None)]
+            conn.execute("SELECT UID, ParentUID FROM BidConditionFolders").fetchall(),
+            [(6, None)],
         )

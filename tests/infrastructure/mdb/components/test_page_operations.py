@@ -1275,7 +1275,9 @@ class PageOperationsRealContractTests(unittest.TestCase):
         )
         self.addCleanup(conn.close)
         with self.assertLogs("test", level="ERROR") as logs:
-            self.assertIs(self.ops_class(conn).save_page_name("x.mdb", "20", "N"), False)
+            self.assertIs(
+                self.ops_class(conn).save_page_name("x.mdb", "20", "N"), False
+            )
         self.assertEqual(
             logs.records[0].getMessage(),
             "Failed to save page name for page 20 in x.mdb",
@@ -1332,9 +1334,7 @@ class PageOperationsRealContractTests(unittest.TestCase):
         conn = self.database()
         ops = self.ops_class(conn)
         self.assertIs(ops.save_page_show_mode("x.mdb", "20", "2"), True)
-        self.assertEqual(
-            self.pages(conn, "UID, [Show]"), [(20, 2), (21, 0), (30, 0)]
-        )
+        self.assertEqual(self.pages(conn, "UID, [Show]"), [(20, 2), (21, 0), (30, 0)])
         self.assertEqual(
             conn.execute("SELECT typeof([Show]) FROM BidPages WHERE UID=20").fetchone(),
             ("integer",),
@@ -1349,7 +1349,9 @@ class PageOperationsRealContractTests(unittest.TestCase):
         )
         self.addCleanup(conn.close)
         with self.assertLogs("test", level="ERROR") as logs:
-            self.assertIs(self.ops_class(conn).save_page_show_mode("x.mdb", "20", 1), False)
+            self.assertIs(
+                self.ops_class(conn).save_page_show_mode("x.mdb", "20", 1), False
+            )
         self.assertEqual(
             logs.records[0].getMessage(),
             "Failed to save page show mode for page 20 in x.mdb",
@@ -1505,7 +1507,9 @@ class PageOperationsRealContractTests(unittest.TestCase):
                         self.ops_class(conn).save_page_name("x.mdb", bad_uid, "N"),
                         False,
                     )
-                self.assertIsInstance(logs.records[0].exc_info[1], MalformedBidOwnedUidError)
+                self.assertIsInstance(
+                    logs.records[0].exc_info[1], MalformedBidOwnedUidError
+                )
                 self.assertEqual(self.pages(conn), before)
 
     def test_image_adjustments_refuse_pages_of_different_bids_and_empty_targets(self):
@@ -1608,7 +1612,9 @@ class PageOperationsRealContractTests(unittest.TestCase):
             str(logs.records[0].exc_info[1]), "Page dimensions must be positive"
         )
         self.assertEqual(
-            conn.execute("SELECT OverlayImagePath FROM BidPages WHERE UID=20").fetchone(),
+            conn.execute(
+                "SELECT OverlayImagePath FROM BidPages WHERE UID=20"
+            ).fetchone(),
             ("",),
         )
 
@@ -1687,7 +1693,9 @@ class PageOperationsRealContractTests(unittest.TestCase):
     def test_page_area_selection_is_saved_through_the_production_contract(self):
         conn = self.database()
         ops = self.ops_class(conn)
-        select = "SELECT UID, BidPageUID, BidAreaUID, BidAreaSelected FROM BidPageSettings"
+        select = (
+            "SELECT UID, BidPageUID, BidAreaUID, BidAreaSelected FROM BidPageSettings"
+        )
         self.assertIs(ops.save_page_area("x.mdb", "20", "10"), True)
         self.assertEqual(conn.execute(select).fetchall(), [(1, 20, 10, 2)])
         self.assertIs(ops.save_page_area("x.mdb", "20", "0"), True)
@@ -1981,7 +1989,13 @@ class PageScaleChangeContentTests(unittest.TestCase):
             with self.subTest(table=table):
                 self.assertEqual(
                     [row[2] for row in self.positions(conn, table) if row[0] == 1],
-                    [[5.0, 6.0, 7.0, 8.0, 0.5] if table == "BidTexts" else [10.0, 20.0, 30.0, 40.0]],
+                    [
+                        (
+                            [5.0, 6.0, 7.0, 8.0, 0.5]
+                            if table == "BidTexts"
+                            else [10.0, 20.0, 30.0, 40.0]
+                        )
+                    ],
                 )
         self.assertEqual(
             conn.execute(

@@ -446,9 +446,11 @@ class BidDataReaderMixin:
         if schema.optional_table_missing(table):
             return rows_out
         select_clause = self._select_all_columns(schema, table)
+        order_by = schema.order_by_existing(table, ("UID",), "")
+        order_clause = f" ORDER BY {order_by}" if order_by else ""
         try:
             with connection.cursor() as cursor:
-                cursor.execute(f"SELECT {select_clause} FROM [{table}]")
+                cursor.execute(f"SELECT {select_clause} FROM [{table}]{order_clause}")
                 desc = cursor.description
                 for row in cursor.fetchall():
                     rows_out.append(serialize_row(row, desc, table=table))
@@ -884,7 +886,17 @@ class BidDataReaderMixin:
                 run = float(row.Run) if row.Run is not None else 0.0
                 shape = int(row.Shape) if row.Shape is not None else 0
                 color_fill = int(row.ColorFill) if row.ColorFill is not None else 0
-                z_value, is_top = extract_z_value_from_name(name)
+                try:
+                    z_value, is_top = extract_z_value_from_name(name)
+                except ValueError as exc:
+                    self.logger.warning(
+                        "Ignoring unreadable elevation in condition %s (%r) of bid %s: %s",
+                        uid,
+                        name,
+                        bid_uid,
+                        exc,
+                    )
+                    z_value, is_top = 0.0, False
                 pattern = int(row.Pattern) if row.Pattern is not None else 0
                 spacing = float(row.Spacing) if row.Spacing is not None else 0.0
                 cdn_type_uid = (

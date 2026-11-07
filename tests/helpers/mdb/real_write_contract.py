@@ -1,5 +1,4 @@
 """sqlite stand-in that runs the production MdbWriter column contract.
-
 The shared sqlite helpers in ``tests.helpers.mdb.operations`` skip the declared
 required columns and the operation labels of ``_execute_insert_values`` and
 ``_execute_update_values``. ``RealContractOps`` delegates to the real MdbWriter
@@ -8,7 +7,6 @@ report or a wrong operation label becomes observable.
 """
 
 import sqlite3
-
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from tests.helpers.mdb.operations import (
     _SqliteConnectionWrapper,

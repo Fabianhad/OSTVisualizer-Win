@@ -41,8 +41,28 @@ class PatternConstantTests(unittest.TestCase):
         )
 
     def test_opacity_is_defined_for_every_stored_code_with_no_dead_zone(self):
-        expected_2d = {0: 0.0, 1: 1.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0, 6: 0.0, 7: 0.0, 8: 0.5}
-        expected_3d = {0: 0.5, 1: 1.0, 2: 0.5, 3: 0.5, 4: 0.5, 5: 0.5, 6: 0.5, 7: 0.5, 8: 0.5}
+        expected_2d = {
+            0: 0.0,
+            1: 1.0,
+            2: 0.0,
+            3: 0.0,
+            4: 0.0,
+            5: 0.0,
+            6: 0.0,
+            7: 0.0,
+            8: 0.5,
+        }
+        expected_3d = {
+            0: 0.5,
+            1: 1.0,
+            2: 0.5,
+            3: 0.5,
+            4: 0.5,
+            5: 0.5,
+            6: 0.5,
+            7: 0.5,
+            8: 0.5,
+        }
         for code in range(9):
             with self.subTest(code=code):
                 self.assertEqual(pattern.get_2d_opacity(code), expected_2d[code])

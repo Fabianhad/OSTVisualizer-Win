@@ -114,10 +114,22 @@ class BulkWriteHelperContractTests(unittest.TestCase):
     def test_correlation_errors_name_the_label_and_the_offending_uid(self):
         check = AccessBulkWriteMixin._require_unique_correlation_uids
         cases = (
-            (["a", "a"], "New takeoff correlation UID a must be present and unique within one save."),
-            ([None], "New takeoff correlation UID <missing> must be present and unique within one save."),
-            ([""], "New takeoff correlation UID <missing> must be present and unique within one save."),
-            (["x", 7, "7"], "New takeoff correlation UID 7 must be present and unique within one save."),
+            (
+                ["a", "a"],
+                "New takeoff correlation UID a must be present and unique within one save.",
+            ),
+            (
+                [None],
+                "New takeoff correlation UID <missing> must be present and unique within one save.",
+            ),
+            (
+                [""],
+                "New takeoff correlation UID <missing> must be present and unique within one save.",
+            ),
+            (
+                ["x", 7, "7"],
+                "New takeoff correlation UID 7 must be present and unique within one save.",
+            ),
         )
         for values, message in cases:
             with self.subTest(values=values):
@@ -150,22 +162,68 @@ class BulkWriteHelperContractTests(unittest.TestCase):
 
     def test_only_access_resource_exhaustion_is_recognised_as_such(self):
         ops = _RecordingTakeoffOps()
-        self.assertIs(ops._is_access_resource_exceeded(pyodbc.Error("HY001", "x")), True)
         self.assertIs(
-            ops._is_access_resource_exceeded(pyodbc.Error("42000", "System resource exceeded.")), True
+            ops._is_access_resource_exceeded(pyodbc.Error("HY001", "x")), True
         )
         self.assertIs(
-            ops._is_access_resource_exceeded(pyodbc.Error("HY000", "System resource exceeded")), True
+            ops._is_access_resource_exceeded(
+                pyodbc.Error("42000", "System resource exceeded.")
+            ),
+            True,
         )
-        self.assertIs(ops._is_access_resource_exceeded(pyodbc.Error("HYT00", "timeout")), False)
+        self.assertIs(
+            ops._is_access_resource_exceeded(
+                pyodbc.Error("HY000", "System resource exceeded")
+            ),
+            True,
+        )
+        self.assertIs(
+            ops._is_access_resource_exceeded(pyodbc.Error("HYT00", "timeout")), False
+        )
         self.assertIs(ops._is_access_resource_exceeded(RuntimeError("HY001")), False)
         self.assertIs(
-            ops._is_access_resource_exceeded(RuntimeError("System resource exceeded")), False
+            ops._is_access_resource_exceeded(RuntimeError("System resource exceeded")),
+            False,
         )
 
-    def test_the_resource_message_is_found_in_the_error_text_even_without_arguments(self):
+    def test_the_resource_message_is_found_in_the_error_text_even_without_arguments(
+        self,
+    ):
         class Quirky(pyodbc.Error):
             def __str__(self):
                 return "[HY001] [Microsoft] System resource exceeded"
 
-        self.assertIs(_RecordingTakeoffOps()._is_access_resource_exceeded(Quirky()), True)
+        self.assertIs(
+            _RecordingTakeoffOps()._is_access_resource_exceeded(Quirky()), True
+        )
+
+    def test_bad_uid_collections_and_values_are_refused_with_the_label_and_the_cause(
+        self,
+    ):
+        ops = _RecordingTakeoffOps()
+        for bad in ("123", b"123", None):
+            with self.subTest(collection=bad):
+                with self.assertRaises(ValueError) as caught:
+                    ops._normalize_int_uids(bad, "takeoff")
+                self.assertEqual(
+                    str(caught.exception), f"Invalid takeoff UID collection: {bad!r}"
+                )
+        with self.assertRaises(ValueError) as caught:
+            ops._normalize_int_uids(["1", "bad"], "page")
+        self.assertEqual(str(caught.exception), "Invalid page UID: 'bad'")
+        self.assertIsInstance(caught.exception.__cause__, ValueError)
+        with self.assertRaises(ValueError) as caught:
+            ops._normalize_int_uids([None], "page")
+        self.assertEqual(str(caught.exception), "Invalid page UID: None")
+        self.assertIsInstance(caught.exception.__cause__, TypeError)
+
+    def test_a_chunked_update_without_values_is_refused_by_name_and_touches_nothing(
+        self,
+    ):
+        ops = _RecordingTakeoffOps()
+        cursor = _RecordingConnection(ops).cursor()
+        with self.assertRaisesRegex(
+            ValueError, r"^No values supplied for chunked UID update\.$"
+        ):
+            ops._execute_uid_in_update_chunks(cursor, "BidTakeoffs", "UID", {}, [1])
+        self.assertEqual(ops.executions, [])

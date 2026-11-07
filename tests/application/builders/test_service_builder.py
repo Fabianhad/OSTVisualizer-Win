@@ -245,7 +245,9 @@ class ServiceBuilderRegistrationTests(unittest.TestCase):
             container.register_instance(name, SimpleNamespace())
         container.register_instance(
             "reload_database_use_case",
-            SimpleNamespace(execute=lambda: None, execute_after_write=lambda _database_id: None),
+            SimpleNamespace(
+                execute=lambda: None, execute_after_write=lambda _database_id: None
+            ),
         )
         container.instances.clear()
         ServiceBuilder(
@@ -263,7 +265,9 @@ class ServiceBuilderRegistrationTests(unittest.TestCase):
         )
         return container
 
-    def test_build_registers_exactly_these_instances_and_lazy_singletons_under_these_names(self):
+    def test_build_registers_exactly_these_instances_and_lazy_singletons_under_these_names(
+        self,
+    ):
         class Provider(FakeInfrastructureProvider):
             icon = object()
 
@@ -275,18 +279,33 @@ class ServiceBuilderRegistrationTests(unittest.TestCase):
         self.assertCountEqual(
             container.instances,
             [
-                "icon_provider", "transaction_monitor", "takeoff_domain_service", "uom_service",
-                "visualization_provider", "coordinate_transformer_factory", "color_service",
-                "pdf_exporter", "ost_exporter", "osp_exporter", "ost_importer", "osp_importer",
-                "import_service", "working_directory_service",
+                "icon_provider",
+                "transaction_monitor",
+                "takeoff_domain_service",
+                "uom_service",
+                "visualization_provider",
+                "coordinate_transformer_factory",
+                "color_service",
+                "pdf_exporter",
+                "ost_exporter",
+                "osp_exporter",
+                "ost_importer",
+                "osp_importer",
+                "import_service",
+                "working_directory_service",
             ],
         )
         self.assertCountEqual(
             container.singletons,
             [
-                "file_loading_service", "config_service", "database_maintenance_service",
-                "visualization_service", "page_visualization_metadata_service", "export_service",
-                "summary_csv_export_service", "update_check_service",
+                "file_loading_service",
+                "config_service",
+                "database_maintenance_service",
+                "visualization_service",
+                "page_visualization_metadata_service",
+                "export_service",
+                "summary_csv_export_service",
+                "update_check_service",
             ],
         )
         self.assertIs(container.get("icon_provider"), Provider.icon)
@@ -297,7 +316,9 @@ class ServiceBuilderRegistrationTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             container.get("icon_provider")
 
-    def test_infrastructure_products_are_registered_as_the_very_objects_the_provider_made(self):
+    def test_infrastructure_products_are_registered_as_the_very_objects_the_provider_made(
+        self,
+    ):
         made = {}
 
         class Provider(FakeInfrastructureProvider):
@@ -348,13 +369,18 @@ class ServiceBuilderRegistrationTests(unittest.TestCase):
         service = container.get("update_check_service")
         self.assertEqual(service.logger.name, "service-builder-test.UpdateCheck")
         self.assertIsNotNone(service.api_client)
-        self.assertEqual(container.get("import_service").logger.name, "service-builder-test.ImportService")
+        self.assertEqual(
+            container.get("import_service").logger.name,
+            "service-builder-test.ImportService",
+        )
         working = container.get("working_directory_service")
         self.assertEqual(working._logger.name, "service-builder-test.WorkingDirectory")
 
 
 class ServiceBuilderLazyDependencyTests(unittest.TestCase):
-    def test_dependent_singletons_resolve_their_dependencies_by_name_when_first_requested(self):
+    def test_dependent_singletons_resolve_their_dependencies_by_name_when_first_requested(
+        self,
+    ):
         class Provider(FakeInfrastructureProvider):
             def get_database_maintenance(self, connection_manager):
                 return SimpleNamespace(connection_manager=connection_manager)
@@ -508,7 +534,9 @@ class ServiceBuilderArgumentWiringTests(unittest.TestCase):
         self.assertIs(config.config_model, self.config_model)
         self.assertIs(config.event_bus, self.event_bus)
 
-    def test_the_visualization_service_gets_every_collaborator_including_the_scene_notifier(self):
+    def test_the_visualization_service_gets_every_collaborator_including_the_scene_notifier(
+        self,
+    ):
         service = self.container.get("visualization_service")
         self.addCleanup(service.cleanup)
         self.assertIs(self.container.get("visualization_service"), service)
@@ -535,7 +563,9 @@ class ServiceBuilderArgumentWiringTests(unittest.TestCase):
         self.container.get("database_maintenance_service")
         self.assertEqual(self.provider.calls["maintenance"], (self.connection_manager,))
 
-    def test_exporters_and_importers_are_created_with_the_matching_infrastructure_services(self):
+    def test_exporters_and_importers_are_created_with_the_matching_infrastructure_services(
+        self,
+    ):
         pdf = self.provider.calls["pdf_exporter"]
         self.assertEqual(len(pdf), 5)
         self.assertIs(pdf[0], self.provider.coordinate_system)
@@ -549,6 +579,8 @@ class ServiceBuilderArgumentWiringTests(unittest.TestCase):
             self.provider.calls["osp_exporter"],
             (self.provider.uom, UpdateCheckService.CURRENT_VERSION),
         )
-        self.assertEqual(self.provider.calls["visualization_provider"], (self.provider.takeoff,))
+        self.assertEqual(
+            self.provider.calls["visualization_provider"], (self.provider.takeoff,)
+        )
         for name in ("ost_importer", "osp_importer"):
             self.assertEqual(self.provider.calls[name], (self.connection_manager,))

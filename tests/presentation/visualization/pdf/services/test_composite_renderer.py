@@ -129,6 +129,15 @@ class _ExplodingPainter:
     def setRenderHint(self, *_args):
         pass
 
+    def save(self):
+        pass
+
+    def restore(self):
+        pass
+
+    def setTransform(self, *_args):
+        pass
+
     def drawImage(self, *_args):
         raise RuntimeError("draw failed")
 
@@ -717,6 +726,18 @@ class CompositeRendererTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "draw failed"):
                 renderer._composite_images(_image(), _image(), _page())
+        self.assertTrue(_ExplodingPainter.last_instance.ended)
+
+    def test_overlay_only_canvas_ends_painter_when_drawing_fails(self):
+        cache = _PixelCache(images={"overlay.pdf": _solid(4, 4, (255, 0, 0))})
+        renderer = CompositeRenderer(cache)
+        with patch(
+            "ost_visualizer.presentation.visualization.pdf.services."
+            "composite_renderer.QPainter",
+            _ExplodingPainter,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "draw failed"):
+                renderer.render_overlay_only(_sheet(), 3.0)
         self.assertTrue(_ExplodingPainter.last_instance.ended)
 
     def test_composite_frame_ends_painter_when_drawing_fails(self):
@@ -1435,10 +1456,24 @@ class _PixelCache(PageCache):
         return None if image is None else QImage(image)
 
     def get_tinted_page(
-        self, path, index, scale, rotation, tint_rgb=(255, 80, 80), wait_for_in_flight=True
+        self,
+        path,
+        index,
+        scale,
+        rotation,
+        tint_rgb=(255, 80, 80),
+        wait_for_in_flight=True,
     ):
         self.calls.append(
-            ("tinted", path, index, scale, rotation, tuple(tint_rgb), wait_for_in_flight)
+            (
+                "tinted",
+                path,
+                index,
+                scale,
+                rotation,
+                tuple(tint_rgb),
+                wait_for_in_flight,
+            )
         )
         image = self.images.get(path)
         return None if image is None else QImage(image)
@@ -1507,7 +1542,15 @@ class CompositePixelTests(unittest.TestCase):
                     self.cache.calls,
                     [
                         ("tinted", "base.pdf", 3, 3.0, 90, (255, 80, 80), False),
-                        ("tinted", overlay, 0, expected_scale, 90, (80, 80, 255), False),
+                        (
+                            "tinted",
+                            overlay,
+                            0,
+                            expected_scale,
+                            90,
+                            (80, 80, 255),
+                            False,
+                        ),
                     ],
                 )
 
@@ -1550,7 +1593,9 @@ class CompositePixelTests(unittest.TestCase):
         # An incomplete composite (no overlay) is never cached.
         self.assertEqual(len(self.cache.calls), 2 * before)
 
-    def test_overlay_only_canvas_is_paper_with_the_overlay_stretched_into_its_rect(self):
+    def test_overlay_only_canvas_is_paper_with_the_overlay_stretched_into_its_rect(
+        self,
+    ):
         renderer = self.renderer(images={"overlay.pdf": _quadrants(20, 10)})
         image = renderer.render_overlay_only(_sheet(), 3.0)
         self.assertEqual((image.width(), image.height()), (216, 216))
@@ -1574,13 +1619,23 @@ class CompositePixelTests(unittest.TestCase):
         renderer = self.renderer(images={"overlay.tif": _quadrants(20, 10)})
         renderer.render_overlay_only(_sheet(overlay_image_path="overlay.tif"), 3.0)
         renderer.render_overlay_only(
-            _sheet(overlay_image_path="overlay.tif", uid="q"), 3.0, tint_rgb=[80, 80, 255]
+            _sheet(overlay_image_path="overlay.tif", uid="q"),
+            3.0,
+            tint_rgb=[80, 80, 255],
         )
         self.assertEqual(
             self.cache.calls,
             [
                 ("page", "overlay.tif", 0, RASTER_NATIVE_RENDER_SCALE, 0, True),
-                ("tinted", "overlay.tif", 0, RASTER_NATIVE_RENDER_SCALE, 0, (80, 80, 255), True),
+                (
+                    "tinted",
+                    "overlay.tif",
+                    0,
+                    RASTER_NATIVE_RENDER_SCALE,
+                    0,
+                    (80, 80, 255),
+                    True,
+                ),
             ],
         )
 
@@ -1590,6 +1645,8 @@ class CompositePixelTests(unittest.TestCase):
         for width, height, scale, expected in (
             (72.4, 10.0, 3.0, (217, 30)),
             (72.6, 10.0, 3.0, (218, 30)),
+            (10.0, 72.4, 3.0, (30, 217)),
+            (10.0, 72.6, 3.0, (30, 218)),
             (0.1, 0.1, 1.0, (1, 1)),
             (100.0, 40.0, 2.5, (250, 100)),
         ):
@@ -1654,9 +1711,13 @@ class CompositePixelTests(unittest.TestCase):
         overlay = QImage(2, 1, QImage.Format.Format_ARGB32)
         overlay.setPixelColor(0, 0, QColor(255, 0, 0))
         overlay.setPixelColor(1, 0, QColor(0, 0, 255))
-        renderer = self.renderer(images={"overlay.pdf": overlay, "base.pdf": _solid(216, 216, (0, 200, 0))})
+        renderer = self.renderer(
+            images={"overlay.pdf": overlay, "base.pdf": _solid(216, 216, (0, 200, 0))}
+        )
         for image in (
-            renderer.render_overlay_only(_sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0)), 3.0),
+            renderer.render_overlay_only(
+                _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0)), 3.0
+            ),
             renderer.render_composite(
                 _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0), uid="c"), None, 3.0, 0
             ),
@@ -1666,13 +1727,31 @@ class CompositePixelTests(unittest.TestCase):
             self.assertGreater(len(blended), 20)
 
     def test_a_degenerate_rect_leaves_the_canvas_without_an_overlay(self):
-        for rect in ((0.0, 0.0, 0.0, 0.0), (16.0, 16.0, 0.0, 16.0), (16.0, 16.0, 16.0, 0.0)):
+        # Zero or negative sides: a mirrored overlay is not drawn either.
+        for rect in (
+            (0.0, 0.0, 0.0, 0.0),
+            (16.0, 16.0, 0.0, 16.0),
+            (16.0, 16.0, 16.0, 0.0),
+            (48.0, 16.0, -32.0, 16.0),
+            (16.0, 32.0, 32.0, -16.0),
+        ):
             with self.subTest(rect=rect):
-                renderer = self.renderer(images={"overlay.pdf": _quadrants(20, 10)})
+                renderer = self.renderer(
+                    images={
+                        "overlay.pdf": _quadrants(20, 10),
+                        "base.pdf": _solid(216, 216, (0, 200, 0)),
+                    }
+                )
                 image = renderer.render_overlay_only(_sheet(overlay_rect=rect), 3.0)
                 white = QImage(216, 216, QImage.Format.Format_ARGB32)
                 white.fill(QColor(255, 255, 255))
                 self.assertEqual(image, white)
+                composite = renderer.render_composite(
+                    _sheet(overlay_rect=rect), None, 3.0, 0
+                )
+                base = QImage(216, 216, QImage.Format.Format_ARGB32)
+                base.fill(QColor(0, 200, 0))
+                self.assertEqual(composite, base)
 
     def test_drawing_an_overlay_restores_the_painter_state(self):
         renderer = CompositeRenderer(_PixelCache())
@@ -1680,11 +1759,11 @@ class CompositePixelTests(unittest.TestCase):
         canvas.fill(QColor(255, 255, 255))
         painter = QPainter(canvas)
         try:
-            renderer._draw_overlay_image(painter, _quadrants(20, 10), _sheet(), 216, 216)
-            self.assertTrue(painter.transform().isIdentity())
             renderer._draw_overlay_image(
-                painter, QImage(), _sheet(), 216, 216
+                painter, _quadrants(20, 10), _sheet(), 216, 216
             )
+            self.assertTrue(painter.transform().isIdentity())
+            renderer._draw_overlay_image(painter, QImage(), _sheet(), 216, 216)
             self.assertTrue(painter.transform().isIdentity())
         finally:
             painter.end()
@@ -1712,7 +1791,9 @@ class CompositeFramePixelTests(unittest.TestCase):
         self.cache = _PixelCache(**kwargs)
         return CompositeRenderer(self.cache)
 
-    def test_a_pdf_overlay_frame_is_requested_in_the_source_and_drawn_at_its_place(self):
+    def test_a_pdf_overlay_frame_is_requested_in_the_source_and_drawn_at_its_place(
+        self,
+    ):
         renderer = self.renderer(
             sizes={"overlay.pdf": (72.0, 72.0)},
             frames={
@@ -1755,13 +1836,21 @@ class CompositeFramePixelTests(unittest.TestCase):
             },
         )
         renderer.render_composite_frame(
-            _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0)), 2.0, -10.0, -10.0, 50.0, 50.0, 0
+            _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0)),
+            2.0,
+            -10.0,
+            -10.0,
+            50.0,
+            50.0,
+            0,
         )
         self.assertEqual(
-            self.cache.calls[0], ("frame", "base.pdf", 0, 2.0, 0.0, 0.0, 40.0, 40.0, 0, True)
+            self.cache.calls[0],
+            ("frame", "base.pdf", 0, 2.0, 0.0, 0.0, 40.0, 40.0, 0, True),
         )
         self.assertEqual(
-            self.cache.calls[1], ("frame", "overlay.pdf", 0, 2.0, 0.0, 0.0, 40.0, 40.0, 0, True)
+            self.cache.calls[1],
+            ("frame", "overlay.pdf", 0, 2.0, 0.0, 0.0, 40.0, 40.0, 0, True),
         )
 
     def test_frames_outside_or_without_area_produce_nothing(self):
@@ -1789,7 +1878,9 @@ class CompositeFramePixelTests(unittest.TestCase):
                         image_path="base.pdf" if pdf_base else "base.tif",
                         overlay_rect=(0.0, 0.0, 64.0, 64.0),
                     )
-                    self.assertIsNone(renderer.render_composite_frame(page, 1.0, *frame, 0))
+                    self.assertIsNone(
+                        renderer.render_composite_frame(page, 1.0, *frame, 0)
+                    )
                     self.assertEqual(self.cache.calls, [])
 
     def test_a_missing_base_frame_gives_nothing_and_a_missing_overlay_gives_the_base_only(
@@ -1800,7 +1891,9 @@ class CompositeFramePixelTests(unittest.TestCase):
             frames={"overlay.pdf": _solid(30, 30, (255, 255, 0))},
         )
         page = _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0))
-        self.assertIsNone(renderer.render_composite_frame(page, 1.0, 0.0, 0.0, 30.0, 30.0, 0))
+        self.assertIsNone(
+            renderer.render_composite_frame(page, 1.0, 0.0, 0.0, 30.0, 30.0, 0)
+        )
         renderer = self.renderer(
             sizes={"overlay.pdf": (72.0, 72.0)},
             frames={"base.pdf": _solid(30, 30, (0, 0, 200))},
@@ -1813,7 +1906,9 @@ class CompositeFramePixelTests(unittest.TestCase):
         self.assertEqual(len(self.cache.calls), 2 * before)
         self.assertEqual(self.tints.count((80, 80, 255)), 0)
 
-    def test_a_raster_overlay_frame_is_cropped_from_the_source_and_placed_in_its_rect(self):
+    def test_a_raster_overlay_frame_is_cropped_from_the_source_and_placed_in_its_rect(
+        self,
+    ):
         renderer = self.renderer(
             images={"overlay.tif": _quadrants(200, 200)},
             sizes={"overlay.tif": (200.0, 200.0)},
@@ -1842,7 +1937,9 @@ class CompositeFramePixelTests(unittest.TestCase):
         for (x, y), colour in expected.items():
             self.assertEqual(_rgb(image, x, y), colour, (x, y))
 
-    def test_a_raster_overlay_without_a_known_size_falls_back_to_the_whole_overlay(self):
+    def test_a_raster_overlay_without_a_known_size_falls_back_to_the_whole_overlay(
+        self,
+    ):
         renderer = self.renderer(
             images={"overlay.tif": _quadrants(200, 200)},
             sizes={"overlay.tif": (0.0, 0.0)},
@@ -1852,7 +1949,17 @@ class CompositeFramePixelTests(unittest.TestCase):
         image = renderer.render_composite_frame(page, 3.0, 0.0, 0.0, 72.0, 72.0, 90)
         self.assertEqual(
             self.cache.calls[1:],
-            [("tinted", "overlay.tif", 0, RASTER_NATIVE_RENDER_SCALE, 90, (80, 80, 255), True)],
+            [
+                (
+                    "tinted",
+                    "overlay.tif",
+                    0,
+                    RASTER_NATIVE_RENDER_SCALE,
+                    90,
+                    (80, 80, 255),
+                    True,
+                )
+            ],
         )
         for (x, y), colour in {
             (5, 5): (0, 200, 0),
@@ -1981,7 +2088,13 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             frames={"base.pdf": base}, sizes={"overlay.pdf": (0.0, 0.0)}
         )
         plain = no_overlay.render_composite_frame(
-            _sheet(image_path="base.pdf", overlay_image_path=""), 2.0, 10.0, 20.0, 30.0, 30.0, 0
+            _sheet(image_path="base.pdf", overlay_image_path=""),
+            2.0,
+            10.0,
+            20.0,
+            30.0,
+            30.0,
+            0,
         )
         self.assertEqual(_rgb(plain, 29, 5), (0, 200, 0))
         self.assertEqual(_rgb(plain, 30, 5), (0, 0, 200))
@@ -1990,7 +2103,9 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
         self.assertEqual(_rgb(plain, 49, 49), (0, 200, 200))
         self.assertEqual(_rgb(plain, 50, 50), (255, 255, 255))
 
-    def test_a_frame_with_an_overlay_path_but_no_overlay_is_not_cached_as_complete(self):
+    def test_a_frame_with_an_overlay_path_but_no_overlay_is_not_cached_as_complete(
+        self,
+    ):
         renderer = self.renderer(frames={"base.pdf": _solid(30, 30, (0, 0, 200))})
         page = _sheet(overlay_image_path="")
         renderer.render_composite_frame(page, 1.0, 0.0, 0.0, 30.0, 30.0, 0)
@@ -2016,7 +2131,9 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
                     overlay_image_path=overlay,
                     overlay_rect=(0.0, 0.0, 64.0, 64.0),
                 )
-                image = renderer.render_composite_frame(page, 1.0, 0.0, 0.0, 30.0, 30.0, 0)
+                image = renderer.render_composite_frame(
+                    page, 1.0, 0.0, 0.0, 30.0, 30.0, 0
+                )
                 self.assertIsNotNone(image)
                 before = len(self.cache.calls)
                 renderer.render_composite_frame(page, 1.0, 0.0, 0.0, 30.0, 30.0, 0)
@@ -2032,7 +2149,9 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             with self.subTest(width=width, height=height):
                 renderer = self.renderer(images={"overlay.pdf": _quadrants(4, 4)})
                 page = _sheet(
-                    width_pts=width, height_pts=height, overlay_rect=(0.0, 0.0, 8.0, 8.0)
+                    width_pts=width,
+                    height_pts=height,
+                    overlay_rect=(0.0, 0.0, 8.0, 8.0),
                 )
                 sizes = []
                 for scale in (10.0, 10.4):
@@ -2043,7 +2162,10 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
     def test_frames_touching_the_page_edge_have_no_area(self):
         renderer = self.renderer(
             sizes={"overlay.pdf": (72.0, 72.0)},
-            frames={"base.pdf": _solid(20, 20, (0, 0, 200)), "overlay.pdf": _solid(20, 20, (255, 255, 0))},
+            frames={
+                "base.pdf": _solid(20, 20, (0, 0, 200)),
+                "overlay.pdf": _solid(20, 20, (255, 255, 0)),
+            },
         )
         page = _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0))
         for frame in (
@@ -2084,7 +2206,10 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
         # needs the overlay rendered at 1x, over a source window of 2x the frame.
         renderer = self.renderer(
             sizes={"overlay.pdf": (144.0, 144.0)},
-            frames={"base.pdf": _solid(60, 60, (0, 0, 200)), "overlay.pdf": _solid(60, 60, (255, 255, 0))},
+            frames={
+                "base.pdf": _solid(60, 60, (0, 0, 200)),
+                "overlay.pdf": _solid(60, 60, (255, 255, 0)),
+            },
         )
         page = _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0))
         renderer.render_composite_frame(page, 2.0, 10.0, 20.0, 30.0, 30.0, 0)
@@ -2102,7 +2227,13 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
                     frames={"base.pdf": _solid(216, 216, (0, 200, 0))},
                 )
                 image = renderer.render_composite_frame(
-                    _sheet(overlay_image_path="overlay.tif"), 3.0, 0.0, 0.0, 72.0, 72.0, 0
+                    _sheet(overlay_image_path="overlay.tif"),
+                    3.0,
+                    0.0,
+                    0.0,
+                    72.0,
+                    72.0,
+                    0,
                 )
                 self.assertEqual(_rgb(image, 56, 56), (255, 0, 0))
         for rect in ((16.0, 16.0, 0.0, 16.0), (16.0, 16.0, 16.0, 0.0)):
@@ -2114,7 +2245,12 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
                 )
                 image = renderer.render_composite_frame(
                     _sheet(overlay_image_path="overlay.tif", overlay_rect=rect),
-                    3.0, 0.0, 0.0, 72.0, 72.0, 0,
+                    3.0,
+                    0.0,
+                    0.0,
+                    72.0,
+                    72.0,
+                    0,
                 )
                 self.assertEqual(_rgb(image, 100, 100), (0, 200, 0))
 
@@ -2137,14 +2273,26 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
         sub = sub_renderer.render_composite_frame(page, 3.0, 18.0, 18.0, 36.0, 36.0, 0)
         # Sub-frame origin is (54, 54) px of the full page; the seams of the
         # overlay quadrants lie at x = 108 and y = 81 there.
-        for x, y in ((2, 2), (50, 2), (58, 2), (100, 2), (2, 24), (2, 30), (50, 40), (58, 40), (100, 50)):
+        for x, y in (
+            (2, 2),
+            (50, 2),
+            (58, 2),
+            (100, 2),
+            (2, 24),
+            (2, 30),
+            (50, 40),
+            (58, 40),
+            (100, 50),
+        ):
             self.assertEqual(_rgb(sub, x, y), _rgb(full, x + 54, y + 54), (x, y))
         self.assertEqual(_rgb(sub, 50, 20), (255, 0, 0))
         self.assertEqual(_rgb(sub, 58, 20), (0, 255, 0))
         self.assertEqual(_rgb(sub, 50, 40), (0, 0, 255))
         self.assertEqual(_rgb(sub, 58, 40), (255, 255, 0))
 
-    def test_a_raster_overlay_frame_equals_the_overlay_only_canvas_inside_the_rect(self):
+    def test_a_raster_overlay_frame_equals_the_overlay_only_canvas_inside_the_rect(
+        self,
+    ):
         overlay = _quadrants(200, 200)
         page = _sheet(overlay_image_path="overlay.tif")
         frame_renderer = self.renderer(
@@ -2152,7 +2300,9 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             sizes={"overlay.tif": (200.0, 200.0)},
             frames={"base.pdf": _solid(216, 216, (0, 200, 0))},
         )
-        frame = frame_renderer.render_composite_frame(page, 3.0, 0.0, 0.0, 72.0, 72.0, 0)
+        frame = frame_renderer.render_composite_frame(
+            page, 3.0, 0.0, 0.0, 72.0, 72.0, 0
+        )
         canvas_renderer = self.renderer(images={"overlay.tif": overlay})
         canvas = canvas_renderer.render_overlay_only(page, 3.0)
         # Rect = canvas px x 54..162, y 54..108. Inside it (one pixel in from the
@@ -2182,7 +2332,10 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             renderer = self.renderer(
                 images={overlay: _quadrants(200, 200)},
                 sizes={overlay: (72.0, 72.0)},
-                frames={"base.pdf": _solid(60, 60, (0, 0, 200)), overlay: _solid(60, 60, (255, 255, 0))},
+                frames={
+                    "base.pdf": _solid(60, 60, (0, 0, 200)),
+                    overlay: _solid(60, 60, (255, 255, 0)),
+                },
             )
             original = self.cache.get_page_size
             self.cache.get_page_size = lambda path, index, original=original: (
@@ -2190,7 +2343,12 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             )
             renderer.render_composite_frame(
                 _sheet(overlay_image_path=overlay, overlay_rect=(0.0, 0.0, 64.0, 64.0)),
-                1.0, 0.0, 0.0, 30.0, 30.0, 0,
+                1.0,
+                0.0,
+                0.0,
+                30.0,
+                30.0,
+                0,
             )
         self.assertEqual(sizes, [("overlay.pdf", 0), ("overlay.tif", 0)])
 
@@ -2224,6 +2382,7 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             ((18.0, 18.0, 36.0, 36.0), (0, 0, 200, 200)),
             ((36.0, 18.0, 18.0, 18.0), (100, 0, 100, 200)),
             ((18.0, 27.0, 36.0, 9.0), (0, 100, 200, 100)),
+            ((18.0, 18.0, 36.0, 9.0), (0, 0, 200, 100)),
             ((27.0, 27.0, 9.0, 9.0), (50, 100, 50, 100)),
         ):
             with self.subTest(frame=frame):
@@ -2249,11 +2408,20 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             frames={"base.pdf": _solid(216, 216, (0, 200, 0))},
         )
         image = renderer.render_composite_frame(
-            _sheet(overlay_image_path="overlay.tif", overlay_rect=(0.0, 0.0, 64.0, 64.0)),
-            3.0, 0.0, 0.0, 72.0, 72.0, 0,
+            _sheet(
+                overlay_image_path="overlay.tif", overlay_rect=(0.0, 0.0, 64.0, 64.0)
+            ),
+            3.0,
+            0.0,
+            0.0,
+            72.0,
+            72.0,
+            0,
         )
         row = [_rgb(image, x, 100) for x in range(60, 160)]
-        self.assertGreater(len([px for px in row if 0 < px[0] < 255 and 0 < px[2] < 255]), 20)
+        self.assertGreater(
+            len([px for px in row if 0 < px[0] < 255 and 0 < px[2] < 255]), 20
+        )
 
     def test_one_pixel_wide_or_tall_overlays_are_drawn_by_the_canvas_and_the_composite(
         self,
@@ -2270,7 +2438,10 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
         ):
             with self.subTest(label):
                 renderer = self.renderer(
-                    images={"overlay.pdf": overlay, "base.pdf": _solid(216, 216, (0, 200, 0))}
+                    images={
+                        "overlay.pdf": overlay,
+                        "base.pdf": _solid(216, 216, (0, 200, 0)),
+                    }
                 )
                 canvas = renderer.render_overlay_only(_sheet(), 3.0)
                 composite = renderer.render_composite(_sheet(uid="c"), None, 3.0, 0)
@@ -2278,7 +2449,9 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
                     for point, colour in probes.items():
                         self.assertEqual(_rgb(image, *point), colour, (label, point))
 
-    def test_overlay_only_canvases_of_one_and_two_pixels_do_not_share_a_cache_entry(self):
+    def test_overlay_only_canvases_of_one_and_two_pixels_do_not_share_a_cache_entry(
+        self,
+    ):
         for width, height, expected in (
             (1.0, 0.01, [(1, 1), (2, 1)]),
             (0.01, 1.0, [(1, 1), (1, 2)]),
@@ -2286,7 +2459,9 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
             with self.subTest(width=width, height=height):
                 renderer = self.renderer(images={"overlay.pdf": _quadrants(4, 4)})
                 page = _sheet(
-                    width_pts=width, height_pts=height, overlay_rect=(0.0, 0.0, 8.0, 8.0)
+                    width_pts=width,
+                    height_pts=height,
+                    overlay_rect=(0.0, 0.0, 8.0, 8.0),
                 )
                 sizes = []
                 for scale in (1.0, 2.0):
@@ -2296,18 +2471,56 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
 
     def test_a_one_pixel_wide_visible_source_window_is_still_drawn(self):
         # Frame x 27.018..27.118 pt is source x 50.1..50.66 px of the 200 px source:
-        # a single source column, in the red (upper-left) quadrant at rows 22..
+        # a single source column, in the red (upper-left) quadrant at rows 22..44.
+        # The window is rounded outwards (floor left/top, ceil right/bottom), so it
+        # is still cropped (not replaced by the whole-overlay fallback).
+        recorded = []
+        real_copy_region = composite_module.copy_region
+
+        def recording_copy(image, left, top, width, height):
+            recorded.append((left, top, width, height))
+            return real_copy_region(image, left, top, width, height)
+
         renderer = self.renderer(
             images={"overlay.tif": _quadrants(200, 200)},
             sizes={"overlay.tif": (200.0, 200.0)},
             frames={"base.pdf": _solid(1, 6, (0, 200, 0))},
         )
-        image = renderer.render_composite_frame(
-            _sheet(overlay_image_path="overlay.tif"), 3.0, 27.018, 20.0, 0.1, 2.0, 0
-        )
+        with patch.object(composite_module, "copy_region", recording_copy):
+            image = renderer.render_composite_frame(
+                _sheet(overlay_image_path="overlay.tif"), 3.0, 27.018, 20.0, 0.1, 2.0, 0
+            )
+        self.assertEqual(recorded, [(50, 22, 1, 23)])
         colours = {_rgb(image, 0, y) for y in range(image.height())}
         self.assertIn((255, 0, 0), colours)
         self.assertNotIn((0, 200, 0), colours)
+
+    def test_a_one_pixel_tall_visible_source_window_is_still_cropped(self):
+        # Frame y 27.045..27.075 pt is source y 100.5..100.83 px: one source row.
+        recorded = []
+        real_copy_region = composite_module.copy_region
+
+        def recording_copy(image, left, top, width, height):
+            recorded.append((left, top, width, height))
+            return real_copy_region(image, left, top, width, height)
+
+        renderer = self.renderer(
+            images={"overlay.tif": _quadrants(200, 200)},
+            sizes={"overlay.tif": (200.0, 200.0)},
+            frames={"base.pdf": _solid(6, 1, (0, 200, 0))},
+        )
+        with patch.object(composite_module, "copy_region", recording_copy):
+            image = renderer.render_composite_frame(
+                _sheet(overlay_image_path="overlay.tif"),
+                3.0,
+                20.0,
+                27.045,
+                2.0,
+                0.03,
+                0,
+            )
+        self.assertEqual(recorded, [(11, 100, 12, 1)])
+        self.assertEqual((image.width(), image.height()), (6, 1))
 
     def test_a_source_window_beyond_the_decoded_image_leaves_an_incomplete_frame(self):
         # The size lookup says 200x200 but only 100x100 pixels were decoded, so
@@ -2353,3 +2566,278 @@ class CompositeEdgeAndCachingTests(unittest.TestCase):
                     self.assertIn(
                         ("page", "overlay.tif", 0, 2.0, 0, True), self.cache.calls
                     )
+
+    def test_a_non_square_frame_keeps_the_size_of_its_base_frame(self):
+        renderer = self.renderer(
+            images={"overlay.tif": _quadrants(200, 200)},
+            sizes={"overlay.tif": (200.0, 200.0)},
+            frames={"base.pdf": _solid(216, 108, (0, 200, 0))},
+        )
+        image = renderer.render_composite_frame(
+            _sheet(overlay_image_path="overlay.tif"), 3.0, 0.0, 0.0, 72.0, 36.0, 0
+        )
+        self.assertEqual((image.width(), image.height()), (216, 108))
+        self.assertEqual(_rgb(image, 5, 5), (0, 200, 0))
+        self.assertEqual(_rgb(image, 56, 56), (255, 0, 0))
+        self.assertEqual(_rgb(image, 160, 56), (0, 255, 0))
+        self.assertEqual(_rgb(image, 205, 100), (0, 200, 0))
+
+    def test_the_fallback_overlay_moves_by_the_frame_origin_on_each_axis(self):
+        # The frame starts 9 pt right and 18 pt below the sheet origin, the overlay
+        # rect at (18, 18) pt: the red quadrant starts 9 pt (27 px) from the left
+        # edge of the frame and flush with its top edge.
+        renderer = self.renderer(
+            images={"overlay.tif": _quadrants(200, 200)},
+            sizes={"overlay.tif": (0.0, 0.0)},
+            frames={"base.pdf": _solid(108, 54, (0, 200, 0))},
+        )
+        image = renderer.render_composite_frame(
+            _sheet(overlay_image_path="overlay.tif"), 3.0, 9.0, 18.0, 36.0, 18.0, 0
+        )
+        self.assertEqual(_rgb(image, 5, 5), (0, 200, 0))
+        self.assertEqual(_rgb(image, 30, 5), (255, 0, 0))
+        self.assertEqual(_rgb(image, 100, 5), (0, 255, 0))
+        self.assertEqual(_rgb(image, 30, 45), (0, 0, 255))
+        self.assertEqual(_rgb(image, 100, 45), (255, 255, 0))
+
+    def test_a_non_uniformly_squeezed_overlay_is_rendered_at_its_larger_axis_scale(
+        self,
+    ):
+        # A 200 x 100 pt source squeezed into a 72 x 72 pt rect is 0.36 wide and
+        # 0.72 tall per source point: the sharper axis (0.72 * 3.0 = 2.16) decides.
+        renderer = self.renderer(
+            sizes={"overlay.pdf": (200.0, 100.0)},
+            frames={
+                "base.pdf": _solid(216, 216, (0, 200, 0)),
+                "overlay.pdf": _solid(216, 216, (255, 255, 0)),
+            },
+        )
+        renderer.render_composite_frame(
+            _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0)), 3.0, 0.0, 0.0, 72.0, 72.0, 0
+        )
+        requested = [call for call in self.cache.calls if call[1] == "overlay.pdf"]
+        self.assertEqual(len(requested), 1)
+        self.assertAlmostEqual(requested[0][3], 2.16, places=2)
+
+    def test_overlay_only_cache_key_rounds_the_page_height_and_width_like_the_canvas(
+        self,
+    ):
+        # 72.6 pt is 218 px at 3.0 but 217 px at 2.99: two different canvases.
+        for width, height, expected in (
+            (72.6, 10.0, [(218, 30), (217, 30)]),
+            (10.0, 72.6, [(30, 218), (30, 217)]),
+        ):
+            with self.subTest(width=width, height=height):
+                renderer = self.renderer(images={"overlay.pdf": _quadrants(4, 4)})
+                page = _sheet(
+                    width_pts=width,
+                    height_pts=height,
+                    overlay_rect=(0.0, 0.0, 8.0, 8.0),
+                )
+                sizes = []
+                for scale in (3.0, 2.99):
+                    image = renderer.render_overlay_only(page, scale)
+                    sizes.append((image.width(), image.height()))
+                self.assertEqual(sizes, expected)
+
+    def test_overlay_rects_thinner_than_a_pixel_are_still_drawn(self):
+        # 0.2 units are 0.225 pt, i.e. 0.675 canvas px at 3.0: the partly covered
+        # pixel must blend the overlay colour into the paper.
+        for label, rect, probe in (
+            ("narrow", (16.0, 16.0, 0.2, 16.0), (54, 80)),
+            ("short", (16.0, 16.0, 16.0, 0.2), (80, 54)),
+        ):
+            with self.subTest(label):
+                renderer = self.renderer(
+                    images={"overlay.pdf": _solid(4, 4, (255, 0, 0))}
+                )
+                canvas = renderer.render_overlay_only(_sheet(overlay_rect=rect), 3.0)
+                red, green, blue = _rgb(canvas, *probe)
+                self.assertEqual(red, 255)
+                self.assertLess(green, 255)
+                self.assertLess(blue, 255)
+
+    def test_frames_thinner_than_a_point_are_still_rendered(self):
+        for frame, size in (
+            ((0.0, 0.0, 0.5, 10.0), (2, 30)),
+            ((0.0, 0.0, 10.0, 0.5), (30, 2)),
+        ):
+            with self.subTest(frame=frame):
+                renderer = self.renderer(
+                    sizes={"overlay.pdf": (72.0, 72.0)},
+                    frames={
+                        "base.pdf": _solid(*size, (0, 0, 200)),
+                        "overlay.pdf": _solid(*size, (255, 255, 0)),
+                    },
+                )
+                image = renderer.render_composite_frame(
+                    _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0)), 3.0, *frame, 0
+                )
+                self.assertEqual((image.width(), image.height()), size)
+                self.assertEqual(
+                    [call[1] for call in self.cache.calls], ["base.pdf", "overlay.pdf"]
+                )
+
+    def test_raster_overlays_of_one_unit_are_cropped_not_treated_as_unknown(self):
+        # A source of exactly 1 x 1 and an overlay rect of well under one point are
+        # valid geometry: the frame crops the source (a "page" request) instead of
+        # falling back to the whole tinted overlay (a "tinted" request).
+        for label, image, size, rect in (
+            ("one unit source", _solid(1, 1, (255, 0, 0)), (1.0, 1.0), None),
+            (
+                "sub point rect",
+                _solid(10, 10, (255, 0, 0)),
+                (10.0, 10.0),
+                (16.0, 16.0, 0.5, 0.5),
+            ),
+        ):
+            with self.subTest(label):
+                renderer = self.renderer(
+                    images={"overlay.tif": image},
+                    sizes={"overlay.tif": size},
+                    frames={"base.pdf": _solid(216, 216, (0, 200, 0))},
+                )
+                overrides = {} if rect is None else {"overlay_rect": rect}
+                composite = renderer.render_composite_frame(
+                    _sheet(overlay_image_path="overlay.tif", **overrides),
+                    3.0,
+                    0.0,
+                    0.0,
+                    72.0,
+                    72.0,
+                    0,
+                )
+                self.assertIsNotNone(composite)
+                kinds = [call[0] for call in self.cache.calls]
+                self.assertEqual(kinds, ["frame", "page"])
+
+    def test_overlay_frames_left_of_or_above_the_overlay_rect_are_not_requested(self):
+        # The overlay rect covers x 18..54 pt and y 18..36 pt of the 72 pt sheet.
+        # A PDF overlay is not requested at all; a raster overlay degrades to the
+        # whole tinted overlay (never to a cropped window of the source).
+        for overlay, expected_requests in (
+            ("overlay.pdf", ["frame"]),
+            ("overlay.tif", ["frame", "tinted"]),
+        ):
+            for frame in ((0.0, 0.0, 10.0, 72.0), (0.0, 0.0, 72.0, 10.0)):
+                with self.subTest(overlay=overlay, frame=frame):
+                    renderer = self.renderer(
+                        images={"overlay.tif": _quadrants(200, 200)},
+                        sizes={overlay: (200.0, 200.0)},
+                        frames={
+                            "base.pdf": _solid(30, 30, (0, 0, 200)),
+                            "overlay.pdf": _solid(30, 30, (255, 255, 0)),
+                        },
+                    )
+                    page = _sheet(overlay_image_path=overlay)
+                    image = renderer.render_composite_frame(page, 1.0, *frame, 0)
+                    self.assertEqual(
+                        [call[0] for call in self.cache.calls], expected_requests
+                    )
+                    self.assertEqual(self.cache.calls[0][1], "base.pdf")
+                    self.assertEqual(_rgb(image, 3, 3), (0, 0, 200))
+                    # Nothing was drawn, so the frame is incomplete and not cached.
+                    renderer.render_composite_frame(page, 1.0, *frame, 0)
+                    self.assertEqual(len(self.cache.calls), 2 * len(expected_requests))
+
+    def test_the_raster_crop_rounds_scaled_window_edges_outwards(self):
+        # At a native scale of 1.5 the window edges fall on half pixels: the left
+        # and top edges round down, the right and bottom edges round up.
+        recorded = []
+        real_copy_region = composite_module.copy_region
+
+        def recording_copy(image, left, top, width, height):
+            recorded.append((left, top, width, height))
+            return real_copy_region(image, left, top, width, height)
+
+        # Source window x 51..53 px, y 23..49 px of the 200 px source (rect scale
+        # 0.18 x 0.09 pt/px), i.e. x 76.5..79.5 and y 34.5..73.5 px at 1.5x.
+        with patch.object(composite_module, "RASTER_NATIVE_RENDER_SCALE", 1.5):
+            renderer = self.renderer(
+                images={"overlay.tif": _quadrants(300, 300)},
+                sizes={"overlay.tif": (200.0, 200.0)},
+                frames={"base.pdf": _solid(1, 7, (0, 200, 0))},
+            )
+            with patch.object(composite_module, "copy_region", recording_copy):
+                renderer.render_composite_frame(
+                    _sheet(overlay_image_path="overlay.tif"),
+                    3.0,
+                    27.2,
+                    20.1,
+                    0.25,
+                    2.3,
+                    0,
+                )
+        self.assertEqual(recorded, [(76, 34, 4, 40)])
+
+    def test_overlay_frame_helpers_leave_the_callers_painter_state_untouched(self):
+        # Each helper draws under its own transform; the painter it was handed must
+        # come back with the transform it had (the caller may keep drawing).
+        page_pdf = _sheet(overlay_rect=(0.0, 0.0, 64.0, 64.0))
+        page_tif = _sheet(overlay_image_path="overlay.tif")
+        cases = (
+            ("pdf frame", "_draw_overlay_pdf_frame", page_pdf, "overlay.pdf", True),
+            (
+                "raster frame",
+                "_draw_overlay_raster_frame",
+                page_tif,
+                "overlay.tif",
+                True,
+            ),
+        )
+        for label, method, page, overlay, expected_drawn in cases:
+            with self.subTest(label):
+                renderer = self.renderer(
+                    images={"overlay.tif": _quadrants(200, 200)},
+                    sizes={overlay: (200.0, 200.0)},
+                    frames={"overlay.pdf": _solid(216, 216, (255, 255, 0))},
+                )
+                canvas = _solid(216, 216, (0, 200, 0))
+                painter = QPainter(canvas)
+                marker = QtGui.QTransform()
+                marker.translate(3.0, 5.0)
+                painter.setTransform(marker)
+                try:
+                    drawn = getattr(renderer, method)(
+                        painter, page, 3.0, 0.0, 0.0, 72.0, 72.0, 0
+                    )
+                    after = painter.transform()
+                finally:
+                    painter.end()
+                self.assertIs(drawn, expected_drawn)
+                self.assertEqual(after, marker)
+                self.assertNotEqual(_rgb(canvas, 100, 100), (0, 200, 0))
+        # The whole-overlay fallback (overlay size unknown) restores it too.
+        renderer = self.renderer(images={"overlay.tif": _quadrants(200, 200)})
+        canvas = _solid(216, 216, (0, 200, 0))
+        painter = QPainter(canvas)
+        marker = QtGui.QTransform()
+        marker.translate(3.0, 5.0)
+        painter.setTransform(marker)
+        try:
+            drawn = renderer._draw_overlay_raster_frame(
+                painter, page_tif, 3.0, 0.0, 0.0, 72.0, 72.0, 0
+            )
+            after = painter.transform()
+        finally:
+            painter.end()
+        self.assertFalse(drawn)
+        self.assertEqual(after, marker)
+        self.assertNotEqual(_rgb(canvas, 100, 100), (0, 200, 0))
+
+    def test_a_source_window_that_cannot_be_copied_leaves_an_incomplete_frame(self):
+        # copy_region only returns a null image when memory runs out; the frame
+        # keeps the base, is flagged incomplete and is therefore not cached.
+        renderer = self.renderer(
+            images={"overlay.tif": _quadrants(200, 200)},
+            sizes={"overlay.tif": (200.0, 200.0)},
+            frames={"base.pdf": _solid(216, 216, (0, 200, 0))},
+        )
+        page = _sheet(overlay_image_path="overlay.tif")
+        with patch.object(composite_module, "copy_region", lambda *_args: QImage()):
+            image = renderer.render_composite_frame(page, 3.0, 0.0, 0.0, 72.0, 72.0, 0)
+        self.assertEqual(_rgb(image, 56, 56), (0, 200, 0))
+        before = len(self.cache.calls)
+        with patch.object(composite_module, "copy_region", lambda *_args: QImage()):
+            renderer.render_composite_frame(page, 3.0, 0.0, 0.0, 72.0, 72.0, 0)
+        self.assertEqual(len(self.cache.calls), 2 * before)

@@ -1,7 +1,9 @@
 import unittest
+import random
 from dataclasses import replace
 from ost_visualizer.application.dtos.mesh_geometry_dto import (
     MeshSceneIdentity,
+    normalize_scene_page_uids,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 
@@ -34,6 +36,35 @@ class MeshSceneIdentityTests(unittest.TestCase):
                 self.assertNotIn(changed, cache)
 
 
+class NormalizeScenePageUidsTests(unittest.TestCase):
+    def test_non_text_page_ids_collapse_with_their_text_form_and_sort_as_text(self):
+        self.assertEqual(
+            normalize_scene_page_uids([10, 9, "9", 0, None, ""]), ("10", "9")
+        )
+        identity = MeshSceneIdentity(BidRef("a.mdb", "b"), (2, 1, "2"), 1)
+        self.assertEqual(identity.page_uids, ("1", "2"))
+        self.assertEqual(
+            identity, MeshSceneIdentity(BidRef("a.mdb", "b"), ("2", "1"), 1)
+        )
+        self.assertEqual(
+            hash(identity),
+            hash(MeshSceneIdentity(BidRef("a.mdb", "b"), ("2", "1"), 1)),
+        )
+
+    def test_order_is_canonical_for_many_ids_whatever_the_set_iteration_order(self):
+        # Set iteration order of strings follows the per-process hash seed; with
+        # 40 ids an unsorted result differs from the sorted one under every
+        # seed in practice (a coincidence has probability 1/40!).
+        ids = [f"page-{number:02d}" for number in range(40)]
+        shuffled = ids[:]
+        random.Random(5).shuffle(shuffled)
+        self.assertNotEqual(shuffled, ids)
+        self.assertEqual(normalize_scene_page_uids(shuffled), tuple(ids))
+        self.assertEqual(normalize_scene_page_uids(reversed(ids)), tuple(ids))
+        identity = MeshSceneIdentity(BidRef("a.mdb", "b"), tuple(shuffled), 1)
+        self.assertEqual(identity.page_uids, tuple(ids))
+
+
 class MeshGeometryValueTests(unittest.TestCase):
     def test_mesh_geometry_is_an_immutable_value(self):
         from dataclasses import FrozenInstanceError
@@ -42,4 +73,6 @@ class MeshGeometryValueTests(unittest.TestCase):
         mesh = MeshGeometry([0.0], [1.0], [0], "#fff", 1.0, "p", "c", "t")
         with self.assertRaises(FrozenInstanceError):
             mesh.opacity = 0.5
-        self.assertEqual(mesh, MeshGeometry([0.0], [1.0], [0], "#fff", 1.0, "p", "c", "t"))
+        self.assertEqual(
+            mesh, MeshGeometry([0.0], [1.0], [0], "#fff", 1.0, "p", "c", "t")
+        )

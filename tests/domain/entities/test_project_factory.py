@@ -87,7 +87,9 @@ class ProjectFactoryHierarchyTests(unittest.TestCase):
                 self.assertEqual(build_projects(hierarchy), [])
                 self.assertEqual(build_loaded_files(hierarchy), [])
 
-    def test_build_projects_keeps_file_order_names_paths_and_adds_one_unassigned_group(self):
+    def test_build_projects_keeps_file_order_names_paths_and_adds_one_unassigned_group(
+        self,
+    ):
         from ost_visualizer.domain.entities.project_factory import build_projects
 
         projects = build_projects(self.hierarchy())
@@ -111,9 +113,7 @@ class ProjectFactoryHierarchyTests(unittest.TestCase):
         hierarchy = self.hierarchy()
         for entry in hierarchy.loaded_files:
             entry.orphan_bids = []
-        self.assertEqual(
-            [p.uid for p in build_projects(hierarchy)], ["p1", "p2", "p3"]
-        )
+        self.assertEqual([p.uid for p in build_projects(hierarchy)], ["p1", "p2", "p3"])
 
     def test_build_loaded_files_keeps_each_files_projects_and_orphans_separate(self):
         from ost_visualizer.domain.entities.project_factory import build_loaded_files
@@ -221,7 +221,9 @@ class ProjectFactoryBidTests(unittest.TestCase):
                     name="Parent",
                     description="Parent desc",
                     pages=[
-                        HierarchyPageInfo(uid="4", name="P4", sheet_no="A-1", sequence=5)
+                        HierarchyPageInfo(
+                            uid="4", name="P4", sheet_no="A-1", sequence=5
+                        )
                     ],
                 )
             },
@@ -232,14 +234,19 @@ class ProjectFactoryBidTests(unittest.TestCase):
         )
         bid = build_bid(info)
         folder = bid.folders["10"]
-        self.assertEqual((folder.uid, folder.name, folder.description), ("10", "Parent", "Parent desc"))
+        self.assertEqual(
+            (folder.uid, folder.name, folder.description),
+            ("10", "Parent", "Parent desc"),
+        )
         page = folder.pages[0]
         self.assertEqual(
             (page.uid, page.name, page.sheet_no, page.sequence, page.folder_uid),
             ("4", "P4", "A-1", 5, "10"),
         )
         blank, converted = bid.pages_without_folder
-        self.assertEqual((blank.sheet_no, blank.sequence, blank.folder_uid), ("", 0, None))
+        self.assertEqual(
+            (blank.sheet_no, blank.sequence, blank.folder_uid), ("", 0, None)
+        )
         self.assertEqual((converted.sheet_no, converted.sequence), ("12", 7))
         self.assertIsInstance(converted.sequence, int)
         self.assertIsInstance(converted.sheet_no, str)

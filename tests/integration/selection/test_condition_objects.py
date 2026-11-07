@@ -378,7 +378,9 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.plan.clear_selection()
         self.assertEqual(self.sidebar.get_selected_condition_uids(), [])
 
-    def test_page_switch_restores_the_project_tree_bid_selection_only_when_it_moved_away(self):
+    def test_page_switch_restores_the_project_tree_bid_selection_only_when_it_moved_away(
+        self,
+    ):
         project_view = self.coordinator.main_window.project_view
         self.plan.set_selected_uids({"1"})
         project_view.restore_bid_selection.reset_mock()
@@ -393,7 +395,9 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.load_page(self.plan, self.page)
         project_view.restore_bid_selection.assert_called_once_with(self.bid_ref)
 
-    def test_reloading_the_same_page_keeps_the_takeoff_selection_and_its_condition(self):
+    def test_reloading_the_same_page_keeps_the_takeoff_selection_and_its_condition(
+        self,
+    ):
         self.plan.set_selected_uids({"1"})
         self.assertEqual(self.sidebar.get_selected_condition_uids(), ["target"])
         self.load_page(self.plan, self.page)

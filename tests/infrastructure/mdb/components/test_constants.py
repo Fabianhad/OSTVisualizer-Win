@@ -59,7 +59,16 @@ class ConstantsPersistenceTests(unittest.TestCase):
         self.assertEqual(hex_to_color_int("#010000"), 0x000001)
         self.assertEqual(hex_to_color_int("#000100"), 0x000100)
         self.assertEqual(hex_to_color_int("#000001"), 0x010000)
-        for bad in ("", "#", "#FFF", "#FF00", "GG0000", "#12G456", "#XFF0000", "XXFF0000"):
+        for bad in (
+            "",
+            "#",
+            "#FFF",
+            "#FF00",
+            "GG0000",
+            "#12G456",
+            "#XFF0000",
+            "XXFF0000",
+        ):
             with self.subTest(value=bad):
                 with self.assertRaises(ValueError):
                     hex_to_color_int(bad)

@@ -155,11 +155,18 @@ class ConditionQuantityServiceExactTests(unittest.TestCase):
         base.update(changes)
         return Condition(**base)
 
-    def test_all_three_quantities_and_negative_signs_are_accumulated_per_condition(self):
+    def test_all_three_quantities_and_negative_signs_are_accumulated_per_condition(
+        self,
+    ):
         condition = self.area_condition(calc_type2=14, uom2=UOM_SQUARE_INCHES)
-        positive = Takeoff(uid="1", condition_uid="a", position=[0, 0, 10, 0, 10, 10, 0, 10])
+        positive = Takeoff(
+            uid="1", condition_uid="a", position=[0, 0, 10, 0, 10, 10, 0, 10]
+        )
         negative = Takeoff(
-            uid="2", condition_uid="a", position=[0, 0, 4, 0, 4, 4, 0, 4], is_negative=True
+            uid="2",
+            condition_uid="a",
+            position=[0, 0, 4, 0, 4, 4, 0, 4],
+            is_negative=True,
         )
         total = compute_page_quantities({"a": condition}, [positive, negative])["a"]
         self.assertEqual(total, (100.0 - 16.0, 40.0 - 16.0, 1.0 - 1.0))
@@ -248,7 +255,9 @@ class ConditionQuantityServiceExactTests(unittest.TestCase):
         ]
         self.assertEqual(compute_page_quantities(conditions, takeoffs)["l"][0], 12.0)
 
-    def test_attachment_children_subtract_footprint_and_add_perimeter_to_the_parent(self):
+    def test_attachment_children_subtract_footprint_and_add_perimeter_to_the_parent(
+        self,
+    ):
         attachment = Condition(
             uid="att",
             condition_type=Condition.TYPE_ATTACHMENT,
@@ -279,7 +288,9 @@ class ConditionQuantityServiceExactTests(unittest.TestCase):
                 )["a"][0]
                 self.assertEqual(value, expected)
 
-    def test_a_child_that_is_neither_area_nor_attachment_does_not_affect_the_parent(self):
+    def test_a_child_that_is_neither_area_nor_attachment_does_not_affect_the_parent(
+        self,
+    ):
         line = Condition(
             uid="l", condition_type=Condition.TYPE_LINEAR, calc_type1=1, uom1=1
         )
@@ -304,11 +315,19 @@ class ConditionQuantityServiceExactTests(unittest.TestCase):
     def test_fractional_quantities_are_accumulated_without_integer_truncation(self):
         # 12x9 in = 108 sq in = 0.75 sq ft; the 6x6 in negative is 0.25 sq ft.
         condition = self.area_condition(
-            uom1=UOM_SQUARE_FEET, uom2=UOM_SQUARE_FEET, calc_type3=CALC_AREA, uom3=UOM_SQUARE_FEET
+            uom1=UOM_SQUARE_FEET,
+            uom2=UOM_SQUARE_FEET,
+            calc_type3=CALC_AREA,
+            uom3=UOM_SQUARE_FEET,
         )
-        positive = Takeoff(uid="1", condition_uid="a", position=[0, 0, 12, 0, 12, 9, 0, 9])
+        positive = Takeoff(
+            uid="1", condition_uid="a", position=[0, 0, 12, 0, 12, 9, 0, 9]
+        )
         negative = Takeoff(
-            uid="2", condition_uid="a", position=[0, 0, 6, 0, 6, 6, 0, 6], is_negative=True
+            uid="2",
+            condition_uid="a",
+            position=[0, 0, 6, 0, 6, 6, 0, 6],
+            is_negative=True,
         )
         total = compute_page_quantities({"a": condition}, [positive, negative])["a"]
         self.assertAlmostEqual(total[0], 0.75 - 0.25)
@@ -319,7 +338,9 @@ class ConditionQuantityServiceExactTests(unittest.TestCase):
         self.assertAlmostEqual(only_negative[1], -0.25)
         self.assertAlmostEqual(only_negative[2], -0.25)
 
-    def test_a_child_on_a_different_page_is_ignored_whichever_page_uid_sorts_first(self):
+    def test_a_child_on_a_different_page_is_ignored_whichever_page_uid_sorts_first(
+        self,
+    ):
         condition = self.area_condition(uom1=UOM_SQUARE_FEET, uom2=UOM_SQUARE_FEET)
         parent = Takeoff(
             uid="p",
@@ -360,7 +381,9 @@ class ConditionQuantityServiceExactTests(unittest.TestCase):
             uid="h", condition_uid="a", page_uid="pg", parent_uid="p", position=[]
         )
         self.assertEqual(
-            compute_page_quantities({"a": self.area_condition()}, [parent, hole])["a"][0],
+            compute_page_quantities({"a": self.area_condition()}, [parent, hole])["a"][
+                0
+            ],
             100.0,
         )
 
@@ -443,3 +466,159 @@ class ConditionQuantityRootSentinelTests(unittest.TestCase):
         ]
         total = compute_page_quantities({"a": condition}, [zero, none_named, *roots])
         self.assertEqual(total["a"][0], 100.0 + 100.0 + 3 * 4.0)
+
+    def test_a_takeoff_with_a_blank_uid_does_not_adopt_the_blank_parent_roots_as_holes(
+        self,
+    ):
+        condition = Condition(
+            uid="a",
+            condition_type=Condition.TYPE_AREA,
+            calc_type1=CALC_AREA,
+            uom1=UOM_SQUARE_INCHES,
+        )
+        takeoffs = [
+            Takeoff(
+                uid=uid,
+                condition_uid="a",
+                page_uid="pg",
+                parent_uid="",
+                position=position,
+            )
+            for uid, position in (
+                ("", [0, 0, 10, 0, 10, 10, 0, 10]),
+                ("r1", [0, 0, 2, 0, 2, 2, 0, 2]),
+                ("r2", [0, 0, 2, 0, 2, 2, 0, 2]),
+            )
+        ]
+        total = compute_page_quantities({"a": condition}, takeoffs)
+        self.assertEqual(total["a"][0], 100.0 + 4.0 + 4.0)
+
+
+class EverySupportedConditionTypeQuantityTests(unittest.TestCase):
+    SQUARE = [0, 0, 10, 0, 10, 10, 0, 10]
+
+    def quantities(self, condition_type, calc_type, uom, position, **dimensions):
+        condition = Condition(
+            uid="c",
+            condition_type=condition_type,
+            calc_type1=calc_type,
+            uom1=uom,
+            **dimensions,
+        )
+        takeoff = Takeoff(uid="t", condition_uid="c", position=position)
+        return compute_page_quantities({"c": condition}, [takeoff])["c"]
+
+    def test_linear_condition_measures_the_polyline_length(self):
+        self.assertEqual(
+            self.quantities(Condition.TYPE_LINEAR, 1, 1, [0, 0, 5, 0])[0], 5.0
+        )
+
+    def test_area_condition_measures_the_polygon_area(self):
+        self.assertEqual(
+            self.quantities(
+                Condition.TYPE_AREA, CALC_AREA, UOM_SQUARE_INCHES, self.SQUARE
+            )[0],
+            100.0,
+        )
+
+    def test_count_and_attachment_conditions_count_one_per_takeoff(self):
+        for condition_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
+            with self.subTest(condition_type=condition_type):
+                self.assertEqual(
+                    self.quantities(condition_type, CALC_COUNT, 0, [5, 5])[0], 1.0
+                )
+
+    def test_count_like_conditions_ignore_polygon_geometry(self):
+        for condition_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
+            with self.subTest(condition_type=condition_type):
+                self.assertEqual(
+                    self.quantities(condition_type, CALC_COUNT, 0, self.SQUARE)[0],
+                    1.0,
+                )
+
+
+class UnsupportedConditionTypePageTests(unittest.TestCase):
+    SQUARE = [0, 0, 10, 0, 10, 10, 0, 10]
+
+    def conditions(self, bad_type=7):
+        return {
+            "good": Condition(
+                uid="good",
+                name="Slab",
+                condition_type=Condition.TYPE_AREA,
+                calc_type1=CALC_AREA,
+                uom1=UOM_SQUARE_INCHES,
+            ),
+            "bad": Condition(
+                uid="bad",
+                name="Foreign",
+                condition_type=bad_type,
+                calc_type1=CALC_AREA,
+                uom1=UOM_SQUARE_INCHES,
+            ),
+        }
+
+    def takeoffs(self):
+        return [
+            Takeoff(uid="1", condition_uid="good", position=self.SQUARE),
+            Takeoff(uid="2", condition_uid="bad", position=self.SQUARE),
+            Takeoff(uid="3", condition_uid="bad", position=self.SQUARE),
+        ]
+
+    def test_an_unsupported_condition_is_skipped_and_the_rest_of_the_page_is_kept(self):
+        for bad_type in (-1, 4, 7, 99):
+            with self.subTest(bad_type=bad_type):
+                with self.assertLogs(
+                    "ost_visualizer.domain.services.condition_quantity_service",
+                    level="WARNING",
+                ):
+                    result = compute_page_quantities(
+                        self.conditions(bad_type), self.takeoffs()
+                    )
+                self.assertEqual(result["good"][0], 100.0)
+                self.assertEqual(result["bad"], (0.0, 0.0, 0.0))
+
+    def test_the_skipped_condition_is_named_once_per_call_with_its_type(self):
+        with self.assertLogs(
+            "ost_visualizer.domain.services.condition_quantity_service",
+            level="WARNING",
+        ) as logged:
+            compute_page_quantities(self.conditions(7), self.takeoffs())
+        messages = [record.getMessage() for record in logged.records]
+        self.assertEqual(len(messages), 1)
+        self.assertIn("bad", messages[0])
+        self.assertIn("Foreign", messages[0])
+        self.assertIn("7", messages[0])
+
+    def test_the_filtered_request_for_an_unsupported_condition_is_zero_not_missing(
+        self,
+    ):
+        with self.assertLogs(
+            "ost_visualizer.domain.services.condition_quantity_service",
+            level="WARNING",
+        ):
+            result = compute_page_quantities(
+                self.conditions(), self.takeoffs(), {"bad", "good"}
+            )
+        self.assertEqual(result["bad"], (0.0, 0.0, 0.0))
+        self.assertEqual(result["good"][0], 100.0)
+
+    def test_a_supported_page_logs_nothing(self):
+        with self.assertNoLogs(
+            "ost_visualizer.domain.services.condition_quantity_service",
+            level="WARNING",
+        ):
+            compute_page_quantities(
+                self.conditions(Condition.TYPE_AREA), self.takeoffs()
+            )
+
+    def test_a_cubic_yard_request_for_an_unsupported_condition_is_a_value_error(self):
+        from ost_visualizer.domain.services.condition_quantity_service import (
+            compute_takeoff_cubic_yards,
+        )
+
+        with self.assertRaises(ValueError):
+            compute_takeoff_cubic_yards(
+                self.conditions(7)["bad"],
+                Takeoff(uid="2", condition_uid="bad", position=self.SQUARE),
+            )

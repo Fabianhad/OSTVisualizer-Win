@@ -6591,7 +6591,9 @@ class DeferredPersistenceManagerUidTypeTests(_DeferredPersistenceManagerFixture)
         self.assertEqual(seen, [(7, list, ["1", "2"])])
 
 
-class DeferredPersistenceManagerThirdPassBoundaryTests(_DeferredPersistenceManagerFixture):
+class DeferredPersistenceManagerThirdPassBoundaryTests(
+    _DeferredPersistenceManagerFixture
+):
     """Loop-continuation and per-kind contracts found by the third-pass mutation
     sweep: each test fails if a scan stops early or a kind is missing from a set."""
 
@@ -6641,9 +6643,7 @@ class DeferredPersistenceManagerThirdPassBoundaryTests(_DeferredPersistenceManag
                     # 2. a pending write is dropped by invalidation too.
                     self.fresh()
                     schedule(self.manager, bid_uid=bid_uid)
-                    self.manager.invalidate_page_visual_revisions(
-                        self.DB, ["p1"], "b1"
-                    )
+                    self.manager.invalidate_page_visual_revisions(self.DB, ["p1"], "b1")
                     self.assertEqual(self.manager.pending_count, 0)
                     self.assertEqual(self.manager._visual_states, {})
                     # 3. an in-flight (queued, unfinished) write loses its state.

@@ -1126,7 +1126,9 @@ class OspImporterFailureAndRollbackTests(unittest.TestCase):
                         )
 
     def test_image_reference_collection_checks_each_attribute_independently(self):
-        members = _image_members("TempImages!.tmp\\over.pdf", "TempImages!.tmp\\img.pdf")
+        members = _image_members(
+            "TempImages!.tmp\\over.pdf", "TempImages!.tmp\\img.pdf"
+        )
         collect = OspImporter(_import_workflow_FakeImporter())._collect_image_references
         resolved_overlay = ET.fromstring(
             _page_xml(("ImagePath", ""), ("OverlayImagePath", "C:\\x\\over.pdf"))
@@ -1137,13 +1139,19 @@ class OspImporterFailureAndRollbackTests(unittest.TestCase):
             [("C:\\x\\over.pdf", "TempImages!.tmp\\over.pdf")],
         )
         unsupported_first = ET.fromstring(
-            _page_xml(("ImagePath", "C:\\x\\notes.txt"), ("OverlayImagePath", "C:\\x\\over.pdf"))
+            _page_xml(
+                ("ImagePath", "C:\\x\\notes.txt"),
+                ("OverlayImagePath", "C:\\x\\over.pdf"),
+            )
         )
         with self.assertNoLogs(osp_importer_module.logger, level="WARNING"):
             refs = collect(unsupported_first, members)
         self.assertEqual([ref.original_path for ref in refs], ["C:\\x\\over.pdf"])
         missing_first = ET.fromstring(
-            _page_xml(("ImagePath", "C:\\x\\gone.pdf"), ("OverlayImagePath", "C:\\x\\over.pdf"))
+            _page_xml(
+                ("ImagePath", "C:\\x\\gone.pdf"),
+                ("OverlayImagePath", "C:\\x\\over.pdf"),
+            )
         )
         with self.assertLogs(osp_importer_module.logger, level="WARNING") as logs:
             refs = collect(missing_first, members)
@@ -1157,7 +1165,9 @@ class OspImporterFailureAndRollbackTests(unittest.TestCase):
             ],
         )
 
-    def test_extraction_directory_is_a_prefixed_fresh_folder_under_the_system_temp(self):
+    def test_extraction_directory_is_a_prefixed_fresh_folder_under_the_system_temp(
+        self,
+    ):
         folder = self._folder()
         with patch.object(
             osp_importer_module.tempfile, "gettempdir", return_value=str(folder)
@@ -1213,7 +1223,9 @@ class OspImporterFailureAndRollbackTests(unittest.TestCase):
             osp_importer_module, "_extract_temp_parent_candidates", lambda: [folder]
         ), patch.object(
             osp_importer_module, "_is_safe_extract_root", lambda *_a: False
-        ), patch.object(osp_importer_module.tempfile, "mkdtemp", mkdtemp):
+        ), patch.object(
+            osp_importer_module.tempfile, "mkdtemp", mkdtemp
+        ):
             with self.assertRaises(OSError) as caught:
                 osp_importer_module._create_extract_temp_dir(("plan.ost",))
         self.assertIs(caught.exception, final_error)
@@ -1234,7 +1246,12 @@ class OspImporterFailureAndRollbackTests(unittest.TestCase):
 
     def test_package_inspection_normalizes_member_names_and_indexes_images(self):
         package = osp_importer_module._inspect_package(
-            ["Plan.OST", "TempImages!.tmp/Sub/Sheet.PDF", "notes\\readme.txt", "Other.tif"]
+            [
+                "Plan.OST",
+                "TempImages!.tmp/Sub/Sheet.PDF",
+                "notes\\readme.txt",
+                "Other.tif",
+            ]
         )
         self.assertEqual(
             package.member_names,
@@ -1257,7 +1274,9 @@ class OspImporterFailureAndRollbackTests(unittest.TestCase):
             with self.subTest(field=field):
                 with self.assertRaises(dataclasses.FrozenInstanceError):
                     setattr(package, field, value)
-        reference = osp_importer_module._ImageReference("a.pdf", "TempImages!.tmp\\a.pdf")
+        reference = osp_importer_module._ImageReference(
+            "a.pdf", "TempImages!.tmp\\a.pdf"
+        )
         with self.assertRaises(dataclasses.FrozenInstanceError):
             reference.member_name = "other"
 
@@ -1370,7 +1389,11 @@ class OspImporterRealArchiveTests(unittest.TestCase):
         empty = folder / "empty.osp"
         empty.write_bytes(b"")
         missing = folder / "missing.osp"
-        for label, archive in (("garbage", garbage), ("empty", empty), ("missing", missing)):
+        for label, archive in (
+            ("garbage", garbage),
+            ("empty", empty),
+            ("missing", missing),
+        ):
             with self.subTest(archive=label):
                 importer = _import_workflow_FakeImporter()
                 with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
@@ -1420,7 +1443,9 @@ class OspImporterRealArchiveTests(unittest.TestCase):
             },
         )
         importer = _StagedOstRecorder()
-        with patch.object(osp_importer_module, "get_default_working_dir", return_value=work):
+        with patch.object(
+            osp_importer_module, "get_default_working_dir", return_value=work
+        ):
             result = OspImporter(importer).import_osp(
                 str(archive), "target.mdb", "project-1"
             )
