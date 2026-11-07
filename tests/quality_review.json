@@ -43217,12 +43217,12 @@
       "state": "All agents were stopped at their own checkpoint. Their full reports (tests/_audit_progress/*.json) were not retained (deleted 2026-11-06); the ledger keeps the conclusions."
     },
     "module_counts": {
-      "Verified": 46,
-      "Awaiting Verification": 53,
-      "In Progress": 27,
+      "Awaiting Verification": 57,
+      "Verified": 51,
+      "In Progress": 24,
       "Partial": 1,
       "Verification Failed": 9,
-      "Blocked": 23,
+      "Blocked": 18,
       "Merged into test_pdf_exporter.py": 1,
       "Merged into test_schema_validator.py": 1,
       "Merged into test_server.py": 1
@@ -43230,7 +43230,7 @@
     "modules": {
       "tests/infrastructure/sql/test_writer.py": {
         "auditor": "A1",
-        "status": "Verified",
+        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
         "verifier": "V1",
         "mutation": {
           "total": 1400,
@@ -43239,6 +43239,11 @@
           "equivalent": 42,
           "excluded": 0,
           "timeouts": 0
+        },
+        "status_before_wave4": "Verified",
+        "wave4_2026-11-07": {
+          "changes": "item 1: 1 test (SQL writer refuses the Deleted Bids project inside its mutation transaction)",
+          "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
         }
       },
       "tests/infrastructure/sql/test_schema_definition.py": {
@@ -43376,6 +43381,27 @@
           "equivalent": 28,
           "excluded": 0,
           "timeouts": 0
+        },
+        "import_progress_scope_wave3": {
+          "verdict": "Verified (scope-limited to the 19 import-progress tests)",
+          "auditor": "W3-IMPORTDLG",
+          "verifier": "V3-IMPORTDLG",
+          "date": "2026-11-07",
+          "tests": "MainWindowImportProgressRealDialogTests (4), MainWindowImportProgressFlowContractTests (5), MainWindowImportFlowCallArgumentTests (10), appended at the end of the file",
+          "mutation": {
+            "main_window_sweep": {
+              "total": 193,
+              "killed": 192,
+              "survived": 1,
+              "survivor": "main_window.py:929 reschedule call in the already-running branch (equivalent)"
+            },
+            "hand_mutants": {
+              "total": 28,
+              "all_killed": true
+            }
+          },
+          "production_change": "main_window.py:1020 exc_info=worker_error (see test_progress_dialog.py)",
+          "not_second_passed": "the other 316 tests of this module are untouched and were NOT second-passed; the module as a whole keeps its status"
         }
       },
       "tests/presentation/handlers/test_plan_view_action_handler.py": {
@@ -43414,7 +43440,11 @@
         "auditor": "A4 then A4b",
         "status": "In Progress",
         "verifier": "V4 (first pass: Partial; not re-verified after A4b)",
-        "outstanding": "1) Full 689-mutant sweep against the final tests (scratchpad A4b/m2.py with cov_worker2.json/time_worker2.json; it needs about 70 s per mutant under load with 10 workers, roughly 80 minutes) and a re-run of the timeouts with a larger limit. 2) Triage whatever survives; the pre-change survivor list above shows what to expect. 3) Re-verify that moving to the shared bid did not weaken a test (assertions are unchanged; only the setup changed)."
+        "outstanding": "1) Full 689-mutant sweep against the final tests (scratchpad A4b/m2.py with cov_worker2.json/time_worker2.json; it needs about 70 s per mutant under load with 10 workers, roughly 80 minutes) and a re-run of the timeouts with a larger limit. 2) Triage whatever survives; the pre-change survivor list above shows what to expect. 3) Re-verify that moving to the shared bid did not weaken a test (assertions are unchanged; only the setup changed).",
+        "wave4_2026-11-07": {
+          "changes": "item 3 follow-up: one expectation updated (gap-closed room outline has 4 vertices, not 5, because region rings now start at the lowest-left corner); area unchanged",
+          "status_unchanged": "In Progress"
+        }
       },
       "tests/application/services/test_ai_takeoff_proposal_service.py": {
         "auditor": "A4",
@@ -43655,31 +43685,156 @@
         }
       },
       "tests/infrastructure/mdb/components/test_layer_operations.py": {
-        "auditor": "A5",
-        "status": "Awaiting Verification",
-        "note": "V5 failed first pass; reworked, not re-verified",
-        "outstanding": "Per-test notes: layer notes cover 83 tests; the rework classes (LayerParameterTypingTests, LayerTextRowTests) and one note that referenced a nonexistent test id need refreshing. 5 survivors listed (equivalent/unreachable).",
-        "mutation": {
+        "status": "Verified",
+        "auditor": "W3-LAYER",
+        "verifier": "V3-LAYER",
+        "second_pass": {
+          "auditor": "W3-LAYER",
+          "verifier": "V3-LAYER",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 87,
+          "tests_after": 98,
+          "tests_added": 11,
+          "tests_changed": [
+            "LayerParameterTypingTests and _NumericTextRejectingCursor docstrings reworded: the premise 'Access rejects numeric text against Long columns' is false in this repo"
+          ],
+          "tests_untouched_count": 87,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 412,
+              "uncapped": true,
+              "before": {
+                "killed": 345,
+                "survived": 4,
+                "total": 349
+              },
+              "final": {
+                "killed": 405,
+                "survived": 7
+              }
+            },
+            "verifier_sweep": {
+              "total": 412,
+              "uncapped": true,
+              "final": {
+                "killed": 405,
+                "survived": 7
+              },
+              "access_sample": {
+                "total": 84,
+                "killed": 42,
+                "note": "40 of the 42 survivors are killed by the fast suite; only 223 and 258 survive both and are equivalent"
+              },
+              "hand_mutants": {
+                "total": 36,
+                "killed": 35
+              }
+            },
+            "method": "in-memory AST mutants; Access tests in a child process with the mutant installed via sitecustomize outside the repo"
+          },
+          "survivors_summary": "NULL AS [BidUID] else-branch of delete_layer (unreachable dead code); empty uid list, int() on rowcount, rowcount 0 branches (equivalent).",
+          "production_changes": [
+            {
+              "file": "ost_visualizer/infrastructure/mdb/components/layer_operations.py",
+              "what": "update_layer_name returned True when its IsTemplate=0 AND IsLocked=0 guard matched no row; now returns bool(rowcount) when rowcount >= 0, else a [Name] read-back (SQL Server NOCOUNT).",
+              "proof": "4 LayerRenameOutcomeTests fail on HEAD, pass with the fix; verifier approved (reproduced on a HEAD mirror, real Access rowcount semantics verified, no caller broken).",
+              "severity": "low (reachable only through direct/queued API use; the UI hides rename for locked/template layers)"
+            }
+          ],
+          "observations_not_fixed": [
+            "delete_default_layer on a locked built-in template returns True on sqlite while real Access refuses when conditions still reference the layer (design question, not pinned).",
+            "swap_layer_sequence with non-canonical numeric text ('01') returns False with no write (latent, direct API misuse only)."
+          ],
+          "caveats": [],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Awaiting Verification",
+        "mutation_before_wave3": {
           "total": 377,
           "killed": 372,
           "survived": 5,
           "equivalent": 5,
           "excluded": 31,
           "timeouts": 0
-        }
+        },
+        "outstanding_before_wave3": "Per-test notes: layer notes cover 83 tests; the rework classes (LayerParameterTypingTests, LayerTextRowTests) and one note that referenced a nonexistent test id need refreshing. 5 survivors listed (equivalent/unreachable).",
+        "note_before_wave3": "V5 failed first pass; reworked, not re-verified",
+        "earlier_auditor": "A5"
       },
       "tests/infrastructure/mdb/components/test_bid_data_reader.py": {
-        "auditor": "A5",
-        "status": "Awaiting Verification",
-        "note": "V5 failed first pass; reworked, not re-verified",
-        "outstanding": "Per-test notes cover 125 of 136 tests; the rework classes ReaderNullAndCoercionTests/ReaderTextValueTests lack notes. 17 survivors listed (equivalent/unreachable).",
-        "mutation": {
+        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "auditor": "W3-BIDREAD",
+        "verifier": "V3-BIDREAD",
+        "second_pass": {
+          "auditor": "W3-BIDREAD",
+          "verifier": "V3-BIDREAD",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 140,
+          "tests_after": 176,
+          "tests_added": 36,
+          "tests_changed": [],
+          "tests_untouched_count": 140,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 2528,
+              "uncapped": true,
+              "before": {
+                "killed": 2336,
+                "survived": 162,
+                "infra": 30
+              },
+              "final": {
+                "killed": 2409,
+                "survived": 89,
+                "infra": 30
+              }
+            },
+            "verifier_sweep": {
+              "total": 2273,
+              "uncapped": true,
+              "round1": {
+                "killed": 2185,
+                "survived": 88
+              },
+              "final": {
+                "killed": 2207,
+                "survived": 66
+              },
+              "hand_mutants": {
+                "total": 80,
+                "killed": 73
+              }
+            },
+            "method": "in-memory AST mutants rebound onto the real BidDataReaderMixin; sqlite wrappers"
+          },
+          "survivors_summary": "annotation/type-alias strings (tooling); redundant guards, index 0 vs -1 on single-column rows, falsy defaults (equivalent); [UID] ORDER BY fallback, '0' parent filter, '<missing>' uid branch (unreachable).",
+          "production_changes": [],
+          "observations_not_fixed": [
+            "parse_position_storage returns an empty list for malformed Position text, so such a takeoff loads with no geometry instead of failing (not claimed as a defect)."
+          ],
+          "caveats": [
+            "Every test in this module runs on sqlite wrappers, not the Access ODBC driver: Jet SQL dialect acceptance, ODBC '?' binding, NULL ordering/tie order and pyodbc Row typing are not exercised here. The one concrete Access-specific behaviour (optional_table_missing schema notes) is pinned through a recording schema."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Awaiting Verification",
+        "mutation_before_wave3": {
           "total": 976,
           "killed": 959,
           "survived": 17,
           "equivalent": 16,
           "excluded": 58,
           "timeouts": 0
+        },
+        "outstanding_before_wave3": "Per-test notes cover 125 of 136 tests; the rework classes ReaderNullAndCoercionTests/ReaderTextValueTests lack notes. 17 survivors listed (equivalent/unreachable).",
+        "note_before_wave3": "V5 failed first pass; reworked, not re-verified",
+        "earlier_auditor": "A5",
+        "status_before_wave4": "Verified",
+        "wave4_2026-11-07": {
+          "changes": "item 6: RealAccessReaderTests (3 tests, one child process each)",
+          "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
         }
       },
       "tests/infrastructure/mdb/components/test_bid_operations.py": {
@@ -43709,16 +43864,84 @@
         }
       },
       "tests/domain/services/test_ai_planar_regions.py": {
-        "auditor": "A5",
-        "status": "Blocked",
-        "outstanding": "Round-5 tests unswept; 178 baseline survivors mostly unclassified individually (grid/cell arithmetic argued at family level only).; The 97 pre-existing tests were not re-read; no per-test notes written.; Unkilled candidates needing geometry work: neck-ratio and 15-degree boundary constants, along[-1] vs along[-2] in jamb_pair, pairing work caps (4096), facing-cosine multipliers (735/736).",
-        "mutation": {
+        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "auditor": "W3-PLANAR",
+        "verifier": "V3-PLANAR",
+        "second_pass": {
+          "auditor": "W3-PLANAR",
+          "verifier": "V3-PLANAR",
+          "verification_rounds": "3 (rounds 1 and 2 Partial; round 3 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 160,
+          "tests_after": 209,
+          "tests_added": 49,
+          "tests_changed": [
+            "module main guard moved from mid-file to the end (it made direct runs skip ~70 tests)"
+          ],
+          "tests_untouched_count": 160,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 1444,
+              "uncapped": true,
+              "before": {
+                "killed": 1264,
+                "survived": 175,
+                "timeouts": 5
+              },
+              "final": {
+                "killed": 1340,
+                "survived": 99,
+                "timeouts": 5
+              },
+              "extra_operator_classes_741": {
+                "before": {
+                  "killed": 592,
+                  "survived": 148
+                },
+                "final": {
+                  "killed": 618,
+                  "survived": 122
+                }
+              }
+            },
+            "verifier_sweep": {
+              "total": 3292,
+              "uncapped": true,
+              "final": {
+                "killed": 3016,
+                "survived": 276,
+                "note": "incl. 10 genuine infinite-loop hangs counted killed by timeout"
+              },
+              "hand_mutants": 40,
+              "differential_fuzz": "all survivors fuzzed against the original; adversarial window search 8000 trials; 24,500 adversarial scenes for L636/L663"
+            },
+            "method": "in-memory AST mutants; survivors classified by differential fuzz and numerical maximisation of the required pairing window"
+          },
+          "survivors_summary": "tuning constants (reach/window/centre/half-angle/cell slack: ~2x headroom, no lost pair); tie-break order and ring-rotation representation (arbitrary); dead-in-practice guards (L180/181); exact-tie L627 Lt->LtE (unreachable); symmetric argument swaps and redundant guards (equivalent). Two earlier 'unreachable' proofs (L625, L627) and an 'equivalent' claim (L654) were refuted by the verifier and are now killed.",
+          "production_changes": [],
+          "observations_not_fixed": [
+            "For sloppy double-drawn walls the result depends on segment order (box-with-divider repro: [1000,600,400] with the extra lines in the middle of the list, only [600] when appended at the end); no stated contract for near-collinear overlaps.",
+            "opening_candidates has no segment-count cap (unlike find_planar_regions_report).",
+            "ring_area/point_in_ring use raw coordinates: precision degrades above ~1e7-1e8 offsets (irrelevant for plan sheets)."
+          ],
+          "caveats": [],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Blocked",
+        "mutation_before_wave3": {
           "total": 975,
           "killed": 794,
           "survived": 178,
           "equivalent": 88,
           "excluded": 5,
           "timeouts": 3
+        },
+        "outstanding_before_wave3": "Round-5 tests unswept; 178 baseline survivors mostly unclassified individually (grid/cell arithmetic argued at family level only).; The 97 pre-existing tests were not re-read; no per-test notes written.; Unkilled candidates needing geometry work: neck-ratio and 15-degree boundary constants, along[-1] vs along[-2] in jamb_pair, pairing work caps (4096), facing-cosine multipliers (735/736).",
+        "earlier_auditor": "A5",
+        "status_before_wave4": "Verified",
+        "wave4_2026-11-07": {
+          "changes": "item 3: SegmentOrderIndependenceTests (6), CanonicalOrderHelperTests (8), 2 cadence tests; 12 tests re-baselined (drawing-order or luck-dependent values)",
+          "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
         }
       },
       "tests/infrastructure/mdb/components/test_overlay_rect.py": {
@@ -43776,30 +43999,132 @@
         }
       },
       "tests/infrastructure/mdb/components/test_project_operations.py": {
-        "auditor": "A5",
-        "status": "Blocked",
-        "outstanding": "Mutation complete (0 survivors). Per-test notes not written for the 10 old and 14 new tests.",
-        "mutation": {
+        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "auditor": "W3-DELETE",
+        "verifier": "V3-DELETE",
+        "second_pass": {
+          "auditor": "W3-DELETE",
+          "verifier": "V3-DELETE",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 24,
+          "tests_after": 34,
+          "tests_added": 10,
+          "tests_changed": [],
+          "tests_untouched_count": 24,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 418,
+              "uncapped": true,
+              "before": {
+                "killed": 399,
+                "survived": 19
+              },
+              "final": {
+                "killed": 414,
+                "survived": 4
+              }
+            },
+            "verifier_sweep": {
+              "total": 544,
+              "uncapped": true,
+              "final": {
+                "killed": 537,
+                "survived": 7
+              },
+              "hand_mutants": {
+                "total": 97
+              }
+            },
+            "method": "in-memory AST mutants; the Access test runs in a child process (not mutated); equivalence of the optional_table_missing guards checked on a real Access file"
+          },
+          "survivors_summary": "create_project except-branch `return None`, the redundant `not optional_table_missing(...)` guards (column_exists is False for a missing table on real Access), None->None no-op mutants (all equivalent).",
+          "production_changes": [],
+          "observations_not_fixed": [
+            "MdbWriter.delete_projects has no writer-level guard for the system project UID 1 'Deleted Bids' (guard lives in ProjectWriteHandler/UI). Verifier: design choice with a latent defense-in-depth gap; owner decision, not a proven defect.",
+            "rename_project on an absent project returns True and changes nothing (silent success), asymmetric with move_bids_to_project; pinned as an explicit characterisation."
+          ],
+          "caveats": [
+            "The unblock reason in the ledger ('Blocked') was bookkeeping (A5's per-test notes lived in the deleted evidence folder), not an infrastructure obstacle."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Blocked",
+        "mutation_before_wave3": {
           "total": 131,
           "killed": 131,
           "survived": 0,
           "equivalent": 0,
           "excluded": 8,
           "timeouts": 0
+        },
+        "outstanding_before_wave3": "Mutation complete (0 survivors). Per-test notes not written for the 10 old and 14 new tests.",
+        "earlier_auditor": "A5",
+        "status_before_wave4": "Verified",
+        "wave4_2026-11-07": {
+          "changes": "item 1: DeletedBidsProjectGuardTests (6 tests); 7 existing tests that deleted project UID 1 as an ordinary project now use another uid",
+          "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
         }
       },
       "tests/infrastructure/mdb/components/test_condition_folder_operations.py": {
-        "auditor": "A5",
-        "status": "Blocked",
-        "outstanding": "Mutation complete (0 survivors). Per-test notes not written.",
-        "mutation": {
+        "status": "Verified",
+        "auditor": "W3-DELETE",
+        "verifier": "V3-DELETE",
+        "second_pass": {
+          "auditor": "W3-DELETE",
+          "verifier": "V3-DELETE",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 22,
+          "tests_after": 32,
+          "tests_added": 10,
+          "tests_changed": [],
+          "tests_untouched_count": 22,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 267,
+              "uncapped": true,
+              "before": {
+                "killed": 255,
+                "survived": 12
+              },
+              "final": {
+                "killed": 261,
+                "survived": 6
+              }
+            },
+            "verifier_sweep": {
+              "total": 341,
+              "uncapped": true,
+              "final": {
+                "killed": 335,
+                "survived": 6
+              },
+              "hand_mutants": {
+                "total": 97
+              }
+            },
+            "method": "as test_project_operations; in-use/re-parent chunk-subset and chunk-size operators added"
+          },
+          "survivors_summary": "parent_uid default None->0, implicit None returns, the optional_table_missing guard (equivalent); 'UID' in the insert required-column tuple (unreachable: the allocator fails first; the test says so).",
+          "production_changes": [],
+          "observations_not_fixed": [],
+          "caveats": [
+            "Real-Access tests (subprocess, gated by _access_available) are additive evidence; every first-round gap is also killed by the ungated sqlite tests, except swallow-failure-of-delete and NULL-folder-condition-counts, which are inherently Access-only."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Blocked",
+        "mutation_before_wave3": {
           "total": 80,
           "killed": 80,
           "survived": 0,
           "equivalent": 0,
           "excluded": 7,
           "timeouts": 0
-        }
+        },
+        "outstanding_before_wave3": "Mutation complete (0 survivors). Per-test notes not written.",
+        "earlier_auditor": "A5"
       },
       "tests/infrastructure/mdb/components/test_condition_operations.py": {
         "auditor": "A5",
@@ -43815,29 +44140,141 @@
         }
       },
       "tests/infrastructure/mdb/components/test_bulk_write_helpers.py": {
-        "auditor": "A5",
-        "status": "Blocked",
-        "outstanding": "Mutation complete (0 survivors). Per-test notes not written.",
-        "mutation": {
+        "status": "Verified",
+        "auditor": "W3-DELETE",
+        "verifier": "V3-DELETE",
+        "second_pass": {
+          "auditor": "W3-DELETE",
+          "verifier": "V3-DELETE",
+          "verification_rounds": "2 (round 1 Verified; re-verified after 3 tests were appended)",
+          "date": "2026-11-07",
+          "tests_before": 14,
+          "tests_after": 21,
+          "tests_added": 7,
+          "tests_changed": [],
+          "tests_untouched_count": 14,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 225,
+              "uncapped": true,
+              "before": {
+                "killed": 215,
+                "survived": 9,
+                "infra": 1
+              },
+              "final": {
+                "killed": 219,
+                "survived": 5,
+                "infra": 1
+              }
+            },
+            "verifier_sweep": {
+              "total": 255,
+              "uncapped": true,
+              "final": {
+                "killed": 250,
+                "survived": 4
+              },
+              "hand_mutants": {
+                "total": 47
+              }
+            },
+            "method": "in-memory AST mutants (chunk-size constants and chunk-subset operators included)"
+          },
+          "survivors_summary": "empty-uid early return, uid_ints[0] vs [-1] on a single-element list, str(arg) vs str() on pyodbc.Error (equivalent).",
+          "production_changes": [],
+          "observations_not_fixed": [],
+          "caveats": [
+            "The module was approved once and then three tests were appended; the verifier re-verified the CURRENT version."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Blocked",
+        "mutation_before_wave3": {
           "total": 55,
           "killed": 55,
           "survived": 0,
           "equivalent": 0,
           "excluded": 22,
           "timeouts": 0
-        }
+        },
+        "outstanding_before_wave3": "Mutation complete (0 survivors). Per-test notes not written.",
+        "earlier_auditor": "A5"
       },
       "tests/infrastructure/parsers/test_position_parser.py": {
-        "auditor": "A5",
-        "status": "Blocked",
-        "outstanding": "Mutation triaged (17 argued survivors). Per-test notes not written.",
-        "mutation": {
+        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "auditor": "W3-PARSE",
+        "verifier": "V3-POSPARSER",
+        "second_pass": {
+          "auditor": "W3-PARSE",
+          "verifier": "V3-POSPARSER",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 39,
+          "tests_after": 65,
+          "tests_added": 26,
+          "tests_changed": [],
+          "tests_untouched_count": 39,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 402,
+              "uncapped": true,
+              "widened_operators": true,
+              "before": {
+                "killed": 329,
+                "survived": 73
+              },
+              "final": {
+                "killed": 345,
+                "survived": 57
+              }
+            },
+            "verifier_sweep": {
+              "total": 686,
+              "uncapped": true,
+              "head_tests": {
+                "killed": 572,
+                "survived": 114
+              },
+              "final": {
+                "killed": 596,
+                "survived": 90
+              },
+              "hand_mutants": {
+                "total": 103,
+                "killed": 93,
+                "survived": 10
+              }
+            },
+            "method": "in-memory AST mutants; survivors classified by differential fuzz (~150k texts x several base-name prefixes); imperial/metric XOR proved structurally and by 1.7M strings"
+          },
+          "survivors_summary": "strip/lstrip/rstrip on regex groups and float() inputs, split/rsplit with 2+ slashes, redundant fast-path guards, 'cm' constants (all equivalent); imperial/metric dispatch (unreachable by the XOR proof).",
+          "production_changes": [],
+          "observations_not_fixed": [
+            "Pre-existing quirks, deliberately not pinned: 'Wall @T - 5\\' 6\"' loses its minus (+66.0); 'Wall @T - 1 m' raises ValueError (caught per condition by callers); '2cm 4m' extract -> 157.48 in while convert leaves the name unchanged; metric->metric conversion is not idempotent ('1cm' -> '1.00 cm').",
+            "position_parser.py:77 `.replace(' ',' ')` is a byte-verified ASCII no-op (dead code).",
+            "The per-condition ValueError catch at settings_operations.py:671 is not pinned by any test (belongs to test_settings_operations.py)."
+          ],
+          "caveats": [
+            "The 39 first-pass tests still contain literal non-ASCII whitespace characters; all new code uses \\u escapes."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Blocked",
+        "mutation_before_wave3": {
           "total": 184,
           "killed": 167,
           "survived": 17,
           "equivalent": 17,
           "excluded": 3,
           "timeouts": 0
+        },
+        "outstanding_before_wave3": "Mutation triaged (17 argued survivors). Per-test notes not written.",
+        "earlier_auditor": "A5",
+        "status_before_wave4": "Verified",
+        "wave4_2026-11-07": {
+          "changes": "item 5: DetachedMinusTests (4 tests)",
+          "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
         }
       },
       "tests/infrastructure/mdb/importers/test_ost_importer.py": {
@@ -43971,17 +44408,74 @@
         }
       },
       "tests/infrastructure/mdb/test_connection_manager.py": {
-        "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 1 survivor(s) listed (classified equivalent mutant, justified)",
-        "mutation": {
+        "status": "Verified",
+        "auditor": "W3-CONN",
+        "verifier": "V3-CONN",
+        "second_pass": {
+          "auditor": "W3-CONN",
+          "verifier": "V3-CONN",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 106,
+          "tests_after": 121,
+          "tests_added": 15,
+          "tests_changed": [
+            "test_same_database_worker_leases_are_serialized and test_path_lock_serializes_leases_spelled_with_different_case: timed negative waits replaced by an event set by an instrumented lock"
+          ],
+          "tests_untouched_count": 104,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 449,
+              "uncapped": true,
+              "before": {
+                "killed": 419,
+                "survived": 29
+              },
+              "final": {
+                "killed": 444,
+                "survived": 5
+              }
+            },
+            "verifier_sweep": {
+              "total": 471,
+              "uncapped": true,
+              "final": {
+                "killed": 465,
+                "survived": 5,
+                "timeouts": 1
+              },
+              "hand_mutants": {
+                "total": 69,
+                "killed": 65,
+                "survived": 2
+              },
+              "instrument_mutants": {
+                "total": 9,
+                "killed": 8,
+                "survived": 1
+              }
+            },
+            "method": "in-memory AST mutants through a meta-path loader; lock-audit instrument regenerated over every dict/set operation"
+          },
+          "survivors_summary": "docstring, redundant `conn is not None` operands, `autocommit and conn is None`, maintenance path-set comprehension, manager RLock vs Lock (all equivalent); RLock->Lock on the path lock hangs the suite (killed by timeout; the watchdog test fails alone in ~10 s).",
+          "production_changes": [],
+          "observations_not_fixed": [],
+          "caveats": [
+            "The _close_single ownership test simulates a state production cannot reach under the manager lock. The case-normalisation test is Windows-specific (os.path.normcase); the app is Windows-only."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "Awaiting Verification",
+        "mutation_before_wave3": {
           "total": 181,
           "killed": 180,
           "survived": 1,
           "equivalent": 1,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "outstanding_before_wave3": "None beyond the 1 survivor(s) listed (classified equivalent mutant, justified)",
+        "earlier_auditor": "A5b"
       },
       "tests/infrastructure/mdb/test_mdb_reader.py": {
         "auditor": "A5b",
@@ -44153,16 +44647,80 @@
         }
       },
       "tests/infrastructure/mdb/components/test_settings_reader.py": {
-        "auditor": "A5b",
-        "status": "In Progress",
-        "outstanding": "Run the full settings_reader sweep against the final tests; expect only #94, #95, #147, #208 as argued survivors.; Then set Awaiting Verification.",
-        "mutation": {
+        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "auditor": "W3-PARSE",
+        "verifier": "V3-SETREAD",
+        "second_pass": {
+          "auditor": "W3-PARSE",
+          "verifier": "V3-SETREAD",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 48,
+          "tests_after": 66,
+          "tests_added": 18,
+          "tests_changed": [],
+          "tests_untouched_count": 48,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 945,
+              "uncapped": true,
+              "widened_operators": true,
+              "before": {
+                "killed": 910,
+                "survived": 35
+              },
+              "final": {
+                "killed": 929,
+                "survived": 16
+              }
+            },
+            "verifier_sweep": {
+              "total": 1115,
+              "uncapped": true,
+              "round1": {
+                "killed": 1038,
+                "survived": 75
+              },
+              "final": {
+                "killed": 1057,
+                "survived": 56,
+                "infra": 2
+              },
+              "hand_mutants": {
+                "total": 98,
+                "killed": 78,
+                "survived": 19
+              }
+            },
+            "method": "in-memory AST mutants bound onto the MdbReader composition; sqlite + fakes + a real MdbSchemaInspector over a fake connection"
+          },
+          "survivors_summary": "annotation-only, dropArg of row.get defaults (_clean_optional_text(None) == ''), safe_int sentinel variants, redundant None filters, ParentUID boolop (UIDs are positive decimals so orphan parents become roots), NULL page uid fallback (unreachable).",
+          "production_changes": [],
+          "observations_not_fixed": [
+            "A NULL JobStatuses.Locked reads as locked (fail closed, matches the SQL write guard at infrastructure/sql/writer.py:746): now pinned as a contract.",
+            "A non-numeric JobStatuses.Sequence makes get_cover_sheet_data raise and get_job_statuses return [] (generic degrade policy); ProjectReadService.is_bid_locked then reads False (fail-open) for a locked bid. Access's INTEGER column cannot hold such a value; pinned as characterisation only.",
+            "get_settings_defaults falls back to ALL defaults when any single field is malformed (not pinned)."
+          ],
+          "caveats": [
+            "sqlite + fakes only; Access serialisation of Locked/Sequence through serialize_row is not exercised. The type of the bid_uid argument in the layer-usage query is not pinned (sqlite coerces it)."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "In Progress",
+        "mutation_before_wave3": {
           "total": 394,
           "killed": 386,
           "survived": 8,
           "equivalent": 4,
           "excluded": 0,
           "timeouts": 0
+        },
+        "outstanding_before_wave3": "Run the full settings_reader sweep against the final tests; expect only #94, #95, #147, #208 as argued survivors.; Then set Awaiting Verification.",
+        "earlier_auditor": "A5b",
+        "status_before_wave4": "Verified",
+        "wave4_2026-11-07": {
+          "changes": "item 2: 1 end-to-end test (degraded status list reads locked); a comment corrected",
+          "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
         }
       },
       "tests/presentation/visualization/exporters/test_pdf_exporter.py": {
@@ -44682,17 +45240,70 @@
         }
       },
       "tests/domain/services/test_condition_quantity_service.py": {
-        "auditor": "A7",
-        "status": "In Progress",
-        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
-        "mutation": {
+        "status": "Verified",
+        "auditor": "W3-PARSE",
+        "verifier": "V3-CONDQTY",
+        "second_pass": {
+          "auditor": "W3-PARSE",
+          "verifier": "V3-CONDQTY",
+          "verification_rounds": "3 (rounds 1 and 2 Partial; round 3 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 29,
+          "tests_after": 57,
+          "tests_added": 28,
+          "tests_changed": [
+            "test_cubic_yards_use_thickness_for_areas_and_height_for_other_types (first-pass): linear case now height 18 / thickness 36 (was 36/36, which hid a height/thickness mix-up)",
+            "test_an_area_takeoff_whose_parent_is_not_on_the_page_is_not_counted labelled characterisation"
+          ],
+          "tests_untouched_count": 28,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 291,
+              "uncapped": true,
+              "widened_operators": true,
+              "before": {
+                "killed": 225,
+                "survived": 66
+              },
+              "final": {
+                "killed": 276,
+                "survived": 15
+              }
+            },
+            "verifier_sweep": {
+              "total": 812,
+              "uncapped": true,
+              "sweep_a_234": {
+                "killed": 221,
+                "survived": 13
+              },
+              "sweep_b_812": {
+                "killed": 766,
+                "survived": 46
+              }
+            },
+            "method": "in-memory AST mutants incl. forwarding (keyword drop/swap, attribute/receiver swap) operators; denormal-round_up probe of 57,792 cases for the unused slots"
+          },
+          "survivors_summary": "cubic-yard grid_size/gap forwarding (the volume calcs never read them), discarded slots 2/3 swaps, q*sign vs q/sign (sign is exactly +-1.0), operand swaps, empty-hole operands (all equivalent); `child.position -> t.position` (unreachable in valid data, dubious to pin: gives a negative net area).",
+          "production_changes": [],
+          "observations_not_fixed": [
+            "compute_takeoff_cubic_yards returns -0.0 for a negative takeoff with zero volume (cosmetic: '-0.00' in elevation_callout_service).",
+            "Takeoff.is_hole treats only '' and '0' as root parents while this service treats '0' and 'None' (and '' via falsiness) as roots (known legacy inconsistency)."
+          ],
+          "caveats": [],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "In Progress",
+        "mutation_before_wave3": {
           "total": 91,
           "killed": 84,
           "survived": 7,
           "equivalent": 7,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "outstanding_before_wave3": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "earlier_auditor": "A7"
       },
       "tests/domain/services/test_elevation.py": {
         "auditor": "A7",
@@ -44745,17 +45356,72 @@
         }
       },
       "tests/domain/services/test_uom_service.py": {
-        "auditor": "A7",
-        "status": "In Progress",
-        "outstanding": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
-        "mutation": {
+        "status": "Verified",
+        "auditor": "W3-UOM",
+        "verifier": "V3-UOM",
+        "second_pass": {
+          "auditor": "W3-UOM",
+          "verifier": "V3-UOM",
+          "verification_rounds": "2 (round 1 Partial; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 96,
+          "tests_after": 109,
+          "tests_added": 13,
+          "tests_changed": [],
+          "tests_untouched_count": 96,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 2097,
+              "uncapped": true,
+              "pre_audit": {
+                "killed": 1954,
+                "survived": 141,
+                "timeouts": 2
+              },
+              "final": {
+                "killed": 1964,
+                "survived": 131,
+                "timeouts": 2
+              }
+            },
+            "verifier_sweep": {
+              "total": 2964,
+              "uncapped": true,
+              "head_tests": {
+                "killed": 2800,
+                "survived": 164
+              },
+              "final": {
+                "killed": 2813,
+                "survived": 149,
+                "timeouts": 2
+              },
+              "hand_mutants": {
+                "total": 157,
+                "killed": 147
+              }
+            },
+            "method": "in-memory AST mutants, child process per mutant (arc oracle: independent circumcircle; OST value 438.1 pinned)"
+          },
+          "survivors_summary": "50 annotation Tuple survivors (tooling); symmetry mutants (equivalent); _CALC_LENGTH redundancy and divisor identity entries (equivalent); zero-divisor guard (unreachable); slope tolerance 1e-10 and radius tolerance 0.1 (tuning constants, effectively unpinned). The auditor's first 'equivalent' claims for L503 (ccw_to_control <= ccw_to_end) and for shoelace recentring were wrong, were retracted and are now killed.",
+          "production_changes": [],
+          "observations_not_fixed": [],
+          "caveats": [
+            "The native twin linear_geom.cpp is out of scope and was not audited."
+          ],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave3": "In Progress",
+        "mutation_before_wave3": {
           "total": 1044,
           "killed": 1014,
           "survived": 30,
           "equivalent": 30,
           "excluded": 0,
           "timeouts": 0
-        }
+        },
+        "outstanding_before_wave3": "V7 rework: code/test changes done, specific added-test notes still pending (see v7_rework), so this module is NOT resubmitted for verification.",
+        "earlier_auditor": "A7"
       },
       "tests/domain/services/test_project_data_service.py": {
         "auditor": "A7",
@@ -45125,6 +45791,80 @@
         "auditor": "A4",
         "status": "Merged into test_server.py (file deleted)",
         "verifier": "V4"
+      },
+      "tests/presentation/components/test_progress_dialog.py": {
+        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "auditor": "W3-IMPORTDLG",
+        "verifier": "V3-IMPORTDLG",
+        "second_pass": {
+          "auditor": "W3-IMPORTDLG",
+          "verifier": "V3-IMPORTDLG",
+          "verification_rounds": "2 (round 1 Verification Failed; round 2 Verified)",
+          "date": "2026-11-07",
+          "tests_before": 15,
+          "tests_after": 38,
+          "tests_added": 23,
+          "tests_changed": [
+            "test_escape_cannot_finish_progress_before_worker (first-pass, timing-based, could pass vacuously) REPLACED by a deterministic version that sends Escape only after the worker has started and asserts the dialog is still open",
+            "_fail_safe_timeout helper now calls done(Rejected) (reject() is refused until the worker finishes, so the old guard could never fire)"
+          ],
+          "tests_untouched_count": 14,
+          "mutation": {
+            "auditor_sweep": {
+              "total": 403,
+              "uncapped": true,
+              "widened_operators": true,
+              "before": {
+                "killed": 265,
+                "survived": 96,
+                "timeouts": 39,
+                "infra": 3
+              },
+              "final": {
+                "killed": 368,
+                "survived": 12,
+                "timeouts": 1,
+                "infra": 22
+              }
+            },
+            "verifier_sweep": {
+              "total": 431,
+              "uncapped": true,
+              "final": {
+                "killed": 410,
+                "survived": 21,
+                "crash_killed": 21
+              },
+              "hand_mutants": {
+                "total": 81,
+                "killed": 77,
+                "survived": 4
+              }
+            },
+            "method": "in-memory AST mutants (correct __class__ cell for zero-argument super()); a crash counts as killed only when the tests ran and failed first or the mutant is detectable only by the crash (7 of the 21)"
+          },
+          "survivors_summary": "busy-bar super().showEvent/hideEvent/timerEvent and antialiasing/size-policy mutants, setSizeGripEnabled default, setFixedWidth overridden, 3//2 == 3//3, painter.end() (equivalent); wait(5000->5001) and singleShot(0->1) (tuning constants); ProgressDialog._worker (dead state, unreachable).",
+          "production_changes": [
+            {
+              "file": "ost_visualizer/presentation/main_window.py",
+              "line": 1020,
+              "what": "exc_info=True -> exc_info=worker_error in a logger.error call outside any except block (it logged 'NoneType: None' instead of the worker's traceback).",
+              "proof": "test_the_worker_error_is_logged_with_its_own_traceback fails on HEAD ('None is not RuntimeError'), passes with the fix; worker_error is always an Exception instance under `if worker_error is not None`; message and level unchanged; verifier approved.",
+              "severity": "low (diagnostics only)"
+            }
+          ],
+          "observations_not_fixed": [
+            "ProgressDialog._worker is dead state (never read); recommend removing it from production and from the first-pass tests that pin it (owner decision).",
+            "main_window.setWindowModality(ApplicationModal) is redundant at runtime (setModal(True) and exec() already force it)."
+          ],
+          "caveats": [],
+          "note": "Only the tests listed as added/changed were second-passed. The untouched first-pass tests are covered by the mutation sweeps but were not individually re-reviewed."
+        },
+        "status_before_wave4": "Verified",
+        "wave4_2026-11-07": {
+          "changes": "item 4: 1 test (no _worker attribute); 3 tests no longer assign or assert _worker",
+          "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        }
       }
     },
     "not_started": {
@@ -45153,6 +45893,17 @@
         "ost_visualizer/infrastructure/sql/writer.py": "OPEN-1 option A: status-3 preflight is an optimistic conflict on annotations_collection/<bid>.",
         "ost_visualizer/domain/entities/database_descriptor.py": "'|' rejected in new SQL database names and when for_sql_server derives an id.",
         "cpp_extensions/src/linear_geom/linear_geom.cpp": "perp_slope swap fixed (C1); arc_sweep helper at both orientation sites and straight-chord tie rule (A1). ost_linear_geom rebuilt twice; the .pyd is git-ignored and must be rebuilt elsewhere."
+      },
+      "wave3_2026-11-07": {
+        "ost_visualizer/infrastructure/mdb/components/layer_operations.py": "update_layer_name reports whether its guarded UPDATE matched a row (was always True). Proven by 4 failing tests; verifier approved.",
+        "ost_visualizer/presentation/main_window.py": "line 1020: exc_info=worker_error so the worker's traceback is logged (was exc_info=True outside an except block). Proven by a failing test; verifier approved."
+      },
+      "wave4_2026-11-07": {
+        "ost_visualizer/infrastructure/mdb/components/project_operations.py": "delete_projects refuses a batch containing the system project 'Deleted Bids' (UID 1) before opening a connection: MDB writer logs and returns False, SqlProjectWriter (inherits it) raises ValueError inside its mutation transaction. Item 1.",
+        "ost_visualizer/application/services/project_read_service.py": "is_bid_locked fails closed: a bid status that cannot be resolved (empty or degraded list, unknown uid) reads as locked with a warning. Item 2.",
+        "ost_visualizer/domain/services/ai_planar_regions.py": "lines read in one canonical order (smaller end first, longest first); segments also split at the split points of neighbouring lines; component roots and gap-closing ties by vertex number; closing edges that pass a neighbour of their end are skipped; rings start at the lowest-left corner; gaps and suppressed symbols in coordinate order. Item 3.",
+        "ost_visualizer/presentation/components/progress_dialog.py": "removed the unused ProgressDialog._worker. Item 4.",
+        "ost_visualizer/infrastructure/parsers/position_parser.py": "a minus separated from the number by spaces negates the whole value (imperial) and no longer raises ValueError (metric). Item 5."
       }
     },
     "owner_decisions_needed": {
@@ -45306,7 +46057,138 @@
         "tests/_audit_progress/"
       ],
       "note": "Deleted by the owner on 2026-11-06. None was ever under git. The first four were moved to the Recycle Bin earlier that day; tests/_audit_progress/ was deleted later and the Recycle Bin was emptied, so it is not recoverable."
+    },
+    "wave3_2026-11-07": {
+      "date": "2026-11-07",
+      "nature": "Second-pass audit of 12 modules by 8 auditor agents; every module independently verified by a separate verifier agent (several after rework rounds). Verdicts are recorded in the module entries above (second_pass), not in a side folder.",
+      "rule": "Only a module whose CURRENT version a verifier that did not write it approved is 'Verified'. Untouched first-pass tests are not counted as second-passed.",
+      "verified": [
+        "tests/domain/services/test_uom_service.py",
+        "tests/infrastructure/mdb/components/test_bid_data_reader.py",
+        "tests/infrastructure/mdb/test_connection_manager.py",
+        "tests/infrastructure/mdb/components/test_layer_operations.py",
+        "tests/infrastructure/parsers/test_position_parser.py",
+        "tests/domain/services/test_condition_quantity_service.py",
+        "tests/infrastructure/mdb/components/test_settings_reader.py",
+        "tests/domain/services/test_ai_planar_regions.py",
+        "tests/infrastructure/mdb/components/test_project_operations.py",
+        "tests/infrastructure/mdb/components/test_condition_folder_operations.py",
+        "tests/infrastructure/mdb/components/test_bulk_write_helpers.py",
+        "tests/presentation/components/test_progress_dialog.py"
+      ],
+      "scope_limited": [
+        "tests/presentation/test_main_window.py (19 import-progress tests only; module status unchanged)"
+      ],
+      "rework_rounds": "uom_service 2, bid_data_reader 2, connection_manager 2, layer_operations 2, position_parser 2, condition_quantity_service 3, settings_reader 2, ai_planar_regions 3, delete group 2, import dialog 2. Every first-round verifier verdict was Partial or Verification Failed except bulk_write_helpers: the auditors' own mutant operator sets had missed real gaps (keyword/argument/forwarding/tuple/BoolOp/exception operators).",
+      "production_changes": [
+        "layer_operations.update_layer_name (defect proven by failing tests)",
+        "main_window.py:1020 exc_info (defect proven by a failing test)"
+      ],
+      "owner_decisions_or_observations": [
+        "MdbWriter.delete_projects has no writer-level guard for the system project UID 1 'Deleted Bids' (UI/handler layer guards it): design choice with a latent defense-in-depth gap.",
+        "ProgressDialog._worker is dead state; main_window.setWindowModality(ApplicationModal) is redundant at runtime.",
+        "ProjectReadService.is_bid_locked reads False (fail-open) when get_job_statuses degrades to [] (only reachable through a non-numeric Sequence, which Access INTEGER cannot hold).",
+        "Doubled/near-collinear walls: planar regions depend on segment order; no stated contract.",
+        "position_parser pre-existing quirks (minus lost in 'Wall @T - 5' 6\"', ValueError for '- 1 m', non-idempotent metric conversion) and the dead replace() at line 77.",
+        "settings_operations.py:671 per-condition ValueError catch is not pinned by any test.",
+        "get_settings_defaults falls back to ALL defaults when one field is malformed.",
+        "delete_default_layer on locked built-ins (sqlite True / Access refuses when referenced)."
+      ],
+      "formatting": "The agents' added code in 13 test files was formatted with Black (AST-equivalence checked); LF endings preserved.",
+      "not_done": [
+        "Not audited this wave: database_creator, bid_operations, settings_operations, takeoff_operations, condition_operations, page_operations, deferred_persistence_manager, plan_view/test_view.py, the 11 blocked PDF integration modules, ai_takeoff_proposal_service and the remaining Awaiting/In Progress modules.",
+        "The 8 modules downgraded by VAI (ai_changeset_store, bridge_client, registry, tokens, bridge, proxy, main, output_artifacts) and test_composite_renderer still need rework."
+      ],
+      "validation": {
+        "full_suite": {
+          "command": "QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 .\u000benv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t . (stdout/stderr to a log file)",
+          "run_on": "2026-11-07, final tree after wave 3 (all verifications, Black formatting of the agents' added code, inventory regenerated)",
+          "tests_run": 17857,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 44,
+          "expected_failures": 0,
+          "seconds": 463.7,
+          "result": "OK",
+          "skipped_reasons": "environment-gated (SQL integration opt-ins, OSTV_SLOW_TESTS, POSIX root-only tests, licensed PDFs, Windows-only, firmware, corpus, absent local ledgers); same 44 as before wave 3",
+          "defined_tests_in_inventory": 17875,
+          "note": "the run count is below the defined count by the same 18 as before wave 3 (class-level skips count once)"
+        }
+      }
+    },
+    "wave4_2026-11-07": {
+      "date": "2026-11-07",
+      "nature": "Six owner-requested fixes, each with a failing test first, an in-memory mutation check and its own commit; plus real-Access tests for bid_data_reader.",
+      "rule": "The wave-3 verifier approvals do not cover these additions, so the seven touched modules are 'Awaiting Verification (wave-4 additions)'.",
+      "items": {
+        "1_deleted_bids_guard": {
+          "defect": "MdbWriter.delete_projects deleted any uid, including the system project 'Deleted Bids' (UID 1); only the UI/handler refused it.",
+          "covered": "MDB writer and SqlProjectWriter (same inherited implementation); no other writer has a project delete path.",
+          "mutation": "95 mutants of delete_projects: 85 killed; after pinning the message, all 17 mutants on the guard lines killed except an existing _require_write_columns call outside the guard."
+        },
+        "2_fail_closed_lock_read": {
+          "defect": "ProjectReadService.is_bid_locked returned False for a bid whose status list was empty or lacked the status.",
+          "not_changed": "ui_event_coordinator._resolve_bid_lock_state (SQL snapshot path) has the same any(...) shape; the SQL writer refuses locked writes itself, so it was left alone. A bid whose JobStatusUID is 0 or dangling now reads as locked.",
+          "mutation": "17 mutants: 16 killed; the survivor was the warning text, now pinned exactly."
+        },
+        "3_segment_order": {
+          "defect": "Doubled walls within the snap tolerance gave up to 10 different answers depending on segment order (lost rooms, slivers of 0.09-0.8 area).",
+          "quality": "600 random sloppy double-drawn drawings: 567 match the clean drawing now; 492 in drawing order and 494 shuffled before. Clean drawings agree 600/600.",
+          "timing_seconds_before_after": {
+            "grid 20x20 (840 seg)": [
+              0.042,
+              0.035
+            ],
+            "grid 60x60 (7,320 seg)": [
+              0.428,
+              0.35
+            ],
+            "grid 60x60 + doubled every 5th (8,784 seg)": [
+              0.635,
+              0.736
+            ],
+            "grid 95x95 (18,050 seg)": [
+              1.262,
+              0.968
+            ],
+            "grid 90x90 + doubled every 10th (~17,800 seg)": [
+              1.188,
+              1.32
+            ]
+          },
+          "mutation": "new helpers and changed lines: 103+77+65+6 mutants in the first sweeps; after killer tests only equivalent, performance-only or tuning survivors remain (exactness threshold 1e-6 x tolerance, perf-only duplicate skip and path compression, zero-length orientation).",
+          "follow_up_found_by_full_suite": "tests/tools/test_ai_takeoff_corpus_worker.py pinned 5 outline vertices for the gap-closed room; it is 4 now (own commit).",
+          "limits": "Rotating a drawing by 135 degrees can change a near-miss cluster's area by up to 0.25 % (the vertex position kept depends on the read order, not on the drawing's orientation); 33 of 600 sloppy scenes still differ from the clean drawing. Tests that pinned drawing order or luck-dependent areas were re-baselined."
+        },
+        "4_dead_state": {
+          "result": "ProgressDialog._worker removed; a search of ost_visualizer and tests found no other reader.",
+          "mutation": "re-adding the attribute in __init__ or cleanup is killed by the new test."
+        },
+        "5_position_parser": {
+          "fixed": [
+            "detached minus with imperial values (lost minus)",
+            "detached minus with metric values (ValueError)"
+          ],
+          "reported_not_changed": [
+            "dead .replace(' ', ' ') in the inches-only branch of _parse_imperial_elevation",
+            "feet-only text such as 5' at the end is not a valid elevation (word-boundary rule; stripping handles it)",
+            "'2cm 4m': the validator accepts the first unit, the parser takes the last (4 m) while conversion leaves the name unchanged",
+            "metric sign applies to the metres part only (-1m 20cm = -80 cm) while imperial negates the whole value",
+            "metric to metric conversion is not idempotent ('1cm' -> '1.00 cm')"
+          ],
+          "mutation": "118 mutants of the three changed functions: 117 killed; the survivor is the dead replace()."
+        },
+        "6_real_access_reader": {
+          "tests": "RealAccessReaderTests: 3 tests, one child process each, skipped with a clear reason when ACE/ADOX is missing.",
+          "mutation": "30 in-memory mutants over 16 methods: sqlite tests killed 24, real-Access tests 27; all 6 mutants only Access rejects (!=, LIMIT, NOTNULL, NULLS FIRST, ?1, CAST) are killed only by the new tests; 3 survivors are equivalent on ACE.",
+          "observations_not_fixed": [
+            "BidPages.OverlayResized is VARCHAR in the created schema, so row.OverlayResized in (-1, True) is never true for a stored '-1' string (latent; nothing writes -1).",
+            "Folder ParentUID 0 reads as '0' while NULL reads as None, unlike areas which normalise both to ''."
+          ]
+        }
+      },
+      "not_committed_by_me": "ost_visualizer/infrastructure/parsers/position_parser.py: a one-line comment ('The grammar allows spaces between a leading minus...') was deleted from the working tree by someone else after the item 5 commit; left uncommitted."
     }
   },
-  "audit_evidence_note": "The audit evidence folder tests/_audit_progress/ (agent, verifier and resolution-phase reports, per-test notes, survivor lists, killer-test drafts, harness copies) was deleted on 2026-11-06 and is not retained anywhere, including git. References to files in it are kept only to identify the source and say 'not retained'. The ledger keeps the conclusions it records (module statuses, owner decisions, the resolution section, per-test notes inside module entries); wave-2 verifier outcomes that were never consolidated into modules{} are not kept (see audit_2026-11-05_checkpoint.resolution_2026-11-06.module_status_note)."
+  "audit_evidence_note": "The audit evidence folder tests/_audit_progress/ (agent, verifier and resolution-phase reports, per-test notes, survivor lists, killer-test drafts, harness copies) was deleted on 2026-11-06 and is not retained anywhere, including git. References to files in it are kept only to identify the source and say 'not retained'. The ledger keeps the conclusions it records (module statuses, owner decisions, the resolution section, per-test notes inside module entries); wave-2 verifier outcomes that were never consolidated into modules{} are not kept (see audit_2026-11-05_checkpoint.resolution_2026-11-06.module_status_note). Wave-3 (2026-11-07) verdicts are recorded in the module entries (second_pass) and in audit_2026-11-05_checkpoint.wave3_2026-11-07."
 }
