@@ -1017,7 +1017,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 logger.error(
                     "Startup project file import worker raised: %s",
                     worker_error,
-                    exc_info=True,
+                    exc_info=worker_error,
                 )
             return self._project_file_import_progress_failure(args, target)
         return result

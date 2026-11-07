@@ -6051,7 +6051,7 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
                     )
                 else:
                     window.set_annotation_window_visible(True)
-                (_name, _args, kwargs) = self.log[0]
+                _name, _args, kwargs = self.log[0]
                 self.assertEqual(
                     bytes(kwargs["initial_geometry"]),
                     b"explicit" if explicit else b"saved",
@@ -6114,14 +6114,14 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         window = self._window(annotation_open=True)
         window._annotation_view_manager.get_active_view = lambda: None
         window.set_view_window_visible(True)
-        (_name, args, _kwargs) = self.log[0]
+        _name, args, _kwargs = self.log[0]
         self.assertEqual(args, (self.BID, "p1", None))
         window = self._window(annotation_open=True)
         window._annotation_view_manager.get_active_view = lambda: SimpleNamespace(
             bid_ref=None, target_page_uid="p9", target_named_view_uid=None
         )
         window.set_view_window_visible(True)
-        (_name, args, _kwargs) = self.log[0]
+        _name, args, _kwargs = self.log[0]
         self.assertEqual(args, (self.BID, "p9", None))
 
     def test_the_action_state_mirrors_the_open_windows_without_emitting_toggles(self):
@@ -8479,3 +8479,666 @@ class MainWindowA3StartupArgumentTests(unittest.TestCase):
         window = self._window(startup_project_file_args=empty)
         self.assertEqual(window._pending_project_file_args, [])
         self.assertIsNone(window.splash_screen)
+
+
+# ---------------------------------------------------------------------------
+# Second-pass (W3-IMPORTDLG): the project-file import progress flow.
+# ---------------------------------------------------------------------------
+import threading
+
+
+class _ImportFlowHost(QtWidgets.QWidget):
+    """A real QWidget parent carrying only what the import-progress flow reads."""
+
+    _project_file_import_progress_label = staticmethod(
+        MainWindow._project_file_import_progress_label
+    )
+    _project_file_import_progress_failure = staticmethod(
+        MainWindow._project_file_import_progress_failure
+    )
+
+    def __init__(self, execute_imports, current_target=None):
+        super().__init__()
+        self.current_target = current_target
+        self.ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
+        self.target = import_args_use_case.ProjectImportTarget(
+            "real-target.mdb", "project-1", True
+        )
+        self.resolved_from = []
+        self.flushed = []
+        self._deferred_persistence_manager = SimpleNamespace(
+            flush_for_file=lambda path: self.flushed.append(path) or True
+        )
+        self._import_project_files_from_args = SimpleNamespace(
+            resolve_target=lambda current: self.resolved_from.append(current)
+            or self.target,
+            uses_async_import=lambda _target: False,
+            execute_imports=execute_imports,
+        )
+
+    def _current_project_import_target(self):
+        return self.current_target
+
+
+class MainWindowImportProgressRealDialogTests(unittest.TestCase):
+    """The import flow driven through the real ProgressDialog and a worker thread."""
+
+    def setUp(self):
+        _dialog_lifecycle_support__app()
+        self._project_folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._project_folder.cleanup)
+        self.host = None
+        self.addCleanup(self._delete_host)
+
+    def _delete_host(self):
+        if self.host is not None and _a3_is_valid(self.host):
+            _a3_delete(self.host)
+        self.host = None
+
+    def _args(self, *names):
+        folder = Path(self._project_folder.name)
+        paths = []
+        for name in names:
+            (folder / name).write_text("x")
+            paths.append(folder / name)
+        return _startup_import__project_file_args(*paths)
+
+    def _run(self, execute_imports, args, current_target=None):
+        instances = []
+
+        class Recording(main_window_module.ProgressDialog):
+            def __init__(self, *dialog_args, **dialog_kwargs):
+                super().__init__(*dialog_args, **dialog_kwargs)
+                self.started_thread = None
+                instances.append(self)
+
+            def _start(self):
+                super()._start()
+                self.started_thread = self._thread
+
+        self._delete_host()
+        self.host = _ImportFlowHost(execute_imports, current_target)
+        guard_fired = []
+
+        def force_close():
+            # fail-safe: a broken completion path fails the test, not hangs it
+            guard_fired.append(True)
+            for dialog in instances:
+                dialog.done(QtWidgets.QDialog.DialogCode.Rejected)
+
+        guard = QtCore.QTimer(self.host)
+        guard.setSingleShot(True)
+        guard.timeout.connect(force_close)
+        guard.start(10000)
+        with patch.object(main_window_module, "ProgressDialog", Recording):
+            result = MainWindow._import_project_files_with_progress(self.host, args)
+        guard.stop()
+        self.assertEqual(guard_fired, [])
+        self.assertEqual(len(instances), 1)
+        return result, instances[0]
+
+    def _assert_released(self, dialog):
+        thread = dialog.started_thread
+        self.assertIsNone(QtWidgets.QApplication.activeModalWidget())
+        self.assertFalse(dialog.isVisible())
+        self.assertIsNotNone(thread)
+        self.assertTrue(thread.isFinished())
+        self.assertFalse(thread.isRunning())
+        self.assertTrue(dialog._cleanup_complete)
+        self.assertIsNone(dialog._thread)
+        self.assertIsNone(dialog._task_fn)
+        QtCore.QCoreApplication.sendPostedEvents(
+            None, QtCore.QEvent.Type.DeferredDelete
+        )
+        self.assertFalse(_a3_is_valid(dialog))
+        self.assertEqual(self.host.findChildren(QtWidgets.QDialog), [])
+
+    def test_the_dialog_is_modal_and_visible_exactly_while_the_worker_runs(self):
+        started = threading.Event()
+        release = threading.Event()
+        worker = {}
+        observed = {}
+        batch = import_args_use_case.ProjectFileImportBatchResult(
+            target_db_path="real-target.mdb"
+        )
+
+        def execute_imports(args, target, refresh_after_import=True):
+            worker["thread"] = threading.get_ident()
+            worker["call"] = (args, target, refresh_after_import)
+            started.set()
+            worker["released"] = release.wait(10)
+            return batch
+
+        def observe():
+            if not started.is_set() or observed:
+                return
+            poll.stop()
+            dialog = QtWidgets.QApplication.activeModalWidget()
+            observed["dialog"] = dialog
+            observed["visible"] = dialog.isVisible()
+            observed["modality"] = dialog.windowModality()
+            observed["parent"] = dialog.parent()
+            observed["label"] = dialog._label.text()
+            observed["running"] = dialog._thread.isRunning()
+            release.set()
+
+        args = self._args("one.ost")
+        poll = QtCore.QTimer()
+        poll.setInterval(1)
+        poll.timeout.connect(observe)
+        poll.start()
+        failsafe = QtCore.QTimer()
+        failsafe.setSingleShot(True)
+        failsafe.timeout.connect(release.set)
+        failsafe.start(5000)
+        try:
+            result, dialog = self._run(execute_imports, args)
+        finally:
+            poll.stop()
+            failsafe.stop()
+            release.set()
+        self.assertTrue(worker["released"])
+        self.assertIs(observed["dialog"], dialog)
+        self.assertIs(observed["visible"], True)
+        self.assertIs(observed["modality"], QtCore.Qt.WindowModality.ApplicationModal)
+        self.assertIs(observed["parent"], self.host)
+        self.assertIs(observed["running"], True)
+        self.assertEqual(observed["label"], "Importing <b>one.ost</b>...")
+        self.assertNotEqual(worker["thread"], threading.get_ident())
+        self.assertIs(worker["call"][0], args)
+        self.assertIs(worker["call"][1], self.host.target)
+        self.assertIs(worker["call"][2], False)
+        self.assertIs(result, batch)
+        self.assertEqual(self.host.flushed, ["real-target.mdb"])
+        self._assert_released(dialog)
+
+    def test_a_worker_exception_becomes_a_failure_result_with_the_error_logged(self):
+        def execute_imports(args, target, refresh_after_import=True):
+            raise RuntimeError("import boom")
+
+        args = self._args("one.ost", "two.osp")
+        with self.assertLogs(
+            "ost_visualizer.presentation.components.progress_dialog", level="ERROR"
+        ), self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured:
+            result, dialog = self._run(execute_imports, args)
+        self.assertIn("import boom", captured.output[0])
+        self.assertIs(captured.records[0].exc_info[1], dialog.error)
+        self.assertEqual(
+            [(item.source_path, item.success, item.message) for item in result.results],
+            [
+                (item.path, False, "The file could not be imported.")
+                for item in args.files
+            ],
+        )
+        self.assertEqual(result.target_db_path, "real-target.mdb")
+        self.assertEqual(result.selected_project_uid, "project-1")
+        self.assertIs(result.import_as_orphaned_due_to_deleted_target, True)
+        self.assertIsNone(dialog.result)
+        self.assertIsInstance(dialog.error, RuntimeError)
+        self._assert_released(dialog)
+
+    def test_a_worker_result_that_is_not_a_batch_result_is_a_failure_without_an_error_log(
+        self,
+    ):
+        for returned in (None, False, True, "done"):
+            with self.subTest(returned=returned):
+                args = self._args("one.ost")
+                with self.assertNoLogs(
+                    "ost_visualizer.presentation.main_window", level="ERROR"
+                ):
+                    result, dialog = self._run(
+                        lambda a, t, refresh_after_import=True, value=returned: value,
+                        args,
+                    )
+                self.assertEqual(
+                    [(item.success, item.message) for item in result.results],
+                    [(False, "The file could not be imported.")],
+                )
+                self.assertEqual(result.target_db_path, "real-target.mdb")
+                self.assertIsNone(dialog.error)
+                self._assert_released(dialog)
+
+    def test_the_current_selection_target_is_what_resolve_target_receives(self):
+        current = import_args_use_case.ProjectImportCurrentTarget(
+            file_path="current.mdb", project_uid="p-current"
+        )
+        batch = import_args_use_case.ProjectFileImportBatchResult()
+        result, _dialog = self._run(
+            lambda a, t, refresh_after_import=True: batch,
+            self._args("one.ost"),
+            current_target=current,
+        )
+        self.assertEqual(len(self.host.resolved_from), 1)
+        self.assertIs(self.host.resolved_from[0], current)
+        self.assertIs(result, batch)
+
+
+class MainWindowImportProgressFlowContractTests(unittest.TestCase):
+    """Argument hand-off, release ordering and failure shape of the import flow."""
+
+    def setUp(self):
+        _startup_import_FakeStartupProgressDialog.instances = []
+        _startup_import_FakeStartupProgressDialog.result_code = (
+            QtWidgets.QDialog.DialogCode.Accepted
+        )
+        self.addCleanup(
+            setattr,
+            _startup_import_FakeStartupProgressDialog,
+            "result_code",
+            QtWidgets.QDialog.DialogCode.Accepted,
+        )
+        self._project_folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._project_folder.cleanup)
+        self.events = []
+        self.target = import_args_use_case.ProjectImportTarget(
+            "target.mdb", "project-7", True
+        )
+        self.current = import_args_use_case.ProjectImportCurrentTarget("cur.mdb")
+
+    def _window(self, *, uses_async=False, flush=True):
+        window = _startup_import__startup_import_window()
+        window._current_project_import_target = lambda: self.current
+        window._deferred_persistence_manager = SimpleNamespace(
+            flush_for_file=lambda path: self.events.append(("flush", path)) or flush
+        )
+        window._import_project_files_from_args = SimpleNamespace(
+            resolve_target=lambda current: self.events.append(("resolve", current))
+            or self.target,
+            uses_async_import=lambda target: uses_async,
+            execute_imports=lambda args, target, refresh_after_import=True: (
+                self.events.append(("execute", args, target, refresh_after_import))
+                or import_args_use_case.ProjectFileImportBatchResult()
+            ),
+            build_no_target_result=lambda args: self.events.append(("no-target", args))
+            or "no-target",
+            build_flush_failure_result=lambda args, target: self.events.append(
+                ("flush-failure", args, target)
+            )
+            or "flush-failure",
+            queue_imports=lambda args, target, completed: self.events.append(
+                ("queue", args, target, completed)
+            ),
+        )
+        return window
+
+    def _args(self, *names):
+        folder = Path(self._project_folder.name)
+        paths = []
+        for name in names:
+            (folder / name).write_text("x")
+            paths.append(folder / name)
+        return _startup_import__project_file_args(*paths)
+
+    def test_the_dialog_is_run_then_cleaned_up_then_scheduled_for_deletion(self):
+        events = self.events
+
+        class Ordered(_startup_import_FakeStartupProgressDialog):
+            def exec(self):
+                events.append("exec")
+                return super().exec()
+
+            def cleanup(self):
+                events.append("cleanup")
+                super().cleanup()
+
+            def deleteLater(self):
+                events.append("deleteLater")
+                super().deleteLater()
+
+        window = self._window()
+        with patch.object(main_window_module, "ProgressDialog", Ordered):
+            MainWindow._import_project_files_with_progress(window, self._args("a.ost"))
+        names = [event if isinstance(event, str) else event[0] for event in events]
+        self.assertEqual(
+            names,
+            ["resolve", "flush", "execute", "exec", "cleanup", "deleteLater"],
+        )
+        self.assertIs(events[0][1], self.current)
+
+    def test_early_exits_hand_the_original_arguments_to_their_result_builders(self):
+        args = self._args("a.ost")
+        window = self._window(flush=False)
+        self.assertEqual(
+            MainWindow._import_project_files_with_progress(window, args),
+            "flush-failure",
+        )
+        self.assertEqual(
+            self.events,
+            [
+                ("resolve", self.current),
+                ("flush", "target.mdb"),
+                ("flush-failure", args, self.target),
+            ],
+        )
+        self.events.clear()
+        window = self._window()
+        window._import_project_files_from_args.resolve_target = lambda current: (
+            self.events.append(("resolve", current)) or None
+        )
+        self.assertEqual(
+            MainWindow._import_project_files_with_progress(window, args), "no-target"
+        )
+        self.assertEqual(self.events, [("resolve", self.current), ("no-target", args)])
+
+    def test_an_async_import_is_queued_with_the_flushed_target_and_no_dialog(self):
+        args = self._args("a.ost")
+        window = self._window(uses_async=True)
+        result = MainWindow._import_project_files_with_progress(window, args)
+        self.assertIsNone(result)
+        self.assertEqual(
+            [event[0] for event in self.events], ["resolve", "flush", "queue"]
+        )
+        _name, queued_args, queued_target, completed = self.events[2]
+        self.assertIs(queued_args, args)
+        self.assertIs(queued_target, self.target)
+        self.assertEqual(completed, window._complete_async_project_file_imports)
+        self.assertEqual(_startup_import_FakeStartupProgressDialog.instances, [])
+
+    def test_the_failure_result_carries_the_target_and_copies_the_rejections(self):
+        args = self._args("a.ost", "b.osp")
+        rejected = [_A3Rejected(value="bad.txt", reason="Unsupported file type.")]
+        args = import_args_use_case.ProjectFileArgs(files=args.files, rejected=rejected)
+        result = MainWindow._project_file_import_progress_failure(args, self.target)
+        self.assertEqual(
+            [(item.source_path, item.success, item.message) for item in result.results],
+            [
+                (item.path, False, "The file could not be imported.")
+                for item in args.files
+            ],
+        )
+        self.assertEqual(result.rejected, rejected)
+        self.assertIsNot(result.rejected, rejected)
+        self.assertEqual(result.target_db_path, "target.mdb")
+        self.assertEqual(result.selected_project_uid, "project-7")
+        self.assertIs(result.import_as_orphaned_due_to_deleted_target, True)
+        self.assertEqual(result.failed, 3)
+        self.assertEqual(result.succeeded, 0)
+        plain = MainWindow._project_file_import_progress_failure(
+            args, import_args_use_case.ProjectImportTarget("plain.mdb")
+        )
+        self.assertIsNone(plain.selected_project_uid)
+        self.assertIs(plain.import_as_orphaned_due_to_deleted_target, False)
+
+    def test_the_worker_error_is_logged_with_its_own_traceback(self):
+        error = RuntimeError("worker boom")
+        window = self._window()
+
+        class Failing(_startup_import_FakeStartupProgressDialog):
+            def exec(self):
+                self.result = None
+                self.error = error
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch.object(
+            main_window_module, "ProgressDialog", Failing
+        ), self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured:
+            MainWindow._import_project_files_with_progress(window, self._args("a.ost"))
+        (record,) = captured.records
+        self.assertEqual(
+            record.getMessage(),
+            "Startup project file import worker raised: worker boom",
+        )
+        self.assertIs(record.exc_info[1], error)
+
+
+def _scope_rejected(value):
+    return _A3Rejected(value=value, reason="Unsupported file type.")
+
+
+def _scope_file(path):
+    return import_args_use_case.ParsedProjectFileArg(path=path, extension=".ost")
+
+
+class MainWindowImportFlowCallArgumentTests(unittest.TestCase):
+    """What the import flow hands to its collaborators, and when it defers."""
+
+    def _window(self):
+        window = _startup_import__startup_import_window()
+        window._startup_load_complete = True
+        window._main_window_ready = True
+        return window
+
+    def _live_window(self):
+        _dialog_lifecycle_support__app()
+        window = _startup_import__startup_import_window()
+        QtWidgets.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
+        return window
+
+    def test_run_pending_merges_files_and_rejections_and_hands_the_result_on(self):
+        window = self._window()
+        first, second = _scope_rejected("a.txt"), _scope_rejected("b.txt")
+        window._pending_project_file_args = [
+            import_args_use_case.ProjectFileArgs(
+                files=[_scope_file("1.ost")], rejected=[first]
+            ),
+            import_args_use_case.ProjectFileArgs(
+                files=[_scope_file("2.ost")], rejected=[second]
+            ),
+        ]
+        result = import_args_use_case.ProjectFileImportBatchResult()
+        received, selected, shown = [], [], []
+        window._import_project_files_with_progress = lambda args: (
+            received.append(args) or result
+        )
+        window._select_project_file_import_result = selected.append
+        window._show_project_file_import_result = shown.append
+        window._run_pending_project_file_imports()
+        self.assertEqual(len(received), 1)
+        self.assertEqual([item.path for item in received[0].files], ["1.ost", "2.ost"])
+        self.assertEqual(received[0].rejected, [first, second])
+        self.assertEqual(len(selected), 1)
+        self.assertIs(selected[0], result)
+        self.assertEqual(len(shown), 1)
+        self.assertIs(shown[0], result)
+        self.assertEqual(window._pending_project_file_args, [])
+
+    def test_run_pending_defers_itself_under_its_own_key_during_shutdown(self):
+        window = self._window()
+        window._collaboration_shutdown_pending = True
+        window._pending_project_file_args = [
+            import_args_use_case.ProjectFileArgs(files=[_scope_file("1.ost")])
+        ]
+        window._run_pending_project_file_imports()
+        self.assertEqual(
+            window._shutdown_deferred_callbacks,
+            {"run_project_file_imports": window._run_pending_project_file_imports},
+        )
+
+    def test_a_shutdown_after_the_import_defers_the_completion_with_that_result(self):
+        for refresh in (False, True):
+            with self.subTest(refresh_pending=refresh):
+                window = self._window()
+                window._pending_project_file_args = [
+                    import_args_use_case.ProjectFileArgs(files=[_scope_file("1.ost")])
+                ]
+                first = import_args_use_case.ProjectFileImportBatchResult(
+                    refresh_pending=refresh
+                )
+                refreshed = import_args_use_case.ProjectFileImportBatchResult()
+                refresh_arguments = []
+
+                def import_with_progress(
+                    args, window=window, refresh=refresh, first=first
+                ):
+                    if not refresh:
+                        window._collaboration_shutdown_pending = True
+                    return first
+
+                def refresh_import_result(
+                    result,
+                    window=window,
+                    refresh_arguments=refresh_arguments,
+                    refreshed=refreshed,
+                ):
+                    refresh_arguments.append(result)
+                    window._collaboration_shutdown_pending = True
+                    return refreshed
+
+                window._import_project_files_with_progress = import_with_progress
+                window._import_project_files_from_args = SimpleNamespace(
+                    refresh_import_result=refresh_import_result
+                )
+                completed = []
+                window._complete_async_project_file_imports = completed.append
+                window._select_project_file_import_result = lambda r: self.fail(
+                    "must wait for the deferred completion"
+                )
+                window._show_project_file_import_result = lambda r: self.fail(
+                    "must wait for the deferred completion"
+                )
+                window._run_pending_project_file_imports()
+                self.assertIn(
+                    "complete_project_file_imports", window._shutdown_deferred_callbacks
+                )
+                if refresh:
+                    self.assertEqual(len(refresh_arguments), 1)
+                    self.assertIs(refresh_arguments[0], first)
+                window._shutdown_deferred_callbacks["complete_project_file_imports"]()
+                self.assertEqual(len(completed), 1)
+                self.assertIs(completed[0], refreshed if refresh else first)
+
+    def test_the_access_check_asks_for_import_and_the_result_copies_the_rejections(
+        self,
+    ):
+        window = _startup_import__startup_import_window()
+        asked = []
+        window.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: asked.append(feature) or False
+        )
+        rejected = [_scope_rejected("bad.txt")]
+        args = import_args_use_case.ProjectFileArgs(
+            files=[_scope_file("1.ost")], rejected=rejected
+        )
+        result = MainWindow._import_project_files_with_progress(window, args)
+        self.assertEqual(asked, [Feature.IMPORT])
+        self.assertEqual(
+            [(item.source_path, item.success, item.message) for item in result.results],
+            [("1.ost", False, "Import is not available for the selected database.")],
+        )
+        self.assertEqual(result.rejected, rejected)
+        self.assertIsNot(result.rejected, rejected)
+        empty = import_args_use_case.ProjectFileArgs(files=[], rejected=rejected)
+        result = MainWindow._import_project_files_with_progress(window, empty)
+        self.assertEqual(result.rejected, rejected)
+        self.assertIsNot(result.rejected, rejected)
+        self.assertEqual(asked, [Feature.IMPORT])
+
+    def test_the_async_decision_is_made_for_the_resolved_target(self):
+        window = _startup_import__startup_import_window()
+        window._current_project_import_target = lambda: None
+        target = import_args_use_case.ProjectImportTarget("t.mdb")
+        asked = []
+        window._deferred_persistence_manager = SimpleNamespace(
+            flush_for_file=lambda path: True
+        )
+        window._import_project_files_from_args = SimpleNamespace(
+            resolve_target=lambda current: target,
+            uses_async_import=lambda candidate: asked.append(candidate) or True,
+            queue_imports=lambda *queued: None,
+        )
+        MainWindow._import_project_files_with_progress(
+            window,
+            import_args_use_case.ProjectFileArgs(files=[_scope_file("1.ost")]),
+        )
+        self.assertEqual(len(asked), 1)
+        self.assertIs(asked[0], target)
+
+    def test_the_current_target_of_a_selected_bid_asks_for_that_bids_project(self):
+        window = _startup_import__startup_import_window()
+        bid_ref = BidRef("f.mdb", "bid-1")
+        seen = []
+        window.ui_state_manager = SimpleNamespace(get_selected_bid_ref=lambda: bid_ref)
+        window._project_data_service = SimpleNamespace(
+            find_project_uid_for_bid=lambda ref: seen.append(ref) or "uid-9"
+        )
+        target = MainWindow._current_project_import_target(window)
+        self.assertEqual(len(seen), 1)
+        self.assertIs(seen[0], bid_ref)
+        self.assertEqual((target.file_path, target.project_uid), ("f.mdb", "uid-9"))
+
+    def test_an_async_completion_for_a_destroyed_window_does_nothing(self):
+        window = _startup_import__startup_import_window()
+        self.assertFalse(_a3_is_valid(window))
+        window._import_project_files_from_args = SimpleNamespace(
+            refresh_import_result=lambda result: self.fail("must not refresh")
+        )
+        window._select_project_file_import_result = lambda r: self.fail("no select")
+        window._show_project_file_import_result = lambda r: self.fail("no show")
+        window._project_file_import_running = True
+        MainWindow._complete_async_project_file_imports(
+            window,
+            import_args_use_case.ProjectFileImportBatchResult(refresh_pending=True),
+        )
+        self.assertTrue(window._project_file_import_running)
+        self.assertEqual(window._shutdown_deferred_callbacks, {})
+
+    def test_an_async_completion_refreshes_the_result_it_was_given(self):
+        window = self._live_window()
+        first = import_args_use_case.ProjectFileImportBatchResult(refresh_pending=True)
+        refreshed = import_args_use_case.ProjectFileImportBatchResult()
+        refresh_arguments, selected, shown = [], [], []
+        window._import_project_files_from_args = SimpleNamespace(
+            refresh_import_result=lambda result: refresh_arguments.append(result)
+            or refreshed
+        )
+        window._select_project_file_import_result = selected.append
+        window._show_project_file_import_result = shown.append
+        with patch.object(QtCore.QTimer, "singleShot"):
+            window._complete_async_project_file_imports(first)
+        self.assertEqual(len(refresh_arguments), 1)
+        self.assertIs(refresh_arguments[0], first)
+        self.assertEqual(len(selected), 1)
+        self.assertIs(selected[0], refreshed)
+        self.assertEqual(len(shown), 1)
+        self.assertIs(shown[0], refreshed)
+
+    def test_an_async_completion_deferred_by_shutdown_later_completes_that_result(
+        self,
+    ):
+        window = self._live_window()
+        selected, shown = [], []
+        window._select_project_file_import_result = selected.append
+        window._show_project_file_import_result = shown.append
+        result = import_args_use_case.ProjectFileImportBatchResult()
+        window._collaboration_shutdown_pending = True
+        window._complete_async_project_file_imports(result)
+        self.assertEqual((selected, shown), ([], []))
+        window._collaboration_shutdown_pending = False
+        with patch.object(QtCore.QTimer, "singleShot"):
+            window._shutdown_deferred_callbacks["complete_project_file_imports"]()
+        self.assertEqual(len(selected), 1)
+        self.assertIs(selected[0], result)
+        self.assertEqual(len(shown), 1)
+        self.assertIs(shown[0], result)
+
+    def test_a_shutdown_started_by_the_refresh_defers_the_refreshed_result(self):
+        window = self._live_window()
+        first = import_args_use_case.ProjectFileImportBatchResult(refresh_pending=True)
+        refreshed = import_args_use_case.ProjectFileImportBatchResult()
+
+        def refresh(result):
+            window._collaboration_shutdown_pending = True
+            return refreshed
+
+        window._import_project_files_from_args = SimpleNamespace(
+            refresh_import_result=refresh
+        )
+        selected, shown = [], []
+        window._select_project_file_import_result = selected.append
+        window._show_project_file_import_result = shown.append
+        window._complete_async_project_file_imports(first)
+        self.assertIn(
+            "complete_project_file_imports", window._shutdown_deferred_callbacks
+        )
+        self.assertEqual((selected, shown), ([], []))
+        window._collaboration_shutdown_pending = False
+        with patch.object(QtCore.QTimer, "singleShot"):
+            window._shutdown_deferred_callbacks["complete_project_file_imports"]()
+        self.assertEqual(len(selected), 1)
+        self.assertIs(selected[0], refreshed)
+        self.assertIs(shown[0], refreshed)
