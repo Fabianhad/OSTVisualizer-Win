@@ -169,3 +169,103 @@ class ProjectFileArgumentValueTests(unittest.TestCase):
             ProjectFileArgs().files = []
         self.assertEqual(ProjectFileArgs().files, [])
         self.assertIsNot(ProjectFileArgs().files, ProjectFileArgs().files)
+
+
+class ProjectFileArgumentContractTests(unittest.TestCase):
+    def test_supported_extensions_are_exactly_ost_and_osp(self):
+        from ost_visualizer.application.dtos.file_import_args import (
+            SUPPORTED_PROJECT_IMPORT_EXTENSIONS,
+        )
+
+        self.assertEqual(SUPPORTED_PROJECT_IMPORT_EXTENSIONS, {".ost", ".osp"})
+        self.assertIs(type(SUPPORTED_PROJECT_IMPORT_EXTENSIONS), frozenset)
+        message = "Unsupported file type. Only .ost and .osp files can be imported."
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            names = ("plan.ostx", "plan.ost.bak", "ost", "plan.exe", "plan.OST.txt")
+            for name in names:
+                (root / name).write_text("x")
+            result = parse_project_file_args([str(root / name) for name in names])
+            self.assertEqual(result.files, [])
+            self.assertEqual(
+                [(item.value, item.reason) for item in result.rejected],
+                [(str(root / name), message) for name in names],
+            )
+
+    def test_args_container_defaults_are_independent_and_report_what_they_hold(self):
+        from ost_visualizer.application.dtos.file_import_args import (
+            ParsedProjectFileArg,
+            ProjectFileArgs,
+            RejectedProjectFileArg,
+        )
+
+        empty = ProjectFileArgs()
+        self.assertIs(type(empty.rejected), list)
+        self.assertEqual(empty.rejected, [])
+        self.assertIsNot(empty.rejected, ProjectFileArgs().rejected)
+        self.assertIs(empty.has_file_args, False)
+        parsed = ParsedProjectFileArg(path="a.ost", extension=".ost")
+        rejected = RejectedProjectFileArg(value="b.txt", reason="why")
+        self.assertEqual((parsed.path, parsed.extension), ("a.ost", ".ost"))
+        self.assertEqual((rejected.value, rejected.reason), ("b.txt", "why"))
+        self.assertIs(ProjectFileArgs(files=[parsed]).has_file_args, True)
+        self.assertIs(ProjectFileArgs(rejected=[rejected]).has_file_args, True)
+        self.assertEqual(ProjectFileArgs(files=[parsed]).rejected, [])
+        self.assertEqual(ProjectFileArgs(rejected=[rejected]).files, [])
+
+
+class ProjectFileArgumentDuplicateAndSnapshotTests(unittest.TestCase):
+    def test_duplicate_arguments_are_each_reported_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            good = root / "a.ost"
+            other = root / "b.osp"
+            good.write_text("x")
+            other.write_text("x")
+            missing = root / "missing.ost"
+            result = parse_project_file_args(
+                [
+                    str(good),
+                    str(other),
+                    str(good),
+                    str(missing),
+                    str(missing),
+                    "plan.txt",
+                    "plan.txt",
+                ]
+            )
+            self.assertEqual(
+                [(item.path, item.extension) for item in result.files],
+                [
+                    (str(good), ".ost"),
+                    (str(other), ".osp"),
+                    (str(good), ".ost"),
+                ],
+            )
+            self.assertEqual(
+                [item.value for item in result.rejected],
+                [str(missing), str(missing), "plan.txt", "plan.txt"],
+            )
+
+    def test_characterisation_the_argument_list_is_read_completely_before_any_file_is_checked(
+        self,
+    ):
+        # Characterisation of the eager snapshot (list(argv)): a file that comes
+        # into existence while the argument iterable is still being consumed is
+        # already visible when the arguments are checked afterwards.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            late = root / "late.ost"
+            first = root / "first.ost"
+            first.write_text("x")
+
+            def arguments():
+                yield str(late)
+                late.write_text("created while the arguments are still being read")
+                yield str(first)
+
+            result = parse_project_file_args(arguments())
+            self.assertEqual(
+                [item.path for item in result.files], [str(late), str(first)]
+            )
+            self.assertEqual(result.rejected, [])

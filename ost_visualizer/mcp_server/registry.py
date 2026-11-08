@@ -117,6 +117,8 @@ class DatabaseRegistry:
         if not isinstance(payload, dict):
             return McpWorkspaceSelection()
         takeoff = payload.get(WORKSPACE_KEY_TAKEOFF_WORKSPACE, {})
+        if not isinstance(takeoff, dict):
+            takeoff = {}
         project = payload.get(WORKSPACE_KEY_PROJECT_WORKSPACE, {})
         selected = (
             project.get(WORKSPACE_KEY_SELECTED_NODE, {})
@@ -166,7 +168,7 @@ class DatabaseRegistry:
     def _validated_database_path(self, raw_path: str) -> Optional[Path]:
         try:
             path = Path(raw_path).expanduser().resolve()
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             self._logger.warning("Ignoring invalid configured database path")
             return None
         if path.suffix.lower() != ".mdb":
@@ -195,5 +197,5 @@ class DatabaseRegistry:
             return payload if isinstance(payload, dict) else {}
         except FileNotFoundError:
             return {}
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except (OSError, ValueError, RecursionError):
             return {}

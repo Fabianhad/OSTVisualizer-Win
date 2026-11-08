@@ -221,12 +221,12 @@ class ProgressDialog(QtWidgets.QDialog):
         if self._thread:
             try:
                 self._thread.finished.disconnect(self._finish_if_ready)
-            except (TypeError, RuntimeError):
+            except (TypeError, RuntimeError, SystemError):
                 pass
         if self._reporter:
             try:
                 self._reporter.progress.disconnect(self._on_progress)
-            except (TypeError, RuntimeError):
+            except (TypeError, RuntimeError, SystemError):
                 pass
         if isinstance(self._progress, _CenteredBusyProgressBar):
             self._progress.stop_animation()

@@ -3335,3 +3335,1118 @@ class ProjectDataServiceResidualContractTests(unittest.TestCase):
             service.update_takeoffs_condition(["t1", "t2", "t3"], "c2"), ["p1", "p2"]
         )
         self.assertEqual([t.condition_uid for t in (t1, t2, t3)], ["c2", "c2", "c2"])
+
+
+class ProjectDataServiceSnapshotIsolationTests(unittest.TestCase):
+    """Second-pass additions: the per-database stores own their data (no aliasing of
+    the collections a caller passes in, no leaking of the stored ones)."""
+
+    def test_used_uid_sets_do_not_alias_the_callers_collections_or_leak_stored_ones(
+        self,
+    ):
+        service, _ = _real_service()
+        jobs = {"j1"}
+        employees = ["e1"]
+        service.replace_database_settings(
+            "db", used_job_status_uids=jobs, used_employee_uids=employees
+        )
+        jobs.add("late-job")
+        employees.append("late-employee")
+        self.assertEqual(service.get_used_job_status_uids("db"), {"j1"})
+        self.assertEqual(service.get_used_employee_uids("db"), {"e1"})
+        for getter in (
+            service.get_used_job_status_uids,
+            service.get_used_employee_uids,
+        ):
+            with self.subTest(getter=getter.__name__):
+                returned = getter("db")
+                self.assertIs(type(returned), set)
+                returned.add("leak")
+                self.assertNotIn("leak", getter("db"))
+        for kind in ("employees", "job_statuses", "pay_classes"):
+            with self.subTest(kind=kind):
+                returned = service.get_master_data_uids_in_use("db", kind)
+                returned.add("leak")
+                self.assertNotIn(
+                    "leak", service.get_master_data_uids_in_use("db", kind)
+                )
+
+    def test_the_bid_lock_flag_can_be_set_and_released(self):
+        service, aggregate = _real_service()
+        self.assertIs(service.is_current_bid_locked(), False)
+        service.set_current_bid_locked(True)
+        self.assertIs(service.is_current_bid_locked(), True)
+        service.set_current_bid_locked(False)
+        self.assertIs(aggregate.current_bid_locked, False)
+        self.assertIs(service.is_current_bid_locked(), False)
+        service.set_current_bid_locked(True)
+        aggregate.current_bid_locked = False
+        self.assertIs(service.is_current_bid_locked(), False)
+
+    def test_bid_keyed_snapshots_treat_a_numeric_bid_uid_like_its_text(self):
+        """Characterisation: a numeric bid uid is keyed as its text."""
+        service, _ = _real_service()
+        service.replace_cover_sheet_data("db", "7", SimpleNamespace(job_name="Cover"))
+        service.replace_page_delete_content_uids("db", "7", ["p"])
+        self.assertEqual(service.get_cover_sheet_snapshot("db", 7).job_name, "Cover")
+        self.assertEqual(service.get_page_delete_content_snapshot("db", 7), {"p"})
+        self.assertIsNone(service.get_cover_sheet_snapshot("db", 70))
+        self.assertEqual(service.get_page_delete_content_snapshot("db", 70), set())
+
+    def test_every_omitted_setting_is_kept_and_every_empty_one_clears_only_itself(
+        self,
+    ):
+        def fill(service):
+            service.replace_database_settings(
+                "db",
+                default_layers=[BidLayer("l", "b", "L", True, 1)],
+                job_statuses=[JobStatus(uid="j", name="J")],
+                employees=[Employee(uid="e", first_name="E")],
+                pay_classes=[PayClass(uid="p", name="P")],
+                used_job_status_uids=["j"],
+                used_employee_uids=["e"],
+            )
+
+        def state(service):
+            return (
+                len(service.get_default_layer_snapshot("db")),
+                len(service.get_job_status_snapshot("db")),
+                len(service.get_employee_snapshot("db")),
+                len(service.get_pay_class_snapshot("db")),
+                len(service.get_used_job_status_uids("db")),
+                len(service.get_used_employee_uids("db")),
+            )
+
+        service, _ = _real_service()
+        fill(service)
+        service.replace_database_settings("db")
+        self.assertEqual(state(service), (1, 1, 1, 1, 1, 1))
+        for index, name in enumerate(
+            (
+                "default_layers",
+                "job_statuses",
+                "employees",
+                "pay_classes",
+                "used_job_status_uids",
+                "used_employee_uids",
+            )
+        ):
+            with self.subTest(cleared=name):
+                service, _ = _real_service()
+                fill(service)
+                service.replace_database_settings("db", **{name: []})
+                expected = [1] * 6
+                expected[index] = 0
+                self.assertEqual(state(service), tuple(expected))
+
+
+class ProjectDataServiceContractGapTests(unittest.TestCase):
+    """Second-pass additions: behaviours the first-pass tests left unpinned."""
+
+    def test_get_bid_matches_the_current_bid_by_value_not_by_object(self):
+        service, aggregate = _real_service()
+        aggregate.set_hierarchy(_hierarchy_with_projects())
+        current = Bid(uid="b1", name="Loaded copy")
+        aggregate.current_bid_ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid = current
+        self.assertIs(service.get_bid(BidRef("C:/a.mdb", "b1")), current)
+
+    def test_layer_snapshot_fallback_normalizes_uids_to_text_and_looks_visibility_up_by_text(
+        self,
+    ):
+        """Characterisation: numeric layer uids are reported as text."""
+        service, aggregate = _real_service()
+        aggregate.bid_layers = []
+        aggregate.bid_layer_names_by_uid = {5: "annotation"}
+        aggregate.bid_layer_visibility = {"5": False}
+        snapshot = service.get_bid_layer_snapshot()
+        self.assertEqual(
+            [(layer.uid, layer.name, layer.show) for layer in snapshot],
+            [("5", "annotation", False)],
+        )
+
+    def test_collecting_takeoffs_skips_pages_whose_takeoffs_are_all_hidden(self):
+        model = OstAggregate(None)
+        model.bid_conditions = {
+            "visible": Condition(uid="visible", layer_visible=True),
+            "hidden": Condition(uid="hidden", layer_visible=False),
+        }
+        hidden_only = Takeoff("t-hidden", "hidden", page_uid="all-hidden")
+        shown = Takeoff("t-shown", "visible", page_uid="mixed")
+        hidden_too = Takeoff("t-hidden-2", "hidden", page_uid="mixed")
+        model.set_pages(
+            {
+                "all-hidden": Page("all-hidden", "A", takeoffs=[hidden_only]),
+                "mixed": Page("mixed", "B", takeoffs=[shown, hidden_too]),
+            }
+        )
+        service = ProjectDataService(model)
+        visible = service.collect_takeoffs_for_pages(["all-hidden", "mixed"])
+        self.assertEqual(visible.valid_page_uids, ["mixed"])
+        self.assertEqual([t.uid for t in visible.takeoffs], ["t-shown"])
+        self.assertEqual((visible.page_count, visible.total_takeoffs), (1, 1))
+        everything = service.collect_takeoffs_for_pages(
+            ["all-hidden", "mixed"], visible_only=False
+        )
+        self.assertEqual(everything.valid_page_uids, ["all-hidden", "mixed"])
+        self.assertEqual((everything.page_count, everything.total_takeoffs), (2, 3))
+        only_hidden = service.collect_takeoffs_for_pages(["all-hidden"])
+        self.assertEqual(only_hidden.takeoffs, [])
+        self.assertEqual(only_hidden.valid_page_uids, [])
+        self.assertIs(only_hidden.is_empty(), True)
+
+    def test_areas_are_keyed_by_text_uid_and_sorted_by_numeric_sequence(self):
+        """Characterisation: numeric area uids are keyed as text and text sequences sort numerically."""
+        service, aggregate = _real_service()
+        aggregate.current_bid_ref = BidRef("C:/a.mdb", "b1")
+        self.assertIs(
+            service.replace_bid_areas(
+                aggregate.current_bid_ref,
+                [BidArea(1, "b1", "0", "One", "10"), BidArea(2, "b1", "0", "Two", "9")],
+            ),
+            True,
+        )
+        self.assertEqual(set(aggregate.bid_areas), {"1", "2"})
+        self.assertEqual(
+            [a.name for a in service.get_bid_area_snapshot()], ["Two", "One"]
+        )
+        used = [Takeoff(uid="t", condition_uid="c", area_uid=1)]
+        self.assertEqual([a.name for a in service.get_bid_area_snapshot(used)], ["One"])
+
+    def test_local_area_cleanup_compares_deleted_uids_as_text(self):
+        """Characterisation: deleted uids are compared as text."""
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        aggregate.page_area_selections = {"p1": "20", "p2": "21"}
+        takeoff = Takeoff(uid="t", condition_uid="c", area_uid="20")
+        kept = Takeoff(uid="k", condition_uid="c", area_uid="21")
+        aggregate.bid_takeoffs = [takeoff, kept]
+        self.assertIs(service.replace_bid_areas_after_local_save(ref, [], [20]), True)
+        self.assertEqual(aggregate.page_area_selections, {"p1": None, "p2": "21"})
+        self.assertEqual((takeoff.area_uid, kept.area_uid), (UNASSIGNED_AREA_UID, "21"))
+
+    def test_condition_and_folder_families_are_copied_not_aliased(self):
+        """Characterisation: the replaced families are copies of the passed dicts."""
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        conditions = {"c": Condition(uid="c")}
+        folders = {"f": object()}
+        self.assertIs(service.replace_condition_family(ref, conditions, folders), True)
+        self.assertIsNot(aggregate.bid_conditions, conditions)
+        self.assertIsNot(aggregate.bid_condition_folders, folders)
+        conditions["late"] = Condition(uid="late")
+        folders["late"] = object()
+        self.assertEqual(set(aggregate.bid_conditions), {"c"})
+        self.assertEqual(set(aggregate.bid_condition_folders), {"f"})
+
+    def test_layer_state_keeps_its_own_list_and_normalizes_flags_to_booleans(self):
+        """Characterisation: the layer list is copied and show flags become booleans."""
+        service, aggregate = _real_service()
+        layers = [
+            BidLayer("a", "b", "Annotation", 1, 1),
+            BidLayer("i", "b", "Image", 0, 2),
+        ]
+        service.set_bid_layer_visibility(layers)
+        self.assertIsNot(aggregate.bid_layers, layers)
+        self.assertEqual(aggregate.bid_layers, layers)
+        self.assertIs(aggregate.bid_layer_visibility["a"], True)
+        self.assertIs(aggregate.bid_layer_visibility["i"], False)
+        self.assertIs(aggregate.bid_layer_visibility_by_name["annotation"], True)
+        self.assertIs(aggregate.bid_layer_visibility_by_name["image"], False)
+        service.update_all_layer_visibility(1)
+        self.assertIs(aggregate.bid_layer_visibility["a"], True)
+        self.assertIs(aggregate.bid_layer_visibility["i"], True)
+        self.assertIs(aggregate.bid_layer_visibility_by_name["image"], True)
+        service.update_all_layer_visibility(0)
+        self.assertIs(aggregate.bid_layer_visibility["a"], False)
+        self.assertIs(aggregate.bid_layer_visibility_by_name["annotation"], False)
+
+    def test_toggling_one_layer_resyncs_only_the_annotations_on_that_layer(self):
+        service, aggregate = _real_service()
+        service.set_bid_layer_visibility(
+            [
+                BidLayer("ann", "b", "Annotation", False, 1),
+                BidLayer("other", "b", "Other", True, 2),
+            ]
+        )
+        # Deliberately inconsistent: the annotation sits on the hidden layer but is still flagged visible.
+        stale = BidAnnotation(
+            uid="a", annotation_type="rect", layer_uid="ann", visible=True
+        )
+        on_other = BidAnnotation(
+            uid="b", annotation_type="rect", layer_uid="other", visible=True
+        )
+        aggregate.set_annotations([stale, on_other])
+        service.update_layer_visibility("other", False)
+        self.assertIs(stale.visible, True)
+        self.assertIs(on_other.visible, False)
+
+    def test_toggling_an_unknown_layer_does_not_invent_a_named_visibility_entry(self):
+        service, aggregate = _real_service()
+        service.set_bid_layer_visibility([BidLayer("l", "b", "Takeoff", True, 1)])
+        before = dict(aggregate.bid_layer_visibility_by_name)
+        service.update_layer_visibility("ghost", False)
+        self.assertEqual(aggregate.bid_layer_visibility_by_name, before)
+        self.assertEqual(aggregate.bid_layer_names_by_uid, {"l": "takeoff"})
+
+    def test_the_bid_annotation_layer_lookup_compares_bid_uids_as_text(self):
+        """Characterisation: bid uids are compared as text."""
+        service, aggregate = _real_service()
+        aggregate.current_bid_ref = BidRef("C:/a.mdb", "7")
+        aggregate.bid_layers = [BidLayer("ann", 7, "Annotation", True, 1)]
+        self.assertEqual(
+            service.get_bid_annotation_layer_uid(BidRef("C:/a.mdb", "7")), "ann"
+        )
+        self.assertEqual(
+            service.get_bid_annotation_layer_uid(BidRef("C:/a.mdb", 7)), "ann"
+        )
+        with self.assertRaisesRegex(
+            ValueError, "^Annotation Layer lookup requires the current Bid context$"
+        ):
+            service.get_bid_annotation_layer_uid(BidRef("C:/a.mdb", 70))
+        aggregate.current_bid_ref = None
+        with self.assertRaisesRegex(
+            ValueError, "^Annotation Layer lookup requires the current Bid context$"
+        ):
+            service.get_bid_annotation_layer_uid(BidRef("C:/a.mdb", "7"))
+
+    def test_hotlink_lookup_never_matches_the_text_none_of_a_missing_target(self):
+        service, aggregate = _real_service()
+        literal_none = BidAnnotation(
+            uid="h-none",
+            annotation_type="hotlink",
+            properties={"BidPageViewUID": "None"},
+        )
+        no_target = BidAnnotation(
+            uid="h-empty", annotation_type="hotlink", properties={}
+        )
+        real = BidAnnotation(
+            uid="h-real",
+            annotation_type="hotlink",
+            properties={"BidPageViewUID": "v1"},
+        )
+        aggregate.set_annotations([literal_none, no_target, real])
+        self.assertEqual(service.find_hotlinks_targeting([None]), [])
+        self.assertEqual(service.find_hotlinks_targeting(["", None, 0]), [])
+        self.assertEqual(
+            [a.uid for a in service.find_hotlinks_targeting(["v1", None])], ["h-real"]
+        )
+
+    def test_remote_families_leave_takeoffs_alone_unless_takeoffs_are_listed(self):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        kept = Takeoff(uid="kept", condition_uid="c", page_uid="p")
+        aggregate.bid_takeoffs = [kept]
+        aggregate.bid_takeoff_extras = {"kept": {"x": 1}}
+        aggregate.set_pages({"p": Page("p", "P", takeoffs=[kept])})
+        incoming = Takeoff(uid="incoming", condition_uid="c", page_uid="p")
+        bid_data = BidLoadResult(
+            bid_takeoffs=[incoming],
+            takeoff_extras={"incoming": {"y": 2}},
+            pages={"p": Page("p", "P new")},
+            bid_annotations=[BidAnnotation(uid="a", annotation_type="rect")],
+        )
+        for families in ({"annotations"}, {"pages"}, {"layers"}, set()):
+            with self.subTest(families=sorted(families)):
+                self.assertIs(
+                    service.replace_remote_bid_families(ref, bid_data, families), True
+                )
+                self.assertEqual(aggregate.bid_takeoffs, [kept])
+                self.assertEqual(aggregate.bid_takeoff_extras, {"kept": {"x": 1}})
+        self.assertIs(
+            service.replace_remote_bid_families(ref, bid_data, {"takeoffs"}), True
+        )
+        self.assertEqual(aggregate.bid_takeoffs, [incoming])
+        self.assertEqual(aggregate.bid_takeoff_extras, {"incoming": {"y": 2}})
+
+    def test_remote_takeoff_replacement_keeps_its_own_extras_and_selection_containers(
+        self,
+    ):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        incoming = Takeoff(uid="incoming", condition_uid="c", page_uid="p")
+        bid_data = BidLoadResult(
+            bid_takeoffs=[incoming],
+            takeoff_extras={"incoming": {"y": 2}},
+            pages={"p": Page("p", "P")},
+            page_area_selections={"p": "a1"},
+        )
+        service.replace_remote_bid_families(ref, bid_data, {"takeoffs", "pages"})
+        self.assertIsNot(aggregate.bid_takeoff_extras, bid_data.takeoff_extras)
+        self.assertIsNot(aggregate.page_area_selections, bid_data.page_area_selections)
+        service.remove_takeoffs(["incoming"])
+        aggregate.page_area_selections["q"] = "a2"
+        self.assertEqual(bid_data.takeoff_extras, {"incoming": {"y": 2}})
+        self.assertEqual(bid_data.page_area_selections, {"p": "a1"})
+
+    def test_transient_previews_with_numeric_uids_are_not_duplicated_by_a_remote_refresh(
+        self,
+    ):
+        """Characterisation: takeoff uids are compared as text when merging previews."""
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        aggregate.set_pages({"p": Page("p", "P")})
+        preview = Takeoff(uid=30, condition_uid="c", page_uid="p")
+        service.add_transient_takeoffs([preview])
+        authoritative = Takeoff(uid=30, condition_uid="c", page_uid="p")
+        service.replace_remote_bid_families(
+            ref,
+            BidLoadResult(bid_takeoffs=[authoritative], pages={"p": Page("p", "P")}),
+            {"takeoffs"},
+        )
+        self.assertEqual(aggregate.bid_takeoffs, [authoritative])
+        self.assertIs(aggregate.bid_takeoffs[0], authoritative)
+
+    def test_a_mixed_scale_batch_with_one_foreign_page_changes_nothing(self):
+        setup = ProjectDataServicePageMetadataTests(
+            "test_scale_text_values_are_coerced_to_numbers"
+        )
+        setup.setUp()
+        stranger = Page("p2", "Two", scale_factor1=1.0, scale_factor2=96.0)
+        self.assertEqual(
+            setup.service.apply_page_scales(
+                setup.ref, [setup.page, stranger], 1.0, 48.0
+            ),
+            (),
+        )
+        self.assertEqual(
+            (setup.page.scale_factor1, setup.page.scale_factor2), (1.0, 96.0)
+        )
+        self.assertEqual(setup.page.overlay_rect, (10.0, 20.0, 30.0, 40.0))
+        self.assertEqual(
+            setup.aggregate.bid_takeoffs[0].position, [96.0, 192.0, 288.0, 384.0]
+        )
+        self.assertEqual(
+            (setup.record.scale_factor1, setup.record.scale_factor2), (1.0, 96.0)
+        )
+
+    def test_hierarchy_refresh_takes_cdn_types_from_the_repository_and_matches_numeric_type_uids(
+        self,
+    ):
+        """Characterisation: the repository supplies the types and numeric type uids match text keys."""
+        setup = ProjectDataServiceDatabaseHierarchyReplacementTests(
+            "test_database_paths_are_compared_in_normalized_form"
+        )
+        setup.setUp()
+        setup.condition.cdn_type_uid = 7
+        setup.service.replace_database_hierarchy(setup.entry, {})
+        self.assertEqual(setup.aggregate.cdn_types, setup.cdn)
+        self.assertEqual(setup.condition.cdn_type_name, "Footings")
+        self.assertEqual(setup.unknown_type.cdn_type_name, "Unknown")
+        self.assertEqual(setup.no_type.cdn_type_name, "Unknown")
+
+
+class ProjectDataServiceTakeoffMutationGapTests(unittest.TestCase):
+    def setUp(self):
+        self.service, self.aggregate = _real_service()
+        self.t1 = Takeoff(uid="t1", condition_uid="c1", page_uid="p1")
+        self.t2 = Takeoff(uid="t2", condition_uid="c1", page_uid="p1")
+        self.t3 = Takeoff(uid="t3", condition_uid="c1", page_uid="orphan-page")
+        self.aggregate.set_pages({"p1": Page("p1", "One", takeoffs=[self.t1, self.t2])})
+        self.aggregate.bid_takeoffs = [self.t1, self.t2, self.t3]
+
+    def test_marking_takeoffs_negative_touches_only_the_listed_ones(self):
+        self.assertEqual(self.service.update_takeoffs_negative(["t2"], True), ["p1"])
+        self.assertEqual(
+            [t.is_negative for t in (self.t1, self.t2, self.t3)],
+            [False, True, False],
+        )
+        self.assertEqual(self.service.update_takeoffs_negative(["t1"], 1), ["p1"])
+        self.assertEqual(
+            [t.is_negative for t in (self.t1, self.t2, self.t3)], [True, True, False]
+        )
+
+    def test_text_property_updates_coerce_every_name_and_dimension_value_by_type(self):
+        """Characterisation: every stored text property is coerced (str, int, bool)."""
+        self.service.update_takeoff_text_properties(
+            [
+                (
+                    "t1",
+                    {
+                        "dimension_font_name": 5,
+                        "dimension_font_color": "255",
+                        "dimension_font_size": "11",
+                        "dimension_font_bold": "yes",
+                        "dimension_font_italic": 2,
+                        "dimension_font_underline": "x",
+                        "name_font_name": 6,
+                        "name_font_color": "7",
+                        "name_font_size": 9.9,
+                        "name_font_bold": "yes",
+                        "name_font_italic": 2,
+                        "name_font_underline": "x",
+                    },
+                )
+            ]
+        )
+        self.assertEqual(
+            (self.t1.dimension_font_name, self.t1.name_font_name), ("5", "6")
+        )
+        self.assertEqual(
+            [
+                type(v)
+                for v in (
+                    self.t1.dimension_font_color,
+                    self.t1.dimension_font_size,
+                    self.t1.name_font_color,
+                    self.t1.name_font_size,
+                )
+            ],
+            [int, int, int, int],
+        )
+        self.assertEqual(
+            (
+                self.t1.dimension_font_color,
+                self.t1.dimension_font_size,
+                self.t1.name_font_color,
+                self.t1.name_font_size,
+            ),
+            (255, 11, 7, 9),
+        )
+        flags = (
+            "dimension_font_bold",
+            "dimension_font_italic",
+            "dimension_font_underline",
+            "name_font_bold",
+            "name_font_italic",
+            "name_font_underline",
+        )
+        for field in flags:
+            with self.subTest(field=field):
+                self.assertIs(getattr(self.t1, field), True)
+        self.service.update_takeoff_text_properties(
+            [
+                (
+                    "t1",
+                    {
+                        "dimension_font_bold": "",
+                        "dimension_font_italic": 0,
+                        "dimension_font_underline": None,
+                        "name_font_bold": "",
+                        "name_font_italic": 0,
+                        "name_font_underline": None,
+                    },
+                )
+            ]
+        )
+        for field in flags:
+            with self.subTest(field=field, after="falsy"):
+                self.assertIs(getattr(self.t1, field), False)
+
+    def test_removing_a_takeoff_whose_recorded_page_is_not_loaded_still_reports_that_page(
+        self,
+    ):
+        # Inconsistent on purpose: the takeoff is held by page p1 but records an unloaded page uid.
+        self.aggregate.get_page("p1").takeoffs.append(self.t3)
+        self.assertEqual(self.service.remove_takeoffs(["t3"]), ["orphan-page"])
+        self.assertEqual(self.aggregate.bid_takeoffs, [self.t1, self.t2])
+        self.assertEqual(
+            self.service.remove_takeoffs(["t1", "t3-never-existed"]), ["p1"]
+        )
+        self.assertEqual(self.aggregate.bid_takeoffs, [self.t2])
+
+
+class ProjectDataServiceRoundTwoBatchTests(unittest.TestCase):
+    """Second-pass round two: empty batches, value-typed refs, coercion of stored values
+    and the identity of the model's own containers."""
+
+    def test_an_empty_scale_batch_is_refused_before_the_scale_values_are_parsed(self):
+        setup = ProjectDataServicePageMetadataTests(
+            "test_scale_text_values_are_coerced_to_numbers"
+        )
+        setup.setUp()
+        self.assertEqual(setup.service.apply_page_scales(setup.ref, [], None, "x"), ())
+        self.assertEqual(
+            (setup.page.scale_factor1, setup.page.scale_factor2), (1.0, 96.0)
+        )
+
+    def test_characterisation_overlay_values_of_other_numeric_types_are_coerced_to_float(
+        self,
+    ):
+        from decimal import Decimal
+
+        setup = ProjectDataServicePageMetadataTests(
+            "test_scale_text_values_are_coerced_to_numbers"
+        )
+        setup.setUp()
+        setup.page.overlay_offset_x = Decimal("4")
+        setup.page.overlay_offset_y = "6"
+        setup.page.overlay_rect = (Decimal("10"), 20, 30, 40)
+        setup.service.apply_page_scales(setup.ref, [setup.page], 1.0, 48.0)
+        self.assertEqual(
+            (setup.page.overlay_offset_x, setup.page.overlay_offset_y), (2.0, 3.0)
+        )
+        self.assertEqual(setup.page.overlay_rect, (5.0, 10.0, 15.0, 20.0))
+        self.assertEqual(
+            [type(v) for v in setup.page.overlay_rect], [float, float, float, float]
+        )
+
+    def test_characterisation_a_curve_update_changes_only_the_first_of_duplicate_uids(
+        self,
+    ):
+        service, aggregate = _real_service()
+        first = Takeoff(uid="t", condition_uid="c", page_uid="p")
+        second = Takeoff(uid="t", condition_uid="c", page_uid="p")
+        aggregate.set_pages({"p": Page("p", "P", takeoffs=[first, second])})
+        service.update_takeoff_curve("t", [1.0], 3)
+        self.assertEqual((first.position, first.curve), ([1.0], 3))
+        self.assertEqual(
+            (second.position, second.curve),
+            ([], Takeoff.CURVE_DISABLED),
+        )
+
+    def test_removing_nothing_keeps_the_models_takeoff_list_object(self):
+        service, aggregate = _real_service()
+        kept = Takeoff(uid="t", condition_uid="c", page_uid="p")
+        aggregate.bid_takeoffs = [kept]
+        held = aggregate.bid_takeoffs
+        self.assertEqual(service.remove_takeoffs([]), [])
+        self.assertIs(aggregate.bid_takeoffs, held)
+        self.assertEqual(service.remove_takeoffs(["", None]), [])
+        self.assertIs(aggregate.bid_takeoffs, held)
+        self.assertEqual(held, [kept])
+
+    def test_equal_but_distinct_bid_refs_are_accepted_by_every_current_bid_guard(self):
+        setup = ProjectDataServicePageMetadataTests(
+            "test_scale_text_values_are_coerced_to_numbers"
+        )
+        setup.setUp()
+        service, aggregate = setup.service, setup.aggregate
+
+        def same():
+            ref = BidRef("C:/a.mdb", "b1")
+            self.assertIsNot(ref, aggregate.current_bid_ref)
+            self.assertEqual(ref, aggregate.current_bid_ref)
+            return ref
+
+        self.assertIs(
+            service.replace_condition_family(same(), {"c": Condition(uid="c")}, {}),
+            True,
+        )
+        self.assertEqual(set(aggregate.bid_conditions), {"c"})
+        self.assertIs(
+            service.replace_bid_areas(same(), [BidArea("a", "b1", "0", "A", 1)]), True
+        )
+        self.assertEqual(set(aggregate.bid_areas), {"a"})
+        self.assertIs(
+            service.replace_bid_areas_after_local_save(same(), [], ["a"]), True
+        )
+        self.assertEqual(aggregate.bid_areas, {})
+        self.assertEqual(
+            service.apply_page_scales(same(), [setup.page], 1.0, 48.0), ("p1",)
+        )
+        self.assertEqual(setup.page.scale_factor2, 48.0)
+        self.assertIs(service.apply_page_name(same(), setup.page, "Renamed"), True)
+        self.assertEqual(setup.page.name, "Renamed")
+        self.assertIs(
+            service.replace_remote_bid_families(same(), BidLoadResult(), set()), True
+        )
+
+    def test_a_page_name_change_refuses_an_equal_copy_of_the_registered_page(self):
+        import dataclasses
+
+        setup = ProjectDataServicePageMetadataTests(
+            "test_scale_text_values_are_coerced_to_numbers"
+        )
+        setup.setUp()
+        twin = dataclasses.replace(setup.page)
+        self.assertEqual(twin, setup.page)
+        self.assertIsNot(twin, setup.page)
+        self.assertIs(setup.service.apply_page_name(setup.ref, twin, "Renamed"), False)
+        self.assertEqual((setup.page.name, twin.name), ("Old", "Old"))
+        self.assertEqual(setup.record.name, "Old")
+        self.assertIs(
+            setup.service.apply_page_name(setup.ref, setup.page, "Renamed"), True
+        )
+        self.assertEqual((setup.page.name, setup.record.name), ("Renamed", "Renamed"))
+
+    def test_page_metadata_sync_visits_every_present_container_whichever_are_missing(
+        self,
+    ):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        page = Page("p1", "New", scale_factor1=1.0, scale_factor2=48.0)
+
+        def current_bid():
+            return Bid(
+                uid="b1",
+                name="Loaded",
+                pages_without_folder=[HierarchyPageInfo(uid="p1", name="Stale")],
+            )
+
+        def cover():
+            return SimpleNamespace(
+                pages_without_folder=[HierarchyPageInfo(uid="p1", name="Cover stale")],
+                folders={},
+            )
+
+        # No hierarchy record for the bid: the loaded bid and the cover sheet are still synced.
+        aggregate.current_bid = current_bid()
+        service.replace_cover_sheet_data("C:/a.mdb", "b1", cover())
+        service._sync_page_metadata(ref, {"p1": page})
+        self.assertEqual(aggregate.current_bid.pages_without_folder[0].name, "New")
+        stored = service._cover_sheet_by_database_bid[("C:/a.mdb", "b1")]
+        self.assertEqual(stored.pages_without_folder[0].name, "New")
+        # No loaded bid: the hierarchy record and the cover sheet are still synced.
+        record = HierarchyPageInfo(uid="p1", name="Old")
+        aggregate.set_hierarchy(
+            HierarchyData(
+                loaded_files=[
+                    HierarchyFileEntry(
+                        file_path="C:/a.mdb",
+                        orphan_bids=[
+                            HierarchyBidInfo(uid="b1", pages_without_folder=[record])
+                        ],
+                    )
+                ]
+            )
+        )
+        aggregate.current_bid = None
+        service.replace_cover_sheet_data("C:/a.mdb", "b1", cover())
+        service._sync_page_metadata(ref, {"p1": page})
+        self.assertEqual((record.name, record.scale_factor2), ("New", 48.0))
+        stored = service._cover_sheet_by_database_bid[("C:/a.mdb", "b1")]
+        self.assertEqual(stored.pages_without_folder[0].name, "New")
+        # No cover sheet: the hierarchy record and the loaded bid are still synced.
+        record.name = "Old"
+        aggregate.current_bid = current_bid()
+        service._cover_sheet_by_database_bid.clear()
+        service._sync_page_metadata(ref, {"p1": page})
+        self.assertEqual(record.name, "New")
+        self.assertEqual(aggregate.current_bid.pages_without_folder[0].name, "New")
+
+    def test_hierarchy_refresh_rewrites_the_loaded_bid_when_the_paths_differ_only_in_spelling(
+        self,
+    ):
+        setup = ProjectDataServiceDatabaseHierarchyReplacementTests(
+            "test_database_paths_are_compared_in_normalized_form"
+        )
+        setup.setUp()
+        respelled = HierarchyFileEntry(
+            file_path="c:\\A.MDB", bid_projects=setup.entry.bid_projects
+        )
+        setup.aggregate.current_bid_ref = BidRef("C:/a.mdb", "b1")
+        setup.service.replace_database_hierarchy(respelled, setup.cdn)
+        self.assertEqual(setup.stale.name, "Fresh name")
+        self.assertEqual(setup.stale.measure_base, 1)
+        self.assertEqual(setup.condition.uom1, UOM_M)
+        self.assertEqual(setup.condition.cdn_type_name, "Footings")
+
+    def test_hierarchy_refresh_resolves_a_condition_type_uid_of_zero(self):
+        setup = ProjectDataServiceDatabaseHierarchyReplacementTests(
+            "test_database_paths_are_compared_in_normalized_form"
+        )
+        setup.setUp()
+        setup.cdn["0"] = CdnType(uid="0", name="Zero")
+        setup.condition.cdn_type_uid = 0
+        setup.service.replace_database_hierarchy(setup.entry, setup.cdn)
+        self.assertEqual(setup.condition.cdn_type_name, "Zero")
+        self.assertEqual(setup.unknown_type.cdn_type_name, "Unknown")
+
+    def test_unlisted_annotations_before_a_listed_one_do_not_stop_style_or_view_updates(
+        self,
+    ):
+        service, aggregate = _real_service()
+        plain_first = BidAnnotation(uid="a", annotation_type="rect", page_uid="p1")
+        plain_second = BidAnnotation(uid="b", annotation_type="rect", page_uid="p2")
+        view_first = BidAnnotation(uid="va", annotation_type="namedview", page_uid="p3")
+        view_second = BidAnnotation(
+            uid="vb", annotation_type="namedview", page_uid="p4"
+        )
+        aggregate.set_annotations([plain_first, view_first, plain_second, view_second])
+        self.assertEqual(
+            service.update_annotation_styles(
+                [("b", "rect", {"Color": "red", "Width": 2})]
+            ),
+            ["p2"],
+        )
+        self.assertEqual(
+            (plain_second.color, plain_second.width, plain_first.color),
+            ("red", 2.0, BidAnnotation(uid="x", annotation_type="rect").color),
+        )
+        self.assertEqual(service.update_named_view_names([("vb", "Name")]), ["p4"])
+        self.assertEqual(view_second.properties.get("Text"), "Name")
+        self.assertNotIn("Text", view_first.properties)
+        service.update_annotation_text_properties([("b", "rect", {"Text": "t"})])
+        self.assertEqual(plain_second.properties["Text"], "t")
+        self.assertNotIn("Text", plain_first.properties)
+
+    def test_takeoff_position_updates_keep_their_own_copy_of_the_callers_list(self):
+        service, aggregate = _real_service()
+        takeoff = Takeoff(uid="t", condition_uid="c", page_uid="p")
+        aggregate.set_pages({"p": Page("p", "P", takeoffs=[takeoff])})
+        position = [1.0, 2.0]
+        self.assertEqual(service.update_takeoff_positions([("t", position)]), ["p"])
+        position.append(99.0)
+        self.assertEqual(takeoff.position, [1.0, 2.0])
+        self.assertIsNot(takeoff.position, position)
+
+    def test_blank_uids_never_select_a_takeoff_whose_uid_is_blank(self):
+        service, aggregate = _real_service()
+        blank = Takeoff(uid="", condition_uid="c", page_uid="p", area_uid="5")
+        aggregate.set_pages({"p": Page("p", "P", takeoffs=[blank])})
+        aggregate.bid_takeoffs = [blank]
+        aggregate.bid_conditions = {"c": Condition(uid="c"), "d": Condition(uid="d")}
+        for blanks in (["", None], [""], [None]):
+            with self.subTest(blanks=blanks):
+                self.assertEqual(service.get_page_uids_for_takeoffs(blanks), [])
+                self.assertEqual(service.get_condition_uids_for_takeoffs(blanks), [])
+                self.assertEqual(service.update_takeoffs_area(blanks, "9"), [])
+                self.assertEqual(service.update_takeoffs_negative(blanks, True), [])
+                self.assertEqual(service.update_takeoffs_condition(blanks, "d"), [])
+                self.assertEqual(service.remove_takeoffs(blanks), [])
+                self.assertEqual(
+                    (blank.area_uid, blank.is_negative, blank.condition_uid),
+                    ("5", False, "c"),
+                )
+                self.assertEqual(aggregate.bid_takeoffs, [blank])
+                self.assertEqual(aggregate.get_page("p").takeoffs, [blank])
+
+    def test_blank_deleted_area_uids_change_nothing_for_unassigned_references(self):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        aggregate.page_area_selections = {"p": None, "q": "7"}
+        takeoff = Takeoff(uid="t", condition_uid="c", area_uid=None)
+        aggregate.bid_takeoffs = [takeoff]
+        self.assertIs(
+            service.replace_bid_areas_after_local_save(ref, [], ["", None]), True
+        )
+        self.assertIsNone(takeoff.area_uid)
+        self.assertEqual(aggregate.page_area_selections, {"p": None, "q": "7"})
+
+    def test_area_getters_apply_the_unassigned_and_relevance_filters_and_normalisation(
+        self,
+    ):
+        service, aggregate = _real_service()
+        aggregate.bid_conditions = {
+            "count": Condition(uid="count", condition_type=Condition.TYPE_COUNT),
+            "hidden": Condition(uid="hidden", layer_visible=False),
+        }
+        takeoffs = [
+            Takeoff(
+                uid="none",
+                condition_uid="count",
+                page_uid="p",
+                area_uid=None,
+                position=[10.0, 20.0],
+            ),
+            Takeoff(
+                uid="zero",
+                condition_uid="count",
+                page_uid="p",
+                area_uid="0",
+                position=[10.0, 20.0],
+            ),
+            Takeoff(
+                uid="padded",
+                condition_uid="count",
+                page_uid="p",
+                area_uid=" 5 ",
+                position=[10.0, 20.0],
+            ),
+            Takeoff(
+                uid="hidden",
+                condition_uid="hidden",
+                page_uid="p",
+                area_uid="6",
+                position=[10.0, 20.0],
+            ),
+        ]
+        aggregate.set_pages({"p": Page("p", "P", takeoffs=takeoffs)})
+        self.assertEqual(service.get_area_uids_with_takeoff(), {"0", "5"})
+        self.assertEqual(service.get_area_uids_with_takeoff_for_page("p"), {"0", "5"})
+        self.assertEqual(
+            service.get_assigned_area_uids_with_stored_takeoff(), {"5", "6"}
+        )
+        aggregate.bid_areas = {
+            "0": BidArea("0", "b", "", "Zero", 1),
+            "5": BidArea("5", "b", "", "Five", 2),
+        }
+        self.assertEqual(
+            [a.uid for a in service.get_bid_area_snapshot(takeoffs[:2])], []
+        )
+        self.assertEqual(
+            [a.uid for a in service.get_bid_area_snapshot(takeoffs[:3])], ["5"]
+        )
+
+    def test_generator_inputs_are_consumed_exactly_once(self):
+        service, aggregate = _real_service()
+        aggregate.set_hierarchy(_hierarchy_with_projects())
+        self.assertEqual(
+            service.get_project_bid_uids("C:/a.mdb", (uid for uid in ("p1", "p3"))),
+            ["b1", "b2", "b3"],
+        )
+        service.replace_database_settings(
+            "db",
+            default_layers=(layer for layer in [BidLayer("l", "b", "L", True, 1)]),
+            job_statuses=(job for job in [JobStatus(uid="j", name="J")]),
+            employees=(e for e in [Employee(uid="e", first_name="E")]),
+            pay_classes=(p for p in [PayClass(uid="p", name="P")]),
+            used_job_status_uids=(uid for uid in ["j1", "j2"]),
+            used_employee_uids=(uid for uid in ["e1"]),
+        )
+        self.assertEqual(
+            [l.uid for l in service.get_default_layer_snapshot("db")], ["l"]
+        )
+        self.assertEqual([j.uid for j in service.get_job_status_snapshot("db")], ["j"])
+        self.assertEqual([e.uid for e in service.get_employee_snapshot("db")], ["e"])
+        self.assertEqual([p.uid for p in service.get_pay_class_snapshot("db")], ["p"])
+        self.assertEqual(service.get_used_job_status_uids("db"), {"j1", "j2"})
+        self.assertEqual(service.get_used_employee_uids("db"), {"e1"})
+        service.replace_page_delete_content_uids("db", "1", (uid for uid in "ab"))
+        self.assertEqual(
+            service.get_page_delete_content_snapshot("db", "1"), {"a", "b"}
+        )
+
+    def test_collected_takeoffs_emptiness_follows_the_takeoff_list_not_the_count(self):
+        from ost_visualizer.domain.services.project_data_service import (
+            CollectedTakeoffsResult,
+        )
+
+        explicit_total = CollectedTakeoffsResult(takeoffs=[], total_takeoffs=5)
+        self.assertEqual(explicit_total.total_takeoffs, 5)
+        self.assertIs(explicit_total.is_empty(), True)
+        listed = CollectedTakeoffsResult(
+            takeoffs=[Takeoff(uid="1", condition_uid="c")], total_takeoffs=-1
+        )
+        self.assertIs(listed.is_empty(), False)
+
+    def test_the_condition_family_replacement_copies_and_does_not_alias_the_passed_dicts(
+        self,
+    ):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        conditions = {"c": Condition(uid="c")}
+        folders = {"f": object()}
+        service.replace_condition_family(ref, conditions, folders)
+        self.assertIsNot(aggregate.bid_conditions, conditions)
+        self.assertIsNot(aggregate.bid_condition_folders, folders)
+        self.assertIs(aggregate.bid_conditions["c"], conditions["c"])
+        self.assertIs(aggregate.bid_condition_folders["f"], folders["f"])
+        self.assertIs(service.get_bid_conditions(), aggregate.bid_conditions)
+
+
+class ProjectDataServiceUidTextCoercionCharacterisationTests(unittest.TestCase):
+    """Characterisation (pins existing behaviour, not a requirement): the service
+    defensively turns uids and keys given as numbers into text before comparing them
+    with the text uids stored in the model. Each test gives a number on one side and
+    its text on the other."""
+
+    def test_characterisation_page_scale_projection_matches_numeric_page_uids(self):
+        setup = ProjectDataServicePageMetadataTests(
+            "test_scale_text_values_are_coerced_to_numbers"
+        )
+        setup.setUp()
+        setup.page.uid = "1"
+        setup.aggregate.set_pages({"1": setup.page})
+        setup.aggregate.bid_takeoffs[0].page_uid = 1
+        setup.rect.page_uid = 1
+        setup.service.apply_page_scales(setup.ref, [setup.page], 1.0, 48.0)
+        self.assertEqual(
+            setup.aggregate.bid_takeoffs[0].position, [48.0, 96.0, 144.0, 192.0]
+        )
+        self.assertEqual(setup.rect.position, [48.0, 24.0, 96.0, 48.0, 0.5])
+
+    def test_characterisation_page_metadata_sync_matches_numeric_record_uids(self):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        record = HierarchyPageInfo(uid=1, name="Old")
+        aggregate.set_hierarchy(
+            HierarchyData(
+                loaded_files=[
+                    HierarchyFileEntry(
+                        file_path="C:/a.mdb",
+                        orphan_bids=[
+                            HierarchyBidInfo(uid="b1", pages_without_folder=[record])
+                        ],
+                    )
+                ]
+            )
+        )
+        service._sync_page_metadata(ref, {"1": Page("1", "New")})
+        self.assertEqual(record.name, "New")
+
+    def test_characterisation_remote_takeoffs_land_on_pages_whose_uid_differs_only_in_type(
+        self,
+    ):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        by_number = Takeoff(uid="t1", condition_uid="c", page_uid=1)
+        by_text = Takeoff(uid="t2", condition_uid="c", page_uid="2")
+        service.replace_remote_bid_families(
+            ref,
+            BidLoadResult(
+                bid_takeoffs=[by_number, by_text],
+                pages={"1": Page("1", "One"), "2": Page(2, "Two")},
+            ),
+            {"takeoffs", "pages"},
+        )
+        pages = {str(page.uid): page for page in aggregate.get_all_pages()}
+        self.assertEqual(pages["1"].takeoffs, [by_number])
+        self.assertEqual(pages["2"].takeoffs, [by_text])
+
+    def test_characterisation_layer_state_normalises_numeric_layer_uids_to_text(self):
+        service, aggregate = _real_service()
+        service.set_bid_layer_visibility(
+            [
+                BidLayer(5, "b", "Annotation", False, 1),
+                BidLayer(6, "b", "Image", True, 2),
+            ]
+        )
+        self.assertEqual(aggregate.bid_layer_visibility, {"5": False, "6": True})
+        self.assertEqual(
+            aggregate.bid_layer_names_by_uid, {"5": "annotation", "6": "image"}
+        )
+        self.assertEqual(service.get_annotation_layer_uid(), "5")
+        self.assertIs(service.is_annotation_layer_visible(), False)
+        self.assertIs(service.is_image_layer_uid(6), True)
+        self.assertIs(service.is_image_layer_uid("6"), True)
+        self.assertIs(service.is_image_layer_uid(5), False)
+        service.update_layer_visibility(6, False)
+        self.assertIs(aggregate.bid_layer_visibility["6"], False)
+        self.assertNotIn(6, aggregate.bid_layer_visibility)
+
+    def test_characterisation_layer_toggles_reach_conditions_and_layers_with_numeric_uids(
+        self,
+    ):
+        service, aggregate = _real_service()
+        aggregate.bid_layers = [BidLayer(5, "b", "Takeoff", True, 1)]
+        service.set_bid_layer_visibility(aggregate.bid_layers)
+        condition = Condition(uid="c", layer_uid=5, layer_visible=True)
+        aggregate.bid_conditions = {"c": condition}
+        service.update_layer_visibility("5", False)
+        self.assertIs(condition.layer_visible, False)
+        self.assertIs(aggregate.bid_layers[0].show, False)
+
+    def test_characterisation_named_visibility_follows_numeric_layer_keys_of_the_model(
+        self,
+    ):
+        service, aggregate = _real_service()
+        aggregate.bid_layer_visibility = {5: True}
+        aggregate.bid_layer_names_by_uid = {5: "takeoff"}
+        aggregate.bid_layer_visibility_by_name = {"takeoff": True}
+        service.update_all_layer_visibility(False)
+        self.assertEqual(aggregate.bid_layer_visibility_by_name, {"takeoff": False})
+
+    def test_characterisation_the_bid_annotation_layer_uid_is_returned_as_text(self):
+        service, aggregate = _real_service()
+        aggregate.current_bid_ref = BidRef("C:/a.mdb", "b1")
+        aggregate.bid_layers = [BidLayer(5, "b1", "Annotation", True, 1)]
+        self.assertEqual(
+            service.get_bid_annotation_layer_uid(aggregate.current_bid_ref), "5"
+        )
+
+    def test_characterisation_layer_usage_reports_numeric_layer_uids_as_text(self):
+        service, aggregate = _real_service()
+        aggregate.bid_conditions = {"c": Condition(uid="c", layer_uid=25)}
+        aggregate.set_pages(
+            {"p": Page("p", "P", takeoffs=[Takeoff(uid="t", condition_uid="c")])}
+        )
+        aggregate.set_annotations(
+            [BidAnnotation(uid="a", annotation_type="rect", layer_uid=30)]
+        )
+        self.assertEqual(service.get_layer_uids_in_use(), {"25", "30"})
+
+    def test_characterisation_annotation_updates_match_numeric_uids_and_types(self):
+        service, aggregate = _real_service()
+        annotation = BidAnnotation(
+            uid="5", annotation_type="3", page_uid="p", properties={"Text": "old"}
+        )
+        view = BidAnnotation(uid="7", annotation_type="namedview", page_uid="v")
+        numeric_type = BidAnnotation(uid="8", annotation_type=4, page_uid="q")
+        aggregate.set_annotations([annotation, view, numeric_type])
+        self.assertEqual(
+            service.get_page_uids_for_annotation_keys([(5, 3), ("8", "4"), (8, 4)]),
+            ["p", "q"],
+        )
+        self.assertEqual(
+            service.update_annotation_positions([(5, 3, [1.0, 2.0])]), ["p"]
+        )
+        self.assertEqual(annotation.position, [1.0, 2.0])
+        self.assertEqual(
+            service.update_annotation_text_properties([(5, 3, {"Text": "new"})]), ["p"]
+        )
+        self.assertEqual(annotation.properties["Text"], "new")
+        self.assertEqual(
+            service.update_annotation_styles([(5, 3, {"Color": "red"})]), ["p"]
+        )
+        self.assertEqual(annotation.color, "red")
+        self.assertEqual(service.update_named_view_names([(7, 8)]), ["v"])
+        self.assertEqual(view.properties["Text"], "8")
+
+    def test_characterisation_hotlink_lookup_matches_numeric_target_uids(self):
+        service, aggregate = _real_service()
+        link = BidAnnotation(
+            uid="h", annotation_type="hotlink", properties={"BidPageViewUID": "7"}
+        )
+        aggregate.set_annotations([link])
+        self.assertEqual(service.find_hotlinks_targeting([7]), [link])
+
+    def test_characterisation_takeoff_updates_match_numeric_uids_and_condition_uids(
+        self,
+    ):
+        service, aggregate = _real_service()
+        takeoff = Takeoff(uid="5", condition_uid="c", page_uid="p")
+        aggregate.set_pages({"p": Page("p", "P", takeoffs=[takeoff])})
+        aggregate.bid_takeoffs = [takeoff]
+        aggregate.bid_conditions = {
+            "c": Condition(uid="c", condition_type=Condition.TYPE_LINEAR),
+            "9": Condition(uid="9", condition_type=Condition.TYPE_LINEAR),
+        }
+        self.assertEqual(service.get_page_uids_for_takeoffs([5]), ["p"])
+        self.assertEqual(service.get_condition_uids_for_takeoffs([5]), ["c"])
+        self.assertEqual(service.update_takeoffs_condition([5], 9), ["p"])
+        self.assertEqual(takeoff.condition_uid, "9")
+        self.assertEqual(service.update_takeoff_curve(5, [1.0], 2), ["p"])
+        self.assertEqual((takeoff.position, takeoff.curve), ([1.0], 2))
+        self.assertEqual(service.update_takeoff_positions([(5, [2.0])]), ["p"])
+        self.assertEqual(takeoff.position, [2.0])
+        self.assertEqual(service.update_takeoff_rotations([(5, 90.0)]), ["p"])
+        self.assertEqual(takeoff.rotation, 90.0)
+        self.assertEqual(
+            service.update_takeoff_text_properties([(5, {"name_font_size": 8})]), ["p"]
+        )
+        self.assertEqual(takeoff.name_font_size, 8)
+
+    def test_characterisation_direct_lookups_do_not_coerce_their_uid(self):
+        service, aggregate = _real_service()
+        takeoff = Takeoff(uid="5", condition_uid="c", page_uid="p")
+        aggregate.set_pages({"p": Page("p", "P", takeoffs=[takeoff])})
+        aggregate.bid_conditions = {"7": Condition(uid="7")}
+        self.assertIs(service.get_takeoff("5"), takeoff)
+        self.assertIsNone(service.get_takeoff(5))
+        self.assertIs(service.get_condition("7"), aggregate.bid_conditions["7"])
+        self.assertIsNone(service.get_condition(7))
+
+    def test_characterisation_local_area_cleanup_matches_numeric_area_uids_to_text_deletions(
+        self,
+    ):
+        service, aggregate = _real_service()
+        ref = BidRef("C:/a.mdb", "b1")
+        aggregate.current_bid_ref = ref
+        aggregate.page_area_selections = {"p": 20, "q": 21}
+        takeoff = Takeoff(uid="t", condition_uid="c", area_uid=20)
+        kept = Takeoff(uid="k", condition_uid="c", area_uid=21)
+        aggregate.bid_takeoffs = [takeoff, kept]
+        self.assertIs(service.replace_bid_areas_after_local_save(ref, [], ["20"]), True)
+        self.assertEqual(aggregate.page_area_selections, {"p": None, "q": 21})
+        self.assertEqual((takeoff.area_uid, kept.area_uid), (UNASSIGNED_AREA_UID, 21))
+
+    def test_characterisation_the_annotation_layer_set_uses_text_uids_for_numeric_model_keys(
+        self,
+    ):
+        service, aggregate = _real_service()
+        aggregate.bid_layer_names_by_uid = {5: "annotation"}
+        aggregate.bid_layer_visibility = {"5": False}
+        self.assertEqual(service.get_annotation_layer_uid(), "5")
+        self.assertIs(service.is_annotation_layer_visible(), False)

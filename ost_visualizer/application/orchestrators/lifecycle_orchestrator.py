@@ -32,16 +32,22 @@ class LifecycleOrchestrator:
 
     def _perform_shutdown(self) -> None:
         self._shutdown_performed = True
+        interrupts: list[BaseException] = []
         try:
             participants = self._container.get_by_interface(IShutdownAware)
         except Exception as exc:
             participants = []
             self.logger.exception("Error discovering shutdown participants: %s", exc)
+        except BaseException as exc:
+            participants = []
+            interrupts.append(exc)
         for participant in participants:
             try:
                 participant.shutdown()
             except Exception as exc:
                 self.logger.exception("Error shutting down %s: %s", participant, exc)
+            except BaseException as exc:
+                self._note_interrupt(interrupts, exc, f"shutting down {participant}")
         if self._app_controller:
             try:
                 self._app_controller.cleanup()
@@ -49,7 +55,27 @@ class LifecycleOrchestrator:
                 self.logger.exception(
                     "Error cleaning up application controller: %s", exc
                 )
+            except BaseException as exc:
+                self._note_interrupt(
+                    interrupts, exc, "cleaning up application controller"
+                )
         self._app_controller = None
         self._container = None
         self._viz_orchestrator = None
         self.event_bus = None
+        if interrupts:
+            raise interrupts[0]
+
+    def _note_interrupt(
+        self, interrupts: list[BaseException], exc: BaseException, stage: str
+    ) -> None:
+        if not interrupts:
+            interrupts.append(exc)
+            return
+        self.logger.exception(
+            "%s while %s after %s; the original %s is re-raised",
+            type(exc).__name__,
+            stage,
+            type(interrupts[0]).__name__,
+            type(interrupts[0]).__name__,
+        )

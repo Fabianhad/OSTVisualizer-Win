@@ -1501,6 +1501,1291 @@ class BridgeCleanupReleaseTests(BridgeTestCase):
         self.assertEqual(parent.findChildren(TakeoffCommandBridge), [])
 
 
+class RecordingSocket:
+    """Stands in for an accepted QLocalSocket: records what the bridge does to it."""
+
+    def __init__(self, incoming=b""):
+        self.events = []
+        self.incoming = incoming
+
+    def readAll(self):
+        data, self.incoming = self.incoming, b""
+        return data
+
+    def write(self, payload):
+        self.events.append(("write", bytes(payload)))
+
+    def flush(self):
+        self.events.append(("flush",))
+
+    def disconnectFromServer(self):
+        self.events.append(("disconnect",))
+
+    def replies(self):
+        writes = [event[1] for event in self.events if event[0] == "write"]
+        for payload in writes:
+            assert payload.endswith(b"\n") and payload.count(b"\n") == 1, payload
+        return [json.loads(payload) for payload in writes]
+
+    def hung_up(self):
+        return self.events.count(("disconnect",))
+
+
+def request_line(**fields):
+    body = {"token": "token-0", "command": "list_levels", "arguments": {}}
+    body.update(fields)
+    return json.dumps(body).encode()
+
+
+class ServerSpy:
+    """Delegates to the real QLocalServer and records the calls the bridge makes."""
+
+    def __init__(self, server):
+        self._server = server
+        self.calls = []
+
+    def __getattr__(self, name):
+        attribute = getattr(self._server, name)
+        if name not in ("removeServer", "listen", "close"):
+            return attribute
+
+        def recorded(*args):
+            self.calls.append((name, args))
+            return attribute(*args)
+
+        return recorded
+
+
+class BridgeDirectHandlerTests(BridgeTestCase):
+    """The slot methods driven directly: nothing escapes, each request is answered once."""
+
+    def test_every_refusal_is_answered_exactly_once_and_stops_there(self):
+        cases = [
+            ("not json", b"{nope", "invalid_argument", "Malformed request."),
+            ("not utf-8", b"\xff\xfe", "invalid_argument", "Malformed request."),
+            ("a list", b"[1]", "invalid_argument", "Malformed request."),
+            (
+                "wrong token",
+                request_line(token="nope"),
+                "unauthorized",
+                "Session token rejected.",
+            ),
+            (
+                "numeric token",
+                request_line(token=7),
+                "unauthorized",
+                "Session token rejected.",
+            ),
+            (
+                "no token",
+                json.dumps({"command": "list_levels"}).encode(),
+                "unauthorized",
+                "Session token rejected.",
+            ),
+            (
+                "unknown command",
+                request_line(command="apply_it"),
+                "unknown_command",
+                "This command is not available.",
+            ),
+            (
+                "numeric command",
+                request_line(command=7),
+                "unknown_command",
+                "This command is not available.",
+            ),
+            (
+                "undeclared argument",
+                request_line(arguments={"approve": True}),
+                "invalid_argument",
+                "Unknown or malformed arguments.",
+            ),
+            (
+                "empty list as arguments",
+                request_line(arguments=[]),
+                "invalid_argument",
+                "Unknown or malformed arguments.",
+            ),
+            (
+                "empty text as arguments",
+                request_line(arguments=""),
+                "invalid_argument",
+                "Unknown or malformed arguments.",
+            ),
+            (
+                "list as arguments",
+                request_line(arguments=["bid_uid"]),
+                "invalid_argument",
+                "Unknown or malformed arguments.",
+            ),
+        ]
+        for label, line, status, message in cases:
+            with self.subTest(label=label):
+                socket = RecordingSocket()
+                self.bridge._handle(socket, line)
+                (reply,) = socket.replies()
+                self.assertEqual(
+                    (reply["success"], reply["status"], reply["error"]["message"]),
+                    (False, status, message),
+                )
+                self.assertEqual(socket.hung_up(), 1)
+        self.allowed = False
+        socket = RecordingSocket()
+        self.bridge._handle(socket, request_line())
+        (reply,) = socket.replies()
+        self.assertEqual(
+            (reply["success"], reply["status"], reply["error"]["message"]),
+            (
+                False,
+                "feature_denied",
+                "AI takeoff is not enabled or not available for the open bid.",
+            ),
+        )
+        self.assertEqual(socket.hung_up(), 1)
+        self.assertEqual(self.service.calls, [])
+
+    def test_a_command_that_fails_is_answered_and_audited_exactly_once(self):
+        audited = []
+        bridge = self.capped_bridge(
+            audit=lambda tool, arguments, outcome: audited.append(
+                (tool, arguments, outcome)
+            )
+        )
+        socket = RecordingSocket()
+        bridge._handle(
+            socket,
+            request_line(
+                token="capped-token",
+                command="get_quantities",
+                arguments={"group_by": "level"},
+            ),
+        )
+        (reply,) = socket.replies()
+        self.assertEqual(
+            (reply["status"], reply["error"]["message"]),
+            ("invalid_argument", "group_by must be condition or page"),
+        )
+        self.assertEqual(socket.hung_up(), 1)
+        self.assertEqual(
+            audited, [("get_quantities", {"group_by": "level"}, "invalid_argument")]
+        )
+
+        def broken(bid_uid=None):
+            raise ValueError("secret detail")
+
+        self.service.list_levels = broken
+        socket = RecordingSocket()
+        audited.clear()
+        with self.assertLogs(
+            "ost_visualizer.presentation.services.ai_takeoff_bridge", logging.ERROR
+        ):
+            bridge._handle(socket, request_line(token="capped-token"))
+        (reply,) = socket.replies()
+        self.assertEqual(
+            (reply["status"], reply["error"]["message"]),
+            ("unexpected_error", "The command failed."),
+        )
+        self.assertEqual(socket.hung_up(), 1)
+        self.assertEqual(audited, [("list_levels", {}, "unexpected_error")])
+
+    def test_a_failed_start_leaves_no_token_that_would_be_accepted(self):
+        blocker = self.directory / "blocker"
+        blocker.write_text("not a folder", encoding="utf-8")
+        bridge = TakeoffCommandBridge(
+            read_service=self.service,
+            pdf_source=self.pdf,
+            access_allowed=lambda: True,
+            token_path=blocker / "session.token",
+            server_name=self.server_name + "-blocked",
+            token_factory=lambda: "blocked-token",
+        )
+        self.addCleanup(self.release_bridge, bridge)
+        with self.assertLogs(
+            "ost_visualizer.presentation.services.ai_takeoff_bridge", logging.WARNING
+        ):
+            self.assertIs(bridge.start(), False)
+        socket = RecordingSocket()
+        bridge._handle(socket, request_line(token="blocked-token"))
+        (reply,) = socket.replies()
+        self.assertEqual(reply["status"], "unauthorized")
+        self.assertEqual(self.service.calls, [])
+
+    def test_a_token_with_a_lone_surrogate_is_compared_like_any_other(self):
+        self.bridge._token = "tok\ud800"
+        accepted = RecordingSocket()
+        self.bridge._handle(accepted, request_line(token="tok\ud800"))
+        self.assertTrue(accepted.replies()[0]["success"])
+        rejected = RecordingSocket()
+        self.bridge._handle(rejected, request_line(token="tok\ud801"))
+        self.assertEqual(rejected.replies()[0]["status"], "unauthorized")
+        self.assertEqual(self.service.calls, [("list_levels", {"bid_uid": None})])
+
+    def test_the_token_is_compared_in_constant_time_on_its_utf8_bytes(self):
+        import hmac
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        real = hmac.compare_digest
+        with patch.object(
+            ai_takeoff_bridge.hmac, "compare_digest", side_effect=real
+        ) as compared:
+            socket = RecordingSocket()
+            self.bridge._handle(socket, request_line(token="token-x"))
+        self.assertEqual(socket.replies()[0]["status"], "unauthorized")
+        compared.assert_called_once_with(b"token-x", b"token-0")
+
+    def test_only_the_first_line_of_one_read_is_a_request(self):
+        socket = RecordingSocket(request_line() + b"\n" + b"not a request")
+        self.bridge._buffers[id(socket)] = bytearray()
+        self.bridge._on_ready_read(socket)
+        (reply,) = socket.replies()
+        self.assertTrue(reply["success"])
+        self.assertEqual(self.service.calls, [("list_levels", {"bid_uid": None})])
+        self.assertNotIn(id(socket), self.bridge._buffers)
+
+    def test_an_idle_timer_for_a_socket_that_no_longer_exists_does_nothing(self):
+        dead = QLocalSocket()
+        delete(dead)
+        self.bridge._buffers[id(dead)] = bytearray(b"{")
+        with self.slot_errors() as errors:
+            self.bridge._on_idle(dead)
+        self.assertEqual(errors, [])
+        self.assertNotIn(id(dead), self.bridge._buffers)
+
+    def test_a_live_socket_that_is_idle_gets_the_timeout_answer(self):
+        socket = RecordingSocket()
+        self.bridge._buffers[id(socket)] = bytearray(b"{")
+        self.bridge._on_idle(socket)
+        (reply,) = socket.replies()
+        self.assertEqual(
+            (reply["status"], reply["error"]["message"]),
+            ("invalid_argument", "No complete request was received in time."),
+        )
+        self.assertEqual(socket.hung_up(), 1)
+        again = RecordingSocket()
+        self.bridge._on_idle(again)
+        self.assertEqual(again.events, [])
+
+    def test_the_busy_worker_counter_stops_at_zero(self):
+        dead = QLocalSocket()
+        delete(dead)
+        self.assertEqual(self.bridge._active_workers, 0)
+        self.bridge._finish(dead, (("list_levels", {}), ok_result({})))
+        self.assertEqual(self.bridge._active_workers, 0)
+        self.bridge._active_workers = 3
+        self.bridge._finish(dead, (("list_levels", {}), ok_result({})))
+        self.assertEqual(self.bridge._active_workers, 2)
+
+    def test_a_finished_job_is_only_answered_while_the_bridge_is_open(self):
+        audited = []
+        bridge = self.capped_bridge(
+            audit=lambda tool, arguments, outcome: audited.append(outcome)
+        )
+        live = RecordingSocket()
+        bridge._finish(live, (("list_levels", {}), ok_result({}, "ok")))
+        self.assertEqual(len(live.replies()), 1)
+        self.assertEqual(audited, ["ok"])
+        bridge.cleanup()
+        late = RecordingSocket()
+        bridge._finish(late, (("list_levels", {}), ok_result({}, "ok")))
+        self.assertEqual(late.events, [])
+        self.assertEqual(audited, ["ok"])
+
+    def test_a_connection_signal_after_cleanup_does_nothing(self):
+        self.bridge.cleanup()
+        with self.slot_errors() as errors:
+            self.bridge._on_new_connection()
+        self.assertEqual(errors, [])
+
+    def test_a_reply_is_one_ascii_json_line_then_a_hang_up(self):
+        socket = RecordingSocket()
+        result = ok_result({"name": "caf\u00e9 \ud800"})
+        self.bridge._respond(socket, result)
+        writes = [event for event in socket.events if event[0] == "write"]
+        self.assertEqual(
+            writes, [("write", json.dumps(result).encode("ascii") + b"\n")]
+        )
+        self.assertEqual(socket.events[0][0], "write")
+        self.assertEqual(socket.events[-1], ("disconnect",))
+        self.assertEqual(socket.hung_up(), 1)
+
+
+class BridgeStateReleaseTests(BridgeTestCase):
+    """What cleanup() is expected to let go of."""
+
+    def test_cleanup_forgets_the_session_token(self):
+        self.bridge.cleanup()
+        socket = RecordingSocket()
+        self.bridge._handle(socket, request_line())
+        (reply,) = socket.replies()
+        self.assertEqual(reply["status"], "unauthorized")
+
+    def test_cleanup_drops_request_state_even_for_sockets_it_does_not_own(self):
+        self.bridge._buffers[12345] = bytearray(b"{")
+        self.bridge._open_sockets.add(12345)
+        self.bridge.cleanup()
+        self.assertEqual(self.bridge._buffers, {})
+        self.assertEqual(self.bridge._open_sockets, set())
+
+    def test_cleanup_lets_go_of_the_read_service_and_the_pdf_source(self):
+        import gc
+        import weakref
+
+        service = FakeReadService()
+        pdf = FakePdfSource()
+        bridge = TakeoffCommandBridge(
+            read_service=service,
+            pdf_source=pdf,
+            access_allowed=lambda: True,
+            token_path=self.directory / "release" / "session.token",
+            server_name=self.server_name + "-release",
+            token_factory=lambda: "release-token",
+        )
+        self.addCleanup(self.release_bridge, bridge)
+        self.assertTrue(bridge.start())
+        service_ref = weakref.ref(service)
+        pdf_ref = weakref.ref(pdf)
+        del service, pdf
+        gc.collect()
+        self.assertIsNotNone(service_ref())
+        self.assertIsNotNone(pdf_ref())
+        bridge.cleanup()
+        gc.collect()
+        self.assertIsNone(service_ref())
+        self.assertIsNone(pdf_ref())
+
+    def test_cleanup_still_releases_everything_when_the_server_is_already_gone(self):
+        self.bridge._server = None
+        self.bridge.cleanup()
+        self.assertEqual(self.bridge._commands, {})
+        self.assertFalse(self.token_path.exists())
+        self.assertIsNone(self.bridge._read_service)
+
+    def test_cleanup_still_closes_the_server_when_the_command_table_is_empty(self):
+        server = self.bridge._server
+        self.bridge._commands = {}
+        self.bridge.cleanup()
+        self.assertFalse(server.isListening())
+        self.assertFalse(self.token_path.exists())
+        self.assertIsNone(self.bridge._server)
+
+    def test_cleanup_schedules_the_deletion_of_each_connection_itself(self):
+        child = QLocalSocket(self.bridge)
+        self.bridge.cleanup()
+        self.assertTrue(isValid(child))
+        QtCore.QCoreApplication.sendPostedEvents(
+            child, QtCore.QEvent.Type.DeferredDelete
+        )
+        self.assertFalse(isValid(child))
+
+    def test_start_and_cleanup_both_remove_a_stale_endpoint_of_their_name(self):
+        bridge = TakeoffCommandBridge(
+            read_service=self.service,
+            pdf_source=self.pdf,
+            access_allowed=lambda: True,
+            token_path=self.directory / "spied" / "session.token",
+            server_name=self.server_name + "-spied",
+            token_factory=lambda: "spied-token",
+        )
+        self.addCleanup(self.release_bridge, bridge)
+        spy = ServerSpy(bridge._server)
+        bridge._server = spy
+        self.assertTrue(bridge.start())
+        name = self.server_name + "-spied"
+        self.assertEqual(
+            [call for call in spy.calls if call[0] in ("removeServer", "listen")],
+            [("removeServer", (name,)), ("listen", (name,))],
+        )
+        spy.calls.clear()
+        bridge.cleanup()
+        self.assertEqual(
+            [call for call in spy.calls if call[0] in ("close", "removeServer")],
+            [("close", ()), ("removeServer", (name,))],
+        )
+
+
+class BridgeDefaultsTests(BridgeTestCase):
+    """What a caller that passes no options gets."""
+
+    def unstarted(self, **options):
+        bridge = TakeoffCommandBridge(
+            read_service=self.service,
+            pdf_source=self.pdf,
+            access_allowed=lambda: True,
+            token_path=self.directory / "defaults" / "session.token",
+            **options,
+        )
+        # never started: deleted directly so the real pipe name is never touched
+        self.addCleanup(lambda: delete(bridge) if isValid(bridge) else None)
+        return bridge
+
+    def test_the_limits_and_pipe_name_default_to_the_module_values(self):
+        bridge = self.unstarted()
+        self.assertEqual(
+            (
+                bridge._max_workers,
+                bridge._max_connections,
+                bridge._idle_timeout_ms,
+                bridge._server_name,
+            ),
+            (2, 8, 10000, "OSTVisualizerTakeoffBridge.v1"),
+        )
+        self.assertIsNone(bridge.parent())
+
+    def test_a_token_path_given_as_text_is_accepted(self):
+        path = self.directory / "as-text" / "session.token"
+        bridge = TakeoffCommandBridge(
+            read_service=self.service,
+            pdf_source=self.pdf,
+            access_allowed=lambda: True,
+            token_path=str(path),
+            server_name=self.server_name + "-as-text",
+            token_factory=lambda: "text-token",
+        )
+        self.addCleanup(self.release_bridge, bridge)
+        self.assertTrue(bridge.start())
+        self.assertEqual(path.read_text(encoding="utf-8"), "text-token")
+        bridge.cleanup()
+        self.assertFalse(path.exists())
+
+    def test_the_limits_are_whole_numbers(self):
+        bridge = self.unstarted(
+            max_workers=2.9, max_connections=3.9, idle_timeout_ms=250.9
+        )
+        self.assertEqual(
+            (bridge._max_workers, bridge._max_connections, bridge._idle_timeout_ms),
+            (2, 3, 250),
+        )
+        for value in (
+            bridge._max_workers,
+            bridge._max_connections,
+            bridge._idle_timeout_ms,
+        ):
+            self.assertIs(type(value), int)
+
+    def test_default_tokens_differ_between_sessions(self):
+        tokens = []
+        for index in range(2):
+            path = self.directory / f"fresh-{index}" / "session.token"
+            bridge = TakeoffCommandBridge(
+                read_service=self.service,
+                pdf_source=self.pdf,
+                access_allowed=lambda: True,
+                token_path=path,
+                server_name=f"{self.server_name}-fresh-{index}",
+            )
+            self.addCleanup(self.release_bridge, bridge)
+            self.assertTrue(bridge.start())
+            tokens.append(path.read_text(encoding="utf-8"))
+        self.assertEqual(len(set(tokens)), 2)
+        for token in tokens:
+            self.assertRegex(token, r"^[A-Za-z0-9_-]{43}$")
+
+    def test_the_default_audit_accepts_a_reply_without_complaint(self):
+        bridge = self.unstarted()
+        socket = RecordingSocket()
+        with self.assertNoLogs(
+            "ost_visualizer.presentation.services.ai_takeoff_bridge", logging.DEBUG
+        ):
+            bridge._reply(socket, "list_levels", {}, ok_result({"levels": []}))
+        self.assertEqual(len(socket.replies()), 1)
+
+
+class BridgeTokenFileTests(BridgeTestCase):
+    def test_the_token_file_is_replaced_atomically_from_a_sibling_temporary(self):
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        path = self.directory / "atomic" / "session.token"
+        path.parent.mkdir()
+        path.write_text("old-token", encoding="utf-8")
+        seen = []
+        real_replace = os.replace
+
+        def spy(source, destination):
+            seen.append(
+                (
+                    Path(source),
+                    Path(destination),
+                    Path(source).read_text(encoding="utf-8"),
+                    Path(destination).read_text(encoding="utf-8"),
+                )
+            )
+            real_replace(source, destination)
+
+        with patch.object(ai_takeoff_bridge.os, "replace", spy):
+            ai_takeoff_bridge._stage_token(path, "new-token")
+            ai_takeoff_bridge._publish_token(path)
+        self.assertEqual(len(seen), 1)
+        source, destination, source_text, destination_text = seen[0]
+        self.assertEqual(destination, path)
+        self.assertNotEqual(source, path)
+        self.assertEqual(source.parent, path.parent)
+        self.assertEqual((source_text, destination_text), ("new-token", "old-token"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "new-token")
+        self.assertEqual([p.name for p in path.parent.iterdir()], ["session.token"])
+
+
+class BridgeRenderPayloadTests(BridgeTestCase):
+    def test_a_render_hands_the_crop_plan_to_the_pdf_and_returns_a_real_png(self):
+        import base64
+
+        frames = []
+        original = self.pdf.render_frame
+
+        def recording(file_path, page_index, scale, frame_pts):
+            frames.append((file_path, page_index, scale, frame_pts))
+            return original(file_path, page_index, scale, frame_pts)
+
+        self.pdf.render_frame = recording
+        response = self.call("render_sheet", {"page_uid": "p1"})
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(frames, [("C:/p.pdf", 0, 1.0, (0.0, 0.0, 20.0, 10.0))])
+        data = response["data"]
+        self.assertEqual(
+            {key: data[key] for key in data if key != "image"},
+            {
+                "page_uid": "p1",
+                "frame_pts": [0.0, 0.0, 20.0, 10.0],
+                "px_to_page_pts": [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                "page_pts_to_ost": [0.5, 0.0, 0.0, 0.5, 0.0, 0.0],
+                "overlay_status": None,
+                "render_status": "ok",
+            },
+        )
+        image = QtGui.QImage.fromData(base64.b64decode(data["image"]["png_base64"]))
+        self.assertEqual((image.width(), image.height()), (20, 10))
+        self.assertEqual(
+            image.pixelColor(10, 5).getRgb(), QtGui.QColor("white").getRgb()
+        )
+        self.assertEqual(
+            (data["image"]["width_px"], data["image"]["height_px"]), (20, 10)
+        )
+
+
+class FaultyServer:
+    """Delegates to the real QLocalServer; named calls can run a hook or fail once."""
+
+    def __init__(
+        self, server, hooks=None, fail_before=None, fail_after=None, attributes=None
+    ):
+        self._server = server
+        self.calls = []
+        self._attributes = dict(attributes or {})
+        self._hooks = dict(hooks or {})
+        self._fail_before = dict(fail_before or {})
+        self._fail_after = dict(fail_after or {})
+
+    def __getattr__(self, name):
+        if name in self._attributes:
+            return self._attributes[name]
+        attribute = getattr(self._server, name)
+        if name not in ("removeServer", "listen", "close"):
+            return attribute
+
+        def faulty(*args):
+            self.calls.append(name)
+            if name in self._hooks:
+                self._hooks.pop(name)()
+            if name in self._fail_before:
+                raise self._fail_before.pop(name)
+            outcome = attribute(*args)
+            if name in self._fail_after:
+                raise self._fail_after.pop(name)
+            return outcome
+
+        return faulty
+
+
+class BridgeStartAbortTests(BridgeTestCase):
+    """start() either ends up listening with a published token or leaves nothing behind."""
+
+    LOGGER = "ost_visualizer.presentation.services.ai_takeoff_bridge"
+
+    def unstarted(self, token_factory, suffix, token_path=None):
+        self.start_name = f"{self.server_name}-{suffix}"
+        self.start_token_path = token_path or (
+            self.directory / suffix / "session.token"
+        )
+        bridge = TakeoffCommandBridge(
+            read_service=self.service,
+            pdf_source=self.pdf,
+            access_allowed=lambda: True,
+            token_path=self.start_token_path,
+            server_name=self.start_name,
+            token_factory=token_factory,
+        )
+        self.addCleanup(self.release_bridge, bridge)
+        return bridge
+
+    def files_left(self):
+        parent = self.start_token_path.parent
+        return sorted(path.name for path in parent.iterdir()) if parent.exists() else []
+
+    def assert_nothing_listening(self, bridge):
+        self.assertFalse(bridge._server.isListening())
+        self.assertIsNone(bridge._token)
+        self.assertEqual(self.files_left(), [])
+        self.server_name = self.start_name
+        result = self.call("list_sheets", token_path=self.other_token_file("any"))
+        self.assertEqual(result["status"], "app_not_running")
+
+    def test_a_token_factory_that_fails_leaves_nothing_listening(self):
+        def factory():
+            raise ValueError("factory failed")
+
+        bridge = self.unstarted(factory, "factory")
+        with self.assertRaises(ValueError):
+            bridge.start()
+        self.assert_nothing_listening(bridge)
+
+    def test_a_token_that_cannot_be_encoded_leaves_nothing_listening(self):
+        bridge = self.unstarted(lambda: "tok\ud800", "surrogate")
+        with self.assertRaises(UnicodeEncodeError):
+            bridge.start()
+        self.assert_nothing_listening(bridge)
+        socket = RecordingSocket()
+        bridge._handle(socket, request_line(token="tok\ud800"))
+        self.assertEqual(socket.replies()[0]["status"], "unauthorized")
+        self.assertEqual(self.service.calls, [])
+
+    def test_a_token_factory_with_an_os_error_is_a_failed_start(self):
+        def factory():
+            raise PermissionError("secret detail")
+
+        bridge = self.unstarted(factory, "oserror")
+        with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+            self.assertIs(bridge.start(), False)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:"
+                "Failed to write the AI takeoff session token: PermissionError"
+            ],
+        )
+        self.assert_nothing_listening(bridge)
+
+    def test_the_token_is_written_before_the_pipe_listens_and_published_after(self):
+        """Characterisation of the order: staged token, then listen, then publish."""
+        seen = []
+        bridge = self.unstarted(lambda: "ordered-token", "ordered")
+        parent = self.start_token_path.parent
+
+        def at_listen():
+            seen.append(
+                {
+                    path.name: path.read_text(encoding="utf-8")
+                    for path in (parent.iterdir() if parent.exists() else [])
+                }
+            )
+
+        bridge._server = FaultyServer(bridge._server, hooks={"listen": at_listen})
+        self.assertTrue(bridge.start())
+        self.assertEqual(seen, [{"session.token.tmp": "ordered-token"}])
+        self.assertEqual(self.files_left(), ["session.token"])
+        self.assertEqual(
+            self.start_token_path.read_text(encoding="utf-8"), "ordered-token"
+        )
+
+    def test_a_failed_listen_leaves_the_token_of_another_instance_alone(self):
+        path = self.directory / "shared" / "session.token"
+        path.parent.mkdir()
+        path.write_text("other-instance-token", encoding="utf-8")
+        bridge = self.unstarted(lambda: "mine", "shared", token_path=path)
+        bridge._server_name = ""
+        with self.assertLogs(self.LOGGER, logging.WARNING):
+            self.assertIs(bridge.start(), False)
+        self.assertEqual(path.read_text(encoding="utf-8"), "other-instance-token")
+        self.assertEqual(self.files_left(), ["session.token"])
+        self.assertIsNone(bridge._token)
+
+    def test_a_token_that_cannot_be_published_closes_the_pipe_again(self):
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        bridge = self.unstarted(lambda: "unpublished", "publish")
+        with patch.object(
+            ai_takeoff_bridge.os, "replace", side_effect=PermissionError("denied")
+        ):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                self.assertIs(bridge.start(), False)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:"
+                "Failed to write the AI takeoff session token: PermissionError"
+            ],
+        )
+        self.assert_nothing_listening(bridge)
+
+    def test_an_interrupt_during_start_leaves_nothing_listening(self):
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        for interrupt in (KeyboardInterrupt, SystemExit):
+            for where in (
+                "factory",
+                "before listen",
+                "after listen",
+                "publish",
+                "after publish",
+            ):
+                with self.subTest(interrupt=interrupt.__name__, where=where):
+                    raised = interrupt()
+
+                    def factory(where=where, raised=raised):
+                        if where == "factory":
+                            raise raised
+                        return "interrupted"
+
+                    bridge = self.unstarted(
+                        factory, f"{interrupt.__name__}-{where}".replace(" ", "-")
+                    )
+                    if where in ("before listen", "after listen"):
+                        key = (
+                            "fail_before" if where == "before listen" else "fail_after"
+                        )
+                        bridge._server = FaultyServer(
+                            bridge._server, **{key: {"listen": raised}}
+                        )
+                    with contextlib.ExitStack() as stack:
+                        if where == "publish":
+                            stack.enter_context(
+                                patch.object(
+                                    ai_takeoff_bridge.os, "replace", side_effect=raised
+                                )
+                            )
+                        if where == "after publish":
+                            real_publish = ai_takeoff_bridge._publish_token
+
+                            def publish_then_interrupt(path, raised=raised):
+                                real_publish(path)
+                                raise raised
+
+                            stack.enter_context(
+                                patch.object(
+                                    ai_takeoff_bridge,
+                                    "_publish_token",
+                                    publish_then_interrupt,
+                                )
+                            )
+                        with self.assertRaises(interrupt) as caught:
+                            bridge.start()
+                    self.assertIs(caught.exception, raised)
+                    self.assert_nothing_listening(bridge)
+
+    def test_an_error_while_cleaning_up_a_failed_start_never_masks_the_interrupt(self):
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        raised = KeyboardInterrupt()
+        bridge = self.unstarted(lambda: "interrupted", "masked")
+        bridge._server = FaultyServer(
+            bridge._server, fail_after={"close": RuntimeError("secret detail")}
+        )
+        with patch.object(ai_takeoff_bridge.os, "replace", side_effect=raised):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    bridge.start()
+        self.assertIs(caught.exception, raised)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after KeyboardInterrupt: RuntimeError"
+            ],
+        )
+        self.assert_nothing_listening(bridge)
+
+    def test_starting_a_second_time_does_not_disturb_the_running_pipe(self):
+        self.assertIs(self.bridge.start(), False)
+        self.assertTrue(self.bridge._server.isListening())
+        self.assertEqual(self.token_path.read_text(encoding="utf-8"), "token-0")
+        self.assertEqual(
+            [path.name for path in self.token_path.parent.iterdir()],
+            ["session.token"],
+        )
+        self.assertEqual(self.call("list_levels")["status"], "ok")
+
+    def test_a_second_start_whose_token_factory_fails_leaves_the_running_pipe_alone(
+        self,
+    ):
+        def factory():
+            raise ValueError("factory failed")
+
+        self.bridge._token_factory = factory
+        with self.assertRaises(ValueError):
+            self.bridge.start()
+        self.assertTrue(self.bridge._server.isListening())
+        self.assertEqual(self.token_path.read_text(encoding="utf-8"), "token-0")
+        self.assertEqual(self.call("list_levels")["status"], "ok")
+
+    def test_a_failed_listen_names_a_cleanup_error_without_hiding_the_failed_start(
+        self,
+    ):
+        bridge = self.unstarted(lambda: "mine", "listen-cleanup")
+        bridge._server_name = ""
+        with patch.object(Path, "unlink", side_effect=PermissionError("denied")):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                self.assertIs(bridge.start(), False)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:Failed to start the AI takeoff bridge",
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after a failed listen: PermissionError",
+            ],
+        )
+        self.assertIsNone(bridge._token)
+
+    def test_a_token_with_non_ascii_text_is_published_as_utf8(self):
+        token = "tok\u00e9\u4e2d"
+        bridge = self.unstarted(lambda: token, "utf8")
+        self.assertTrue(bridge.start())
+        self.assertEqual(self.start_token_path.read_bytes(), token.encode("utf-8"))
+
+    def test_a_cleanup_error_after_an_os_error_names_that_os_error(self):
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        bridge = self.unstarted(lambda: "named", "named")
+        bridge._server = FaultyServer(
+            bridge._server, fail_after={"close": RuntimeError("secret detail")}
+        )
+        with patch.object(
+            ai_takeoff_bridge.os, "replace", side_effect=PermissionError("denied")
+        ):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                self.assertIs(bridge.start(), False)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:"
+                "Failed to write the AI takeoff session token: PermissionError",
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after PermissionError: RuntimeError",
+            ],
+        )
+        self.assert_nothing_listening(bridge)
+
+    def test_an_interrupt_during_the_cleanup_after_an_os_error_is_still_raised(self):
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        raised = KeyboardInterrupt()
+        bridge = self.unstarted(lambda: "named", "os-then-interrupt")
+        bridge._server = FaultyServer(bridge._server, fail_after={"close": raised})
+        with patch.object(
+            ai_takeoff_bridge.os, "replace", side_effect=PermissionError("denied")
+        ):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    bridge.start()
+        self.assertIs(caught.exception, raised)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:"
+                "Failed to write the AI takeoff session token: PermissionError"
+            ],
+        )
+        self.assert_nothing_listening(bridge)
+
+    def test_an_interrupt_during_the_cleanup_after_a_failed_listen_is_still_raised(
+        self,
+    ):
+        raised = SystemExit()
+        bridge = self.unstarted(lambda: "mine", "listen-then-interrupt")
+        bridge._server_name = ""
+        with patch.object(Path, "unlink", side_effect=raised):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                with self.assertRaises(SystemExit) as caught:
+                    bridge.start()
+        self.assertIs(caught.exception, raised)
+        self.assertEqual(
+            captured.output,
+            [f"WARNING:{self.LOGGER}:Failed to start the AI takeoff bridge"],
+        )
+
+    def test_an_interrupt_during_the_cleanup_replaces_an_earlier_ordinary_error(self):
+        def factory():
+            raise ValueError("secret detail")
+
+        raised = KeyboardInterrupt()
+        bridge = self.unstarted(factory, "ordinary-then-interrupt")
+        with patch.object(Path, "unlink", side_effect=raised):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    bridge.start()
+        self.assertIs(caught.exception, raised)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after KeyboardInterrupt: ValueError"
+            ],
+        )
+        self.assert_nothing_listening(bridge)
+
+    def test_the_first_of_two_interrupts_during_start_is_the_one_raised(self):
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        first = KeyboardInterrupt()
+        bridge = self.unstarted(lambda: "twice", "two-interrupts")
+        bridge._server = FaultyServer(
+            bridge._server, fail_after={"close": SystemExit()}
+        )
+        with patch.object(ai_takeoff_bridge.os, "replace", side_effect=first):
+            with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    bridge.start()
+        self.assertIs(caught.exception, first)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after KeyboardInterrupt: SystemExit"
+            ],
+        )
+        self.assert_nothing_listening(bridge)
+
+
+class BridgeCleanupInterruptTests(BridgeTestCase):
+    """cleanup() lets go of everything it can and raises what went wrong first."""
+
+    LOGGER = "ost_visualizer.presentation.services.ai_takeoff_bridge"
+
+    def faulty_bridge(self, bridge, **faults):
+        bridge._server = FaultyServer(bridge._server, **faults)
+        return bridge
+
+    def assert_released(self, bridge):
+        self.assertIsNone(bridge._server)
+        self.assertIsNone(bridge._token)
+        self.assertIsNone(bridge._read_service)
+        self.assertEqual(bridge._commands, {})
+        self.assertFalse(self.token_path.exists())
+
+    def test_an_interrupt_during_cleanup_still_releases_everything_then_is_raised(
+        self,
+    ):
+        for interrupt in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt.__name__):
+                raised = interrupt()
+                bridge = self.faulty_bridge(
+                    self.capped_bridge(),
+                    fail_after={
+                        "close": raised,
+                        "removeServer": RuntimeError("secret detail"),
+                    },
+                )
+                with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+                    with self.assertRaises(interrupt) as caught:
+                        bridge.cleanup()
+                self.assertIs(caught.exception, raised)
+                self.assertEqual(
+                    captured.output,
+                    [
+                        f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step "
+                        f"failed after {interrupt.__name__}: RuntimeError"
+                    ],
+                )
+                self.assert_released(bridge)
+
+    def test_an_interrupt_while_removing_the_token_still_stops_the_server(self):
+        bridge = self.bridge
+        server = bridge._server
+        raised = KeyboardInterrupt()
+        with patch.object(Path, "unlink", side_effect=raised):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                bridge.cleanup()
+        self.assertIs(caught.exception, raised)
+        self.assertFalse(server.isListening())
+        self.assertIsNone(bridge._server)
+        self.assertIsNone(bridge._token)
+        self.assertEqual(bridge._commands, {})
+
+    def test_an_interrupt_while_aborting_one_connection_still_aborts_the_others(self):
+        bridge = self.bridge
+        raised = KeyboardInterrupt()
+        aborted = []
+
+        class Tracking(QLocalSocket):
+            def __init__(self, parent, label, fail):
+                super().__init__(parent)
+                self.label = label
+                self.fail = fail
+
+            def abort(self):
+                aborted.append(self.label)
+                if self.fail:
+                    raise raised
+
+        first = Tracking(bridge, "first", True)
+        second = Tracking(bridge, "second", False)
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            bridge.cleanup()
+        self.assertIs(caught.exception, raised)
+        self.assertEqual(sorted(aborted), ["first", "second"])
+        self.assert_released(bridge)
+        self.assertTrue(isValid(first) and isValid(second))
+        self.delete_later_now()
+        self.assertFalse(isValid(first) or isValid(second))
+
+    def test_an_interrupt_while_detaching_the_connection_slot_still_closes_the_server(
+        self,
+    ):
+        class Failing:
+            def disconnect(self, *args):
+                raise raised
+
+        raised = KeyboardInterrupt()
+        server = self.bridge._server
+        bridge = self.faulty_bridge(
+            self.bridge, attributes={"newConnection": Failing()}
+        )
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            bridge.cleanup()
+        self.assertIs(caught.exception, raised)
+        self.assertFalse(server.isListening())
+        self.assert_released(bridge)
+
+    def test_an_interrupt_while_disconnecting_one_signal_still_disconnects_the_other(
+        self,
+    ):
+        class Failing:
+            def disconnect(self, *args):
+                raise raised
+
+        raised = KeyboardInterrupt()
+        offered = []
+        self.bridge.rebind_suggested.connect(lambda: offered.append(True))
+        self.bridge._job_finished = Failing()
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            self.bridge.cleanup()
+        self.assertIs(caught.exception, raised)
+        self.assert_released(self.bridge)
+        self.bridge.rebind_suggested.emit()
+        self.assertEqual(offered, [])
+        self.assertTrue(isValid(self.bridge))
+        self.delete_later_now()
+        self.assertFalse(isValid(self.bridge))
+
+    def test_an_interrupt_after_an_ordinary_cleanup_error_is_still_raised(self):
+        raised = KeyboardInterrupt()
+        bridge = self.faulty_bridge(
+            self.bridge,
+            fail_after={"close": RuntimeError("secret detail"), "removeServer": raised},
+        )
+        with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                bridge.cleanup()
+        self.assertIs(caught.exception, raised)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after KeyboardInterrupt: RuntimeError"
+            ],
+        )
+        self.assert_released(bridge)
+
+    def test_the_first_of_two_interrupts_during_cleanup_is_the_one_raised(self):
+        first = KeyboardInterrupt()
+        bridge = self.faulty_bridge(
+            self.bridge, fail_after={"close": first, "removeServer": SystemExit()}
+        )
+        with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                bridge.cleanup()
+        self.assertIs(caught.exception, first)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after KeyboardInterrupt: SystemExit"
+            ],
+        )
+        self.assert_released(bridge)
+
+    def test_an_error_after_an_interrupt_that_replaced_an_error_names_the_interrupt(
+        self,
+    ):
+        class Failing:
+            def disconnect(self, *args):
+                raise ValueError("first")
+
+        raised = KeyboardInterrupt()
+        bridge = self.faulty_bridge(
+            self.bridge,
+            attributes={"newConnection": Failing()},
+            fail_after={"close": raised, "removeServer": RuntimeError("third")},
+        )
+        with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                bridge.cleanup()
+        self.assertIs(caught.exception, raised)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after KeyboardInterrupt: ValueError",
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after KeyboardInterrupt: RuntimeError",
+            ],
+        )
+        self.assert_released(bridge)
+
+    def test_two_ordinary_cleanup_errors_raise_the_first_and_log_the_second(self):
+        first = RuntimeError("first")
+        bridge = self.faulty_bridge(
+            self.bridge,
+            fail_after={"close": first, "removeServer": ValueError("second")},
+        )
+        with self.assertLogs(self.LOGGER, logging.WARNING) as captured:
+            with self.assertRaises(RuntimeError) as caught:
+                bridge.cleanup()
+        self.assertIs(caught.exception, first)
+        self.assertEqual(
+            captured.output,
+            [
+                f"WARNING:{self.LOGGER}:An AI takeoff bridge cleanup step failed "
+                "after RuntimeError: ValueError"
+            ],
+        )
+        self.assert_released(bridge)
+
+    def test_an_ordinary_error_in_one_cleanup_step_is_raised_after_the_rest_ran(self):
+        error = RuntimeError("close failed")
+        bridge = self.faulty_bridge(self.bridge, fail_after={"close": error})
+        with self.assertRaises(RuntimeError) as caught:
+            bridge.cleanup()
+        self.assertIs(caught.exception, error)
+        self.assert_released(bridge)
+
+    def test_cleanup_ignores_a_token_path_that_cannot_be_read(self):
+        self.bridge._token_path = self.directory / "bad\0name"
+        self.bridge.cleanup()
+        self.assertIsNone(self.bridge._token)
+        self.assertIsNone(self.bridge._server)
+
+    def test_cleanup_removes_a_token_file_that_ends_with_a_newline(self):
+        self.token_path.write_text("token-0\n", encoding="utf-8")
+        self.bridge.cleanup()
+        self.assertFalse(self.token_path.exists())
+
+    def test_cleanup_keeps_a_token_file_written_by_someone_else(self):
+        self.token_path.write_text("token-1\n", encoding="utf-8")
+        self.bridge.cleanup()
+        self.assertEqual(self.token_path.read_text(encoding="utf-8"), "token-1\n")
+
+
+class BridgeRequestShapeTests(BridgeTestCase):
+    def test_a_command_that_is_not_text_is_answered_as_unknown(self):
+        for label, command in (
+            ("list", ["list_levels"]),
+            ("dict", {"a": 1}),
+            ("null", None),
+            ("boolean", True),
+        ):
+            with self.subTest(label=label):
+                socket = RecordingSocket()
+                self.bridge._handle(socket, request_line(command=command))
+                (reply,) = socket.replies()
+                self.assertEqual(
+                    (reply["status"], reply["error"]["message"]),
+                    ("unknown_command", "This command is not available."),
+                )
+                self.assertEqual(socket.hung_up(), 1)
+        self.assertEqual(self.service.calls, [])
+
+    def test_an_interrupt_while_a_request_is_handled_is_not_turned_into_an_answer(
+        self,
+    ):
+        """Characterisation: an interrupt leaves the slot instead of becoming a reply."""
+        from ost_visualizer.presentation.services import ai_takeoff_bridge
+
+        def raising(error):
+            def raise_it(*args, **kwargs):
+                raise error
+
+            return raise_it
+
+        audited = []
+        bridge = self.capped_bridge(
+            audit=lambda tool, arguments, outcome: audited.append(outcome)
+        )
+        line = request_line(token="capped-token")
+        for interrupt in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt.__name__, where="parsing"):
+                socket = RecordingSocket()
+                with patch.object(
+                    ai_takeoff_bridge.json, "loads", side_effect=interrupt()
+                ):
+                    with self.assertRaises(interrupt):
+                        bridge._handle(socket, line)
+                self.assertEqual(socket.events, [])
+            with self.subTest(interrupt=interrupt.__name__, where="command"):
+                socket = RecordingSocket()
+                with patch.object(self.service, "list_levels", raising(interrupt())):
+                    with self.assertRaises(interrupt):
+                        bridge._handle(socket, line)
+                self.assertEqual(socket.events, [])
+                self.assertEqual(audited, [])
+            with self.subTest(interrupt=interrupt.__name__, where="audit"):
+                socket = RecordingSocket()
+                with patch.object(bridge, "_audit", raising(interrupt())):
+                    with self.assertRaises(interrupt):
+                        bridge._handle(socket, line)
+                self.assertEqual(len(socket.replies()), 1)
+                self.assertEqual(socket.hung_up(), 1)
+
+    def test_a_reply_is_flushed_before_the_hang_up(self):
+        socket = RecordingSocket()
+        self.bridge._respond(socket, ok_result({}))
+        self.assertEqual(
+            [event[0] for event in socket.events], ["write", "flush", "disconnect"]
+        )
+
+    def test_the_audit_of_a_worker_command_names_the_arguments_it_received(self):
+        audited = []
+        self.capped_bridge(
+            audit=lambda tool, arguments, outcome: audited.append(
+                (tool, arguments, outcome)
+            )
+        )
+        cases = [
+            ("list_text", {"page_uid": "p1", "query": "wall"}),
+            ("list_segments", {"page_uid": "p1", "kinds": ["wall"]}),
+            ("render_sheet", {"page_uid": "p1", "dpi": 100}),
+            ("list_sheets", {"text_hints": True, "limit": 3}),
+        ]
+        for command, arguments in cases:
+            with self.subTest(command=command):
+                audited.clear()
+                self.assertTrue(self.call(command, arguments)["success"])
+                self.assertEqual(audited, [(command, arguments, "ok")])
+
+    def test_the_audit_of_a_deferred_command_names_the_arguments_it_received(self):
+        audited = []
+        writes = DeferredWriteCommands()
+        self.capped_bridge(
+            write_commands=writes,
+            idle_timeout_ms=60000,
+            audit=lambda tool, arguments, outcome: audited.append(
+                (tool, arguments, outcome)
+            ),
+        )
+        handle = self.open_raw()
+        self.addCleanup(handle.Close)
+        self.write_raw(
+            handle,
+            b'{"token": "capped-token", "command": "apply_changeset", '
+            b'"arguments": {"changeset_id": "c1"}}\n',
+        )
+        self.pump_until(lambda: len(writes.replies) == 1)
+        writes.replies[0].resolve(ok_result({"changeset_id": "c1"}, "applied"))
+        self.assertEqual(
+            self.read_raw(handle), ok_result({"changeset_id": "c1"}, "applied")
+        )
+        self.assertEqual(
+            audited, [("apply_changeset", {"changeset_id": "c1"}, "applied")]
+        )
+
+
 def live_bridge_workers():
     return [
         thread

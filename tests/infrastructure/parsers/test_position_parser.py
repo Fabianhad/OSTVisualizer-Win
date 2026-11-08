@@ -1035,5 +1035,257 @@ class MetricFormattingDropsRoundingNoiseTests(unittest.TestCase):
                 self.assertEqual(convert_elevation_in_name(once, True), once)
 
 
+class RegexInternalDigitRunAndSpacingTests(unittest.TestCase):
+    """Two-digit runs, optional spaces and unit boundaries inside the elevation regexes.
+    Every expected value is derived by hand from the grammar: feet are worth 12
+    inches, a trailing fraction adds numerator/denominator inches, a metric value
+    is centimetres (metres * 100) divided by 2.54 for the inch result.
+    """
+
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_feet_and_inches_with_two_digit_and_sixteenth_parts(self):
+        table = (
+            ("Wall @T 5' 10\"", 70.0),  # 5 * 12 + 10
+            ("Wall @T 5' 11\"", 71.0),  # 5 * 12 + 11
+            ("Wall @T 12' 3\"", 147.0),  # 12 * 12 + 3
+            ("Wall @T 10' 10\"", 130.0),  # 10 * 12 + 10
+            ("Wall @T 5' 6 11/16\"", 66.6875),  # 66 + 11/16
+            ("Wall @T 5' 6 1/16\"", 66.0625),  # 66 + 1/16
+            ("Wall @T 5' 6 15/16\"", 66.9375),  # 66 + 15/16
+        )
+        for name, inches in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (inches, True))
+
+    def test_a_space_before_the_prime_or_before_the_closing_quote_is_allowed(self):
+        table = (
+            ("Wall @T 5 ' 6\"", 66.0),
+            ("Wall @T 5' 6 \"", 66.0),
+            ("Wall @T 5 ' 6 \"", 66.0),
+            ("Wall @T -5 ' 6\"", -66.0),
+            ("Wall @T 5' 6 1/2 \"", 66.5),
+        )
+        for name, inches in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (inches, True))
+
+    def test_a_bare_fraction_directly_after_the_feet_mark_is_the_inches_part(self):
+        """Characterisation of an incidental form, not a documented input format."""
+        # "5'3/4"" cannot read "3" as whole inches (no closing quote follows it),
+        # so the regex falls back to the fraction alternative: 60 + 3/4. (The
+        # validity gate only admits this form glued to the prime, via "\b".)
+        table = (
+            ("Wall @T 5'3/4\"", 60.75),
+            ("Wall @T 5'3/16\"", 60.1875),
+            ("Wall @T 5'13/16\"", 60.8125),
+            ("Wall @T -5'3/4\"", -60.75),
+        )
+        for name, inches in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (inches, True))
+
+    def test_feet_only_values_with_two_digits_or_a_space_before_the_prime(self):
+        table = (
+            ("Wall @T 20'x", 240.0),  # 20 * 12
+            ("Wall @T 11 'x", 132.0),  # 11 * 12
+            ("Wall @T 10'x", 120.0),
+            ("Wall @T -12 'x", -144.0),
+        )
+        for name, inches in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (inches, True))
+
+    def test_inches_only_values_with_two_digits_a_space_or_a_sixteenth_fraction(self):
+        table = (
+            ('Wall @T 12"', 12.0),
+            ('Wall @T 6 "', 6.0),
+            ('Wall @T 11 1/2"', 11.5),  # 11 + 1/2
+            ('Wall @T 1 7/16"', 1.4375),  # 1 + 7/16
+            ('Wall @T 6 11/16"', 6.6875),  # 6 + 11/16
+            ('Wall @T 11/16"', 0.6875),  # bare fraction, two-digit numerator
+            ('Wall @T 5/16 "', 0.3125),  # bare fraction, space before the quote
+            ('Wall @T -11 1/2"', -11.5),
+        )
+        for name, inches in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (inches, True))
+
+    def test_metric_values_with_two_digit_metres_or_centimetres_and_decimals(self):
+        table = (
+            ("Wall @T 11m 20cm", 1120.0),  # 11 * 100 + 20
+            ("Wall @T 1m 25cm", 125.0),  # 1 * 100 + 25
+            ("Wall @T 1.25m 20cm", 145.0),  # 1.25 * 100 + 20
+            ("Wall @T 1m 2.50cm", 102.5),  # 100 + 2.5
+            ("Wall @T 11 m", 1100.0),  # 11 * 100
+            ("Wall @T 11.5 m", 1150.0),
+            ("Wall @T 12 meters", 1200.0),
+            ("Wall @T 25 cm", 25.0),
+            ("Wall @T 12.5 cm", 12.5),
+            ("Wall @T 12 centimeters", 12.0),
+        )
+        for name, centimetres in table:
+            with self.subTest(name=name):
+                value, is_top = extract_z_value_from_name(name)
+                self.assertAlmostEqual(value, centimetres / 2.54, places=9)
+                self.assertIs(is_top, True)
+
+    def test_a_metric_unit_is_not_taken_from_the_start_of_a_longer_word(self):
+        # "5 cm" is the whole reading; the trailing "2mm" must not be read as 2 m
+        # (which would give 5 cm -> 2 m = 200 cm) because "m" needs a word boundary.
+        value, is_top = extract_z_value_from_name("Wall @T 5 cm 2mm")
+        self.assertAlmostEqual(value, 5 / 2.54, places=9)
+        self.assertIs(is_top, True)
+
+    def test_private_metric_helper_needs_a_word_boundary_after_each_unit(self):
+        # Characterisation of the private helper (public paths gate on the
+        # validity patterns first): a unit glued to more letters is not a unit.
+        metric = position_parser._parse_metric_elevation
+        self.assertEqual(metric("5cmx"), 0.0)
+        self.assertEqual(metric("5mx"), 0.0)
+        self.assertEqual(metric("5 cm 2mm"), 5.0)
+
+    def test_conversion_to_metric_uses_the_same_digit_runs_and_spacing(self):
+        table = (
+            ("Wall @T 11m 20cm", "Wall @T 1120 cm"),
+            ("Wall @T 1.25m 20cm", "Wall @T 145 cm"),
+            ("Wall @T 11 m", "Wall @T 1100 cm"),
+            ("Wall @T 25 cm", "Wall @T 25 cm"),
+            ("Wall @T 5' 10\"", "Wall @T 177.80 cm"),  # 70 * 2.54
+            ("Wall @T 5 ' 6 \"", "Wall @T 167.64 cm"),  # 66 * 2.54
+            ('Wall @T 12"', "Wall @T 30.48 cm"),  # 12 * 2.54
+            ("Wall @T 5' 6 11/16\"", "Wall @T 169.39 cm"),  # 66.6875 * 2.54
+        )
+        for name, expected in table:
+            with self.subTest(name=name):
+                self.assertEqual(convert_elevation_in_name(name, True), expected)
+
+
+class ElevationValidityGateSpacingAndBoundaryTests(unittest.TestCase):
+    """Spacing, decimals and word boundaries inside the validity patterns.
+    The gate (prefix match for extraction, whole-text match for conversion) is
+    separate from the value regexes, so each form is checked through the entry
+    point that actually depends on it.
+    """
+
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_a_detached_minus_before_a_feet_only_value_is_accepted(self):
+        # "- 5'x" is -5 feet = -60 inches: the gate allows spaces after the minus.
+        self.assertEqual(extract_z_value_from_name("Wall @T - 5'x"), (-60.0, True))
+        self.assertEqual(extract_z_value_from_name("Wall @B - 12 'x"), (-144.0, False))
+
+    def test_inches_glued_to_a_fraction_are_not_a_readable_elevation(self):
+        # After the prime "611/16" has no whitespace between a whole number and a
+        # fraction, and no word boundary follows the prime, so no pattern admits it.
+        name = "Wall @T 5' 611/16\""
+        self.assertEqual(extract_z_value_from_name(name), (0.0, False))
+        self.assertEqual(convert_elevation_in_name(name, True), name)
+
+    def test_a_centimetre_unit_glued_to_more_letters_is_not_an_elevation(self):
+        for name in ("Wall @T 5cmx", "Wall @T 5 centimetersx", "Wall @B 12 cmx"):
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (0.0, False))
+                self.assertEqual(convert_elevation_in_name(name, True), name)
+
+    def test_a_compound_metric_value_converts_with_any_of_its_optional_spaces(self):
+        # metres*100 +/- centimetres, then shown as centimetres
+        table = (
+            ("Wall @T 1 m 20cm", "Wall @T 120 cm"),  # space before "m"
+            ("Wall @T 1m 20 cm", "Wall @T 120 cm"),  # space before "cm"
+            ("Wall @T 1m and -2cm", "Wall @T 98 cm"),  # 100 - 2, space after "and"
+            ("Wall @T 1m + -2cm", "Wall @T 98 cm"),  # 100 - 2, space after "+"
+            ("Wall @T 1m - 20cm", "Wall @T 80 cm"),  # 100 - 20, detached minus
+            ("Wall @T 1m 2.5cm", "Wall @T 102.50 cm"),  # 100 + 2.5
+            ("Wall @T 1m 2.50cm", "Wall @T 102.50 cm"),  # 100 + 2.50
+            ("Wall @T 1,5 m 2,5 cm", "Wall @T 152.50 cm"),  # 150 + 2.5
+        )
+        for name, expected in table:
+            with self.subTest(name=name):
+                self.assertEqual(convert_elevation_in_name(name, True), expected)
+
+
+class RunsOfWhitespaceAndDecimalPointTests(unittest.TestCase):
+    """Every optional space accepts a run of spaces; a decimal point needs digits.
+    Expected values are derived from the grammar: feet are worth 12 inches, a
+    metric value is metres * 100 plus centimetres (a leading minus negates the
+    whole value), divided by 2.54 for the inch result.
+    """
+
+    def setUp(self):
+        position_parser.clear_caches()
+        self.addCleanup(position_parser.clear_caches)
+
+    def test_imperial_values_accept_runs_of_spaces_around_every_mark(self):
+        table = (
+            ("Wall @T 5  ' 6\"", 66.0),  # two spaces before the prime
+            ("Wall @T 5' 6  \"", 66.0),  # two spaces before the closing quote
+            ("Wall @T 5   '   6   \"", 66.0),  # runs of three
+            ("Wall @T 5'  -  6\"", 66.0),  # the dash is only a separator
+            ("Wall @T 5' -  6\"", 66.0),
+            ("Wall @T -  5'x", -60.0),  # two spaces after the minus (feet only)
+            ("Wall @T 5  'x", 60.0),  # two spaces before the prime (feet only)
+            ('Wall @T -  6"', -6.0),  # two spaces after the minus (inches only)
+            ('Wall @T 6  "', 6.0),  # two spaces before the quote (inches only)
+            ('Wall @T 1/2  "', 0.5),
+            ('Wall @T 11  1/2  "', 11.5),
+        )
+        for name, inches in table:
+            with self.subTest(name=name):
+                self.assertEqual(extract_z_value_from_name(name), (inches, True))
+
+    def test_metric_values_accept_runs_of_spaces_around_every_mark(self):
+        table = (
+            ("Wall @T -  1m 20cm", -120.0),  # -(100 + 20)
+            ("Wall @T 1  m 20  cm", 120.0),
+            ("Wall @T 1m  and  20cm", 120.0),
+            ("Wall @T 1m  +  20cm", 120.0),
+            ("Wall @T -  1 m", -100.0),
+            ("Wall @T 1  m", 100.0),
+            ("Wall @T -  20 cm", -20.0),
+            ("Wall @T 20  cm", 20.0),
+            ("Wall @T 1   m   20   cm", 120.0),
+            ("Wall @T 1m and  -  20cm", 80.0),  # 100 + (-20), runs after and / minus
+            ("Wall @T 1m -  20cm", 80.0),
+        )
+        for name, centimetres in table:
+            with self.subTest(name=name):
+                value, is_top = extract_z_value_from_name(name)
+                self.assertAlmostEqual(value, centimetres / 2.54, places=9)
+                self.assertIs(is_top, True)
+
+    def test_a_decimal_point_without_digits_is_not_part_of_the_number(self):
+        # "2." is not a decimal number, so the compound "1m 2.cm" is not read and the
+        # value falls back to the leading "1m" (100 cm); likewise "2.m" is no metre
+        # reading, so "5 cm" stands (the gate admits the leading, readable unit).
+        table = (
+            ("Wall @T 1m 2.cm", 100.0),
+            ("Wall @T 1m 2x3cm", 100.0),  # "2x3cm" is not a number plus cm
+            ("Wall @T 5 cm 2.m", 5.0),
+        )
+        for name, centimetres in table:
+            with self.subTest(name=name):
+                value, is_top = extract_z_value_from_name(name)
+                self.assertAlmostEqual(value, centimetres / 2.54, places=9)
+                self.assertIs(is_top, True)
+
+    def test_private_metric_helper_search_does_not_bridge_a_broken_number(self):
+        # Characterisation of the private helper's unanchored search (the public
+        # gate rejects most of these): the number must be digits, an optional
+        # '.digits', and then the unit, so noise before it is skipped, not parsed.
+        metric = position_parser._parse_metric_elevation
+        self.assertEqual(metric("2x5m"), 500.0)  # finds "5m"
+        self.assertEqual(metric("2x5cm"), 5.0)  # finds "5cm"
+        self.assertEqual(metric("1x2m 3cm"), 203.0)  # finds "2m 3cm"
+        self.assertEqual(metric("1.m 2cm"), 2.0)  # "1." is not a number
+        self.assertEqual(metric("2.m"), 0.0)
+        self.assertEqual(metric("2.cm"), 0.0)
+        self.assertEqual(metric("1m 2.cm"), 100.0)
+
+
 if __name__ == "__main__":
     unittest.main()

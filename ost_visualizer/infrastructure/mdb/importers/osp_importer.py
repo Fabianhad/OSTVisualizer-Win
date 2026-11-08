@@ -19,6 +19,14 @@ _OSP_TEMP_PREFIX = "ostv_osp_"
 _WINDOWS_PATH_LIMIT = 240
 _IMAGE_MEMBER_ROOT = "TempImages!.tmp"
 _IMAGE_PATH_ATTRS = ("ImagePath", "OverlayImagePath")
+_WINDOWS_DEVICE_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {
+        f"{device}{suffix}"
+        for device in ("COM", "LPT")
+        for suffix in "123456789\u00b9\u00b2\u00b3"
+    }
+)
 
 
 class _OspFormatError(ValueError):
@@ -70,6 +78,14 @@ def _is_safe_extract_root(root: Path, member_names: tuple[str, ...]) -> bool:
     )
 
 
+def _is_windows_device_name(part: str) -> bool:
+    return part.partition(".")[0].rstrip(" ").upper() in _WINDOWS_DEVICE_NAMES
+
+
+def _ends_in_dot_or_space(part: str) -> bool:
+    return part.endswith((".", " "))
+
+
 def _is_safe_cab_member_name(member_name: str) -> bool:
     if not isinstance(member_name, str) or not member_name:
         return False
@@ -78,7 +94,10 @@ def _is_safe_cab_member_name(member_name: str) -> bool:
         return False
     parts = member_path.parts
     return bool(parts) and all(
-        part not in (".", "..") and ":" not in part for part in parts
+        not _ends_in_dot_or_space(part)
+        and ":" not in part
+        and not _is_windows_device_name(part)
+        for part in parts
     )
 
 
@@ -104,8 +123,18 @@ def _create_extract_temp_dir(member_names: tuple[str, ...]) -> Path:
         raise
 
 
+def _cab_member_destination(root: Path, member_name: str) -> Path:
+    destination = _cab_member_path(root, member_name)
+    if (
+        any(_ends_in_dot_or_space(part) for part in _windows_path_parts(member_name))
+        or root.resolve() not in destination.resolve().parents
+    ):
+        raise _OspFormatError(f"unsafe CAB member path: {member_name!r}")
+    return destination
+
+
 def _create_cab_member_parent_dir(tmp_path: Path, member_name: str) -> None:
-    subdir = _cab_member_path(tmp_path, member_name).parent
+    subdir = _cab_member_destination(tmp_path, member_name).parent
     Path(_cab_extract_output_dir(subdir)).mkdir(parents=True, exist_ok=True)
 
 
@@ -370,6 +399,10 @@ def _resolve_image_member(
 
 def _image_destination_relative_path(member_name: str) -> Path:
     member_parts = _windows_path_parts(member_name)
+    if any(_is_windows_device_name(part) for part in member_parts):
+        raise _OspFormatError(
+            f"image staging name is a reserved device name: {member_name!r}"
+        )
     filename = member_parts[-1]
     if len(member_parts) == 2:
         return Path(filename)

@@ -42,3 +42,16 @@
   -5' 6" (it was read as +5' 6"), `@T -1m 20cm` is -120 cm (it was -80 cm), and
   `@T - 1 m` is read instead of being skipped. Converting `1 cm` to metric keeps
   `1 cm` instead of `1.00 cm`.
+- **OSP packages with unsafe file names are refused.** An OSP package that contains a file named after a
+  Windows reserved device (NUL, CON, AUX, COM1, LPT1 and the like, with or without an extension) or a file
+  or folder name ending in a dot or a space is now rejected as unsafe instead of being extracted, and any
+  member that would be extracted outside its temporary folder is refused.
+- **Compact/Repair keeps your database if the app is interrupted.** Compact/Repair no longer risks deleting
+  the only copy of your database if the application is interrupted while the compacted file is being
+  swapped in, including a second interrupt during recovery.
+- **Interrupting a save no longer lets a half-written change be saved.** Pressing Ctrl+C during a database
+  save no longer leaves the half-written change pending for the next save to commit.
+- **The MCP server survives damaged state files.** It now starts and reloads cleanly even when its saved
+  state files are damaged in unusual ways (extremely nested JSON, oversized numbers or an unexpected
+  workspace layout), and it ignores a saved database path that is too long for Windows instead of failing
+  to start.

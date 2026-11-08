@@ -101,9 +101,6 @@ def _walk_page_uids(root: QtGui.QStandardItem) -> List[str]:
 
 
 def _sync_folder_check_states(parent: QtGui.QStandardItem) -> tuple[int, int]:
-    """Derive every folder's check state from the pages beneath it.
-    Returns the (checked, total) page counts under ``parent``.
-    """
     checked = total = 0
     for row in range(parent.rowCount()):
         child = parent.child(row)
@@ -323,7 +320,6 @@ class PageComboBox(TreePopupComboBoxBase):
         self._update_display_text()
 
     def _apply_folder_check_state(self, folder: QtGui.QStandardItem) -> None:
-        """Check or uncheck every page under a folder in one selection change."""
         check = folder.checkState() == QtCore.Qt.CheckState.Checked
         target = (
             QtCore.Qt.CheckState.Checked if check else QtCore.Qt.CheckState.Unchecked

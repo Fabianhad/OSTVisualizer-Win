@@ -70,5 +70,54 @@ class AnnotationCreationFactoryEmptyDefaultTests(unittest.TestCase):
         self.assertEqual(spec.layer_uid, "12")
 
 
+class AnnotationCreationFactoryContractTests(unittest.TestCase):
+    def test_bulk_assignment_updates_in_place_and_returns_nothing(self):
+        factory = AnnotationCreationFactory("annotation-layer")
+        specs = [_spec(), _spec("custom")]
+        self.assertIsNone(factory.assign_default_layer_to_specs(specs))
+        self.assertEqual(
+            [spec.layer_uid for spec in specs], ["annotation-layer", "custom"]
+        )
+        empty = []
+        self.assertIsNone(factory.assign_default_layer_to_specs(empty))
+        self.assertEqual(empty, [])
+
+    def test_insert_annotation_spec_defaults_and_required_fields(self):
+        from dataclasses import fields
+
+        spec = InsertAnnotationSpec("p", "rect", [1.0], "#000", 1.5)
+        self.assertEqual(spec.properties, {})
+        self.assertIs(type(spec.properties), dict)
+        self.assertIsNot(
+            spec.properties,
+            InsertAnnotationSpec("p", "rect", [1.0], "#000", 1.5).properties,
+        )
+        self.assertEqual(spec.layer_uid, "")
+        self.assertEqual(
+            (
+                spec.page_uid,
+                spec.annotation_type,
+                spec.position,
+                spec.color,
+                spec.width,
+            ),
+            ("p", "rect", [1.0], "#000", 1.5),
+        )
+        self.assertEqual(
+            [field.name for field in fields(InsertAnnotationSpec)],
+            [
+                "page_uid",
+                "annotation_type",
+                "position",
+                "color",
+                "width",
+                "properties",
+                "layer_uid",
+            ],
+        )
+        with self.assertRaises(TypeError):
+            InsertAnnotationSpec("p", "rect", [1.0], "#000")
+
+
 if __name__ == "__main__":
     unittest.main()

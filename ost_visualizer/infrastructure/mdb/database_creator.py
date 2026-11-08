@@ -986,6 +986,7 @@ class DatabaseCreator:
         conn = pyodbc.connect(conn_str, autocommit=False)
         cursor = None
         operation_failed = False
+        interrupt = None
         try:
             cursor = conn.cursor()
             self._create_schema_tables(cursor, progress_callback)
@@ -1001,12 +1002,16 @@ class DatabaseCreator:
             operation_failed = True
             self._rollback_connection(conn, "schema creation")
             raise
+        except BaseException as exc:
+            interrupt = exc
+            raise
         finally:
             self._close_odbc_resources(
                 cursor,
                 conn,
                 "schema creation",
                 suppress_errors=operation_failed,
+                interrupt=interrupt,
             )
         if seed_name is None:
             self._apply_reference_schema_metadata(
@@ -1022,6 +1027,7 @@ class DatabaseCreator:
         engine = win32com.client.Dispatch("DAO.DBEngine.120")
         db = engine.OpenDatabase(str(db_path))
         operation_failed = False
+        interrupt = None
         try:
             self._report_progress(progress_callback, "schema field metadata")
             for table_name in UID_REQUIRED_TABLES:
@@ -1057,8 +1063,15 @@ class DatabaseCreator:
         except Exception:
             operation_failed = True
             raise
+        except BaseException as exc:
+            interrupt = exc
+            raise
         finally:
-            self._close_dao_database(db, suppress_errors=operation_failed)
+            self._close_dao_database(
+                db,
+                suppress_errors=operation_failed,
+                interrupt=interrupt,
+            )
 
     def _insert_seed_data(
         self,
@@ -1072,6 +1085,7 @@ class DatabaseCreator:
         conn = pyodbc.connect(conn_str, autocommit=False)
         cursor = None
         operation_failed = False
+        interrupt = None
         try:
             cursor = conn.cursor()
             self._insert_seed_rows(cursor, name, progress_callback)
@@ -1080,12 +1094,16 @@ class DatabaseCreator:
             operation_failed = True
             self._rollback_connection(conn, "seed-data insertion")
             raise
+        except BaseException as exc:
+            interrupt = exc
+            raise
         finally:
             self._close_odbc_resources(
                 cursor,
                 conn,
                 "seed-data insertion",
                 suppress_errors=operation_failed,
+                interrupt=interrupt,
             )
 
     def _insert_seed_rows(
@@ -1146,6 +1164,7 @@ class DatabaseCreator:
         operation: str,
         *,
         suppress_errors: bool,
+        interrupt: Optional[BaseException] = None,
     ) -> None:
         first_error = None
         for resource_name, resource in (
@@ -1157,20 +1176,40 @@ class DatabaseCreator:
             try:
                 resource.close()
             except Exception as exc:
-                self._logger.exception(
-                    "Failed to close MDB %s after %s",
-                    resource_name,
-                    operation,
-                )
+                if interrupt is None:
+                    self._logger.exception(
+                        "Failed to close MDB %s after %s",
+                        resource_name,
+                        operation,
+                    )
+                else:
+                    self._logger.exception(
+                        "Failed to close MDB %s after %s while handling %s",
+                        resource_name,
+                        operation,
+                        type(interrupt).__name__,
+                    )
                 if first_error is None:
                     first_error = exc
-        if first_error is not None and not suppress_errors:
+        if first_error is not None and not suppress_errors and interrupt is None:
             raise first_error
 
-    def _close_dao_database(self, database, *, suppress_errors: bool) -> None:
+    def _close_dao_database(
+        self,
+        database,
+        *,
+        suppress_errors: bool,
+        interrupt: Optional[BaseException] = None,
+    ) -> None:
         try:
             database.Close()
         except Exception:
-            self._logger.exception("Failed to close MDB DAO database")
-            if not suppress_errors:
+            if interrupt is None:
+                self._logger.exception("Failed to close MDB DAO database")
+            else:
+                self._logger.exception(
+                    "Failed to close MDB DAO database while handling %s",
+                    type(interrupt).__name__,
+                )
+            if not suppress_errors and interrupt is None:
                 raise

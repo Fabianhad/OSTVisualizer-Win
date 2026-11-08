@@ -91,12 +91,30 @@ class MdbWriter(
                             )
                             raise rollback_error from exc
                     raise
+                except BaseException as interrupt:
+                    if depth > 0 and self._access_transaction_error.get() is None:
+                        self._access_transaction_error.set(interrupt)
+                    if depth == 0:
+                        self._rollback_after_interrupt(conn, interrupt)
+                    raise
         finally:
             self._access_transaction_depth.reset(depth_token)
             if error_token is not None:
                 self._access_transaction_error.reset(error_token)
         if committed:
             self._conn_manager.use_committed_writer_for_reads(db_path)
+
+    def _rollback_after_interrupt(
+        self, conn: ConnectionWrapper, interrupt: BaseException
+    ) -> None:
+        try:
+            conn.rollback()
+        except Exception:
+            self.logger.error(
+                "The MDB transaction could not be rolled back after %s.",
+                type(interrupt).__name__,
+                exc_info=True,
+            )
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)

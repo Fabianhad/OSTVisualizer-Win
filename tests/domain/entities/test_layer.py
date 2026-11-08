@@ -136,6 +136,31 @@ class LayerEntityContractTests(unittest.TestCase):
         self.assertEqual(layers.resolve_layer(5).as_tuple(), ("5", False))
         self.assertEqual(layers.resolve_layer("6").as_tuple(), ("6", True))
 
+    def test_a_blank_or_zero_uid_is_an_explicit_uid_not_an_unassigned_one(self):
+        layers = LayerSet({"1": Layer(uid="1", name="Annotation", visible=False)})
+        self.assertEqual(layers.resolve_layer("").as_tuple(), ("", True))
+        self.assertEqual(
+            layers.resolve_layer_or_default("", "annotation").as_tuple(), ("", True)
+        )
+        self.assertEqual(
+            layers.resolve_layer_or_default(0, "annotation").as_tuple(), ("0", True)
+        )
+        # Only None falls back to the default layer, which is invisible here.
+        self.assertEqual(
+            layers.resolve_layer_or_default(None, "annotation").as_tuple(), ("1", False)
+        )
+
+    def test_an_integer_uid_is_matched_against_the_text_keys_when_checking_visibility(
+        self,
+    ):
+        from ost_visualizer.domain.entities.layer import is_layer_visible
+
+        layers = {"5": Layer(uid="5", name="Custom", visible=False)}
+        self.assertIs(LayerSet(layers).is_visible(5), False)
+        self.assertIs(is_layer_visible(layers, 5), False)
+        self.assertIs(is_layer_visible(layers, "5"), False)
+        self.assertIs(is_layer_visible(layers, 6), True)
+
     def test_annotation_layer_visibility_is_visible_when_the_layer_is_absent(self):
         self.assertIs(LayerSet({}).annotation_layer_visible(), True)
         self.assertIs(
@@ -182,6 +207,26 @@ class LayerEntityContractTests(unittest.TestCase):
         )
         self.assertEqual([layer.uid for layer in sorted_output], ["y", "z", "x"])
 
+    def test_a_bid_layer_beats_a_same_named_template_whatever_the_sequences_or_input_order(
+        self,
+    ):
+        template = BidLayer("t", "0", "X", True, 5, is_template=True)
+        own = BidLayer("o", "bid", "x", False, 1)
+        for inputs in ([template, own], [own, template]):
+            with self.subTest(order=[layer.uid for layer in inputs]):
+                merged = merge_layers_for_bid(inputs)
+                self.assertEqual([layer.uid for layer in merged], ["o"])
+                self.assertIs(merged[0], own)
+
+    def test_the_later_sequence_wins_for_equal_names_whatever_the_uid_order(self):
+        low = BidLayer("z", "bid", "same", True, 9)
+        high = BidLayer("a", "bid", "Same", False, 10)
+        for inputs in ([low, high], [high, low]):
+            with self.subTest(order=[layer.uid for layer in inputs]):
+                merged = merge_layers_for_bid(inputs)
+                self.assertEqual([layer.uid for layer in merged], ["a"])
+                self.assertIs(merged[0], high)
+
 
 class LockedBuiltInDefaultLayerTests(unittest.TestCase):
     @staticmethod
@@ -209,6 +254,11 @@ class LockedBuiltInDefaultLayerTests(unittest.TestCase):
                 uid=layer.uid, template=layer.is_template, locked=layer.is_locked
             ):
                 self.assertIs(is_locked_built_in_default_layer(layer), expected)
+
+    def test_a_padded_uid_is_not_a_built_in_uid(self):
+        for uid in (" 1", "1 ", "01"):
+            with self.subTest(uid=uid):
+                self.assertIs(is_locked_built_in_default_layer(self._layer(uid)), False)
 
 
 if __name__ == "__main__":

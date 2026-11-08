@@ -1198,6 +1198,20 @@ class LayerSwapSemanticsTests(_StrictTestCase):
         self.assertIsFalse(_SqliteMdbOps(conn).swap_layer_sequence("bid.mdb", "1", "2"))
         self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, 1), (2, None)])
 
+    def test_bid_layer_swap_refuses_a_pair_whose_first_sequence_is_unset(self):
+        conn = _layer_db([(1, 7, "A", -1, None, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
+        self.assertIsFalse(_SqliteMdbOps(conn).swap_layer_sequence("bid.mdb", "1", "2"))
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, None), (2, 2)])
+
+    def test_default_layer_swap_refuses_a_pair_whose_first_sequence_is_unset(self):
+        conn = _layer_db(
+            [(1, None, "T1", -1, None, -1, -1), (2, None, "T2", -1, 2, -1, -1)]
+        )
+        self.assertIsFalse(
+            _SqliteMdbOps(conn).swap_default_layer_sequence("bid.mdb", "1", "2")
+        )
+        self.assertEqual(_layer_rows(conn, "UID, Sequence"), [(1, None), (2, 2)])
+
     def test_swapping_a_bid_layer_with_itself_is_refused_without_writing(self):
         conn = _layer_db([(1, 7, "A", -1, 1, 0, 0), (2, 7, "B", -1, 2, 0, 0)])
         self.assertIsFalse(_SqliteMdbOps(conn).swap_layer_sequence("bid.mdb", "1", "1"))
@@ -1348,6 +1362,17 @@ class BulkLayerVisibilitySemanticsTests(_StrictTestCase):
         operations.cursor.forced_postupdate_uids = (10, 12)
         with self.assertRaisesRegex(
             RuntimeError, "could verify only 2 of 2 captured Layers"
+        ):
+            operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
+
+    def test_unknown_count_verification_rejects_a_duplicated_persisted_uid(self):
+        operations = _LayerOperations()
+        operations.cursor.forced_update_rowcount = -1
+        operations.cursor.forced_postupdate_uids = (10, 10, 11)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "bulk Layer visibility update could verify only 3 of 2 captured Layers "
+            "in a 2-Layer operation",
         ):
             operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
 
@@ -1547,6 +1572,23 @@ class LayerWriteColumnContractTests(_StrictTestCase):
             with self.subTest(operation=name):
                 conn = _layer_db(_FULL_LAYER_FIXTURE)
                 self.assertIsNotNone(call(RealContractOps(conn)))
+
+    def test_every_operation_reports_its_documented_result_when_its_columns_exist(
+        self,
+    ):
+        # The insert operations return the new uid (text); everything else True.
+        expected = {
+            "insert_layer": "32",
+            "insert_default_layer": "32",
+        }
+        for name, call, _required in _LAYER_OPERATION_CONTRACTS:
+            with self.subTest(operation=name):
+                conn = _layer_db(_FULL_LAYER_FIXTURE)
+                result = call(RealContractOps(conn))
+                if name in expected:
+                    self.assertEqual(result, expected[name])
+                else:
+                    self.assertIsTrue(result)
 
     def test_every_operation_refuses_to_start_without_each_declared_column(self):
         for name, call, required in _LAYER_OPERATION_CONTRACTS:

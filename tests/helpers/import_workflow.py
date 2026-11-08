@@ -72,6 +72,23 @@ class InspectingImporter(FakeImporter):
         )
 
 
+def hostile_cab_member_names(outside_dir, extract_root):
+    """CAB member names that lead from ``extract_root`` to ``outside_dir/payload.ost``.
+    The absolute, rooted (drive-less) and ``..`` forms are derived from the
+    caller's own sandbox, so a guard that lets one through can only write there.
+    """
+    target = Path(outside_dir) / "payload.ost"
+    absolute = str(target)
+    rooted = absolute[len(target.drive) :]
+    relative = os.path.relpath(target, extract_root)
+    return {
+        "absolute": absolute,
+        "rooted": rooted,
+        "relative": relative,
+        "relative with forward slashes": relative.replace("\\", "/"),
+    }
+
+
 class FakeOspCab:
     def __init__(self, names=None, ost_xml="<XML_ROOT />"):
         self.extract_calls = []
@@ -87,13 +104,28 @@ class FakeOspCab:
         normal_output = self._normal_windows_path(output_dir)
         root = Path(normal_output)
         self.root = root
-        for member_name in self.names:
-            member_path = root.joinpath(*PureWindowsPath(member_name).parts)
+        member_paths = [
+            self._member_destination(root, member_name) for member_name in self.names
+        ]
+        for member_path in member_paths:
             if member_path.suffix.lower() == ".ost":
                 member_path.write_text(self.ost_xml, encoding="utf-8")
             elif member_path.suffix:
                 member_path.write_bytes(b"packaged")
         return True
+
+    def _member_destination(self, root, member_name):
+        """Where the member would be written; raises if that is not inside ``root``.
+        The real extractor writes absolute, rooted and ``..`` member names for
+        real, so this fake refuses them before anything is written.
+        """
+        member_path = root.joinpath(*PureWindowsPath(member_name).parts)
+        if root.resolve() not in member_path.resolve().parents:
+            raise AssertionError(
+                f"CAB member {member_name!r} would be extracted to {member_path}, "
+                f"outside the extraction folder {root}"
+            )
+        return member_path
 
     def _normal_windows_path(self, value):
         if value.startswith("\\\\?\\UNC\\"):

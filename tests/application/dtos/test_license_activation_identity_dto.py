@@ -165,3 +165,53 @@ class LicenseActivationIdentityValidationTests(unittest.TestCase):
                     )
                 self._identity(**{field: "a b"})
                 self._identity(**{field: "a\x7fb"})
+
+
+class LicenseActivationIdentityStrictnessTests(unittest.TestCase):
+    def _identity(self, **changes):
+        return LicenseActivationIdentityTests._identity(self, **changes)
+
+    def test_unjoined_join_name_must_be_a_real_empty_string_not_a_lookalike(self):
+        class BlankLookalike:
+            __hash__ = None
+
+            def __eq__(self, other):
+                return other == ""
+
+            def __ne__(self, other):
+                return not self.__eq__(other)
+
+        lookalike = BlankLookalike()
+        self.assertTrue(lookalike == "")
+        self.assertFalse(lookalike != "")
+        with self.assertRaisesRegex(
+            ValueError, "^An unjoined computer cannot have a join name$"
+        ):
+            self._identity(join_type=WindowsJoinType.UNJOINED, join_name=lookalike)
+        self.assertEqual(
+            self._identity(join_type=WindowsJoinType.UNJOINED, join_name="").join_name,
+            "",
+        )
+
+    def test_payload_values_are_plain_strings_not_str_subclass_members(self):
+        payload = self._identity().to_payload()
+        self.assertEqual(
+            list(payload),
+            ["version", "windows_account", "computer_name", "join_type", "join_name"],
+        )
+        for key, value in payload.items():
+            with self.subTest(key=key):
+                self.assertIs(type(value), str)
+
+    def test_the_error_type_is_a_runtime_error_that_carries_its_message(self):
+        from ost_visualizer.application.dtos.license_activation_identity_dto import (
+            LicenseActivationIdentityError,
+        )
+
+        self.assertTrue(issubclass(LicenseActivationIdentityError, RuntimeError))
+        self.assertEqual(
+            str(LicenseActivationIdentityError("no identity available")),
+            "no identity available",
+        )
+        with self.assertRaises(RuntimeError):
+            raise LicenseActivationIdentityError("x")

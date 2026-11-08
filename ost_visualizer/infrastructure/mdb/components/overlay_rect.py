@@ -21,7 +21,7 @@ def _validated_overlay_rect(
         raise ValueError("OverlayRect must contain exactly four values")
     try:
         rect = tuple(float(value) for value in values)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("OverlayRect values must be numeric") from exc
     if not all(math.isfinite(value) for value in rect):
         raise ValueError("OverlayRect values must be finite")
@@ -57,8 +57,11 @@ def full_page_overlay_rect(
     overlay_units = overlay_units_per_sheet_inch(scale_factor1, scale_factor2)
     if overlay_units is None:
         raise ValueError("Overlay calibration must contain finite positive values")
-    width = float(width_inches)
-    height = float(height_inches)
+    try:
+        width = float(width_inches)
+        height = float(height_inches)
+    except OverflowError as exc:
+        raise ValueError("Page dimensions must be finite") from exc
     if not math.isfinite(width) or not math.isfinite(height):
         raise ValueError("Page dimensions must be finite")
     if width <= 0.0 or height <= 0.0:

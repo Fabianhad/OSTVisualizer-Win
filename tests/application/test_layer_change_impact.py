@@ -115,3 +115,20 @@ class LayerChangeImpactEdgeTests(unittest.TestCase):
             ),
             False,
         )
+
+
+class LayerChangeImpactCaseAndWhitespaceTests(unittest.TestCase):
+    def test_a_case_only_or_whitespace_only_rename_still_counts_as_a_rename(self):
+        # The rename is detected on the raw names: a case or padding change of an
+        # ordinary layer name preserves rendering (it is not a no-op).
+        old = BidLayer("1", "8", "Walls", True, 1)
+        for name in ("WALLS", " Walls ", "walls"):
+            with self.subTest(name=name):
+                self.assertIs(
+                    layer_rename_preserves_rendering([old], [replace(old, name=name)]),
+                    True,
+                )
+                self.assertIs(
+                    layer_rename_preserves_rendering([replace(old, name=name)], [old]),
+                    True,
+                )

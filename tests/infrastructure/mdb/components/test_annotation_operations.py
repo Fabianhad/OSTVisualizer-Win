@@ -3775,3 +3775,573 @@ class AnnotationParameterTypingTests(unittest.TestCase):
         self.assertEqual(
             self.conn.execute("SELECT UID FROM BidHotLinks").fetchall(), []
         )
+
+
+class _InterruptedAnnotationOps(RealContractAnnotationOps):
+    def _schema(self, _connection):
+        raise KeyboardInterrupt()
+
+
+class _NeverMissingSchema:
+    """Like the real schema for an unknown table name: it never reports it missing."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def optional_table_missing(self, _table):
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _NeverMissingSchemaAnnotationOps(RealContractAnnotationOps):
+    def _schema(self, connection):
+        return _NeverMissingSchema(super()._schema(connection))
+
+
+class _ConnectionCountingAnnotationOps(RealContractAnnotationOps):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.opened = []
+
+    def _connection(self, db_path):
+        self.opened.append(db_path)
+        return super()._connection(db_path)
+
+
+class _AllocationRecordingAnnotationOps(_StrictParameterAnnotationOps):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.allocations = []
+
+    def _next_uids_preserving_references(self, cursor, schema, table, count):
+        self.allocations.append((table, count))
+        return super()._next_uids_preserving_references(cursor, schema, table, count)
+
+
+class AnnotationOperationsErrorPolicyTests(unittest.TestCase):
+    """What the mutating operations log and propagate when something goes wrong."""
+
+    def test_an_interrupt_propagates_from_every_mutating_operation_without_a_log(self):
+        for label, call in (
+            (
+                "positions",
+                lambda ops: ops.save_annotation_positions(
+                    "bid.mdb", [("1", "rect", [0.0, 0.0, 1.0, 1.0])]
+                ),
+            ),
+            (
+                "text properties",
+                lambda ops: ops.save_annotation_text_properties(
+                    "bid.mdb", [("1", "text", {"Text": "x"})]
+                ),
+            ),
+            (
+                "styles",
+                lambda ops: ops.save_annotation_styles(
+                    "bid.mdb", [("1", "rect", {"Color": 1})]
+                ),
+            ),
+            (
+                "insert",
+                lambda ops: ops.insert_annotations(
+                    "bid.mdb", "1", [_strict_spec("rect")]
+                ),
+            ),
+            (
+                "delete",
+                lambda ops: ops.delete_annotations("bid.mdb", [("1", "rect")]),
+            ),
+        ):
+            with self.subTest(label):
+                conn = _strict_parameter_database()
+                ops = _InterruptedAnnotationOps(conn)
+                with self.assertNoLogs("test.annotation_write_support", level="ERROR"):
+                    with self.assertRaises(KeyboardInterrupt):
+                        call(ops)
+                self.assertIs(conn.in_transaction, False)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT UID, Position FROM BidAnnotationRects ORDER BY UID"
+                    ).fetchall(),
+                    [(1, b"\x00"), (2, b"\x00")],
+                )
+
+    def test_each_failed_operation_logs_one_message_naming_the_operation_and_file(
+        self,
+    ):
+        broken_rects = (
+            "CREATE TABLE BidAnnotationRects (Foo INTEGER)",
+            "INSERT INTO BidAnnotationRects VALUES (1)",
+        )
+        for label, ddl, call, expected_outcome, expected_message in (
+            (
+                "positions",
+                broken_rects,
+                lambda ops: ops.save_annotation_positions(
+                    "bid.mdb", [("1", "rect", [0.0, 0.0, 1.0, 1.0])]
+                ),
+                False,
+                "Failed to bulk save annotation positions in bid.mdb",
+            ),
+            (
+                "text properties",
+                ("CREATE TABLE BidTexts (Foo INTEGER)",),
+                lambda ops: ops.save_annotation_text_properties(
+                    "bid.mdb", [("1", "text", {"Text": "x"})]
+                ),
+                False,
+                "Failed to bulk save annotation text properties in bid.mdb",
+            ),
+            (
+                "styles",
+                broken_rects,
+                lambda ops: ops.save_annotation_styles(
+                    "bid.mdb", [("1", "rect", {"Color": 1})]
+                ),
+                False,
+                "Failed to bulk save annotation styles in bid.mdb",
+            ),
+            (
+                "insert",
+                ("CREATE TABLE Bids (UID INTEGER)",),
+                lambda ops: ops.insert_annotations(
+                    "bid.mdb", "1", [_strict_spec("rect")]
+                ),
+                [],
+                "Failed to bulk insert annotations in bid.mdb",
+            ),
+            (
+                "delete",
+                broken_rects,
+                lambda ops: ops.delete_annotations("bid.mdb", [("1", "rect")]),
+                False,
+                "Failed to bulk delete annotations in bid.mdb",
+            ),
+        ):
+            with self.subTest(label):
+                ops = RealContractAnnotationOps(annotation_database(*ddl))
+                with self.assertLogs(
+                    "test.annotation_write_support", level="ERROR"
+                ) as logs:
+                    outcome = call(ops)
+                self.assertEqual(outcome, expected_outcome)
+                self.assertIs(type(outcome), type(expected_outcome))
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records], [expected_message]
+                )
+
+    def test_unsupported_types_are_rejected_with_the_exact_message(self):
+        ops = ReraisingRealContractAnnotationOps(_strict_parameter_database())
+        for label, call in (
+            (
+                "insert",
+                lambda: ops.insert_annotations("bid.mdb", "1", [_strict_spec("bogus")]),
+            ),
+            (
+                "delete",
+                lambda: ops.delete_annotations("bid.mdb", [("1", "bogus")]),
+            ),
+        ):
+            with self.subTest(label):
+                with self.assertRaises(ValueError) as caught:
+                    call()
+                self.assertEqual(
+                    str(caught.exception), "Unsupported annotation type: bogus"
+                )
+
+    def test_an_empty_insert_batch_never_opens_a_connection_or_logs(self):
+        ops = _ConnectionCountingAnnotationOps(_strict_parameter_database())
+        with self.assertNoLogs("test.annotation_write_support", level="ERROR"):
+            self.assertEqual(ops.insert_annotations("bid.mdb", "1", []), [])
+        self.assertEqual(ops.opened, [])
+
+    def test_a_position_for_an_unknown_type_is_skipped_even_if_no_table_is_reported_missing(
+        self,
+    ):
+        ops = _NeverMissingSchemaAnnotationOps(annotation_database())
+        self.assertIs(
+            ops.save_annotation_positions("bid.mdb", [("1", "bogus", [0.0, 0.0])]),
+            True,
+        )
+
+
+class AnnotationOperationsValueEdgeTests(unittest.TestCase):
+    """Reference validation scope, UID allocation sizes and numeric coercions."""
+
+    def test_only_hot_links_validate_a_named_view_reference(self):
+        conn = _strict_parameter_database()
+        ops = _StrictParameterAnnotationOps(conn)
+        self.assertEqual(
+            ops.insert_annotations(
+                "bid.mdb", "1", [_strict_spec("rect", BidPageViewUID="999")]
+            ),
+            ["3"],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidPageUID FROM BidAnnotationRects ORDER BY UID"
+            ).fetchall(),
+            [(1, 3), (2, 3), (3, 3)],
+        )
+
+    def test_each_table_reserves_exactly_as_many_uids_as_it_receives_specs(self):
+        ops = _AllocationRecordingAnnotationOps(_strict_parameter_database())
+        specs = [
+            _strict_spec("rect"),
+            _strict_spec("text", Text="a"),
+            _strict_spec("rect"),
+            _strict_spec("rect"),
+            _strict_spec("text", Text="b"),
+        ]
+        self.assertEqual(
+            ops.insert_annotations("bid.mdb", "1", specs),
+            ["3", "2", "4", "5", "3"],
+        )
+        self.assertEqual(ops.allocations, [("BidAnnotationRects", 3), ("BidTexts", 2)])
+
+    def test_numeric_colours_are_bound_as_integers(self):
+        ops = _StrictParameterAnnotationOps(_strict_parameter_database())
+        self.assertIs(
+            ops.save_annotation_styles(
+                "bid.mdb",
+                [("1", "rect", {"Color": 255.0}), ("2", "rect", {"Color": None})],
+            ),
+            True,
+        )
+        updates = ops.statements("UPDATE [BidAnnotationRects]")
+        self.assertEqual(updates, [(255, 1), (0, 2)])
+        self.assertEqual(
+            [[type(value) for value in params] for params in updates],
+            [[int, int], [int, int]],
+        )
+        self.assertEqual(
+            ops.insert_annotations(
+                "bid.mdb", "1", [_strict_spec("dimension", FontColor=7.0)]
+            ),
+            ["2"],
+        )
+        font_color = ops.insert_bound("BidDimensions")["FontColor"]
+        self.assertEqual(font_color, 7)
+        self.assertIs(type(font_color), int)
+
+    def test_none_valued_text_properties_fall_back_to_the_documented_defaults(self):
+        conn = _strict_parameter_database()
+        ops = _StrictParameterAnnotationOps(conn)
+        self.assertIs(
+            ops.save_annotation_text_properties(
+                "bid.mdb",
+                [
+                    (
+                        "1",
+                        "text",
+                        {
+                            "Text": "Hi",
+                            "FontName": None,
+                            "FontColor": None,
+                            "FontSize": None,
+                            "FontBold": None,
+                            "TextAlign": None,
+                        },
+                    )
+                ],
+            ),
+            True,
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT FontName, FontColor, FontSize, FontBold, FontItalic, "
+                "FontUnderline, TextAlign FROM BidTexts"
+            ).fetchall(),
+            [("Arial", 0, 12, 0, 0, 0, 0)],
+        )
+
+
+class AnnotationOperationsRequiredColumnTests(unittest.TestCase):
+    """Every column a text or dimension update writes is required, one at a time."""
+
+    def _missing_column_message(self, table, columns, update):
+        conn = _database_with_bid(
+            _annotation_table_ddl(table, columns),
+            f"INSERT INTO {table} (UID, BidUID) VALUES (1, 1)",
+        )
+        ops = RealContractAnnotationOps(conn)
+        with self.assertLogs("test.annotation_write_support", level="ERROR") as logs:
+            self.assertIs(
+                ops.save_annotation_text_properties("bid.mdb", [update]), False
+            )
+        return str(logs.records[0].exc_info[1])
+
+    def test_a_text_or_callout_update_needs_every_text_column(self):
+        text_columns = ("UID", "BidUID", "Name") + _FONT_COLUMNS + ("TextAlign",)
+        for annotation_type, table in (
+            ("text", "BidTexts"),
+            ("callout", "BidCallOuts"),
+        ):
+            for missing in text_columns[2:]:
+                with self.subTest(table=table, missing=missing):
+                    columns = tuple(c for c in text_columns if c != missing)
+                    self.assertEqual(
+                        self._missing_column_message(
+                            table,
+                            columns,
+                            ("1", annotation_type, {"Text": "x"}),
+                        ),
+                        f"Missing {table}.{missing}",
+                    )
+
+    def test_a_dimension_update_needs_every_font_column(self):
+        for missing in _FONT_COLUMNS:
+            with self.subTest(missing=missing):
+                columns = ("UID", "BidUID") + tuple(
+                    c for c in _FONT_COLUMNS if c != missing
+                )
+                self.assertEqual(
+                    self._missing_column_message(
+                        "BidDimensions",
+                        columns,
+                        ("1", "dimension", {"FontName": "Calibri"}),
+                    ),
+                    f"Missing BidDimensions.{missing}",
+                )
+
+
+class AnnotationOperationsHotLinkRemapTests(unittest.TestCase):
+    def _hotlink_spec(self, target):
+        return _strict_spec("hotlink", BidPageViewUID=target)
+
+    def test_a_numeric_hot_link_target_is_remapped_through_its_text_key(self):
+        conn = _strict_parameter_database()
+        ops = _StrictParameterAnnotationOps(conn)
+        self.assertEqual(
+            ops.insert_annotations(
+                "bid.mdb",
+                "1",
+                [self._hotlink_spec(6)],
+                ref_remap=PasteRefRemap(namedview_uids={"6": "5"}),
+            ),
+            ["31"],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidPageViewUID FROM BidHotLinks ORDER BY UID"
+            ).fetchall(),
+            [(30, 6), (31, 5)],
+        )
+
+    def test_the_remapped_hot_link_target_is_the_one_that_gets_validated(self):
+        conn = _strict_parameter_database()
+        ops = _StrictParameterAnnotationOps(conn)
+        with self.assertRaisesRegex(
+            RuntimeError, "BidNamedViews has no row for UID 999"
+        ):
+            ops.insert_annotations(
+                "bid.mdb",
+                "1",
+                [self._hotlink_spec(6)],
+                ref_remap=PasteRefRemap(namedview_uids={"6": "999"}),
+            )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidHotLinks").fetchone()[0], 1
+        )
+
+
+class AnnotationOperationsRound3Tests(unittest.TestCase):
+    """Uid coercion, callout styles, named-view positions and dependency chunking."""
+
+    def test_padded_and_float_uids_are_accepted_by_position_saves_characterisation(
+        self,
+    ):
+        # Characterisation of the current lenient coercion: int() runs before the
+        # uid is validated, so " 1" and 1.0 address row 1.
+        for uid in (" 1", 1.0, "1"):
+            with self.subTest(uid=uid):
+                conn = _strict_parameter_database()
+                ops = _StrictParameterAnnotationOps(conn)
+                self.assertIs(
+                    ops.save_annotation_positions(
+                        "bid.mdb", [(uid, "rect", [1.0, 2.0, 3.0, 4.0])]
+                    ),
+                    True,
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT UID, Position FROM BidAnnotationRects ORDER BY UID"
+                    ).fetchall(),
+                    [(1, b"1.0;2.0;3.0;4.0\n"), (2, b"\x00")],
+                )
+
+    def test_a_non_numeric_uid_in_a_delete_fails_with_the_int_conversion_text(self):
+        # Characterisation: the text comes from int(), not from the helper that
+        # normalises uid collections.
+        ops = ReraisingRealContractAnnotationOps(_strict_parameter_database())
+        with self.assertRaises(ValueError) as caught:
+            ops.delete_annotations("bid.mdb", [("abc", "rect")])
+        self.assertEqual(
+            str(caught.exception), "invalid literal for int() with base 10: 'abc'"
+        )
+
+    def test_callout_style_updates_write_color_and_width_not_the_font_colour(self):
+        conn = _strict_parameter_database()
+        ops = _StrictParameterAnnotationOps(conn)
+        self.assertIs(
+            ops.save_annotation_styles(
+                "bid.mdb", [("1", "callout", {"Color": "#00ff00", "Width": "9.7"})]
+            ),
+            True,
+        )
+        self.assertEqual(
+            ops.statements("UPDATE [BidCallOuts]"),
+            [(0x00FF00, 9, 1)],
+        )
+        self.assertEqual(
+            [
+                " ".join(query.split())
+                for query, _params in ops.executed
+                if query.lstrip().startswith("UPDATE [BidCallOuts]")
+            ],
+            ["UPDATE [BidCallOuts] SET [Color]=?, [Width]=? WHERE [UID]=?"],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT Color, Width, FontColor, FontSize FROM BidCallOuts"
+            ).fetchall(),
+            [(0x00FF00, 9, 1, 12)],
+        )
+
+    def test_a_callout_colour_alone_leaves_the_width_untouched(self):
+        conn = _strict_parameter_database()
+        ops = _StrictParameterAnnotationOps(conn)
+        self.assertIs(
+            ops.save_annotation_styles("bid.mdb", [("1", "callout", {"Color": 255})]),
+            True,
+        )
+        self.assertEqual(
+            conn.execute("SELECT Color, Width, FontColor FROM BidCallOuts").fetchall(),
+            [(255, 1, 1)],
+        )
+
+    def test_named_view_positions_are_stored_normalised_and_other_types_raw(self):
+        conn = annotation_database(
+            "CREATE TABLE Bids (UID INTEGER)",
+            "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidNamedViews (UID INTEGER, BidUID INTEGER, Position BLOB)",
+            "INSERT INTO BidNamedViews VALUES (3, 1, X'00')",
+            "INSERT INTO BidNamedViews VALUES (4, 1, X'00')",
+            "CREATE TABLE BidAnnotationRects "
+            "(UID INTEGER, BidUID INTEGER, Position BLOB)",
+            "INSERT INTO BidAnnotationRects VALUES (5, 1, X'00')",
+        )
+        ops = RealContractAnnotationOps(conn)
+        self.assertIs(
+            ops.save_annotation_positions(
+                "bid.mdb",
+                [
+                    ("3", "namedview", [1.0, 2.0, 13.0, 14.0]),
+                    ("4", "namedview", [5.0, 6.0, 1.0, 2.0]),
+                    ("5", "rect", [1.0, 2.0, 13.0, 14.0]),
+                ],
+            ),
+            True,
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, Position FROM BidNamedViews ORDER BY UID"
+            ).fetchall(),
+            [
+                (3, b"13.0;14.0;1.0;2.0;13.0;2.0;1.0;14.0;0.0\n"),
+                (4, b"5.0;6.0;1.0;2.0;5.0;2.0;1.0;6.0;0.0\n"),
+            ],
+        )
+        self.assertEqual(
+            conn.execute("SELECT Position FROM BidAnnotationRects").fetchall(),
+            [(b"1.0;2.0;13.0;14.0\n",)],
+        )
+
+    def test_the_named_view_dependency_lookup_is_chunked_like_the_delete(self):
+        class LimitedAnnotationOps(
+            AnnotationOperationsMixin, _ParameterLimitedSqliteOps
+        ):
+            pass
+
+        count = 120
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute("CREATE TABLE BidNamedViews (UID INTEGER, BidUID INTEGER)")
+        conn.execute(
+            "CREATE TABLE BidHotLinks "
+            "(UID INTEGER, BidUID INTEGER, BidPageViewUID INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidNamedViews VALUES (?, 1)",
+            ((uid,) for uid in range(1, count + 1)),
+        )
+        conn.executemany(
+            "INSERT INTO BidHotLinks VALUES (?, 1, ?)",
+            ((1000 + uid, uid) for uid in range(1, count + 1)),
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        annotations = [(str(uid), "namedview") for uid in range(1, count + 1)] + [
+            (str(1000 + uid), "hotlink") for uid in range(1, count + 1)
+        ]
+        self.assertIs(
+            LimitedAnnotationOps(conn).delete_annotations("bid.mdb", annotations), True
+        )
+        lookups = [
+            sql
+            for sql in statements
+            if sql.lstrip().startswith("SELECT [UID] FROM [BidHotLinks]")
+        ]
+        self.assertEqual(len(lookups), 3)
+        for lookup in lookups:
+            self.assertLessEqual(lookup.count(",") + 1, 50)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidNamedViews").fetchone()[0], 0
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidHotLinks").fetchone()[0], 0
+        )
+
+
+class AnnotationOperationsTextValueTypeTests(unittest.TestCase):
+    def test_numeric_text_properties_are_stored_as_text(self):
+        conn = _strict_parameter_database()
+        ops = RealContractAnnotationOps(conn)
+        self.assertIs(
+            ops.save_annotation_text_properties(
+                "bid.mdb",
+                [
+                    ("5", "namedview", {"Text": 123}),
+                    ("1", "text", {"Text": "t", "FontName": 77}),
+                ],
+            ),
+            True,
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT typeof(Name), Name FROM BidNamedViews WHERE UID=5"
+            ).fetchall(),
+            [("text", "123")],
+        )
+        self.assertEqual(
+            conn.execute("SELECT typeof(FontName), FontName FROM BidTexts").fetchall(),
+            [("text", "77")],
+        )
+
+    def test_a_named_view_delete_needs_the_hot_link_uid_column_itself(self):
+        conn = _database_with_bid(
+            "CREATE TABLE BidNamedViews (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidNamedViews VALUES (1, 1)",
+            "CREATE TABLE BidHotLinks (BidUID INTEGER, BidPageViewUID INTEGER)",
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            ReraisingRealContractAnnotationOps(conn).delete_annotations(
+                "bid.mdb", [("1", "namedview")]
+            )
+        self.assertEqual(str(caught.exception), "Missing BidHotLinks.UID")
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidNamedViews").fetchone()[0], 1
+        )

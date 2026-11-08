@@ -542,6 +542,126 @@ class ProgressDialogContractTests(unittest.TestCase):
         self.assertIsNone(dialog._label)
         self.assertEqual(stuck.quit_calls, 1)
 
+    def test_progress_text_keeps_the_dialogs_own_action_text(self):
+        dialog = self._dialog("a.ost", lambda: True, action_text="Importing")
+        self.assertEqual(dialog._label.text(), "Importing <b>a.ost</b>...")
+        dialog._on_progress("page 2")
+        self.assertEqual(dialog._label.text(), "Importing <b>page 2</b>...")
+
+    def test_the_dialog_is_380_pixels_wide_before_and_after_progress_text(self):
+        dialog = self._dialog("a.ost", lambda: True)
+        self.assertEqual((dialog.minimumWidth(), dialog.maximumWidth()), (380, 380))
+        dialog._on_progress("a very long description " * 20)
+        self.assertEqual((dialog.minimumWidth(), dialog.maximumWidth()), (380, 380))
+        self.assertEqual(dialog.width(), 380)
+
+    def test_the_fixed_height_is_exactly_the_layouts_size_hint_and_follows_the_text(
+        self,
+    ):
+        dialog = self._dialog("a.ost", lambda: True)
+        self.assertEqual(dialog.height(), dialog.layout().totalSizeHint().height())
+        short_height = dialog.height()
+        dialog._on_progress("a very long description " * 20)
+        self.assertGreater(dialog.height(), short_height)
+        self.assertEqual(dialog.height(), dialog.layout().totalSizeHint().height())
+        self.assertEqual(dialog.minimumHeight(), dialog.height())
+        self.assertEqual(dialog.maximumHeight(), dialog.height())
+
+    def test_cleanup_survives_a_reporter_whose_qt_object_is_already_deleted(self):
+        reporter = ProgressReporter()
+        dialog = self._dialog("a.ost", lambda: True, reporter=reporter)
+        delete(reporter)
+        self.assertFalse(isValid(reporter))
+        dialog.cleanup()
+        self.assertTrue(dialog._cleanup_complete)
+        self.assertIsNone(dialog._reporter)
+        self.assertIsNone(dialog._thread)
+        self.assertIsNone(dialog._task_fn)
+
+    def test_cleanup_completes_for_a_destroyed_dialog_that_was_connected_to_signals(
+        self,
+    ):
+        for with_thread, with_reporter in ((False, True), (True, False), (True, True)):
+            with self.subTest(thread=with_thread, reporter=with_reporter):
+                reporter = ProgressReporter() if with_reporter else None
+                dialog = self._dialog("a.ost", lambda: True, reporter=reporter)
+                patcher, created = self._doubles()
+                if with_thread:
+                    with patcher:
+                        dialog._start()
+                if with_reporter and not with_thread:
+                    reporter.progress.connect(dialog._on_progress)
+                delete(dialog)
+                self.assertFalse(isValid(dialog))
+                dialog.cleanup()
+                self.assertTrue(dialog._cleanup_complete)
+                self.assertTrue(dialog._cleaned_up)
+                self.assertIsNone(dialog._reporter)
+                self.assertIsNone(dialog._thread)
+                self.assertIsNone(dialog._task_fn)
+                self.assertIsNone(dialog._progress)
+                dialog.cleanup()
+                self.assertTrue(dialog._cleanup_complete)
+
+    def test_cleanup_only_tolerates_the_known_disconnect_errors(self):
+        class _Failing:
+            def __init__(self, error):
+                self.error = error
+
+            def disconnect(self, _callback):
+                raise self.error
+
+        class _Holder:
+            def __init__(self, error):
+                self.progress = _Failing(error)
+                self.finished = self.progress
+
+            def isRunning(self):
+                return False
+
+        for error in (ValueError("odd"), KeyboardInterrupt(), SystemExit(1)):
+            for attribute in ("_reporter", "_thread"):
+                with self.subTest(error=type(error).__name__, attribute=attribute):
+                    reporter = ProgressReporter()
+                    dialog = self._dialog("a.ost", lambda: True, reporter=reporter)
+                    setattr(dialog, attribute, _Holder(error))
+                    if attribute == "_thread":
+                        dialog._reporter = None
+                    with self.assertRaises(type(error)):
+                        dialog.cleanup()
+                    self.assertFalse(dialog._cleanup_complete)
+                    dialog._reporter = reporter
+                    dialog._thread = None
+
+    def test_each_tolerated_disconnect_error_is_ignored_for_both_signals(self):
+        class _Failing:
+            def __init__(self, error):
+                self.error = error
+
+            def disconnect(self, _callback):
+                raise self.error
+
+        class _Holder:
+            def __init__(self, error):
+                self.progress = self.finished = _Failing(error)
+
+            def isRunning(self):
+                return False
+
+        for error in (TypeError("t"), RuntimeError("r"), SystemError("s")):
+            for attribute in ("_reporter", "_thread"):
+                with self.subTest(error=type(error).__name__, attribute=attribute):
+                    dialog = self._dialog("a.ost", lambda: True)
+                    setattr(dialog, attribute, _Holder(error))
+                    dialog.cleanup()
+                    self.assertTrue(dialog._cleanup_complete)
+                    self.assertIsNone(dialog._reporter)
+                    self.assertIsNone(dialog._thread)
+
+    def test_the_default_action_text_is_processing(self):
+        dialog = self._dialog("dir/x.ost", lambda: True)
+        self.assertEqual(dialog._label.text(), "Processing <b>x.ost</b>...")
+
     def test_finishing_is_ignored_after_cleanup_and_before_the_worker_reports(self):
         dialog = self._dialog("a.ost", lambda: True)
         accepted = _spy(dialog.accepted)

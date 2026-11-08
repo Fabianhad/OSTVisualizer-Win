@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 from contextlib import contextmanager
@@ -8,6 +9,7 @@ from ...application.interfaces.i_mdb_connection_manager import (
 )
 from ..database.connection_wrapper import ConnectionWrapper
 
+logger = logging.getLogger(__name__)
 ACCESS_CLIENT_TASK_EXHAUSTED_MESSAGE = (
     "Microsoft Access cannot open another database connection in this OST "
     "Visualizer session. Save any work in other applications, restart OST "
@@ -162,20 +164,35 @@ class MdbConnectionManager:
                 self._active_leases[abs_path] = (autocommit, lease_depth)
             wrapper = ConnectionWrapper(conn)
             cursor_cleanup_errors = []
+            interrupt = None
             try:
                 try:
                     yield wrapper
+                except BaseException as caught:
+                    if not isinstance(caught, Exception):
+                        interrupt = caught
+                    raise
                 finally:
                     cursor_cleanup_errors = wrapper.close_cursors()
                     if borrowed_write_connection:
-                        wrapper.rollback()
-            except pyodbc.Error as operation_error:
-                should_replace = (
-                    wrapper.rollback_failed
-                    or self._connection_requires_replacement(
-                        conn,
-                        operation_error,
-                    )
+                        try:
+                            wrapper.rollback()
+                        except Exception:
+                            if interrupt is None:
+                                raise
+                            logger.error(
+                                "The MDB read lease on the writer connection "
+                                "could not be rolled back after %s.",
+                                type(interrupt).__name__,
+                                exc_info=True,
+                            )
+            except BaseException as operation_error:
+                is_driver_error = isinstance(operation_error, pyodbc.Error)
+                if isinstance(operation_error, Exception) and not is_driver_error:
+                    raise
+                should_replace = wrapper.rollback_failed or (
+                    is_driver_error
+                    and self._connection_requires_replacement(conn, operation_error)
                 )
                 if should_replace:
                     with self._lock:

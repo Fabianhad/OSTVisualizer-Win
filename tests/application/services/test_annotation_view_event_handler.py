@@ -235,3 +235,47 @@ class AnnotationViewEventHandlerDefaultsAndErrorTests(unittest.TestCase):
         handler._on_hotlink_clicked(hotlink_uid="b")
         self.assertEqual(len(attempts), 2)
         self.assertEqual(len(logger.messages), 2)
+
+
+class AnnotationViewEventHandlerCachingTests(unittest.TestCase):
+    def test_a_falsy_use_case_is_still_built_once_and_reused(self):
+        class FalsyUseCase:
+            def __init__(self):
+                self.events = []
+
+            def __bool__(self):
+                return False
+
+            def execute_from_hotlink(self, event):
+                self.events.append(event.hotlink_uid)
+
+        built = []
+
+        def factory():
+            built.append(FalsyUseCase())
+            return built[-1]
+
+        handler = AnnotationViewEventHandler(
+            event_bus=EventBus(),
+            use_case_factory=factory,
+            logger=logging.getLogger("test"),
+        )
+        handler._on_hotlink_clicked(hotlink_uid="a")
+        handler._on_hotlink_clicked(hotlink_uid="b")
+        self.assertEqual(len(built), 1)
+        self.assertEqual(built[0].events, ["a", "b"])
+
+    def test_an_interrupt_raised_by_the_use_case_is_not_swallowed_as_a_click_error(
+        self,
+    ):
+        def interrupted(event):
+            raise KeyboardInterrupt
+
+        handler = AnnotationViewEventHandler(
+            event_bus=EventBus(),
+            use_case_factory=lambda: SimpleNamespace(execute_from_hotlink=interrupted),
+            logger=logging.getLogger("test"),
+        )
+        with self.assertNoLogs("test", level="DEBUG"):
+            with self.assertRaises(KeyboardInterrupt):
+                handler._on_hotlink_clicked(hotlink_uid="a")

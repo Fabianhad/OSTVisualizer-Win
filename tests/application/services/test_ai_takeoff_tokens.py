@@ -1,7 +1,8 @@
 import hashlib
 import json
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
+from pathlib import PurePosixPath
 from ost_visualizer.application.services.ai_takeoff_tokens import ProjectDataTokenReader
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
@@ -186,6 +187,162 @@ class ProjectDataTokenReaderTests(unittest.TestCase):
         self.assertEqual(after["takeoff:t1"], before["takeoff:t1"])
         self.assertNotEqual(after["takeoff:t2"], before["takeoff:t2"])
         self.assertEqual(after["takeoff:t9"], "missing")
+
+    def test_page_takeoff_token_ignores_list_order_but_follows_each_field_of_each_takeoff(
+        self,
+    ):
+        extra = Takeoff("t3", "c2", "p1", position=[2.0, 2.0, 3.0, 3.0])
+        self.project.takeoffs.append(extra)
+        resource = ("page_takeoffs:p1",)
+        before = self.reader("C:/jobs/a.mdb", "7", resource)
+        self.project.takeoffs[0], self.project.takeoffs[2] = (
+            self.project.takeoffs[2],
+            self.project.takeoffs[0],
+        )
+        self.assertEqual(self.reader("C:/jobs/a.mdb", "7", resource), before)
+        index = self.project.takeoffs.index(extra)
+        for label, change in (
+            ("uid", {"uid": "t4"}),
+            ("condition_uid", {"condition_uid": "c3"}),
+            ("position", {"position": [2.0, 2.0, 3.0, 4.0]}),
+        ):
+            with self.subTest(field=label):
+                self.project.takeoffs[index] = replace(extra, **change)
+                self.assertNotEqual(self.reader("C:/jobs/a.mdb", "7", resource), before)
+        self.project.takeoffs[index] = extra
+        self.assertEqual(self.reader("C:/jobs/a.mdb", "7", resource), before)
+
+    def test_page_takeoff_token_is_the_canonical_digest_of_the_sorted_triples(self):
+        canonical = '[["t1","c1",[0.0,0.0,10.0,0.0,10.0,10.0]],["t3","c2",[2.0,2.0]]]'
+        self.project.takeoffs.insert(0, Takeoff("t3", "c2", "p1", position=[2.0, 2.0]))
+        self.assertEqual(
+            self.reader("C:/jobs/a.mdb", "7", ("page_takeoffs:p1",)),
+            {
+                "page_takeoffs:p1": hashlib.sha256(
+                    canonical.encode("utf-8")
+                ).hexdigest()[:16]
+            },
+        )
+
+    def test_membership_and_takeoff_tokens_ignore_takeoff_list_order(self):
+        self.project.takeoffs.append(Takeoff("t3", "c1", "p2", position=[4.0, 4.0]))
+        resources = ("condition_takeoffs:c1", "takeoff:t1", "takeoff:t3")
+        before = self.reader("C:/jobs/a.mdb", "7", resources)
+        self.project.takeoffs.reverse()
+        self.assertEqual(self.reader("C:/jobs/a.mdb", "7", resources), before)
+        canonical = '["t1","t2","t3"]'
+        self.assertEqual(
+            before["condition_takeoffs:c1"],
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16],
+        )
+
+    def test_characterisation_non_string_ids_and_paths_are_compared_and_digested_as_text(
+        self,
+    ):
+        """Pins the defensive str() coercion and the json default=str fallback."""
+        self.project.bid_ref = BidRef("C:/jobs/a.mdb", 7)
+        self.project.takeoffs.append(Takeoff(9, 5, "p3", position=[1.0, 2.0]))
+        self.project.pages["p3"] = Page(uid="p3", name="P3")
+        resources = ("takeoff:9", "condition_takeoffs:5", "page_takeoffs:p3")
+        tokens = self.reader("C:/jobs/a.mdb", "7", resources)
+        self.assertNotIn("closed", set(tokens.values()))
+        self.assertNotEqual(tokens["takeoff:9"], "missing")
+        self.assertEqual(
+            tokens["condition_takeoffs:5"],
+            hashlib.sha256(b'["9"]').hexdigest()[:16],
+        )
+        self.assertEqual(
+            tokens["page_takeoffs:p3"],
+            hashlib.sha256(b'[["9","5",[1.0,2.0]]]').hexdigest()[:16],
+        )
+        self.assertEqual(
+            self.reader(PurePosixPath("C:/jobs/a.mdb"), 7, ("page:p1",)),
+            {"page:p1": self.reader("C:/jobs/a.mdb", "7", ("page:p1",))["page:p1"]},
+        )
+        self.project.bid_ref = BidRef(PurePosixPath("C:/jobs/a.mdb"), 7)
+        path_token = self.reader("C:/jobs/a.mdb", "7", ("page:p1",))
+        self.project.bid_ref = BidRef("C:/jobs/a.mdb", 7)
+        self.assertEqual(path_token, self.reader("C:/jobs/a.mdb", "7", ("page:p1",)))
+        self.assertNotEqual(path_token["page:p1"], "closed")
+        self.project.pages["p1"] = replace(
+            self.project.pages["p1"], image_path=PurePosixPath("/plans/a.pdf")
+        )
+        as_text = replace(self.project.pages["p1"], image_path="/plans/a.pdf")
+        self.project.pages["p4"] = as_text
+        self.assertEqual(
+            self.reader("C:/jobs/a.mdb", "7", ("page:p1",))["page:p1"],
+            self.reader("C:/jobs/a.mdb", "7", ("page:p4",))["page:p4"],
+        )
+
+    def test_a_generator_of_resources_is_read_once(self):
+        tokens = self.reader(
+            "C:/jobs/a.mdb", "7", (name for name in ("page:p1", "condition:c1"))
+        )
+        self.assertEqual(set(tokens), {"page:p1", "condition:c1"})
+        self.project.bid_ref = None
+        self.assertEqual(
+            self.reader("C:/jobs/a.mdb", "7", (name for name in ("page:p1",))),
+            {"page:p1": "closed"},
+        )
+
+    def test_a_colon_inside_an_id_belongs_to_the_id_not_to_the_kind(self):
+        project = self.project
+        project.pages["a:b"] = replace(project.pages["p1"], uid="a:b")
+        project.conditions["c:1"] = replace(project.conditions["c1"], uid="c:1")
+        project.takeoffs.append(
+            Takeoff("t:1", "c:1", "a:b", position=[1.0, 1.0, 2.0, 2.0])
+        )
+        resources = (
+            "page:a:b",
+            "page_takeoffs:a:b",
+            "takeoff:t:1",
+            "condition:c:1",
+            "condition_takeoffs:c:1",
+        )
+        tokens = self.reader("C:/jobs/a.mdb", "7", resources)
+        for name, token in tokens.items():
+            with self.subTest(resource=name):
+                self.assertNotIn(token, ("unknown", "missing", "closed"))
+                self.assertEqual(len(token), 16)
+        plain = self.reader("C:/jobs/a.mdb", "7", ("page:p1", "condition:c1"))
+        self.assertEqual(tokens["page:a:b"], plain["page:p1"])
+        self.assertEqual(
+            tokens["condition:c:1"],
+            hashlib.sha256(
+                json.dumps(
+                    asdict(replace(project.conditions["c1"], uid="c:1")),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()[:16],
+        )
+        self.assertEqual(
+            tokens["condition_takeoffs:c:1"],
+            hashlib.sha256(b'["t:1"]').hexdigest()[:16],
+        )
+        project.pages["a:b"] = replace(project.pages["a:b"], scale_factor1=0.125)
+        project.takeoffs[2] = replace(project.takeoffs[2], position=[7.0, 7.0])
+        project.conditions["c:1"] = replace(project.conditions["c:1"], thickness=9.0)
+        changed = self.reader("C:/jobs/a.mdb", "7", resources)
+        for name in resources:
+            if name != "condition_takeoffs:c:1":
+                with self.subTest(changed=name):
+                    self.assertNotEqual(changed[name], tokens[name])
+        self.assertEqual(
+            changed["condition_takeoffs:c:1"], tokens["condition_takeoffs:c:1"]
+        )
+
+    def test_a_path_with_unpaired_surrogates_or_non_ascii_text_still_gets_a_token(self):
+        for image_path in ("C:/plans/caf\u00e9.pdf", "C:/plans/\udc80.pdf"):
+            with self.subTest(image_path=image_path):
+                self.project.pages["p1"] = replace(
+                    self.project.pages["p1"], image_path=image_path
+                )
+                token = self.reader("C:/jobs/a.mdb", "7", ("page:p1",))["page:p1"]
+                self.assertRegex(token, r"\A[0-9a-f]{16}\Z")
+                self.assertEqual(
+                    token, self.reader("C:/jobs/a.mdb", "7", ("page:p1",))["page:p1"]
+                )
 
 
 if __name__ == "__main__":

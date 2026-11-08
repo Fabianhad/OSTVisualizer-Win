@@ -246,3 +246,50 @@ class IdentityAllocationTextUidTests(unittest.TestCase):
             ),
             6,
         )
+
+
+class IdentityAllocationSchemaAndBulkContractTests(unittest.TestCase):
+    def test_a_non_positive_bulk_count_allocates_nothing_without_a_database_query(
+        self,
+    ):
+        # The connection has no tables at all, so any allocation query would raise.
+        conn = sqlite3.connect(":memory:")
+        ops = _SqliteDuplicateOps(conn)
+        cursor = _SqliteCursorWrapper(conn)
+        for count in (0, -1, -2):
+            with self.subTest(count=count):
+                result = ops._next_uids_preserving_references(
+                    cursor, ops._schema_ref, "BidPages", count
+                )
+                self.assertEqual(list(result), [])
+        with self.assertRaises(sqlite3.OperationalError):
+            ops._next_uids_preserving_references(cursor, ops._schema_ref, "BidPages", 1)
+
+    def test_missing_child_tables_are_found_before_their_columns_are_asked_for(self):
+        class _StrictSchema(_SqliteSchema):
+            """column_exists rejects unknown tables, like the SQL Server schema."""
+
+            def __init__(self, connection):
+                super().__init__(connection)
+                self.column_checks = []
+
+            def column_exists(self, table_name, column_name):
+                if self.optional_table_missing(table_name):
+                    raise AssertionError(f"column asked for missing {table_name}")
+                self.column_checks.append((table_name, column_name))
+                return super().column_exists(table_name, column_name)
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidLayers (UID INTEGER)")
+        conn.execute("INSERT INTO BidLayers VALUES (4)")
+        conn.execute("CREATE TABLE BidConditions (UID INTEGER, BidLayerUID INTEGER)")
+        conn.execute("INSERT INTO BidConditions VALUES (1, 30)")
+        ops = _SqliteDuplicateOps(conn)
+        schema = _StrictSchema(conn)
+        self.assertEqual(
+            ops._next_uid_preserving_references(
+                _SqliteCursorWrapper(conn), schema, "BidLayers"
+            ),
+            31,
+        )
+        self.assertEqual(schema.column_checks, [("BidConditions", "BidLayerUID")])

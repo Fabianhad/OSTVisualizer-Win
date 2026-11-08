@@ -563,3 +563,95 @@ class ElevationBoundsValueTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             bounds.top = 11.0
         self.assertEqual(bounds, ConditionElevationBounds("Wall", 10.0, 2.0))
+
+
+class ElevationBoundsNumericTypeTests(unittest.TestCase):
+    def condition(self, **changes):
+        base = dict(
+            uid="c",
+            name="Wall @T 10'",
+            condition_type=Condition.TYPE_LINEAR,
+            z_value=100,
+            height=20,
+            thickness=5,
+            is_top=True,
+        )
+        base.update(changes)
+        return Condition(**base)
+
+    def test_integer_dimensions_give_float_bounds_for_both_markers(self):
+        for name, is_top, expected in (
+            ("Wall @T 10'", True, (100.0, 80.0)),
+            ("Wall @B 10'", False, (120.0, 100.0)),
+        ):
+            with self.subTest(name=name):
+                bounds = resolve_condition_elevation_bounds(
+                    self.condition(name=name, is_top=is_top)
+                )
+                self.assertEqual((bounds.top, bounds.bottom), expected)
+                self.assertIs(type(bounds.top), float)
+                self.assertIs(type(bounds.bottom), float)
+
+    def test_numeric_text_dimensions_are_coerced_to_float_characterisation(self):
+        bounds = resolve_condition_elevation_bounds(
+            self.condition(z_value="100", height="20")
+        )
+        self.assertEqual((bounds.top, bounds.bottom), (100.0, 80.0))
+        self.assertIs(type(bounds.top), float)
+        area = resolve_condition_elevation_bounds(
+            self.condition(
+                condition_type=Condition.TYPE_AREA, z_value="100", thickness="5"
+            )
+        )
+        self.assertEqual((area.top, area.bottom), (100.0, 95.0))
+
+
+class StripFeetOnlySuffixTests(unittest.TestCase):
+    def test_feet_alone_is_stripped_with_any_digits_minus_and_spacing(self):
+        for value in ("5'", "12'", "745'", "- 5'", "-5'", "5 '", "  5'", "5' "):
+            with self.subTest(value=value):
+                self.assertEqual(strip_elevation_suffix("Wall @T " + value), "Wall")
+                self.assertEqual(strip_elevation_suffix("Wall @B " + value), "Wall")
+
+    def test_malformed_feet_text_keeps_the_name(self):
+        for value in ("--5'", "- -5'", "'", "5' x", "5' 6", "a5'"):
+            with self.subTest(value=value):
+                name = "Wall @T " + value
+                self.assertEqual(strip_elevation_suffix(name), name)
+
+
+class ElevationMissingNameAndFlagTests(unittest.TestCase):
+    def condition(self, **changes):
+        base = dict(
+            uid="c",
+            name="Wall @T 10'",
+            condition_type=Condition.TYPE_LINEAR,
+            z_value=100.0,
+            height=20.0,
+            thickness=5.0,
+            is_top=True,
+        )
+        base.update(changes)
+        return Condition(**base)
+
+    def test_a_missing_name_has_no_elevation_and_is_not_an_error(self):
+        from ost_visualizer.domain.services.elevation import ElevationParts
+
+        self.assertEqual(parse_elevation(None), ElevationParts())
+        self.assertEqual(parse_elevation(""), ElevationParts())
+        self.assertIsNone(resolve_condition_elevation_bounds(self.condition(name=None)))
+
+    def test_access_style_integer_booleans_select_the_top_reference(self):
+        for flag in (1, 2, -1, True):
+            with self.subTest(is_top=flag):
+                bounds = resolve_condition_elevation_bounds(self.condition(is_top=flag))
+                self.assertEqual((bounds.top, bounds.bottom), (100.0, 80.0))
+        for flag in (0, False, None):
+            with self.subTest(is_top=flag):
+                self.assertIsNone(
+                    resolve_condition_elevation_bounds(self.condition(is_top=flag))
+                )
+                bounds = resolve_condition_elevation_bounds(
+                    self.condition(name="Wall @B 10'", is_top=flag)
+                )
+                self.assertEqual((bounds.top, bounds.bottom), (120.0, 100.0))

@@ -68,20 +68,44 @@ class LicenseOrchestrator:
             return
         self._closed = True
         errors = []
+        interrupts: list[BaseException] = []
         cleanup_steps = (
-            self._scheduler.stop,
-            self._scheduler.clear_task,
-            self._thread_manager.cleanup,
+            ("scheduler stop", self._scheduler.stop),
+            ("scheduler clear_task", self._scheduler.clear_task),
+            ("thread manager cleanup", self._thread_manager.cleanup),
         )
-        for cleanup in cleanup_steps:
+        for label, cleanup in cleanup_steps:
             try:
                 cleanup()
             except Exception as exc:
                 errors.append(exc)
+            except BaseException as exc:
+                if interrupts:
+                    self._logger.error(
+                        "%s during license orchestrator cleanup (%s) after %s;"
+                        " the original %s is re-raised",
+                        type(exc).__name__,
+                        label,
+                        type(interrupts[0]).__name__,
+                        type(interrupts[0]).__name__,
+                        exc_info=exc,
+                    )
+                else:
+                    interrupts.append(exc)
         self._callback_bridge = None
         self._event_publisher = None
         self._scheduler = None
         self._thread_manager = None
+        if interrupts:
+            for error in errors:
+                self._logger.error(
+                    "Error in license orchestrator cleanup;"
+                    " the original %s is re-raised: %s",
+                    type(interrupts[0]).__name__,
+                    error,
+                    exc_info=error,
+                )
+            raise interrupts[0]
         if len(errors) == 1:
             raise errors[0]
         if errors:
@@ -119,7 +143,7 @@ class LicenseOrchestrator:
                 on_main_thread=on_main,
                 error_prefix="activation",
             )
-        except Exception:
+        except BaseException:
             self._operation_in_progress = False
             raise
 
@@ -151,7 +175,7 @@ class LicenseOrchestrator:
                 on_main_thread=on_main,
                 error_prefix="deactivation",
             )
-        except Exception:
+        except BaseException:
             self._operation_in_progress = False
             raise
 

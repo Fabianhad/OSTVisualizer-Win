@@ -14,6 +14,7 @@ from ost_visualizer.infrastructure.mdb.importers.osp_importer import OspImporter
 from tests.helpers.import_workflow import (
     FakeImporter as _import_workflow_FakeImporter,
     FakeOspCab as _import_workflow_FakeOspCab,
+    hostile_cab_member_names as _import_workflow_hostile_cab_member_names,
     _write_osp_page_xml as _import_workflow__write_osp_page_xml,
     _write_osp_page_xml_text as _import_workflow__write_osp_page_xml_text,
     _write_packaged_image as _import_workflow__write_packaged_image,
@@ -291,6 +292,11 @@ class OspImporterHelperTests(unittest.TestCase):
 
 
 class OspImporterImageAndPackageTests(unittest.TestCase):
+    def _folder(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        return Path(folder.name)
+
     def test_osp_import_extracts_cab_with_windows_extended_output_path(self):
         fake_cab = _import_workflow_FakeOspCab()
         importer = _StagedOstRecorder()
@@ -313,7 +319,9 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         self.assertEqual(importer.calls[0][2:], ("target.mdb", "project-1"))
         staged_path, staged_existed, staged_text = importer.staged[0]
         self.assertEqual(staged_path.name, "Project.ost")
-        self.assertEqual(staged_path.parent, fake_cab.root)
+        # The fake extractor receives the resolved folder (a mapped drive such as
+        # a ``subst`` letter resolves to its real location), so compare resolved.
+        self.assertEqual(staged_path.parent.resolve(), fake_cab.root.resolve())
         self.assertTrue(staged_existed)
         self.assertEqual(staged_text, "<XML_ROOT />")
         self.assertFalse(fake_cab.root.exists())
@@ -399,13 +407,13 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         self.assertEqual(importer.calls, [])
 
     def test_osp_import_rejects_unsafe_cab_member_paths_before_extraction(self):
+        folder = self._folder()
         unsafe_names = (
-            "..\\outside\\payload.ost",
-            "C:\\outside\\payload.ost",
-            "\\outside\\payload.ost",
+            *_import_workflow_hostile_cab_member_names(
+                folder / "outside", folder / "extract"
+            ).values(),
             "\\\\server\\share\\payload.ost",
             "payload.ost:stream",
-            "../outside/payload.ost",
             ".",
         )
         original_cab = osp_importer_module.ost_cab
@@ -513,13 +521,15 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                 ),
                 True,
             )
+            resolved_short_parent = short_parent.resolve()
         finally:
             osp_importer_module.ost_cab = original_cab
             osp_importer_module._extract_temp_parent_candidates = original_candidates
             if base_dir.exists():
                 osp_importer_module.shutil.rmtree(base_dir)
         self.assertEqual(len(importer.calls), 1)
-        self.assertTrue(str(fake_cab.root).startswith(str(short_parent)))
+        # The fake extractor reports the resolved folder, so compare resolved.
+        self.assertEqual(fake_cab.root.parent, resolved_short_parent)
 
     def test_osp_import_accepts_nested_legacy_visualizer_layout(self):
         nested_member = "TempImages!.tmp\\generated-folder\\sheet.pdf"
@@ -1169,9 +1179,11 @@ class OspImporterFailureAndRollbackTests(unittest.TestCase):
         self,
     ):
         folder = self._folder()
+        # A deeply nested temp folder (the sandbox runner's) would be unsafe for
+        # long members and trigger the short-root fallback tested elsewhere.
         with patch.object(
             osp_importer_module.tempfile, "gettempdir", return_value=str(folder)
-        ):
+        ), patch.object(osp_importer_module, "_is_safe_extract_root", lambda *_a: True):
             created = osp_importer_module._create_extract_temp_dir(("plan.ost",))
         self.addCleanup(osp_importer_module._remove_temp_tree, created)
         self.assertTrue(created.is_dir())
@@ -1431,6 +1443,52 @@ class OspImporterRealArchiveTests(unittest.TestCase):
         self.assertEqual(importer.calls, [])
         self.assertFalse((Path(tempfile.gettempdir()) / probe).exists())
 
+    def test_real_archives_with_members_outside_the_extraction_write_nothing(self):
+        # The native extractor writes absolute, rooted and ``..`` member names
+        # for real: every hostile name here points into this test's own folder.
+        for label in (
+            "absolute",
+            "rooted",
+            "relative",
+            "relative with forward slashes",
+        ):
+            with self.subTest(form=label):
+                folder = self._folder()
+                extract_root = folder / "extract"
+                extract_root.mkdir()
+                outside = folder / "outside"
+                outside.mkdir()
+                name = _import_workflow_hostile_cab_member_names(outside, extract_root)[
+                    label
+                ]
+                archive = self._write_osp(
+                    folder, {"Project.ost": "<XML_ROOT />", name: b"payload"}
+                )
+                importer = _import_workflow_FakeImporter()
+                with patch.object(
+                    osp_importer_module,
+                    "_create_extract_temp_dir",
+                    return_value=extract_root,
+                ) as create:
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="DEBUG"
+                    ) as logs:
+                        result = OspImporter(importer).import_osp(
+                            str(archive), "target.mdb", "project-1"
+                        )
+                self.assertIs(result, False)
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    [
+                        f"Cannot import OSP {archive}: "
+                        f"unsafe CAB member path: {name!r}"
+                    ],
+                )
+                create.assert_not_called()
+                self.assertEqual(importer.calls, [])
+                self.assertEqual(list(outside.iterdir()), [])
+                self.assertEqual(list(extract_root.iterdir()), [])
+
     def test_real_archive_stages_images_rewrites_paths_and_removes_the_extraction(self):
         folder = self._folder()
         work = folder / "work"
@@ -1461,3 +1519,1043 @@ class OspImporterRealArchiveTests(unittest.TestCase):
         )
         self.assertFalse(staged_path.parent.exists())
         self.assertEqual([path.name for path in work.iterdir()], ["Project"])
+
+
+class OspImporterSecondPassTests(unittest.TestCase):
+    def _folder(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        return Path(folder.name)
+
+    def _use_cab(self, fake_cab):
+        original = osp_importer_module.ost_cab
+        osp_importer_module.ost_cab = fake_cab
+        self.addCleanup(setattr, osp_importer_module, "ost_cab", original)
+
+    def test_the_short_root_falls_back_to_drive_c_without_a_system_drive(self):
+        with patch.object(osp_importer_module.os, "name", "nt"), patch.object(
+            osp_importer_module.tempfile, "gettempdir", return_value="relative\\temp"
+        ), patch.dict(os.environ):
+            os.environ.pop("SystemDrive", None)
+            candidates = osp_importer_module._extract_temp_parent_candidates()
+        self.assertEqual(candidates, [Path("relative\\temp"), Path("C:\\OSTVTemp")])
+
+    def test_the_extraction_folder_is_a_fresh_prefixed_folder_in_the_chosen_parent(
+        self,
+    ):
+        parent = self._folder() / "parent"
+        with patch.object(
+            osp_importer_module, "_extract_temp_parent_candidates", lambda: [parent]
+        ), patch.object(osp_importer_module, "_is_safe_extract_root", lambda *_a: True):
+            first = osp_importer_module._create_extract_temp_dir(("plan.ost",))
+            second = osp_importer_module._create_extract_temp_dir(("plan.ost",))
+        self.assertEqual((first.parent, second.parent), (parent, parent))
+        self.assertNotEqual(first, second)
+        for created in (first, second):
+            self.assertTrue(created.name.startswith("ostv_osp_"), created.name)
+            self.assertGreater(len(created.name), len("ostv_osp_"))
+            self.assertEqual(list(created.iterdir()), [])
+
+    def test_import_osp_forwards_the_target_and_the_project_uid(self):
+        for arguments, expected in (
+            (("source.osp", "target.mdb", "project-1"), ("target.mdb", "project-1")),
+            (("source.osp", "target.mdb"), ("target.mdb", None)),
+        ):
+            with self.subTest(arguments=arguments):
+                fake_cab = _import_workflow_FakeOspCab()
+                importer = _StagedOstRecorder()
+                self._use_cab(fake_cab)
+                self.assertIs(OspImporter(importer).import_osp(*arguments), True)
+                self.assertEqual(len(importer.calls), 1)
+                self.assertEqual(importer.calls[0][0], "ost")
+                self.assertEqual(importer.calls[0][2:], expected)
+
+    def test_path_normalisation_replaces_only_separators(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        self.assertIs(safe("..X/a.pdf"), True)
+        self.assertIs(safe("a/..X/b.pdf"), True)
+        self.assertIs(safe("\\\\server\\share"), False)
+        self.assertEqual(
+            osp_importer_module._windows_path_parts("a/MAX/b"), ("a", "MAX", "b")
+        )
+        supported = osp_importer_module._is_supported_image_path
+        self.assertIs(supported("C:\\plans\\a.pdfX/"), False)
+        self.assertIs(supported("C:\\plans\\a.pdf/"), True)
+
+    def test_a_non_oserror_while_creating_the_extraction_folder_propagates(self):
+        folder = self._folder()
+        real_mkdtemp = osp_importer_module.tempfile.mkdtemp
+
+        def mkdtemp(prefix=None, dir=None):
+            if dir is not None:
+                raise ValueError("not an os error")
+            return real_mkdtemp(prefix=prefix, dir=str(folder))
+
+        with patch.object(
+            osp_importer_module, "_extract_temp_parent_candidates", lambda: [folder]
+        ), patch.object(osp_importer_module.tempfile, "mkdtemp", mkdtemp):
+            with self.assertRaisesRegex(ValueError, "^not an os error$"):
+                osp_importer_module._create_extract_temp_dir(("plan.ost",))
+
+    def test_a_non_oserror_from_the_default_location_is_not_replaced_by_the_parent_error(
+        self,
+    ):
+        folder = self._folder()
+        parent_error = OSError("parent unusable")
+        default_error = ValueError("default broken")
+
+        def mkdtemp(prefix=None, dir=None):
+            raise parent_error if dir is not None else default_error
+
+        with patch.object(
+            osp_importer_module, "_extract_temp_parent_candidates", lambda: [folder]
+        ), patch.object(osp_importer_module.tempfile, "mkdtemp", mkdtemp):
+            with self.assertRaises(ValueError) as caught:
+                osp_importer_module._create_extract_temp_dir(("plan.ost",))
+        self.assertIs(caught.exception, default_error)
+
+    def test_interrupts_are_never_swallowed_by_cleanup_or_import(self):
+        folder = self._folder()
+        with patch.object(
+            osp_importer_module.shutil, "rmtree", side_effect=KeyboardInterrupt
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                osp_importer_module._remove_temp_tree(folder)
+
+        class InterruptedImporter(_import_workflow_FakeImporter):
+            def import_ost(self, source_path, target_path, project_uid=None):
+                raise KeyboardInterrupt
+
+        fake_cab = _import_workflow_FakeOspCab()
+        self._use_cab(fake_cab)
+        with self.assertRaises(KeyboardInterrupt):
+            OspImporter(InterruptedImporter()).import_osp(
+                "source.osp", "target.mdb", "project-1"
+            )
+        self.assertFalse(fake_cab.root.exists())
+
+    def test_failed_temp_folder_removal_message_names_the_folder(self):
+        folder = self._folder()
+        with patch.object(
+            osp_importer_module.shutil, "rmtree", side_effect=PermissionError("locked")
+        ):
+            with self.assertLogs(osp_importer_module.logger, level="DEBUG") as logs:
+                osp_importer_module._remove_temp_tree(folder)
+        self.assertEqual(
+            [(record.levelno, record.getMessage()) for record in logs.records],
+            [
+                (
+                    osp_importer_module.logging.WARNING,
+                    f"Failed to remove temporary OSP extraction directory {folder}",
+                )
+            ],
+        )
+
+    def test_package_rejections_use_exact_messages(self):
+        inspect = osp_importer_module._inspect_package
+        duplicate = "tempimages!.TMP\\SHEET.PDF"
+        with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+            inspect(["Project.ost", "TempImages!.tmp\\sheet.pdf", duplicate])
+        self.assertEqual(
+            str(caught.exception), f"duplicate or conflicting CAB member: {duplicate!r}"
+        )
+        unsupported = "TempImages!.tmp\\notes.txt"
+        with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+            inspect(["Project.ost", unsupported])
+        self.assertEqual(
+            str(caught.exception),
+            f"unsupported member under TempImages!.tmp: {unsupported!r}",
+        )
+
+    def test_image_staging_content_address_collision_message(self):
+        resolve = osp_importer_module._non_conflicting_image_destination
+        root = self._folder()
+        source = root / "source.png"
+        source.write_bytes(b"new image")
+        digest = hashlib.sha256(b"new image").hexdigest()
+        destination = root / "plan.png"
+        destination.write_bytes(b"old")
+        for length in (16, 32, len(digest)):
+            (root / f"plan-{digest[:length]}.png").write_bytes(b"other")
+        with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+            resolve(source, destination)
+        self.assertEqual(
+            str(caught.exception),
+            "image staging content-address collision for 'plan.png'",
+        )
+
+    def test_corrupt_embedded_ost_message_names_archive_and_parse_error(self):
+        fake_cab = _import_workflow_FakeOspCab(ost_xml="<XML_ROOT>")
+        self._use_cab(fake_cab)
+        with self.assertLogs(osp_importer_module.logger, level="DEBUG") as logs:
+            result = OspImporter(_import_workflow_FakeImporter()).import_osp(
+                "corrupt.osp", "target.mdb", "project-1"
+            )
+        self.assertIs(result, False)
+        self.assertEqual(
+            [record.levelno for record in logs.records],
+            [osp_importer_module.logging.ERROR],
+        )
+        self.assertIsNone(logs.records[0].exc_info)
+        self.assertRegex(
+            logs.records[0].getMessage(),
+            r"^Cannot import OSP corrupt\.osp: embedded OST data is corrupt: "
+            r"no element found: line \d+, column \d+$",
+        )
+
+    def test_explicit_package_root_references_never_fall_back_to_a_flat_basename(
+        self,
+    ):
+        members = _image_members("TempImages!.tmp\\b.pdf")
+        resolve = osp_importer_module._resolve_image_member
+        self.assertEqual(
+            resolve("TempImages!.tmp\\b.pdf", members), "TempImages!.tmp\\b.pdf"
+        )
+        self.assertIsNone(resolve("TempImages!.tmp\\other\\b.pdf", members))
+        self.assertIsNone(resolve("tempimages!.TMP\\deep\\er\\b.pdf", members))
+
+    def test_rewritten_ost_keeps_non_ascii_text_literally_without_a_declaration(self):
+        tmp_path = self._folder()
+        member = "TempImages!.tmp\\plan.pdf"
+        _import_workflow__write_packaged_image(tmp_path, member, b"plan")
+        ost_path = tmp_path / "Project.ost"
+        ost_path.write_text(
+            _page_xml(
+                ("Name", "Caf\u00e9 \u4e2d"), ("ImagePath", "C:\\plans\\plan.pdf")
+            ),
+            encoding="utf-8",
+        )
+        dest_dir = tmp_path / "dest"
+        OspImporter(_import_workflow_FakeImporter())._extract_images(
+            tmp_path, ost_path, dest_dir, _image_members(member)
+        )
+        text = ost_path.read_bytes().decode("utf-8")
+        self.assertIn("Caf\u00e9 \u4e2d", text)
+        self.assertNotIn("&#", text)
+        self.assertTrue(text.startswith("<XML_ROOT>"))
+        self.assertIn(str(dest_dir / "plan.pdf"), text)
+
+
+class _TypeRecordingImporter(_import_workflow_FakeImporter):
+    def __init__(self):
+        super().__init__()
+        self.source_types = []
+
+    def import_ost(self, source_path, target_path, project_uid=None):
+        self.source_types.append(type(source_path))
+        return super().import_ost(source_path, target_path, project_uid)
+
+    def import_ost_mutation(self, source_path, target_path, project_uid, recorder):
+        self.source_types.append(type(source_path))
+        return super().import_ost_mutation(
+            source_path, target_path, project_uid, recorder
+        )
+
+
+class _DirectoryOstExtractCab(_import_workflow_FakeOspCab):
+    """Extracts a directory where the embedded OST file should be."""
+
+    def extract_cab(self, source_path, output_dir):
+        self.extract_calls.append(output_dir)
+        self.root = Path(self._normal_windows_path(output_dir))
+        (self.root / "Project.ost").mkdir()
+        return True
+
+
+class OspImporterSecondPassContractTests(unittest.TestCase):
+    def _folder(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        return Path(folder.name)
+
+    def _use_cab(self, fake_cab):
+        original = osp_importer_module.ost_cab
+        osp_importer_module.ost_cab = fake_cab
+        self.addCleanup(setattr, osp_importer_module, "ost_cab", original)
+
+    def test_import_without_a_project_uid_passes_none_and_a_text_path(self):
+        fake_cab = _import_workflow_FakeOspCab()
+        importer = _TypeRecordingImporter()
+        self._use_cab(fake_cab)
+        self.assertIs(OspImporter(importer).import_osp("s.osp", "t.mdb"), True)
+        self.assertEqual(importer.calls[0][2:], ("t.mdb", None))
+        self.assertEqual(
+            OspImporter(importer).import_osp_mutation("s.osp", "t.sql", None, None),
+            {"bid_uids": {"source": "target"}},
+        )
+        self.assertEqual(importer.calls[1][2:], ("t.sql", None, None))
+        self.assertEqual(importer.source_types, [str, str])
+
+    def test_expected_import_failures_log_errors_without_tracebacks(self):
+        for label, fake_cab, expected in (
+            (
+                "format",
+                _import_workflow_FakeOspCab(names=["First.ost", "Second.ost"]),
+                "Cannot import OSP s.osp: archive must contain exactly one "
+                "top-level .ost file; found 2",
+            ),
+            ("extraction", _FailingExtractCab(), None),
+        ):
+            with self.subTest(case=label):
+                self._use_cab(fake_cab)
+                with self.assertLogs(osp_importer_module.logger, level="DEBUG") as logs:
+                    result = OspImporter(_import_workflow_FakeImporter()).import_osp(
+                        "s.osp", "t.mdb", "p"
+                    )
+                self.assertIs(result, False)
+                self.assertEqual(len(logs.records), 1)
+                self.assertEqual(
+                    logs.records[0].levelno, osp_importer_module.logging.ERROR
+                )
+                self.assertIsNone(logs.records[0].exc_info)
+                if expected is not None:
+                    self.assertEqual(logs.records[0].getMessage(), expected)
+
+    def test_unresolved_image_warning_is_a_warning_and_the_result_is_a_list(self):
+        members = _image_members("TempImages!.tmp\\over.pdf")
+        collect = OspImporter(_import_workflow_FakeImporter())._collect_image_references
+        root = ET.fromstring(
+            _page_xml(
+                ("ImagePath", "C:\\x\\gone.pdf"),
+                ("OverlayImagePath", "C:\\x\\over.pdf"),
+            )
+        )
+        with self.assertLogs(osp_importer_module.logger, level="DEBUG") as logs:
+            refs = collect(root, members)
+        self.assertEqual(
+            [record.levelno for record in logs.records],
+            [osp_importer_module.logging.WARNING],
+        )
+        self.assertIs(type(refs), list)
+        self.assertEqual(len(refs), 1)
+
+    def test_the_short_root_lookup_does_not_consume_the_system_drive_variable(self):
+        with patch.object(osp_importer_module.os, "name", "nt"), patch.object(
+            osp_importer_module.tempfile, "gettempdir", return_value="relative\\temp"
+        ), patch.dict(os.environ, {"SystemDrive": "E:"}):
+            first = osp_importer_module._extract_temp_parent_candidates()
+            second = osp_importer_module._extract_temp_parent_candidates()
+            self.assertEqual(os.environ.get("SystemDrive"), "E:")
+        expected = [Path("relative\\temp"), Path("E:\\OSTVTemp")]
+        self.assertEqual((first, second), (expected, expected))
+
+    def test_casefold_semantics_are_used_for_member_matching_and_staging_keys(self):
+        inspect = osp_importer_module._inspect_package
+        with self.assertRaisesRegex(
+            osp_importer_module._OspFormatError,
+            "^duplicate or conflicting CAB member: ",
+        ):
+            inspect(
+                [
+                    "Project.ost",
+                    "TempImages!.tmp\\Stra\u00dfe.pdf",
+                    "TempImages!.tmp\\STRASSE.pdf",
+                ]
+            )
+        long_s_root = "TempImage\u017f!.tmp\\notes.txt"
+        with self.assertRaisesRegex(
+            osp_importer_module._OspFormatError,
+            "^unsupported member under TempImages!.tmp: ",
+        ):
+            inspect(["Project.ost", long_s_root])
+        resolve = osp_importer_module._resolve_image_member
+        upper = "TempImages!.tmp\\STRASSE.pdf"
+        sharp = "TempImages!.tmp\\Stra\u00dfe.pdf"
+        self.assertEqual(
+            resolve("C:\\x\\Stra\u00dfe.pdf", _image_members(upper)), upper
+        )
+        self.assertEqual(resolve("C:\\x\\STRASSE.pdf", _image_members(sharp)), sharp)
+        deep = "TempImages!.tmp\\Sub\\Stra\u00dfe.pdf"
+        digest = hashlib.sha1(deep.casefold().encode("utf-8")).hexdigest()[:16]
+        self.assertEqual(
+            osp_importer_module._image_destination_relative_path(deep),
+            Path("Images") / digest / "Stra\u00dfe.pdf",
+        )
+
+    def test_staging_destinations_that_differ_only_by_case_are_a_collision(self):
+        first = "TempImages!.tmp\\a.pdf"
+        second = "TempImages!.tmp\\b.pdf"
+        for names in (("Shared.pdf", "shared.pdf"), ("Stra\u00dfe.pdf", "STRASSE.pdf")):
+            with self.subTest(names=names):
+                tmp_path = self._folder()
+                _import_workflow__write_packaged_image(tmp_path, first, b"alpha")
+                _import_workflow__write_packaged_image(tmp_path, second, b"alpha")
+                refs = [
+                    osp_importer_module._ImageReference("a.pdf", first),
+                    osp_importer_module._ImageReference("b.pdf", second),
+                ]
+                with patch.object(
+                    osp_importer_module,
+                    "_image_destination_relative_path",
+                    side_effect=[Path(names[0]), Path(names[1])],
+                ):
+                    with self.assertRaisesRegex(
+                        osp_importer_module._OspFormatError,
+                        "^image staging destination collision between ",
+                    ):
+                        OspImporter(
+                            _import_workflow_FakeImporter()
+                        )._copy_referenced_images(tmp_path, tmp_path / "dest", refs)
+
+    def test_a_directory_in_place_of_the_extracted_ost_is_a_format_error(self):
+        fake_cab = _DirectoryOstExtractCab()
+        importer = _import_workflow_FakeImporter()
+        self._use_cab(fake_cab)
+        with self.assertLogs(osp_importer_module.logger, level="DEBUG") as logs:
+            result = OspImporter(importer).import_osp("source.osp", "t.mdb", "p")
+        self.assertIs(result, False)
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Cannot import OSP source.osp: embedded OST member was not "
+                "extracted: Project.ost"
+            ],
+        )
+        self.assertEqual(importer.calls, [])
+        self.assertFalse(fake_cab.root.exists())
+
+    def test_a_directory_in_place_of_a_packaged_image_is_not_extracted(self):
+        tmp_path = self._folder()
+        (tmp_path / "TempImages!.tmp" / "plan.pdf").mkdir(parents=True)
+        dest_dir = tmp_path / "dest"
+        refs = [
+            osp_importer_module._ImageReference("a.pdf", "TempImages!.tmp\\plan.pdf")
+        ]
+        with self.assertRaisesRegex(
+            osp_importer_module._OspFormatError,
+            r"^image member was not extracted: TempImages!\.tmp\\plan\.pdf$",
+        ):
+            OspImporter(_import_workflow_FakeImporter())._copy_referenced_images(
+                tmp_path, dest_dir, refs
+            )
+        self.assertFalse(dest_dir.exists())
+
+    def test_staging_names_taken_by_directories_are_never_reused(self):
+        resolve = osp_importer_module._non_conflicting_image_destination
+        root = self._folder()
+        source = root / "source.png"
+        source.write_bytes(b"new image")
+        digest = hashlib.sha256(b"new image").hexdigest()
+        destination = root / "plan.png"
+        destination.mkdir()
+        self.assertEqual(resolve(source, destination), root / f"plan-{digest[:16]}.png")
+        (root / f"plan-{digest[:16]}.png").mkdir()
+        self.assertEqual(resolve(source, destination), root / f"plan-{digest[:32]}.png")
+
+
+_RESERVED_DEVICE_MEMBER_NAMES = (
+    "nul",
+    "NUL.ost",
+    "con.pdf",
+    "COM1",
+    "aux.ost",
+    "Lpt9.txt",
+    "prn",
+    "PRN.OST",
+    "com9.pdf",
+    "lpt1",
+    "nul.",
+    "nul..",
+    "nul .txt",
+    "nul . .txt",
+    "NUL.tar.gz",
+    "con.d.pdf",
+    "CONIN$",
+    "conout$.txt",
+    "COM\u00b9.pdf",
+    "lpt\u00b3",
+    "docs\\aux",
+    "docs\\nul\\readme.pdf",
+    "docs/con/readme.pdf",
+    "nul\\readme.pdf",
+    "TempImages!.tmp\\COM3.pdf",
+    "TempImages!.tmp\\sub\\aux.pdf",
+    "TempImages!.tmp\\nul\\plan.pdf",
+    "TempImages!.tmp/Lpt2.tif",
+)
+_DRIVE_WITHOUT_ROOT_MEMBER_NAMES = (
+    "//?/",
+    "\\\\?\\",
+    "/\\?/",
+    "\\/?\\",
+    "//?\\",
+    "//./",
+    "\\\\.\\",
+    "//?/C:/x",
+    "\\\\?\\C:\\x.pdf",
+    "\\\\?\\UNC\\server\\share",
+    "//server/share/x",
+    "//server/share",
+)
+
+
+class OspImporterReservedAndDeviceNameTests(unittest.TestCase):
+    """Windows device names and extended-length prefixes are never extracted."""
+
+    def _folder(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        return Path(folder.name)
+
+    def _use_cab(self, fake_cab):
+        original = osp_importer_module.ost_cab
+        osp_importer_module.ost_cab = fake_cab
+        self.addCleanup(setattr, osp_importer_module, "ost_cab", original)
+
+    def test_reserved_device_names_are_rejected_in_every_component(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        for name in _RESERVED_DEVICE_MEMBER_NAMES:
+            with self.subTest(name=name):
+                self.assertIs(safe(name), False)
+
+    def test_ordinary_names_that_only_resemble_device_names_stay_safe(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        for name in (
+            "nulls.ost",
+            "console.pdf",
+            "com10.pdf",
+            "lpt.txt",
+            "comm1",
+            "com0.pdf",
+            "lpt0",
+            "com.pdf",
+            "com1x.pdf",
+            "xnul.pdf",
+            "a.nul",
+            "a.con.pdf",
+            "nu.l",
+            "conin.pdf",
+            "docs\\auxiliary\\readme.pdf",
+            "TempImages!.tmp\\com10.pdf",
+            "TempImages!.tmp\\sub\\console.pdf",
+            "Project.ost",
+        ):
+            with self.subTest(name=name):
+                self.assertIs(safe(name), True)
+
+    def test_drive_without_root_and_extended_prefixes_are_never_safe(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        for name in _DRIVE_WITHOUT_ROOT_MEMBER_NAMES:
+            with self.subTest(name=name):
+                self.assertIs(safe(name), False)
+
+    def test_package_inspection_rejects_these_names_with_the_exact_message(self):
+        inspect = osp_importer_module._inspect_package
+        folder = self._folder()
+        unsafe_names = (
+            *_RESERVED_DEVICE_MEMBER_NAMES,
+            *_DRIVE_WITHOUT_ROOT_MEMBER_NAMES,
+            *_import_workflow_hostile_cab_member_names(
+                folder / "outside", folder / "extract"
+            ).values(),
+            "\\\\server\\share\\payload.ost",
+            "payload.ost:stream",
+            ".",
+        )
+        for name in unsafe_names:
+            with self.subTest(name=name):
+                with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+                    inspect(["Project.ost", name])
+                self.assertEqual(
+                    str(caught.exception), f"unsafe CAB member path: {name!r}"
+                )
+
+    def test_a_reserved_name_is_rejected_even_when_it_is_the_ost_member(self):
+        with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+            osp_importer_module._inspect_package(["NUL.ost"])
+        self.assertEqual(str(caught.exception), "unsafe CAB member path: 'NUL.ost'")
+
+    def test_import_osp_rejects_these_names_before_extraction_or_import(self):
+        for name in (*_RESERVED_DEVICE_MEMBER_NAMES, *_DRIVE_WITHOUT_ROOT_MEMBER_NAMES):
+            with self.subTest(name=name):
+                fake_cab = _import_workflow_FakeOspCab(names=["Project.ost", name])
+                importer = _import_workflow_FakeImporter()
+                self._use_cab(fake_cab)
+                with patch.object(
+                    osp_importer_module, "_create_extract_temp_dir"
+                ) as create:
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="DEBUG"
+                    ) as logs:
+                        result = OspImporter(importer).import_osp(
+                            "source.osp", "target.mdb", "project-1"
+                        )
+                self.assertIs(result, False)
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    [f"Cannot import OSP source.osp: unsafe CAB member path: {name!r}"],
+                )
+                self.assertEqual(
+                    [record.levelno for record in logs.records],
+                    [osp_importer_module.logging.ERROR],
+                )
+                create.assert_not_called()
+                self.assertEqual(fake_cab.extract_calls, [])
+                self.assertEqual(importer.calls, [])
+
+    def test_the_mutation_import_path_rejects_these_names_too(self):
+        for name in ("con.pdf", "//?/"):
+            with self.subTest(name=name):
+                fake_cab = _import_workflow_FakeOspCab(names=["Project.ost", name])
+                importer = _import_workflow_FakeImporter()
+                self._use_cab(fake_cab)
+                with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+                    OspImporter(importer).import_osp_mutation(
+                        "source.osp", "target.sql", None, None
+                    )
+                self.assertEqual(
+                    str(caught.exception), f"unsafe CAB member path: {name!r}"
+                )
+                self.assertEqual(fake_cab.extract_calls, [])
+                self.assertEqual(importer.calls, [])
+
+    def test_real_archives_with_these_member_names_are_rejected_unextracted(self):
+        for name in ("nul", "NUL.ost", "docs\\con.pdf", "//?/", "\\\\?\\"):
+            with self.subTest(name=name):
+                folder = self._folder()
+                work = folder / "work"
+                source = folder / "source.bin"
+                source.write_bytes(b"<XML_ROOT />")
+                archive = folder / "package.osp"
+                self.assertTrue(
+                    osp_importer_module.ost_cab.create_cab_with_names(
+                        [str(source), str(source)],
+                        ["Project.ost", name],
+                        str(archive),
+                    )
+                )
+                importer = _import_workflow_FakeImporter()
+                with patch.object(
+                    osp_importer_module, "_create_extract_temp_dir"
+                ) as create, patch.object(
+                    osp_importer_module, "get_default_working_dir", return_value=work
+                ):
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="DEBUG"
+                    ) as logs:
+                        result = OspImporter(importer).import_osp(
+                            str(archive), "target.mdb", "project-1"
+                        )
+                self.assertIs(result, False)
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    [
+                        f"Cannot import OSP {archive}: "
+                        f"unsafe CAB member path: {name!r}"
+                    ],
+                )
+                create.assert_not_called()
+                self.assertEqual(importer.calls, [])
+                self.assertFalse(work.exists())
+
+    def test_staged_image_names_reject_reserved_device_names(self):
+        relative = osp_importer_module._image_destination_relative_path
+        for member in (
+            "TempImages!.tmp\\nul.pdf",
+            "TempImages!.tmp\\CON.TIF",
+            "TempImages!.tmp\\Sub\\aux.pdf",
+            "TempImages!.tmp\\com1\\plan.pdf",
+            "TempImages!.tmp\\Sub\\lpt\u00b2.pdf",
+        ):
+            with self.subTest(member=member):
+                with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+                    relative(member)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"image staging name is a reserved device name: {member!r}",
+                )
+        self.assertEqual(relative("TempImages!.tmp\\console.pdf"), Path("console.pdf"))
+
+    def test_a_reserved_image_destination_is_never_copied(self):
+        tmp_path = self._folder()
+        member = "TempImages!.tmp\\nul.pdf"
+        _import_workflow__write_packaged_image(tmp_path, member, b"alpha")
+        dest_dir = tmp_path / "dest"
+        refs = [osp_importer_module._ImageReference("a.pdf", member)]
+        with self.assertRaisesRegex(
+            osp_importer_module._OspFormatError,
+            r"^image staging name is a reserved device name: ",
+        ):
+            OspImporter(_import_workflow_FakeImporter())._copy_referenced_images(
+                tmp_path, dest_dir, refs
+            )
+        self.assertFalse(dest_dir.exists())
+
+    def test_every_numbered_device_name_and_only_those_are_reserved(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        for device in ("com", "lpt", "COM", "LPT", "Com", "Lpt"):
+            for digit in "123456789\u00b9\u00b2\u00b3":
+                for name in (f"{device}{digit}", f"{device}{digit}.pdf"):
+                    with self.subTest(name=name):
+                        self.assertIs(safe(name), False)
+            for suffix in ("0", "x", "10", "1a", "\u2074", "A"):
+                name = f"{device}{suffix}.pdf"
+                with self.subTest(name=name):
+                    self.assertIs(safe(name), True)
+        for name in ("con", "prn", "aux", "nul", "conin$", "conout$"):
+            for variant in (name, name.upper(), name.title(), f"{name}.txt"):
+                with self.subTest(name=variant):
+                    self.assertIs(safe(variant), False)
+        for name in ("conx", "nulX", "nul\t.txt", "nul\t", "aux_", "pr", "xcon"):
+            with self.subTest(name=name):
+                self.assertIs(safe(name), True)
+
+    def test_only_spaces_and_the_extension_are_ignored_for_device_names(self):
+        device = osp_importer_module._is_windows_device_name
+        for part in ("nul", "nul ", "nul   ", "nul .txt", "NUL.a.b", "Com1 .x"):
+            with self.subTest(part=part):
+                self.assertIs(device(part), True)
+        for part in (
+            " nul",
+            "nul\t",
+            "nul\u00a0.txt",
+            "nulX .txt",
+            ".nul",
+            "a.nul",
+            "",
+            "nul1",
+        ):
+            with self.subTest(part=part):
+                self.assertIs(device(part), False)
+
+    def test_only_page_rows_contribute_image_references_and_rewrites(self):
+        members = _image_members("TempImages!.tmp\\plan.pdf")
+        importer = OspImporter(_import_workflow_FakeImporter())
+        root = ET.fromstring(
+            "<Root><Other ImagePath='C:\\x\\plan.pdf'/>"
+            "<BidPage ImagePath='C:\\x\\plan.pdf'/></Root>"
+        )
+        refs = importer._collect_image_references(root, members)
+        self.assertEqual([ref.original_path for ref in refs], ["C:\\x\\plan.pdf"])
+        only_other = ET.fromstring("<Root><Other ImagePath='C:\\x\\plan.pdf'/></Root>")
+        with self.assertNoLogs(osp_importer_module.logger, level="WARNING"):
+            self.assertEqual(
+                importer._collect_image_references(only_other, members), []
+            )
+        with tempfile.TemporaryDirectory() as folder:
+            ost_path = Path(folder, "Project.ost")
+            ost_path.write_text(
+                "<Root><Other ImagePath='C:\\x\\plan.pdf'/>"
+                "<BidPage ImagePath='C:\\x\\plan.pdf'/></Root>",
+                encoding="utf-8",
+            )
+            importer._rewrite_image_paths(
+                ET.parse(ost_path), ost_path, {"C:\\x\\plan.pdf": "D:\\staged.pdf"}
+            )
+            parsed = ET.parse(ost_path).getroot()
+            self.assertEqual(parsed.find("Other").get("ImagePath"), "C:\\x\\plan.pdf")
+            self.assertEqual(parsed.find("BidPage").get("ImagePath"), "D:\\staged.pdf")
+
+    def test_staging_helper_shares_one_copy_between_casefold_equal_members(self):
+        tmp_path = self._folder()
+        upper = "TempImages!.tmp\\Sub\\STRASSE.pdf"
+        sharp = "TempImages!.tmp\\Sub\\Stra\u00dfe.pdf"
+        _import_workflow__write_packaged_image(tmp_path, upper, b"alpha")
+        _import_workflow__write_packaged_image(tmp_path, sharp, b"alpha")
+        dest_dir = tmp_path / "dest"
+        copied = OspImporter(_import_workflow_FakeImporter())._copy_referenced_images(
+            tmp_path,
+            dest_dir,
+            [
+                osp_importer_module._ImageReference("a.pdf", upper),
+                osp_importer_module._ImageReference("b.pdf", sharp),
+            ],
+        )
+        self.assertEqual(copied["a.pdf"], copied["b.pdf"])
+        self.assertEqual(
+            [path.name for path in dest_dir.rglob("*") if path.is_file()],
+            ["STRASSE.pdf"],
+        )
+
+
+_TRAILING_DOT_OR_SPACE_MEMBER_NAMES = (
+    "dir.\\plan.pdf",
+    "dir \\plan.pdf",
+    "file. ",
+    "plan.pdf ",
+    "plan.pdf.",
+    "a..",
+    "...",
+    " ",
+    "a\\ ",
+    "a\\...\\x.pdf",
+    "x\\a..\\y",
+    ".. \\x",
+    "a\\.. \\x.pdf",
+    "Project.ost.",
+    "Project.ost ",
+    "TempImages!.tmp\\sheets.\\a.png",
+    "TempImages!.tmp\\sheets \\a.png",
+    "TempImages!.tmp\\a.png ",
+    "TempImages!.tmp\\a.png.",
+    "TempImages!.tmp/a. ",
+    "dir./plan.pdf",
+)
+_PLAIN_DOT_AND_SPACE_MEMBER_NAMES = (
+    "level 1\\plan v2.pdf",
+    "TempImages!.tmp\\sheets\\a.b.png",
+    "TempImages!.tmp\\sheets\\a.b.pdf",
+    "TempImages!.tmp\\a b.pdf",
+    "TempImages!.tmp/sub folder/a.b.c.tif",
+    "a.b",
+    " lead.pdf",
+    ".hidden\\a.pdf",
+    "x\\.y\\z.pdf",
+    "Bid Trans v2.xml",
+    "a b\\c d\\e f.pdf",
+    "..X/a.pdf",
+    "ends-with-x.pdf",
+)
+
+
+class OspImporterTrailingDotAndContainmentTests(unittest.TestCase):
+    """Trailing dots/spaces and escaping destinations are refused before extraction."""
+
+    def _folder(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        return Path(folder.name)
+
+    def _use_cab(self, fake_cab):
+        original = osp_importer_module.ost_cab
+        osp_importer_module.ost_cab = fake_cab
+        self.addCleanup(setattr, osp_importer_module, "ost_cab", original)
+
+    def _sandbox(self):
+        folder = self._folder()
+        extract_root = folder / "extract"
+        extract_root.mkdir()
+        outside = folder / "outside"
+        outside.mkdir()
+        return folder, extract_root, outside
+
+    def test_components_ending_in_a_dot_or_a_space_are_never_safe(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        for name in _TRAILING_DOT_OR_SPACE_MEMBER_NAMES:
+            with self.subTest(name=name):
+                self.assertIs(safe(name), False)
+                with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+                    osp_importer_module._inspect_package(["Project.ost", name])
+                self.assertEqual(
+                    str(caught.exception), f"unsafe CAB member path: {name!r}"
+                )
+
+    def test_names_with_inner_dots_and_spaces_stay_safe(self):
+        safe = osp_importer_module._is_safe_cab_member_name
+        for name in _PLAIN_DOT_AND_SPACE_MEMBER_NAMES:
+            with self.subTest(name=name):
+                self.assertIs(safe(name), True)
+        inspectable = [
+            name
+            for name in _PLAIN_DOT_AND_SPACE_MEMBER_NAMES
+            if not name.startswith("TempImages!.tmp") or name.endswith((".pdf", ".tif"))
+        ]
+        self.assertEqual(len(inspectable), len(_PLAIN_DOT_AND_SPACE_MEMBER_NAMES) - 1)
+        package = osp_importer_module._inspect_package(["Project.ost", *inspectable])
+        self.assertEqual(len(package.member_names), 1 + len(inspectable))
+        self.assertIn("level 1\\plan v2.pdf", package.member_names)
+        self.assertEqual(
+            package.image_members_by_path,
+            {
+                "tempimages!.tmp\\sheets\\a.b.pdf": "TempImages!.tmp\\sheets\\a.b.pdf",
+                "tempimages!.tmp\\a b.pdf": "TempImages!.tmp\\a b.pdf",
+                "tempimages!.tmp\\sub folder\\a.b.c.tif": (
+                    "TempImages!.tmp\\sub folder\\a.b.c.tif"
+                ),
+            },
+        )
+
+    def test_import_osp_rejects_trailing_dot_and_space_names_before_extraction(self):
+        for name in _TRAILING_DOT_OR_SPACE_MEMBER_NAMES:
+            with self.subTest(name=name):
+                fake_cab = _import_workflow_FakeOspCab(names=["Project.ost", name])
+                importer = _import_workflow_FakeImporter()
+                self._use_cab(fake_cab)
+                with patch.object(
+                    osp_importer_module, "_create_extract_temp_dir"
+                ) as create:
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="DEBUG"
+                    ) as logs:
+                        result = OspImporter(importer).import_osp(
+                            "source.osp", "target.mdb", "project-1"
+                        )
+                self.assertIs(result, False)
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    [f"Cannot import OSP source.osp: unsafe CAB member path: {name!r}"],
+                )
+                create.assert_not_called()
+                self.assertEqual(fake_cab.extract_calls, [])
+                self.assertEqual(importer.calls, [])
+
+    def test_real_archives_with_trailing_dot_or_space_members_are_not_extracted(self):
+        for name in ("dir.\\plan.pdf", "TempImages!.tmp\\sheets \\a.png", "plan.pdf."):
+            with self.subTest(name=name):
+                folder, extract_root, _outside = self._sandbox()
+                source = folder / "source.bin"
+                source.write_bytes(b"payload")
+                archive = folder / "package.osp"
+                self.assertTrue(
+                    osp_importer_module.ost_cab.create_cab_with_names(
+                        [str(source), str(source)],
+                        ["Project.ost", name],
+                        str(archive),
+                    )
+                )
+                importer = _import_workflow_FakeImporter()
+                with patch.object(
+                    osp_importer_module,
+                    "_create_extract_temp_dir",
+                    return_value=extract_root,
+                ) as create:
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="DEBUG"
+                    ) as logs:
+                        result = OspImporter(importer).import_osp(
+                            str(archive), "target.mdb", "project-1"
+                        )
+                self.assertIs(result, False)
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    [
+                        f"Cannot import OSP {archive}: "
+                        f"unsafe CAB member path: {name!r}"
+                    ],
+                )
+                create.assert_not_called()
+                self.assertEqual(importer.calls, [])
+                self.assertEqual(list(extract_root.iterdir()), [])
+
+    def test_member_destinations_must_resolve_inside_the_extraction_folder(self):
+        folder, extract_root, outside = self._sandbox()
+        sibling = folder / "extract-sibling"
+        sibling.mkdir()
+        names = {
+            **_import_workflow_hostile_cab_member_names(outside, extract_root),
+            "sibling sharing the name prefix": "..\\extract-sibling\\payload.ost",
+            "the extraction folder itself": "sub\\..",
+            "trailing dot": "dir.\\plan.pdf",
+            "trailing space": "dir \\plan.pdf",
+            "dot dot space": ".. \\outside\\payload.ost",
+            "dots": "...\\plan.pdf",
+            "trailing dot in a later folder": "sub\\dir.\\plan.pdf",
+            "trailing space in the last component": "sub\\plan.pdf ",
+            "trailing space in a later folder": "TempImages!.tmp\\sheets \\a.pdf",
+            "trailing dot in the last component": "a\\b\\plan.",
+            "dot dot space in a later folder": "sub\\.. \\plan.pdf",
+        }
+        for label, name in names.items():
+            with self.subTest(form=label, name=name):
+                with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+                    osp_importer_module._create_cab_member_parent_dir(
+                        extract_root, name
+                    )
+                self.assertEqual(
+                    str(caught.exception), f"unsafe CAB member path: {name!r}"
+                )
+                self.assertEqual(list(outside.iterdir()), [])
+                self.assertEqual(list(sibling.iterdir()), [])
+                self.assertEqual(list(extract_root.iterdir()), [])
+
+    def test_member_destinations_that_stay_inside_are_prepared(self):
+        _folder, extract_root, outside = self._sandbox()
+        for name in (
+            "Project.ost",
+            "TempImages!.tmp\\sheets\\level 1\\plan v2.pdf",
+            "plan\\a.b.pdf",
+        ):
+            with self.subTest(name=name):
+                osp_importer_module._create_cab_member_parent_dir(extract_root, name)
+        self.assertTrue(
+            (extract_root / "TempImages!.tmp" / "sheets" / "level 1").is_dir()
+        )
+        self.assertTrue((extract_root / "plan").is_dir())
+        self.assertEqual(
+            sorted(path.name for path in extract_root.iterdir()),
+            ["TempImages!.tmp", "plan"],
+        )
+        self.assertEqual(list(outside.iterdir()), [])
+
+    @unittest.skipUnless(os.name == "nt", "directory junctions are Windows only")
+    def test_a_junction_that_leads_outside_the_extraction_folder_is_refused(self):
+        import _winapi
+
+        folder, extract_root, outside = self._sandbox()
+        sibling = folder / "extract-sibling"
+        sibling.mkdir()
+        inside = extract_root / "real"
+        inside.mkdir()
+        _winapi.CreateJunction(str(outside), str(extract_root / "escape"))
+        _winapi.CreateJunction(str(inside), str(extract_root / "stay"))
+        # A sibling whose path merely starts with the extraction folder's path.
+        _winapi.CreateJunction(str(sibling), str(extract_root / "sib"))
+        # A junction back to the extraction folder itself.
+        _winapi.CreateJunction(str(extract_root), str(extract_root / "loop"))
+        for name in (
+            "escape\\sub\\payload.ost",
+            "sib\\sub\\payload.ost",
+            "sib\\payload.ost",
+            "loop",
+        ):
+            with self.subTest(name=name):
+                with self.assertRaises(osp_importer_module._OspFormatError) as caught:
+                    osp_importer_module._create_cab_member_parent_dir(
+                        extract_root, name
+                    )
+                self.assertEqual(
+                    str(caught.exception), f"unsafe CAB member path: {name!r}"
+                )
+                self.assertEqual(list(outside.iterdir()), [])
+                self.assertEqual(list(sibling.iterdir()), [])
+        osp_importer_module._create_cab_member_parent_dir(
+            extract_root, "stay\\sub\\plan.pdf"
+        )
+        self.assertTrue((inside / "sub").is_dir())
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_import_osp_refuses_escaping_destinations_even_if_the_name_check_fails(
+        self,
+    ):
+        for label in (
+            "absolute",
+            "rooted",
+            "relative",
+            "relative with forward slashes",
+        ):
+            with self.subTest(form=label):
+                _folder, extract_root, outside = self._sandbox()
+                name = _import_workflow_hostile_cab_member_names(outside, extract_root)[
+                    label
+                ]
+                fake_cab = _import_workflow_FakeOspCab(names=["Project.ost", name])
+                importer = _import_workflow_FakeImporter()
+                self._use_cab(fake_cab)
+                with patch.object(
+                    osp_importer_module,
+                    "_is_safe_cab_member_name",
+                    return_value=True,
+                ), patch.object(
+                    osp_importer_module,
+                    "_create_extract_temp_dir",
+                    return_value=extract_root,
+                ):
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="DEBUG"
+                    ) as logs:
+                        result = OspImporter(importer).import_osp(
+                            "source.osp", "target.mdb", "project-1"
+                        )
+                self.assertIs(result, False)
+                normalised = "\\".join(PureWindowsPath(name.replace("/", "\\")).parts)
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    [
+                        "Cannot import OSP source.osp: "
+                        f"unsafe CAB member path: {normalised!r}"
+                    ],
+                )
+                self.assertEqual(fake_cab.extract_calls, [])
+                self.assertEqual(importer.calls, [])
+                self.assertEqual(list(outside.iterdir()), [])
+                self.assertFalse(extract_root.exists())

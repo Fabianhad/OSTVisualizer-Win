@@ -128,5 +128,37 @@ class PasteRefRemapEdgeTests(unittest.TestCase):
         )
 
 
+class PasteRefRemapLiteralNoneIdentityTests(unittest.TestCase):
+    def test_a_missing_reference_is_never_looked_up_under_the_text_none(self):
+        remap = PasteRefRemap(
+            takeoff_uids={"None": "mapped-none"},
+            namedview_uids={"None": "mapped-none"},
+        )
+        self.assertEqual(
+            remap.remap_annotation_properties(
+                {
+                    "BidTakeoffFromUID": None,
+                    "BidTakeoffToUID": None,
+                    "BidPageViewUID": None,
+                }
+            ),
+            {"BidPageViewUID": None},
+        )
+        self.assertEqual(
+            remap.remap_annotation_properties(
+                {
+                    "BidTakeoffFromUID": "None",
+                    "BidTakeoffToUID": "None",
+                    "BidPageViewUID": "None",
+                }
+            ),
+            {
+                "BidTakeoffFromUID": "mapped-none",
+                "BidTakeoffToUID": "mapped-none",
+                "BidPageViewUID": "mapped-none",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -422,6 +422,9 @@ class McpOutputContractTests(unittest.TestCase):
     def test_a_preview_stops_once_its_characters_are_used_up_even_before_blank_lines(
         self,
     ):
+        """Pins only the visible result: a full-width line is followed by no
+        text in the preview (the final strip also hides a trailing blank
+        line, so this does not by itself prove the early stop)."""
         formatter = self.formatter(inline_max_chars=10, preview_max_chars=10)
         formatted = formatter.format_result("tool-x", "abcdefghi\n\nsecond line here")
         self.assertEqual(formatted.structured_content["preview"], "abcdefghi")
@@ -447,3 +450,199 @@ class McpOutputContractTests(unittest.TestCase):
         self.assertEqual(_sanitize_filename_part("._-ab-_."), "ab")
         self.assertEqual(_sanitize_filename_part("XabX"), "XabX")
         self.assertEqual(_sanitize_filename_part("a b"), "a-b")
+
+
+class McpOutputSecondPassTests(unittest.TestCase):
+    """Exact messages, error scoping and coercions found open by the 2nd audit."""
+
+    BARE_SUMMARY_KEYS = {
+        "inline_truncated",
+        "inline_char_count",
+        "preview",
+        "format",
+        "full_output_saved",
+        "full_output",
+    }
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.output_dir = Path(self.tmp.name) / "outputs"
+        self.clock = lambda: datetime(2026, 7, 7, 12, 30, 45, 123456)
+
+    def formatter(self, **options):
+        options.setdefault("nonce_factory", lambda: "fixed-id")
+        options.setdefault("inline_max_chars", 10)
+        options.setdefault("preview_max_chars", 30)
+        return McpOutputFormatter(self.output_dir, clock=self.clock, **options)
+
+    def test_the_saved_notice_reads_exactly_as_documented(self):
+        formatted = self.formatter().format_result("tool-x", "y" * 50)
+        self.assertEqual(
+            formatted.text,
+            "Output from tool-x was too long to show inline (50 characters). "
+            f"Full output saved to: {formatted.artifact.path}\n\n"
+            f"Preview:\n{'y' * 30}",
+        )
+
+    def test_the_save_failed_notice_reads_exactly_as_documented(self):
+        self.output_dir.write_text("not a directory", encoding="utf-8")
+        formatted = self.formatter().format_result("tool-x", "y" * 50)
+        self.assertIsNotNone(formatted.save_error)
+        self.assertEqual(
+            formatted.text,
+            "Output from tool-x was too long to show inline (50 characters), "
+            f"and saving the full output failed: {formatted.save_error}\n\n"
+            f"Preview:\n{'y' * 30}",
+        )
+
+    def test_a_permission_error_is_reported_as_such_without_retrying_names(self):
+        opened = []
+
+        def deny(path, *args, **kwargs):
+            opened.append(path)
+            raise PermissionError(13, "denied by test")
+
+        with patch.object(Path, "open", autospec=True, side_effect=deny):
+            formatted = self.formatter().format_result("tool-x", "y" * 50)
+        self.assertEqual(len(opened), 1)
+        self.assertIsNone(formatted.artifact)
+        self.assertIn("denied by test", formatted.save_error)
+        self.assertNotIn("unique", formatted.save_error)
+
+    def test_only_io_and_encoding_errors_count_as_save_failures(self):
+        """Characterisation of current behaviour: an unexpected exception type
+        from the writer propagates instead of becoming a save_error."""
+        formatter = self.formatter()
+        with patch.object(
+            McpOutputFormatter, "_write_artifact", side_effect=KeyError("bug")
+        ):
+            with self.assertRaises(KeyError):
+                formatter.format_result("tool-x", "y" * 50)
+
+    def test_envelope_words_inside_long_text_or_lists_are_not_summary_fields(self):
+        formatter = self.formatter()
+        long_text = formatter.format_result(
+            "tool-text", "success status meta error\n" * 10
+        )
+        self.assertEqual(set(long_text.structured_content), self.BARE_SUMMARY_KEYS)
+        self.assertEqual(long_text.structured_content["format"], "text")
+        listing = formatter.format_result(
+            "tool-list", ["success", "status", "meta", "error"] * 5
+        )
+        self.assertEqual(set(listing.structured_content), self.BARE_SUMMARY_KEYS)
+        self.assertEqual(listing.structured_content["format"], "json")
+
+    def test_limits_given_as_text_or_floats_are_coerced_to_whole_numbers(self):
+        """Characterisation of current behaviour: the constructor int()-coerces
+        its limits (no caller passes strings or floats today)."""
+        formatter = McpOutputFormatter(
+            self.output_dir,
+            inline_max_chars="40",
+            preview_max_chars=25.9,
+            preview_max_lines="2",
+            clock=self.clock,
+            nonce_factory=lambda: "fixed-id",
+        )
+        self.assertEqual(formatter.inline_max_chars, 40)
+        self.assertIs(type(formatter.inline_max_chars), int)
+        lines = formatter.format_result("tool-x", "l1\nl2\nl3\n" + "z" * 60)
+        self.assertEqual(lines.structured_content["preview"], "l1\nl2")
+        chars = formatter.format_result("tool-x", "z" * 60)
+        self.assertEqual(chars.structured_content["preview"], "z" * 25)
+
+    def test_blank_edges_of_a_preview_are_trimmed(self):
+        formatter = self.formatter(
+            inline_max_chars=2, preview_max_chars=100, preview_max_lines=4
+        )
+        leading = formatter.format_result("tool-x", "\n\n  \nabc")
+        self.assertEqual(leading.structured_content["preview"], "abc")
+        trailing = formatter.format_result("tool-x", "abc\n   \n\n\nxyz")
+        self.assertEqual(trailing.structured_content["preview"], "abc")
+
+    def test_the_default_clock_is_the_local_current_time(self):
+        formatter = McpOutputFormatter(self.output_dir)
+        self.assertEqual(formatter._clock, datetime.now)
+
+    def test_the_file_extensions_are_the_literal_json_and_txt(self):
+        # The other tests derive names from the exported suffix constants.
+        self.assertEqual(JSON_OUTPUT_SUFFIX, ".json")
+        self.assertEqual(TEXT_OUTPUT_SUFFIX, ".txt")
+        formatter = self.formatter()
+        as_json = formatter.format_result("tool-x", {"data": "y" * 50})
+        as_text = formatter.format_result("tool-x", "y" * 50)
+        self.assertEqual(
+            Path(as_json.artifact.path).name,
+            "20260707_123045_123456_tool-x_fixed-id.json",
+        )
+        self.assertEqual(
+            Path(as_text.artifact.path).name,
+            "20260707_123045_123456_tool-x_fixed-id.txt",
+        )
+
+    def test_names_keep_letters_digits_dots_underscores_and_dashes(self):
+        from ost_visualizer.mcp_server.output_artifacts import _sanitize_filename_part
+
+        self.assertEqual(_sanitize_filename_part("aZ09.b_c-d"), "aZ09.b_c-d")
+        self.assertEqual(_sanitize_filename_part("tool v1.2_b-3"), "tool-v1.2_b-3")
+        self.assertEqual(_sanitize_filename_part("a--b"), "a--b")
+        self.assertEqual(_sanitize_filename_part("a- b"), "a--b")
+
+    def test_save_error_is_none_unless_a_save_failed(self):
+        inline = self.formatter(inline_max_chars=500).format_result("tool-x", "x")
+        saved = self.formatter().format_result("tool-x", "y" * 50)
+        self.assertIsNone(inline.save_error)
+        self.assertIsNone(saved.save_error)
+        self.assertIsNotNone(saved.artifact)
+
+    def test_a_failed_save_summary_says_nothing_was_saved(self):
+        self.output_dir.write_text("not a directory", encoding="utf-8")
+        formatted = self.formatter().format_result("tool-x", "y" * 50)
+        summary = formatted.structured_content
+        self.assertIsNone(formatted.artifact)
+        self.assertIs(summary["full_output_saved"], False)
+        self.assertNotIn("full_output", summary)
+        self.assertEqual(summary["output_save_error"], formatted.save_error)
+
+    def test_preview_lines_are_split_on_crlf_without_carriage_returns(self):
+        formatter = self.formatter(
+            inline_max_chars=5, preview_max_chars=100, preview_max_lines=2
+        )
+        formatted = formatter.format_result("tool-x", "one\r\ntwo\r\nthree")
+        self.assertEqual(formatted.structured_content["preview"], "one\ntwo")
+
+    def test_indentation_of_a_truncated_preview_line_is_kept(self):
+        formatter = self.formatter(inline_max_chars=5, preview_max_chars=10)
+        formatted = formatter.format_result("tool-x", "abc\n    def\nzzz")
+        self.assertEqual(formatted.structured_content["preview"], "abc\n    de")
+
+    def test_the_output_dir_may_be_given_as_a_plain_string(self):
+        formatter = McpOutputFormatter(
+            str(self.output_dir),
+            inline_max_chars=5,
+            clock=self.clock,
+            nonce_factory=lambda: "fixed-id",
+        )
+        self.assertEqual(formatter.output_dir, self.output_dir)
+        self.assertIsInstance(formatter.output_dir, Path)
+        formatted = formatter.format_result("tool-x", "y" * 50)
+        self.assertEqual(Path(formatted.artifact.path).parent, self.output_dir)
+
+    def test_a_non_string_nonce_is_converted_to_text_for_the_file_name(self):
+        formatter = McpOutputFormatter(
+            self.output_dir,
+            inline_max_chars=5,
+            clock=self.clock,
+            nonce_factory=lambda: 12345,
+        )
+        formatted = formatter.format_result("tool-x", "y" * 50)
+        self.assertEqual(
+            Path(formatted.artifact.path).name,
+            "20260707_123045_123456_tool-x_12345.txt",
+        )
+
+    def test_a_run_of_unsafe_characters_becomes_one_dash(self):
+        from ost_visualizer.mcp_server.output_artifacts import _sanitize_filename_part
+
+        self.assertEqual(_sanitize_filename_part("a  b//c"), "a-b-c")
+        self.assertEqual(_sanitize_filename_part("a: /\\ b"), "a-b")

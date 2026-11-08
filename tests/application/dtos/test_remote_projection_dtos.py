@@ -400,3 +400,38 @@ class RemoteProjectionBarrierMessageTests(unittest.TestCase):
         second.complete(True)
         self.assertEqual(results, [True])
         self.assertIs(barrier._completed, True)
+
+
+class RemoteProjectionAliasOrderTests(unittest.TestCase):
+    def test_aliases_keep_first_seen_order_while_dropping_repeats(self):
+        barrier = _barrier(
+            lambda success: None,
+            resource_uid_aliases_by_family={"takeoffs": ("b", "a", "b", "c", "a")},
+        )
+        self.assertEqual(
+            barrier.resource_uid_aliases_by_family, {"takeoffs": ("b", "a", "c")}
+        )
+        self.assertIs(type(barrier.resource_uid_aliases_by_family["takeoffs"]), tuple)
+
+
+class RemoteProjectionLateFailureTests(unittest.TestCase):
+    def test_a_failure_reported_after_sealing_still_fails_a_pending_batch(self):
+        results = []
+        barrier = _barrier(results.append)
+        main = barrier.register("main")
+        barrier.seal()
+        barrier.fail()
+        self.assertEqual(results, [])
+        main.complete(True)
+        self.assertEqual(results, [False])
+        self.assertIs(barrier._completed, True)
+
+    def test_a_failure_reported_before_sealing_still_fails_a_pending_batch(self):
+        results = []
+        barrier = _barrier(results.append)
+        main = barrier.register("main")
+        barrier.fail()
+        barrier.seal()
+        self.assertEqual(results, [])
+        main.complete(True)
+        self.assertEqual(results, [False])

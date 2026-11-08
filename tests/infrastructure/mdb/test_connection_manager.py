@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import threading
@@ -22,6 +23,11 @@ from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+class _Abort(BaseException):
+    # A BaseException that is neither KeyboardInterrupt nor SystemExit.
+    pass
 
 
 class _LifecycleCounts:
@@ -1059,6 +1065,377 @@ class MdbConnectionManagerHandleHealthTests(unittest.TestCase):
         self.assertIs(manager._read_conns[path_key], reader_connection)
         with writer._connection(path) as connection:
             self.assertIsNot(connection._conn, writer_connection)
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_interrupted_write_is_not_committed_by_the_next_transaction(self):
+        # Interrupt policy: the pooled write connection is not autocommit, so an
+        # interrupt (KeyboardInterrupt/SystemExit) must roll the transaction
+        # back; otherwise the next commit on the reused handle commits it.
+        for interrupt_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt_type.__name__):
+                manager = MdbConnectionManager()
+                writer = MdbWriter(conn_manager=manager)
+                path = f"interrupted-{interrupt_type.__name__}.mdb"
+                counts = self.connect.counts
+                committed_before = len(counts.committed_rows)
+                rollbacks_before = counts.rollbacks
+                interrupt = interrupt_type()
+                with self.assertRaises(interrupt_type) as raised:
+                    with writer._connection(path) as connection:
+                        connection.cursor().execute("INSERT_PENDING")
+                        raise interrupt
+                self.assertIs(raised.exception, interrupt)
+                self.assertEqual(counts.rollbacks, rollbacks_before + 1)
+                with writer._connection(path) as connection:
+                    connection.cursor().execute("INSERT_PENDING")
+                self.assertEqual(len(counts.committed_rows), committed_before + 1)
+                manager.close()
+        self.assert_all_resources_released()
+
+    def test_a_failed_rollback_during_an_interrupt_is_logged_and_evicts_the_handle(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "interrupt-rollback-hy000.mdb"
+        with writer._connection(path) as connection:
+            first_connection = connection._conn
+        failure = pyodbc.OperationalError("HY000", "rollback refused")
+        first_connection.rollback_error = failure
+        interrupt = KeyboardInterrupt()
+        with self.assertLogs(writer.logger, level="ERROR") as logged:
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                with writer._connection(path) as connection:
+                    connection.cursor().execute("INSERT_PENDING")
+                    raise interrupt
+        self.assertIs(raised.exception, interrupt)
+        self.assertIn("KeyboardInterrupt", logged.records[0].getMessage())
+        self.assertIs(logged.records[0].exc_info[1], failure)
+        self.assertTrue(first_connection.closed)
+        with writer._connection(path) as connection:
+            self.assertIsNot(connection._conn, first_connection)
+            visible = connection.cursor().execute("SELECT_VISIBLE_ROWS").fetchall()
+            self.assertEqual(visible, [])
+        self.assertEqual(self.connect.counts.committed_rows, [])
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_interrupt_in_a_borrowed_writer_read_lease_is_not_masked_by_a_failed_rollback(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "borrowed-interrupt.mdb"
+        path_key = os.path.normcase(os.path.abspath(path))
+        with manager.connection(path):
+            pass
+        reader_connection = manager._read_conns[path_key]
+        with writer._connection(path):
+            pass
+        writer_connection = manager._write_conns[path_key]
+        failure = pyodbc.OperationalError("HY000", "rollback refused")
+        interrupt = KeyboardInterrupt()
+        with self.assertLogs(_MANAGER_MODULE, level="ERROR") as logged:
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                with manager.connection(path) as connection:
+                    self.assertIs(connection._conn, writer_connection)
+                    writer_connection.rollback_error = failure
+                    raise interrupt
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(
+            logged.records[0].getMessage(),
+            "The MDB read lease on the writer connection could not be rolled "
+            "back after KeyboardInterrupt.",
+        )
+        self.assertIs(logged.records[0].exc_info[1], failure)
+        self.assertTrue(writer_connection.closed)
+        self.assertEqual(manager._write_conns, {})
+        self.assertFalse(reader_connection.closed)
+        self.assertIs(manager._read_conns[path_key], reader_connection)
+        self.assertEqual(manager._active_leases, {})
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_a_second_interrupt_from_the_borrowed_lease_rollback_is_not_swallowed(self):
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "borrowed-second-interrupt.mdb"
+        path_key = os.path.normcase(os.path.abspath(path))
+        with writer._connection(path):
+            pass
+        writer_connection = manager._write_conns[path_key]
+        second = SystemExit(2)
+        first = KeyboardInterrupt()
+        with self.assertRaises(SystemExit) as raised:
+            with manager.connection(path):
+                writer_connection.rollback_error = second
+                raise first
+        self.assertIs(raised.exception, second)
+        self.assertIs(raised.exception.__context__, first)
+        self.assertEqual(manager._active_leases, {})
+        manager.close()
+        self.assert_all_resources_released()
+
+    def _warm_writer_handle(self, writer, path):
+        with writer._connection(path) as connection:
+            return connection._conn
+
+    def _committed_by_next_write(self, writer, path):
+        before = len(self.connect.counts.committed_rows)
+        with writer._connection(path) as connection:
+            connection.cursor().execute("INSERT_PENDING")
+        return len(self.connect.counts.committed_rows) - before
+
+    def test_an_interrupt_raised_by_the_rollback_itself_evicts_the_handle(self):
+        # The rollback was interrupted: its outcome is unknown, so the pending
+        # statements must not survive on the pooled non-autocommit handle.
+        for first, second in (
+            (KeyboardInterrupt(), SystemExit(2)),
+            (SystemExit(1), KeyboardInterrupt()),
+            (_Abort(), KeyboardInterrupt()),
+        ):
+            with self.subTest(first=type(first).__name__, second=type(second).__name__):
+                manager = MdbConnectionManager()
+                writer = MdbWriter(conn_manager=manager)
+                path = f"rollback-interrupted-{type(first).__name__}.mdb"
+                handle = self._warm_writer_handle(writer, path)
+                handle.rollback_error = second
+                with self.assertRaises(type(second)) as raised:
+                    with writer._connection(path) as connection:
+                        connection.cursor().execute("INSERT_PENDING")
+                        raise first
+                self.assertIs(raised.exception, second)
+                self.assertTrue(handle.closed)
+                self.assertEqual(self._committed_by_next_write(writer, path), 1)
+                manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_interrupt_raised_by_the_rollback_of_an_ordinary_failure_evicts_the_handle(
+        self,
+    ):
+        for interrupt_type in (KeyboardInterrupt, SystemExit, _Abort):
+            with self.subTest(interrupt=interrupt_type.__name__):
+                manager = MdbConnectionManager()
+                writer = MdbWriter(conn_manager=manager)
+                path = f"ordinary-rollback-{interrupt_type.__name__}.mdb"
+                handle = self._warm_writer_handle(writer, path)
+                interrupt = interrupt_type()
+                handle.rollback_error = interrupt
+                with self.assertRaises(interrupt_type) as raised:
+                    with writer._connection(path) as connection:
+                        connection.cursor().execute("INSERT_PENDING")
+                        raise ValueError("validation failed")
+                self.assertIs(raised.exception, interrupt)
+                self.assertTrue(handle.closed)
+                self.assertEqual(self._committed_by_next_write(writer, path), 1)
+                manager.close()
+        self.assert_all_resources_released()
+
+    def test_a_failed_rollback_after_any_baseexception_evicts_the_handle(self):
+        for exception_type in (
+            KeyboardInterrupt,
+            SystemExit,
+            _Abort,
+            asyncio.CancelledError,
+        ):
+            with self.subTest(exception=exception_type.__name__):
+                manager = MdbConnectionManager()
+                writer = MdbWriter(conn_manager=manager)
+                path = f"baseexception-{exception_type.__name__}.mdb"
+                handle = self._warm_writer_handle(writer, path)
+                failure = pyodbc.OperationalError("HY000", "rollback refused")
+                handle.rollback_error = failure
+                abort = exception_type()
+                with self.assertLogs(writer.logger, level="ERROR") as logged:
+                    with self.assertRaises(exception_type) as raised:
+                        with writer._connection(path) as connection:
+                            connection.cursor().execute("INSERT_PENDING")
+                            raise abort
+                self.assertIs(raised.exception, abort)
+                self.assertEqual(
+                    logged.records[0].getMessage(),
+                    "The MDB transaction could not be rolled back after "
+                    f"{exception_type.__name__}.",
+                )
+                self.assertTrue(handle.closed)
+                self.assertEqual(self._committed_by_next_write(writer, path), 1)
+                manager.close()
+        self.assert_all_resources_released()
+
+    def test_a_borrowed_read_lease_rollback_error_never_replaces_a_baseexception(self):
+        for exception_type in (KeyboardInterrupt, SystemExit, _Abort):
+            for failure in (
+                pyodbc.OperationalError("HY000", "rollback refused"),
+                RuntimeError("driver bug"),
+            ):
+                with self.subTest(
+                    exception=exception_type.__name__, failure=type(failure).__name__
+                ):
+                    manager = MdbConnectionManager()
+                    writer = MdbWriter(conn_manager=manager)
+                    path = (
+                        f"lease-{exception_type.__name__}-{type(failure).__name__}.mdb"
+                    )
+                    path_key = os.path.normcase(os.path.abspath(path))
+                    with writer._connection(path):
+                        pass
+                    writer_connection = manager._write_conns[path_key]
+                    abort = exception_type()
+                    with self.assertLogs(_MANAGER_MODULE, level="ERROR") as logged:
+                        with self.assertRaises(exception_type) as raised:
+                            with manager.connection(path) as connection:
+                                self.assertIs(connection._conn, writer_connection)
+                                writer_connection.rollback_error = failure
+                                raise abort
+                    self.assertIs(raised.exception, abort)
+                    self.assertEqual(len(logged.records), 1)
+                    self.assertEqual(
+                        logged.records[0].getMessage(),
+                        "The MDB read lease on the writer connection could not be "
+                        f"rolled back after {exception_type.__name__}.",
+                    )
+                    self.assertIs(logged.records[0].exc_info[1], failure)
+                    self.assertEqual(manager._active_leases, {})
+                    if isinstance(failure, pyodbc.Error):
+                        self.assertTrue(writer_connection.closed)
+                        self.assertEqual(manager._write_conns, {})
+                    manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_ordinary_error_from_the_borrowed_read_lease_rollback_still_propagates(
+        self,
+    ):
+        # Control: without an interrupt in flight the guard re-raises (old behaviour).
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "lease-ordinary.mdb"
+        path_key = os.path.normcase(os.path.abspath(path))
+        with writer._connection(path):
+            pass
+        writer_connection = manager._write_conns[path_key]
+        failure = RuntimeError("driver bug")
+        with self.assertRaises(RuntimeError) as raised:
+            with manager.connection(path):
+                writer_connection.rollback_error = failure
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(manager._active_leases, {})
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_interrupt_alone_does_not_evict_a_handle_that_is_not_known_broken(self):
+        # An interrupt is not evidence of a dead handle: the health probe runs only
+        # for driver errors, and a dead handle is replaced by the next lease entry.
+        for interrupt_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt_type.__name__):
+                manager = MdbConnectionManager()
+                writer = MdbWriter(conn_manager=manager)
+                path = f"dead-{interrupt_type.__name__}.mdb"
+                handle = self._warm_writer_handle(writer, path)
+                with self.assertRaises(interrupt_type):
+                    with manager.connection(path, autocommit=False):
+                        handle.unhealthy = True
+                        raise interrupt_type()
+                self.assertFalse(handle.closed)
+                with writer._connection(path) as connection:
+                    self.assertIsNot(connection._conn, handle)
+                self.assertTrue(handle.closed)
+                manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_ordinary_error_is_still_replaced_by_a_failed_borrowed_lease_rollback(
+        self,
+    ):
+        # Control for the interrupt guard: with an ordinary Exception in flight the
+        # driver rollback error still replaces it (old behaviour) and is not logged.
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "lease-ordinary-replaced.mdb"
+        path_key = os.path.normcase(os.path.abspath(path))
+        with writer._connection(path):
+            pass
+        writer_connection = manager._write_conns[path_key]
+        failure = pyodbc.OperationalError("HY000", "rollback refused")
+        with self.assertNoLogs(_MANAGER_MODULE, level="ERROR"):
+            with self.assertRaises(pyodbc.OperationalError) as raised:
+                with manager.connection(path):
+                    writer_connection.rollback_error = failure
+                    raise ValueError("body failed")
+        self.assertIs(raised.exception, failure)
+        self.assertIsInstance(raised.exception.__context__, ValueError)
+        self.assertTrue(writer_connection.closed)
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_ordinary_error_after_a_caught_failed_rollback_keeps_the_handle(self):
+        # Only driver errors and interrupts reach the replacement decision: an
+        # ordinary Exception never evicts, whatever wrapper.rollback_failed says.
+        for error_type in (ValueError, RuntimeError, KeyError):
+            with self.subTest(error=error_type.__name__):
+                manager = MdbConnectionManager()
+                writer = MdbWriter(conn_manager=manager)
+                path = f"ordinary-after-failed-rollback-{error_type.__name__}.mdb"
+                handle = self._warm_writer_handle(writer, path)
+                with self.assertRaises(error_type):
+                    with manager.connection(path, autocommit=False) as connection:
+                        handle.rollback_error = pyodbc.OperationalError(
+                            "HY000", "refused"
+                        )
+                        try:
+                            connection.rollback()
+                        except pyodbc.Error:
+                            pass
+                        self.assertTrue(connection.rollback_failed)
+                        raise error_type("not a driver error")
+                self.assertFalse(handle.closed)
+                manager.close()
+        self.assert_all_resources_released()
+
+    def test_a_connect_failure_that_is_not_an_operational_error_is_not_translated(self):
+        failure = pyodbc.ProgrammingError(
+            "08004", "[Microsoft][ODBC] Too many client tasks. (-1036)"
+        )
+        manager = MdbConnectionManager()
+        with patch(f"{_MANAGER_MODULE}.pyodbc.connect", side_effect=failure):
+            with self.assertRaises(pyodbc.ProgrammingError) as raised:
+                with manager.connection("untranslated.mdb"):
+                    pass
+        self.assertIs(raised.exception, failure)
+        manager.close()
+
+    def test_a_non_driver_ordinary_error_does_not_run_the_replacement_handler(self):
+        # Control: a ValueError never evicts the handle, even with a dead probe.
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "ordinary-valueerror.mdb"
+        handle = self._warm_writer_handle(writer, path)
+        with self.assertRaises(ValueError):
+            with manager.connection(path, autocommit=False):
+                handle.unhealthy = True
+                raise ValueError("not a driver error")
+        self.assertFalse(handle.closed)
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_an_interrupt_in_a_borrowed_writer_read_lease_keeps_a_cleanly_rolled_back_handle(
+        self,
+    ):
+        manager = MdbConnectionManager()
+        writer = MdbWriter(conn_manager=manager)
+        path = "borrowed-interrupt-clean.mdb"
+        path_key = os.path.normcase(os.path.abspath(path))
+        with writer._connection(path):
+            pass
+        writer_connection = manager._write_conns[path_key]
+        before = self.connect.counts.rollbacks
+        with self.assertRaises(SystemExit):
+            with manager.connection(path):
+                raise SystemExit(3)
+        self.assertEqual(self.connect.counts.rollbacks, before + 1)
+        self.assertIs(manager._write_conns[path_key], writer_connection)
+        self.assertFalse(writer_connection.closed)
+        self.assertEqual(manager._active_leases, {})
         manager.close()
         self.assert_all_resources_released()
 
@@ -2712,6 +3089,18 @@ class ConnectionWrapperContractTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             foreign.rollback()
         self.assertFalse(foreign.rollback_failed)
+
+    def test_a_rollback_interrupted_by_any_baseexception_marks_the_wrapper(self):
+        for exception_type in (KeyboardInterrupt, SystemExit, _Abort):
+            with self.subTest(exception=exception_type.__name__):
+                interrupt = exception_type()
+                wrapper = ConnectionWrapper(
+                    _RecordingRawConnection(rollback_error=interrupt)
+                )
+                with self.assertRaises(exception_type) as raised:
+                    wrapper.rollback()
+                self.assertIs(raised.exception, interrupt)
+                self.assertTrue(wrapper.rollback_failed)
 
 
 _MANAGER_MODULE = "ost_visualizer.infrastructure.mdb.connection_manager"

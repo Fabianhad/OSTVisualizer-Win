@@ -6,6 +6,7 @@ from tests.helpers.mdb.operations import (
     _SqliteRow,
     _SqliteSchema,
 )
+from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
@@ -35,6 +36,7 @@ from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
 from ost_visualizer.infrastructure.mdb.components.bid_operations import (
     BidOperationsMixin,
 )
+import asyncio
 import unittest
 import sqlite3
 import tempfile
@@ -773,6 +775,11 @@ class _SqliteWriteManager:
         self.events.append(("reads", db_path))
 
 
+class _Abort(BaseException):
+    # A BaseException that is neither KeyboardInterrupt nor SystemExit.
+    pass
+
+
 class _SqliteWriterCase(unittest.TestCase):
     """Runs the production MdbWriter against a real sqlite database."""
 
@@ -872,6 +879,210 @@ class MdbWriterSqliteTransactionTests(_SqliteWriterCase):
         self.assertIsNone(writer._access_transaction_error.get())
         database.rollback()
         self.assertEqual(self.rows(database), [])
+
+    def test_an_interrupt_rolls_the_transaction_back_before_the_connection_is_reused(
+        self,
+    ):
+        # The pooled write connection is not autocommit: without a rollback the
+        # interrupted INSERT stays pending and the NEXT commit would commit it.
+        for interrupt_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt_type.__name__):
+                writer, database, manager, _schema = self.writer_for(self.DDL)
+                interrupt = interrupt_type()
+                with self.assertRaises(interrupt_type) as raised:
+                    with writer._connection("x.mdb") as connection:
+                        self.insert(connection, 1, "interrupted")
+                        raise interrupt
+                self.assertIs(raised.exception, interrupt)
+                self.assertEqual(manager.events.count("rollback"), 1)
+                self.assertEqual(manager.events.count("commit"), 0)
+                self.assertEqual(self.rows(database), [])
+                with writer._connection("x.mdb") as connection:
+                    self.insert(connection, 2, "next transaction")
+                self.assertEqual(self.rows(database), [(2, "next transaction")])
+                self.assertEqual(manager.events.count("commit"), 1)
+                self.assertEqual(writer._access_transaction_depth.get(), 0)
+                self.assertIsNone(writer._access_transaction_error.get())
+
+    def test_an_interrupt_in_a_nested_block_rolls_the_outer_transaction_back_once(
+        self,
+    ):
+        writer, database, manager, _schema = self.writer_for(self.DDL)
+        interrupt = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            with writer._connection("x.mdb") as connection:
+                self.insert(connection, 1, "outer write")
+                with writer._connection("x.mdb"):
+                    self.insert(connection, 2, "inner write")
+                    raise interrupt
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(manager.events.count("rollback"), 1)
+        self.assertEqual(manager.events.count("commit"), 0)
+        self.assertEqual(self.rows(database), [])
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+        self.assertIsNone(writer._access_transaction_error.get())
+
+    def test_a_swallowed_nested_interrupt_still_discards_every_write(self):
+        writer, database, manager, _schema = self.writer_for(self.DDL)
+        interrupt = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            with writer._connection("x.mdb") as connection:
+                self.insert(connection, 1, "outer write")
+                try:
+                    with writer._connection("x.mdb"):
+                        self.insert(connection, 2, "inner write")
+                        raise interrupt
+                except KeyboardInterrupt:
+                    pass
+                self.insert(connection, 3, "after the swallowed interrupt")
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(self.rows(database), [])
+        self.assertEqual(manager.events.count("rollback"), 1)
+        self.assertEqual(manager.events.count("commit"), 0)
+        self.assertNotIn(("reads", "x.mdb"), manager.events)
+
+    def test_a_rollback_failure_during_an_interrupt_is_logged_and_never_replaces_it(
+        self,
+    ):
+        for failure in (
+            pyodbc.Error("HY000", "rollback refused"),
+            RuntimeError("rollback bug"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                writer, database, manager, _schema = self.writer_for(
+                    self.DDL, rollback_error=failure
+                )
+                interrupt = KeyboardInterrupt()
+                with self.assertLogs(writer.logger, level="ERROR") as logged:
+                    with self.assertRaises(KeyboardInterrupt) as raised:
+                        with writer._connection("x.mdb") as connection:
+                            self.insert(connection, 1, "interrupted")
+                            raise interrupt
+                self.assertIs(raised.exception, interrupt)
+                self.assertEqual(manager.events.count("rollback"), 1)
+                self.assertEqual(manager.events.count("commit"), 0)
+                self.assertNotIn(("reads", "x.mdb"), manager.events)
+                self.assertEqual(len(logged.records), 1)
+                self.assertEqual(
+                    logged.records[0].getMessage(),
+                    "The MDB transaction could not be rolled back after "
+                    "KeyboardInterrupt.",
+                )
+                self.assertIs(logged.records[0].exc_info[1], failure)
+                self.assertEqual(writer._access_transaction_depth.get(), 0)
+                self.assertIsNone(writer._access_transaction_error.get())
+
+    def test_any_baseexception_rolls_back_and_is_reraised_at_either_depth(self):
+        # The policy covers every non-Exception BaseException (CancelledError,
+        # custom aborts), not only KeyboardInterrupt/SystemExit.
+        for exception_type in (_Abort, asyncio.CancelledError):
+            with self.subTest(exception=exception_type.__name__, depth="outermost"):
+                writer, database, manager, _schema = self.writer_for(self.DDL)
+                abort = exception_type()
+                with self.assertRaises(exception_type) as raised:
+                    with writer._connection("x.mdb") as connection:
+                        self.insert(connection, 1, "aborted")
+                        raise abort
+                self.assertIs(raised.exception, abort)
+                self.assertEqual(manager.events.count("rollback"), 1)
+                self.assertEqual(manager.events.count("commit"), 0)
+                self.assertEqual(self.rows(database), [])
+                self.assertNotIn(("reads", "x.mdb"), manager.events)
+                self.assertEqual(writer._access_transaction_depth.get(), 0)
+                self.assertIsNone(writer._access_transaction_error.get())
+            with self.subTest(exception=exception_type.__name__, depth="nested"):
+                writer, database, manager, _schema = self.writer_for(self.DDL)
+                abort = exception_type()
+                with self.assertRaises(exception_type) as raised:
+                    with writer._connection("x.mdb") as connection:
+                        self.insert(connection, 1, "outer write")
+                        try:
+                            with writer._connection("x.mdb"):
+                                self.insert(connection, 2, "inner write")
+                                raise abort
+                        except BaseException:
+                            pass
+                self.assertIs(raised.exception, abort)
+                self.assertEqual(self.rows(database), [])
+                self.assertEqual(manager.events.count("rollback"), 1)
+                self.assertEqual(manager.events.count("commit"), 0)
+
+    def test_the_rollback_failure_log_names_the_real_exception_type(self):
+        for exception_type in (SystemExit, _Abort):
+            with self.subTest(exception=exception_type.__name__):
+                writer, _database, _manager, _schema = self.writer_for(
+                    self.DDL, rollback_error=pyodbc.Error("HY000", "refused")
+                )
+                abort = exception_type()
+                with self.assertLogs(writer.logger, level="ERROR") as logged:
+                    with self.assertRaises(exception_type) as raised:
+                        with writer._connection("x.mdb"):
+                            raise abort
+                self.assertIs(raised.exception, abort)
+                self.assertEqual(
+                    logged.records[0].getMessage(),
+                    "The MDB transaction could not be rolled back after "
+                    f"{exception_type.__name__}.",
+                )
+
+    def test_a_second_interrupt_raised_by_the_rollback_is_not_swallowed(self):
+        # Only ordinary rollback errors are logged: a NEW interrupt that arrives
+        # while cleaning up after the first one still propagates.
+        second = SystemExit(2)
+        writer, _database, _manager, _schema = self.writer_for(
+            self.DDL, rollback_error=second
+        )
+        first = KeyboardInterrupt()
+        with self.assertRaises(SystemExit) as raised:
+            with writer._connection("x.mdb"):
+                raise first
+        self.assertIs(raised.exception, second)
+        self.assertIs(raised.exception.__context__, first)
+        self.assertEqual(writer._access_transaction_depth.get(), 0)
+        self.assertIsNone(writer._access_transaction_error.get())
+
+    def test_the_first_swallowed_failure_wins_when_interrupts_and_errors_mix(self):
+        for first, second in (
+            (ValueError("first"), KeyboardInterrupt()),
+            (KeyboardInterrupt(), ValueError("second")),
+        ):
+            with self.subTest(first=type(first).__name__):
+                writer, database, manager, _schema = self.writer_for(self.DDL)
+                with self.assertRaises(type(first)) as raised:
+                    with writer._connection("x.mdb") as connection:
+                        self.insert(connection, 1, "outer write")
+                        for failure in (first, second):
+                            try:
+                                with writer._connection("x.mdb"):
+                                    raise failure
+                            except (Exception, KeyboardInterrupt):
+                                pass
+                self.assertIs(raised.exception, first)
+                self.assertEqual(self.rows(database), [])
+                self.assertEqual(manager.events.count("rollback"), 1)
+                self.assertEqual(manager.events.count("commit"), 0)
+
+    def test_an_ordinary_failure_still_replaces_the_error_with_the_rollback_error(
+        self,
+    ):
+        # Control: the interrupt policy must not change the ordinary-exception
+        # path (the database rollback error wins and carries the original note).
+        failure = pyodbc.Error("HY000", "rollback refused")
+        writer, _database, _manager, _schema = self.writer_for(
+            self.DDL, rollback_error=failure
+        )
+        with self.assertRaises(pyodbc.Error) as raised:
+            with writer._connection("x.mdb"):
+                raise ValueError("original")
+        self.assertIs(raised.exception, failure)
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        self.assertEqual(
+            raised.exception.__notes__,
+            [
+                "The MDB transaction could not be rolled back after "
+                "ValueError: original"
+            ],
+        )
 
     def test_a_non_database_rollback_error_replaces_the_failure_but_resets_state(self):
         writer, database, manager, _schema = self.writer_for(
@@ -1239,3 +1450,209 @@ class MdbWriterWriteContractTests(_SqliteWriterCase):
         self.assertEqual(
             database.execute("SELECT Name FROM Items").fetchall(), [("old",)]
         )
+
+
+class MdbWriterConstructionTests(unittest.TestCase):
+    def test_default_manager_and_logger_are_created_per_writer(self):
+        first = MdbWriter()
+        second = MdbWriter()
+        self.assertEqual(
+            first.logger.name, "ost_visualizer.infrastructure.mdb.mdb_writer"
+        )
+        self.assertIsInstance(first._conn_manager, MdbConnectionManager)
+        self.assertIsInstance(second._conn_manager, MdbConnectionManager)
+        self.assertIsNot(first._conn_manager, second._conn_manager)
+
+    def test_explicit_manager_and_logger_are_kept(self):
+        manager = MdbWriterTransactionTests.Manager([])
+        logger = logging.getLogger("tests.mdb_writer.explicit")
+        writer = MdbWriter(conn_manager=manager, logger=logger)
+        self.assertIs(writer.logger, logger)
+        self.assertIs(writer._conn_manager, manager)
+
+    def test_each_writer_has_its_own_transaction_state(self):
+        first = MdbWriter(conn_manager=MdbWriterTransactionTests.Manager([]))
+        second = MdbWriter(conn_manager=MdbWriterTransactionTests.Manager([]))
+        self.assertIsNot(
+            first._access_transaction_depth, second._access_transaction_depth
+        )
+        with first._connection("a.mdb"):
+            self.assertEqual(first._access_transaction_depth.get(), 1)
+            self.assertEqual(second._access_transaction_depth.get(), 0)
+
+    def test_a_non_database_rollback_error_is_not_annotated_or_chained_as_a_cause(
+        self,
+    ):
+        # Only a pyodbc.Error from rollback gets the "could not be rolled back"
+        # note and an explicit cause; any other rollback failure propagates as is.
+        events = []
+        rollback_error = RuntimeError("rollback broke")
+        writer = MdbWriter(
+            conn_manager=MdbWriterTransactionTests.Manager(events, rollback_error)
+        )
+        with self.assertRaises(RuntimeError) as raised:
+            with writer._connection("a.mdb"):
+                raise ValueError("original")
+        self.assertIs(raised.exception, rollback_error)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertFalse(hasattr(raised.exception, "__notes__"))
+        self.assertEqual(events.count("rollback"), 1)
+
+
+class MdbWriterPlanPreflightSchemaVariantTests(_SqliteWriterCase):
+    BASE = (
+        "CREATE TABLE Bids (UID INTEGER)",
+        "INSERT INTO Bids VALUES (1)",
+    )
+
+    def test_takeoffs_without_a_parent_column_are_verified_without_a_parent_query(
+        self,
+    ):
+        writer, _database, manager, _schema = self.writer_for(
+            *self.BASE,
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (10, 1)",
+        )
+        writer.verify_plan_items_exist("x.mdb", "1", ("10",), ())
+        self.assertFalse(
+            [sql for sql, _params in manager.statements if "ParentUID" in sql]
+        )
+        self.assertEqual(manager.events[-2:], ["close", ("reads", "x.mdb")])
+
+    def test_a_takeoff_with_a_parent_column_is_checked_for_unselected_children(self):
+        writer, _database, manager, _schema = self.writer_for(
+            *self.BASE,
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, ParentUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (10, 1, NULL)",
+            "INSERT INTO BidTakeoffs VALUES (11, 1, 10)",
+        )
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError,
+            r"^The takeoff relationship graph changed before the Plan mutation "
+            r"started\.$",
+        ):
+            writer.verify_plan_items_exist("x.mdb", "1", ("10",), ())
+        self.assertEqual(
+            [
+                (sql, params)
+                for sql, params in manager.statements
+                if "ParentUID" in sql and sql.startswith("SELECT [UID]")
+            ],
+            [("SELECT [UID] FROM [BidTakeoffs] WHERE [ParentUID] IN (?)", (10,))],
+        )
+
+    def test_repeated_takeoff_uids_are_queried_once_in_first_seen_order(self):
+        writer, _database, manager, _schema = self.writer_for(
+            *self.BASE,
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, ParentUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (10, 1, NULL)",
+            "INSERT INTO BidTakeoffs VALUES (11, 1, NULL)",
+        )
+        writer.verify_plan_items_exist("x.mdb", "1", ("11", "10", "11"), ())
+        self.assertEqual(
+            [
+                (sql, params)
+                for sql, params in manager.statements
+                if sql.startswith("SELECT [UID] FROM [BidTakeoffs] WHERE [ParentUID]")
+            ],
+            [
+                (
+                    "SELECT [UID] FROM [BidTakeoffs] WHERE [ParentUID] IN (?,?)",
+                    (11, 10),
+                )
+            ],
+        )
+
+    def test_an_unknown_annotation_type_is_reported_as_changed_even_if_every_table_exists(
+        self,
+    ):
+        writer, _database, _manager, schema = self.writer_for(*self.BASE)
+        schema.optional_table_missing = lambda _table: False
+        with self.assertRaises(MissingBidOwnedUidError) as raised:
+            writer.verify_plan_items_exist(
+                "x.mdb", "1", (), (("30", "not-an-annotation-type"),)
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "An annotation changed or was deleted before the Plan mutation started.",
+        )
+
+    def test_unique_annotation_tables_are_each_verified_once_with_their_uids(self):
+        writer, _database, manager, _schema = self.writer_for(
+            *self.BASE,
+            "CREATE TABLE BidAnnotationRects (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidAnnotationRects VALUES (30, 1)",
+            "INSERT INTO BidAnnotationRects VALUES (31, 1)",
+        )
+        writer.verify_plan_items_exist(
+            "x.mdb", "1", (), (("30", "rect"), ("31", "rect"))
+        )
+        rect_selects = [
+            params
+            for sql, params in manager.statements
+            if "FROM [BidAnnotationRects]" in sql
+        ]
+        self.assertEqual(rect_selects, [(30, 31)])
+
+    def test_text_stored_uids_are_compared_as_integers(self):
+        # UIDs read back as text still match the integer UIDs that were requested.
+        writer, _database, _manager, _schema = self.writer_for(
+            *self.BASE,
+            "CREATE TABLE BidTakeoffs (UID TEXT, BidUID INTEGER, ParentUID TEXT)",
+            "INSERT INTO BidTakeoffs VALUES ('10', 1, NULL)",
+            "INSERT INTO BidTakeoffs VALUES ('11', 1, '10')",
+        )
+        writer.verify_plan_items_exist("x.mdb", "1", ("10", "11"), ())
+
+    def test_text_stored_takeoff_uids_match_the_reassignment_snapshot(self):
+        writer, _database, _manager, _schema = self.writer_for(
+            "CREATE TABLE Bids (UID INTEGER)",
+            "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidPages VALUES (5, 1)",
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidConditions VALUES (7, 1)",
+            "CREATE TABLE BidTakeoffs (UID TEXT, BidUID INTEGER, "
+            "BidPageUID INTEGER, BidConditionUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES ('10', 1, 5, 7)",
+        )
+        writer.verify_takeoff_reassignment(
+            "x.mdb", "1", ConditionTakeoffReassignment("7", "5", ("10",))
+        )
+
+
+class MdbWriterPaddedUidCharacterisationTests(_SqliteWriterCase):
+    """Characterisation: uids padded with blanks are accepted as the integers.
+    Open owner question: are padded uids supported input at all? The preflights
+    currently convert every requested uid with int() before querying, so
+    ' 7' means 7; these tests pin that existing acceptance, not a requirement.
+    """
+
+    def test_padded_page_and_condition_uids_are_accepted_by_the_reassignment_check(
+        self,
+    ):
+        writer, _database, manager, _schema = self.writer_for(
+            "CREATE TABLE Bids (UID INTEGER)",
+            "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidPages VALUES (5, 1)",
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidConditions VALUES (7, 1)",
+            "CREATE TABLE BidTakeoffs (UID INTEGER, BidUID INTEGER, "
+            "BidPageUID INTEGER, BidConditionUID INTEGER)",
+            "INSERT INTO BidTakeoffs VALUES (10, 1, 5, 7)",
+        )
+        writer.verify_takeoff_reassignment(
+            "x.mdb", "1", ConditionTakeoffReassignment(" 7", " 5", ("10",))
+        )
+        self.assertEqual(manager.events[-2:], ["close", ("reads", "x.mdb")])
+
+    def test_a_padded_annotation_uid_is_accepted_by_the_plan_preflight(self):
+        writer, _database, manager, _schema = self.writer_for(
+            "CREATE TABLE Bids (UID INTEGER)",
+            "INSERT INTO Bids VALUES (1)",
+            "CREATE TABLE BidAnnotationRects (UID INTEGER, BidUID INTEGER)",
+            "INSERT INTO BidAnnotationRects VALUES (30, 1)",
+        )
+        writer.verify_plan_items_exist("x.mdb", "1", (), ((" 30", "rect"),))
+        self.assertEqual(manager.events[-2:], ["close", ("reads", "x.mdb")])

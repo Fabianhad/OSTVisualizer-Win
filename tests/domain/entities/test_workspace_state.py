@@ -1149,3 +1149,102 @@ class WorkspaceStateSectionTests(unittest.TestCase):
             "takeoff_splitter_sizes"
         ]
         self.assertEqual(lists, [1, 2])
+
+
+class WorkspaceStateUnexpectedErrorTests(unittest.TestCase):
+    class Exploding:
+        def __int__(self):
+            raise RuntimeError("not an integer")
+
+    def test_only_type_value_and_overflow_errors_are_absorbed_while_loading(self):
+        boom = self.Exploding()
+        for name, load in (
+            ("int_list", lambda: ws._coerce_int_list([1, boom])),
+            ("size_dict", lambda: ws._coerce_size_dict({"a": [boom, 2]})),
+            (
+                "positive_int_dict",
+                lambda: ws._coerce_positive_int_dict({"a": boom}),
+            ),
+            (
+                "header_widths",
+                lambda: HeaderLayoutState.from_dict({"widths": {"a": boom}}),
+            ),
+            (
+                "schema_version",
+                lambda: WorkspaceState.from_dict({"schema_version": boom}),
+            ),
+        ):
+            with self.subTest(coercion=name):
+                with self.assertRaisesRegex(RuntimeError, "not an integer"):
+                    load()
+
+
+class WorkspaceStateDefaultsAndKeyCoercionTests(unittest.TestCase):
+    class TextKey:
+        """A mapping key whose text form is a given string (keys are compared by text)."""
+
+        def __init__(self, text):
+            self.text = text
+
+        def __str__(self):
+            return self.text
+
+    def test_a_header_layout_starts_unsorted_with_no_columns(self):
+        layout = HeaderLayoutState()
+        self.assertIsNone(layout.sort_column)
+        self.assertIs(layout.sort_descending, False)
+        self.assertEqual((layout.widths, layout.order), ({}, []))
+        self.assertEqual(
+            layout.to_dict(),
+            {"widths": {}, "order": [], "sort_column": None, "sort_descending": False},
+        )
+        self.assertIsNone(HeaderLayoutState.from_dict({}).sort_column)
+        self.assertIsNone(HeaderLayoutState.from_dict({"sort_column": ""}).sort_column)
+
+    def test_the_written_sort_direction_is_a_real_boolean(self):
+        for value, expected in ((1, True), (0, False), ("yes", True), ("", False)):
+            with self.subTest(value=value):
+                written = HeaderLayoutState(
+                    sort_descending=value, order=["a"]
+                ).to_dict()
+                self.assertIs(written["sort_descending"], expected)
+
+    def test_non_text_keys_are_written_and_read_as_text(self):
+        written = WorkspaceState(header_layouts={5: HeaderLayoutState()}).to_dict()
+        self.assertEqual(list(written["header_layouts"]), ["5"])
+        loaded = WorkspaceState.from_dict({"header_layouts": {5: {}}})
+        self.assertEqual(list(loaded.header_layouts), ["5"])
+        self.assertEqual(
+            list(ws._load_workspace_annotation_styles({5: {}})),
+            ["5"],
+        )
+        takeoff = TakeoffWorkspaceState(annotation_styles={5: AnnotationStyle()})
+        self.assertEqual(list(takeoff.to_dict()["annotation_styles"]), ["5"])
+        self.assertEqual(
+            list(WorkspaceState(dialog_sizes={5: [3, 4]}).to_dict()["dialog_sizes"]),
+            ["5"],
+        )
+
+    def test_annotation_style_keys_are_judged_by_their_text_form(self):
+        text_style = AnnotationStyle(color="#123456", text_align=2)
+        takeoff = TakeoffWorkspaceState(
+            annotation_styles={
+                self.TextKey("text"): text_style,
+                self.TextKey("dimension"): AnnotationStyle(color="#654321"),
+                self.TextKey("arrow"): AnnotationStyle(color="#112233"),
+            }
+        )
+        written = takeoff.to_dict()["annotation_styles"]
+        self.assertEqual(set(written), {"text", "arrow"})
+        self.assertEqual(written["text"], {"text_align": 2})
+        self.assertEqual(written["arrow"]["color"], "#112233")
+        loaded = ws._load_workspace_annotation_styles(
+            {
+                self.TextKey("text"): {"color": "#123456", "text_align": 2},
+                self.TextKey("highlight"): {"color": "#111111"},
+                self.TextKey("rect"): {"color": "#abcdef"},
+            }
+        )
+        self.assertEqual(set(loaded), {"text", "rect"})
+        self.assertEqual(loaded["text"].text_align, 2)
+        self.assertEqual(loaded["text"].color, "#ff0000")

@@ -195,6 +195,16 @@ class McpLoggingContractTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
         self.assertIn("--log-level", completed.stdout)
 
+    def test_the_log_file_is_written_as_utf_8(self):
+        text = "café € 中"
+        with contextlib.redirect_stderr(io.StringIO()):
+            logger = _configure_logging(self.app_data_dir, "INFO")
+            logger.warning(text)
+            for handler in logger.handlers:
+                handler.flush()
+        raw = (self.app_data_dir / "mcp_server.log").read_bytes()
+        self.assertIn(text.encode("utf-8"), raw)
+
 
 if __name__ == "__main__":
     unittest.main()

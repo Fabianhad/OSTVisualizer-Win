@@ -1,6 +1,8 @@
 import ctypes
+import logging
 import os
 import shutil
+import sys
 import tempfile
 from ctypes import wintypes
 from pathlib import Path
@@ -9,6 +11,8 @@ import win32com.client
 import win32con
 import win32file
 from ...application.interfaces.i_database_maintenance import DatabaseMaintenanceResult
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _replace_file(source: Path, destination: Path, backup: Path) -> None:
@@ -29,6 +33,16 @@ def _replace_file(source: Path, destination: Path, backup: Path) -> None:
 def _signature(path: Path) -> tuple:
     stat = path.stat()
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def _cleanup_after_interrupt(cleanup, interrupt: BaseException) -> None:
+    try:
+        cleanup()
+    except Exception:
+        _LOGGER.exception(
+            "Maintenance cleanup failed after %s; the interrupt is re-raised.",
+            type(interrupt).__name__,
+        )
 
 
 def _table_counts(engine, path: Path) -> dict[str, int | None]:
@@ -83,8 +97,13 @@ class MdbDatabaseMaintenance:
                     "The selected database changed; start maintenance again."
                 )
             return _MdbMaintenanceTarget(source, identity, lease)
-        except BaseException:
+        except Exception:
             lease.__exit__(None, None, None)
+            raise
+        except BaseException as interrupt:
+            _cleanup_after_interrupt(
+                lambda: lease.__exit__(None, None, None), interrupt
+            )
             raise
 
     def is_target_current(self, locator: str, identity: object) -> bool:
@@ -104,7 +123,11 @@ class MdbDatabaseMaintenance:
         try:
             return prepared.commit()
         finally:
-            prepared.close()
+            pending = sys.exc_info()[1]
+            if pending is None or isinstance(pending, Exception):
+                prepared.close()
+            else:
+                _cleanup_after_interrupt(prepared.close, pending)
 
     def prepare(self, locator: str, identity: object):
         prepared = _PreparedMdbMaintenance(
@@ -121,8 +144,11 @@ class MdbDatabaseMaintenance:
             finally:
                 pythoncom.CoUninitialize()
             return prepared
-        except BaseException:
+        except Exception:
             prepared.close()
+            raise
+        except BaseException as interrupt:
+            _cleanup_after_interrupt(prepared.close, interrupt)
             raise
 
 
@@ -150,6 +176,7 @@ class _PreparedMdbMaintenance:
         self._connections = connections
         self._work = None
         self._preserve_recovery = False
+        self._swap_in_progress = False
         self._committed = False
 
     def build(self) -> None:
@@ -192,6 +219,7 @@ class _PreparedMdbMaintenance:
             handle.Close()
         destination = self._work / self.source.name
         backup = self._work / "original.backup"
+        self._swap_in_progress = True
         try:
             _replace_file(self.source, destination, backup)
             if _signature(backup) != self.identity:
@@ -206,28 +234,55 @@ class _PreparedMdbMaintenance:
                 raise RuntimeError(
                     "The source changed during replacement; its newer contents were restored."
                 )
-        except Exception:
-            if backup.exists():
-                if not self.source.exists():
-                    try:
-                        os.rename(backup, self.source)
-                    except OSError as exc:
-                        self._preserve_recovery = True
-                        raise RuntimeError(
-                            f"Replacement recovery failed. The original database is preserved at {backup}."
-                        ) from exc
-                else:
-                    self._preserve_recovery = True
+        except BaseException as failure:
+            self._recover_swap(backup, failure)
             raise
+        self._swap_in_progress = False
         self._committed = True
         return DatabaseMaintenanceResult(True, "Compact/Repair completed successfully.")
 
+    def _recover_swap(self, backup: Path, failure: BaseException) -> None:
+        if not backup.exists():
+            self._swap_in_progress = False
+            return
+        preserved_before = self._preserve_recovery
+        self._preserve_recovery = True
+        if self.source.exists():
+            return
+        try:
+            os.rename(backup, self.source)
+        except Exception as exc:
+            if isinstance(failure, Exception):
+                if not isinstance(exc, OSError):
+                    raise
+                raise RuntimeError(
+                    f"Replacement recovery failed. The original database is preserved at {backup}."
+                ) from exc
+            _LOGGER.exception(
+                "Could not restore the original database after %s; it is preserved at %s.",
+                type(failure).__name__,
+                backup,
+            )
+            return
+        self._preserve_recovery = preserved_before
+        self._swap_in_progress = False
+
     def close(self) -> None:
         try:
-            if self._work is not None and not self._preserve_recovery:
+            if self._work is not None and not (
+                self._preserve_recovery or self._swap_in_progress
+            ):
                 shutil.rmtree(self._work)
                 self._work = None
-        finally:
-            if self._lease is not None:
-                self._lease.close()
-                self._lease = None
+        except Exception:
+            self._release_lease()
+            raise
+        except BaseException as interrupt:
+            _cleanup_after_interrupt(self._release_lease, interrupt)
+            raise
+        self._release_lease()
+
+    def _release_lease(self) -> None:
+        if self._lease is not None:
+            self._lease.close()
+            self._lease = None

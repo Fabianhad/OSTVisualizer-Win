@@ -495,6 +495,7 @@ class SqlProjectWriter(MdbWriter):
         ) as lease:
             transaction_finished = False
             commit_attempted = False
+            interrupt: Optional[BaseException] = None
             try:
                 state = _SqlMutationState(request.database_id, lease, request)
                 self._require_sql_client_editability(lease, state)
@@ -534,13 +535,45 @@ class SqlProjectWriter(MdbWriter):
                     commit_attempted=True,
                     consumed_lock_tokens=tuple(request.required_lock_tokens),
                 )
+            except BaseException as caught:
+                if not isinstance(caught, Exception):
+                    interrupt = caught
+                raise
             finally:
-                if not transaction_finished and not commit_attempted:
-                    try:
-                        lease.rollback()
-                    except pyodbc.Error:
-                        pass
-                self._clear_session_context(lease)
+                if interrupt is not None:
+                    self._clean_up_after_interrupt(
+                        lease,
+                        interrupt,
+                        not transaction_finished and not commit_attempted,
+                    )
+                else:
+                    if not transaction_finished and not commit_attempted:
+                        try:
+                            lease.rollback()
+                        except pyodbc.Error:
+                            pass
+                    self._clear_session_context(lease)
+
+    def _clean_up_after_interrupt(
+        self, lease: SqlConnectionLease, interrupt: BaseException, roll_back: bool
+    ) -> None:
+        if roll_back:
+            try:
+                lease.rollback()
+            except Exception:
+                self.logger.error(
+                    "The SQL transaction could not be rolled back after %s.",
+                    type(interrupt).__name__,
+                    exc_info=True,
+                )
+        try:
+            self._clear_session_context(lease)
+        except Exception:
+            self.logger.error(
+                "The SQL session context could not be cleared after %s.",
+                type(interrupt).__name__,
+                exc_info=True,
+            )
 
     @staticmethod
     def _clear_session_context(lease: SqlConnectionLease) -> None:

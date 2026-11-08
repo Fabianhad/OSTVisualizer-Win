@@ -2080,3 +2080,1151 @@ class ImportOperationsValueConversionEdgeTests(unittest.TestCase):
                         self.convert(text, type_name, table=table, column="Name"),
                         text.encode("utf-8"),
                     )
+
+
+class _MetadataRecordingCursor(_RecordingCursor):
+    def columns(self, table):
+        self._owner.metadata_tables.append(table)
+        return super().columns(table)
+
+
+class _MetadataRecordingConnection(_RecordingConnection):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.metadata_tables = []
+
+    def cursor(self):
+        cursor = _MetadataRecordingCursor(self._connection, self)
+        self.cursors.append(cursor)
+        return cursor
+
+
+class _FailingQueryCursor(_RecordingCursor):
+    def execute(self, query, *params):
+        self._owner.statements.append(query)
+        raise self._owner.error
+
+
+class _FailingQueryConnection(_RecordingConnection):
+    def __init__(self, connection, error):
+        super().__init__(connection)
+        self.error = error
+
+    def cursor(self):
+        cursor = _FailingQueryCursor(self._connection, self)
+        self.cursors.append(cursor)
+        return cursor
+
+
+class ImportOperationsWrittenRowTests(unittest.TestCase):
+    """The rows an import stores: per-table columns, type conversion, and no stray work."""
+
+    def _database(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        connection.execute(
+            "CREATE TABLE BidTakeoffs (UID INTEGER PRIMARY KEY, BidPageUID INTEGER, "
+            "Quantity REAL)"
+        )
+        connection.commit()
+        return connection, _import_export_support__SqliteMdbWriter(connection)
+
+    def test_every_table_row_is_stored_with_that_tables_own_columns_and_types(self):
+        connection, writer = self._database()
+        remapped = RawBidData(
+            bid_row={"UID": "5", "JobName": "Imported", "Bogus": "dropped"},
+            bid_tables={
+                "BidAreas": [
+                    {
+                        "UID": "30",
+                        "BidUID": "5",
+                        "ParentUID": "NULL",
+                        "Name": "Zone",
+                        "Sequence": "2",
+                        "GUID": "g-1",
+                        "Bogus": "dropped",
+                    }
+                ],
+                "BidPages": [
+                    {
+                        "UID": "20",
+                        "BidUID": "5",
+                        "Name": "Sheet",
+                        "Sequence": "1",
+                        "ParentUID": "dropped: not a BidPages column",
+                    }
+                ],
+            },
+            page_tables={
+                "BidTakeoffs": [
+                    {"UID": "40", "BidPageUID": "20", "Quantity": "2.5", "Name": "x"}
+                ],
+                "BidPageSettings": [
+                    {
+                        "UID": "50",
+                        "BidPageUID": "20",
+                        "BidAreaUID": "30",
+                        "BidTypAreaUID": "",
+                        "BidAreaSelected": "-1",
+                    }
+                ],
+            },
+        )
+        writer._write_to_db(
+            _import_export_support__SqliteConnection(connection), remapped
+        )
+        for sql, expected in (
+            (
+                "SELECT UID, BidProjectUID, EstimatorUID, JobStatusUID, JobName, "
+                "BidNo FROM Bids",
+                [(5, None, None, None, "Imported", None)],
+            ),
+            (
+                "SELECT UID, BidUID, ParentUID, Name, Sequence, GUID FROM BidAreas",
+                [(30, 5, None, "Zone", 2, "g-1")],
+            ),
+            (
+                "SELECT UID, BidUID, Name, Sequence FROM BidPages",
+                [(20, 5, "Sheet", 1)],
+            ),
+            (
+                "SELECT UID, BidPageUID, Quantity FROM BidTakeoffs",
+                [(40, 20, 2.5)],
+            ),
+            (
+                "SELECT UID, BidPageUID, BidAreaUID, BidTypAreaUID, BidAreaSelected "
+                "FROM BidPageSettings",
+                [(50, 20, 30, None, -1)],
+            ),
+        ):
+            with self.subTest(sql=sql):
+                self.assertEqual(connection.execute(sql).fetchall(), expected)
+
+    def test_table_metadata_is_requested_only_for_the_bid_and_tables_with_rows(self):
+        connection, writer = self._database()
+        wrapped = _MetadataRecordingConnection(connection)
+        writer._write_to_db(
+            wrapped,
+            RawBidData(
+                bid_row={"UID": "5"},
+                bid_tables={
+                    "BidAreas": [{"UID": "30", "BidUID": "5"}],
+                    "BidPages": [],
+                },
+                page_tables={
+                    "BidTakeoffs": [{"UID": "40", "BidPageUID": "20"}],
+                    "BidPageSettings": [],
+                },
+            ),
+        )
+        # Each table is described twice (column names, then column types).
+        self.assertEqual(
+            wrapped.metadata_tables,
+            ["Bids", "Bids", "BidAreas", "BidAreas", "BidTakeoffs", "BidTakeoffs"],
+        )
+        wrapped.assert_every_cursor_closed(self)
+
+    def test_an_interrupt_during_an_import_propagates_and_rolls_everything_back(self):
+        connection, writer = self._database()
+        raw_data = RawBidData(
+            bid_row={"UID": "5"},
+            global_tables={
+                "CdnTypes": [{"UID": "9", "Name": "New", "ExpandState": "0"}]
+            },
+        )
+
+        def interrupted(*_arguments):
+            raise KeyboardInterrupt()
+
+        with self.assertNoLogs("test", level="ERROR"):
+            with self.assertRaises(KeyboardInterrupt):
+                writer.import_ost_data("target.mdb", raw_data, interrupted)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM CdnTypes").fetchone()[0], 0
+        )
+        self.assertEqual(
+            connection.execute("SELECT NextBidNo FROM Settings").fetchall(), [(1,)]
+        )
+
+    def test_nothing_incoming_means_no_database_access_for_any_master_table(self):
+        connection, writer = self._database()
+        empty = RawBidData(bid_row={"UID": "1"})
+        for name, call in (
+            ("CdnTypes", lambda w, c: w._resolve_cdn_types(c, empty, 7)),
+            ("JobStatuses", lambda w, c: w._resolve_job_statuses(c, empty, 7)),
+            ("AccessLevels", lambda w, c: w._resolve_access_levels(c, empty)),
+            ("PayClasses", lambda w, c: w._resolve_pay_classes(c, empty)),
+            ("Employees", lambda w, c: w._resolve_employees(c, empty, {}, {})),
+        ):
+            with self.subTest(table=name):
+                wrapped = _RecordingConnection(connection)
+                call(writer, wrapped)
+                self.assertEqual(wrapped.cursors, [])
+                self.assertEqual(wrapped.statements, [])
+
+
+class ImportOperationsUidFloorEdgeTests(unittest.TestCase):
+    def _floor(self, connection):
+        wrapped = _RecordingConnection(connection)
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        return writer._get_max_uid(wrapped), wrapped
+
+    def test_a_non_numeric_child_reference_value_is_not_swallowed(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Bids (UID INTEGER)")
+        connection.execute("CREATE TABLE BidNotes (UID INTEGER, BidUID TEXT)")
+        connection.execute("INSERT INTO BidNotes VALUES (1, 'abc')")
+        wrapped = _RecordingConnection(connection)
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        with self.assertRaises(ValueError):
+            writer._get_max_uid(wrapped)
+        wrapped.assert_every_cursor_closed(self)
+
+    def test_numeric_text_in_a_child_reference_column_counts_as_a_number(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Bids (UID INTEGER)")
+        connection.execute("INSERT INTO Bids VALUES (3)")
+        connection.execute("CREATE TABLE BidNotes (UID INTEGER, BidUID TEXT)")
+        connection.execute("INSERT INTO BidNotes VALUES (1, '12')")
+        floor, wrapped = self._floor(connection)
+        self.assertEqual(floor, 12)
+        wrapped.assert_every_cursor_closed(self)
+
+    def test_references_to_a_parent_column_other_than_uid_are_not_scanned(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Bids (UID INTEGER, GUID INTEGER)")
+        connection.execute("INSERT INTO Bids VALUES (1, 1)")
+        connection.execute("CREATE TABLE BidAreas (UID INTEGER, BidGuid INTEGER)")
+        connection.execute("INSERT INTO BidAreas VALUES (2, 900)")
+        relationships = [RawBidRelationship("BidAreas", "BidGuid", "Bids", "GUID")]
+        with patch.object(import_operations_module, "BID_RELATIONSHIPS", relationships):
+            floor, wrapped = self._floor(connection)
+        self.assertEqual(floor, 2)
+        self.assertEqual([s for s in wrapped.statements if "MAX([" in s], [])
+
+
+class ImportOperationsLoaderErrorTests(unittest.TestCase):
+    def _writer(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        connection.execute("INSERT INTO PayClasses (UID, Name) VALUES (1, 'A')")
+        connection.execute(
+            "INSERT INTO Employees (UID, EmployeeNo) VALUES (1, 'E1'), (2, NULL)"
+        )
+        return connection, _import_export_support__SqliteMdbWriter(connection)
+
+    @staticmethod
+    def _loaders():
+        return (
+            (
+                "by column",
+                lambda w, c: w._load_existing_uid_candidates_by_column(
+                    c, "PayClasses", "Name"
+                ),
+            ),
+            (
+                "employees",
+                lambda w, c: w._load_existing_employee_uid_candidates_by_key(c),
+            ),
+        )
+
+    def test_a_failing_odbc_query_leaves_an_empty_index_and_closes_the_cursor(self):
+        connection, writer = self._writer()
+        for label, load in self._loaders():
+            with self.subTest(loader=label):
+                wrapped = _FailingQueryConnection(connection, pyodbc.Error("locked"))
+                self.assertEqual(load(writer, wrapped), {})
+                self.assertEqual(len(wrapped.statements), 1)
+                wrapped.assert_every_cursor_closed(self)
+
+    def test_only_odbc_errors_are_swallowed_by_the_loaders_and_catalog_lookups(self):
+        connection, writer = self._writer()
+        for label, load in self._loaders():
+            with self.subTest(loader=label):
+                wrapped = _FailingQueryConnection(connection, RuntimeError("boom"))
+                with self.assertRaisesRegex(RuntimeError, "^boom$"):
+                    load(writer, wrapped)
+                wrapped.assert_every_cursor_closed(self)
+        for method in ("_get_table_columns", "_get_column_types"):
+            with self.subTest(method=method):
+                cursor = _ColumnsCursor(error=RuntimeError("catalog boom"))
+                with self.assertRaisesRegex(RuntimeError, "^catalog boom$"):
+                    getattr(writer, method)(_ColumnsConnection(cursor), "T")
+                self.assertIs(cursor.closed, True)
+
+    def test_the_employee_index_holds_only_rows_with_a_business_key(self):
+        connection, writer = self._writer()
+        connection.execute(
+            "INSERT INTO Employees (UID, FirstName, LastName) VALUES (3, ' Ann ', 'LEE')"
+        )
+        connection.execute("INSERT INTO Employees (UID) VALUES (4)")
+        wrapped = _RecordingConnection(connection)
+        self.assertEqual(
+            writer._load_existing_employee_uid_candidates_by_key(wrapped),
+            {"no:e1": ["1"], "name:ann|lee|": ["3"]},
+        )
+        self.assertEqual(
+            wrapped.statements,
+            ["SELECT [UID], [EmployeeNo], [FirstName], [LastName] FROM [Employees]"],
+        )
+        wrapped.assert_every_cursor_closed(self)
+
+    def test_the_employee_query_selects_every_identity_column_the_table_has(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute(
+            "CREATE TABLE Employees (EMail TEXT, UID INTEGER, Junk TEXT)"
+        )
+        connection.execute("INSERT INTO Employees VALUES ('a@x.test', 7, 'j')")
+        wrapped = _RecordingConnection(connection)
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        self.assertEqual(
+            writer._load_existing_employee_uid_candidates_by_key(wrapped),
+            {"name:||a@x.test": ["7"]},
+        )
+        self.assertEqual(wrapped.statements, ["SELECT [UID], [EMail] FROM [Employees]"])
+        connection.execute("DROP TABLE Employees")
+        connection.execute(
+            "CREATE TABLE Employees (UID INTEGER, EmployeeNo TEXT, FirstName TEXT, "
+            "LastName TEXT, EMail TEXT)"
+        )
+        wrapped = _RecordingConnection(connection)
+        writer._load_existing_employee_uid_candidates_by_key(wrapped)
+        self.assertEqual(
+            wrapped.statements,
+            [
+                "SELECT [UID], [EmployeeNo], [FirstName], [LastName], [EMail] "
+                "FROM [Employees]"
+            ],
+        )
+
+
+class ImportOperationsStoredValueContractTests(unittest.TestCase):
+    """Edges of how rows and master-data UIDs are stored that the earlier tests left open."""
+
+    def _writer(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        for statement in statements:
+            connection.execute(statement)
+        return connection, _import_export_support__SqliteMdbWriter(connection)
+
+    def test_only_autonumber_uid_columns_have_blank_values_left_to_the_engine(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Plain (UID INTEGER, Name TEXT)")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        wrapped = _RecordingConnection(connection)
+        table_info = writer._get_table_info(wrapped, "Plain")
+        writer._insert_raw_row(
+            wrapped, "Plain", {"UID": "0", "Name": "zero"}, table_info
+        )
+        writer._insert_raw_row(
+            wrapped, "Plain", {"UID": "", "Name": "blank"}, table_info
+        )
+        self.assertEqual(
+            wrapped.statements,
+            ["INSERT INTO [Plain] ([UID], [Name]) VALUES (?, ?)"] * 2,
+        )
+        self.assertEqual(
+            connection.execute("SELECT UID, Name FROM Plain ORDER BY Name").fetchall(),
+            [(None, "blank"), (0, "zero")],
+        )
+        self.assertIs(writer._should_omit_autonumber_uid("UID", "", {}), False)
+        self.assertIs(
+            writer._should_omit_autonumber_uid("UID", "", {"UID": "counter"}), True
+        )
+        self.assertIs(
+            writer._should_omit_autonumber_uid("Name", "", {"Name": "counter"}), False
+        )
+
+    def test_a_column_without_type_information_keeps_its_text_value(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Plain (A INTEGER, B TEXT)")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        wrapped = _RecordingConnection(connection)
+        writer._insert_raw_row(
+            wrapped,
+            "Plain",
+            {"A": "5", "B": "007"},
+            ({"A", "B"}, {"A": "integer"}),
+        )
+        self.assertEqual(
+            connection.execute("SELECT A, B FROM Plain").fetchall(), [(5, "007")]
+        )
+
+    def test_annotation_text_names_are_stored_latin1_and_other_text_utf8(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute(
+            "CREATE TABLE BidTexts (UID INTEGER, Name LONGBINARY, Other LONGBINARY)"
+        )
+        connection.execute("CREATE TABLE BidNotes (UID INTEGER, Name LONGBINARY)")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        wrapped = _RecordingConnection(connection)
+        for table, row in (
+            ("BidTexts", {"UID": "1", "Name": "café", "Other": "café"}),
+            ("BidNotes", {"UID": "1", "Name": "café"}),
+        ):
+            writer._insert_raw_row(
+                wrapped, table, row, writer._get_table_info(wrapped, table)
+            )
+        self.assertEqual(
+            connection.execute("SELECT Name, Other FROM BidTexts").fetchall(),
+            [("café".encode("latin-1"), "café".encode("utf-8"))],
+        )
+        self.assertEqual(
+            connection.execute("SELECT Name FROM BidNotes").fetchall(),
+            [("café".encode("utf-8"),)],
+        )
+
+    def test_a_bid_table_row_without_a_uid_is_logged_with_an_empty_uid(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Bids (UID INTEGER)")
+        connection.execute("CREATE TABLE BidAreas (UID INTEGER, Name TEXT NOT NULL)")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        with self.assertLogs("test", level="ERROR") as logs:
+            with self.assertRaises(pyodbc.Error):
+                writer._write_to_db(
+                    _import_export_support__SqliteConnection(connection),
+                    RawBidData(
+                        bid_row={"UID": "5"}, bid_tables={"BidAreas": [{"Name": None}]}
+                    ),
+                )
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Failed inserting into [BidAreas], row_uid=, columns=['Name'], "
+                "error=NOT NULL constraint failed: BidAreas.Name"
+            ],
+        )
+
+    def test_the_uid_floor_scans_every_table_the_import_can_write(self):
+        from ost_visualizer.infrastructure.mdb.schema_contract import (
+            PAGE_SECTIONS,
+            RAW_BID_TABLES,
+        )
+
+        tables = ["Bids", "CdnTypes", "JobStatuses", *RAW_BID_TABLES, *PAGE_SECTIONS]
+        self.assertEqual(len(tables), len(set(tables)))
+        for table in tables:
+            with self.subTest(table=table):
+                connection = sqlite3.connect(":memory:")
+                connection.execute(f"CREATE TABLE [{table}] (UID INTEGER)")
+                connection.execute(f"INSERT INTO [{table}] VALUES (777)")
+                writer = _import_export_support__SqliteMdbWriter(connection)
+                self.assertEqual(
+                    writer._get_max_uid(
+                        _import_export_support__SqliteConnection(connection)
+                    ),
+                    777,
+                )
+
+    def test_new_condition_type_and_job_status_uids_are_allocated_one_above_the_other(
+        self,
+    ):
+        connection, writer = self._writer(
+            "INSERT INTO Bids (UID, JobName) VALUES (100, 'Existing')"
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "CdnTypes": [{"UID": "9", "Name": "Footings", "ExpandState": "0"}],
+                "JobStatuses": [
+                    {"UID": "3", "Name": "Won", "Locked": "0", "Sequence": "1"}
+                ],
+            },
+        )
+        captured = []
+
+        def transform(raw, max_uid, cdn, status, employee, pay):
+            captured.append((max_uid, cdn, status))
+            return RawBidData(bid_row={"UID": "200"})
+
+        self.assertIs(writer.import_ost_data("target.mdb", raw_data, transform), True)
+        self.assertEqual(captured, [(102, {"9": "101"}, {"3": "102"})])
+        self.assertEqual(
+            connection.execute("SELECT UID, Name FROM CdnTypes").fetchall(),
+            [(101, "Footings")],
+        )
+        self.assertEqual(
+            connection.execute("SELECT UID, Name FROM JobStatuses").fetchall(),
+            [(102, "Won")],
+        )
+
+    def test_an_imported_condition_type_alone_raises_the_floor_for_the_transform(self):
+        connection, writer = self._writer(
+            "INSERT INTO Bids (UID, JobName) VALUES (100, 'Existing')"
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "CdnTypes": [{"UID": "9", "Name": "Footings", "ExpandState": "0"}]
+            },
+        )
+        captured = []
+
+        def transform(raw, max_uid, cdn, status, employee, pay):
+            captured.append((max_uid, cdn, status))
+            return RawBidData(bid_row={"UID": "200"})
+
+        self.assertIs(writer.import_ost_data("target.mdb", raw_data, transform), True)
+        self.assertEqual(captured, [(101, {"9": "101"}, {})])
+
+    def test_a_nameless_row_is_never_taken_for_a_row_literally_named_x(self):
+        cases = (
+            (
+                "CdnTypes",
+                (),
+                "INSERT INTO CdnTypes (UID, Name, ExpandState) VALUES (40, 'x', 0)",
+                [{"UID": "1"}, {"UID": "2", "Name": "x"}],
+                lambda w, c, raw: w._resolve_cdn_types(c, raw, 100)[0],
+            ),
+            (
+                "JobStatuses",
+                (),
+                "INSERT INTO JobStatuses (UID, Name, Locked, Sequence) "
+                "VALUES (40, 'x', 0, 1)",
+                [{"UID": "1"}, {"UID": "2", "Name": "x"}],
+                lambda w, c, raw: w._resolve_job_statuses(c, raw, 100)[0],
+            ),
+            (
+                "AccessLevels",
+                (
+                    "DROP TABLE AccessLevels",
+                    "CREATE TABLE AccessLevels (UID INTEGER PRIMARY KEY, "
+                    "Description TEXT)",
+                ),
+                "INSERT INTO AccessLevels (UID, Description) VALUES (40, 'x')",
+                [{"UID": "1"}, {"UID": "2", "Description": "x"}],
+                lambda w, c, raw: w._resolve_access_levels(c, raw),
+            ),
+            (
+                "PayClasses",
+                (),
+                "INSERT INTO PayClasses (UID, Name) VALUES (40, 'x')",
+                [{"UID": "1"}, {"UID": "2", "Name": "x"}],
+                lambda w, c, raw: w._resolve_pay_classes(c, raw),
+            ),
+        )
+        for table, setup, existing, rows, resolve in cases:
+            with self.subTest(table=table):
+                connection, writer = self._writer(*setup, existing)
+                raw_data = RawBidData(bid_row={"UID": "1"}, global_tables={table: rows})
+                result = resolve(
+                    writer,
+                    _import_export_support__SqliteConnection(connection),
+                    raw_data,
+                )
+                self.assertEqual(len(result), 2)
+                self.assertEqual(result["2"], "40")
+                self.assertNotEqual(result["1"], "40")
+                self.assertEqual(
+                    connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 2
+                )
+
+    def test_a_nameless_incoming_job_status_reuses_a_nameless_existing_one(self):
+        connection, writer = self._writer(
+            "INSERT INTO JobStatuses (UID, Name, Locked, Sequence) "
+            "VALUES (40, NULL, 0, 1)"
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1"}, global_tables={"JobStatuses": [{"UID": "9"}]}
+        )
+        result, max_uid = writer._resolve_job_statuses(
+            _import_export_support__SqliteConnection(connection), raw_data, 100
+        )
+        self.assertEqual((result, max_uid), ({"9": "40"}, 100))
+
+
+class ImportOperationsSuccessfulImportTests(unittest.TestCase):
+    def test_a_successful_import_commits_the_bid_its_children_and_the_bid_number(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection, next_bid_numbers=(7,))
+        connection.execute(
+            "CREATE TABLE BidTakeoffs (UID INTEGER PRIMARY KEY, BidPageUID INTEGER)"
+        )
+        connection.commit()
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        remapped = RawBidData(
+            bid_row={"UID": "5", "JobName": "Imported"},
+            bid_tables={
+                "BidAreas": [{"UID": "30", "BidUID": "5", "Name": "Area"}],
+                "BidPages": [{"UID": "20", "BidUID": "5", "Name": "Sheet"}],
+            },
+            page_tables={"BidTakeoffs": [{"UID": "40", "BidPageUID": "20"}]},
+        )
+        with self.assertNoLogs("test", level="WARNING"):
+            outcome = writer.import_ost_data(
+                "target.mdb",
+                RawBidData(bid_row={"UID": "1"}),
+                lambda *_arguments: remapped,
+                "12",
+            )
+        self.assertIs(outcome, True)
+        self.assertIs(connection.in_transaction, False)
+        self.assertEqual(
+            connection.execute("SELECT UID, BidProjectUID, BidNo FROM Bids").fetchall(),
+            [(5, 12, 7)],
+        )
+        self.assertEqual(
+            connection.execute("SELECT UID, BidUID, Name FROM BidAreas").fetchall(),
+            [(30, 5, "Area")],
+        )
+        self.assertEqual(
+            connection.execute("SELECT UID, BidUID, Name FROM BidPages").fetchall(),
+            [(20, 5, "Sheet")],
+        )
+        self.assertEqual(
+            connection.execute("SELECT UID, BidPageUID FROM BidTakeoffs").fetchall(),
+            [(40, 20)],
+        )
+        self.assertEqual(
+            connection.execute("SELECT NextBidNo FROM Settings").fetchall(), [(8,)]
+        )
+
+
+class _InterruptingInsertCursor(_RecordingCursor):
+    def execute(self, query, *params):
+        if query.startswith("INSERT"):
+            self._owner.inserts += 1
+            if self._owner.inserts > 1:
+                raise KeyboardInterrupt()
+        return super().execute(query, *params)
+
+
+class _InterruptingInsertConnection(_RecordingConnection):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.inserts = 0
+
+    def cursor(self):
+        cursor = _InterruptingInsertCursor(self._connection, self)
+        self.cursors.append(cursor)
+        return cursor
+
+
+class _NotingSchema(_import_export_support__SqliteSchema):
+    """Records the optional tables reported missing, like the real inspector's notes."""
+
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.notes = []
+
+    def optional_table_missing(self, table_name):
+        missing = super().optional_table_missing(table_name)
+        if missing:
+            self.notes.append(table_name)
+        return missing
+
+
+class ImportOperationsInterruptAndNoteTests(unittest.TestCase):
+    def test_an_interrupt_while_inserting_a_row_propagates_without_an_error_log(self):
+        for label, remapped in (
+            (
+                "bid table",
+                RawBidData(
+                    bid_row={"UID": "5"},
+                    bid_tables={"BidAreas": [{"UID": "30", "BidUID": "5"}]},
+                ),
+            ),
+            (
+                "page table",
+                RawBidData(
+                    bid_row={"UID": "5"},
+                    page_tables={"BidTakeoffs": [{"UID": "40", "BidPageUID": "20"}]},
+                ),
+            ),
+        ):
+            with self.subTest(label):
+                connection = sqlite3.connect(":memory:")
+                _import_export_support__create_import_schema(connection)
+                connection.execute(
+                    "CREATE TABLE BidTakeoffs (UID INTEGER, BidPageUID INTEGER)"
+                )
+                writer = _import_export_support__SqliteMdbWriter(connection)
+                wrapped = _InterruptingInsertConnection(connection)
+                with self.assertNoLogs("test", level="ERROR"):
+                    with self.assertRaises(KeyboardInterrupt):
+                        writer._write_to_db(wrapped, remapped)
+                self.assertEqual(wrapped.inserts, 2)
+
+    def test_a_missing_master_table_is_noted_by_the_loaders(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        connection.execute("DROP TABLE Employees")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        schema = _NotingSchema(connection)
+        writer._schema_ref = schema
+        wrapped = _RecordingConnection(connection)
+        self.assertEqual(
+            writer._load_existing_uid_candidates_by_column(wrapped, "Missing", "Name"),
+            {},
+        )
+        self.assertEqual(
+            writer._load_existing_employee_uid_candidates_by_key(wrapped), {}
+        )
+        self.assertEqual(schema.notes, ["Missing", "Employees"])
+        self.assertEqual(wrapped.statements, [])
+
+    def test_without_a_target_project_the_remapped_bid_row_carries_none(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        for target in (None, ""):
+            with self.subTest(target=target):
+                remapped = RawBidData(
+                    bid_row={"UID": "5", "BidProjectUID": "99"},
+                )
+                self.assertIs(
+                    writer.import_ost_data(
+                        "target.mdb",
+                        RawBidData(bid_row={"UID": "1"}),
+                        lambda *_arguments: remapped,
+                        target,
+                    ),
+                    True,
+                )
+                self.assertIsNone(remapped.bid_row["BidProjectUID"])
+                connection.execute("DELETE FROM Bids")
+
+
+class ImportOperationsMasterIdentityEdgeTests(unittest.TestCase):
+    """Same-source duplicates, case variants and caller-row hygiene of the resolvers."""
+
+    _ACCESS_LEVELS_SCHEMA = (
+        "DROP TABLE AccessLevels",
+        "CREATE TABLE AccessLevels (UID INTEGER PRIMARY KEY, Description TEXT)",
+    )
+
+    def _writer(self, *statements):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        for statement in statements:
+            connection.execute(statement)
+        return connection, _import_export_support__SqliteMdbWriter(connection)
+
+    def _resolvers(self):
+        return {
+            "CdnTypes": lambda w, c, raw: w._resolve_cdn_types(c, raw, 100)[0],
+            "JobStatuses": lambda w, c, raw: w._resolve_job_statuses(c, raw, 100)[0],
+            "AccessLevels": lambda w, c, raw: w._resolve_access_levels(c, raw),
+            "PayClasses": lambda w, c, raw: w._resolve_pay_classes(c, raw),
+            "Employees": lambda w, c, raw: w._resolve_employees(c, raw, {}, {}),
+        }
+
+    def test_repeated_rows_with_the_same_source_uid_are_stored_once(self):
+        cases = (
+            (
+                "CdnTypes",
+                (),
+                {"UID": "90", "Name": "X", "ExpandState": "0"},
+                {"90": "101"},
+                "SELECT UID, Name, ExpandState FROM CdnTypes",
+                [(101, "X", 0)],
+            ),
+            (
+                "JobStatuses",
+                (),
+                {"UID": "90", "Name": "X", "Locked": "0", "Sequence": "1"},
+                {"90": "101"},
+                "SELECT UID, Name, Locked, Sequence FROM JobStatuses",
+                [(101, "X", 0, 1)],
+            ),
+            (
+                "AccessLevels",
+                self._ACCESS_LEVELS_SCHEMA,
+                {"UID": "90", "Description": "X"},
+                {"90": "1"},
+                "SELECT UID, Description FROM AccessLevels",
+                [(1, "X")],
+            ),
+            (
+                "PayClasses",
+                (),
+                {"UID": "90", "Name": "X"},
+                {"90": "1"},
+                "SELECT UID, Name FROM PayClasses",
+                [(1, "X")],
+            ),
+            (
+                "Employees",
+                (),
+                {"UID": "90", "EmployeeNo": "E1", "FirstName": "a"},
+                {"90": "1"},
+                "SELECT UID, EmployeeNo, FirstName FROM Employees",
+                [(1, "E1", "a")],
+            ),
+        )
+        for table, setup, row, expected_map, select, expected_rows in cases:
+            with self.subTest(table=table):
+                connection, writer = self._writer(*setup)
+                raw_data = RawBidData(
+                    bid_row={"UID": "1"},
+                    global_tables={table: [dict(row), dict(row)]},
+                )
+                result = self._resolvers()[table](
+                    writer,
+                    _import_export_support__SqliteConnection(connection),
+                    raw_data,
+                )
+                self.assertEqual(result, expected_map)
+                self.assertEqual(connection.execute(select).fetchall(), expected_rows)
+
+    def test_names_that_differ_only_in_case_or_spacing_are_distinct_outside_cdn_types(
+        self,
+    ):
+        cases = (
+            (
+                "JobStatuses",
+                (),
+                lambda name, uid: {
+                    "UID": uid,
+                    "Name": name,
+                    "Locked": "0",
+                    "Sequence": "1",
+                },
+                "SELECT UID, Name FROM JobStatuses ORDER BY UID",
+                {"1": "101", "2": "102", "3": "103"},
+            ),
+            (
+                "PayClasses",
+                (),
+                lambda name, uid: {"UID": uid, "Name": name},
+                "SELECT UID, Name FROM PayClasses ORDER BY UID",
+                {"1": "1", "2": "2", "3": "3"},
+            ),
+            (
+                "AccessLevels",
+                self._ACCESS_LEVELS_SCHEMA,
+                lambda name, uid: {"UID": uid, "Description": name},
+                "SELECT UID, Description FROM AccessLevels ORDER BY UID",
+                {"1": "1", "2": "2", "3": "3"},
+            ),
+        )
+        for table, setup, make_row, select, expected_map in cases:
+            with self.subTest(table=table):
+                connection, writer = self._writer(*setup)
+                raw_data = RawBidData(
+                    bid_row={"UID": "1"},
+                    global_tables={
+                        table: [
+                            make_row("Open", "1"),
+                            make_row("open", "2"),
+                            make_row(" Open ", "3"),
+                        ]
+                    },
+                )
+                result = self._resolvers()[table](
+                    writer,
+                    _import_export_support__SqliteConnection(connection),
+                    raw_data,
+                )
+                self.assertEqual(result, expected_map)
+                stored = connection.execute(select).fetchall()
+                self.assertEqual(
+                    [name for _uid, name in stored], ["Open", "open", " Open "]
+                )
+
+    def test_an_existing_name_is_matched_exactly_outside_cdn_types_characterisation(
+        self,
+    ):
+        # Characterisation: only the condition-type name contract folds case and
+        # trims; the other master tables match their text exactly.
+        connection, writer = self._writer(
+            "INSERT INTO PayClasses VALUES (20, 'Regular')"
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "PayClasses": [
+                    {"UID": "1", "Name": "Regular"},
+                    {"UID": "2", "Name": "regular"},
+                ]
+            },
+        )
+        self.assertEqual(
+            writer._resolve_pay_classes(
+                _import_export_support__SqliteConnection(connection), raw_data
+            ),
+            {"1": "20", "2": "21"},
+        )
+
+    def test_an_incoming_empty_identity_never_reuses_an_existing_empty_row(self):
+        for table, column, setup, resolve in (
+            (
+                "PayClasses",
+                "Name",
+                (),
+                lambda w, c, raw: w._resolve_pay_classes(c, raw),
+            ),
+            (
+                "AccessLevels",
+                "Description",
+                self._ACCESS_LEVELS_SCHEMA,
+                lambda w, c, raw: w._resolve_access_levels(c, raw),
+            ),
+        ):
+            with self.subTest(table=table):
+                connection, writer = self._writer(*setup)
+                connection.execute(
+                    f"INSERT INTO {table} (UID, {column}) VALUES (15, '')"
+                )
+                raw_data = RawBidData(
+                    bid_row={"UID": "1"},
+                    global_tables={table: [{"UID": "90", column: ""}]},
+                )
+                self.assertEqual(
+                    resolve(
+                        writer,
+                        _import_export_support__SqliteConnection(connection),
+                        raw_data,
+                    ),
+                    {"90": "16"},
+                )
+                self.assertEqual(
+                    connection.execute(
+                        f"SELECT UID FROM {table} ORDER BY UID"
+                    ).fetchall(),
+                    [(15,), (16,)],
+                )
+
+    def test_the_resolvers_leave_the_callers_incoming_rows_untouched(self):
+        import copy
+
+        connection, writer = self._writer(*self._ACCESS_LEVELS_SCHEMA)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "AccessLevels": [{"UID": "90", "Description": "Full"}],
+                "PayClasses": [{"UID": "91", "Name": "Reg"}],
+                "Employees": [{"UID": "92", "EmployeeNo": "E1", "PayClassUID": "91"}],
+                "CdnTypes": [{"UID": "93", "Name": "C", "ExpandState": "0"}],
+                "JobStatuses": [
+                    {"UID": "94", "Name": "J", "Locked": "0", "Sequence": "1"}
+                ],
+            },
+        )
+        before = copy.deepcopy(raw_data.global_tables)
+        wrapped = _import_export_support__SqliteConnection(connection)
+        writer._resolve_cdn_types(wrapped, raw_data, 100)
+        writer._resolve_job_statuses(wrapped, raw_data, 100)
+        access_levels = writer._resolve_access_levels(wrapped, raw_data)
+        pay_classes = writer._resolve_pay_classes(wrapped, raw_data)
+        writer._resolve_employees(wrapped, raw_data, pay_classes, access_levels)
+        self.assertEqual(raw_data.global_tables, before)
+
+    def test_employee_identity_keys_fold_case_with_casefold_not_lower(self):
+        key = _import_export_support__SqliteMdbWriter(
+            sqlite3.connect(":memory:")
+        )._employee_identity_key
+        for row_a, row_b, expected in (
+            ({"EmployeeNo": "STRASSE"}, {"EmployeeNo": "Straße"}, "no:strasse"),
+            ({"FirstName": "STRASSE"}, {"FirstName": "Straße"}, "name:strasse||"),
+            ({"LastName": "STRASSE"}, {"LastName": "Straße"}, "name:|strasse|"),
+            ({"EMail": "STRASSE"}, {"EMail": "Straße"}, "name:||strasse"),
+        ):
+            with self.subTest(row=row_b):
+                self.assertEqual(key(row_a), expected)
+                self.assertEqual(key(row_b), expected)
+
+    def test_an_existing_employee_is_matched_through_the_folded_number(self):
+        connection, writer = self._writer(
+            "INSERT INTO Employees (UID, EmployeeNo) VALUES (7, 'Straße')"
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={"Employees": [{"UID": "90", "EmployeeNo": "STRASSE"}]},
+        )
+        self.assertEqual(
+            writer._resolve_employees(
+                _import_export_support__SqliteConnection(connection), raw_data, {}, {}
+            ),
+            {"90": "7"},
+        )
+
+
+class ImportOperationsConversionInterruptTests(unittest.TestCase):
+    """Only ValueError/TypeError read as NULL; interrupts and overflow propagate."""
+
+    def setUp(self):
+        self.convert = _import_export_support__SqliteMdbWriter(
+            sqlite3.connect(":memory:")
+        )._convert_access_value
+
+    @staticmethod
+    def _raiser(exception):
+        def raise_it(*_arguments, **_options):
+            raise exception
+
+        return raise_it
+
+    def test_an_interrupt_while_converting_a_datetime_propagates(self):
+        for interrupt in (KeyboardInterrupt(), SystemExit(3)):
+            with self.subTest(interrupt=type(interrupt).__name__):
+                fake_module = SimpleNamespace(datetime=self._raiser(interrupt))
+                with patch.object(import_operations_module, "datetime", fake_module):
+                    with self.assertRaises(type(interrupt)):
+                        self.convert("2024 3 9 14 5 7", "datetime")
+
+    def test_an_interrupt_while_converting_a_number_propagates(self):
+        for value, replaced in (("12", "int"), ("1.5", "float")):
+            with self.subTest(value=value):
+                with patch.object(
+                    import_operations_module,
+                    replaced,
+                    self._raiser(KeyboardInterrupt()),
+                    create=True,
+                ):
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.convert(value, "integer")
+
+    def test_an_absurd_datetime_text_raises_overflow_characterisation(self):
+        # Characterisation, not a requirement: OverflowError is neither ValueError nor
+        # TypeError, so it currently fails the import instead of reading as NULL.
+        # Owner question: should such a text read as NULL like any other bad date?
+        with self.assertRaises(OverflowError):
+            self.convert("99999999999999999999 1 1 0 0 0", "datetime")
+
+
+class ImportOperationsUidFloorReferenceTests(unittest.TestCase):
+    def test_a_second_uid_column_of_the_same_child_table_is_scanned_too(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Bids (UID INTEGER)")
+        connection.execute("INSERT INTO Bids VALUES (1)")
+        connection.execute(
+            "CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER, ParentUID INTEGER)"
+        )
+        connection.execute("INSERT INTO BidAreas VALUES (2, 3, 900)")
+        relationships = [
+            RawBidRelationship("BidAreas", "BidUID", "Bids", "UID"),
+            RawBidRelationship("BidAreas", "ParentUID", "BidAreas", "UID"),
+        ]
+        wrapped = _RecordingConnection(connection)
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        with patch.object(import_operations_module, "BID_RELATIONSHIPS", relationships):
+            floor = writer._get_max_uid(wrapped)
+        self.assertEqual(floor, 900)
+        self.assertEqual(
+            [s for s in wrapped.statements if "MAX([" in s],
+            [
+                "SELECT MAX([BidUID]) FROM [BidAreas]",
+                "SELECT MAX([ParentUID]) FROM [BidAreas]",
+            ],
+        )
+
+    def test_missing_child_tables_of_the_floor_scan_are_noted(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Bids (UID INTEGER)")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        schema = _NotingSchema(connection)
+        writer._schema_ref = schema
+        self.assertEqual(writer._get_max_uid(_RecordingConnection(connection)), 0)
+        self.assertIn("BidNotes", schema.notes)
+        self.assertNotIn("Bids", schema.notes)
+
+
+class ImportOperationsNonTextNumberTests(unittest.TestCase):
+    def test_a_non_text_value_in_a_numeric_column_reads_as_null_characterisation(self):
+        # Characterisation: values are text by contract; a stray number or flag in a
+        # numeric column does not fail the import, it is stored as NULL.
+        convert = _import_export_support__SqliteMdbWriter(
+            sqlite3.connect(":memory:")
+        )._convert_access_value
+        for value in (5, 1.5, True):
+            with self.subTest(value=value):
+                self.assertIsNone(convert(value, "integer"))
+
+
+class ImportOperationsExistingEmployeeValueTests(unittest.TestCase):
+    def test_an_existing_numeric_zero_employee_number_still_forms_a_key(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        connection.execute("DROP TABLE Employees")
+        connection.execute("CREATE TABLE Employees (UID INTEGER, EmployeeNo)")
+        connection.execute("INSERT INTO Employees (UID, EmployeeNo) VALUES (7, 0)")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        self.assertEqual(
+            writer._load_existing_employee_uid_candidates_by_key(
+                _import_export_support__SqliteConnection(connection)
+            ),
+            {"no:0": ["7"]},
+        )
+
+
+class ImportOperationsRowOrderTests(unittest.TestCase):
+    """Rows of one table are written in the given order (parents before children)."""
+
+    def _database(self):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        connection.execute("DROP TABLE BidAreas")
+        connection.execute(
+            "CREATE TABLE BidAreas (UID INTEGER PRIMARY KEY, BidUID INTEGER, "
+            "ParentUID INTEGER REFERENCES BidAreas (UID))"
+        )
+        connection.execute(
+            "CREATE TABLE BidTakeoffs (UID INTEGER PRIMARY KEY, "
+            "ParentUID INTEGER REFERENCES BidTakeoffs (UID))"
+        )
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection, _import_export_support__SqliteMdbWriter(connection)
+
+    def _inserts(self, connection, remapped, table):
+        statements = []
+        connection.set_trace_callback(statements.append)
+        _import_export_support__SqliteMdbWriter(connection)._write_to_db(
+            _import_export_support__SqliteConnection(connection), remapped
+        )
+        connection.set_trace_callback(None)
+        return [s for s in statements if s.startswith(f"INSERT INTO [{table}]")]
+
+    def test_bid_table_rows_are_inserted_parent_before_child(self):
+        connection, _writer = self._database()
+        remapped = RawBidData(
+            bid_row={"UID": "5"},
+            bid_tables={
+                "BidAreas": [
+                    {"UID": "30", "BidUID": "5", "ParentUID": "NULL"},
+                    {"UID": "31", "BidUID": "5", "ParentUID": "30"},
+                ]
+            },
+        )
+        self.assertEqual(
+            self._inserts(connection, remapped, "BidAreas"),
+            [
+                "INSERT INTO [BidAreas] ([UID], [BidUID], [ParentUID]) "
+                "VALUES (30, 5, NULL)",
+                "INSERT INTO [BidAreas] ([UID], [BidUID], [ParentUID]) "
+                "VALUES (31, 5, 30)",
+            ],
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT UID, ParentUID FROM BidAreas ORDER BY UID"
+            ).fetchall(),
+            [(30, None), (31, 30)],
+        )
+
+    def test_page_table_rows_are_inserted_parent_before_child(self):
+        connection, _writer = self._database()
+        remapped = RawBidData(
+            bid_row={"UID": "5"},
+            page_tables={
+                "BidTakeoffs": [
+                    {"UID": "40", "ParentUID": "NULL"},
+                    {"UID": "41", "ParentUID": "40"},
+                ]
+            },
+        )
+        self.assertEqual(
+            self._inserts(connection, remapped, "BidTakeoffs"),
+            [
+                "INSERT INTO [BidTakeoffs] ([UID], [ParentUID]) VALUES (40, NULL)",
+                "INSERT INTO [BidTakeoffs] ([UID], [ParentUID]) VALUES (41, 40)",
+            ],
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT UID, ParentUID FROM BidTakeoffs ORDER BY UID"
+            ).fetchall(),
+            [(40, None), (41, 40)],
+        )

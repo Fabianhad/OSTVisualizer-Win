@@ -751,3 +751,394 @@ class LicenseThreadManagerMessageTests(unittest.TestCase):
             [type(e) for e in raised.exception.exceptions], [RuntimeError, ValueError]
         )
         manager.cleanup()
+
+
+class LicenseThreadManagerReentrancyTests(unittest.TestCase):
+    """The main-thread completion runs under the manager lock, so the lock must be re-entrant: a completion handler
+    may start the next operation or shut the manager down. Handlers run on a daemon helper thread with a bounded join,
+    so a lock that is not re-entrant fails the test instead of hanging it. Nothing depends on timing.
+    """
+
+    WAIT = 5.0
+
+    class _Bridge:
+        def __init__(self):
+            self.requests = []
+
+        def request_callback(self, callback, success, message):
+            self.requests.append((callback, success, message))
+
+    def _join(self, thread, what):
+        thread.join(timeout=self.WAIT)
+        self.assertFalse(thread.is_alive(), what)
+
+    def _deliver_on_main(self, callback, success, message):
+        errors = []
+
+        def run():
+            try:
+                callback(success, message)
+            except BaseException as error:
+                errors.append(error)
+
+        main = threading.Thread(target=run, name="license-main", daemon=True)
+        main.start()
+        self._join(main, "the completion handler blocked on the manager lock")
+        self.assertEqual(errors, [])
+
+    def test_a_completion_handler_may_start_the_next_operation(self):
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        first_bridge, second_bridge = self._Bridge(), self._Bridge()
+        started = []
+
+        def on_first_done(_success, _message, _extra_data):
+            started.append(
+                manager.spawn_with_bridge(
+                    lambda: (True, "second", None),
+                    second_bridge,
+                    lambda *_args: None,
+                )
+            )
+
+        first = manager.spawn_with_bridge(
+            lambda: (True, "first", None), first_bridge, on_first_done
+        )
+        self._join(first, "license test worker did not terminate")
+        callback, success, message = first_bridge.requests.pop()
+        self.assertEqual((success, message), (True, "first"))
+        self._deliver_on_main(callback, success, message)
+        self.assertEqual(len(started), 1)
+        self._join(started[0], "license test worker did not terminate")
+        self.assertEqual(
+            [(ok, text) for _cb, ok, text in second_bridge.requests],
+            [(True, "second")],
+        )
+        self.assertEqual(manager._active_threads, [])
+        manager.cleanup()
+
+    def test_a_completion_handler_may_stop_the_manager(self):
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        bridge = self._Bridge()
+        events = []
+
+        def on_done(_success, _message, _extra_data):
+            manager.cleanup(timeout=0.0)
+            events.append("stopped")
+
+        worker = manager.spawn_with_bridge(
+            lambda: (True, "done", None), bridge, on_done
+        )
+        self._join(worker, "license test worker did not terminate")
+        callback, success, message = bridge.requests.pop()
+        self._deliver_on_main(callback, success, message)
+        self.assertEqual(events, ["stopped"])
+        with self.assertRaisesRegex(RuntimeError, "^License operations have stopped$"):
+            manager.spawn_with_bridge(
+                lambda: (True, "late", None), bridge, lambda *_args: None
+            )
+        self.assertEqual(manager._active_threads, [])
+
+
+class LicenseThreadManagerJoinFailureReportingTests(unittest.TestCase):
+    class _Logger:
+        def __init__(self):
+            self.records = []
+
+        def warning(self, message, *args):
+            self.records.append(("warning", message % args))
+
+        def exception(self, message, *args):
+            self.records.append(("exception", message % args))
+
+    def test_a_failed_join_is_raised_without_also_reporting_the_worker_as_stuck(self):
+        class JoinFails:
+            name = "join-fails"
+
+            def is_alive(self):
+                return True
+
+            def join(self, timeout=None):
+                raise RuntimeError("join failed")
+
+        logger = self._Logger()
+        manager = LicenseThreadManager(logger)
+        manager._active_threads = [JoinFails()]
+        with self.assertRaisesRegex(RuntimeError, "^join failed$"):
+            manager.cleanup(timeout=0.25)
+        self.assertEqual(logger.records, [])
+        self.assertEqual(manager._active_threads, [])
+
+
+class LicenseThreadManagerSnapshotTests(unittest.TestCase):
+    def test_cleanup_joins_every_worker_even_when_one_unregisters_itself_while_being_joined(
+        self,
+    ):
+        # A finishing worker removes itself from the registry in its finally block while cleanup is joining it.
+        # cleanup must walk a snapshot taken under the lock; walking the live list would skip the next worker.
+        manager = LicenseThreadManager(logging.getLogger("test"))
+
+        class UnregistersWhileJoined:
+            name = "first"
+
+            def __init__(self):
+                self.alive = True
+                self.join_timeouts = []
+
+            def is_alive(self):
+                return self.alive
+
+            def join(self, timeout=None):
+                self.join_timeouts.append(timeout)
+                self.alive = False
+                manager._remove_thread(self)
+
+        class PlainWorker:
+            def __init__(self, name):
+                self.name = name
+                self.alive = True
+                self.join_timeouts = []
+
+            def is_alive(self):
+                return self.alive
+
+            def join(self, timeout=None):
+                self.join_timeouts.append(timeout)
+                self.alive = False
+
+        first = UnregistersWhileJoined()
+        second, third = PlainWorker("second"), PlainWorker("third")
+        manager._active_threads = [first, second, third]
+        manager.cleanup(timeout=0.5)
+        self.assertEqual(
+            (first.join_timeouts, second.join_timeouts, third.join_timeouts),
+            ([0.5], [0.5], [0.5]),
+        )
+        self.assertEqual(manager._active_threads, [])
+
+
+class LicenseThreadManagerCallbackRelayTests(unittest.TestCase):
+    def test_the_main_thread_completion_forwards_the_outcome_the_bridge_delivers_with_the_worker_data(
+        self,
+    ):
+        queued, delivered = [], []
+
+        class Bridge:
+            def request_callback(self, callback, success, message):
+                queued.append((callback, success, message))
+
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        worker = manager.spawn_with_bridge(
+            lambda: (True, "from worker", "extra"),
+            Bridge(),
+            lambda *args: delivered.append(args),
+        )
+        worker.join(timeout=5.0)
+        self.assertFalse(worker.is_alive(), "license test worker did not terminate")
+        callback, success, message = queued.pop()
+        self.assertEqual((success, message), (True, "from worker"))
+        callback(False, "relayed by the bridge")
+        self.assertEqual(delivered, [(False, "relayed by the bridge", "extra")])
+        manager.cleanup()
+
+
+class LicenseThreadManagerInterruptPolicyTests(unittest.TestCase):
+    """Interrupt policy (KeyboardInterrupt or SystemExit): clean up, log any secondary error and re-raise the ORIGINAL
+    interrupt; never swallow it, never let a cleanup error replace it. Ordinary-exception handling is unchanged.
+    """
+
+    INTERRUPTS = (KeyboardInterrupt, SystemExit)
+
+    class _Worker:
+        """Thread stand-in whose join raises `error` (if any) and records every join."""
+
+        def __init__(self, name, error=None, stays_alive=False):
+            self.name, self.error, self.stays_alive = name, error, stays_alive
+            self.alive = True
+            self.join_timeouts = []
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            self.join_timeouts.append(timeout)
+            if self.error is not None:
+                raise self.error
+            self.alive = self.stays_alive
+
+    class _InertThread:
+        """Thread stand-in that never runs: spawn registers it and the test runs the captured target by hand."""
+
+        created = []
+
+        def __init__(self, target=None, daemon=None, name="inert"):
+            self.target, self.daemon, self.name = target, daemon, name
+            type(self).created.append(self)
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return False
+
+    def setUp(self):
+        self._InertThread.created = []
+
+    def test_an_interrupt_while_starting_the_worker_releases_its_registration_and_is_re_raised(
+        self,
+    ):
+        for kind in self.INTERRUPTS:
+            with self.subTest(interrupt=kind.__name__):
+                manager = LicenseThreadManager(logging.getLogger("test"))
+                interrupt = kind("start interrupted")
+                with patch.object(threading.Thread, "start", side_effect=interrupt):
+                    with self.assertRaises(kind) as raised:
+                        manager.spawn_with_bridge(
+                            lambda: (True, "ok", None), object(), object()
+                        )
+                self.assertIs(raised.exception, interrupt)
+                self.assertEqual(manager._active_threads, [])
+                self.assertIs(manager._closed, False)
+                manager.cleanup()
+
+    def test_an_interrupt_while_dispatching_the_callback_is_not_swallowed_and_still_releases_the_worker(
+        self,
+    ):
+        for kind in self.INTERRUPTS:
+            with self.subTest(interrupt=kind.__name__):
+                interrupt = kind("dispatch interrupted")
+
+                class Bridge:
+                    def request_callback(self, _callback, _success, _message):
+                        raise interrupt
+
+                manager = LicenseThreadManager(logging.getLogger("test"))
+                self._InertThread.created = []
+                with patch.object(threading, "Thread", self._InertThread):
+                    manager.spawn_with_bridge(
+                        lambda: (True, "ok", None), Bridge(), lambda *_args: None
+                    )
+                (worker,) = self._InertThread.created
+                self.assertEqual(manager._active_threads, [worker])
+                with self.assertNoLogs("test"):
+                    with self.assertRaises(kind) as raised:
+                        worker.target()
+                self.assertIs(raised.exception, interrupt)
+                self.assertEqual(manager._active_threads, [])
+
+    def test_an_interrupt_while_joining_a_worker_still_joins_the_rest_and_empties_the_registry(
+        self,
+    ):
+        for kind in self.INTERRUPTS:
+            with self.subTest(interrupt=kind.__name__):
+                logger = logging.getLogger("test")
+                manager = LicenseThreadManager(logger)
+                interrupt = kind("join interrupted")
+                first = self._Worker("first")
+                interrupted = self._Worker("interrupted", error=interrupt)
+                last = self._Worker("last")
+                manager._active_threads = [first, interrupted, last]
+                with self.assertNoLogs("test"):
+                    with self.assertRaises(kind) as raised:
+                        manager.cleanup(timeout=0.25)
+                self.assertIs(raised.exception, interrupt)
+                self.assertEqual(
+                    (
+                        first.join_timeouts,
+                        interrupted.join_timeouts,
+                        last.join_timeouts,
+                    ),
+                    ([0.25], [0.25], [0.25]),
+                )
+                self.assertEqual(manager._active_threads, [])
+                manager.cleanup(timeout=0.25)
+                self.assertEqual(last.join_timeouts, [0.25])
+
+    def test_a_worker_that_outlives_the_timeout_is_still_reported_when_a_later_join_is_interrupted(
+        self,
+    ):
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        stuck = self._Worker("stuck", stays_alive=True)
+        interrupt = KeyboardInterrupt("later join")
+        manager._active_threads = [stuck, self._Worker("interrupted", error=interrupt)]
+        with self.assertLogs("test", level="WARNING") as logs:
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                manager.cleanup(timeout=0.5)
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            ["Thread stuck did not stop within 0.5s"],
+        )
+
+    def test_ordinary_join_errors_around_an_interrupt_are_logged_and_never_replace_it(
+        self,
+    ):
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        interrupt = KeyboardInterrupt("original")
+        broken_before = self._Worker("before", error=RuntimeError("join failed before"))
+        broken_after = self._Worker("after", error=ValueError("join failed after"))
+        last = self._Worker("last")
+        manager._active_threads = [
+            broken_before,
+            self._Worker("interrupted", error=interrupt),
+            broken_after,
+            last,
+        ]
+        with self.assertLogs("test", level="ERROR") as logs:
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                manager.cleanup(timeout=0.25)
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Error joining a license worker during cleanup;"
+                " the original KeyboardInterrupt is re-raised: join failed before",
+                "Error joining a license worker during cleanup;"
+                " the original KeyboardInterrupt is re-raised: join failed after",
+            ],
+        )
+        self.assertEqual(
+            [type(record.exc_info[1]) for record in logs.records],
+            [RuntimeError, ValueError],
+        )
+        self.assertEqual(last.join_timeouts, [0.25])
+        self.assertEqual(manager._active_threads, [])
+
+    def test_a_second_interrupt_is_logged_and_the_first_one_is_re_raised(self):
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        first = KeyboardInterrupt("first")
+        second = SystemExit(2)
+        last = self._Worker("last")
+        manager._active_threads = [
+            self._Worker("one", error=first),
+            self._Worker("two", error=second),
+            last,
+        ]
+        with self.assertLogs("test", level="ERROR") as logs:
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                manager.cleanup(timeout=0.25)
+        self.assertIs(raised.exception, first)
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "SystemExit while joining license worker two during cleanup after"
+                " KeyboardInterrupt; the original KeyboardInterrupt is re-raised"
+            ],
+        )
+        self.assertIs(logs.records[0].exc_info[1], second)
+        self.assertEqual(last.join_timeouts, [0.25])
+        self.assertEqual(manager._active_threads, [])
+
+    def test_without_an_interrupt_join_errors_are_still_raised_and_not_logged(self):
+        # Ordinary-exception behaviour is unchanged: errors are raised singly or grouped, nothing is logged.
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        manager._active_threads = [
+            self._Worker("one", error=RuntimeError("one")),
+            self._Worker("two", error=ValueError("two")),
+        ]
+        with self.assertNoLogs("test"):
+            with self.assertRaises(ExceptionGroup) as raised:
+                manager.cleanup()
+        self.assertEqual(
+            [type(error) for error in raised.exception.exceptions],
+            [RuntimeError, ValueError],
+        )

@@ -184,6 +184,30 @@ class SchemaCompatibilityCompatibilityTests(unittest.TestCase):
             "[FolderUID], [PageNumber]",
         )
 
+    def test_empty_table_listing_is_cached_and_not_requeried(self):
+        connection = _RecordingConnection([], {})
+        inspector = MdbSchemaInspector(connection)
+        self.assertIs(inspector.optional_table_missing("BidHotLinks"), True)
+        self.assertIs(inspector.table_exists("BidPages"), False)
+        self.assertEqual(connection.table_calls, [{"tableType": "TABLE"}])
+        self.assertEqual(inspector.report.detected_tables, set())
+
+    def test_order_by_existing_keeps_the_requested_priority_order(self):
+        inspector = MdbSchemaInspector(
+            _RecordingConnection(
+                ["BidPages"], {"BidPages": {"Alpha", "Sequence", "FolderUID"}}
+            )
+        )
+        self.assertEqual(
+            inspector.order_by_existing(
+                "BidPages", ("Sequence", "Missing", "FolderUID", "Alpha"), "[UID]"
+            ),
+            "[Sequence], [FolderUID], [Alpha]",
+        )
+
+    def test_unsupported_schema_error_is_a_runtime_error_subclass(self):
+        self.assertTrue(issubclass(UnsupportedMdbSchemaError, RuntimeError))
+
 
 class _RecordingCursor:
     def __init__(self, connection):

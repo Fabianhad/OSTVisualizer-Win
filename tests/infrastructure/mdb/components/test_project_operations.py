@@ -434,7 +434,7 @@ class ProjectOperationContractTests(unittest.TestCase):
             ),
             (
                 "delete",
-                lambda ops: ops.delete_projects("x.mdb", ["1"]),
+                lambda ops: ops.delete_projects("x.mdb", ["2"]),
                 False,
                 {"projects": "Name TEXT"},
             ),
@@ -499,7 +499,7 @@ class ProjectOperationContractTests(unittest.TestCase):
                 "UID",
             ),
             (
-                lambda ops: ops.delete_projects("x.mdb", ["1"]),
+                lambda ops: ops.delete_projects("x.mdb", ["2"]),
                 {"projects": "Name TEXT"},
                 "UID",
             ),
@@ -582,9 +582,9 @@ class ProjectOperationFailurePathTests(unittest.TestCase):
                 "Failed to rename project 1 in a.mdb",
             ),
             (
-                lambda ops: ops.delete_projects("a.mdb", ["1", "2"]),
+                lambda ops: ops.delete_projects("a.mdb", ["2", "3"]),
                 {"projects": "Name TEXT"},
-                "Failed to delete projects ['1', '2'] from a.mdb",
+                "Failed to delete projects ['2', '3'] from a.mdb",
             ),
             (
                 lambda ops: ops.move_bids_to_project("a.mdb", ["x"], "2"),

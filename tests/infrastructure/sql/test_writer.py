@@ -55,6 +55,7 @@ from ost_visualizer.infrastructure.database.settings_cardinality import (
 )
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
+import asyncio
 import contextlib
 import json
 import os
@@ -8584,3 +8585,477 @@ class WriterVerifierReworkTests(unittest.TestCase):
             str(raised.exception),
             "The SQL collaboration session expired before the write.",
         )
+
+
+class _SqlAbort(BaseException):
+    # A BaseException that is neither KeyboardInterrupt nor SystemExit.
+    pass
+
+
+class WriterA1eGapTests(unittest.TestCase):
+    """Gaps found by the second verifier (V1e) in the writer sweep: first-error
+    wins through ``_connection``, rollback and session-context cleanup catching
+    only driver errors, dedupe ordering, the remapped import graph (external
+    references, per-child bid identity, rows without a UID) and the positive
+    and negative controls of the Deleted Bids guard in ``delete_projects``."""
+
+    def _request(self, descriptor, **kwargs):
+        return _DatabaseMutationRequest(
+            database_id=descriptor.database_id,
+            session_id="session-1",
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
+            request_hash="a" * 64,
+            **kwargs,
+        )
+
+    def test_connection_reraises_the_first_of_two_swallowed_failures(self):
+        writer, descriptor, server = _strict_writer()
+        resource = ResourceRef("database", descriptor.database_id)
+        first, second = ValueError("first"), KeyError("second")
+
+        def operation(recorder):
+            for failure in (first, second):
+                try:
+                    with writer._connection(descriptor.database_id):
+                        raise failure
+                except Exception:
+                    pass
+            recorder.record(resource, ChangeOperation.UPDATE)
+            return True
+
+        with server.patched():
+            with self.assertRaises(ValueError) as raised:
+                writer.execute(
+                    self._request(descriptor, resources=(resource,)), operation
+                )
+        self.assertIs(raised.exception, first)
+        self.assertEqual(str(raised.exception), "first")
+
+    def test_an_interrupt_while_rolling_back_propagates(self):
+        # Characterisation of current behaviour: only driver errors are swallowed
+        # during the rollback; see questions_for_owner in the audit report.
+        writer, descriptor, server = _strict_writer()
+        server.fail("rollback", KeyboardInterrupt())
+
+        def failing_operation(_recorder):
+            raise RuntimeError("operation failed")
+
+        with server.patched():
+            with self.assertRaises(KeyboardInterrupt):
+                writer.execute(self._request(descriptor), failing_operation)
+
+    def test_a_non_driver_error_while_rolling_back_propagates(self):
+        writer, descriptor, server = _strict_writer()
+        server.fail("rollback", ValueError("rollback bug"))
+
+        def failing_operation(_recorder):
+            raise RuntimeError("operation failed")
+
+        with server.patched():
+            with self.assertRaises(ValueError) as raised:
+                writer.execute(self._request(descriptor), failing_operation)
+        self.assertEqual(str(raised.exception), "rollback bug")
+
+    def _fail_session_context_clear(self, server, failure):
+        def raise_failure(_call):
+            raise failure
+
+        server.rules.insert(
+            0,
+            (
+                lambda sql: "sp_set_session_context" in sql and "@value=NULL" in sql,
+                raise_failure,
+            ),
+        )
+
+    def test_an_interrupt_while_clearing_the_session_context_propagates(self):
+        # Characterisation of current behaviour (see the rollback test above).
+        writer, descriptor, server = _strict_writer()
+        resource, mutate = _record_database_update(descriptor)
+        self._fail_session_context_clear(server, KeyboardInterrupt())
+        with server.patched():
+            with self.assertRaises(KeyboardInterrupt):
+                writer.execute(self._request(descriptor, resources=(resource,)), mutate)
+
+    def test_a_non_driver_error_while_clearing_the_session_context_propagates(self):
+        writer, descriptor, server = _strict_writer()
+        resource, mutate = _record_database_update(descriptor)
+        self._fail_session_context_clear(server, ValueError("context bug"))
+        with server.patched():
+            with self.assertRaises(ValueError) as raised:
+                writer.execute(self._request(descriptor, resources=(resource,)), mutate)
+        self.assertEqual(str(raised.exception), "context bug")
+
+    def test_any_baseexception_in_the_operation_rolls_back_and_is_reraised(self):
+        for exception_type in (_SqlAbort, asyncio.CancelledError):
+            with self.subTest(exception=exception_type.__name__):
+                writer, descriptor, server = _strict_writer()
+                server.fail("rollback", ValueError("rollback bug"))
+                abort = exception_type()
+
+                def aborted_operation(_recorder, abort=abort):
+                    raise abort
+
+                with server.patched():
+                    with self.assertLogs(writer.logger, level="ERROR") as logged:
+                        with self.assertRaises(exception_type) as raised:
+                            writer.execute(self._request(descriptor), aborted_operation)
+                self.assertIs(raised.exception, abort)
+                self.assertEqual(
+                    logged.records[0].getMessage(),
+                    "The SQL transaction could not be rolled back after "
+                    f"{exception_type.__name__}.",
+                )
+                raw = server.connections[0]
+                self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
+                self.assertTrue(
+                    any("@value=NULL" in sql for sql in server.statements(1))
+                )
+
+    def test_the_rollback_log_names_the_real_interrupt_type(self):
+        writer, descriptor, server = _strict_writer()
+        server.fail("rollback", ValueError("rollback bug"))
+        interrupt = SystemExit(2)
+
+        def interrupted_operation(_recorder):
+            raise interrupt
+
+        with server.patched():
+            with self.assertLogs(writer.logger, level="ERROR") as logged:
+                with self.assertRaises(SystemExit) as raised:
+                    writer.execute(self._request(descriptor), interrupted_operation)
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(
+            logged.records[0].getMessage(),
+            "The SQL transaction could not be rolled back after SystemExit.",
+        )
+
+    def test_the_session_context_is_cleared_after_the_interrupt_rollback(self):
+        writer, descriptor, server = _strict_writer()
+        rollbacks_at_clear = []
+
+        def record_clear(_call):
+            rollbacks_at_clear.append(server.connections[0].rollbacks)
+
+        server.rules.insert(
+            0,
+            (
+                lambda sql: "sp_set_session_context" in sql and "@value=NULL" in sql,
+                record_clear,
+            ),
+        )
+
+        def interrupted_operation(_recorder):
+            raise KeyboardInterrupt()
+
+        with server.patched():
+            with self.assertRaises(KeyboardInterrupt):
+                writer.execute(self._request(descriptor), interrupted_operation)
+        self.assertEqual(rollbacks_at_clear, [1])
+
+    def test_a_non_interrupt_baseexception_from_the_commit_is_not_rolled_back(self):
+        # Like an interrupt, it leaves the commit outcome unknown: never roll back.
+        writer, descriptor, server = _strict_writer()
+        abort = _SqlAbort()
+        server.fail("commit", abort)
+        _resource, mutate = _record_database_update(descriptor)
+        with server.patched():
+            with self.assertRaises(_SqlAbort) as raised:
+                writer.execute(self._request(descriptor), mutate)
+        self.assertIs(raised.exception, abort)
+        raw = server.connections[0]
+        self.assertEqual((raw.commits, raw.rollbacks), (1, 0))
+        self.assertTrue(raw.closed)
+
+    def test_an_interrupt_in_the_operation_rolls_back_and_reraises_the_original(self):
+        # Interrupt policy: roll back, clean up, re-raise the ORIGINAL interrupt.
+        for interrupt_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt_type.__name__):
+                writer, descriptor, server = _strict_writer()
+                interrupt = interrupt_type()
+
+                def interrupted_operation(_recorder, interrupt=interrupt):
+                    raise interrupt
+
+                with server.patched():
+                    with self.assertRaises(interrupt_type) as raised:
+                        writer.execute(self._request(descriptor), interrupted_operation)
+                self.assertIs(raised.exception, interrupt)
+                raw = server.connections[0]
+                self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
+                self.assertTrue(
+                    any("@value=NULL" in sql for sql in server.statements(1))
+                )
+                self.assertTrue(raw.closed)
+                server.assert_everything_closed()
+
+    def test_a_rollback_failure_during_an_interrupt_is_logged_and_never_replaces_it(
+        self,
+    ):
+        for failure in (
+            sql_server_error("08S01", "Communication link failure"),
+            ValueError("rollback bug"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                writer, descriptor, server = _strict_writer()
+                server.fail("rollback", failure)
+                interrupt = KeyboardInterrupt()
+
+                def interrupted_operation(_recorder, interrupt=interrupt):
+                    raise interrupt
+
+                with server.patched():
+                    with self.assertLogs(writer.logger, level="ERROR") as logged:
+                        with self.assertRaises(KeyboardInterrupt) as raised:
+                            writer.execute(
+                                self._request(descriptor), interrupted_operation
+                            )
+                self.assertIs(raised.exception, interrupt)
+                self.assertEqual(len(logged.records), 1)
+                self.assertEqual(
+                    logged.records[0].getMessage(),
+                    "The SQL transaction could not be rolled back after "
+                    "KeyboardInterrupt.",
+                )
+                self.assertIs(logged.records[0].exc_info[1], failure)
+                raw = server.connections[0]
+                self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
+                # the failed rollback does not skip the session-context clear
+                self.assertTrue(
+                    any("@value=NULL" in sql for sql in server.statements(1))
+                )
+                self.assertTrue(raw.closed)
+                server.assert_everything_closed()
+
+    def test_a_context_clear_failure_during_an_interrupt_is_logged_and_never_replaces_it(
+        self,
+    ):
+        writer, descriptor, server = _strict_writer()
+        self._fail_session_context_clear(server, ValueError("context bug"))
+        interrupt = SystemExit(2)
+
+        def interrupted_operation(_recorder):
+            raise interrupt
+
+        with server.patched():
+            with self.assertLogs(writer.logger, level="ERROR") as logged:
+                with self.assertRaises(SystemExit) as raised:
+                    writer.execute(self._request(descriptor), interrupted_operation)
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(
+            logged.records[0].getMessage(),
+            "The SQL session context could not be cleared after SystemExit.",
+        )
+        self.assertEqual(str(logged.records[0].exc_info[1]), "context bug")
+        raw = server.connections[0]
+        self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
+
+    def test_a_second_interrupt_during_the_interrupt_cleanup_is_not_swallowed(self):
+        # Only ordinary cleanup errors are logged: a NEW interrupt that arrives
+        # while cleaning up after the first one still propagates.
+        writer, descriptor, server = _strict_writer()
+        second = SystemExit(2)
+        server.fail("rollback", second)
+        first = KeyboardInterrupt()
+
+        def interrupted_operation(_recorder):
+            raise first
+
+        with server.patched():
+            with self.assertRaises(SystemExit) as raised:
+                writer.execute(self._request(descriptor), interrupted_operation)
+        self.assertIs(raised.exception, second)
+        self.assertIs(raised.exception.__context__, first)
+        writer, descriptor, server = _strict_writer()
+        self._fail_session_context_clear(server, second)
+        with server.patched():
+            with self.assertRaises(SystemExit) as raised:
+                writer.execute(self._request(descriptor), interrupted_operation)
+        self.assertIs(raised.exception, second)
+        self.assertIs(raised.exception.__context__, first)
+
+    def test_deduplicate_records_sorts_by_resource_not_by_insertion_order(self):
+        r5, r9, r3 = (ResourceRef("takeoff", str(uid), 8) for uid in (5, 9, 3))
+        records = [
+            _RecordedMutation(r5, ChangeOperation.UPDATE),
+            _RecordedMutation(r9, ChangeOperation.UPDATE),
+            _RecordedMutation(r3, ChangeOperation.UPDATE),
+            _RecordedMutation(r5, ChangeOperation.DELETE),
+        ]
+        deduplicated = SqlProjectWriter._deduplicate_records(records)
+        self.assertEqual(
+            [(item.resource, item.operation) for item in deduplicated],
+            [
+                (r3, ChangeOperation.UPDATE),
+                (r5, ChangeOperation.DELETE),
+                (r9, ChangeOperation.UPDATE),
+            ],
+        )
+
+    def _write_graph(self, raw):
+        writer = _plain_writer()
+        connection = _ScriptedConnection()
+        inserted = []
+
+        def insert(_connection, table, row, _table_info):
+            inserted.append((table, dict(row)))
+            return len(inserted) * 100 + 1
+
+        def table_info(_connection, table):
+            columns = {"UID", "Name", "BidPageUID", "ParentUID"}
+            if table != "Bids":
+                columns.add("BidUID")
+            return columns, {}
+
+        with patch.object(writer, "_get_table_info", side_effect=table_info):
+            with patch.object(writer, "_insert_identity_raw", side_effect=insert):
+                identities = writer._write_remapped_identity_graph(connection, raw)
+        return inserted, identities, connection
+
+    def test_every_imported_child_row_receives_the_new_bid_identity(self):
+        raw = RawBidData(
+            bid_row={"UID": "1", "Name": "B"},
+            bid_tables={
+                "BidLayers": [
+                    {"UID": "5", "BidUID": "1", "Name": "L1"},
+                    {"UID": "6", "BidUID": "1", "Name": "L2"},
+                    {"UID": "7", "BidUID": "1", "Name": "L3"},
+                ]
+            },
+        )
+        inserted, identities, _connection = self._write_graph(raw)
+        self.assertEqual(
+            [table for table, _row in inserted], ["Bids"] + ["BidLayers"] * 3
+        )
+        self.assertEqual(
+            [row["BidUID"] for _table, row in inserted[1:]], [101, 101, 101]
+        )
+        self.assertEqual(
+            identities,
+            {
+                "Bids": {"1": "101"},
+                "BidLayers": {"5": "201", "6": "301", "7": "401"},
+            },
+        )
+
+    def test_a_row_without_a_uid_adds_no_entry_to_the_identity_map(self):
+        raw = RawBidData(
+            bid_row={"UID": "1", "Name": "B"},
+            bid_tables={"BidLayers": [{"BidUID": "1", "Name": "L1"}]},
+        )
+        inserted, identities, _connection = self._write_graph(raw)
+        self.assertEqual([table for table, _row in inserted], ["Bids", "BidLayers"])
+        self.assertEqual(identities, {"Bids": {"1": "101"}})
+
+    def test_characterisation_a_reference_outside_the_import_is_inserted_unchanged(
+        self,
+    ):
+        raw = RawBidData(
+            bid_row={"UID": "1", "Name": "B"},
+            bid_tables={
+                "BidAreas": [
+                    {"UID": "5", "BidUID": "1", "Name": "A", "ParentUID": "777"}
+                ]
+            },
+        )
+        inserted, identities, connection = self._write_graph(raw)
+        self.assertEqual(inserted[1][0], "BidAreas")
+        self.assertEqual(inserted[1][1]["ParentUID"], "777")
+        self.assertEqual(connection.executed, [])
+        self.assertEqual(identities, {"Bids": {"1": "101"}, "BidAreas": {"5": "201"}})
+
+    def _delete_projects(self, uids, recorded=()):
+        writer, descriptor, manager = _recording_writer()
+
+        def operation(recorder):
+            for uid in recorded:
+                recorder.record(
+                    ResourceRef("project", str(uid)), ChangeOperation.DELETE
+                )
+            return writer.delete_projects(descriptor.database_id, uids)
+
+        request = _cleanup_support_DatabaseMutationRequest(
+            database_id=descriptor.database_id, session_id="session-1"
+        )
+        return writer, manager, request, operation
+
+    @staticmethod
+    def _project_statements(manager):
+        return [
+            (statement, params)
+            for statement, params in manager.lease.statements
+            if statement.startswith(
+                (
+                    "SELECT [UID] FROM [BidProjects]",
+                    "UPDATE [Bids]",
+                    "DELETE FROM [BidProjects]",
+                )
+            )
+        ]
+
+    def test_deleting_an_ordinary_project_passes_the_deleted_bids_guard(self):
+        writer, manager, request, operation = self._delete_projects(
+            ["2"], recorded=(2,)
+        )
+        result = writer.execute(request, operation)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertIs(result.value, True)
+        self.assertEqual(
+            self._project_statements(manager),
+            [
+                ("SELECT [UID] FROM [BidProjects] WHERE [UID] IN (?)", (2,)),
+                (
+                    "UPDATE [Bids] SET [BidProjectUID]=? WHERE [BidProjectUID]=?",
+                    (None, 2),
+                ),
+                (
+                    "UPDATE [Bids] SET [OrigBidProjectUID]=? WHERE [OrigBidProjectUID]=?",
+                    (None, 2),
+                ),
+                ("DELETE FROM [BidProjects] WHERE [UID]=?", (2,)),
+            ],
+        )
+        self.assertEqual((manager.lease.commits, manager.lease.rollbacks), (1, 0))
+
+    def test_uids_that_merely_contain_or_start_with_one_are_not_the_system_project(
+        self,
+    ):
+        writer, manager, request, operation = self._delete_projects(
+            ["10", "11", 21, "2"], recorded=(10, 11, 21, 2)
+        )
+        result = writer.execute(request, operation)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            self._project_statements(manager)[-1],
+            ("DELETE FROM [BidProjects] WHERE [UID] IN (?,?,?,?)", (10, 11, 21, 2)),
+        )
+        self.assertEqual((manager.lease.commits, manager.lease.rollbacks), (1, 0))
+
+    def test_the_deleted_bids_guard_refuses_the_uid_in_every_position_and_spelling(
+        self,
+    ):
+        message = "Cannot delete the system project 'Deleted Bids' (UID 1)"
+        for uids in (
+            ["1"],
+            [1],
+            ["1", "2"],
+            ["2", "1"],
+            ["3", "1", "2"],
+            [2, "1"],
+            ["2", 1],
+            ["2", "01"],
+            [" 1"],
+            ["2", "3", "1"],
+        ):
+            with self.subTest(uids=uids):
+                writer, manager, request, operation = self._delete_projects(uids)
+                with self.assertRaises(ValueError) as raised:
+                    writer.execute(request, operation)
+                self.assertIs(type(raised.exception), ValueError)
+                self.assertEqual(str(raised.exception), message)
+                self.assertEqual(self._project_statements(manager), [])
+                self.assertEqual(
+                    (manager.lease.commits, manager.lease.rollbacks), (0, 1)
+                )

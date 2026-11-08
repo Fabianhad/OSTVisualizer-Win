@@ -122,6 +122,30 @@ class ReferenceSchemaMetadataFixtureTests(unittest.TestCase):
                     continue
                 self.assertEqual(name, f"{child}_{column}1")
 
+    def test_indexes_and_relationships_keep_the_reference_application_order(self):
+        # database_creator applies them in tuple order, so the order of the
+        # captured reference (the order DAO enumerates them) is part of the contract.
+        self.assertEqual(
+            list(metadata.EXPLICIT_INDEXES),
+            [
+                (item["table"], item["name"], item["unique"], tuple(item["fields"]))
+                for item in self.fixture["explicit_indexes"]
+            ],
+        )
+        self.assertEqual(
+            list(metadata.REFERENCE_RELATIONSHIPS),
+            [
+                (
+                    item["name"],
+                    item["child_table"],
+                    item["child_column"],
+                    item["parent_table"],
+                    item["parent_column"],
+                )
+                for item in self.fixture["relationships"]
+            ],
+        )
+
 
 class ReferenceSchemaMetadataDdlConsistencyTests(unittest.TestCase):
     """Cross-checks the metadata against the independent CREATE TABLE DDL."""

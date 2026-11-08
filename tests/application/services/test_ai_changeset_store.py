@@ -1,5 +1,8 @@
+import threading
 import time
 import unittest
+import uuid
+from dataclasses import replace
 from unittest.mock import patch
 from ost_visualizer.application.dtos.ai_changeset_write_dtos import AppliedChangeset
 from ost_visualizer.application.services.ai_changeset_store import (
@@ -590,6 +593,706 @@ class MonotonicExpiryTests(unittest.TestCase):
             time, "monotonic", return_value=1000.0 + 1800.0
         ), patch.object(time, "time", return_value=5_000_000.0):
             self.assertEqual(proposals.get(added.uid).status, "expired")
+
+
+class StateMachineTests(StoreTestCase):
+    STALE_MESSAGE = (
+        "The changeset expired or the objects it touches changed. Propose it again."
+    )
+    ALL_STATES = (
+        STATUS_PROPOSED,
+        STATUS_PENDING_APPROVAL,
+        STATUS_APPLYING,
+        STATUS_APPLIED,
+        STATUS_FAILED,
+        STATUS_UNDONE,
+        STATUS_DISCARDED,
+        STATUS_REJECTED,
+        STATUS_EXPIRED,
+        STATUS_STALE,
+    )
+
+    def at_state(self, state):
+        added = self.add(
+            _changeset(assumptions=(_assumption("a1", SUBJECT_OTHER, IMPACT_NORMAL),))
+        )
+        uid = added.uid
+        if state == STATUS_PROPOSED:
+            return uid
+        if state == STATUS_DISCARDED:
+            self.proposals.discard(uid)
+            return uid
+        if state == STATUS_EXPIRED:
+            self.clock.now += 1800.0
+            self.assertEqual(self.store.get(uid).status, STATUS_EXPIRED)
+            return uid
+        if state == STATUS_STALE:
+            self.tokens.values["page:page-1"] = "changed"
+            with self.assertRaises(ChangesetError):
+                self.proposals.request_apply(uid)
+            self.assertEqual(self.store.get(uid).status, STATUS_STALE)
+            return uid
+        self.proposals.request_apply(uid)
+        if state == STATUS_PENDING_APPROVAL:
+            return uid
+        if state == STATUS_REJECTED:
+            self.store.reject(uid)
+            return uid
+        self.store.approve(uid)
+        if state == STATUS_APPLYING:
+            return uid
+        if state == STATUS_FAILED:
+            self.store.mark_failed(uid)
+            return uid
+        self.store.mark_applied(uid, AppliedChangeset(takeoff_uids=("T1",)))
+        if state == STATUS_APPLIED:
+            return uid
+        self.assertEqual(state, STATUS_UNDONE)
+        self.store.mark_undone(uid)
+        return uid
+
+    def assert_refused(self, state, action):
+        uid = self.at_state(state)
+        self.assertEqual(self.store.get(uid).status, state)
+        before = self.store.get(uid)
+        record_before = self.store.applied_record(uid)
+        with self.assertRaises(ChangesetError) as raised:
+            action(uid)
+        if state in (STATUS_EXPIRED, STATUS_STALE):
+            self.assertEqual(raised.exception.code, "stale_changeset")
+            self.assertEqual(raised.exception.message, self.STALE_MESSAGE)
+        else:
+            self.assertEqual(raised.exception.code, "invalid_state")
+            self.assertEqual(
+                raised.exception.message,
+                f"The changeset is {state} and cannot do that",
+            )
+        self.assertEqual(self.store.get(uid), before)
+        self.assertEqual(self.store.applied_record(uid), record_before)
+        self.assertEqual(
+            self.store.last_applied("C:/jobs/a.mdb", "7") is not None,
+            state == STATUS_APPLIED,
+        )
+
+    def review_actions(self):
+        return {
+            "discard": lambda uid: self.store.discard(uid),
+            "reject": lambda uid: self.store.reject(uid),
+            "request_apply": lambda uid: self.proposals.request_apply(uid),
+            "add_assumption": lambda uid: self.proposals.add_assumption(
+                uid, SUBJECT_OTHER, "c1", "flat", "ramp", "S-102"
+            ),
+            "revise_assumption": lambda uid: self.proposals.revise_assumption(
+                uid, "a1", "9", "note"
+            ),
+            "accept_assumption": lambda uid: self.store.accept_assumption(uid, "a1"),
+            "override_assumption": lambda uid: self.store.override_assumption(
+                uid, "a1", "9"
+            ),
+        }
+
+    def test_review_operations_are_refused_on_every_changeset_that_is_not_open_for_review(
+        self,
+    ):
+        closed = (
+            STATUS_APPLYING,
+            STATUS_APPLIED,
+            STATUS_FAILED,
+            STATUS_UNDONE,
+            STATUS_DISCARDED,
+            STATUS_REJECTED,
+            STATUS_EXPIRED,
+            STATUS_STALE,
+        )
+        for name, action in self.review_actions().items():
+            for state in closed:
+                with self.subTest(action=name, state=state):
+                    self.setUp()
+                    self.assert_refused(state, action)
+
+    def test_approval_is_refused_on_every_state_but_a_pending_one(self):
+        for state in self.ALL_STATES:
+            if state in (STATUS_PENDING_APPROVAL, STATUS_PROPOSED):
+                continue
+            with self.subTest(state=state):
+                self.setUp()
+                self.assert_refused(state, lambda uid: self.store.approve(uid))
+
+    def test_completion_marks_are_only_accepted_in_their_own_state(self):
+        marks = {
+            "mark_applied": (
+                lambda uid: self.store.mark_applied(
+                    uid, AppliedChangeset(takeoff_uids=("T9",))
+                ),
+                STATUS_APPLYING,
+            ),
+            "mark_failed": (lambda uid: self.store.mark_failed(uid), STATUS_APPLYING),
+            "mark_undone": (lambda uid: self.store.mark_undone(uid), STATUS_APPLIED),
+        }
+        for name, (action, only_state) in marks.items():
+            for state in self.ALL_STATES:
+                if state == only_state:
+                    continue
+                with self.subTest(action=name, state=state):
+                    self.setUp()
+                    self.assert_refused(state, action)
+
+    def test_review_operations_work_from_both_open_states_and_keep_the_status(self):
+        actions = self.review_actions()
+        expected = {
+            "discard": STATUS_DISCARDED,
+            "reject": STATUS_REJECTED,
+            "request_apply": STATUS_PENDING_APPROVAL,
+        }
+        for start in (STATUS_PROPOSED, STATUS_PENDING_APPROVAL):
+            for name, action in actions.items():
+                with self.subTest(action=name, start=start):
+                    self.setUp()
+                    uid = self.at_state(start)
+                    result = action(uid)
+                    self.assertEqual(result.status, expected.get(name, start))
+                    self.assertEqual(self.store.get(uid), result)
+
+    def test_time_never_expires_a_changeset_that_is_applying_or_already_closed(self):
+        added = self.add()
+        self.proposals.request_apply(added.uid)
+        self.store.approve(added.uid)
+        self.clock.now += 100000.0
+        self.assertEqual(self.proposals.get(added.uid).status, STATUS_APPLYING)
+        self.store.mark_applied(added.uid, AppliedChangeset(takeoff_uids=("T1",)))
+        self.clock.now += 100000.0
+        self.assertEqual(self.proposals.get(added.uid).status, STATUS_APPLIED)
+        self.assertEqual(
+            self.proposals.last_applied("C:/jobs/a.mdb", "7").status, STATUS_APPLIED
+        )
+        discarded = self.add()
+        self.proposals.discard(discarded.uid)
+        failed = self.add()
+        self.proposals.request_apply(failed.uid)
+        self.store.approve(failed.uid)
+        self.store.mark_failed(failed.uid)
+        self.clock.now += 100000.0
+        self.assertEqual(self.proposals.get(discarded.uid).status, STATUS_DISCARDED)
+        self.assertEqual(self.proposals.get(failed.uid).status, STATUS_FAILED)
+
+    def test_a_pending_request_is_rechecked_for_changed_objects_when_asked_again(self):
+        added = self.add()
+        self.proposals.request_apply(added.uid)
+        self.tokens.values["page:page-1"] = "changed"
+        with self.assertRaises(ChangesetError) as raised:
+            self.proposals.request_apply(added.uid)
+        self.assertEqual(raised.exception.code, "stale_changeset")
+        self.assertEqual(
+            raised.exception.message,
+            "A page or condition this changeset touches changed. Propose it again.",
+        )
+        self.assertEqual(self.proposals.get(added.uid).status, STATUS_STALE)
+
+
+class ProposalDetailTests(StoreTestCase):
+    def test_the_open_limit_message_names_the_limit(self):
+        for _ in range(5):
+            self.add()
+        with self.assertRaises(ChangesetError) as raised:
+            self.add()
+        self.assertEqual(
+            raised.exception.message,
+            "At most 5 changesets can be open per bid. Discard or apply one first.",
+        )
+
+    def test_open_changesets_are_counted_per_database_and_bid(self):
+        other_database = replace(_changeset(), database_id="C:/jobs/b.mdb")
+        for _ in range(5):
+            self.add()
+        self.add(other_database)
+        mine = self.store.open_for_bid("C:/jobs/a.mdb", "7")
+        theirs = self.store.open_for_bid("C:/jobs/b.mdb", "7")
+        self.assertEqual([item.uid for item in mine], [f"cs-{n}" for n in range(1, 6)])
+        self.assertEqual([item.uid for item in theirs], ["cs-6"])
+        self.assertEqual(self.store.open_for_bid("C:/jobs/a.mdb", 7), mine)
+        self.assertEqual(self.store.open_for_bid("C:/jobs/a.mdb", "8"), ())
+        self.assertEqual(self.store.open_for_bid("C:/jobs/c.mdb", "7"), ())
+        for _ in range(4):
+            self.add(other_database)
+        with self.assertRaises(ChangesetError) as raised:
+            self.add(other_database)
+        self.assertEqual(raised.exception.code, "changeset_too_large")
+
+    def test_created_at_is_a_float_even_when_the_clock_returns_an_int(self):
+        store = AiChangesetStore(clock=lambda: 1000)
+        added = store.add(_changeset())
+        self.assertEqual(added.created_at, 1000.0)
+        self.assertIsInstance(added.created_at, float)
+
+    def test_the_default_id_factory_takes_twelve_hex_characters_of_a_uuid4(self):
+        store = AiChangesetStore(clock=self.clock)
+        with patch.object(
+            uuid, "uuid4", return_value=uuid.UUID("0123456789abcdef0123456789abcdef")
+        ) as factory:
+            added = store.add(_changeset())
+        factory.assert_called_once_with()
+        self.assertEqual(added.uid, "0123456789ab")
+
+    def test_base_tokens_follow_the_sorted_touched_resources(self):
+        base = _changeset()
+        changeset = replace(
+            base,
+            takeoffs=(
+                ProposedTakeoff("t1", "page-2", "existing:9", SQUARE),
+                ProposedTakeoff("t2", "page-1", "c1", SQUARE),
+            ),
+        )
+        self.tokens.values.update({"page:page-1": "v1", "condition:9": "v9"})
+        added = self.add(changeset)
+        self.assertEqual(
+            added.base_tokens,
+            (("condition:9", "v9"), ("page:page-1", "v1"), ("page:page-2", "v0")),
+        )
+
+    def test_the_default_token_reader_records_empty_tokens_and_never_goes_stale(self):
+        store = AiChangesetStore(clock=self.clock)
+        added = store.add(_changeset())
+        self.assertEqual(added.base_tokens, (("page:page-1", ""),))
+        self.assertEqual(store.request_apply(added.uid).status, STATUS_PENDING_APPROVAL)
+        self.assertEqual(store.approve(added.uid).status, STATUS_APPLYING)
+
+    def test_tokens_are_compared_as_text_and_a_missing_token_is_empty(self):
+        values = {"page:page-1": 5}
+        store = AiChangesetStore(
+            clock=self.clock,
+            token_reader=lambda database_id, bid_uid, resources: dict(values),
+            uid_factory=lambda: "7",
+        )
+        changeset = replace(
+            _changeset(),
+            takeoffs=(ProposedTakeoff("t1", "page-1", "existing:9", SQUARE),),
+        )
+        added = store.add(changeset)
+        self.assertEqual(added.base_tokens, (("condition:9", ""), ("page:page-1", "5")))
+        self.assertEqual(store.request_apply("7").status, STATUS_PENDING_APPROVAL)
+        values["page:page-1"] = 6
+        with self.assertRaises(ChangesetError) as raised:
+            store.approve("7")
+        self.assertEqual(raised.exception.code, "stale_changeset")
+
+    def test_characterisation_ids_are_looked_up_as_text(self):
+        """Pins the defensive str() on ids: a numeric id finds the same changeset."""
+        store = AiChangesetStore(clock=self.clock, uid_factory=lambda: "7")
+        added = store.add(_changeset())
+        self.assertIs(store.get(7), added)
+        store.request_apply("7")
+        store.approve("7")
+        record = AppliedChangeset(takeoff_uids=("T1",))
+        store.mark_applied("7", record)
+        self.assertIs(store.applied_record(7), record)
+
+
+class AssumptionDetailTests(StoreTestCase):
+    def test_a_new_assumption_keeps_every_field_it_was_given(self):
+        added = self.add()
+        self.assertEqual(added.revision, 0)
+        updated = self.proposals.add_assumption(
+            added.uid,
+            SUBJECT_THICKNESS,
+            "c1",
+            "8 in",
+            "slab thickness not dimensioned",
+            "S-102",
+        )
+        self.assertEqual(
+            updated.assumptions,
+            (
+                ChangesetAssumption(
+                    uid="a1",
+                    subject=SUBJECT_THICKNESS,
+                    target_key="c1",
+                    value="8 in",
+                    reason="slab thickness not dimensioned",
+                    sheet_ref="S-102",
+                    impact=IMPACT_HIGH,
+                    status=ASSUMPTION_OPEN,
+                    override_value=None,
+                ),
+            ),
+        )
+        self.assertEqual(updated.revision, 1)
+        self.assertEqual(self.proposals.get(added.uid), updated)
+
+    def test_characterisation_assumption_text_fields_are_stored_as_text(self):
+        """Pins the defensive str() on every free-text assumption input."""
+        added = self.add(_changeset(assumptions=(_assumption("a1"),)))
+        updated = self.proposals.add_assumption(added.uid, SUBJECT_OTHER, 5, 10, 3, 1)
+        new = updated.assumptions[-1]
+        self.assertEqual(
+            (new.target_key, new.value, new.reason, new.sheet_ref),
+            ("5", "10", "3", "1"),
+        )
+        revised = self.proposals.revise_assumption(added.uid, "a1", 7, 2)
+        self.assertEqual(
+            (revised.assumptions[0].value, revised.assumptions[0].reason), ("7", "2")
+        )
+        overridden = self.store.override_assumption(added.uid, "a1", 11)
+        self.assertEqual(overridden.assumptions[0].override_value, "11")
+
+    def test_accepting_clears_an_override_and_revising_reopens_the_assumption(self):
+        added = self.add(_changeset(assumptions=(_assumption("a1"), _assumption("a2"))))
+        overridden = self.store.override_assumption(added.uid, "a1", "10")
+        self.assertEqual(
+            (
+                overridden.assumptions[0].status,
+                overridden.assumptions[0].override_value,
+            ),
+            (ASSUMPTION_OVERRIDDEN, "10"),
+        )
+        accepted = self.store.accept_assumption(added.uid, "a1")
+        self.assertEqual(
+            (accepted.assumptions[0].status, accepted.assumptions[0].override_value),
+            (ASSUMPTION_ACCEPTED, None),
+        )
+        self.store.override_assumption(added.uid, "a1", "12")
+        revised = self.proposals.revise_assumption(added.uid, "a1", "9", "re-read")
+        self.assertEqual(
+            (
+                revised.assumptions[0].status,
+                revised.assumptions[0].override_value,
+                revised.assumptions[0].value,
+            ),
+            (ASSUMPTION_OPEN, None, "9"),
+        )
+        self.assertEqual(revised.assumptions[1], _assumption("a2"))
+
+    def test_the_facade_hands_every_argument_to_the_right_place(self):
+        added = self.add(_changeset(assumptions=(_assumption("a1"),)))
+        updated = self.proposals.add_assumption(
+            added.uid,
+            SUBJECT_CLOSING_SEGMENT,
+            "target-key",
+            "the value",
+            "the reason",
+            "the sheet",
+            closing_length_in=20.0,
+        )
+        new = updated.assumptions[-1]
+        self.assertEqual(
+            (new.subject, new.target_key, new.value, new.reason, new.sheet_ref),
+            (
+                SUBJECT_CLOSING_SEGMENT,
+                "target-key",
+                "the value",
+                "the reason",
+                "the sheet",
+            ),
+        )
+        self.assertEqual(new.impact, IMPACT_HIGH)
+
+    def test_characterisation_an_unknown_subject_is_refused_before_the_changeset_is_looked_up(
+        self,
+    ):
+        """No document specifies this order; pins what the store does today."""
+        added = self.add()
+        self.clock.now += 1800.0
+        for label, uid in (("unknown id", "nope"), ("expired changeset", added.uid)):
+            with self.subTest(case=label):
+                with self.assertRaises(ChangesetError) as raised:
+                    self.proposals.add_assumption(uid, "bogus", "c1", "v", "r", "S-1")
+                self.assertEqual(raised.exception.code, "invalid_state")
+                self.assertEqual(raised.exception.message, "Unknown assumption subject")
+
+
+class ClosedPruningKindTests(StoreTestCase):
+    def close_one(self):
+        self.proposals.discard(self.add().uid)
+
+    def test_expired_stale_and_rejected_changesets_are_pruned_like_the_others(self):
+        expired = self.add()
+        self.clock.now += 1800.0
+        self.assertEqual(self.store.get(expired.uid).status, STATUS_EXPIRED)
+        stale = self.add()
+        self.tokens.values["page:page-1"] = "changed"
+        with self.assertRaises(ChangesetError):
+            self.proposals.request_apply(stale.uid)
+        self.tokens.values.clear()
+        rejected = self.add()
+        self.proposals.request_apply(rejected.uid)
+        self.store.reject(rejected.uid)
+        for _ in range(MAX_CLOSED_CHANGESETS):
+            self.close_one()
+        for changeset in (expired, stale, rejected):
+            with self.subTest(uid=changeset.uid):
+                with self.assertRaises(ChangesetError) as raised:
+                    self.proposals.get(changeset.uid)
+                self.assertEqual(raised.exception.code, "not_found")
+
+    def test_an_edited_open_changeset_is_never_pruned_with_the_closed_ones(self):
+        added = self.add(_changeset(assumptions=(_assumption("a1"),)))
+        self.store.accept_assumption(added.uid, "a1")
+        self.proposals.add_assumption(
+            added.uid, SUBJECT_OTHER, "c1", "flat", "ramp", "S-102"
+        )
+        for _ in range(MAX_CLOSED_CHANGESETS + 2):
+            self.close_one()
+        self.assertEqual(self.proposals.get(added.uid).status, STATUS_PROPOSED)
+        self.proposals.request_apply(added.uid)
+        self.proposals.add_assumption(
+            added.uid, SUBJECT_OTHER, "c1", "again", "ramp", "S-102"
+        )
+        for _ in range(MAX_CLOSED_CHANGESETS + 2):
+            self.close_one()
+        self.assertEqual(self.proposals.get(added.uid).status, STATUS_PENDING_APPROVAL)
+
+
+class RoundTwoTests(StoreTestCase):
+    """Gaps found by the independent verifier of the first rework round."""
+
+    CALL = ("C:/jobs/a.mdb", "7", ("page:page-1",))
+
+    def test_listing_open_changesets_survives_an_expiry_that_prunes_the_closed_ones(
+        self,
+    ):
+        old = self.add()
+        for _ in range(MAX_CLOSED_CHANGESETS):
+            self.proposals.discard(self.add().uid)
+        self.clock.now += 1800.0
+        self.assertEqual(self.store.open_for_bid("C:/jobs/a.mdb", "7"), ())
+        self.assertEqual(self.store.get(old.uid).status, STATUS_EXPIRED)
+        with self.assertRaises(ChangesetError) as raised:
+            self.store.get("cs-2")
+        self.assertEqual(raised.exception.code, "not_found")
+
+    def test_override_with_a_stale_revision_is_refused_and_changes_nothing(self):
+        added = self.add(_changeset(assumptions=(_assumption("a1"),)))
+        with self.assertRaises(ChangesetError) as raised:
+            self.store.override_assumption(
+                added.uid, "a1", "9", expected_revision=added.revision + 1
+            )
+        self.assertEqual(raised.exception.code, "changed_during_review")
+        self.assertEqual(self.store.get(added.uid), added)
+        overridden = self.store.override_assumption(
+            added.uid, "a1", "9", expected_revision=added.revision
+        )
+        self.assertEqual(overridden.assumptions[0].override_value, "9")
+
+    def test_every_token_read_names_the_database_the_bid_and_the_resources(self):
+        added = self.add()
+        self.assertEqual(self.tokens.calls, [self.CALL])
+        self.tokens.calls.clear()
+        self.proposals.request_apply(added.uid)
+        self.assertEqual(self.tokens.calls, [self.CALL])
+        self.tokens.calls.clear()
+        self.store.approve(added.uid)
+        self.assertEqual(self.tokens.calls, [self.CALL])
+
+    def test_time_expiry_is_noticed_by_every_operation_that_looks_a_changeset_up(self):
+        operations = {
+            "discard": lambda uid: self.proposals.discard(uid),
+            "reject": lambda uid: self.store.reject(uid),
+            "request_apply": lambda uid: self.proposals.request_apply(uid),
+            "approve": lambda uid: self.store.approve(uid),
+            "accept": lambda uid: self.store.accept_assumption(uid, "a1"),
+            "override": lambda uid: self.store.override_assumption(uid, "a1", "9"),
+            "revise": lambda uid: self.proposals.revise_assumption(uid, "a1", "9", "x"),
+            "add_assumption": lambda uid: self.proposals.add_assumption(
+                uid, SUBJECT_OTHER, "c1", "v", "r", "S-1"
+            ),
+        }
+        for name, operation in operations.items():
+            with self.subTest(operation=name):
+                self.setUp()
+                added = self.add(
+                    _changeset(
+                        assumptions=(_assumption("a1", SUBJECT_OTHER, IMPACT_NORMAL),)
+                    )
+                )
+                if name == "approve":
+                    self.proposals.request_apply(added.uid)
+                self.clock.now += 1800.0
+                with self.assertRaises(ChangesetError) as raised:
+                    operation(added.uid)
+                self.assertEqual(raised.exception.code, "stale_changeset")
+                self.assertEqual(
+                    raised.exception.message,
+                    "The changeset expired or the objects it touches changed. "
+                    "Propose it again.",
+                )
+                self.assertEqual(self.store.get(added.uid).status, STATUS_EXPIRED)
+
+    def test_unknown_changeset_ids_are_not_found_for_every_operation(self):
+        operations = {
+            "discard": lambda: self.proposals.discard("nope"),
+            "reject": lambda: self.store.reject("nope"),
+            "request_apply": lambda: self.proposals.request_apply("nope"),
+            "approve": lambda: self.store.approve("nope"),
+            "mark_applied": lambda: self.store.mark_applied(
+                "nope", AppliedChangeset(takeoff_uids=("T1",))
+            ),
+            "mark_failed": lambda: self.store.mark_failed("nope"),
+            "mark_undone": lambda: self.store.mark_undone("nope"),
+            "accept": lambda: self.store.accept_assumption("nope", "a1"),
+            "override": lambda: self.store.override_assumption("nope", "a1", "9"),
+            "revise": lambda: self.proposals.revise_assumption("nope", "a1", "9", "x"),
+            "add_assumption": lambda: self.proposals.add_assumption(
+                "nope", SUBJECT_OTHER, "c1", "v", "r", "S-1"
+            ),
+        }
+        for name, operation in operations.items():
+            with self.subTest(operation=name):
+                with self.assertRaises(ChangesetError) as raised:
+                    operation()
+                self.assertEqual(raised.exception.code, "not_found")
+                self.assertEqual(raised.exception.message, "Unknown changeset_id")
+
+    def test_approving_with_a_stale_revision_reports_the_review_conflict_first(self):
+        """AGENTS.md: a different revision raises changed_during_review."""
+        added = self.add()
+        self.proposals.request_apply(added.uid)
+        self.tokens.values["page:page-1"] = "changed"
+        with self.assertRaises(ChangesetError) as raised:
+            self.store.approve(added.uid, expected_revision=added.revision + 1)
+        self.assertEqual(raised.exception.code, "changed_during_review")
+        self.assertEqual(self.store.get(added.uid).status, STATUS_PENDING_APPROVAL)
+        with self.assertRaises(ChangesetError) as raised:
+            self.store.approve(added.uid, expected_revision=added.revision)
+        self.assertEqual(raised.exception.code, "stale_changeset")
+        self.assertEqual(self.store.get(added.uid).status, STATUS_STALE)
+
+    def test_assumption_edits_with_a_stale_revision_report_the_conflict_before_an_unknown_assumption(
+        self,
+    ):
+        added = self.add(_changeset(assumptions=(_assumption("a1"),)))
+        edits = {
+            "accept": lambda: self.store.accept_assumption(
+                added.uid, "a9", expected_revision=added.revision + 1
+            ),
+            "override": lambda: self.store.override_assumption(
+                added.uid, "a9", "9", expected_revision=added.revision + 1
+            ),
+        }
+        for name, edit in edits.items():
+            with self.subTest(edit=name):
+                with self.assertRaises(ChangesetError) as raised:
+                    edit()
+                self.assertEqual(raised.exception.code, "changed_during_review")
+
+
+class HeldLock:
+    """Re-entrant lock that counts how deep it is held (no threads, no timing)."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.depth = 0
+
+    def __enter__(self):
+        self._lock.acquire()
+        self.depth += 1
+
+    def __exit__(self, *exc_info):
+        self.depth -= 1
+        self._lock.release()
+
+
+class GuardedDict(dict):
+    def __init__(self, lock, *args):
+        super().__init__(*args)
+        self.lock = lock
+
+    def check(self):
+        assert self.lock.depth > 0, "state touched without the store lock"
+
+    def __setitem__(self, key, value):
+        self.check()
+        super().__setitem__(key, value)
+
+    def __getitem__(self, key):
+        self.check()
+        return super().__getitem__(key)
+
+    def __delitem__(self, key):
+        self.check()
+        super().__delitem__(key)
+
+    def __contains__(self, key):
+        self.check()
+        return super().__contains__(key)
+
+    def __iter__(self):
+        self.check()
+        return super().__iter__()
+
+    def __len__(self):
+        self.check()
+        return super().__len__()
+
+    def get(self, key, default=None):
+        self.check()
+        return super().get(key, default)
+
+    def pop(self, *args):
+        self.check()
+        return super().pop(*args)
+
+    def items(self):
+        self.check()
+        return super().items()
+
+
+class GuardedList(list):
+    def __init__(self, lock):
+        super().__init__()
+        self.lock = lock
+
+    def check(self):
+        assert self.lock.depth > 0, "state touched without the store lock"
+
+    def append(self, item):
+        self.check()
+        super().append(item)
+
+    def remove(self, item):
+        self.check()
+        super().remove(item)
+
+    def __reversed__(self):
+        self.check()
+        return super().__reversed__()
+
+    def __contains__(self, item):
+        self.check()
+        return super().__contains__(item)
+
+
+class LockDisciplineTests(StoreTestCase):
+    def test_every_operation_touches_the_store_state_only_while_holding_the_lock(self):
+        lock = HeldLock()
+        store = self.store
+        store._lock = lock
+        store._changesets = GuardedDict(lock, store._changesets)
+        store._applied = GuardedDict(lock, store._applied)
+        store._closed_order = GuardedDict(lock, store._closed_order)
+        store._applied_order = GuardedList(lock)
+        first = self.add(
+            _changeset(assumptions=(_assumption("a1", SUBJECT_OTHER, IMPACT_NORMAL),))
+        )
+        store.get(first.uid)
+        store.open_for_bid("C:/jobs/a.mdb", "7")
+        store.last_applied("C:/jobs/a.mdb", "7")
+        store.applied_record(first.uid)
+        store.accept_assumption(first.uid, "a1")
+        store.override_assumption(first.uid, "a1", "1")
+        store.revise_assumption(first.uid, "a1", "1", "r")
+        store.add_assumption(first.uid, SUBJECT_OTHER, "c", "v", "r", "s")
+        store.request_apply(first.uid)
+        store.approve(first.uid)
+        store.mark_applied(first.uid, AppliedChangeset(takeoff_uids=("T1",)))
+        store.last_applied("C:/jobs/a.mdb", "7")
+        store.mark_undone(first.uid)
+        store.discard(self.add().uid)
+        store.reject(self.add().uid)
+        failing = self.add()
+        store.request_apply(failing.uid)
+        store.approve(failing.uid)
+        store.mark_failed(failing.uid)
+        self.assertEqual(lock.depth, 0)
+        self.assertEqual(store.get(failing.uid).status, STATUS_FAILED)
 
 
 if __name__ == "__main__":

@@ -2032,6 +2032,27 @@ class JobStatusLockedContractTests(unittest.TestCase):
     def test_every_other_lock_flag_reads_as_locked(self):
         self.assertEqual(self.read([1, -1, 2, "1", "True"]), [True] * 5)
 
+    def test_unrecognised_spellings_of_unlocked_read_as_locked(self):
+        # Only the exact tuple ("0", "False", "") unlocks a stored text flag; every
+        # near-spelling (case, padding, other words, decimals) fails closed.
+        spellings = [
+            "No",
+            "no",
+            "false",
+            "FALSE",
+            "None",
+            "off",
+            "n",
+            " 0",
+            "0 ",
+            "00",
+            "-0",
+            "0.0",
+            " False",
+            "False ",
+        ]
+        self.assertEqual(self.read(spellings), [True] * len(spellings))
+
     def test_a_missing_lock_column_reads_as_unlocked(self):
         connection = sqlite3.connect(":memory:")
         self.addCleanup(connection.close)
@@ -2133,6 +2154,21 @@ class SettingsReaderRoundTwoBoundaryTests(unittest.TestCase):
             [("named", 4, 2, 0), ("", 1, 0, 5), ("full", 3, 1, 6)],
         )
 
+    def test_page_integer_columns_holding_numeric_text_are_typed_as_integers(self):
+        # Untyped columns hand the driver's text through: the reader must still type it.
+        connection = self.database(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Index1, [Show], "
+            "MultiPageCount)",
+            "INSERT INTO BidPages VALUES (1, 7, '3', '2', '5')",
+        )
+        _folders, pages = _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+            _SqliteConnectionWrapper(connection), "7"
+        )
+        (page,) = pages
+        self.assertEqual((page.index, page.show_mode, page.multi_page_count), (3, 2, 5))
+        for value in (page.index, page.show_mode, page.multi_page_count):
+            self.assertIsInstance(value, int)
+
     def test_condition_type_and_layer_usage_reads_tolerate_every_data_error_type(self):
         for method, args, message in (
             (
@@ -2171,3 +2207,194 @@ class SettingsReaderRoundTwoBoundaryTests(unittest.TestCase):
             reader.inspector.report.detected_schema_notes,
             {f"missing optional table {table}" for table in LAYER_REFERENCE_TABLES},
         )
+
+
+class SettingsReaderScopeOfTolerantReadsTests(unittest.TestCase):
+    """The tolerant reads downgrade data errors only: an interrupt or a non-data
+    failure is never swallowed into a warning plus an empty result."""
+
+    class _Interrupted(_FailingOpen):
+        error = KeyboardInterrupt()
+        policy_calls = 0
+
+        def _record_caught_read_error(self, _exc, _locator=None):
+            type(self).policy_calls += 1
+            return False
+
+    def test_an_interrupt_is_not_swallowed_by_the_list_reads(self):
+        for method, args in (
+            ("get_job_statuses", ("x.mdb",)),
+            ("get_employees_and_pay_classes", ("x.mdb",)),
+            ("get_bid_areas", ("x.mdb", "1")),
+        ):
+            with self.subTest(method=method):
+                reader_type = type(
+                    "Interrupted", (self._Interrupted,), {"policy_calls": 0}
+                )
+                with self.assertRaises(KeyboardInterrupt):
+                    getattr(reader_type(None), method)(*args)
+                self.assertEqual(reader_type.policy_calls, 0)
+
+    def test_an_interrupt_is_not_swallowed_by_the_usage_reads(self):
+        for method, args in (
+            ("get_settings_defaults", ("x.mdb",)),
+            ("get_employee_uids_in_use", ("x.mdb",)),
+            ("get_condition_type_uids_in_use", ("x.mdb",)),
+            ("get_layer_uids_in_use", ("x.mdb", "1")),
+        ):
+            with self.subTest(method=method):
+                reader_type = type(
+                    "Interrupted", (self._Interrupted,), {"policy_calls": 0}
+                )
+                with self.assertRaises(KeyboardInterrupt):
+                    getattr(reader_type(None), method)(*args)
+                self.assertEqual(reader_type.policy_calls, 0)
+
+    def test_a_non_data_failure_is_not_recorded_as_a_tolerated_read_error(self):
+        # RuntimeError (the stand-in for a defect or an environment failure) must still
+        # reach the read policy; a data error stays tolerated.
+        for method, args in (
+            ("get_job_statuses", ("x.mdb",)),
+            ("get_employees_and_pay_classes", ("x.mdb",)),
+            ("get_bid_areas", ("x.mdb", "1")),
+        ):
+            with self.subTest(method=method):
+                failing = type("R", (_FailingOpen,), {"error": RuntimeError("boom")})
+                with self.assertLogs("test", level="WARNING"):
+                    getattr(failing(None), method)(*args)
+                fatal = type("F", (_FailingOpenFatal,), {"error": RuntimeError("boom")})
+                with self.assertRaisesRegex(RuntimeError, "^boom$"):
+                    getattr(fatal(None), method)(*args)
+
+    def test_a_settings_field_conversion_failure_other_than_bad_data_propagates(self):
+        class Raising:
+            def __init__(self, error):
+                self.error = error
+
+            def __int__(self):
+                raise self.error
+
+        reader = _SqliteSettingsReader(sqlite3.connect(":memory:"))
+        with self.assertRaisesRegex(RuntimeError, "^boom$"):
+            reader._read_settings_field(
+                Raising(RuntimeError("boom")), "ScaleStyle", int, 1
+            )
+        with self.assertRaises(KeyboardInterrupt):
+            reader._read_settings_field(
+                Raising(KeyboardInterrupt()), "ScaleStyle", int, 1
+            )
+        # the data errors it does tolerate keep falling back to the default
+        for error in (TypeError("t"), ValueError("v"), OverflowError("o")):
+            with self.subTest(error=type(error).__name__):
+                with self.assertLogs("test", level="WARNING"):
+                    self.assertEqual(
+                        reader._read_settings_field(
+                            Raising(error), "ScaleStyle", int, 1
+                        ),
+                        1,
+                    )
+
+    def test_a_non_numeric_bid_uid_makes_the_layer_usage_read_fail(self):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.execute(
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, BidLayerUID INTEGER)"
+        )
+        connection.execute("INSERT INTO BidConditions VALUES (1, 1, 11)")
+        with self.assertLogs("test", level="WARNING") as logs:
+            self.assertEqual(
+                _SqliteSettingsReader(connection).get_layer_uids_in_use("x.mdb", "abc"),
+                set(),
+            )
+        self.assertRegex(
+            logs.records[0].getMessage(),
+            r"^Could not query layer UIDs in use: .*'abc'",
+        )
+        with self.assertRaisesRegex(ValueError, "'abc'"):
+            _FatalReadErrors(connection).get_layer_uids_in_use("x.mdb", "abc")
+        # the numeric text of a real bid is still accepted
+        self.assertEqual(
+            _SqliteSettingsReader(connection).get_layer_uids_in_use("x.mdb", "1"),
+            {"11"},
+        )
+
+    def test_identity_errors_name_their_own_table_at_the_start_of_the_message(self):
+        folders = "CREATE TABLE BidPageFolders (UID INTEGER, BidUID INTEGER, Name TEXT"
+        pages = "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)"
+        master_reads = (
+            (
+                "get_job_statuses",
+                "^JobStatuses contains duplicate UID 7;",
+                (
+                    "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+                    "INSERT INTO JobStatuses VALUES (7, 'A')",
+                    "INSERT INTO JobStatuses VALUES (7, 'B')",
+                ),
+            ),
+            (
+                "get_employees_and_pay_classes",
+                "^Employees contains duplicate UID 7;",
+                (
+                    "CREATE TABLE Employees (UID INTEGER)",
+                    "INSERT INTO Employees VALUES (7)",
+                    "INSERT INTO Employees VALUES (7)",
+                    "CREATE TABLE PayClasses (UID INTEGER)",
+                ),
+            ),
+            (
+                "get_employees_and_pay_classes",
+                "^PayClasses contains duplicate UID 7;",
+                (
+                    "CREATE TABLE Employees (UID INTEGER)",
+                    "CREATE TABLE PayClasses (UID INTEGER)",
+                    "INSERT INTO PayClasses VALUES (7)",
+                    "INSERT INTO PayClasses VALUES (7)",
+                ),
+            ),
+        )
+        for method, expected, statements in master_reads:
+            with self.subTest(method=method, expected=expected):
+                connection = sqlite3.connect(":memory:")
+                self.addCleanup(connection.close)
+                for statement in statements:
+                    connection.execute(statement)
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    getattr(_FatalReadErrors(connection), method)("x.mdb")
+        cover_sheet_reads = (
+            (
+                "^BidPageFolders contains duplicate UID 5;",
+                (
+                    folders + ")",
+                    "INSERT INTO BidPageFolders VALUES (5, 7, 'A')",
+                    "INSERT INTO BidPageFolders VALUES (5, 7, 'B')",
+                    pages,
+                ),
+            ),
+            (
+                "^BidPages contains duplicate UID 5;",
+                (
+                    pages,
+                    "INSERT INTO BidPages VALUES (5, 7)",
+                    "INSERT INTO BidPages VALUES (5, 7)",
+                ),
+            ),
+            (
+                r"^BidPageFolders\.UID=7 participates in a ParentUID cycle",
+                (
+                    folders + ", ParentUID INTEGER)",
+                    "INSERT INTO BidPageFolders VALUES (7, 7, 'A', 8)",
+                    "INSERT INTO BidPageFolders VALUES (8, 7, 'B', 7)",
+                    pages,
+                ),
+            ),
+        )
+        for expected, statements in cover_sheet_reads:
+            with self.subTest(expected=expected):
+                connection = sqlite3.connect(":memory:")
+                self.addCleanup(connection.close)
+                for statement in statements:
+                    connection.execute(statement)
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    _SqliteSettingsReader(connection)._query_cover_sheet_pages(
+                        _SqliteConnectionWrapper(connection), "7"
+                    )

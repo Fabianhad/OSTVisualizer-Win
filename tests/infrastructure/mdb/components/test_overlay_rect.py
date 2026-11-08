@@ -197,3 +197,175 @@ class OverlayDecimalPageSizeTests(unittest.TestCase):
                 self.assertEqual(
                     full_page_overlay_rect(width, height, 0.125, 12.0), expected
                 )
+
+
+class OverlayErrorContractTests(unittest.TestCase):
+    """The validation messages are user-facing: match them exactly, not by substring."""
+
+    def _message(self, function, *args):
+        with self.assertRaises(ValueError) as raised:
+            function(*args)
+        return raised.exception
+
+    def test_rect_validation_messages_are_exact(self):
+        for function, args, message in (
+            (
+                parse_overlay_rect_storage,
+                ("0,0,2688",),
+                "OverlayRect must contain exactly four values",
+            ),
+            (
+                parse_overlay_rect_storage,
+                ("0,0,x,1",),
+                "OverlayRect values must be numeric",
+            ),
+            (
+                parse_overlay_rect_storage,
+                ("0,0,nan,1",),
+                "OverlayRect values must be finite",
+            ),
+            (
+                parse_overlay_rect_storage,
+                ("0,0,-1,1",),
+                "OverlayRect width and height cannot be negative",
+            ),
+            (
+                serialize_overlay_rect_storage,
+                ((0, 0, 1),),
+                "OverlayRect must contain exactly four values",
+            ),
+            (
+                serialize_overlay_rect_storage,
+                ((0, 0, "x", 1),),
+                "OverlayRect values must be numeric",
+            ),
+            (
+                serialize_overlay_rect_storage,
+                ((0, 0, float("inf"), 1),),
+                "OverlayRect values must be finite",
+            ),
+            (
+                serialize_overlay_rect_storage,
+                ((0, 0, 1, -1),),
+                "OverlayRect width and height cannot be negative",
+            ),
+        ):
+            with self.subTest(function=function.__name__, args=args):
+                self.assertEqual(str(self._message(function, *args)), message)
+
+    def test_full_page_validation_messages_are_exact(self):
+        for args, message in (
+            (
+                (42.0, 30.0, 0.0, 12.0),
+                "Overlay calibration must contain finite positive values",
+            ),
+            ((float("nan"), 30.0, 0.125, 12.0), "Page dimensions must be finite"),
+            ((42.0, float("inf"), 0.125, 12.0), "Page dimensions must be finite"),
+            ((0.0, 30.0, 0.125, 12.0), "Page dimensions must be positive"),
+            ((42.0, -2.0, 0.125, 12.0), "Page dimensions must be positive"),
+        ):
+            with self.subTest(args=args):
+                self.assertEqual(
+                    str(self._message(full_page_overlay_rect, *args)), message
+                )
+
+    def test_a_non_numeric_value_keeps_the_original_conversion_error_as_its_cause(
+        self,
+    ):
+        parse_error = self._message(parse_overlay_rect_storage, "0,0,invalid,1920")
+        self.assertIsInstance(parse_error.__cause__, ValueError)
+        # None is not convertible at all (TypeError), still reported as "numeric".
+        serialize_error = self._message(serialize_overlay_rect_storage, (0, 0, None, 5))
+        self.assertEqual(str(serialize_error), "OverlayRect values must be numeric")
+        self.assertIsInstance(serialize_error.__cause__, TypeError)
+
+    def test_non_string_paths_are_converted_to_text(self):
+        class _Named:
+            def __str__(self):
+                return "Dir/Sub/File.PDF"
+
+        self.assertEqual(overlay_path_storage_identity(_Named()), "dir\\sub\\file.pdf")
+        self.assertEqual(overlay_path_storage_identity(42), "42")
+        values = replacement_overlay_storage_values(
+            _Named(), 42.0, 30.0, 0.125, 12.0, original_image_path="plan.pdf"
+        )
+        self.assertIs(type(values["OverlayImagePath"]), str)
+        self.assertEqual(values["OverlayImagePath"], "Dir/Sub/File.PDF")
+
+
+class OverlayConversionAndShowTypeTests(unittest.TestCase):
+    def test_an_unexpected_error_from_float_conversion_propagates_unchanged(self):
+        class _Unconvertible:
+            def __float__(self):
+                raise RuntimeError("boom")
+
+        with self.assertRaisesRegex(RuntimeError, "^boom$"):
+            serialize_overlay_rect_storage((0, 0, _Unconvertible(), 1))
+        with self.assertRaisesRegex(RuntimeError, "^boom$"):
+            full_page_overlay_rect(_Unconvertible(), 30.0, 0.125, 12.0)
+
+    def test_an_int_too_large_for_float_is_rejected_like_other_unusable_numbers(self):
+        huge = 10**400
+        with self.assertRaisesRegex(ValueError, "^OverlayRect values must be numeric$"):
+            serialize_overlay_rect_storage((huge, 0, 10, 1))
+        with self.assertRaisesRegex(ValueError, "^OverlayRect values must be numeric$"):
+            serialize_overlay_rect_storage((0, 0, 10, -huge))
+        with self.assertRaisesRegex(
+            ValueError, "^OverlayRect values must be numeric$"
+        ) as raised:
+            serialize_overlay_rect_storage((0, 0, huge, 1))
+        self.assertIsInstance(raised.exception.__cause__, OverflowError)
+        for width, height in ((huge, 30.0), (42.0, huge), (-huge, 30.0)):
+            with self.assertRaisesRegex(
+                ValueError, "^Page dimensions must be finite$"
+            ) as raised:
+                full_page_overlay_rect(width, height, 0.125, 12.0)
+            self.assertIsInstance(raised.exception.__cause__, OverflowError)
+
+    def test_characterisation_a_non_numeric_page_dimension_leaks_the_raw_error(self):
+        # CHARACTERISATION of current behaviour, not an endorsement (owner question:
+        # should these become ValueError like in serialize_overlay_rect_storage?).
+        # Only OverflowError is converted in full_page_overlay_rect.
+        with self.assertRaises(TypeError):
+            full_page_overlay_rect(None, 30.0, 0.125, 12.0)
+        with self.assertRaises(TypeError):
+            full_page_overlay_rect(42.0, None, 0.125, 12.0)
+        with self.assertRaises(ValueError) as raised:
+            full_page_overlay_rect("abc", 30.0, 0.125, 12.0)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn("Page dimensions", str(raised.exception))
+        with self.assertRaises(ValueError) as raised:
+            full_page_overlay_rect(42.0, "abc", 0.125, 12.0)
+        self.assertNotIn("Page dimensions", str(raised.exception))
+
+    def test_an_oversized_number_in_stored_text_is_rejected_as_not_finite(self):
+        # float("1" * 400) is inf (no OverflowError for text), so the finite check applies.
+        with self.assertRaisesRegex(ValueError, "must be finite"):
+            parse_overlay_rect_storage("0,0," + "1" * 400 + ",1")
+
+    def test_show_is_a_real_int_because_a_bool_is_stored_as_minus_one_by_access(self):
+        shown_alone = replacement_overlay_storage_values(
+            "o.pdf", 42.0, 30.0, 0.125, 12.0, original_image_path=""
+        )
+        hidden = replacement_overlay_storage_values(
+            "", 42.0, 30.0, 0.125, 12.0, original_image_path="plan.pdf"
+        )
+        self.assertIs(type(shown_alone["Show"]), int)
+        self.assertEqual(shown_alone["Show"], 1)
+        self.assertIs(type(hidden["Show"]), int)
+        self.assertEqual(hidden["Show"], 0)
+
+
+class OverlayPartStrippingCharacterisationTests(unittest.TestCase):
+    def test_characterisation_each_part_is_stripped_with_str_strip_semantics(self):
+        # CHARACTERISATION: control separators (U+001C..U+001F) are never stored in
+        # practice. str.strip removes them although float() alone rejects them, so
+        # this pins that every comma-separated part is stripped before conversion.
+        self.assertEqual(
+            parse_overlay_rect_storage("0,\x1f0,10\x1d,\x1e10"),
+            (0.0, 0.0, 10.0, 10.0),
+        )
+        self.assertEqual(
+            parse_overlay_rect_storage("1,\x1c2.5\x1f,3,\x1d4"),
+            (1.0, 2.5, 3.0, 4.0),
+        )

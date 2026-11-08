@@ -29669,6 +29669,135 @@ class Sp3a5gBidLockReverifyTests(unittest.TestCase):
                 self.assertEqual(calls, [])
 
 
+class A1fBidLockForwardingTests(unittest.TestCase):
+    """Wave 7 second pass for the wave-5/6 lock code: the arguments, the log
+    level and the log text that the Sp3a5g fakes above never looked at."""
+
+    def _sql(self, bid, statuses=()):
+        seen = SimpleNamespace(bids=[], snapshot=[], probe=[], locked=[])
+        coordinator = _sp3a5g_coordinator()
+        coordinator.project_data = SimpleNamespace(
+            get_bid=lambda ref: seen.bids.append(ref) or bid,
+            get_job_status_snapshot=lambda path: seen.snapshot.append(path)
+            or list(statuses),
+            set_current_bid_locked=seen.locked.append,
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: seen.probe.append(path)
+            or True
+        )
+        return coordinator, seen
+
+    def _mdb(self, bid):
+        seen = SimpleNamespace(read=[], snapshot=[], probe=[], locked=[])
+        coordinator = _sp3a5g_coordinator()
+        coordinator.project_data = SimpleNamespace(
+            get_bid=lambda ref: bid,
+            get_job_status_snapshot=lambda path: seen.snapshot.append(path) or [],
+            set_current_bid_locked=seen.locked.append,
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: seen.probe.append(path)
+            or False
+        )
+        coordinator._project_read_service = SimpleNamespace(
+            is_bid_locked=lambda path, status_uid: seen.read.append((path, status_uid))
+            or False
+        )
+        return coordinator, seen
+
+    def test_sql_resolution_probes_and_reads_the_snapshot_of_the_bids_database(self):
+        ref = BidRef("dbX", "7")
+        coordinator, seen = self._sql(
+            SimpleNamespace(status_uid="2"),
+            statuses=[SimpleNamespace(uid="2", locked=True)],
+        )
+        coordinator._resolve_bid_lock_state(ref)
+        self.assertEqual(seen.probe, ["dbX"])
+        self.assertEqual(seen.snapshot, ["dbX"])
+        self.assertEqual(seen.bids, [ref])
+        self.assertEqual(seen.locked, [True])
+
+    def test_mdb_resolution_asks_the_read_service_for_the_path_and_status_uid(self):
+        coordinator, seen = self._mdb(SimpleNamespace(status_uid="2"))
+        coordinator._resolve_bid_lock_state(BidRef("dbX", "7"))
+        self.assertEqual(seen.probe, ["dbX"])
+        self.assertEqual(seen.read, [("dbX", "2")])
+        self.assertEqual(seen.snapshot, [])
+        self.assertEqual(seen.locked, [False])
+
+    def test_a_bid_missing_from_the_project_data_does_not_break_the_resolution(self):
+        """Not a pin of the resulting flag: whether a missing bid should read
+        locked is an open owner question. Only the lookup contract is checked:
+        the resolution completes, publishes exactly one flag and hands a missing
+        bid to the status rules as 'no status' instead of raising."""
+        ref = BidRef("dbX", "7")
+        coordinator, seen = self._sql(None)
+        coordinator._resolve_bid_lock_state(ref)
+        self.assertEqual(seen.bids, [ref])
+        self.assertEqual(len(seen.locked), 1)
+        self.assertIsInstance(seen.locked[0], bool)
+        coordinator, seen = self._mdb(None)
+        coordinator._resolve_bid_lock_state(ref)
+        self.assertEqual(seen.read, [("dbX", None)])
+        self.assertEqual(len(seen.locked), 1)
+
+    def test_the_fail_closed_notice_is_a_warning_naming_the_status_and_database(self):
+        coordinator, _seen = self._sql(SimpleNamespace(status_uid="9"))
+        with self.assertLogs(_UEC, "DEBUG") as logs:
+            coordinator._resolve_bid_lock_state(BidRef("dbX", "7"))
+        (record,) = logs.records
+        self.assertEqual((record.name, record.levelname), (_UEC, "WARNING"))
+        self.assertEqual(record.args, ("9", "dbX"))
+        self.assertEqual(
+            record.getMessage(),
+            "Job status '9' of a bid in dbX could not be resolved; "
+            "treating the bid as locked",
+        )
+
+    def test_reverify_compares_the_database_paths_normalised_not_as_spelled(self):
+        reverify = Sp3a5gBidLockReverifyTests()
+        for active_path, database_id in (
+            ("./db.mdb", "db.mdb"),
+            ("db.mdb", "./db.mdb"),
+            ("sub/../db.mdb", "db.mdb"),
+        ):
+            with self.subTest(active=active_path, database_id=database_id):
+                active = BidRef(active_path, "1")
+                coordinator, calls = reverify._make(active=active)
+                coordinator._reverify_bid_lock_state(database_id)
+                self.assertEqual(calls, [("resolve", active), "refresh", "menu"])
+
+    def test_a_scheduled_reverify_frees_only_its_own_databases_marker(self):
+        reverify = Sp3a5gBidLockReverifyTests()
+        coordinator, _calls = reverify._make()
+        coordinator._bid_lock_reverify_scheduled = {"db.mdb", "other.mdb"}
+        coordinator._reverify_bid_lock_state("db.mdb", scheduled=True)
+        self.assertEqual(coordinator._bid_lock_reverify_scheduled, {"other.mdb"})
+        coordinator._reverify_bid_lock_state("other.mdb")
+        self.assertEqual(coordinator._bid_lock_reverify_scheduled, {"other.mdb"})
+
+    def test_a_rejection_logs_one_warning_with_the_operation_id_and_starts_watching(
+        self,
+    ):
+        coordinator = _sp3a5g_coordinator()
+        coordinator._is_cleaning_up = False
+        coordinator._bid_lock_watch = set()
+        coordinator._bid_lock_reverify_scheduled = {"d"}
+        with self.assertLogs(_UEC, "DEBUG") as logs:
+            coordinator._on_bid_locked_rejection("d", "op-77")
+        (record,) = logs.records
+        self.assertEqual((record.name, record.levelname), (_UEC, "WARNING"))
+        self.assertEqual(record.args, ("op-77",))
+        self.assertEqual(
+            record.getMessage(),
+            "Queued write refused by the SQL writer: the active bid is locked "
+            "(operation op-77)",
+        )
+        self.assertEqual(coordinator._bid_lock_watch, {"d"})
+        self.assertEqual(coordinator._bid_lock_reverify_scheduled, {"d"})
+
+
 class Sp3a5gPageScaleChangedTests(unittest.TestCase):
     def _make(self, *, flush=True, queued=None, saved=True, selected=None, active="p1"):
         calls = []
@@ -35200,3 +35329,838 @@ class A3SecondPassMutationGapTests(unittest.TestCase):
         self.assertEqual(coordinator._viewer.changed_annotation_uids, [["a1"], ["a2"]])
         self.assertEqual(coordinator._viewer.changed_annotation_types, [["rect"], None])
         self.assertEqual(focus, [True, True])
+
+
+class A1fUnexpectedQueueErrorTests(unittest.TestCase):
+    """Wave 7 second pass: an exception type a queue or save call is not
+    documented to raise reaches the caller. The narrow handlers (the
+    ActiveBidLockedError refusals and the RuntimeError/ValueError dialogs) must
+    neither report it as a locked bid nor turn it into a warning dialog."""
+
+    def test_bid_areas_save_lets_an_unexpected_queue_error_through(self):
+        error = KeyError("unexpected")
+
+        def queue(*_args, **_kwargs):
+            raise error
+
+        coordinator = Sp3a5cBidAreaAsyncQueueTests._coordinator(queue)
+        completions = []
+        with patch(
+            f"{_SP3A5C_MODULE}.show_warning",
+            new=lambda *args: self.fail(f"unexpected dialog {args}"),
+        ):
+            with self.assertNoLogs(_SP3A5C_MODULE, level="WARNING"):
+                with self.assertRaises(KeyError) as raised:
+                    coordinator._save_bid_areas_async(
+                        BidRef("db.mdb", "8"),
+                        {},
+                        lambda *args: completions.append(args),
+                    )
+        self.assertIs(raised.exception, error)
+        self.assertEqual(completions, [])
+
+    def test_master_data_saves_let_an_unexpected_queue_error_through(self):
+        helper = Sp3a5dQueuedMasterDataSaveTests()
+        error = KeyError("unexpected")
+
+        def raising_submit(_finish):
+            raise error
+
+        starts = (
+            ("master data", lambda env: helper._start_master_data(env)),
+            ("default layer", lambda env: helper._start_layer(env, raising_submit)),
+            (
+                "condition types",
+                lambda env: helper._start_condition_types(env),
+            ),
+        )
+        for name, start in starts:
+            with self.subTest(save=name):
+                env = helper._coordinator()
+                env.raises = error
+                with self.assertRaises(KeyError) as raised:
+                    start(env)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(env.warnings, [])
+                self.assertEqual(env.criticals, [])
+                self.assertNotIn("completed", [call[0] for call in env.calls])
+
+    def test_cleanup_tolerates_only_the_signal_disconnect_failure_types(self):
+        """Characterisation: any other error from a signal disconnect escapes
+        cleanup() instead of being swallowed with the Qt failure signatures
+        (TypeError, RuntimeError) that the neighbouring test tolerates."""
+
+        class Signal:
+            def __init__(self, error):
+                self.error = error
+
+            def disconnect(self, _callback):
+                raise self.error
+
+        for attribute in ("_view_stack", "_tab_widget"):
+            with self.subTest(widget=attribute):
+                coordinator = Sp3a5dCleanupTests._coordinator()
+                error = KeyError(attribute)
+                setattr(
+                    coordinator,
+                    attribute,
+                    SimpleNamespace(currentChanged=Signal(error)),
+                )
+                with self.assertRaises(KeyError) as raised:
+                    coordinator.cleanup()
+                self.assertIs(raised.exception, error)
+
+    def test_sql_page_setting_saves_let_an_unexpected_queue_error_through(self):
+        saves = Sp3a5gPageSettingSaveTests()
+        for kind in Sp3a5gPageSettingKinds.ALL:
+            with self.subTest(kind=kind.name):
+                error = KeyError(kind.name)
+                coordinator, calls = saves._make(uses_sql=True, queued=error)
+                with self.assertNoLogs(_UEC, "WARNING"):
+                    with self.assertRaises(KeyError) as raised:
+                        saves._save(kind, coordinator)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(len([c for c in calls if c[0] == "queue"]), 1)
+
+    def test_async_page_settings_and_rename_let_an_unexpected_error_through(self):
+        bid = Sp3a5hPageSettingsAsyncTests.BID
+        cases = (
+            (
+                "page settings",
+                Sp3a5hPageSettingsAsyncTests,
+                lambda coordinator, completed: coordinator._save_page_settings_async(
+                    bid, "scale", [["p1", 1.0, 2.0]], "Set Scale", completed, object()
+                ),
+            ),
+            (
+                "rename",
+                Sp3a5hRenamePageAsyncTests,
+                lambda coordinator, completed: coordinator._save_page_name_async(
+                    bid, "p2", "New", completed, edit_lease_handle=object()
+                ),
+            ),
+        )
+        for name, helper, run in cases:
+            with self.subTest(save=name):
+                error = KeyError("unexpected")
+                completed = []
+                coordinator = helper()._coordinator(
+                    [], service=_Sp3a5hWriteService(raises=error)
+                )
+                with patch(f"{_SP3A5H_MOD}.show_warning") as warning:
+                    with self.assertNoLogs(_UEC, "WARNING"):
+                        with self.assertRaises(KeyError) as raised:
+                            run(coordinator, completed.append)
+                self.assertIs(raised.exception, error)
+                warning.assert_not_called()
+                self.assertEqual(completed, [])
+
+    def test_sql_layer_commands_do_not_report_an_unexpected_error_as_a_lock(self):
+        cases = (
+            (
+                Sp3a5iLayerAddTests,
+                dict(sql=True, bid_owner=object()),
+                "queue_layer_insert",
+                lambda coordinator: coordinator._on_layer_added("New", 3),
+            ),
+            (
+                Sp3a5iLayerDeleteTests,
+                dict(sql=True),
+                "queue_layer_delete",
+                lambda coordinator: coordinator._on_layer_deleted("l1"),
+            ),
+            (
+                Sp3a5iLayerMoveTests,
+                dict(sql=True),
+                "queue_layer_reorder",
+                lambda coordinator: coordinator._on_layer_moved("l1", 1),
+            ),
+            (
+                Sp3a5iLayerRenameTests,
+                dict(sql=True),
+                "queue_layer_rename",
+                lambda coordinator: coordinator._on_layer_renamed("l1", "New"),
+            ),
+        )
+        for helper, options, method, run in cases:
+            with self.subTest(queue=method):
+                coordinator = helper()._stubbed(**options)
+                error = KeyError(method)
+                coordinator._project_write_service.errors[method] = error
+                with self.assertRaises(KeyError) as raised:
+                    run(coordinator)
+                self.assertIs(raised.exception, error)
+                self.assertNotIn(
+                    "_refuse_locked_layer_write", _sp3a5i_names(coordinator)
+                )
+                self.assertEqual(
+                    [name for name in _sp3a5i_names(coordinator) if name == method],
+                    [method],
+                )
+
+
+class A1fLayerToolSnapshotGuardTests(unittest.TestCase):
+    """Wave 7 second pass: the annotation-place snapshot needs both an
+    annotation Layer and an annotation type."""
+
+    def _coordinator(self, *, layer_uid, annotation_type):
+        helper = Sp3a5bLayerToolSnapshotTests()
+        coordinator = helper._coordinator(
+            mode=CURSOR_MODE_ANNOTATION_PLACE, place_uid=None
+        )
+        coordinator.project_data.annotation_layer_uid = layer_uid
+        coordinator.plan_view.annotation_place_type = annotation_type
+        return coordinator, helper
+
+    def test_an_annotation_tool_with_layer_and_type_is_captured(self):
+        coordinator, helper = self._coordinator(layer_uid="A1", annotation_type="text")
+        tool = coordinator._active_layer_tool_snapshot(None)
+        self.assertEqual(
+            (
+                tool.layer_uid,
+                tool.mode,
+                tool.annotation_type,
+                tool.condition_uid,
+                tool.condition_identities,
+                tool.bid_ref,
+                tool.bid_owner,
+                tool.tool_revision,
+            ),
+            (
+                "A1",
+                CURSOR_MODE_ANNOTATION_PLACE,
+                "text",
+                None,
+                (),
+                _SP3A5B_BID,
+                helper.owner,
+                4,
+            ),
+        )
+
+    def test_an_annotation_tool_without_an_annotation_layer_is_not_captured(self):
+        for layer_uid in (None, ""):
+            with self.subTest(layer_uid=layer_uid):
+                coordinator, _helper = self._coordinator(
+                    layer_uid=layer_uid, annotation_type="text"
+                )
+                self.assertIsNone(coordinator._active_layer_tool_snapshot(None))
+
+    def test_an_annotation_tool_without_an_annotation_type_is_not_captured(self):
+        for annotation_type in (None, ""):
+            with self.subTest(annotation_type=annotation_type):
+                coordinator, _helper = self._coordinator(
+                    layer_uid="A1", annotation_type=annotation_type
+                )
+                self.assertIsNone(coordinator._active_layer_tool_snapshot(None))
+
+
+class A1fCollaborationEditDeniedLeaseTests(unittest.TestCase):
+    """Wave 7 second pass: a denied lease carries no handle, so a late denial
+    delivered while the view closes or after its context changed has nothing to
+    release; only a granted handle is ended."""
+
+    @staticmethod
+    def _coordinator(pending, released):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = object()
+        coordinator._tab_widget = SimpleNamespace(
+            currentIndex=lambda: TAB_INDEX_TAKEOFF
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path="database",
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._sql_collaboration = SimpleNamespace(
+            request_local_edit=lambda _database_id, _resources, callback, **_kwargs: (
+                pending.append(callback)
+            ),
+            end_edit_lease=released.append,
+        )
+        return coordinator
+
+    def _deliver(self, trigger, result):
+        pending, released, delivered = [], [], []
+        coordinator = self._coordinator(pending, released)
+        with patch(f"{_UEC}.show_warning") as warning:
+            coordinator.request_collaboration_edit("database", (), delivered.append)
+            trigger(coordinator)
+            pending[0](result)
+        warning.assert_not_called()
+        return released, delivered
+
+    def test_a_denied_lease_delivered_during_cleanup_releases_nothing(self):
+        released, delivered = self._deliver(
+            lambda coordinator: setattr(coordinator, "_is_cleaning_up", True),
+            EditLeaseResult(False, "busy"),
+        )
+        self.assertEqual(released, [])
+        self.assertEqual(
+            delivered,
+            [
+                EditLeaseResult(
+                    False, "The edit was cancelled while the view was closing."
+                )
+            ],
+        )
+
+    def test_a_denied_lease_after_the_database_changed_releases_nothing(self):
+        def switch_database(coordinator):
+            coordinator.ui_state_manager.selected_file_path = "other-database"
+
+        released, delivered = self._deliver(
+            switch_database, EditLeaseResult(False, "busy")
+        )
+        self.assertEqual(released, [])
+        self.assertEqual(
+            delivered,
+            [
+                EditLeaseResult(
+                    False,
+                    "The edit was cancelled because its original context changed.",
+                )
+            ],
+        )
+
+
+class A1fMeshReopenDirtySceneTests(unittest.TestCase):
+    BID_REF = BidRef("db", "7")
+
+    def setUp(self):
+        _MeshWindowFake.instances.clear()
+        patcher = patch(f"{_COORDINATOR}.MeshViewWindow", _MeshWindowFake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_reopening_with_a_dirty_scene_flushes_it_instead_of_requesting_a_refresh(
+        self,
+    ):
+        for replay in (False, True):
+            with self.subTest(replay=replay):
+                _MeshWindowFake.instances.clear()
+                coordinator = Sp3a5aMeshWindowOpenTests._coordinator(
+                    self, replay=replay
+                )
+                coordinator._mesh_scene_dirty = True
+                coordinator._pending_dirty_mesh_refresh = True
+                coordinator._flush_dirty_mesh_refresh_if_needed = (
+                    lambda: self.log.append(
+                        ("flush", coordinator._pending_dirty_mesh_refresh)
+                    )
+                )
+                coordinator.set_mesh_window_visible(True)
+                (window,) = _MeshWindowFake.instances
+                self.assertEqual(
+                    self.log,
+                    [
+                        ("overlay_mode", "page-1"),
+                        ("action", True),
+                        ("replay", window),
+                        ("flush", False),
+                    ],
+                )
+
+
+class A1fNavigationTransitionTests(unittest.TestCase):
+    """Wave 7 second pass: the active-page sync moves the navigation state only
+    as far as needed; it does not re-enter a state it is already in."""
+
+    @staticmethod
+    def _coordinator(state):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        nav = NavigationStateMachine()
+        path = {
+            NavState.FILE_LOADED_NO_BID: [NavState.FILE_LOADED_NO_BID],
+            NavState.BID_ACTIVE_NO_PAGES: [
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+            ],
+            NavState.BID_ACTIVE_PAGES_SELECTED: [
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+                NavState.BID_ACTIVE_PAGES_SELECTED,
+            ],
+        }[state]
+        for step in path:
+            nav.transition_to(step)
+        transitions = []
+        real_transition = nav.transition_to
+
+        def transition_to(target):
+            transitions.append(target)
+            return real_transition(target)
+
+        nav.transition_to = transition_to
+        coordinator._nav = nav
+        coordinator._placement = SimpleNamespace(
+            is_active=False, force_exit=lambda: transitions.append("force_exit")
+        )
+        return coordinator, transitions
+
+    def test_only_the_missing_navigation_steps_are_taken(self):
+        bid_ref = BidRef("active.mdb", "bid-1")
+        no_pages = NavState.BID_ACTIVE_NO_PAGES
+        selected = NavState.BID_ACTIVE_PAGES_SELECTED
+        cases = (
+            (NavState.FILE_LOADED_NO_BID, "page-1", [no_pages, selected], selected),
+            (no_pages, "page-1", [selected], selected),
+            (selected, "page-1", [], selected),
+            (selected, None, [no_pages], no_pages),
+            (no_pages, None, [], no_pages),
+        )
+        for start, page_uid, expected, final in cases:
+            with self.subTest(start=start.name, page_uid=page_uid):
+                coordinator, transitions = self._coordinator(start)
+                transitions.clear()
+                coordinator._sync_navigation_for_active_page(bid_ref, page_uid)
+                self.assertEqual(transitions, expected)
+                self.assertEqual(coordinator._nav.current_state, final)
+
+
+class A1fSparseDataGuardTests(unittest.TestCase):
+    """Wave 7 second pass: lookups that may legitimately come back empty."""
+
+    def test_a_view_state_change_for_an_unknown_page_leaves_known_pages_alone(self):
+        coordinator, pages = (
+            DeferredPersistenceCoordinatorTests._make_view_state_coordinator(None)
+        )
+        before = {
+            uid: (p.zoom_fac, p.current_x, p.current_y) for uid, p in pages.items()
+        }
+        coordinator._on_plan_view_state_changed("ghost", 3.0, 30.0, 40.0)
+        self.assertEqual(
+            {uid: (p.zoom_fac, p.current_x, p.current_y) for uid, p in pages.items()},
+            before,
+        )
+
+    def test_saving_the_view_state_of_an_unknown_current_page_does_not_raise(self):
+        coordinator, pages = (
+            DeferredPersistenceCoordinatorTests._make_view_state_coordinator(None)
+        )
+        coordinator.plan_view.current_page_uid = "ghost"
+        before = {
+            uid: (p.zoom_fac, p.current_x, p.current_y) for uid, p in pages.items()
+        }
+        coordinator._save_current_page_view_state()
+        self.assertEqual(
+            {uid: (p.zoom_fac, p.current_x, p.current_y) for uid, p in pages.items()},
+            before,
+        )
+
+    def test_rename_targets_skip_blank_and_unknown_pages_in_sidebar_order(self):
+        coordinator = _sp3a5g_coordinator()
+        pages = {
+            "p1": Page(uid="p1", name="One"),
+            "p2": Page(uid="p2", name="Two"),
+        }
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["p2", "", "ghost", "p1"]
+        )
+        coordinator.project_data = SimpleNamespace(get_page=pages.get)
+        self.assertEqual(
+            coordinator._rename_page_targets(),
+            [
+                PageRenameTarget(uid="p2", name="Two"),
+                PageRenameTarget(uid="p1", name="One"),
+            ],
+        )
+        coordinator.takeoff_sidebar = None
+        self.assertEqual(coordinator._rename_page_targets(), [])
+
+    def test_caching_bid_data_after_the_cache_was_released_builds_a_new_cache(self):
+        calls = []
+        coordinator = _sp3a5g_coordinator()
+        coordinator._bid_data_cache = None
+        coordinator.visualization_service = SimpleNamespace(
+            start_database_monitoring=lambda: calls.append("monitor")
+        )
+        bid = SimpleNamespace(uid="10")
+        coordinator._cache_bid_data(
+            [SimpleNamespace(file_path="a.mdb", projects=[], orphan_bids=[bid])]
+        )
+        self.assertEqual(coordinator._bid_data_cache, {BidRef("a.mdb", "10"): bid})
+        self.assertEqual(calls, ["monitor"])
+
+
+class A1fDatabaseRefreshedStateTests(unittest.TestCase):
+    """Wave 7 second pass for _on_database_refreshed."""
+
+    def _coordinator(self, log):
+        return Sp3a5eDatabaseRefreshedTests()._coordinator(log)
+
+    def test_an_external_change_without_an_undo_service_still_refreshes(self):
+        log = []
+        coordinator = self._coordinator(log)
+        coordinator._undo_service = None
+        coordinator._on_database_refreshed(file_path="db-a", external_change=True)
+        self.assertEqual(
+            _sp3a5e_calls(log, "deferred.cancel_for_file"), [(("db-a",), {})]
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_prepare_for_modal_mutation_error"), [(("db-a",), {})]
+        )
+        self.assertEqual(len(_sp3a5e_calls(log, "_do_file_refresh")), 1)
+        self.assertEqual(len(_sp3a5e_calls(log, "_finish_refresh")), 1)
+
+    def _with_selection_changing_on_start(self, before, after):
+        log = []
+        coordinator = self._coordinator(log)
+        state = {"ref": before}
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: state["ref"]
+        coordinator._nav = _sp3a5e_fake(
+            log,
+            "nav",
+            ("start_refresh",),
+            effects={"start_refresh": lambda *a, **k: state.update(ref=after) or True},
+        )
+        coordinator._on_database_refreshed(file_path="db-a")
+        return log
+
+    def test_mesh_views_are_cleared_only_if_a_bid_is_selected_after_the_refresh_starts(
+        self,
+    ):
+        ref = BidRef("db-a", "1")
+        log = self._with_selection_changing_on_start(ref, None)
+        self.assertEqual(_sp3a5e_calls(log, "_clear_mesh_views_for_scene_update"), [])
+        self.assertEqual(_sp3a5e_calls(log, "_mark_mesh_scene_dirty"), [])
+        log = self._with_selection_changing_on_start(None, ref)
+        self.assertEqual(
+            _sp3a5e_calls(log, "_clear_mesh_views_for_scene_update"), [((), {})]
+        )
+        self.assertEqual(
+            _sp3a5e_calls(log, "_mark_mesh_scene_dirty"), [((["page-1"],), {})]
+        )
+
+
+class A1fAllLayersVisibilitySourceTests(unittest.TestCase):
+    def test_an_open_layers_sidebar_is_the_source_even_on_a_sql_bid(self):
+        coordinator = _sp3a5i_bulk_fixture(
+            sidebar=True, sql=True, shows=(True, True), snapshot_shows=(True, True)
+        )
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), True)
+        schedule = [e for e in coordinator.log if e[0] == "schedule_all_layers_show"]
+        self.assertEqual(len(schedule), 1)
+        self.assertEqual(schedule[0][1], ("a.mdb", "bid-1", False, ["l1", "l2"]))
+        self.assertIn(
+            ("project_data.set_bid_layer_visibility", (coordinator.layers,), {}),
+            coordinator.log,
+        )
+
+    def test_without_a_sidebar_a_sql_bid_reads_the_layer_snapshot(self):
+        coordinator = _sp3a5i_bulk_fixture(
+            sidebar=False, sql=True, shows=(True, True), snapshot_shows=(True, True)
+        )
+        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), True)
+        schedule = [e for e in coordinator.log if e[0] == "schedule_all_layers_show"]
+        self.assertEqual(schedule[0][1], ("a.mdb", "bid-1", False, ["s1", "s2"]))
+
+
+class A1fPageRotationTypeTests(unittest.TestCase):
+    def test_a_stored_rotation_of_any_numeric_spelling_is_saved_as_an_int(self):
+        helper = Sp3a5gAdjustCurrentPageImageTests()
+        for stored, delta, expected in (("90", 90, 180), (270.0, 90, 0), (90.0, 0, 90)):
+            with self.subTest(stored=stored, delta=delta):
+                page = SimpleNamespace(
+                    rotation=stored,
+                    flip_x=False,
+                    flip_y=False,
+                    invert=False,
+                    bitonal=False,
+                )
+                coordinator, calls = helper._make(page=page)
+                coordinator._adjust_current_page_image(rotation_delta=delta)
+                (write,) = helper._writes(calls)
+                saved = write[4][0]
+                self.assertEqual(saved, expected)
+                self.assertIs(type(saved), int)
+
+
+class A1fLockRefusalAndFailureTextTests(unittest.TestCase):
+    """Wave 7 second pass: the log level and text of the lock refusals and the
+    user-facing text of the failures whose wording no test looked at."""
+
+    def _one_warning(self, logs, message):
+        (record,) = logs.records
+        self.assertEqual(
+            (record.name, record.levelname, record.getMessage()),
+            (_UEC, "WARNING", message),
+        )
+
+    def test_a_locked_sql_page_setting_save_logs_one_named_warning(self):
+        saves = Sp3a5gPageSettingSaveTests()
+        expected = {
+            "adjust": "Image adjustments blocked: the active bid is locked",
+            "scale": "Page scale blocked: the active bid is locked",
+        }
+        for kind in Sp3a5gPageSettingKinds.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, _calls = saves._make(
+                    uses_sql=True, queued=ActiveBidLockedError()
+                )
+                with self.assertLogs(_UEC, level="DEBUG") as logs:
+                    self.assertIs(saves._save(kind, coordinator), False)
+                self._one_warning(logs, expected[kind.name])
+
+    def test_a_locked_async_page_setting_and_rename_log_their_own_title(self):
+        bid = Sp3a5hPageSettingsAsyncTests.BID
+        cases = (
+            (
+                Sp3a5hPageSettingsAsyncTests,
+                lambda coordinator: coordinator._save_page_settings_async(
+                    bid,
+                    "scale",
+                    [["p1", 1.0, 2.0]],
+                    "Set Scale",
+                    lambda _s: None,
+                    object(),
+                ),
+                "Set Scale blocked: the active bid is locked",
+            ),
+            (
+                Sp3a5hRenamePageAsyncTests,
+                lambda coordinator: coordinator._save_page_name_async(
+                    bid, "p2", "New", lambda _s: None, edit_lease_handle=object()
+                ),
+                "Rename Page blocked: the active bid is locked",
+            ),
+        )
+        for helper, run, message in cases:
+            with self.subTest(message=message):
+                coordinator = helper()._coordinator(
+                    [], service=_Sp3a5hWriteService(raises=ActiveBidLockedError())
+                )
+                with self.assertLogs(_UEC, level="DEBUG") as logs:
+                    self.assertIs(run(coordinator), False)
+                self._one_warning(logs, message)
+
+    def test_a_failed_scale_save_reports_whether_the_selection_is_still_current(self):
+        dialogs = Sp3a5gPageDialogOpenTests()
+        kind = Sp3a5gPageSettingKinds.SCALE
+        for selected_uid, active_uid, current in (
+            ("8", "p1", True),
+            ("9", "p1", False),
+            ("8", "p2", False),
+            ("9", "p2", False),
+        ):
+            with self.subTest(bid=selected_uid, page=active_uid):
+                coordinator, ctx = dialogs._build()
+                coordinator._save_scale_settings = lambda *args: False
+                coordinator._page_dialog_context_is_current = lambda *args: False
+                dialogs._open(kind, coordinator, ctx)
+                save_fn = ctx.dialogs[0].kwargs["save_fn"]
+                selected = BidRef("db.mdb", selected_uid)
+                coordinator.ui_state_manager = SimpleNamespace(
+                    active_page_uid=active_uid, get_selected_bid_ref=lambda: selected
+                )
+                with self.assertLogs(_UEC, level="WARNING") as logs:
+                    self.assertIs(save_fn(kind.settings), False)
+                self.assertEqual(
+                    logs.records[0].getMessage(),
+                    "Page scale save failed (database=db.mdb, bid=8, page=p1, "
+                    "context_current=False, page_present=True, page_current=True, "
+                    f"selection_current={current}, edit_allowed=True)",
+                )
+
+    def test_a_condition_type_save_with_a_failed_refresh_warns_with_the_reopen_hint(
+        self,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = "window"
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator._project_write_service = SimpleNamespace(
+            save_condition_types_result=lambda path, changes: SimpleNamespace(
+                write_success=True, refresh_failed=True, value={"saved": "1"}
+            )
+        )
+        with patch(f"{_UEC}.show_warning") as warning:
+            result = coordinator._save_master_condition_types("db.ost", {"c": 1})
+        self.assertEqual(result, {"saved": "1"})
+        warning.assert_called_once_with(
+            "window",
+            "Refresh Error",
+            "The condition type changes were saved, but the condition type list "
+            "could not be refreshed. Reopen the database to see the latest "
+            "condition types.",
+        )
+
+    def test_a_failed_direct_page_delete_clears_the_stage_and_explains_why(self):
+        helper = Sp3a5hDeleteCurrentPageTests()
+        log = []
+        coordinator, _state = helper._build(log, stage_result=True)
+        coordinator._project_write_service.delete_pages = lambda path, uids: (
+            log.append(("delete_pages", path, list(uids))) or False
+        )
+        with patch(f"{_SP3A5H_MOD}.show_critical") as critical:
+            coordinator.delete_current_page()
+        critical.assert_called_once_with(
+            coordinator.main_window,
+            "Delete Page",
+            f"Failed to delete page. {DB_LOCKED_HINT}",
+        )
+        self.assertEqual(
+            [entry for entry in log if entry[0] in {"delete_pages", "clear"}],
+            [("delete_pages", "db.mdb", ["p1"]), ("clear",)],
+        )
+
+    def test_an_unsupported_deferred_image_flag_names_itself_in_the_error(self):
+        helper = Sp3a5hTogglePageImageFlagTests()
+        coordinator = helper._build()
+        with self.assertRaises(ValueError) as raised:
+            coordinator._toggle_page_image_flag("sepia", lambda page, value: None, True)
+        self.assertEqual(str(raised.exception), "Unsupported deferred page image flag")
+
+
+class A1fOverlayVisibilityGuardTests(unittest.TestCase):
+    def test_without_an_active_page_uid_the_page_lookup_is_never_consulted(self):
+        for page_uid in (None, ""):
+            with self.subTest(page_uid=page_uid):
+                page = Page(
+                    uid="p1",
+                    name="One",
+                    image_path="orig.pdf",
+                    overlay_image_path="over.pdf",
+                    image_show_mode=2,
+                )
+                log = []
+                coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+                coordinator.ui_state_manager = SimpleNamespace(active_page_uid=page_uid)
+                coordinator.project_data = SimpleNamespace(
+                    get_page=lambda uid: log.append(("get_page", uid)) or page
+                )
+                coordinator._update_export_menu_state = lambda: log.append("export")
+                coordinator._on_overlay_display_mode_requested = (
+                    lambda mode: log.append(("request", mode))
+                )
+                coordinator._set_overlay_visibility("original", False)
+                self.assertEqual(log, ["export"])
+
+
+class A1fDirectLayerWriteFailureTests(unittest.TestCase):
+    """Wave 7 second pass: the Access-path layer commands log a failed write
+    with its traceback, but do not swallow an interrupt."""
+
+    def _cases(self):
+        return (
+            (
+                Sp3a5iLayerAddTests,
+                "insert_layer_result",
+                "Failed to insert layer",
+                lambda coordinator: coordinator._on_layer_added("New", 3),
+            ),
+            (
+                Sp3a5iLayerDeleteTests,
+                "delete_layer",
+                "Failed to delete layer",
+                lambda coordinator: coordinator._on_layer_deleted("l1"),
+            ),
+            (
+                Sp3a5iLayerMoveTests,
+                "swap_layer_sequence",
+                "Failed to move layer",
+                lambda coordinator: coordinator._on_layer_moved("l1", 1),
+            ),
+            (
+                Sp3a5iLayerRenameTests,
+                "update_layer_name",
+                "Failed to rename layer",
+                lambda coordinator: coordinator._on_layer_renamed("l1", "New"),
+            ),
+        )
+
+    def test_a_failed_direct_write_is_logged_once_with_its_traceback(self):
+        for helper, method, message, run in self._cases():
+            with self.subTest(write=method):
+                coordinator = helper()._stubbed()
+                error = RuntimeError(method)
+                coordinator._project_write_service.errors[method] = error
+                with (
+                    patch(f"{_sp3a5i_MODULE}.show_critical"),
+                    self.assertLogs(_UEC, level="DEBUG") as logs,
+                ):
+                    run(coordinator)
+                (record,) = logs.records
+                self.assertEqual(
+                    (record.levelname, record.getMessage()), ("WARNING", message)
+                )
+                self.assertIs(record.exc_info[1], error)
+
+    def test_an_interrupt_during_a_direct_write_is_not_swallowed(self):
+        for helper, method, _message, run in self._cases():
+            with self.subTest(write=method):
+                coordinator = helper()._stubbed()
+                coordinator._project_write_service.errors[method] = KeyboardInterrupt()
+                with patch(f"{_sp3a5i_MODULE}.show_critical") as critical:
+                    with self.assertNoLogs(_UEC, level="WARNING"):
+                        with self.assertRaises(KeyboardInterrupt):
+                            run(coordinator)
+                critical.assert_not_called()
+
+
+class A1fCleanupInterruptTests(unittest.TestCase):
+    """Wave 7 second pass: cleanup collects ordinary step failures but an
+    interrupt is not collected."""
+
+    def test_an_interrupt_in_a_cleanup_step_propagates_without_running_later_steps(
+        self,
+    ):
+        coordinator = Sp3a5dCleanupTests._coordinator()
+        reached = []
+
+        def interrupted():
+            raise KeyboardInterrupt()
+
+        coordinator.project_operations = SimpleNamespace(
+            cancel_navigation_load=interrupted
+        )
+        coordinator._toolbar = SimpleNamespace(
+            cleanup=lambda: reached.append("toolbar")
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            coordinator.cleanup()
+        self.assertEqual(reached, [])
+
+    def test_an_interrupt_while_unsubscribing_propagates(self):
+        class Bus:
+            def unsubscribe(self, event_name, callback):
+                raise KeyboardInterrupt()
+
+        coordinator = Sp3a5dCleanupTests._coordinator()
+        coordinator.event_bus = Bus()
+        coordinator._subscriptions = [(AppEvents.FILE_OPENED, lambda **_: None)]
+        with self.assertRaises(KeyboardInterrupt):
+            coordinator._cleanup_event_subscriptions()
+
+
+class A1fSaveInterruptTests(unittest.TestCase):
+    """Wave 7 second pass: a failed save is logged and reported, an interrupt
+    during the save is not swallowed."""
+
+    def test_an_interrupt_in_a_page_dialog_save_is_not_swallowed(self):
+        dialogs = Sp3a5gPageDialogOpenTests()
+        for kind in Sp3a5gPageSettingKinds.ALL:
+            with self.subTest(kind=kind.name):
+                coordinator, ctx = dialogs._build()
+
+                def interrupted(*_args):
+                    raise KeyboardInterrupt()
+
+                setattr(coordinator, kind.sync_method, interrupted)
+                dialogs._open(kind, coordinator, ctx)
+                save_fn = ctx.dialogs[0].kwargs["save_fn"]
+                with self.assertNoLogs(_UEC, level="WARNING"):
+                    with self.assertRaises(KeyboardInterrupt):
+                        save_fn(kind.settings)
+
+    def test_an_interrupt_while_saving_a_page_scale_change_is_not_swallowed(self):
+        helper = Sp3a5gPageScaleChangedTests()
+        coordinator, calls, _captured = helper._make(saved=True)
+
+        def interrupted(*_args):
+            raise KeyboardInterrupt()
+
+        coordinator._project_write_service.save_page_scale = interrupted
+        with self.assertNoLogs(_UEC, level="WARNING"):
+            with self.assertRaises(KeyboardInterrupt):
+                coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertNotIn(("bar", "p1"), calls)

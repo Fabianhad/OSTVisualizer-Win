@@ -98,8 +98,9 @@ class ConnectionWrapper:
     def rollback(self) -> None:
         try:
             self._conn.rollback()
-        except pyodbc.Error:
-            self.rollback_failed = True
+        except BaseException as exc:
+            if isinstance(exc, pyodbc.Error) or not isinstance(exc, Exception):
+                self.rollback_failed = True
             raise
 
     def getinfo(self, info_type: int):

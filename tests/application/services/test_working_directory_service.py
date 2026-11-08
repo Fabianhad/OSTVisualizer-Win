@@ -339,5 +339,78 @@ class WorkingDirectoryDefaultNameFormatTests(unittest.TestCase):
             self.assertEqual(creator.calls, [(created, "3-7-2026 14-9-8", None)])
 
 
+class WorkingDirectoryDiscoveryAndNamingTests(unittest.TestCase):
+    def test_only_databases_directly_inside_the_working_directory_are_discovered(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            working = Path(temp_dir) / "working"
+            service = WorkingDirectoryService(_DatabaseCreator(), working)
+            (working / "archive").mkdir(parents=True)
+            (working / "archive" / "old.mdb").touch()
+            (working / "top.mdb").touch()
+            self.assertEqual(service.discover_databases(), [working / "top.mdb"])
+            self.assertEqual(
+                [
+                    entry.file_path
+                    for entry in service.merge_discovered_into_file_state([])
+                ],
+                [str(working / "top.mdb")],
+            )
+
+    def test_created_database_file_keeps_the_lowercase_mdb_extension(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            creator = _DatabaseCreator()
+            service = WorkingDirectoryService(creator, Path(temp_dir))
+            result = service.create_database("Estimate")
+            self.assertEqual(result.name, "Estimate.mdb")
+            self.assertEqual(creator.calls[0][0].name, "Estimate.mdb")
+            self.assertEqual(creator.calls[0][1], "Estimate")
+
+    def test_blank_name_means_the_generated_default_name_characterisation(self):
+        # Characterisation: the menu controller passes ``name or None``; the service
+        # itself also treats an empty string as "no name given" (whitespace-only
+        # names, by contrast, are rejected as invalid).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            creator = _DatabaseCreator()
+            service = WorkingDirectoryService(creator, Path(temp_dir))
+            with patch.object(
+                service, "_generate_default_name", return_value="Generated"
+            ) as name:
+                result = service.create_database("")
+            self.assertEqual(result.name, "Generated.mdb")
+            self.assertEqual(creator.calls, [(result, "Generated", None)])
+            name.assert_called_once_with()
+            self.assertIsNone(service.create_database("   "))
+            self.assertEqual(len(creator.calls), 1)
+
+
+class WorkingDirectoryExtensionAndCollisionTests(unittest.TestCase):
+    def test_only_files_ending_in_dot_mdb_are_discovered(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            working = Path(temp_dir)
+            for name in (
+                "old.mdb.bak",
+                "copy.mdbx",
+                "legacy.mde",
+                "notmdb",
+                "plain.mdb",
+            ):
+                (working / name).touch()
+            service = WorkingDirectoryService(_DatabaseCreator(), working)
+            self.assertEqual(service.discover_databases(), [working / "plain.mdb"])
+            self.assertEqual(
+                [e.file_path for e in service.merge_discovered_into_file_state([])],
+                [str(working / "plain.mdb")],
+            )
+
+    def test_a_directory_named_like_the_database_blocks_creation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            creator = _DatabaseCreator()
+            service = WorkingDirectoryService(creator, Path(temp_dir))
+            (Path(temp_dir) / "Taken.mdb").mkdir()
+            self.assertIsNone(service.create_database("Taken"))
+            self.assertEqual(creator.calls, [])
+            self.assertTrue((Path(temp_dir) / "Taken.mdb").is_dir())
+
+
 if __name__ == "__main__":
     unittest.main()

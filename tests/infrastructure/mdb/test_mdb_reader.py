@@ -409,3 +409,47 @@ class MdbReaderCdnTypeAndParseFileTests(unittest.TestCase):
         self.assertEqual(
             manager.events, [("enter", "project.mdb", True), ("exit", "project.mdb")]
         )
+
+    def test_duplicate_uid_message_names_exactly_the_cdn_types_table(self):
+        connection = self._cdn_connection([(7, "First"), (7, "Second")])
+        reader, _manager = self._reader(connection)
+        with self.assertRaisesRegex(
+            DuplicateMasterDataUidError,
+            r"^CdnTypes contains duplicate UID 7; "
+            r"authoritative master-data UIDs must be unique\.$",
+        ):
+            reader._parse_cdn_types(connection)
+
+
+class MdbReaderCompositionTests(unittest.TestCase):
+    def test_the_reader_is_the_facade_of_the_four_reader_mixins(self):
+        from ost_visualizer.infrastructure.mdb.components.annotation_reader import (
+            AnnotationReaderMixin,
+        )
+        from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
+            BidDataReaderMixin,
+        )
+        from ost_visualizer.infrastructure.mdb.components.hierarchy_reader import (
+            HierarchyReaderMixin,
+        )
+        from ost_visualizer.infrastructure.mdb.components.settings_reader import (
+            SettingsReaderMixin,
+        )
+
+        self.assertEqual(
+            MdbReader.__bases__,
+            (
+                HierarchyReaderMixin,
+                BidDataReaderMixin,
+                AnnotationReaderMixin,
+                SettingsReaderMixin,
+            ),
+        )
+        for mixin, name in (
+            (HierarchyReaderMixin, "_parse_hierarchy"),
+            (BidDataReaderMixin, "get_bid_data"),
+            (AnnotationReaderMixin, "_parse_bid_annotations_for_bid"),
+            (SettingsReaderMixin, "get_settings_defaults"),
+        ):
+            with self.subTest(mixin=mixin.__name__, method=name):
+                self.assertIs(getattr(MdbReader, name), getattr(mixin, name))

@@ -4735,5 +4735,1114 @@ class SegmentCapHintSuggestedWidthTests(unittest.TestCase):
         )
 
 
+class WaveSevenTieBoundaryTests(ProposalTestCase):
+    """Boundaries that only an exact float tie distinguishes (wave 7 second pass).
+    Every expected value is derived by hand from the stated numbers, not read back
+    from the code; the inputs are chosen so the compared floats are equal to the last
+    bit.
+    """
+
+    def dimension_agrees(self, scale_text, distance=10.0):
+        # A dimension of 500 in across points `distance` = 10 pt apart implies exactly
+        # 50 in per point; the dimension text sits 4 pt from the measured segment.
+        self.pdf.runs = [
+            PdfTextRunDto(
+                "41'-8\"",
+                left=90.0,
+                top=PAGE_HEIGHT - 100.0,
+                right=120.0,
+                bottom=PAGE_HEIGHT - 108.0,
+            )
+        ]
+        data = self.service_m1b.propose_scale(
+            "p1", [100.0, 100.0], [100.0 + distance, 100.0], preset=scale_text
+        )["data"]
+        return data["scale"]["dimension_check"]
+
+    def test_a_scale_exactly_two_percent_off_a_nearby_dimension_still_agrees(self):
+        # sf1:sf2 = 0.5:1836 gives 1836 / (72 * 0.5) = 51 in per point and 0.5:1764
+        # gives 49; against the 50 implied by the dimension both are |+-1| / 50 =
+        # 0.02 (the double 0.02 times 100 is exactly 2.0), the stated 2 percent limit.
+        for preset, chosen in (("0.5:1836", 51.0), ("0.5:1764", 49.0)):
+            with self.subTest(chosen=chosen):
+                check = self.dimension_agrees(preset)
+                self.assertEqual(check["real_in"], 500.0)
+                self.assertEqual(check["error_pct"], 2.0)
+                self.assertIs(check["agrees"], True)
+
+    def test_a_scale_a_hair_more_than_two_percent_off_a_dimension_disagrees(self):
+        # 1836.0036 / 36 = 51.0001 in per point: |51.0001 - 50| / 50 = 2.0002 percent.
+        check = self.dimension_agrees("0.5:1836.0036")
+        self.assertEqual(check["error_pct"], 2.0002)
+        self.assertIs(check["agrees"], False)
+
+    SQUARE_RING = ((0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0))
+
+    def seed_choice(self, segments, max_gap_in=12.0, ring=None):
+        """Run the seeded choice on page-point segments around the seed (50, 50)."""
+        self.raster_result = RasterResult(ring or self.SQUARE_RING, False, 0.0)
+        filters = module._RegionFilters(
+            max_gap_in=max_gap_in,
+            min_width=None,
+            exclude_dashed=False,
+            exclude_thin_curves=False,
+            colors=None,
+            min_area_sf=0.0,
+            symbol_max_pts=48.0,
+        )
+        return self.service_m1b._seed_choice(
+            [tuple(float(value) for value in segment) for segment in segments],
+            (0.0, 0.0, 200.0, 200.0),
+            (50.0, 50.0),
+            filters,
+            K,
+        )
+
+    def room_with_a_door(self, height):
+        # 100 wide room, `height` tall, with a 20 pt door (40..60) in its bottom wall.
+        return [
+            (0, 0, 40, 0),
+            (60, 0, 100, 0),
+            (100, 0, 100, height),
+            (100, height, 0, height),
+            (0, height, 0, 0),
+        ]
+
+    def test_a_sealed_room_is_kept_when_its_area_is_within_a_quarter_of_the_raster_fill(
+        self,
+    ):
+        # The raster fill is the 100 x 100 square (10000), so a quarter is exactly
+        # 2500: a room 125 tall (12500) or 75 tall (7500) differs by exactly 2500 and
+        # is the region the openings sealed; 125.01 (12501) or 74.99 (7499) differ
+        # by more and the raster fill stays the answer. Both keep the one door
+        # closure (40, 0) - (60, 0).
+        door = ((40.0, 0.0, 60.0, 0.0),)
+        for height, area in ((125.0, 12500.0), (75.0, 7500.0)):
+            with self.subTest(height=height):
+                choice = self.seed_choice(self.room_with_a_door(height))
+                self.assertIsNone(choice.raster)
+                self.assertEqual(abs(module.ring_area(choice.region.outer)), area)
+                self.assertEqual(choice.closures, door)
+                self.assertEqual(choice.closures_status, "complete")
+        for height in (125.01, 74.99):
+            with self.subTest(height=height):
+                choice = self.seed_choice(self.room_with_a_door(height))
+                self.assertIsNone(choice.region)
+                self.assertEqual(choice.raster.ring, self.SQUARE_RING)
+                self.assertEqual(choice.closures, door)
+                self.assertEqual(choice.closures_status, "complete")
+
+    def test_sealing_an_opening_does_not_also_bridge_a_sub_point_gap_elsewhere(self):
+        # The door is sealed with exactly the traced closure; a 0.8 pt break in the top
+        # wall (wider than the 0.5 pt snap) is not bridged, so no room is traced
+        # around the seed and the raster fill stays. A 0.4 pt break snaps shut, and
+        # then the sealed room (10000, the same as the raster fill) is chosen.
+        def room(gap):
+            return [
+                (0, 0, 40, 0),
+                (60, 0, 100, 0),
+                (100, 0, 100, 100),
+                (100, 100, 50, 100),
+                (50 - gap, 100, 0, 100),
+                (0, 100, 0, 0),
+            ]
+
+        broken = self.seed_choice(room(0.8))
+        self.assertIsNone(broken.region)
+        self.assertEqual(broken.raster.ring, self.SQUARE_RING)
+        self.assertEqual(broken.closures, ((40.0, 0.0, 60.0, 0.0),))
+        snapped = self.seed_choice(room(0.4))
+        self.assertIsNone(snapped.raster)
+        self.assertEqual(abs(module.ring_area(snapped.region.outer)), 10000.0)
+        self.assertEqual(snapped.closures, ((40.0, 0.0, 60.0, 0.0),))
+
+    def test_a_line_end_exactly_the_snap_tolerance_from_the_wall_still_continues_it(
+        self,
+    ):
+        # 0.5 pt is the snap tolerance, and "within reach" is inclusive: a point 0.5
+        # above the end of the wall, with the other end straight ahead of it, is on
+        # the wall's line; 0.5000001 is not.
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        wall = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        self.assertIs(module._continues_a_line((10.0, 0.5), (15.0, 0.5), wall), True)
+        self.assertIs(
+            module._continues_a_line((10.0, 0.5000001), (15.0, 0.5000001), wall), False
+        )
+
+    def test_walls_and_dashes_together_report_the_dashed_outline_they_do_not_follow(
+        self,
+    ):
+        # Strengthens test_walls_and_dashes_together_follow_the_walls, which only
+        # checks that an outline is reported: its area is the mat outline's.
+        self.pdf.segments = _mat_page()
+        (region,) = self.service_m1b.find_regions(
+            self.snapshot(),
+            MAT_BOX,
+            seed_pts=list(mat.SEED),
+            boundary_kinds=["wall", "dashed"],
+        )["data"]["regions"]
+        expected = _sf(mat.outline_area())
+        self.assertAlmostEqual(
+            region["dashed_outline"]["area_sf"], expected, delta=expected * 0.005
+        )
+        self.assertEqual(set(region["dashed_outline"]), {"area_sf"})
+
+
+class WaveSevenScaleAndDimensionTests(ProposalTestCase):
+    """Wave 7 second pass: scale arguments and the dimension check."""
+
+    def test_points_a_float_overflow_apart_are_refused_even_with_a_preset_alone(self):
+        # 1e308 - (-1e308) overflows to an infinite distance; with only a preset no
+        # real_in divides by it, so the distance check itself must refuse.
+        error = self.assert_error(
+            "invalid_argument",
+            lambda: self.service_m1b.propose_scale(
+                "p1", [-1e308, 0], [1e308, 0], preset="1:12"
+            ),
+        )
+        self.assertEqual(
+            error.message, "p1_pts and p2_pts must be at least 1 point apart"
+        )
+
+    def test_the_scale_error_is_the_size_of_the_difference_whichever_way_it_goes(self):
+        # 100 pt apart, real_in 100 -> 1.0 in per point. The 1/4" scale is 2/3 in per
+        # point: |2/3 - 1| / 1 = 33.33.. percent (chosen below measured). Real_in 50
+        # -> 0.5 in per point: |2/3 - 0.5| / 0.5 = 33.33.. percent (chosen above).
+        for real_in in (100.0, 50.0):
+            with self.subTest(real_in=real_in):
+                data = self.service_m1b.propose_scale(
+                    "p1", [0, 0], [100, 0], real_in=real_in, preset='1/4" = 1\' 0"'
+                )["data"]
+                self.assertAlmostEqual(
+                    data["scale"]["error_pct"], 100.0 / 3.0, places=9
+                )
+
+    def test_whole_number_page_scale_factors_are_recorded_as_floats(self):
+        page = self.project.pages[1]
+        self.project.pages[1] = replace(page, scale_factor1=3, scale_factor2=24)
+        data = self.service_m1b.propose_scale(
+            "p1", [0, 0], [100, 0], preset='1/4" = 1\' 0"'
+        )["data"]
+        previous = data["scale"]["previous_sf1_sf2"]
+        self.assertEqual(previous, [3.0, 24.0])
+        self.assertEqual([type(value) for value in previous], [float, float])
+
+    def test_of_two_dimensions_in_reach_the_nearer_one_wins_even_when_read_later(
+        self,
+    ):
+        # Points (100, 100) - (532, 100): 432 pt apart, so reach is 108 pt. Text is read
+        # top to bottom: the 30'-0" line (y = 60, 36 pt from the measured line) comes
+        # first, the 24'-0" line (y = 104, 8 pt away) after it, and the nearer wins.
+        def run(text, y):
+            return PdfTextRunDto(
+                text,
+                left=300,
+                top=PAGE_HEIGHT - y,
+                right=330,
+                bottom=PAGE_HEIGHT - y - 8,
+            )
+
+        self.pdf.runs = [run("30'-0\"", 60), run("24'-0\"", 104)]
+        data = self.service_m1b.propose_scale(
+            "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+        )["data"]
+        self.assertEqual(data["scale"]["dimension_check"]["real_in"], 288.0)
+
+    def test_a_page_whose_text_cannot_be_read_gives_no_dimension_check(self):
+        # The status guard of _dimension_check, against a read service that reports a
+        # failure but still hands back a line that would otherwise be used.
+        line = types.SimpleNamespace(
+            text="24'-0\"", left=300.0, right=330.0, top=90.0, bottom=98.0
+        )
+        for status in ("not_pdf", "empty"):
+            with self.subTest(status=status):
+                service = AiTakeoffProposalService(
+                    read_service=types.SimpleNamespace(
+                        page_text_lines=lambda snapshot, status=status: (
+                            status,
+                            [line],
+                        )
+                    ),
+                    proposals=self.proposals,
+                    presets=PRESETS,
+                    raster_fill=self._raster,
+                )
+                self.assertIsNone(
+                    service._dimension_check(
+                        None, (100.0, 100.0), (532.0, 100.0), 2 / 3
+                    )
+                )
+        ok = AiTakeoffProposalService(
+            read_service=types.SimpleNamespace(
+                page_text_lines=lambda snapshot: ("ok", [line])
+            ),
+            proposals=self.proposals,
+            presets=PRESETS,
+            raster_fill=self._raster,
+        )
+        check = ok._dimension_check(None, (100.0, 100.0), (532.0, 100.0), 2 / 3)
+        self.assertEqual((check.real_in, check.agrees), (288.0, True))
+
+
+class WaveSevenFindRegionsTests(ProposalTestCase):
+    """Wave 7 second pass: find_regions orchestration that no earlier test pinned."""
+
+    find = FindRegionFilterTests.find
+
+    def test_only_a_boundary_kind_list_with_dashes_uses_the_dashed_analysis_edges(
+        self,
+    ):
+        # Without "dashed" among the kinds nothing is bridged and, with no seed, the
+        # dashed analysis is not even run; with a seed it still runs (for the
+        # ignored-outline warning) but still bridges nothing.
+        self.pdf.segments = _mat_page()
+        unseeded = self.find(bbox=MAT_BOX, boundary_kinds=["wall"])["data"]
+        self.assertEqual(unseeded["dashed_analysis"], "not_run")
+        self.assertEqual(unseeded["dash_bridge_count"], 0)
+        seeded = self.find(
+            bbox=MAT_BOX, boundary_kinds=["wall"], seed_pts=list(mat.SEED)
+        )["data"]
+        self.assertEqual(seeded["dashed_analysis"], "complete")
+        self.assertEqual(seeded["dash_bridge_count"], 0)
+        dashed = self.find(bbox=MAT_BOX, boundary_kinds=["wall", "dashed"])["data"]
+        self.assertEqual(dashed["dashed_analysis"], "complete")
+        self.assertGreater(dashed["dash_bridge_count"], 0)
+
+    def test_the_segment_cap_hint_is_only_offered_without_boundary_kinds(self):
+        helper = SegmentCapTests("crowded_page")
+        self.pdf.segments = helper.crowded_page()
+        default = self.assert_error(
+            "invalid_argument", lambda: self.find(bbox=[0, 0, 2000, 2000])
+        )
+        self.assertRegex(
+            default.message,
+            r"^More than 20000 line segments; use a smaller bounding box\. "
+            r"min_width 1 keeps \d+ line segments and would pass\.$",
+        )
+        kinds = self.assert_error(
+            "invalid_argument",
+            lambda: self.find(bbox=[0, 0, 2000, 2000], boundary_kinds=["wall", "thin"]),
+        )
+        self.assertEqual(
+            kinds.message, "More than 20000 line segments; use a smaller bounding box."
+        )
+
+    def dashed_room_with_a_raster_ring(self):
+        self.pdf.segments = _styled_rect(100, 100, 500, 500, style=DASH_STYLE)
+        self.raster_result = RasterResult(
+            ((200.0, 200.0), (400.0, 200.0), (400.0, 400.0), (200.0, 400.0)), False, 4.0
+        )
+
+    def test_a_dashed_search_that_runs_out_of_time_drops_the_dashes_and_the_outline(
+        self,
+    ):
+        # The first dashed-outline pass finds the 400 x 400 square, the second one
+        # (the dashes-only region) runs out of time: everything the dashes gave is
+        # dropped, so the raster fill (200 x 200) stands with no outline warning and
+        # no bridges were added.
+        self.dashed_room_with_a_raster_ring()
+        real = module._dashed_outline
+        calls = []
+
+        def outline(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise DashedAnalysisTimeout("late")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(module, "_dashed_outline", outline):
+            data = self.find(boundary_kinds=["dashed"], seed_pts=[300, 300])["data"]
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(data["dashed_analysis"], "skipped_time_budget")
+        self.assertEqual(data["dash_bridge_count"], 0)
+        self.assertEqual(data["segment_count"], 0)
+        (region,) = data["regions"]
+        self.assertEqual(region["method"], "raster")
+        self.assertIsNone(region["dashed_outline"])
+        self.assertAlmostEqual(region["area_sf"], _sf(200 * 200), places=3)
+
+
+class WaveSevenArgumentAndWordingTests(ProposalTestCase):
+    """Wave 7 second pass: argument checks and wording that no earlier test pinned."""
+
+    find = FindRegionFilterTests.find
+
+    def test_optional_text_must_be_text_when_given(self):
+        error = self.assert_error(
+            "invalid_argument",
+            lambda: self.service_m1b.propose_scale(
+                "p1", [0, 0], [100, 0], preset="1:12", reason=5
+            ),
+        )
+        self.assertEqual(error.message, "reason must be text")
+
+    def test_preset_numbers_given_as_whole_numbers_become_floats(self):
+        service = AiTakeoffProposalService(
+            read_service=self.service,
+            proposals=self.proposals,
+            presets=[(1, 12, "whole")],
+            raster_fill=self._raster,
+        )
+        data = service.propose_scale("p1", [0, 0], [100, 0], preset="whole")["data"]
+        scale = data["scale"]["sf1_sf2"]
+        self.assertEqual(scale, [1.0, 12.0])
+        self.assertEqual([type(value) for value in scale], [float, float])
+
+    def test_only_the_scale_assumption_is_protected_among_the_assumptions(self):
+        uid = self.service_m1b.propose_scale(
+            "p1", [100, 100], [460, 100], real_in=479.0
+        )["data"]["changeset_id"]
+        added = self.service_m1b.update_assumption(
+            uid, "add", subject="other", target_key="p1", value="note", reason="why"
+        )["data"]["assumptions"]
+        self.assertEqual([item["id"] for item in added], ["a1", "a2"])
+        # a1 is the scale: refused although a2 is not a scale assumption ...
+        self.assert_error(
+            "invalid_argument",
+            lambda: self.service_m1b.update_assumption(
+                uid, "revise", assumption_id="a1", value="1:999", reason="x"
+            ),
+        )
+        # ... and a2 can be revised although a1 is a scale assumption.
+        revised = self.service_m1b.update_assumption(
+            uid, "revise", assumption_id="a2", value="new", reason="because"
+        )["data"]["assumptions"]
+        self.assertEqual(
+            [(item["id"], item["value"]["value"]) for item in revised],
+            [("a1", "0.125:12"), ("a2", "new")],
+        )
+
+    def test_a_filter_color_list_must_be_a_list_of_hex_colors_all_of_them(self):
+        self.pdf.segments = _rect(100, 100, 300, 300)
+        for colors in (("#000000",), ["#000000", "black"], ["#000000", 5], [5]):
+            with self.subTest(colors=colors):
+                error = self.assert_error(
+                    "invalid_argument", lambda: self.find(colors=colors)
+                )
+                self.assertEqual(
+                    error.message, "colors must be a list of #rrggbb values"
+                )
+
+    def test_the_gap_limit_message_names_the_limit(self):
+        self.pdf.segments = _rect(100, 100, 300, 300)
+        error = self.assert_error("invalid_argument", lambda: self.find(max_gap_in=49))
+        self.assertEqual(error.message, "max_gap_in must be between 0 and 48")
+
+    def test_suppressed_symbol_boxes_are_listed_in_group_order(self):
+        self.pdf.segments = (
+            _styled_rect(100, 100, 400, 400)
+            + _styled_rect(150, 150, 170, 170, style=THIN_STYLE, group="9:0")
+            + _styled_rect(200, 150, 210, 160, style=THIN_STYLE, group="9:1")
+        )
+        result = self.find(seed_pts=[120, 380])["data"]
+        self.assertEqual(
+            result["suppressed_symbols_pts"],
+            [[150.0, 150.0, 170.0, 170.0], [200.0, 150.0, 210.0, 160.0]],
+        )
+
+    def test_a_skipped_dashed_analysis_still_keeps_the_walls(self):
+        self.pdf.segments = _styled_rect(100, 100, 500, 500) + _styled_rect(
+            150, 150, 450, 450, style=DASH_STYLE
+        )
+        with mock.patch.object(module, "DASHED_ANALYSIS_BUDGET_S", -1.0):
+            data = self.find(bbox=[0, 0, 600, 700], boundary_kinds=["wall", "dashed"])[
+                "data"
+            ]
+        self.assertEqual(data["dashed_analysis"], "skipped_time_budget")
+        self.assertEqual(data["segment_count"], 4)
+        self.assertEqual(data["excluded"]["kind"], 4)
+        (region,) = data["regions"]
+        self.assertAlmostEqual(region["area_sf"], _sf(400 * 400), places=3)
+
+    def test_a_raster_ring_drawn_either_way_round_gives_the_same_positive_area(self):
+        ring = ((100.0, 100.0), (300.0, 100.0), (300.0, 300.0), (100.0, 300.0))
+        for label, drawn in (("forward", ring), ("reversed", ring[::-1])):
+            with self.subTest(label):
+                self.raster_result = RasterResult(drawn, False, 4.0)
+                (region,) = self.find(seed_pts=[200, 200], bbox=[0, 0, 600, 700])[
+                    "data"
+                ]["regions"]
+                self.assertEqual(region["method"], "raster")
+                self.assertAlmostEqual(region["area_sf"], _sf(200 * 200), places=3)
+
+    def test_a_clockwise_raster_ring_still_reports_an_opening_to_the_outside(self):
+        ring = ((60.0, 60.0), (540.0, 60.0), (540.0, 340.0), (60.0, 340.0))[::-1]
+        self.raster_result = RasterResult(ring, False, 4.0)
+        self.pdf.segments = [
+            _styled(100, 100, 500, 100),
+            _styled(100, 300, 500, 300),
+            _styled(100, 100, 100, 300),
+            _styled(300, 100, 300, 150),
+            _styled(300, 150 + GAP_PTS, 300, 300),
+        ]
+        (region,) = self.find(seed_pts=[200, 200], bbox=ROOM_BOX)["data"]["regions"]
+        self.assertEqual(region["method"], "raster")
+        (opening,) = region["open_gaps"]
+        self.assertAlmostEqual(opening["length_in"], 39.0, places=6)
+        self.assertTrue(region["leak_risk"])
+
+    def test_an_ignored_dashed_outline_is_measured_against_a_clockwise_ring_too(self):
+        from types import SimpleNamespace
+
+        outline = SimpleNamespace(
+            outer=[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]
+        )
+
+        def clockwise(side):
+            return [(0.0, 0.0), (0.0, side), (side, side), (side, 0.0)]
+
+        self.assertIsNone(module._ignored_outline_sf(outline, clockwise(100.0), 1.0))
+        self.assertAlmostEqual(
+            module._ignored_outline_sf(outline, clockwise(90.0), 2.0),
+            10000.0 * 4 / 144.0,
+        )
+
+    def test_a_colored_boundary_drops_a_bridge_when_only_its_second_end_is_kept(self):
+        from ost_visualizer.domain.services.ai_dashed_outline import DashedBoundary
+        from ost_visualizer.domain.services.ai_linework import LineSegment
+
+        lines = [
+            LineSegment(0.0, 0.0, 1.0, 0.0, color="#111111"),
+            LineSegment(2.0, 0.0, 3.0, 0.0, color="#111111"),
+            LineSegment(4.0, 0.0, 5.0, 0.0, color="#999999"),
+        ]
+        boundary = DashedBoundary(
+            {0: 1.0, 1: 1.0, 2: 1.0},
+            ((1.0, 0.0, 2.0, 0.0), (5.0, 0.0, 2.0, 0.0), (1.0, 0.0, 5.0, 0.0)),
+        )
+        colored = module._colored(lines, boundary, ("#111111",))
+        self.assertEqual(colored.bridges, ((1.0, 0.0, 2.0, 0.0),))
+
+    def test_a_gap_that_is_only_half_located_is_worded_as_unlocated(self):
+        for p1, p2 in (((1.0, 2.0), None), (None, (3.0, 4.0))):
+            with self.subTest(p1=p1, p2=p2):
+                self.assertEqual(
+                    module._gap_assumption_text(module._GapRecord(18.0, p1, p2)),
+                    (
+                        "up to 18.00 in",
+                        "The fill may have closed openings up to 18.00 in that could "
+                        "not be located; check the outline.",
+                    ),
+                )
+
+    def test_a_closed_gap_is_worded_with_its_length_and_ends(self):
+        self.pdf.segments = _door_room()
+        self.raster_result = RasterResult(
+            ((100.0, 100.0), (400.0, 100.0), (400.0, 300.0), (100.0, 300.0)), False, 4.0
+        )
+        (region,) = self.find(seed_pts=[250, 200], max_gap_in=40.0)["data"]["regions"]
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=4.0, top_elev_in=0.0
+        )["data"]
+        (closing,) = data["assumptions"]
+        # The door is 200 to 254 on the y=300 wall: 54 pt * 2/3 in per pt = 36 in.
+        self.assertEqual(closing["value"]["value"], "36.00 in")
+        self.assertEqual(
+            closing["reason"]["value"],
+            "The outline was closed across a 36.00 in gap in the drawing from "
+            "(200.0, 300.0) to (254.0, 300.0) page points.",
+        )
+
+    def test_an_open_gap_and_an_ignored_outline_are_worded_in_full(self):
+        self.pdf.segments = _two_rooms()
+        (region,) = self.service_m1b.find_regions(
+            self.snapshot(), ROOM_BOX, seed_pts=[200, 200]
+        )["data"]["regions"]
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=4.0, top_elev_in=0.0
+        )["data"]
+        (open_gap,) = data["assumptions"]
+        self.assertEqual(open_gap["value"]["value"], "39.00 in opening not closed")
+        self.assertEqual(
+            open_gap["reason"]["value"],
+            "The region runs through a 39.00 in opening from (300.0, 150.0) to "
+            "(300.0, 208.5) page points without closing it, so it may merge two "
+            "areas; check the outline.",
+        )
+        record = _RegionRecord("p1", (), (), (), False, K, (), 1234.56)
+        ((value, reason),) = module._region_warnings(record)
+        self.assertEqual(value, "dashed outline ignored")
+        self.assertEqual(
+            reason,
+            "The seed is inside a closed dashed outline of 1234.6 SF that this "
+            "region does not follow. Dashed lines often mark mat, footing or "
+            "below-grade edges; compare with the callouts.",
+        )
+
+
+class WaveSevenElementTests(ProposalTestCase):
+    """Wave 7 second pass: element proposals."""
+
+    SQUARE = [0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0]
+
+    def test_the_thickness_limit_message_names_the_limit(self):
+        for thickness in (0, 120.5):
+            with self.subTest(thickness=thickness):
+                error = self.assert_error(
+                    "invalid_argument",
+                    lambda: self.service_m1b.propose_element(
+                        "slab", "p1", polygon_ost=self.SQUARE, thickness_in=thickness
+                    ),
+                )
+                self.assertEqual(
+                    error.message, "thickness_in must be above 0 and at most 120"
+                )
+
+    def test_a_dropped_hole_is_recorded_with_its_count_and_reason(self):
+        record = _RegionRecord(
+            "p1",
+            (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0),
+            (
+                (100.0, 100.0, 160.0, 100.0, 160.0, 160.0, 100.0, 160.0),
+                (-10.0, 200.0, 50.0, 200.0, 50.0, 250.0, -10.0, 250.0),
+            ),
+            (),
+            False,
+            K,
+        )
+        region_id = self.service_m1b._store_region(record)
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region_id, thickness_in=8.0, top_elev_in=0.0
+        )["data"]
+        (other,) = data["assumptions"]
+        self.assertEqual(other["value"]["value"], "1 hole(s) left out")
+        self.assertEqual(
+            other["reason"]["value"],
+            "1 traced hole(s) crossed the slab outline and were left out; check "
+            "the outline.",
+        )
+
+    def test_a_region_found_on_one_page_is_unknown_on_another(self):
+        self.pdf.segments = _rect(100, 100, 200, 200)
+        region = self.service_m1b.find_regions(self.snapshot(), [0, 0, 600, 700])[
+            "data"
+        ]["regions"][0]
+        error = self.assert_error(
+            "not_found",
+            lambda: self.service_m1b.propose_element(
+                "slab", "p2", region_id=region["id"], thickness_in=8.0
+            ),
+        )
+        self.assertEqual(error.message, "Unknown region_id for this page")
+        proposed = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region["id"], thickness_in=8.0
+        )
+        self.assertEqual(proposed["data"]["status"], "proposed")
+
+
+class WaveSevenSegmentCountTests(unittest.TestCase):
+    """Wave 7 second pass: only segments with four finite coordinates are counted."""
+
+    SEGMENTS = [
+        (0.0, 0.0, 1.0, 1.0),
+        (0.0, 0.0, math.inf, 1.0),
+        (math.nan, 0.0, 1.0, 1.0),
+        (math.inf, -math.inf, math.nan, math.inf),
+        (2.0, 2.0, 3.0, 3.0),
+    ]
+
+    def test_a_segment_with_any_non_finite_coordinate_is_not_counted(self):
+        self.assertEqual(module._finite_count(self.SEGMENTS), 2)
+        self.assertEqual(module._finite_count([]), 0)
+
+    def test_the_cap_check_counts_only_segments_with_four_finite_coordinates(self):
+        counted = []
+        with mock.patch.object(module, "check_segment_count", counted.append):
+            module._check_segment_cap(self.SEGMENTS)
+        self.assertEqual(counted, [2])
+
+    def test_a_cap_refusal_from_the_planar_search_is_an_invalid_argument(self):
+        with mock.patch.object(
+            module,
+            "find_planar_regions_report",
+            side_effect=RegionTooComplex("too many segments"),
+        ):
+            with self.assertRaises(AiTakeoffRequestError) as raised:
+                module._planar([], 0.0, 48.0)
+        self.assertEqual(raised.exception.code, "invalid_argument")
+        self.assertEqual(raised.exception.message, "too many segments")
+        with mock.patch.object(
+            module,
+            "find_planar_regions_report",
+            side_effect=RegionTooComplex("too many segments"),
+        ):
+            self.assertIsNone(module._planar_within_cap([], 0.0, 48.0))
+
+
+class WaveSevenOpeningReachTests(unittest.TestCase):
+    def test_a_run_end_up_to_three_tolerances_from_a_wall_end_still_snaps_to_it(self):
+        # At 1 px per pt the tolerance is 3 pt and the snap reach 3 * 3 = 9 pt (a pen of
+        # 3.5 adds only 1.75). The outline hugs the wall 3 pt above it, swings out at
+        # x = 34 (6 pt left of the wall end at (40, 0), 6.7 pt away from it) and
+        # comes back at x = 43, straight above the next wall's end at (43, 0): the
+        # first end is only reached with the 9 pt reach (an additive 3 + 3 = 6 pt
+        # reach would miss it), the second end is the one nearer the seed.
+        ring = (
+            (0.0, 3.0),
+            (34.0, 3.0),
+            (34.0, 6.0),
+            (43.0, 6.0),
+            (43.0, 3.0),
+            (100.0, 3.0),
+            (100.0, 60.0),
+            (0.0, 60.0),
+        )
+        segments = [(0.0, 0.0, 40.0, 0.0), (43.0, 0.0, 100.0, 0.0)]
+        self.assertEqual(
+            module._sealed_openings(
+                RasterResult(ring, False, 1.0), segments, 3.5, (70.0, 30.0)
+            ),
+            [(40.0, 0.0, 43.0, 0.0)],
+        )
+
+
+class WaveSevenLeakAndWordingTests(ProposalTestCase):
+    """Wave 7 second pass: leak guard without a face, rounding in the wording."""
+
+    find = DashedBoundaryTests.find
+
+    def test_an_empty_optional_text_is_still_text_and_gets_the_default(self):
+        data = self.service_m1b.propose_scale(
+            "p1", [0, 0], [100, 0], preset="1:12", reason=""
+        )["data"]
+        self.assertEqual(
+            data["assumptions"][0]["reason"]["value"],
+            "Scale proposed by the AI from a measured distance.",
+        )
+
+    def test_a_dashed_search_that_runs_out_of_time_bridges_nothing(self):
+        # The mat page's dashed pieces have bridges. The dashes-only region runs out
+        # of time after the first outline pass: no bridge may be added to the
+        # linework, and no dashed piece is used as a boundary.
+        self.pdf.segments = _mat_page()
+        real = module._dashed_outline
+        calls = []
+
+        def outline(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise DashedAnalysisTimeout("late")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(module, "_dashed_outline", outline):
+            data = self.find(boundary_kinds=["dashed"])["data"]
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(data["dashed_analysis"], "skipped_time_budget")
+        self.assertEqual(data["dash_bridge_count"], 0)
+        self.assertEqual(data["segment_count"], 0)
+        self.assertEqual(data["regions"], [])
+
+    def test_a_closed_gap_and_an_open_gap_are_worded_with_ends_rounded_to_a_tenth(
+        self,
+    ):
+        # Ends (10.26, 20.54) and (30.74, 40.12) read (10.3, 20.5) and (30.7, 40.1).
+        closed = module._GapRecord(36.0, (10.26, 20.54), (30.74, 40.12))
+        self.assertEqual(
+            module._gap_assumption_text(closed),
+            (
+                "36.00 in",
+                "The outline was closed across a 36.00 in gap in the drawing from "
+                "(10.3, 20.5) to (30.7, 40.1) page points.",
+            ),
+        )
+        record = _RegionRecord("p1", (), (), (), False, K, (closed,))
+        ((value, reason),) = module._region_warnings(record)
+        self.assertEqual(value, "36.00 in opening not closed")
+        self.assertEqual(
+            reason,
+            "The region runs through a 36.00 in opening from (10.3, 20.5) to "
+            "(30.7, 40.1) page points without closing it, so it may merge two "
+            "areas; check the outline.",
+        )
+
+    def test_openings_are_not_reported_when_no_face_holds_the_seed(self):
+        # A raster fill around two open-ended walls (no side walls) with one opening
+        # in the partition: closing it still leaves no closed face around the seed,
+        # so there is nothing to split and nothing is reported. With the left wall
+        # drawn the same opening is reported (the control).
+        ring = ((60.0, 60.0), (540.0, 60.0), (540.0, 340.0), (60.0, 340.0))
+        segments = [
+            (100.0, 100.0, 500.0, 100.0),
+            (100.0, 300.0, 500.0, 300.0),
+            (300.0, 100.0, 300.0, 150.0),
+            (300.0, 150.0 + GAP_PTS, 300.0, 300.0),
+        ]
+
+        def open_gaps(drawn):
+            report = module._planar(drawn, 0.0, 48.0)
+            choice = module._SeedChoice(report, raster=RasterResult(ring, False, 0.0))
+            return module._open_gaps(drawn, choice, (200.0, 200.0), ring, K, 48.0)
+
+        self.assertEqual(open_gaps(segments), ((), "complete"))
+        (opening,), leak_guard = open_gaps(segments + [(100.0, 100.0, 100.0, 300.0)])
+        self.assertEqual(leak_guard, "complete")
+        self.assertEqual(
+            sorted([opening.p1, opening.p2]), [(300.0, 150.0), (300.0, 150.0 + GAP_PTS)]
+        )
+
+
+class WaveSevenRoundTwoCappedSearchTests(ProposalTestCase):
+    """Wave 7 round 2: the seeded search with its closures pass over the cap.
+    Same scenario and cap handling as SeededSegmentCapTests (a lowered cap through
+    the two module globals), kept in its own class so those tests do not run twice.
+    """
+
+    find = FindRegionFilterTests.find
+    sealed_page = RegionSearchBudgetTests.sealed_page
+    fill_to = SeededSegmentCapTests.fill_to
+    BOX = [0, 0, 2000, 2000]
+    CAP = 300
+
+    def setUp(self):
+        super().setUp()
+        budget = mock.patch.object(module, "REGION_SEARCH_BUDGET_S", 1e6)
+        budget.start()
+        self.addCleanup(budget.stop)
+        for target in (planar_module, module):
+            patch = mock.patch.object(target, "MAX_REGION_SEGMENTS", self.CAP)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def capped_find(self, boundary_kinds=None):
+        self.sealed_page()
+        self.fill_to(self.CAP)
+        return self.find(
+            bbox=self.BOX,
+            seed_pts=[250, 200],
+            max_gap_in=40.0,
+            min_width=0.0,
+            boundary_kinds=boundary_kinds,
+        )["data"]
+
+    def test_a_closures_pass_over_the_cap_leaves_nothing_for_the_leak_check_to_split(
+        self,
+    ):
+        # The door closures were found but their planar pass was over the cap, so the
+        # raster region stands. The leak check then has no opening to try (no dangling
+        # wall ends face each other beyond the door the fill sealed) and reports
+        # "complete" without running its own pass over the cap.
+        for boundary_kinds in (None, ["wall", "thin"]):
+            with self.subTest(boundary_kinds=boundary_kinds):
+                data = self.capped_find(boundary_kinds)
+                self.assertEqual(data["closures"], "skipped_segment_cap")
+                self.assertEqual(data["leak_guard"], "complete")
+                (region,) = data["regions"]
+                self.assertEqual(region["method"], "raster")
+                self.assertEqual(region["open_gaps"], [])
+
+    def test_the_door_the_fill_sealed_is_listed_from_the_run_start_to_its_end(self):
+        # The raster ring runs (100,100) (400,100) (400,300) (100,300): along the y=300
+        # wall it comes from x=400, so it reaches the 54 pt door (254 .. 200) at 254
+        # first. 54 pt * 2/3 in per pt = 36 in.
+        for boundary_kinds in (None, ["wall", "thin"]):
+            with self.subTest(boundary_kinds=boundary_kinds):
+                (region,) = self.capped_find(boundary_kinds)["regions"]
+                self.assertEqual(
+                    region["gaps"],
+                    [
+                        {
+                            "p1_pts": [254.0, 300.0],
+                            "p2_pts": [200.0, 300.0],
+                            "length_in": 36.0,
+                        }
+                    ],
+                )
+
+
+class WaveSevenRoundTwoTests(ProposalTestCase):
+    """Wave 7 round 2: gaps named by the verifier of the first round."""
+
+    find = FindRegionFilterTests.find
+    sealed_page = RegionSearchBudgetTests.sealed_page
+    dimension_check = ScaleProposalTests.dimension_check
+    dimension_text = ScaleProposalTests.dimension_text
+    service_with = ScaleArgumentTests.service_with
+    SQUARE_RING = WaveSevenTieBoundaryTests.SQUARE_RING
+    seed_choice = WaveSevenTieBoundaryTests.seed_choice
+    room_with_a_door = WaveSevenTieBoundaryTests.room_with_a_door
+
+    def test_a_search_that_times_out_while_sealing_openings_is_a_skipped_search(self):
+        # A deadline raised by the closures pass is not a segment cap: it ends the
+        # whole search, with no regions and no pass reported as run.
+        self.sealed_page()
+        real = module.find_planar_regions_report
+
+        def late_with_closures(segments, snap, gap, *args, **kwargs):
+            if kwargs.get("closures"):
+                raise RegionSearchTimeout("late")
+            return real(segments, snap, gap, *args, **kwargs)
+
+        with mock.patch.object(
+            module, "find_planar_regions_report", late_with_closures
+        ):
+            result = self.find(seed_pts=[250, 200], max_gap_in=40.0)
+        data = result["data"]
+        self.assertEqual(data["region_search"], "skipped_time_budget")
+        self.assertEqual(data["regions"], [])
+        self.assertEqual(data["closures"], "not_run")
+        self.assertEqual(data["leak_guard"], "not_run")
+        self.assertEqual(result["status"], "empty")
+
+    def test_a_clockwise_raster_ring_still_picks_the_region_the_openings_sealed(self):
+        # The raster fill is the 100 x 100 square drawn clockwise; the room with the
+        # 20 pt door sealed is the same square (10000), so it is the answer.
+        # The closure is listed in the direction the ring runs: (40, 0) to (60, 0)
+        # counter-clockwise, (60, 0) to (40, 0) clockwise.
+        for label, ring, closure in (
+            ("counter-clockwise", self.SQUARE_RING, (40.0, 0.0, 60.0, 0.0)),
+            ("clockwise", self.SQUARE_RING[::-1], (60.0, 0.0, 40.0, 0.0)),
+        ):
+            with self.subTest(label):
+                choice = self.seed_choice(self.room_with_a_door(100.0), ring=ring)
+                self.assertIsNone(choice.raster)
+                self.assertEqual(abs(module.ring_area(choice.region.outer)), 10000.0)
+                self.assertEqual(choice.closures, (closure,))
+                self.assertEqual(choice.closures_status, "complete")
+
+    def test_a_line_touches_a_box_whichever_way_it_is_drawn_on_all_four_sides(self):
+        from types import SimpleNamespace
+
+        box = (10.0, 20.0, 30.0, 40.0)
+        touching = (
+            ((0, 25), (10, 25)),
+            ((30, 25), (50, 25)),
+            ((15, 0), (15, 20)),
+            ((15, 40), (15, 60)),
+            ((0, 30), (15, 0)),
+            ((15, 60), (15, 30)),
+            ((15, 0), (15, 30)),
+            ((15, 60), (15, 35)),
+            ((0, 25), (50, 25)),
+            ((15, 0), (15, 60)),
+            ((0, 50), (35, 35)),
+        )
+        apart = (
+            ((0, 25), (9.9, 25)),
+            ((30.1, 25), (50, 25)),
+            ((15, 0), (15, 19.9)),
+            ((15, 40.1), (15, 60)),
+            ((0, 0), (5, 60)),
+            ((50, 0), (35, 60)),
+        )
+
+        def line(first, second):
+            return SimpleNamespace(x1=first[0], y1=first[1], x2=second[0], y2=second[1])
+
+        for first, second in touching:
+            for a, b in ((first, second), (second, first)):
+                with self.subTest(a=a, b=b):
+                    self.assertTrue(module._touches_box(line(a, b), box))
+        for first, second in apart:
+            for a, b in ((first, second), (second, first)):
+                with self.subTest(a=a, b=b):
+                    self.assertFalse(module._touches_box(line(a, b), box))
+
+    def test_the_dimension_text_is_placed_by_the_centre_of_its_box(self):
+        # Measured line (100, 100)-(532, 100): 432 pt, reach 108 pt. The centre of a
+        # box 500..800 wide is 650, 118 pt past the line's end although its left edge
+        # is 32 pt away: no dimension. Its mirror (box -300..140, centre -80) is 180 pt
+        # before the line's start. Boxes centred on the line are used (controls).
+        def check(left, right):
+            self.pdf.runs = [
+                PdfTextRunDto(
+                    "24'-0\"",
+                    left=left,
+                    top=PAGE_HEIGHT - 96,
+                    right=right,
+                    bottom=PAGE_HEIGHT - 104,
+                )
+            ]
+            return self.service_m1b.propose_scale(
+                "p1", [100, 100], [532, 100], preset='1/4" = 1\' 0"'
+            )["data"]["scale"]["dimension_check"]
+
+        self.assertIsNone(check(500.0, 800.0))
+        self.assertIsNone(check(-300.0, 140.0))
+        self.assertEqual(check(500.0, 560.0)["real_in"], 288.0)
+        self.assertEqual(check(60.0, 140.0)["real_in"], 288.0)
+
+    def test_the_dimension_reach_is_36_points_for_a_short_measured_line(self):
+        # (100, 100)-(110, 100): a quarter of 10 pt is 2.5, so the 36 pt minimum is the
+        # reach. Text centred 36.05 pt below the line is out of reach, 35.95 is in.
+        def check(centre_y):
+            self.pdf.runs = [
+                PdfTextRunDto(
+                    "24'-0\"",
+                    left=90.0,
+                    top=PAGE_HEIGHT - (centre_y - 4.0),
+                    right=120.0,
+                    bottom=PAGE_HEIGHT - (centre_y + 4.0),
+                )
+            ]
+            return self.service_m1b.propose_scale(
+                "p1", [100, 100], [110, 100], preset='1/4" = 1\' 0"'
+            )["data"]["scale"]["dimension_check"]
+
+        self.assertIsNone(check(100.0 + 36.05))
+        self.assertEqual(check(100.0 + 35.95)["real_in"], 288.0)
+
+    def test_a_measured_dimension_is_checked_from_the_first_point_with_its_numbers(
+        self,
+    ):
+        # Strengthens test_a_dimension_is_measured_from_the_actual_first_point_not_a_
+        # mirrored_one (which only asserts that a check exists): 24'-0" = 288 in over
+        # 432 pt is 2/3 in per pt, the 1/4" scale exactly.
+        data = self.dimension_check(290.0, first=(100, 300), second=(532, 300), x=150.0)
+        check = data["scale"]["dimension_check"]
+        self.assertEqual(
+            (check["real_in"], check["error_pct"], check["agrees"]), (288.0, 0.0, True)
+        )
+
+    def test_the_stated_reason_leads_the_whole_dimension_warning(self):
+        # 30'-0" = 360 in over 432 pt is 5/6 in per pt; the 1/4" scale (2/3) gives
+        # 432 * 2/3 = 288 in, 20.0 percent below it: |2/3 - 5/6| / (5/6) = 0.2.
+        data = self.dimension_check(
+            90.0, text="30'-0\"", reason="Read from the title block"
+        )
+        self.assertEqual(
+            data["assumptions"][0]["reason"]["value"],
+            "Read from the title block A dimension near the measured points reads "
+            "360 in, but this scale gives 288 in (20.0% off).",
+        )
+
+    def test_a_preset_a_little_over_one_percent_off_is_not_matched(self):
+        # 7276 / 72 = 101.0556 in per pt against the 100 measured: 1.0556 percent.
+        service = self.service_with([(1.0, 7276.0, "101.05")])
+        data = service.propose_scale("p1", [0, 0], [1, 0], real_in=100.0)["data"]
+        self.assertEqual(data["scale"]["sf1_sf2"], [1.0, 7200.0])
+
+    def test_a_line_end_14_5_degrees_off_the_wall_still_continues_it(self):
+        from ost_visualizer.domain.services.ai_linework import SegmentGrid
+
+        wall = SegmentGrid([(0.0, 0.0, 10.0, 0.0)])
+        end = (10.0, 0.0)
+        for degrees in (14.5, -14.5):
+            radians = math.radians(degrees)
+            other = (end[0] + 5.0 * math.cos(radians), end[1] + 5.0 * math.sin(radians))
+            with self.subTest(degrees=degrees):
+                self.assertIs(module._continues_a_line(end, other, wall), True)
+
+    def test_an_opening_is_reported_up_to_72_inches_and_not_beyond(self):
+        # 72 in is 108 pt at 2/3 in per pt: a 107 pt break (71.33 in) is an opening, a
+        # 109 pt one (72.67 in) is too wide for the check.
+        for gap, reported in ((107.0, True), (109.0, False)):
+            with self.subTest(gap=gap):
+                self.pdf.segments = _two_rooms(gap=gap)
+                (region,) = self.service_m1b.find_regions(
+                    self.snapshot(), ROOM_BOX, seed_pts=[200, 200]
+                )["data"]["regions"]
+                self.assertEqual(len(region["open_gaps"]), int(reported))
+                if reported:
+                    self.assertAlmostEqual(
+                        region["open_gaps"][0]["length_in"], gap * K, places=6
+                    )
+
+    def test_a_foreign_error_from_the_store_is_not_turned_into_a_request_error(self):
+        # Only ChangesetError is translated; a programming error from the store must
+        # surface as itself.
+        uid = self.service_m1b.propose_scale("p1", [0, 0], [100, 0], preset="1:12")[
+            "data"
+        ]["changeset_id"]
+        boom = RuntimeError("store broke")
+        calls = {
+            "add": lambda: self.service_m1b.propose_scale(
+                "p1", [0, 0], [100, 0], preset="1:12"
+            ),
+            "add_assumption": lambda: self.service_m1b.update_assumption(
+                uid, "add", subject="other", target_key="p1", value="v", reason="r"
+            ),
+            "request_apply": lambda: self.service_m1b.apply_changeset(uid),
+            "discard": lambda: self.service_m1b.discard_changeset(uid),
+        }
+        for method, call in calls.items():
+            with self.subTest(method):
+                with mock.patch.object(self.proposals, method, side_effect=boom):
+                    with self.assertRaisesRegex(RuntimeError, "store broke"):
+                        call()
+
+
+class WaveSevenRoundTwoSegmentCapHintTests(unittest.TestCase):
+    """Wave 7 round 2: the hint ignores widths that cannot be filtered on."""
+
+    CAP = SegmentCapHintTests.CAP
+    hint = SegmentCapHintTests.hint
+    walls = staticmethod(SegmentCapHintTests.walls)
+
+    def test_the_hint_runs_only_over_the_widths_of_stroked_lines(self):
+        # Cap 5. Stroked: 6 lines of 0.5, 2 of 1.0, 1 of 2.0; an unstroked (filled)
+        # line of width 0.75 is always kept and is no width to filter on. Naming 1
+        # keeps 3 stroked + 1 unstroked = 4 lines; 0.75 is not a candidate.
+        lines = self.walls(0.5, 6) + self.walls(1.0, 2) + self.walls(2.0, 1)
+        lines.append(LineSegment(0.0, 5.0, 5.0, 5.0, width=0.75, stroked=False))
+        self.assertEqual(
+            self.hint(lines), "min_width 1 keeps 4 line segments and would pass."
+        )
+
+    def test_an_infinite_stroke_width_is_not_a_width_to_name(self):
+        # 6 lines of 0.5 and 6 of 1.0 all stay over the cap of 5 at every finite width;
+        # a stroke of infinite width would "pass" at width inf but is no usable width.
+        lines = self.walls(0.5, 6) + self.walls(1.0, 6)
+        lines.append(LineSegment(0.0, 5.0, 5.0, 5.0, width=math.inf))
+        self.assertEqual(self.hint(lines), "")
+
+
+class WaveSevenRoundTwoListingTests(ProposalTestCase):
+    find = FindRegionFilterTests.find
+
+    def test_the_unseeded_listing_bridges_only_the_dimension_line_ends(self):
+        # Strengthens the `any(len(gaps) == 2)` of test_a_seed_closes_its_own_openings_
+        # before_bridging_nearby_lines. With max_gap_in 40 (60 pt) the unseeded
+        # search bridges, from the wall and dimension-line ends of _door_room plus
+        # dimension_line: the wall ends (92, 308) / (408, 308) to the ticks' ends
+        # (92, 326) / (408, 326) (18 pt = 12 in) and the dimension line's end
+        # (92, 338) / (408, 338) to the inner wall's corners (100, 300) / (400, 300)
+        # (hypot(8, 38) = 38.83 pt = 25.889 in); every gap of every listed region is
+        # one of these four and each of the four is used by some region.
+        self.pdf.segments = _door_room() + self.dimension_line()
+        listed = self.find(max_gap_in=40.0)["data"]["regions"]
+        bridges = {
+            ((92.0, 308.0), (92.0, 326.0)): 12.0,
+            ((408.0, 308.0), (408.0, 326.0)): 12.0,
+            ((92.0, 338.0), (100.0, 300.0)): math.hypot(8.0, 38.0) * K,
+            ((400.0, 300.0), (408.0, 338.0)): math.hypot(8.0, 38.0) * K,
+        }
+        seen = set()
+        for region in listed:
+            for gap in region["gaps"]:
+                key = tuple(sorted((tuple(gap["p1_pts"]), tuple(gap["p2_pts"]))))
+                self.assertIn(key, bridges)
+                self.assertAlmostEqual(gap["length_in"], bridges[key], places=6)
+                seen.add(key)
+        self.assertEqual(seen, set(bridges))
+        self.assertTrue(any(len(region["gaps"]) == 2 for region in listed))
+
+    dimension_line = FindRegionFilterTests.dimension_line
+
+
+class WaveSevenRoundTwoDefaultsTests(ProposalTestCase):
+    def test_a_filter_record_defaults_to_no_width_source_and_no_boundary_kinds(self):
+        filters = module._RegionFilters(
+            max_gap_in=0.0,
+            min_width=None,
+            exclude_dashed=True,
+            exclude_thin_curves=True,
+            colors=None,
+            min_area_sf=0.0,
+            symbol_max_pts=48.0,
+        )
+        data = filters.to_dict()
+        self.assertEqual(data["min_width_source"], "none")
+        self.assertIsNone(data["boundary_kinds"])
+
+    def test_a_raster_item_defaults_to_a_leak_check_that_ran(self):
+        ring = ((10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0))
+        item = self.service_m1b._raster_item(
+            self.snapshot(), RasterResult(ring, False), K
+        )
+        self.assertIs(item["leak_risk"], False)
+        self.assertEqual(item["open_gaps"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2405,6 +2405,39 @@ class AnnotationEndpointColumnTests(unittest.TestCase):
                     )
                     self.assertEqual(raw_data.page_tables[table][0][column], "0")
 
+    def test_every_dangling_endpoint_is_reported_table_by_table_and_from_before_to(
+        self,
+    ):
+        # Characterisation: the report lists BidDimensions, BidArrows, then BidALines,
+        # and within a row the From endpoint before the To endpoint, whatever the
+        # order of the keys in the row dicts.
+        raw_data = RawBidData(
+            page_tables={
+                "BidTakeoffs": [{"UID": "7"}],
+                "BidALines": [
+                    {"UID": "3", "BidTakeoffToUID": "63", "BidTakeoffFromUID": "53"}
+                ],
+                "BidArrows": [
+                    {"UID": "2", "BidTakeoffToUID": "62", "BidTakeoffFromUID": "52"}
+                ],
+                "BidDimensions": [
+                    {"UID": "1", "BidTakeoffToUID": "61", "BidTakeoffFromUID": "51"}
+                ],
+            }
+        )
+        cleared = clear_missing_annotation_takeoff_references(raw_data)
+        self.assertEqual(
+            [issue.format() for issue in cleared],
+            [
+                "BidDimensions.UID=1 BidTakeoffFromUID=51 missing BidTakeoffs.UID",
+                "BidDimensions.UID=1 BidTakeoffToUID=61 missing BidTakeoffs.UID",
+                "BidArrows.UID=2 BidTakeoffFromUID=52 missing BidTakeoffs.UID",
+                "BidArrows.UID=2 BidTakeoffToUID=62 missing BidTakeoffs.UID",
+                "BidALines.UID=3 BidTakeoffFromUID=53 missing BidTakeoffs.UID",
+                "BidALines.UID=3 BidTakeoffToUID=63 missing BidTakeoffs.UID",
+            ],
+        )
+
 
 class ExportOrphanPruneContractTests(unittest.TestCase):
     """Direct contract of the private orphan pruner used by the export prepare."""
@@ -2460,3 +2493,75 @@ class ExportOrphanPruneContractTests(unittest.TestCase):
         )
         prepared = prepare_raw_bid_data_for_export(raw_data)
         self.assertEqual([row["UID"] for row in prepared.bid_tables["BidPages"]], ["5"])
+
+
+class SortedReportOrderTests(unittest.TestCase):
+    """Report order comes from sorting by UID text, not from row insertion order.
+    The insertion orders below are neither the sorted order nor its reverse, so
+    dropping or reversing the sort changes the result.
+    """
+
+    def test_bid_settings_cardinality_issues_are_sorted_by_owner_uid_text(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={
+                "BidSettings": [
+                    {"UID": str(n), "BidUID": owner}
+                    for n, owner in enumerate(("2", "2", "9", "9", "10", "10"), 100)
+                ]
+            },
+        )
+        cardinality = [
+            issue
+            for issue in validate_raw_bid_integrity(raw_data)
+            if isinstance(issue, RawBidCardinalityIssue)
+        ]
+        self.assertEqual(
+            cardinality,
+            [
+                RawBidCardinalityIssue("BidSettings", "Bids", "10", 2, 1),
+                RawBidCardinalityIssue("BidSettings", "Bids", "2", 2, 1),
+                RawBidCardinalityIssue("BidSettings", "Bids", "9", 2, 1),
+            ],
+        )
+
+    def test_takeoff_duplicate_uids_are_sorted_by_uid_text_not_first_appearance(self):
+        raw_data = _takeoff_raw_data(
+            *(_takeoff(uid) for uid in ("2", "2", "9", "9", "10", "10"))
+        )
+        self.assertEqual(
+            resolve_takeoff_graph(raw_data).fatal_issues,
+            (
+                RawBidDuplicateUid("BidTakeoffs", "10", 2),
+                RawBidDuplicateUid("BidTakeoffs", "2", 2),
+                RawBidDuplicateUid("BidTakeoffs", "9", 2),
+            ),
+        )
+
+    def test_bid_relationships_catalog_is_an_immutable_tuple(self):
+        self.assertIsInstance(BID_RELATIONSHIPS, tuple)
+
+
+class TakeoffGraphMalformedUidPrecedenceTests(unittest.TestCase):
+    def test_a_malformed_uid_repeated_is_reported_per_row_and_never_as_a_duplicate(
+        self,
+    ):
+        raw_data = _takeoff_raw_data(_takeoff("x"), _takeoff("7"), _takeoff("x"))
+        resolution = resolve_takeoff_graph(raw_data)
+        self.assertEqual(
+            resolution.fatal_issues,
+            (
+                RawBidMalformedUid("BidTakeoffs", "x", "UID", "x"),
+                RawBidMalformedUid("BidTakeoffs", "x", "UID", "x"),
+            ),
+        )
+
+    def test_a_malformed_uid_alone_stops_the_graph_before_parent_checks(self):
+        raw_data = _takeoff_raw_data(_takeoff("x"), _takeoff("8", parent="bad"))
+        resolution = resolve_takeoff_graph(raw_data)
+        self.assertEqual(
+            resolution.fatal_issues,
+            (RawBidMalformedUid("BidTakeoffs", "x", "UID", "x"),),
+        )
+        self.assertEqual(resolution.missing_parent_roots, ())
+        self.assertEqual(resolution.dependent_descendants, ())

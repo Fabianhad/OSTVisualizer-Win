@@ -52,6 +52,20 @@ class RenderQualityContractTests(unittest.TestCase):
         self.assertEqual(quantize_render_frame_coordinate(4.1236), 4.124)
 
 
+class RenderQualityNumericCoercionTests(unittest.TestCase):
+    def test_quantizers_return_floats_even_for_whole_number_inputs(self):
+        # Cache keys and Qt geometry expect floats, never the int that round() returns.
+        for result, expected in (
+            (quantize_constrained_render_scale(2), 2.0),
+            (quantize_constrained_render_scale(0), CONSTRAINED_RENDER_SCALE_FLOOR),
+            (quantize_render_frame_coordinate(4), 4.0),
+            (quantize_render_frame_coordinate(-4), -4.0),
+        ):
+            with self.subTest(expected=expected):
+                self.assertIsInstance(result, float)
+                self.assertEqual(result, expected)
+
+
 class RenderFrameAlignmentTests(unittest.TestCase):
     def test_frame_origins_snap_to_the_render_pixel_grid_for_any_positive_scale(self):
         from ost_visualizer.application import render_quality as rq

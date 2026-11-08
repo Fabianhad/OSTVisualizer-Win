@@ -424,3 +424,57 @@ class AnnotationResourceIdentityMessageTests(unittest.TestCase):
             parse_annotation_resource_id(annotation_resource_id("rect", "a/b")),
             ("rect", "a/b"),
         )
+
+
+class CollaborationResourceCatalogLookupTests(unittest.TestCase):
+    def test_unknown_type_message_is_anchored_and_chained_to_the_missing_key(self):
+        for unknown in ("obsolete_resource", "Condition", ""):
+            with self.subTest(resource_type=unknown):
+                with self.assertRaises(ValueError) as raised:
+                    resource_definition(unknown)
+                self.assertEqual(
+                    str(raised.exception),
+                    f"Unknown collaboration resource type: {unknown}",
+                )
+                self.assertIsInstance(raised.exception.__cause__, KeyError)
+        with self.assertRaises(ValueError) as raised:
+            ResourceRef("obsolete_resource", "1")
+        self.assertTrue(
+            str(raised.exception).startswith("Unknown collaboration resource type")
+        )
+
+    def test_characterisation_unhashable_input_is_not_reported_as_an_unknown_type(
+        self,
+    ):
+        # Only a missing key is translated; a caller bug (unhashable value)
+        # keeps its own TypeError instead of being masked as an unknown type.
+        for bad in (["condition"], {"condition"}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(TypeError):
+                    resource_definition(bad)
+
+    def test_derived_groupings_are_immutable_containers(self):
+        import types
+
+        for name, value in (
+            ("SUPPORTED_REMOTE_RESOURCE_TYPES", SUPPORTED_REMOTE_RESOURCE_TYPES),
+            ("CONDITION_RESOURCE_TYPES", CONDITION_RESOURCE_TYPES),
+            ("AREA_RESOURCE_TYPES", AREA_RESOURCE_TYPES),
+            ("HIERARCHY_RESOURCE_TYPES", HIERARCHY_RESOURCE_TYPES),
+            ("MASTER_DATA_RESOURCE_TYPES", MASTER_DATA_RESOURCE_TYPES),
+            ("BID_CONTENT_RESOURCE_TYPES", BID_CONTENT_RESOURCE_TYPES),
+            (
+                "BID_CONTENT_ENTITY_RESOURCE_TYPES",
+                BID_CONTENT_ENTITY_RESOURCE_TYPES,
+            ),
+        ):
+            with self.subTest(constant=name):
+                self.assertIs(type(value), frozenset)
+        for family in CollaborationResourceFamily:
+            with self.subTest(family=family):
+                self.assertIs(type(resource_types_for_family(family)), frozenset)
+        self.assertIsInstance(
+            BID_CONTENT_FAMILY_BY_RESOURCE_TYPE, types.MappingProxyType
+        )
+        with self.assertRaises(TypeError):
+            BID_CONTENT_FAMILY_BY_RESOURCE_TYPE["page"] = "x"

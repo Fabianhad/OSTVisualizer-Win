@@ -9142,3 +9142,166 @@ class MainWindowImportFlowCallArgumentTests(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         self.assertIs(selected[0], refreshed)
         self.assertIs(shown[0], refreshed)
+
+
+class MainWindowSecondPassGapTests(unittest.TestCase):
+    """Behaviour the second-pass mutation sweep showed no earlier test pinned."""
+
+    A = BidRef("C:/jobs/a.mdb", "b1")
+    B = BidRef("C:/jobs/a.mdb", "b2")
+    OTHER = BidRef("C:/jobs/other.mdb", "b3")
+    _edit_window = MainWindowA3EditCommandTests._window
+    _update_check_window = MainWindowDeferredShutdownTests._update_check_window
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def test_copying_on_the_takeoff_tab_never_also_copies_the_selected_bids(self):
+        access = _A3Access({Feature.SELECT_PLAN_ITEMS, Feature.COPY_BID})
+        window = self._edit_window(TAB_INDEX_TAKEOFF, access=access)
+        window._copy_selected()
+        self.assertEqual([entry[0] for entry in window.log], ["plan.copy"])
+        self.assertFalse(window._bid_clipboard.has_content())
+        self.assertEqual(access.calls, [("allowed", Feature.SELECT_PLAN_ITEMS)])
+
+    def test_only_a_missing_update_service_is_optional(self):
+        window = MainWindow.__new__(MainWindow)
+
+        def broken(name):
+            raise RuntimeError(f"container failed for {name}")
+
+        window.app_controller = SimpleNamespace(get_service=broken)
+        with self.assertRaisesRegex(
+            RuntimeError, "container failed for update_check_service"
+        ):
+            window._resolve_update_service()
+
+    def test_a_failed_update_check_is_logged_with_its_message_and_traceback(self):
+        def explode():
+            raise RuntimeError("update server down")
+
+        window = self._update_check_window(explode)
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread"
+        ) as thread_factory:
+            MainWindow._check_for_updates(window)
+        with self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured:
+            thread_factory.call_args.kwargs["target"]()
+        (record,) = captured.records
+        self.assertEqual(
+            record.getMessage(), "Error checking for updates: update server down"
+        )
+        self.assertEqual(record.levelname, "ERROR")
+        self.assertIs(record.exc_info[0], RuntimeError)
+        self.assertEqual(window.emitted, [])
+
+    def test_the_update_check_worker_does_not_swallow_interpreter_exits(self):
+        def leave():
+            raise SystemExit("interpreter leaving")
+
+        window = self._update_check_window(leave)
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread"
+        ) as thread_factory:
+            MainWindow._check_for_updates(window)
+        with self.assertNoLogs("ost_visualizer.presentation.main_window"):
+            with self.assertRaises(SystemExit):
+                thread_factory.call_args.kwargs["target"]()
+        self.assertEqual(window.emitted, [])
+
+    def test_resuming_never_shows_a_hidden_window_whose_widget_was_destroyed(self):
+        dead = QtWidgets.QWidget()
+        _a3_delete(dead)
+        self.assertFalse(_a3_is_valid(dead))
+        live = QtWidgets.QWidget()
+        self.addCleanup(live.deleteLater)
+        elsewhere = QtWidgets.QWidget()
+        self.addCleanup(elsewhere.deleteLater)
+        window = MainWindow.__new__(MainWindow)
+        window._shutdown_hidden_windows = (dead, live, elsewhere)
+        window._shutdown_deferred_callbacks = {}
+        window._detached_plan_windows = lambda: (dead, live)
+        window.get_mesh_window = lambda: None
+        window._resume_shutdown_deferred_callbacks()
+        self.assertEqual(window._shutdown_hidden_windows, ())
+        self.assertFalse(live.isHidden())
+        self.assertTrue(elsewhere.isHidden())
+
+    def test_a_move_is_checked_against_the_database_of_the_first_bid(self):
+        """Characterisation: refs of one database may spell its path differently."""
+        first = BidRef("C:/Jobs/A.mdb", "b1")
+        second = BidRef("c:\\jobs\\a.mdb", "b2")
+        created = []
+        window = MainWindow.__new__(MainWindow)
+        window.ui_access_manager = SimpleNamespace(
+            can_edit_bid_structure=lambda refs: True,
+            can_create_bid=lambda path, project: created.append((path, project))
+            or True,
+        )
+        self.assertIs(window._can_move_project_bids([first, second], "proj"), True)
+        self.assertIs(window._can_move_project_bids([second, first], "proj"), True)
+        self.assertEqual(
+            created, [("C:/Jobs/A.mdb", "proj"), ("c:\\jobs\\a.mdb", "proj")]
+        )
+
+    def test_sidebar_setters_coerce_their_argument_to_a_real_boolean(self):
+        for setter, getter, action_name, widget_name in (
+            (
+                "set_pan_sidebar_visible",
+                "is_pan_sidebar_visible",
+                "_pan_toggle_action",
+                "_pan_sidebar",
+            ),
+            (
+                "set_layers_sidebar_visible",
+                "is_layers_sidebar_visible",
+                "_layers_toggle_action",
+                "_bid_layers_sidebar",
+            ),
+            (
+                "set_conditions_sidebar_visible",
+                "is_conditions_sidebar_visible",
+                "_conditions_toggle_action",
+                "_conditions_sidebar",
+            ),
+        ):
+            with self.subTest(setter=setter):
+                window = self._sidebar_window()
+                action = getattr(window, action_name)
+                widget = getattr(window, widget_name)
+                widget.setHidden(True)
+                action.setChecked(False)
+                getattr(window, setter)("yes")
+                self.assertTrue(action.isChecked())
+                getattr(window, setter)("yes")
+                self.assertFalse(widget.isHidden())
+                self.assertIs(getattr(window, getter)(), True)
+                getattr(window, setter)(None)
+                self.assertFalse(action.isChecked())
+                getattr(window, setter)(None)
+                self.assertTrue(widget.isHidden())
+                self.assertIs(getattr(window, getter)(), False)
+
+    def test_status_panel_setter_coerces_and_leaves_a_matching_action_alone(self):
+        window = self._sidebar_window()
+        action = window._status_bar_action
+        window.status_panel.setHidden(True)
+        action.setChecked(False)
+        window.set_status_bar_visible("yes")
+        self.assertTrue(action.isChecked())
+        self.assertFalse(window.status_panel.isHidden())
+        window.set_status_bar_visible(None)
+        self.assertFalse(action.isChecked())
+        self.assertTrue(window.status_panel.isHidden())
+        action.blockSignals(True)
+        window.set_status_bar_visible(None)
+        self.assertTrue(action.signalsBlocked())
+        self.assertFalse(action.isChecked())
+        self.assertTrue(window.status_panel.isHidden())
+        action.blockSignals(False)
+
+    _window = MainWindowA3ShellLayoutTests._window
+    _sidebar_window = MainWindowA3ShellLayoutTests._sidebar_window

@@ -214,3 +214,64 @@ class UpdateCheckServiceVersionAndLogTests(unittest.TestCase):
 
         self.assertEqual(UpdateCheckService.CURRENT_VERSION, APPLICATION_VERSION)
         self.assertTrue(APPLICATION_VERSION)
+
+
+class UpdateCheckServiceStrictnessTests(unittest.TestCase):
+    class _Logger:
+        def __init__(self):
+            self.warnings = []
+
+        def warning(self, message, *args):
+            self.warnings.append(message % args)
+
+        def exception(self, message, *args):
+            raise AssertionError("unexpected exception log")
+
+    def test_components_must_be_plain_integers_not_any_float_spelling(self):
+        logger = self._Logger()
+        service = UpdateCheckService(Mock(), logger)
+        for server, current in (
+            ("1e3", "1.0"),
+            ("inf", "1.0"),
+            ("nan", "1.0"),
+            ("2e0", "1"),
+            ("1.0", "1e3"),
+        ):
+            with self.subTest(server=server, current=current):
+                before = len(logger.warnings)
+                self.assertIs(service._is_version_newer(server, current), False)
+                self.assertEqual(len(logger.warnings), before + 1)
+                self.assertTrue(
+                    logger.warnings[-1].startswith(
+                        f"Failed to parse version strings: {server} vs {current} ("
+                    )
+                )
+        self.assertIs(service._is_version_newer("1.5", "1.0"), True)
+
+    def test_an_interrupt_from_the_client_is_not_swallowed_as_a_failed_check(self):
+        client = Mock()
+        client.check_version.side_effect = KeyboardInterrupt
+        service = UpdateCheckService(client, Mock())
+        with self.assertRaises(KeyboardInterrupt):
+            service.check_for_updates()
+
+
+class UpdateCheckServiceNegativeComponentTests(unittest.TestCase):
+    def test_negative_components_are_accepted_characterisation(self):
+        """CHARACTERISATION: production accepts negative components.
+        ``int()`` parses "-1", so "1.-1" is a valid version that sorts below "1".
+        The owner may prefer to reject negative components as unparseable; if so
+        the server-side zero padding would become redundant (only then).
+        """
+        service = UpdateCheckService(Mock(), Mock())
+        for server, current, expected in (
+            ("1", "1.-1", True),
+            ("0", "0.-1", True),
+            ("1.-1", "1", False),
+            ("1.0", "1.-1", True),
+            ("1.-1", "1.-1", False),
+            ("1.-2", "1.-1", False),
+            ("1.-1", "1.-2", True),
+        ):
+            with self.subTest(server=server, current=current):
+                self.assertIs(service._is_version_newer(server, current), expected)

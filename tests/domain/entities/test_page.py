@@ -583,3 +583,91 @@ class PageCoordinateSizeGuardTests(unittest.TestCase):
         self.assertIsNone(negative_page._page_coordinate_size(float("-inf")))
         positive_page = Page(uid="p", name="N", width_pts=612.0, height_pts=792.0)
         self.assertIsNone(positive_page._page_coordinate_size(-96.0))
+
+
+class PageConversionErrorHandlingTests(unittest.TestCase):
+    class Exploding:
+        def __float__(self):
+            raise RuntimeError("not a number")
+
+    def page(self, **changes):
+        values = dict(
+            uid="p",
+            name="N",
+            width_pts=72.0,
+            height_pts=144.0,
+            scale_factor1=1.0,
+            scale_factor2=96.0,
+            overlay_rect=(1.0, 2.0, 3.0, 4.0),
+        )
+        values.update(changes)
+        return Page(**values)
+
+    def test_only_type_and_value_errors_become_no_geometry_other_errors_propagate(
+        self,
+    ):
+        boom = self.Exploding()
+        page = self.page()
+        with self.subTest(where="units_per_inch"):
+            with self.assertRaisesRegex(RuntimeError, "not a number"):
+                page._page_coordinate_size(boom)
+        for method in PageCoordinateConversionTests.METHODS:
+            with self.subTest(where="canvas_width", method=method):
+                with self.assertRaisesRegex(RuntimeError, "not a number"):
+                    getattr(page, method)(1.0, 1.0, boom, 10.0)
+            with self.subTest(where="point_x", method=method):
+                with self.assertRaisesRegex(RuntimeError, "not a number"):
+                    getattr(page, method)(boom, 1.0, 10.0, 10.0)
+            with self.subTest(where="point_y", method=method):
+                with self.assertRaisesRegex(RuntimeError, "not a number"):
+                    getattr(page, method)(1.0, boom, 10.0, 10.0)
+        with self.subTest(where="overlay_rect"):
+            page.overlay_rect = (boom, 2.0, 3.0, 4.0)
+            with self.assertRaisesRegex(RuntimeError, "not a number"):
+                page.overlay_rect_canvas(100.0, 200.0)
+
+    def test_a_negative_resolution_is_refused_even_for_a_negative_page_whatever_its_size(
+        self,
+    ):
+        negative_page = Page(uid="p", name="N", width_pts=-612.0, height_pts=-792.0)
+        for resolution in (-0.5, -0.001, -1.0, -1.5):
+            with self.subTest(units_per_inch=resolution):
+                self.assertIsNone(negative_page._page_coordinate_size(resolution))
+
+    def test_numeric_text_page_dimensions_are_accepted_characterisation(self):
+        page = Page(uid="p", name="N", width_pts="72", height_pts="144")
+        self.assertEqual(page._page_coordinate_size(96.0), (96.0, 192.0))
+        self.assertEqual(
+            page.ost_page_pixels_to_canvas_point(48.0, 96.0, 100.0, 200.0),
+            (50.0, 100.0),
+        )
+        rotated = Page(uid="p", name="N", width_pts="72", height_pts="144", rotation=90)
+        self.assertEqual(rotated._page_coordinate_size(96.0), (192.0, 96.0))
+
+
+class PageConversionValueTests(unittest.TestCase):
+    def test_numeric_text_arguments_give_the_same_point_as_numbers(self):
+        page = Page(
+            uid="p",
+            name="N",
+            width_pts=72.0,
+            height_pts=144.0,
+            scale_factor1=1.0,
+            scale_factor2=96.0,
+        )
+        for method in PageCoordinateConversionTests.METHODS:
+            with self.subTest(method=method):
+                convert = getattr(page, method)
+                self.assertEqual(
+                    convert("1.5", "2", "10", "10"), convert(1.5, 2.0, 10.0, 10.0)
+                )
+                self.assertEqual(len(convert(1.5, 2.0, 10.0, 10.0)), 2)
+
+    def test_tiny_pages_convert_with_their_exact_proportions(self):
+        page = Page(uid="p", name="N", width_pts=0.5, height_pts=0.25)
+        x, y = page.ost_page_pixels_to_canvas_point(0.1, 0.1, 0.5, 0.5)
+        # The page is 0.5 / 72 * 96 by 0.25 / 72 * 96 OST pixels.
+        self.assertAlmostEqual(x, 0.1 * 0.5 / (0.5 / 72.0 * 96.0))
+        self.assertAlmostEqual(y, 0.1 * 0.5 / (0.25 / 72.0 * 96.0))
+        self.assertAlmostEqual(x, 0.075)
+        self.assertAlmostEqual(y, 0.15)

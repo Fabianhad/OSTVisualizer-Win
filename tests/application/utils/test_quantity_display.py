@@ -57,3 +57,29 @@ class QuantityDisplayFormattingTests(unittest.TestCase):
                     format_quantity_number(value, UOM_M, zero_text="none"), "none"
                 )
                 self.assertEqual(format_quantity_with_uom(value, 999, {}.get), "")
+
+
+class QuantityDisplayLabelTests(unittest.TestCase):
+    def test_an_empty_label_leaves_the_bare_number_with_no_trailing_space_or_zero(self):
+        # The condition panels default their label function to ``lambda _: ""``.
+        no_label = lambda _code: ""
+        self.assertEqual(
+            format_quantity_with_uom(12.6, UOM_LINEAR_FEET, no_label), "13"
+        )
+        self.assertEqual(format_quantity_with_uom(12.345, UOM_M, no_label), "12.35")
+        self.assertEqual(format_quantity_with_uom(0.0, UOM_LINEAR_FEET, no_label), "")
+        self.assertEqual(
+            format_quantity_with_uom(0.0, UOM_LINEAR_FEET, lambda _code: None), ""
+        )
+
+    def test_the_label_function_is_asked_for_the_unit_of_the_quantity_exactly_once(
+        self,
+    ):
+        asked = []
+
+        def label(code):
+            asked.append(code)
+            return "SF"
+
+        self.assertEqual(format_quantity_with_uom(1234.0, UOM_M2, label), "1,234 SF")
+        self.assertEqual(asked, [UOM_M2])

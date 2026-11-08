@@ -3544,5 +3544,420 @@ class CanonicalOrderHelperTests(unittest.TestCase):
             )
 
 
+class PlanarCallSiteTests(unittest.TestCase):
+    """What the report hands to its helpers (the helpers are pinned on their own)."""
+
+    def test_a_closing_edge_through_a_neighbour_of_its_end_is_not_closed_in_the_first_pass(
+        self,
+    ):
+        # Both loose ends are dangling, so only the first pass sees them. The wall from
+        # V (0,0) goes through N (4,0.3), which sits 0.3 from the straight closing edge
+        # V-W (within the 0.5 snap tolerance, well inside the 10 reach), so V-W is
+        # redundant and is not closed; W closes to N instead (N is 6.0075 away).
+        segments = [(0, 0, 4, 0.3), (4, 0.3, 4, 10), (4, 10, 10, 10), (10, 10, 10, 0)]
+        (region,) = find_planar_regions_report(segments, 0.5, 10.0).regions
+        self.assertEqual(
+            region.outer, ((10.0, 0.0), (10.0, 10.0), (4.0, 10.0), (4.0, 0.3))
+        )
+        self.assertAlmostEqual(region.area, 59.1, places=9)
+        self.assertEqual(
+            region.gaps,
+            (RegionGap((4.0, 0.3), (10.0, 0.0), math.hypot(6.0, 0.3)),),
+        )
+
+    def test_the_first_pass_judges_a_neighbour_by_the_snap_tolerance_not_the_reach(
+        self,
+    ):
+        # V (0,0) and W (5,0) are loose ends; V's wall bends through N (2,2), which is
+        # 2.0 from the closing edge V-W: farther than the 0.5 snap tolerance, nearer
+        # than the 5.0 reach. The edge is not redundant, so it closes the room.
+        segments = [(0, 0, 2, 2), (2, 2, 0, 10), (0, 10, 5, 10), (5, 10, 5, 0)]
+        (region,) = find_planar_regions_report(segments, 0.5, 5.0).regions
+        self.assertEqual(
+            region.outer, ((0.0, 0.0), (5.0, 0.0), (5.0, 10.0), (0.0, 10.0), (2.0, 2.0))
+        )
+        self.assertEqual(region.area, 40.0)
+        self.assertEqual(region.gaps, (RegionGap((0.0, 0.0), (5.0, 0.0), 5.0),))
+
+    def test_the_report_hands_the_near_split_pass_its_tolerance_and_deadline(self):
+        calls = []
+        real = planar._split_at_near_split_points
+
+        def spy(segments, pairs, splits, tolerance, deadline=None):
+            calls.append((tolerance, deadline))
+            return real(segments, pairs, splits, tolerance, deadline)
+
+        square = _rect(0, 0, 10, 10)
+        with mock.patch.object(planar, "_split_at_near_split_points", spy):
+            report = find_planar_regions_report(square, 0.5, 0.0, deadline=1e18)
+            find_planar_regions_report(square, 0.0, 0.0, deadline=1e18)
+            opening_candidates(square, 0.25, 1.0, 5.0, deadline=1e18)
+        self.assertEqual([region.area for region in report.regions], [100.0])
+        # one call per search: the snap tolerance (at least 1e-6) and the deadline
+        self.assertEqual(calls, [(0.5, 1e18), (1e-6, 1e18), (0.25, 1e18)])
+
+    def test_the_near_split_pass_checks_the_deadline_the_search_was_given(self):
+        seen = []
+
+        def spy(deadline):
+            if sys._getframe(1).f_code.co_name == "_split_at_near_split_points":
+                seen.append(deadline)
+
+        star = [(-100.0, float(y), 100.0, float(y) + 1.0) for y in range(40)]
+        with mock.patch.object(planar, "check_deadline", spy):
+            find_planar_regions_report(star, 0.5, 0.0, deadline=123.0)
+        self.assertEqual(seen, [123.0])
+
+    def _crossing_above_a_wall(self, height):
+        # Wall A (0,0)-(10,0) and two long shallow lines B and C that cross at
+        # P = (5, height) above it. P is a split point of B and C, not an end of either.
+        rise = 0.02 * 25.0
+        return [
+            (0.0, 0.0, 10.0, 0.0),
+            (-20.0, height - rise, 30.0, height + rise),
+            (-20.0, height + rise, 30.0, height - rise),
+        ]
+
+    def test_a_crossing_farther_than_the_tolerance_from_a_wall_does_not_split_it(self):
+        # P is 0.7 above A: beyond the 0.5 snap tolerance, so A stays one edge.
+        index = _VertexIndex(0.5)
+        edges, _drawn = planar._split_segments(
+            planar._canonical_segments(_finite_pairs(self._crossing_above_a_wall(0.7))),
+            index,
+            0.5,
+        )
+        # A (2 ends), B (2 ends), C (2 ends) and P; A, and B and C once each split at P
+        self.assertEqual(len(index.points), 7)
+        self.assertEqual(len(edges), 5)
+        left, right = index.add((0.0, 0.0)), index.add((10.0, 0.0))
+        self.assertEqual(len(index.points), 7)
+        self.assertIn((min(left, right), max(left, right)), edges)
+
+    def test_a_crossing_within_the_tolerance_of_a_wall_leaves_no_sliver_beside_it(self):
+        # P is 0.4 above A (within 0.5): the near-split pass makes P a vertex of A as
+        # well, so the triangle A-B-C that would be left (area 2) collapses onto its
+        # own sides and no room is reported.
+        self.assertEqual(
+            find_planar_regions(self._crossing_above_a_wall(0.4), 0.5, 0.0), []
+        )
+
+
+class PlanarReportOrderTests(unittest.TestCase):
+    """Gaps and suppressed symbols come out in coordinate order, whatever the numbering."""
+
+    def test_gaps_of_different_walls_come_out_in_coordinate_order(self):
+        # A square room with a gap in the middle of each side (4, 3, 5 and 2 long),
+        # listed round the walls. Each gap runs from its smaller end; the gaps are
+        # ordered by (smaller end, larger end): left, bottom, top, right.
+        frame = [
+            (0, 0, 40, 0),
+            (43, 0, 100, 0),
+            (100, 0, 100, 60),
+            (100, 62, 100, 100),
+            (100, 100, 60, 100),
+            (55, 100, 0, 100),
+            (0, 100, 0, 40),
+            (0, 36, 0, 0),
+        ]
+        (region,) = find_planar_regions_report(frame, 0.5, 5.0).regions
+        self.assertEqual(region.area, 10000.0)
+        self.assertEqual(
+            region.gaps,
+            (
+                RegionGap((0.0, 36.0), (0.0, 40.0), 4.0),
+                RegionGap((40.0, 0.0), (43.0, 0.0), 3.0),
+                RegionGap((55.0, 100.0), (60.0, 100.0), 5.0),
+                RegionGap((100.0, 60.0), (100.0, 62.0), 2.0),
+            ),
+        )
+
+    def test_diagonal_gaps_are_ordered_by_their_smaller_end_not_their_larger_end(self):
+        # Gap one runs (10,0)-(14,3), gap two (11,100)-(13,96): the smaller ends are
+        # ordered one, two but the larger ends two, one ((13,96) before (14,3)).
+        walls = [
+            (0, 0, 10, 0),
+            (14, 3, 100, 3),
+            (100, 3, 100, 96),
+            (100, 96, 13, 96),
+            (11, 100, 0, 100),
+            (0, 100, 0, 0),
+        ]
+        (region,) = find_planar_regions_report(walls, 0.5, 6.0).regions
+        # the 100 x 100 square less the strips (90 and 86 wide, 3 high) and (87 and
+        # 89 wide, 4 high) that the two jogged walls cut off
+        self.assertAlmostEqual(region.area, 10000.0 - 264.0 - 352.0, places=9)
+        self.assertEqual(
+            region.gaps,
+            (
+                RegionGap((10.0, 0.0), (14.0, 3.0), 5.0),
+                RegionGap((11.0, 100.0), (13.0, 96.0), math.hypot(2.0, 4.0)),
+            ),
+        )
+
+    def test_gaps_that_share_their_smaller_end_are_ordered_by_the_larger_end(self):
+        # The loose end X (0,0) is 5 from the loose ends (0,5) and (5,0) (reach 6, the
+        # two of them 7.07 apart), and closes to both: both gaps start at X and the
+        # one ending at (0,5) comes before the one ending at (5,0).
+        for width, height, tail in ((50, 80, 45), (50, 50, 10), (80, 80, 45)):
+            walls = [
+                (-tail, 0, 0, 0),
+                (0, 5, 0, height),
+                (0, height, width, height),
+                (width, height, width, 0),
+                (width, 0, 5, 0),
+            ]
+            with self.subTest(width=width, height=height, tail=tail):
+                (region,) = find_planar_regions_report(walls, 0.5, 6.0).regions
+                self.assertEqual(region.area, float(width * height))
+                self.assertEqual(
+                    region.gaps,
+                    (
+                        RegionGap((0.0, 0.0), (0.0, 5.0), 5.0),
+                        RegionGap((0.0, 0.0), (5.0, 0.0), 5.0),
+                    ),
+                )
+
+    def test_suppressed_symbols_of_different_sizes_come_out_in_coordinate_order(self):
+        # The larger a symbol's lines, the earlier they are read, so the drawing order
+        # here (5, 4, 2 and 3 across) runs against the coordinates.
+        segments = (
+            _rect(0, 0, 200, 100)
+            + _rect(150, 60, 155, 65)
+            + _rect(100, 20, 104, 24)
+            + _rect(100, 60, 102, 62)
+            + _rect(20, 40, 23, 43)
+        )
+        report = find_planar_regions_report(segments, 0.5, 0.0, symbol_max=6.0)
+        self.assertEqual(
+            report.suppressed,
+            (
+                (20.0, 40.0, 23.0, 43.0),
+                (100.0, 20.0, 104.0, 24.0),
+                (100.0, 60.0, 102.0, 62.0),
+                (150.0, 60.0, 155.0, 65.0),
+            ),
+        )
+        # the room is not holed by the symbols; each symbol is also a small region
+        self.assertEqual(
+            [region.area for region in report.regions],
+            [20000.0, 25.0, 16.0, 9.0, 4.0],
+        )
+        self.assertEqual(report.regions[0].holes, ())
+
+    def test_closures_drawn_over_each_other_give_one_report_in_any_order_or_direction(
+        self,
+    ):
+        # The frame lacks 30 of its left side. Two closures run across it side by side
+        # with end points near each other (within the snap tolerance) but not equal,
+        # and a third divides the room. Which of two near points becomes the vertex
+        # depends on the order the lines are read in, so it must not depend on the
+        # order they were given in.
+        frame = [(0, 0, 100, 0), (100, 0, 100, 60), (100, 60, 0, 60), (0, 60, 0, 30)]
+        closures = [(0.2, 29.9, 0.0, 0.0), (-0.1, 30.1, 0.3, 0.1), (50, 0, 50, 60)]
+        reports = set()
+        for order in itertools.permutations(closures):
+            for flips in itertools.product((False, True), repeat=3):
+                given = [
+                    (x2, y2, x1, y1) if flip else (x1, y1, x2, y2)
+                    for (x1, y1, x2, y2), flip in zip(order, flips)
+                ]
+                reports.add(find_planar_regions_report(frame, 0.5, 3.0, closures=given))
+        self.assertEqual(len(reports), 1)
+        (report,) = reports
+        # the whole room, the right-hand room and the left-hand room; the closed left
+        # side moves each of them by less than the tolerance along its 30 length
+        self.assertEqual(len(report.regions), 3)
+        whole, *rooms = report.regions
+        self.assertAlmostEqual(whole.area, 6000.0, delta=15.0)
+        for room in rooms:
+            self.assertAlmostEqual(room.area, 3000.0, delta=15.0)
+        (right,) = [room for room in rooms if room.outer[0] == (50.0, 0.0)]
+        self.assertEqual(right.area, 3000.0)
+        self.assertEqual(
+            right.outer, ((50.0, 0.0), (100.0, 0.0), (100.0, 60.0), (50.0, 60.0))
+        )
+
+
+def _translated(segments, dx, dy):
+    return [(x1 + dx, y1 + dy, x2 + dx, y2 + dy) for x1, y1, x2, y2 in segments]
+
+
+class PlanarTieRuleTests(unittest.TestCase):
+    """Closures are chosen by ascending canonical vertex number (see CanonicalOrderHelperTests).
+    The vertices are numbered in the order the canonical lines create them: the split
+    points first, then each line from its smaller end, longest line first. Eight copies
+    of every scene, far apart and 700 high on every second copy, keep the answer from
+    depending on how the hash order of the edge set happens to fall.
+    """
+
+    COPIES = [(1000.0 * copy, 700.0 * (copy % 2)) for copy in range(8)]
+
+    def closures(self, scene, reach):
+        segments = []
+        for dx, dy in self.COPIES:
+            segments += _translated(scene, dx, dy)
+        index = _VertexIndex(0.5)
+        edges, _drawn = planar._split_segments(
+            planar._canonical_segments(_finite_pairs(segments)), index, 0.5
+        )
+        return {
+            frozenset((index.points[u], index.points[v]))
+            for u, v in planar._close_gaps(edges, index, reach)
+        }
+
+    def expected(self, pairs):
+        return {
+            frozenset(((x1 + dx, y1 + dy), (x2 + dx, y2 + dy)))
+            for dx, dy in self.COPIES
+            for (x1, y1), (x2, y2) in pairs
+        }
+
+    def test_loose_ends_close_in_ascending_vertex_order_not_in_hash_order(self):
+        # Loose ends a (0,0), b (4,0) and c (7,0) hang from long walls (100 each, read
+        # in that order: a < b < c) from a roof; w (-3,0) is a corner at 3 from a. a
+        # is read first and takes b (4; c is out of reach at 7). b is then used, so c
+        # looks among the corners for the nearest one, which is b (3, now a corner).
+        # Had c or b been read first, a would have been left to close on w instead.
+        scene = [
+            (-100, 100, 100, 100),
+            (-3, 0, -3, 100),
+            (-3, 0, -10, -5),
+            (0, 0, 0, 100),
+            (4, 0, 4, 100),
+            (7, 0, 7, 100),
+        ]
+        self.assertEqual(
+            self.closures(scene, 5.0),
+            self.expected([((0.0, 0.0), (4.0, 0.0)), ((4.0, 0.0), (7.0, 0.0))]),
+        )
+
+    def test_equal_distance_loose_ends_go_to_the_last_in_vertex_order(self):
+        # x (0,0) hangs from a 50 long wall, p (5,0) from a 40 long one and q (-5,0)
+        # from a 20 long one: x < p < q. Both p and q are 5 from x (reach 7), so q, the
+        # later of the two, is chosen whichever cell holds it. p, left over, closes to
+        # the corner w (5,-2) 2 away rather than to x (5 away, now a corner too).
+        scene = [
+            (-25, 50, 45, 50),
+            (-25, 0, -25, 50),
+            (-25, 0, -5, 0),
+            (45, 0, 45, 50),
+            (5, 0, 45, 0),
+            (0, 0, 0, 50),
+            (5, -40, 5, -2),
+            (5, -2, 12, -2),
+        ]
+        self.assertEqual(
+            self.closures(scene, 7.0),
+            self.expected([((0.0, 0.0), (-5.0, 0.0)), ((5.0, 0.0), (5.0, -2.0))]),
+        )
+
+    def test_equal_distance_corners_go_to_the_later_one_in_vertex_order(self):
+        # The loose end (0,0) is 7.07 from the corners (5,5), whose arms are 20 long,
+        # and (5,-5), whose arms are 10 long, so (5,5) is numbered first. The later
+        # one, (5,-5), is chosen.
+        scene = [
+            (-20, 0, 0, 0),
+            (5, 5, 5, 25),
+            (5, 5, 25, 5),
+            (5, -5, 5, -15),
+            (5, -5, 15, -5),
+        ]
+        self.assertEqual(
+            self.closures(scene, 8.0), self.expected([((0.0, 0.0), (5.0, -5.0))])
+        )
+
+    def test_opening_candidates_are_reported_from_the_wall_end_numbered_first(self):
+        # Wall pieces hang from the top and the bottom of a 200 x 100 room, with a
+        # gap in each. The longer piece of each pair is read first, so its end is the
+        # first end of the opening, and the openings follow the longest piece first:
+        # 50 (x 160), 45 (x 100) and 40 (x 40).
+        segments = _rect(0, 0, 200, 100) + [
+            (40, 0, 40, 25),
+            (40, 60, 40, 100),
+            (100, 0, 100, 45),
+            (100, 70, 100, 100),
+            (160, 0, 160, 20),
+            (160, 50, 160, 100),
+        ]
+        self.assertEqual(
+            opening_candidates(segments, 0.5, 1.0, 50.0),
+            [
+                (160.0, 50.0, 160.0, 20.0),
+                (100.0, 45.0, 100.0, 70.0),
+                (40.0, 60.0, 40.0, 25.0),
+            ],
+        )
+
+
+class CanonicalOrderTieTests(unittest.TestCase):
+    def test_lines_of_equal_length_are_ordered_by_their_start_then_their_end(self):
+        # Both are 5 long. Ordered by (start, end), ((0,0),(3,4)) comes first; ordered by
+        # (end, start) it would come second.
+        first = ((0.0, 0.0), (3.0, 4.0))
+        second = ((1.0, 0.0), (1.0, 5.0))
+        for lines in ([first, second], [second, first]):
+            self.assertEqual(planar._canonical_segments(lines), [first, second])
+
+    def test_a_line_that_is_slightly_longer_comes_first_whatever_its_position(self):
+        # 5.0004 against 5.0: the order is by exact length, not by length to the
+        # millimetre.
+        shorter = ((0.0, 0.0), (0.0, 5.0))
+        longer = ((1.0, 0.0), (1.0, 5.0004))
+        for lines in ([shorter, longer], [longer, shorter]):
+            self.assertEqual(planar._canonical_segments(lines), [longer, shorter])
+
+    def test_a_split_point_is_a_near_split_point_of_a_line_it_misses_by_a_hair(self):
+        # A point 1e-5 above a line is not "on" it (it is split), one 1e-7 above is.
+        segments = [((0.0, 0.0), (10.0, 0.0)), ((0.0, 5.0), (10.0, 5.0))]
+        for height, expected in ((1e-5, [(0.5, (5.0, 0.0))]), (1e-7, [])):
+            with self.subTest(height=height):
+                splits = defaultdict(list, {1: [(0.5, (5.0, height))]})
+                planar._split_at_near_split_points(segments, [(0, 1)], splits, 0.5)
+                self.assertEqual(splits[0], expected)
+
+
+class SmallScaleGapClosingTests(unittest.TestCase):
+    def test_a_closing_edge_leading_away_from_the_loose_ends_own_wall_closes_at_any_scale(
+        self,
+    ):
+        # A 1.2 x 0.5 room whose bottom wall lacks x 0 to 0.4. V (0,0) ends the wall
+        # running left, W (0.4,0) the wall running right, so the closing edge V-W points
+        # away from V's wall (opposite directions) and does not run along it: the gap
+        # (0.4 long, within the 0.5 reach) is closed. Scaled by 0.1 and 0.5 as well,
+        # where a dot product of the two directions is far below 1.
+        for scale in (1.0, 0.5, 0.1):
+            walls = [
+                (-0.3, 0, 0, 0),
+                (0.4, 0, 0.9, 0),
+                (-0.3, 0, -0.3, 0.5),
+                (-0.3, 0.5, 0.9, 0.5),
+                (0.9, 0.5, 0.9, 0),
+            ]
+            walls = [tuple(value * scale for value in wall) for wall in walls]
+            with self.subTest(scale=scale):
+                (region,) = find_planar_regions_report(
+                    walls, 0.01 * scale, 0.5 * scale
+                ).regions
+                self.assertAlmostEqual(region.area, 0.6 * scale * scale, places=12)
+                self.assertEqual(
+                    [(gap.p1, gap.p2) for gap in region.gaps],
+                    [((0.0, 0.0), (0.4 * scale, 0.0))],
+                )
+
+
+class VertexIndexTieTests(unittest.TestCase):
+    def test_a_point_between_two_vertices_at_equal_distance_joins_the_last_one_visited(
+        self,
+    ):
+        # Characterisation of an arbitrary but deterministic tie rule. The cells are
+        # visited in (dx, dy) order, so the vertex in the lower cell (0,-0.6) is visited
+        # before the one in the cell of (0,0), (0,0.6), and the later one wins a tie.
+        index = _VertexIndex(1.0)
+        self.assertEqual(index.add((0.0, 0.6)), 0)
+        self.assertEqual(index.add((0.0, -0.6)), 1)
+        self.assertEqual(index.add((0.0, 0.0)), 0)
+        self.assertEqual(index.points, [(0.0, 0.6), (0.0, -0.6)])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -70,6 +70,16 @@ class FetchOptionalBidSettingsRowTests(unittest.TestCase):
             fetch_optional_bid_settings_row(cursor, 9, ("A",))
         self.assertEqual(cursor.fetch_count, 2)
 
+    def test_cardinality_error_prints_a_str_bid_uid_without_quotes(self):
+        # Production passes the bid UID as str; it must not be repr()'d.
+        cursor = _ScriptedCursor([(1,), (2,)])
+        with self.assertRaisesRegex(
+            BidSettingsCardinalityError,
+            r"^BidSettings has multiple rows for Bids\.UID=7; "
+            r"expected at most one\.$",
+        ):
+            fetch_optional_bid_settings_row(cursor, "7", ("A",))
+
     def test_falsy_second_row_still_counts_as_a_duplicate(self):
         cursor = _ScriptedCursor([(1,), ()])
         with self.assertRaises(BidSettingsCardinalityError):
@@ -89,3 +99,9 @@ class FetchOptionalBidSettingsRowTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "disk gone"):
             fetch_optional_bid_settings_row(cursor, 9, ("A",))
         self.assertEqual(cursor.fetch_count, 0)
+
+    def test_non_tuple_row_object_is_returned_by_identity(self):
+        # Real pyodbc rows are not tuples: the row must come back untouched.
+        row = object()
+        cursor = _ScriptedCursor([row])
+        self.assertIs(fetch_optional_bid_settings_row(cursor, 9, ("A",)), row)

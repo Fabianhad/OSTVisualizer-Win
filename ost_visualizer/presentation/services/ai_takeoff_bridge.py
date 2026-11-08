@@ -6,7 +6,7 @@ import secrets
 import threading
 import warnings
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Callable, Iterable, Optional, Union
 from PySide6 import QtCore
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from shiboken6 import isValid
@@ -116,54 +116,127 @@ class TakeoffCommandBridge(QtCore.QObject):
     def start(self) -> bool:
         if self._server is None:
             return False
-        self._server.removeServer(self._server_name)
-        if not self._server.listen(self._server_name):
-            logger.warning("Failed to start the AI takeoff bridge")
-            return False
+        server = self._server
+        listening = False
+        failed_listen = False
         try:
-            self._token = self._token_factory()
-            _write_token(self._token_path, self._token)
+            token = self._token_factory()
+            _stage_token(self._token_path, token)
+            server.removeServer(self._server_name)
+            listening = True
+            if server.listen(self._server_name):
+                self._token = token
+                _publish_token(self._token_path)
+            else:
+                failed_listen = True
         except OSError as exc:
             logger.warning(
                 "Failed to write the AI takeoff session token: %s", type(exc).__name__
             )
-            self._server.close()
-            self._token = None
+            error = self._abandon_start(listening, after=type(exc).__name__)
+            if error is not None:
+                raise error
+            return False
+        except BaseException as exc:
+            error = self._abandon_start(listening, pending=exc)
+            if error is exc:
+                raise
+            raise error
+        if failed_listen:
+            logger.warning("Failed to start the AI takeoff bridge")
+            error = self._abandon_start(False, after="a failed listen")
+            if error is not None:
+                raise error
             return False
         return True
+
+    def _abandon_start(
+        self,
+        listening: bool,
+        after: Optional[str] = None,
+        pending: Optional[BaseException] = None,
+    ) -> Optional[BaseException]:
+        steps = []
+        if listening:
+            steps.extend((self._server.close, self._remove_own_token))
+        steps.append(
+            lambda: _staged_token_path(self._token_path).unlink(missing_ok=True)
+        )
+        error = _run_steps(steps, after, pending)
+        if listening:
+            self._token = None
+        return error
 
     def cleanup(self) -> None:
         if self._server is None and not self._commands:
             return
-        if self._server is not None:
-            try:
-                self._server.newConnection.disconnect(self._on_new_connection)
-            except (TypeError, RuntimeError):
-                pass
-            self._server.close()
-            self._server.removeServer(self._server_name)
+        steps = []
+        server = self._server
+        if server is not None:
+            steps.extend(
+                (
+                    lambda: self._disconnect_new_connection(server),
+                    server.close,
+                    lambda: server.removeServer(self._server_name),
+                )
+            )
+        steps.extend(
+            (
+                self._abort_connections,
+                self._forget_requests,
+                self._remove_own_token,
+                self._release_state,
+                self._disconnect_own_signals,
+                self.deleteLater,
+            )
+        )
+        error = _run_steps(steps)
+        if error is not None:
+            raise error
+
+    def _disconnect_new_connection(self, server: QLocalServer) -> None:
+        try:
+            server.newConnection.disconnect(self._on_new_connection)
+        except (TypeError, RuntimeError):
+            pass
+
+    def _abort_connections(self) -> None:
+        steps = []
         for socket in self.findChildren(QLocalSocket):
-            socket.abort()
-            socket.deleteLater()
+            steps.extend((socket.abort, socket.deleteLater))
+        error = _run_steps(steps)
+        if error is not None:
+            raise error
+
+    def _forget_requests(self) -> None:
         self._buffers.clear()
         self._open_sockets.clear()
-        self._remove_own_token()
+
+    def _release_state(self) -> None:
         self._token = None
         self._server = None
         self._read_service = None
         self._pdf_source = None
         self._commands = {}
-        self._disconnect_own_signals()
-        self.deleteLater()
 
     def _disconnect_own_signals(self) -> None:
-        for signal in (self._job_finished, self.rebind_suggested):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", RuntimeWarning)
-                try:
-                    signal.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
+        error = _run_steps(
+            [
+                lambda signal=signal: self._disconnect_signal(signal)
+                for signal in (self._job_finished, self.rebind_suggested)
+            ]
+        )
+        if error is not None:
+            raise error
+
+    @staticmethod
+    def _disconnect_signal(signal) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            try:
+                signal.disconnect()
+            except (TypeError, RuntimeError):
+                pass
 
     def _remove_own_token(self) -> None:
         if self._token is None:
@@ -171,7 +244,7 @@ class TakeoffCommandBridge(QtCore.QObject):
         try:
             if self._token_path.read_text(encoding="utf-8").strip() == self._token:
                 self._token_path.unlink()
-        except (OSError, UnicodeError):
+        except (OSError, ValueError):
             pass
 
     def _on_new_connection(self) -> None:
@@ -443,8 +516,48 @@ class TakeoffCommandBridge(QtCore.QObject):
         return render
 
 
-def _write_token(path: Path, token: str) -> None:
+def _staged_token_path(path: Path) -> Path:
+    return path.with_name(path.name + ".tmp")
+
+
+def _stage_token(path: Path, token: str) -> None:
+    data = token.encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(token, encoding="utf-8")
-    os.replace(temporary, path)
+    _staged_token_path(path).write_bytes(data)
+
+
+def _publish_token(path: Path) -> None:
+    os.replace(_staged_token_path(path), path)
+
+
+def _is_interrupt(error: Optional[BaseException]) -> bool:
+    return error is not None and not isinstance(error, Exception)
+
+
+def _run_steps(
+    steps: Iterable[Callable[[], object]],
+    after: Optional[str] = None,
+    pending: Optional[BaseException] = None,
+) -> Optional[BaseException]:
+    leading = pending
+    label = after if pending is None else type(pending).__name__
+    for step in steps:
+        try:
+            step()
+        except BaseException as exc:
+            name = type(exc).__name__
+            if label is None:
+                leading, label = exc, name
+            elif _is_interrupt(exc) and not _is_interrupt(leading):
+                if leading is not None:
+                    _log_secondary(name, type(leading).__name__)
+                leading, label = exc, name
+            else:
+                _log_secondary(label, name)
+    return leading
+
+
+def _log_secondary(after: str, failed: str) -> None:
+    logger.warning(
+        "An AI takeoff bridge cleanup step failed after %s: %s", after, failed
+    )

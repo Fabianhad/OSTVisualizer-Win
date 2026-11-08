@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import copy
 import importlib
 import io
 import json
@@ -16,6 +17,7 @@ from ost_visualizer.application.dtos.ai_takeoff_dtos import AI_TAKEOFF_COMMANDS
 from ost_visualizer.mcp_takeoff import main as main_module
 from ost_visualizer.mcp_takeoff.protocol import JsonRpcError
 from ost_visualizer.mcp_takeoff.proxy import TakeoffProxy
+from ost_visualizer.mcp_takeoff.tool_catalog import tool_items
 from tests.paths import REPO_ROOT
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -717,6 +719,252 @@ class EntryScriptTests(unittest.TestCase):
             module = importlib.import_module("McpTakeoffServer")
         self.assertEqual(calls, [])
         self.assertEqual(module.__name__, "McpTakeoffServer")
+
+
+class ProxyContractTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.output_dir = Path(directory.name) / "outputs"
+
+    def proxy(self, result, inline_max_bytes=256 * 1024, output_dir=None):
+        return TakeoffProxy(
+            FakeClient(result),
+            self.output_dir if output_dir is None else output_dir,
+            inline_max_bytes=inline_max_bytes,
+            clock=lambda: datetime(2026, 10, 7, 9, 30, 0),
+            nonce_factory=lambda: "abc123",
+        )
+
+    def test_an_unknown_tool_is_an_invalid_params_error_naming_the_tool(self):
+        proxy = self.proxy({})
+        for name, message in (
+            ("approve_changeset", "Unknown tool: approve_changeset"),
+            ("", "Unknown tool: "),
+        ):
+            with self.subTest(name=name):
+                with self.assertRaises(JsonRpcError) as caught:
+                    proxy.call_tool(name, {})
+                self.assertEqual(caught.exception.code, -32602)
+                self.assertEqual(caught.exception.message, message)
+
+    def test_every_catalog_tool_is_forwarded_with_its_name_and_arguments(self):
+        result = {"success": True, "status": "ok", "data": {}}
+        client = FakeClient(result)
+        proxy = TakeoffProxy(client, self.output_dir)
+        names = [tool["name"] for tool in proxy.list_tools()]
+        self.assertEqual(names, list(AI_TAKEOFF_COMMANDS))
+        self.assertGreaterEqual(len(names), 15)
+        for name in names:
+            with self.subTest(name=name):
+                response = proxy.call_tool(name, {"marker": name})
+                self.assertIs(response["isError"], False)
+        self.assertEqual(client.calls, [(name, {"marker": name}) for name in names])
+
+    def test_the_listed_tools_are_the_catalog_items_with_schemas(self):
+        items = self.proxy({}).list_tools()
+        self.assertEqual(items, tool_items())
+        self.assertGreaterEqual(len(items), 15)
+        for item in items:
+            with self.subTest(name=item["name"]):
+                self.assertEqual(sorted(item), ["description", "inputSchema", "name"])
+                self.assertEqual(item["inputSchema"]["type"], "object")
+
+    def test_only_a_boolean_true_success_is_not_an_error(self):
+        for success, is_error in (
+            (True, False),
+            (False, True),
+            (1, True),
+            ("true", True),
+            (None, True),
+        ):
+            with self.subTest(success=success):
+                response = self.proxy({"success": success, "status": "s"}).call_tool(
+                    "list_sheets", {}
+                )
+                self.assertIs(response["isError"], is_error)
+        response = self.proxy({"status": "s"}).call_tool("list_sheets", {})
+        self.assertIs(response["isError"], True)
+
+    def test_the_app_result_is_not_modified_by_the_conversion(self):
+        for inline_max_bytes in (256 * 1024, 2000):
+            result = _render_result(PNG_BYTES + b"\x01" * 4000)
+            expected = copy.deepcopy(result)
+            with self.subTest(inline_max_bytes=inline_max_bytes):
+                proxy = self.proxy(result, inline_max_bytes=inline_max_bytes)
+                first = proxy.call_tool("render_sheet", {"page_uid": "p1"})
+                self.assertEqual(result, expected)
+                second = proxy.call_tool("render_sheet", {"page_uid": "p1"})
+                self.assertEqual(result, expected)
+                self.assertEqual(
+                    [item["type"] for item in first["content"]],
+                    [item["type"] for item in second["content"]],
+                )
+                self.assertIsNot(first["structuredContent"], result)
+
+    def test_a_string_output_folder_is_accepted(self):
+        result = {"success": True, "status": "ok", "data": {"x": "y" * 5000}}
+        proxy = self.proxy(
+            result, inline_max_bytes=1000, output_dir=str(self.output_dir)
+        )
+        response = proxy.call_tool("list_text", {})
+        saved = Path(response["structuredContent"]["full_output"]["path"])
+        self.assertEqual(saved.parent, self.output_dir)
+        self.assertTrue(saved.is_file())
+
+    def test_png_data_with_non_ascii_characters_is_dropped_not_raised(self):
+        result = _render_result()
+        result["data"]["image"]["png_base64"] = "iVBOéRw=="
+        response = self.proxy(result).call_tool("render_sheet", {"page_uid": "p1"})
+        self.assertEqual([item["type"] for item in response["content"]], ["text"])
+        self.assertEqual(
+            response["structuredContent"]["data"]["image"],
+            {"width_px": 10, "height_px": 8},
+        )
+        self.assertIs(response["isError"], False)
+        self.assertFalse(self.output_dir.exists())
+
+    def test_characterisation_unexpected_save_errors_are_not_reported_as_save_failures(
+        self,
+    ):
+        """Characterisation: pins current behaviour (only OSError is reported as a save failure)."""
+        png_result = _render_result(PNG_BYTES + b"\x01" * 4000)
+        json_result = {"success": True, "status": "ok", "data": {"x": "y" * 5000}}
+        for label, result, tool in (
+            ("png", png_result, "render_sheet"),
+            ("json", json_result, "list_text"),
+        ):
+            with self.subTest(label=label):
+                proxy = self.proxy(result, inline_max_bytes=2000)
+                with patch.object(Path, "open", side_effect=RuntimeError("boom")):
+                    with self.assertRaises(RuntimeError) as caught:
+                        proxy.call_tool(tool, {"page_uid": "p1"})
+                self.assertEqual(str(caught.exception), "boom")
+
+    def test_the_inline_limit_is_stored_as_an_int_whatever_numeric_type_is_given(self):
+        result = {"success": True, "status": "ok", "data": {"x": "y" * 5000}}
+        for value in (1000.0, "1000", 1000):
+            with self.subTest(value=value):
+                proxy = self.proxy(result, inline_max_bytes=value)
+                self.assertEqual(proxy._inline_max_bytes, 1000)
+                self.assertIs(type(proxy._inline_max_bytes), int)
+                response = proxy.call_tool("list_text", {})
+                self.assertTrue(response["structuredContent"]["inline_truncated"])
+                self.assertEqual(
+                    len(response["content"][0]["text"].encode("utf-8")), 1000 - 64
+                )
+
+    def test_an_astronomically_large_inline_limit_still_inlines_a_small_png(self):
+        proxy = self.proxy(_render_result(), inline_max_bytes=2**1100)
+        response = proxy.call_tool("render_sheet", {"page_uid": "p1"})
+        self.assertEqual(
+            [item["type"] for item in response["content"]], ["image", "text"]
+        )
+        self.assertEqual(base64.b64decode(response["content"][0]["data"]), PNG_BYTES)
+        self.assertNotIn("inline_truncated", response["structuredContent"])
+
+    def test_safe_collapses_each_run_of_bad_characters_to_one_dash_and_keeps_dots(self):
+        from ost_visualizer.mcp_takeoff.proxy import _safe
+
+        self.assertEqual(_safe("a  b"), "a-b")
+        self.assertEqual(_safe("a  //  b"), "a-b")
+        self.assertEqual(_safe("a.b"), "a.b")
+        self.assertEqual(_safe("v1.2_x"), "v1.2_x")
+        self.assertEqual(_safe("a_b-c"), "a_b-c")
+
+    def test_a_failed_png_save_reports_the_plain_error_text(self):
+        big_png = PNG_BYTES + b"\x01" * 4000
+        proxy = self.proxy(_render_result(big_png), inline_max_bytes=2000)
+        with patch.object(Path, "open", side_effect=OSError("disk full")):
+            response = proxy.call_tool("render_sheet", {"page_uid": "p1"})
+        image = response["structuredContent"]["data"]["image"]
+        self.assertEqual(image["file_save_error"], "disk full")
+        self.assertIs(image["file_saved"], False)
+
+
+class MainWiringTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(self.drop_handlers)
+
+    @staticmethod
+    def drop_handlers():
+        for handler in list(main_module.LOGGER.handlers):
+            main_module.LOGGER.removeHandler(handler)
+            handler.close()
+
+    def test_the_app_data_folder_is_dot_ost_visualizer_under_the_home_folder(self):
+        with tempfile.TemporaryDirectory() as home:
+            with patch.object(Path, "home", return_value=Path(home)):
+                self.assertEqual(
+                    main_module.app_data_dir(), Path(home) / ".ost_visualizer"
+                )
+
+    def test_main_connects_the_token_file_and_spills_outputs_under_the_app_data_folder(
+        self,
+    ):
+        big = {"success": True, "status": "ok", "data": {"x": "y" * (300 * 1024)}}
+        client = FakeClient(big)
+        created = []
+
+        def create_client(token_path):
+            created.append(token_path)
+            return client
+
+        requests = [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "list_text", "arguments": {"page_uid": "p1"}},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "nope", "arguments": {}},
+            },
+        ]
+        with tempfile.TemporaryDirectory() as home:
+            directory = Path(home) / "data"
+            stdout = io.StringIO()
+            with patch.object(main_module, "app_data_dir", return_value=directory):
+                with patch.object(main_module, "TakeoffPipeClient", create_client):
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        code = main_module.main(
+                            [],
+                            stdin=io.StringIO(
+                                "".join(json.dumps(item) + "\n" for item in requests)
+                            ),
+                            stdout=stdout,
+                        )
+            self.assertEqual(code, 0)
+            self.assertEqual(created, [directory / "ai_takeoff" / "session.token"])
+            self.assertEqual(client.calls, [("list_text", {"page_uid": "p1"})])
+            first, second = [
+                json.loads(line) for line in stdout.getvalue().splitlines()
+            ]
+            structured = first["result"]["structuredContent"]
+            saved = Path(structured["full_output"]["path"])
+            self.assertEqual(saved.parent, directory / "mcp_takeoff_outputs")
+            self.assertEqual(json.loads(saved.read_text(encoding="utf-8")), big)
+            self.assertEqual(
+                second["error"], {"code": -32602, "message": "Unknown tool: nope"}
+            )
+
+    def test_a_given_stdin_leaves_the_real_stdin_encoding_alone(self):
+        class FakeStdin(io.StringIO):
+            calls = []
+
+            def reconfigure(self, **options):
+                FakeStdin.calls.append(options)
+
+        with tempfile.TemporaryDirectory() as home:
+            with patch.object(
+                main_module, "app_data_dir", return_value=Path(home)
+            ), patch.object(sys, "stdin", FakeStdin("")):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    main_module.main([], stdin=io.StringIO(""), stdout=io.StringIO())
+        self.assertEqual(FakeStdin.calls, [])
 
 
 if __name__ == "__main__":

@@ -1492,3 +1492,567 @@ class LicenseOrchestratorReactivationGuardTests(unittest.TestCase):
             orchestrator._reactivate_once_if_device_activation_inactive(ok), ok
         )
         self.assertEqual(activate.calls, ["LIC"])
+
+
+class _ArgumentRecordingThreadManager:
+    def __init__(self):
+        self.calls = []
+
+    def spawn_with_bridge(
+        self, operation, callback_bridge, on_main_thread, error_prefix
+    ):
+        self.calls.append((error_prefix, callback_bridge))
+
+    def cleanup(self):
+        pass
+
+
+class LicenseOrchestratorFailurePolicyTests(unittest.TestCase):
+    _build_orchestrator = LicenseActivationContractTests._build_orchestrator
+    _result = staticmethod(LicenseActivationContractTests._result)
+
+    class _BrokenModel(FakeModel):
+        def ensure_hwid(self):
+            raise RuntimeError("registry corrupt")
+
+        def require_canonical_hwid(self):
+            raise RuntimeError("registry corrupt")
+
+    def _build(self, model, bridge=None, thread_manager=None):
+        validate = FakeUseCase(self._result(True, OK, LicenseStatus.VALID, "ok"))
+        activate = FakeUseCase(self._result(True, OK, LicenseStatus.VALID, "activated"))
+        publisher = FakeEventPublisher()
+        orchestrator = self._build_orchestrator(
+            validate,
+            activate,
+            publisher,
+            model=model,
+            callback_bridge=bridge,
+            thread_manager=thread_manager,
+        )
+        return orchestrator, validate, activate, publisher
+
+    def test_an_unexpected_model_failure_during_initialize_is_not_reported_as_a_hardware_failure(
+        self,
+    ):
+        orchestrator, validate, _activate, publisher = self._build(self._BrokenModel())
+        with self.assertRaisesRegex(RuntimeError, "^registry corrupt$"):
+            orchestrator.initialize()
+        self.assertEqual(orchestrator._scheduler.starts, 0)
+        self.assertEqual(validate.calls, [])
+        self.assertEqual(
+            (publisher.invalidated, publisher.lost_calls, publisher.activated_calls),
+            ([], 0, 0),
+        )
+        self.assertIsNone(orchestrator._current_license_status)
+        self.assertIsNone(orchestrator._status_message)
+
+    def test_an_unexpected_model_failure_before_an_activation_is_not_reported_as_a_hardware_failure(
+        self,
+    ):
+        orchestrator, _validate, activate, publisher = self._build(self._BrokenModel())
+        outcomes = []
+        with self.assertRaisesRegex(RuntimeError, "^registry corrupt$"):
+            orchestrator.activate_license_async(
+                "KEY", lambda ok, message: outcomes.append((ok, message))
+            )
+        self.assertEqual(outcomes, [])
+        self.assertEqual(activate.calls, [])
+        self.assertEqual(publisher.invalidated, [])
+        self.assertIsNone(orchestrator._current_license_status)
+        self.assertIs(orchestrator._operation_in_progress, False)
+
+    def test_an_unexpected_model_failure_during_periodic_validation_is_not_reported_as_a_hardware_failure(
+        self,
+    ):
+        bridge = QueuedCallbackBridge()
+        orchestrator, validate, _activate, publisher = self._build(
+            self._BrokenModel(), bridge=bridge
+        )
+        with self.assertRaisesRegex(RuntimeError, "^registry corrupt$"):
+            orchestrator._perform_periodic_validation()
+        self.assertEqual(validate.calls, [])
+        self.assertEqual(bridge.callbacks, [])
+        self.assertEqual(publisher.invalidated, [])
+        self.assertIsNone(orchestrator._current_license_status)
+
+    def test_a_periodic_validation_that_outlives_cleanup_returns_its_result_without_publishing(
+        self,
+    ):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "invalid",
+        )
+
+        class ValidationThatRacesCleanup(FakeUseCase):
+            orchestrator = None
+
+            def execute(self, license_key=None):
+                self.orchestrator.cleanup()
+                return super().execute(license_key)
+
+        validate = ValidationThatRacesCleanup(invalid)
+        publisher = FakeEventPublisher()
+        bridge = QueuedCallbackBridge()
+        orchestrator = self._build_orchestrator(
+            validate, FakeUseCase(invalid), publisher, callback_bridge=bridge
+        )
+        validate.orchestrator = orchestrator
+        self.assertIs(orchestrator._perform_periodic_validation(), invalid)
+        self.assertEqual(validate.calls, [None])
+        self.assertIsNone(orchestrator._callback_bridge)
+        self.assertEqual(bridge.callbacks, [])
+        self.assertEqual(publisher.invalidated, [])
+
+    def test_a_hardware_failure_found_by_a_periodic_validation_that_outlives_cleanup_is_returned_without_publishing(
+        self,
+    ):
+        bridge = QueuedCallbackBridge()
+        holder = []
+
+        class ModelThatRacesCleanup(FakeModel):
+            def require_canonical_hwid(self):
+                holder[0].cleanup()
+                raise HardwareIdentityError("firmware unavailable")
+
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "must not run",
+        )
+        validate = FakeUseCase(invalid)
+        publisher = FakeEventPublisher()
+        orchestrator = self._build_orchestrator(
+            validate,
+            FakeUseCase(invalid),
+            publisher,
+            model=ModelThatRacesCleanup(),
+            callback_bridge=bridge,
+        )
+        holder.append(orchestrator)
+        with self.assertLogs("test", level="ERROR"):
+            result = orchestrator._perform_periodic_validation()
+        self.assertEqual(
+            result.operation_status, LicenseOperationStatus.HWID_UNAVAILABLE
+        )
+        self.assertEqual(result.license_status, LicenseStatus.HWID_UNAVAILABLE)
+        self.assertEqual(validate.calls, [])
+        self.assertIsNone(orchestrator._callback_bridge)
+        self.assertEqual(bridge.callbacks, [])
+        self.assertEqual(publisher.invalidated, [])
+
+    def test_every_asynchronous_operation_hands_the_orchestrators_callback_bridge_to_the_thread_manager(
+        self,
+    ):
+        for operation, expected_prefix in (
+            ("initialize", "startup license validation"),
+            ("activate", "activation"),
+            ("deactivate", "deactivation"),
+        ):
+            with self.subTest(operation=operation):
+                bridge = QueuedCallbackBridge()
+                manager = _ArgumentRecordingThreadManager()
+                orchestrator, *_ = self._build(
+                    FakeModel(), bridge=bridge, thread_manager=manager
+                )
+                if operation == "initialize":
+                    orchestrator.initialize()
+                elif operation == "activate":
+                    orchestrator.activate_license_async("KEY", lambda *_args: None)
+                else:
+                    orchestrator.deactivate_license_async(lambda *_args: None)
+                self.assertEqual(len(manager.calls), 1)
+                prefix, handed_bridge = manager.calls[0]
+                self.assertEqual(prefix, expected_prefix)
+                self.assertIs(handed_bridge, bridge)
+
+
+class _ObservingPublisher:
+    """Publisher stand-in that records, in one shared log, what a synchronous subscriber would see at publish time."""
+
+    def __init__(self, log):
+        self.log = log
+        self.orchestrator = None
+
+    def _view(self):
+        return self.orchestrator.has_valid_license()
+
+    def publish_activated(self):
+        self.log.append(("activated", self._view()))
+
+    def publish_license_lost(self):
+        self.log.append(("lost", self._view()))
+
+    def publish_invalidated(self, message, status=None):
+        view = self.orchestrator.get_view_model()
+        self.log.append(
+            (
+                "invalidated",
+                self._view(),
+                view.hardware_identity_available,
+                view.message == message,
+            )
+        )
+        return True
+
+
+class LicenseOrchestratorPublishOrderingTests(unittest.TestCase):
+    """EventBus.publish and the completion callbacks run synchronously, so the order of state changes, publications
+    and callbacks inside the orchestrator is observable to subscribers and to callbacks that start the next operation.
+    """
+
+    _result = staticmethod(LicenseActivationContractTests._result)
+
+    def _build(self, model=None, thread_manager=None, deactivate_result=None):
+        log = []
+        publisher = _ObservingPublisher(log)
+        ok = self._result(True, OK, LicenseStatus.VALID, "activated")
+        gone = deactivate_result or self._result(
+            True, OK, LicenseStatus.NO_LICENSE, "deactivated"
+        )
+        orchestrator = LicenseOrchestrator(
+            license_model=model or FakeModel(),
+            validate_use_case=FakeUseCase(
+                self._result(True, OK, LicenseStatus.VALID, "ok")
+            ),
+            activate_use_case=FakeUseCase(ok),
+            deactivate_use_case=FakeUseCase(gone),
+            scheduler=FakeScheduler(),
+            event_publisher=publisher,
+            thread_manager=thread_manager or ImmediateThreadManager(),
+            callback_bridge=QueuedCallbackBridge(),
+            logger=logging.getLogger("test"),
+        )
+        publisher.orchestrator = orchestrator
+        self.addCleanup(orchestrator.cleanup)
+        return orchestrator, log
+
+    def test_a_completion_callback_may_start_the_next_operation(self):
+        for first in ("activate", "deactivate"):
+            with self.subTest(first=first):
+                orchestrator, _log = self._build()
+                inner = []
+
+                def record(success, message):
+                    inner.append((success, message))
+
+                def start_the_other(_success, _message):
+                    if first == "activate":
+                        orchestrator.deactivate_license_async(record)
+                    else:
+                        orchestrator.activate_license_async("KEY", record)
+
+                if first == "activate":
+                    orchestrator.activate_license_async("KEY", start_the_other)
+                    expected = (True, "deactivated")
+                else:
+                    orchestrator.deactivate_license_async(start_the_other)
+                    expected = (True, "activated")
+                self.assertEqual(inner, [expected])
+                self.assertIs(orchestrator._operation_in_progress, False)
+
+    def test_the_outcome_is_published_before_the_completion_callback_runs(self):
+        for operation, event in (("activate", "activated"), ("deactivate", "lost")):
+            with self.subTest(operation=operation):
+                orchestrator, log = self._build()
+                callback = lambda success, message: log.append(("callback", success))
+                if operation == "activate":
+                    orchestrator.activate_license_async("KEY", callback)
+                else:
+                    orchestrator.deactivate_license_async(callback)
+                self.assertEqual([entry[0] for entry in log], [event, "callback"])
+
+    def test_a_failed_operation_publishes_nothing_before_its_callback(self):
+        orchestrator, log = self._build(
+            deactivate_result=self._result(
+                False, LicenseOperationStatus.NETWORK_ERROR, None, "offline"
+            )
+        )
+        orchestrator.deactivate_license_async(
+            lambda success, message: log.append(("callback", success, message))
+        )
+        self.assertEqual(log, [("callback", False, "offline")])
+
+    def test_initialize_shows_grace_to_subscribers_before_the_server_has_answered(self):
+        model = FakeModel()
+        model.offline = True
+        model.valid = True
+        manager = _PendingThreadManager()
+        orchestrator, log = self._build(model=model, thread_manager=manager)
+        orchestrator.initialize()
+        self.assertEqual(log, [("activated", True)])
+        self.assertEqual(orchestrator._current_license_status, LicenseStatus.GRACE)
+        self.assertEqual(len(manager.pending), 1)
+        operation, on_main = manager.pending[0]
+        on_main(*operation())
+        self.assertEqual(orchestrator._current_license_status, LicenseStatus.VALID)
+        self.assertEqual(log, [("activated", True), ("activated", True)])
+
+    def test_initialize_without_a_license_clears_a_stale_status_before_reporting_the_loss(
+        self,
+    ):
+        model = FakeModel()
+        model.license_key = None
+        model.valid = True
+        orchestrator, log = self._build(model=model)
+        orchestrator._current_license_status = LicenseStatus.VALID
+        orchestrator.initialize()
+        self.assertEqual(log, [("lost", False)])
+        self.assertIsNone(orchestrator._current_license_status)
+
+    def test_a_hardware_failure_updates_the_state_before_the_invalidation_is_published(
+        self,
+    ):
+        for operation in ("initialize", "activate"):
+            with self.subTest(operation=operation):
+                model = FakeModel()
+                model.valid = True
+                model.hwid_error = HardwareIdentityError("firmware unavailable")
+                orchestrator, log = self._build(model=model)
+                orchestrator._current_license_status = LicenseStatus.VALID
+                with self.assertLogs("test", level="ERROR"):
+                    if operation == "initialize":
+                        orchestrator.initialize()
+                    else:
+                        orchestrator.activate_license_async(
+                            "KEY", lambda success, message: None
+                        )
+                self.assertEqual(log, [("invalidated", False, False, True)])
+                self.assertEqual(
+                    orchestrator._current_license_status, LicenseStatus.HWID_UNAVAILABLE
+                )
+
+
+class LicenseOrchestratorStartupCallbackOrderingTests(unittest.TestCase):
+    def test_the_startup_validation_callback_runs_after_the_outcome_is_published(self):
+        log = []
+        publisher = _ObservingPublisher(log)
+        orchestrator = LicenseOrchestrator(
+            license_model=FakeModel(),
+            validate_use_case=FakeUseCase(
+                LicenseOperationResultDto(
+                    success=True,
+                    operation_status=OK,
+                    license_status=LicenseStatus.VALID,
+                    message="ok",
+                )
+            ),
+            activate_use_case=FakeUseCase(None),
+            deactivate_use_case=FakeUseCase(None),
+            scheduler=FakeScheduler(),
+            event_publisher=publisher,
+            thread_manager=ImmediateThreadManager(),
+            callback_bridge=QueuedCallbackBridge(),
+            logger=logging.getLogger("test"),
+        )
+        publisher.orchestrator = orchestrator
+        self.addCleanup(orchestrator.cleanup)
+        orchestrator._current_license_status = LicenseStatus.VALID
+        orchestrator._model.valid = True
+        orchestrator._startup_validate_license_async(
+            lambda success, message: log.append(("callback", success, message))
+        )
+        self.assertEqual(log, [("activated", True), ("callback", True, "ok")])
+
+
+class LicenseOrchestratorInterruptPolicyTests(unittest.TestCase):
+    """Interrupt policy (KeyboardInterrupt or SystemExit): reset or release what the operation held, log any secondary
+    error and re-raise the ORIGINAL interrupt; never swallow it, never let a cleanup error replace it. Ordinary
+    exceptions keep their existing handling (see LicenseOrchestratorFailurePolicyTests).
+    """
+
+    INTERRUPTS = (KeyboardInterrupt, SystemExit)
+    _build_orchestrator = LicenseActivationContractTests._build_orchestrator
+    _result = staticmethod(LicenseActivationContractTests._result)
+
+    class _SpawnInterruptedOnce(ImmediateThreadManager):
+        def __init__(self, interrupt):
+            self.interrupt = interrupt
+            self.spawns = 0
+
+        def spawn_with_bridge(
+            self, operation, callback_bridge, on_main_thread, error_prefix
+        ):
+            self.spawns += 1
+            if self.spawns == 1:
+                raise self.interrupt
+            super().spawn_with_bridge(
+                operation, callback_bridge, on_main_thread, error_prefix
+            )
+
+    def _orchestrator(self, **kwargs):
+        valid = self._result(True, OK, LicenseStatus.VALID, "done")
+        use_case = FakeUseCase(valid)
+        orchestrator = self._build_orchestrator(
+            use_case,
+            use_case,
+            FakeEventPublisher(),
+            deactivate=use_case,
+            **kwargs,
+        )
+        return orchestrator, use_case
+
+    def test_an_interrupt_while_starting_an_operation_does_not_leave_license_operations_busy(
+        self,
+    ):
+        for kind in self.INTERRUPTS:
+            for operation in ("activate", "deactivate"):
+                with self.subTest(interrupt=kind.__name__, operation=operation):
+                    interrupt = kind("spawn interrupted")
+                    manager = self._SpawnInterruptedOnce(interrupt)
+                    orchestrator, use_case = self._orchestrator(thread_manager=manager)
+                    outcomes = []
+
+                    def submit():
+                        callback = lambda success, message: outcomes.append(
+                            (success, message)
+                        )
+                        if operation == "activate":
+                            orchestrator.activate_license_async("KEY", callback)
+                        else:
+                            orchestrator.deactivate_license_async(callback)
+
+                    with self.assertRaises(kind) as raised:
+                        submit()
+                    self.assertIs(raised.exception, interrupt)
+                    self.assertIs(orchestrator._operation_in_progress, False)
+                    self.assertEqual(outcomes, [])
+                    submit()
+                    self.assertEqual(outcomes, [(True, "done")])
+                    self.assertEqual(manager.spawns, 2)
+                    self.assertEqual(len(use_case.calls), 1)
+
+    def _failing_cleanup_orchestrator(self, calls, stop=None, clear=None, workers=None):
+        orchestrator, _use_case = self._orchestrator()
+
+        def step(name, error):
+            def run():
+                calls.append(name)
+                if error is not None:
+                    raise error
+
+            return run
+
+        scheduler = FakeScheduler()
+        scheduler.stop = step("stop", stop)
+        scheduler.clear_task = step("clear_task", clear)
+        manager = ImmediateThreadManager()
+        manager.cleanup = step("thread_cleanup", workers)
+        orchestrator._scheduler = scheduler
+        orchestrator._thread_manager = manager
+        return orchestrator
+
+    def _assert_released_and_retry_is_a_noop(self, orchestrator, calls):
+        for attribute in (
+            "_callback_bridge",
+            "_event_publisher",
+            "_scheduler",
+            "_thread_manager",
+        ):
+            self.assertIsNone(getattr(orchestrator, attribute))
+        self.assertIs(orchestrator._closed, True)
+        before = list(calls)
+        orchestrator.cleanup()
+        self.assertEqual(calls, before)
+
+    def test_an_interrupt_in_any_cleanup_stage_still_runs_the_other_stages_and_releases_every_reference(
+        self,
+    ):
+        for kind in self.INTERRUPTS:
+            for stage in ("stop", "clear", "workers"):
+                with self.subTest(interrupt=kind.__name__, stage=stage):
+                    calls = []
+                    interrupt = kind(f"{stage} interrupted")
+                    orchestrator = self._failing_cleanup_orchestrator(
+                        calls,
+                        stop=interrupt if stage == "stop" else None,
+                        clear=interrupt if stage == "clear" else None,
+                        workers=interrupt if stage == "workers" else None,
+                    )
+                    with self.assertNoLogs("test"):
+                        with self.assertRaises(kind) as raised:
+                            orchestrator.cleanup()
+                    self.assertIs(raised.exception, interrupt)
+                    self.assertEqual(calls, ["stop", "clear_task", "thread_cleanup"])
+                    self._assert_released_and_retry_is_a_noop(orchestrator, calls)
+
+    def test_ordinary_cleanup_errors_around_an_interrupt_are_logged_and_never_replace_it(
+        self,
+    ):
+        calls = []
+        interrupt = KeyboardInterrupt("original")
+        orchestrator = self._failing_cleanup_orchestrator(
+            calls,
+            stop=RuntimeError("stop failed"),
+            clear=interrupt,
+            workers=ValueError("workers failed"),
+        )
+        with self.assertLogs("test", level="ERROR") as logs:
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                orchestrator.cleanup()
+        self.assertIs(raised.exception, interrupt)
+        self.assertEqual(calls, ["stop", "clear_task", "thread_cleanup"])
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Error in license orchestrator cleanup;"
+                " the original KeyboardInterrupt is re-raised: stop failed",
+                "Error in license orchestrator cleanup;"
+                " the original KeyboardInterrupt is re-raised: workers failed",
+            ],
+        )
+        self.assertEqual(
+            [type(record.exc_info[1]) for record in logs.records],
+            [RuntimeError, ValueError],
+        )
+        self._assert_released_and_retry_is_a_noop(orchestrator, calls)
+
+    def test_a_second_interrupt_during_cleanup_is_logged_and_the_first_one_is_re_raised(
+        self,
+    ):
+        for stage, label in (
+            ("clear", "scheduler clear_task"),
+            ("workers", "thread manager cleanup"),
+        ):
+            with self.subTest(stage=stage):
+                calls = []
+                first = KeyboardInterrupt("first")
+                second = SystemExit(2)
+                orchestrator = self._failing_cleanup_orchestrator(
+                    calls,
+                    stop=first,
+                    clear=second if stage == "clear" else None,
+                    workers=second if stage == "workers" else None,
+                )
+                with self.assertLogs("test", level="ERROR") as logs:
+                    with self.assertRaises(KeyboardInterrupt) as raised:
+                        orchestrator.cleanup()
+                self.assertIs(raised.exception, first)
+                self.assertEqual(calls, ["stop", "clear_task", "thread_cleanup"])
+                self.assertEqual(
+                    [record.getMessage() for record in logs.records],
+                    [
+                        f"SystemExit during license orchestrator cleanup ({label})"
+                        " after KeyboardInterrupt;"
+                        " the original KeyboardInterrupt is re-raised"
+                    ],
+                )
+                self.assertIs(logs.records[0].exc_info[1], second)
+                self._assert_released_and_retry_is_a_noop(orchestrator, calls)
+
+    def test_without_an_interrupt_cleanup_errors_are_still_raised_and_not_logged(self):
+        calls = []
+        orchestrator = self._failing_cleanup_orchestrator(
+            calls, stop=RuntimeError("stop failed"), workers=ValueError("workers")
+        )
+        with self.assertNoLogs("test"):
+            with self.assertRaises(ExceptionGroup) as raised:
+                orchestrator.cleanup()
+        self.assertEqual(
+            [str(error) for error in raised.exception.exceptions],
+            ["stop failed", "workers"],
+        )
+        self.assertEqual(calls, ["stop", "clear_task", "thread_cleanup"])

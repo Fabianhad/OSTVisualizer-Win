@@ -125,3 +125,55 @@ class LicenseEventPublisherLoggingTests(unittest.TestCase):
             (AppEvents.LICENSE_STATUS_CHANGED, {"has_license": False}),
         )
         self.assertIs(publisher.publish_invalidated("fourth"), False)
+
+
+class LicenseEventPublisherReentrancyTests(unittest.TestCase):
+    """publish_invalidated must record that the failure was announced BEFORE it publishes anything.
+    EventBus.publish is synchronous, so a subscriber that runs a nested event loop could let a second failure outcome
+    (for example a queued periodic validation result) re-enter publish_invalidated while the first invalidation is
+    still being published. Reachability in the real application is plausible but not proven; the test pins the
+    ordering at the unit level with a bus that re-enters on its first publish.
+    """
+
+    class _Logger:
+        def __init__(self):
+            self.warnings = []
+
+        def warning(self, message, *args):
+            self.warnings.append(message % args)
+
+    def test_a_failure_raised_while_the_first_is_being_published_is_suppressed(self):
+        for status, expected_events, expected_warning in (
+            (
+                None,
+                [(AppEvents.LICENSE_STATUS_CHANGED, {"has_license": False})],
+                "License invalid: first",
+            ),
+            (
+                LicenseStatus.EXPIRED,
+                [
+                    (AppEvents.LICENSE_EXPIRED, {}),
+                    (AppEvents.LICENSE_STATUS_CHANGED, {"has_license": False}),
+                ],
+                "License expired: first",
+            ),
+        ):
+            with self.subTest(status=status):
+                published, nested = [], []
+                holder = []
+
+                class Bus:
+                    def publish(self, event, **kwargs):
+                        published.append((event, kwargs))
+                        if len(published) == 1:
+                            nested.append(
+                                holder[0].publish_invalidated("second", status)
+                            )
+
+                logger = self._Logger()
+                publisher = LicenseEventPublisher(Bus(), logger)
+                holder.append(publisher)
+                self.assertIs(publisher.publish_invalidated("first", status), True)
+                self.assertEqual(nested, [False])
+                self.assertEqual(published, expected_events)
+                self.assertEqual(logger.warnings, [expected_warning])

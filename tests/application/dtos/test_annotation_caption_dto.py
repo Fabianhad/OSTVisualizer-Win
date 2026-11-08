@@ -80,3 +80,38 @@ class AnnotationCaptionDtoValueTests(unittest.TestCase):
             AnnotationCaptionSettingsDto(True, ()),
             AnnotationCaptionSettingsDto(True, ()),
         )
+
+
+class AnnotationCaptionDtoFieldNameTests(unittest.TestCase):
+    def test_dtos_are_read_by_field_name_with_their_exact_types(self):
+        from ost_visualizer.application.dtos.annotation_caption_dto import (
+            AnnotationCaptionSettingsDto,
+            AnnotationCaptionSpec,
+        )
+        from ost_visualizer.domain.entities.annotation_caption import (
+            AnnotationCaptionId,
+        )
+
+        selected = (AnnotationCaptionId.LENGTH, AnnotationCaptionId.AREA)
+        settings = AnnotationCaptionSettingsDto(enabled=True, selected_ids=selected)
+        self.assertIs(settings.enabled, True)
+        self.assertIs(settings.selected_ids, selected)
+        self.assertEqual(
+            {field.name for field in fields(AnnotationCaptionSettingsDto)},
+            {"enabled", "selected_ids"},
+        )
+        spec = AnnotationCaptionSpec(title="T", measurement_type=5, prefix="P")
+        self.assertEqual(
+            (spec.title, spec.measurement_type, spec.prefix), ("T", 5, "P")
+        )
+        self.assertEqual(
+            [field.name for field in fields(AnnotationCaptionSpec)],
+            ["title", "measurement_type", "prefix"],
+        )
+        resolved = ResolvedAnnotationCaptionDto(
+            lines=("L1", "L2"), label="lab", measurement_types=3
+        )
+        self.assertEqual(
+            (resolved.lines, resolved.label, resolved.measurement_types),
+            (("L1", "L2"), "lab", 3),
+        )

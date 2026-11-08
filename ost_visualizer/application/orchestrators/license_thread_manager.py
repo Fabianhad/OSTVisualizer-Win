@@ -50,7 +50,7 @@ class LicenseThreadManager:
             self._active_threads.append(thread)
             try:
                 thread.start()
-            except Exception:
+            except BaseException:
                 self._active_threads.remove(thread)
                 raise
         return thread
@@ -62,12 +62,27 @@ class LicenseThreadManager:
             self._closed = True
             active_threads = list(self._active_threads)
         errors = []
+        interrupts: list[BaseException] = []
         for thread in active_threads:
             if thread.is_alive():
                 try:
                     thread.join(timeout=timeout)
                 except Exception as exc:
                     errors.append(exc)
+                    continue
+                except BaseException as exc:
+                    if interrupts:
+                        self._logger.error(
+                            "%s while joining license worker %s during cleanup after %s;"
+                            " the original %s is re-raised",
+                            type(exc).__name__,
+                            thread.name,
+                            type(interrupts[0]).__name__,
+                            type(interrupts[0]).__name__,
+                            exc_info=exc,
+                        )
+                    else:
+                        interrupts.append(exc)
                     continue
                 if thread.is_alive():
                     self._logger.warning(
@@ -77,6 +92,16 @@ class LicenseThreadManager:
                     )
         with self._lock:
             self._active_threads.clear()
+        if interrupts:
+            for error in errors:
+                self._logger.error(
+                    "Error joining a license worker during cleanup;"
+                    " the original %s is re-raised: %s",
+                    type(interrupts[0]).__name__,
+                    error,
+                    exc_info=error,
+                )
+            raise interrupts[0]
         if len(errors) == 1:
             raise errors[0]
         if errors:

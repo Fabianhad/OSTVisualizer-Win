@@ -230,3 +230,109 @@ class ElevationCalloutCenterTests(unittest.TestCase):
         result = self.resolve([(3, 4)])
         self.assertEqual((result.x, result.y), (3.0, 4.0))
         self.assertIsInstance(result.x, float)
+
+
+class ElevationCalloutQuantityFailureTests(unittest.TestCase):
+    SERVICE = "ost_visualizer.domain.services.elevation_callout_service"
+
+    def resolve(self):
+        return resolve_elevation_callout(
+            _elevation_support__area_condition(
+                name="F9 @T 410' 3\"",
+                thickness=48.0,
+                height=48.0,
+                z_value=4923.0,
+                condition_type=99,
+            ),
+            _elevation_support__area_takeoff(),
+            [],
+            _elevation_support__outer_ring(),
+        )
+
+    def test_the_dropped_quantity_is_logged_once_with_the_condition_and_the_reason(
+        self,
+    ):
+        with self.assertLogs(self.SERVICE, level="WARNING") as logged:
+            result = self.resolve()
+        self.assertEqual(result.lines, ("F9", "410' - 3\"", "406' - 3\""))
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(logged.records[0].levelname, "WARNING")
+        self.assertEqual(
+            logged.records[0].getMessage(),
+            "Omitting cubic yards from the elevation callout of condition "
+            "condition-1 ('F9 @T 410\\' 3\"'): Unsupported condition type 99",
+        )
+
+    def test_only_a_value_error_from_the_quantity_is_absorbed(self):
+        with mock.patch(
+            self.SERVICE + ".compute_takeoff_cubic_yards",
+            side_effect=RuntimeError("quantity engine broke"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "quantity engine broke"):
+                self.resolve()
+
+    def test_the_quantity_line_is_the_two_decimal_cubic_yards_with_the_uom_label(
+        self,
+    ):
+        with mock.patch(
+            self.SERVICE + ".compute_takeoff_cubic_yards", return_value=2.0049
+        ) as quantity:
+            result = self.resolve()
+        self.assertEqual(result.lines[-1], "2.00 CY")
+        quantity.assert_called_once()
+        self.assertEqual(quantity.call_args.args[2], [])
+
+    def test_ring_coordinates_are_coerced_to_float_characterisation(self):
+        from decimal import Decimal
+
+        result = resolve_elevation_callout(
+            _elevation_support__area_condition(
+                name="F9 @T 410' 3\"", thickness=48.0, z_value=4923.0
+            ),
+            _elevation_support__area_takeoff(),
+            [],
+            ((Decimal("1"), Decimal("2")), (Decimal("5"), Decimal("8"))),
+            ElevationCalloutSettings(
+                include_condition=True,
+                include_top=False,
+                include_bottom=False,
+                include_cubic_yards=False,
+            ),
+        )
+        self.assertEqual((result.x, result.y), (3.0, 5.0))
+        self.assertIsInstance(result.x, float)
+        self.assertIsInstance(result.y, float)
+
+
+class ElevationCalloutValueTests(unittest.TestCase):
+    def test_settings_and_callouts_are_immutable_values(self):
+        from dataclasses import FrozenInstanceError
+
+        settings = ElevationCalloutSettings()
+        with self.assertRaises(FrozenInstanceError):
+            settings.include_top = False
+        callout = ElevationCallout(x=1.0, y=2.0, lines=("F9",))
+        with self.assertRaises(FrozenInstanceError):
+            callout.x = 5.0
+        self.assertEqual(callout, ElevationCallout(x=1.0, y=2.0, lines=("F9",)))
+        self.assertEqual((callout.x, callout.y, callout.lines), (1.0, 2.0, ("F9",)))
+
+    def test_each_content_flag_alone_keeps_the_callout_and_all_off_has_no_content(
+        self,
+    ):
+        flags = (
+            "include_condition",
+            "include_top",
+            "include_bottom",
+            "include_cubic_yards",
+        )
+        self.assertTrue(ElevationCalloutSettings().has_content)
+        for enabled in flags:
+            with self.subTest(enabled=enabled):
+                settings = ElevationCalloutSettings(
+                    **{flag: flag == enabled for flag in flags}
+                )
+                self.assertTrue(settings.has_content)
+        self.assertFalse(
+            ElevationCalloutSettings(**{flag: False for flag in flags}).has_content
+        )

@@ -1310,3 +1310,222 @@ class SqliteBackedAnnotationReaderTests(unittest.TestCase):
                 self.assertEqual(annotation.properties, props)
                 self.assertEqual(annotation.layer_uid, "99")
                 self.assertIs(annotation.visible, False)
+
+    @staticmethod
+    def _row_values(table, uid, bid_uid, position, layer_uid=None):
+        values = {"UID": uid, "BidUID": bid_uid, "Position": position}
+        if "BidLayerUID" in _SQLITE_READER_DDL[table].split(", "):
+            values["BidLayerUID"] = layer_uid
+        return values
+
+    def test_each_table_resolves_its_own_layer_when_it_alone_has_rows(self):
+        # With every table populated, a block that forgot to resolve its own layer
+        # would silently reuse the previous table's value; isolating one table at a
+        # time makes the layer and visibility come from that table's own row.
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        for table, columns in _SQLITE_READER_DDL.items():
+            layered = "BidLayerUID" in columns.split(", ")
+            with self.subTest(table=table):
+                conn = self._database()
+                self._insert(
+                    conn, table, **self._row_values(table, 1, 1, position, layer_uid=50)
+                )
+                (annotation,) = self._read(conn).values()
+                expected = ("50", True) if layered else ("99", False)
+                self.assertEqual((annotation.layer_uid, annotation.visible), expected)
+
+    def test_rows_without_a_position_are_skipped_in_every_table(self):
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        for table in _SQLITE_READER_DDL:
+            with self.subTest(table=table):
+                conn = self._database()
+                self._insert(conn, table, **self._row_values(table, 1, 1, None))
+                self._insert(conn, table, **self._row_values(table, 2, 1, b""))
+                self._insert(conn, table, **self._row_values(table, 3, 1, position))
+                self.assertEqual(set(self._read(conn)), {"3"})
+
+    def test_text_rows_need_four_position_values_but_callouts_need_only_one(self):
+        conn = self._database()
+        for table, uid, values in (
+            ("BidTexts", 1, [1.0, 2.0, 3.0]),
+            ("BidTexts", 2, [1.0, 2.0, 3.0, 4.0]),
+            ("BidCallOuts", 3, [1.0]),
+            ("BidCallOuts", 4, [1.0, 2.0, 3.0]),
+        ):
+            self._insert(
+                conn, table, **self._row_values(table, uid, 1, encode_position(values))
+            )
+        by_uid = self._read(conn)
+        self.assertEqual(set(by_uid), {"2", "3", "4"})
+        self.assertEqual(by_uid["2"].position, [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(by_uid["3"].position, [1.0])
+        self.assertEqual(by_uid["4"].position, [1.0, 2.0, 3.0])
+
+    def test_width_is_returned_as_a_float_and_font_values_as_integers(self):
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        width_tables = (
+            "BidAnnotationClouds",
+            "BidAnnotationOvals",
+            "BidAnnotationPolygons",
+            "BidAnnotationRects",
+            "BidAnnoInk",
+            "BidALines",
+            "BidArrows",
+            "BidCallOuts",
+        )
+        for table in width_tables:
+            with self.subTest(table=table, column="Width"):
+                conn = self._database()
+                values = self._row_values(table, 1, 1, position)
+                self._insert(conn, table, Width=3, **values)
+                (annotation,) = self._read(conn).values()
+                self.assertIs(type(annotation.width), float)
+                self.assertEqual(annotation.width, 3.0)
+        # Defensive coercion: stored numbers that arrive as float or text still
+        # surface as int font size / alignment (sqlite keeps the inserted type).
+        for table in ("BidDimensions", "BidTexts", "BidCallOuts"):
+            with self.subTest(table=table, column="FontSize"):
+                conn = self._database()
+                values = self._row_values(table, 1, 1, position)
+                extra = {"FontSize": 14.0}
+                if table != "BidDimensions":
+                    extra["TextAlign"] = "2"
+                self._insert(conn, table, **extra, **values)
+                (annotation,) = self._read(conn).values()
+                self.assertIs(type(annotation.properties["FontSize"]), int)
+                self.assertEqual(annotation.properties["FontSize"], 14)
+                if table != "BidDimensions":
+                    self.assertIs(type(annotation.properties["TextAlign"]), int)
+                    self.assertEqual(annotation.properties["TextAlign"], 2)
+
+    def test_every_table_only_returns_rows_of_the_requested_bid(self):
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        conn = self._database()
+        expected = {"1": set(), "2": set(), "3": set()}
+        for index, table in enumerate(_SQLITE_READER_DDL):
+            for bid_uid in (1, 2, 3):
+                uid = 100 * bid_uid + index
+                self._insert(
+                    conn, table, **self._row_values(table, uid, bid_uid, position)
+                )
+                expected[str(bid_uid)].add(str(uid))
+        for bid_uid, uids in expected.items():
+            with self.subTest(bid_uid=bid_uid):
+                self.assertEqual(len(uids), len(_SQLITE_READER_DDL))
+                self.assertEqual(set(self._read(conn, bid_uid)), uids)
+        self.assertEqual(self._read(conn, "4"), {})
+
+    def test_font_flags_are_each_read_from_their_own_column(self):
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        flag_rows = (
+            (1, {"FontBold": 1, "FontItalic": 0, "FontUnderline": 0}),
+            (2, {"FontBold": 0, "FontItalic": 1, "FontUnderline": 0}),
+            (3, {"FontBold": 0, "FontItalic": 0, "FontUnderline": 1}),
+        )
+        for table in ("BidDimensions", "BidTexts", "BidCallOuts"):
+            with self.subTest(table=table):
+                conn = self._database()
+                for uid, flags in flag_rows:
+                    extra = dict(
+                        flags,
+                        BidPageUID=7,
+                        FontName="Cambria",
+                        FontColor=255,
+                        FontSize=14,
+                    )
+                    if table == "BidDimensions":
+                        extra.update(BidTakeoffFromUID=21, BidTakeoffToUID=22)
+                    else:
+                        extra.update(Name=b"Hello", TextAlign=2)
+                    if table == "BidCallOuts":
+                        extra.update(Color=0x00FFFF, Width=6)
+                    self._insert(
+                        conn,
+                        table,
+                        **extra,
+                        **self._row_values(table, uid, 1, position, layer_uid=50),
+                    )
+                by_uid = self._read(conn)
+                for uid, flags in flag_rows:
+                    properties = by_uid[str(uid)].properties
+                    self.assertEqual(
+                        {name: properties[name] for name in flags},
+                        {name: bool(value) for name, value in flags.items()},
+                    )
+
+    def _read_single_row(self, table, **extra):
+        position = encode_position([0.0, 0.0, 10.0, 10.0])
+        conn = self._database()
+        self._insert(conn, table, **extra, **self._row_values(table, 1, 1, position))
+        (annotation,) = self._read(conn).values()
+        return annotation
+
+    def test_zero_or_blank_column_values_read_as_the_documented_defaults(self):
+        # A falsy value (0 or '') is replaced by the default, exactly like NULL.
+        for table, columns in _SQLITE_READER_DDL.items():
+            columns = columns.split(", ")
+            with self.subTest(table=table, column="BidPageUID"):
+                annotation = self._read_single_row(table, BidPageUID=0)
+                self.assertEqual(annotation.page_uid, "")
+            if "Width" in columns:
+                with self.subTest(table=table, column="Width"):
+                    annotation = self._read_single_row(table, Width=0)
+                    self.assertIs(type(annotation.width), float)
+                    self.assertEqual(annotation.width, 2.0)
+        for table, default_size in (
+            ("BidDimensions", 10),
+            ("BidTexts", 12),
+            ("BidCallOuts", 12),
+        ):
+            with self.subTest(table=table, column="FontName"):
+                annotation = self._read_single_row(table, FontName="")
+                self.assertEqual(annotation.properties["FontName"], "Arial")
+            with self.subTest(table=table, column="FontSize"):
+                annotation = self._read_single_row(table, FontSize=0)
+                self.assertIs(type(annotation.properties["FontSize"]), int)
+                self.assertEqual(annotation.properties["FontSize"], default_size)
+
+    def test_characterisation_a_takeoff_reference_of_zero_is_kept_as_text_zero(self):
+        # CHARACTERISATION of current behaviour (owner question: should 0 be
+        # treated as unlinked, like NULL, instead of being kept as '0'?). Only NULL
+        # drops the property today.
+        for table in ("BidALines", "BidDimensions", "BidArrows"):
+            with self.subTest(table=table, case="zero"):
+                annotation = self._read_single_row(
+                    table, BidTakeoffFromUID=0, BidTakeoffToUID=0
+                )
+                self.assertEqual(
+                    {
+                        key: value
+                        for key, value in annotation.properties.items()
+                        if key.startswith("BidTakeoff")
+                    },
+                    {"BidTakeoffFromUID": "0", "BidTakeoffToUID": "0"},
+                )
+            with self.subTest(table=table, case="one side only"):
+                annotation = self._read_single_row(table, BidTakeoffToUID=0)
+                self.assertEqual(
+                    {
+                        key: value
+                        for key, value in annotation.properties.items()
+                        if key.startswith("BidTakeoff")
+                    },
+                    {"BidTakeoffToUID": "0"},
+                )
+
+
+class ResolveColorTests(unittest.TestCase):
+    def test_integers_become_hex_strings_text_is_kept_and_anything_else_is_the_default(
+        self,
+    ):
+        from ost_visualizer.infrastructure.mdb.components.annotation_reader import (
+            _resolve_color,
+        )
+
+        self.assertEqual(_resolve_color(0x0000FF), "#ff0000")
+        self.assertEqual(_resolve_color(0x00FF00), "#00ff00")
+        self.assertEqual(_resolve_color("#123456"), "#123456")
+        for unsupported in (None, 255.0, b"#123456", (255,)):
+            with self.subTest(unsupported=unsupported):
+                self.assertEqual(_resolve_color(unsupported), "#FF0000")
+                self.assertEqual(_resolve_color(unsupported, "#008000"), "#008000")

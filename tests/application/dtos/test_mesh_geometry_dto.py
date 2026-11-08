@@ -76,3 +76,62 @@ class MeshGeometryValueTests(unittest.TestCase):
         self.assertEqual(
             mesh, MeshGeometry([0.0], [1.0], [0], "#fff", 1.0, "p", "c", "t")
         )
+
+
+class MeshGeometryFieldTests(unittest.TestCase):
+    def test_mesh_geometry_fields_are_keyed_by_name_and_kept_by_identity(self):
+        from dataclasses import fields
+        from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
+
+        vertices, normals, indices = [0.0, 1.0, 2.0], [0.0, 0.0, 1.0], [0, 1, 2]
+        mesh = MeshGeometry(
+            vertices=vertices,
+            normals=normals,
+            indices=indices,
+            color="#123456",
+            opacity=0.25,
+            page_uid="page",
+            condition_uid="condition",
+            takeoff_uid="takeoff",
+        )
+        self.assertIs(mesh.vertices, vertices)
+        self.assertIs(mesh.normals, normals)
+        self.assertIs(mesh.indices, indices)
+        self.assertEqual(
+            (
+                mesh.color,
+                mesh.opacity,
+                mesh.page_uid,
+                mesh.condition_uid,
+                mesh.takeoff_uid,
+            ),
+            ("#123456", 0.25, "page", "condition", "takeoff"),
+        )
+        self.assertEqual(
+            {field.name for field in fields(MeshGeometry)},
+            {
+                "vertices",
+                "normals",
+                "indices",
+                "color",
+                "opacity",
+                "page_uid",
+                "condition_uid",
+                "takeoff_uid",
+            },
+        )
+        self.assertNotEqual(mesh, replace(mesh, vertices=[9.0]))
+
+    def test_scene_identity_is_frozen_and_normalizes_to_a_plain_tuple_and_int(self):
+        from dataclasses import FrozenInstanceError
+
+        identity = MeshSceneIdentity(BidRef("a.mdb", "b"), ["p2", "p1"], "3")
+        self.assertIs(type(identity.page_uids), tuple)
+        self.assertIs(type(identity.generation), int)
+        with self.assertRaises(FrozenInstanceError):
+            identity.generation = 4
+        with self.assertRaises(FrozenInstanceError):
+            identity.page_uids = ()
+        self.assertEqual(normalize_scene_page_uids([]), ())
+        self.assertIs(type(normalize_scene_page_uids([])), tuple)
+        self.assertIs(type(normalize_scene_page_uids(iter(["x"]))), tuple)

@@ -43217,12 +43217,11 @@
       "state": "All agents were stopped at their own checkpoint. Their full reports (tests/_audit_progress/*.json) were not retained (deleted 2026-11-06); the ledger keeps the conclusions."
     },
     "module_counts": {
-      "Awaiting Verification": 60,
-      "Verified": 48,
+      "Verified": 115,
+      "Awaiting Verification": 5,
       "In Progress": 24,
-      "Partial": 1,
-      "Verification Failed": 9,
       "Blocked": 18,
+      "Partial": 2,
       "Merged into test_pdf_exporter.py": 1,
       "Merged into test_schema_validator.py": 1,
       "Merged into test_server.py": 1
@@ -43230,20 +43229,48 @@
     "modules": {
       "tests/infrastructure/sql/test_writer.py": {
         "auditor": "A1",
-        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "status": "Verified",
         "verifier": "V1",
-        "mutation": {
-          "total": 1400,
-          "killed": 1351,
-          "survived": 49,
-          "equivalent": 42,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before_wave4": "Verified",
         "wave4_2026-11-07": {
           "changes": "item 1: 1 test (SQL writer refuses the Deleted Bids project inside its mutation transaction)",
           "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        },
+        "verifier_wave7_8": "V9b round 2 (V1e round 2 earlier)",
+        "mutation": {
+          "writer_py_V1e_round2": {
+            "total": 1506,
+            "killed": 1411,
+            "survived": 91,
+            "timeouts": 2,
+            "infra": 2
+          },
+          "interrupt_policy_lines_V9b": {
+            "total": 92,
+            "killed": 74,
+            "survived": 8,
+            "infra": 10
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9b round 2 (V1e round 2 earlier)",
+          "tests_before_wave7": 239,
+          "tests_now": 259,
+          "sha256": "48b05394e21092375606fd036ea5e7fabacbb5249b3d9335738a69b10d83a17b",
+          "notes": "survivors equivalent/unreachable (commit_attempted blocks rollback); production fix Approved."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+          "mutation": {
+            "total": 1400,
+            "killed": 1351,
+            "survived": 49,
+            "equivalent": 42,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/sql/test_schema_definition.py": {
@@ -43306,6 +43333,29 @@
           "equivalent": 36,
           "excluded": 0,
           "timeouts": 4
+        },
+        "status_before_wave7": "Awaiting Verification",
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Awaiting Verification",
+          "verifier": "none (A3l stopped early; the test file is unchanged)",
+          "tests_before_wave7": 216,
+          "tests_now": 216,
+          "sha256": "b64823508234fc966911ac7beaec27d324245f1e8dc3e2971fb7b5341e85ff4f",
+          "mutation": {
+            "A3l_base_sweep": {
+              "total": 855,
+              "killed": 815,
+              "survived": 36,
+              "timeouts": 4
+            }
+          },
+          "remaining_gaps": [
+            "No tests added (216 unchanged). The supplementary 1007-mutant sweep stopped at 300 (40 survivors unanalysed, 707 not run); 121 hand text mutants, the multi-seed PYTHONHASHSEED sweep and the four hang-only mutants (connected-states closure loop) were not run or re-verified.",
+            "Two tests were drafted but not inserted (deterministic debounce timer through timeout.emit; cancel_pages remaining-key set). About 40 percent of the tests were read line by line.",
+            "Owner question: the L698 mutants are classified unreachable because a database is SQL or MDB for its lifetime; confirm that holds if a database can be converted in place."
+          ],
+          "left_open": "by owner decision (reduced scope); not finished in this round"
         }
       },
       "tests/presentation/handlers/test_file_operation_handler.py": {
@@ -43349,16 +43399,8 @@
       },
       "tests/presentation/coordinators/test_ui_event_coordinator.py": {
         "auditor": "A3",
-        "status": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
+        "status": "Verified",
         "verifier": "V3",
-        "mutation": {
-          "total": 4338,
-          "killed": 4318,
-          "survived": 20,
-          "equivalent": 18,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before_wave5": "Verified",
         "wave5_2026-11-07": {
           "changes": "item 2: Sp3a5gBidLockStateTests (3 new, 1 changed): the SQL lock branch fails closed",
@@ -43368,6 +43410,33 @@
           "changes": "item 3: Sp3a5gBidLockStateTests: integer uid 0 reads locked with the warning (2 new rows) and a resolvable integer 0 reads its own flag (2 new rows)",
           "status_unchanged": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
           "independent_verification": "none yet"
+        },
+        "verifier_wave7_8": "V1f round 2",
+        "mutation": {
+          "total": 6630,
+          "killed": 6555,
+          "survived": 71,
+          "note": "raw 6493 killed / 133 survived plus 62 default-value rows killed through __defaults__"
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1f round 2",
+          "tests_before_wave7": 1435,
+          "tests_now": 1477,
+          "sha256": "7305f3875fd2158d30a919bec6b7bab14dbf75f79fdccb270464871b386271d6",
+          "notes": "verified together with test_cover_sheet (1477 + 9 tests)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
+          "mutation": {
+            "total": 4338,
+            "killed": 4318,
+            "survived": 20,
+            "equivalent": 18,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/presentation/windows/components/test_window.py": {
@@ -43416,6 +43485,29 @@
           },
           "production_change": "main_window.py:1020 exc_info=worker_error (see test_progress_dialog.py)",
           "not_second_passed": "the other 316 tests of this module are untouched and were NOT second-passed; the module as a whole keeps its status"
+        },
+        "status_before_wave7": "Awaiting Verification",
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Awaiting Verification",
+          "verifier": "none (A3m auditor only; no verifier ran in wave 7/8)",
+          "tests_before_wave7": 335,
+          "tests_now": 343,
+          "sha256": "d1dd97540bb67d68ef3b56c943bf5bc5cf578cff976c30153dd0e08f35ba1b2b",
+          "mutation": {
+            "A3m_sweep": {
+              "total": 2825,
+              "killed": 2813,
+              "survived": 12,
+              "timeouts": 1
+            }
+          },
+          "remaining_gaps": [
+            "No independent verification. A3m (343 tests, +8) closed 11 survivors; the 12 left are equivalent by argument (return None / delete Return, const 0 -> -1, keep operand 1).",
+            "Open question for the owner: is the bool() coercion of the four sidebar/status setters (None or str accepted) a contract or incidental? The new test pins it as current behaviour.",
+            "About 200 later A3-era tests were audited through the sweep and AST triage only, not re-read."
+          ],
+          "left_open": "by owner decision (reduced scope); not finished in this round"
         }
       },
       "tests/presentation/handlers/test_plan_view_action_handler.py": {
@@ -43429,6 +43521,29 @@
           "equivalent": 24,
           "excluded": 12,
           "timeouts": 0
+        },
+        "status_before_wave7": "Awaiting Verification",
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Awaiting Verification",
+          "verifier": "none (A3n stopped early; the test file is unchanged)",
+          "tests_before_wave7": 590,
+          "tests_now": 590,
+          "sha256": "09e29d08c668b7b8ff30433706b617cfa43f69dbdcb22ef5c91a2fb6a60d1fbe",
+          "mutation": {
+            "A3n_sweep": {
+              "total": 3886,
+              "killed": 3638,
+              "survived": 237,
+              "infra": 11
+            }
+          },
+          "remaining_gaps": [
+            "No tests added (590 unchanged). The 237 survivors (67 functions; most in _execute_local_plan_properties 23, _push_sql_paste_history 14, _push_sql_delete_history 12, on_elements_deleted 11, _push_sql_geometry_history 10) were NOT classified.",
+            "By eye likely real gaps: user-facing warning text/title (L3486-3487), history dict keys and kind strings, error messages (L1543/1561/2789/4534), annotation_text/annotation_style branches (L993-1003), deepcopy deletions (aliasing).",
+            "Survivors were not re-run against the whole module in fresh processes; about 530 of the 590 tests were not read whole."
+          ],
+          "left_open": "by owner decision (reduced scope); not finished in this round"
         }
       },
       "tests/presentation/components/plan_view/test_view.py": {
@@ -43462,7 +43577,7 @@
       },
       "tests/application/services/test_ai_takeoff_proposal_service.py": {
         "auditor": "A4",
-        "status": "Partial: 14 genuine gaps left, 5 more mutants (:1670/:1671) killable",
+        "status": "Awaiting Verification (wave-7 rework; V2h round 2 was interim and not completed)",
         "verifier": "V4",
         "outstanding": "43 survivors (see survivors; genuine gaps: float-tie boundaries at 451/763/1761/1767/1895, fixtures needing a sub-point gap or special opening geometry at 217/754/1734/1869) and 6 non-terminating mutants.",
         "mutation": {
@@ -43472,39 +43587,111 @@
           "equivalent": 29,
           "excluded": 0,
           "timeouts": 6
+        },
+        "status_before_wave7": "Partial: 14 genuine gaps left, 5 more mutants (:1670/:1671) killable",
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Awaiting Verification (wave-7 rework; V2h round 2 was interim and not completed)",
+          "verifier": "V2h round 2 (INTERIM, stopped on the coordinator request)",
+          "tests_before_wave7": 240,
+          "tests_now": 297,
+          "sha256": "cfa46c80dfe25b2153646ad6bb4da2969b1cf16d38cd45cf814780c1311c024b",
+          "mutation": {
+            "full_sweep_final_file_V2h": {
+              "total": 2346,
+              "killed": 2272,
+              "survived": 65,
+              "timeouts": 7,
+              "infra": 2
+            }
+          },
+          "remaining_gaps": [
+            "No verdict reached. V2h leaned Verified: the full sweep on the final 303-test file is clean (the 8 round-1 gap mutants of the sweep are killed, no new survivor), but the operator (277), constant (36) and default (14) sweeps and the probes were NOT re-run, so four round-1 gaps that live only in the operator set are not mutation-confirmed killed: _touches_box y orientation, L437 text centre, L712 gap order, L1382 cap hint (L1614/L1615 also).",
+            "Seven timeouts were argued, not re-run with a larger limit; 2 infra mutants (L1786/L1788) are genuine infinite loops.",
+            "Moderate coupling: WaveSevenRoundTwoListingTests pin which wall-end/dimension-line pairs _close_gaps bridges (greedy matching order); test_a_slow_dashed_analysis_stops_at_its_time_budget still depends on a real 0.5 s budget.",
+            "The 6 FullSizeSeededSegmentCapTests are skipped without OSTV_SLOW_TESTS (303 run, 297 defined here)."
+          ],
+          "left_open": "by owner decision (reduced scope); not finished in this round"
         }
       },
       "tests/application/services/test_ai_changeset_store.py": {
         "auditor": "A4",
-        "status": "Verification Failed",
+        "status": "Verified",
         "verifier": "V4",
-        "mutation": {
-          "total": 121,
-          "killed": 121,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V2a round 3",
+        "mutation": {
+          "total": 483,
+          "killed": 473,
+          "survived": 8,
+          "timeouts": 2,
+          "infra": 1
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2a round 3",
+          "tests_before_wave7": 30,
+          "tests_now": 59,
+          "sha256": "93b132e5ed0f7446ef59ddd2a27cb9cc25ed2ce22b9d6ccb39c7374ecece2390"
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict.",
+          "mutation": {
+            "total": 121,
+            "killed": 121,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
+        }
       },
       "tests/presentation/services/test_ai_takeoff_bridge.py": {
         "auditor": "A4",
-        "status": "Verification Failed (minor)",
+        "status": "Verified",
         "verifier": "V4",
-        "mutation": {
-          "total": 261,
-          "killed": 247,
-          "survived": 10,
-          "equivalent": 10,
-          "excluded": 0,
-          "timeouts": 4
-        },
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V2f round 3",
+        "mutation": {
+          "harness": {
+            "total": 569,
+            "killed": 552,
+            "survived": 11,
+            "timeouts": 6
+          },
+          "text_mutants": {
+            "specs": 180,
+            "killed": 147,
+            "survived": 4,
+            "timeouts": 2,
+            "obsolete_patterns": 27
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2f round 3",
+          "tests_before_wave7": 83,
+          "tests_now": 144,
+          "sha256": "0e1909b10cc8c47322ff2b9d18e888051b49b3156f534ec06f62957e9bed46a2",
+          "notes": "Verified with two disclosed owner-level items that are not test gaps: worker-thread SystemExit (survivor L421, classified unreachable, behaviour not pinned) and the test-teardown deadlock hygiene; production fix Approved."
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed (minor)",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict.",
+          "mutation": {
+            "total": 261,
+            "killed": 247,
+            "survived": 10,
+            "equivalent": 10,
+            "excluded": 0,
+            "timeouts": 4
+          }
+        }
       },
       "tests/mcp_takeoff/test_pipe_client.py": {
         "auditor": "A4",
@@ -43534,11 +43721,40 @@
       },
       "tests/mcp_takeoff/test_proxy.py": {
         "auditor": "A4",
-        "status": "Verification Failed (minor)",
+        "status": "Verified",
         "verifier": "V4",
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V2e round 2",
+        "mutation": {
+          "proxy_py": {
+            "total": 276,
+            "killed": 265,
+            "survived": 11
+          },
+          "main_py": {
+            "total": 64,
+            "killed": 64,
+            "survived": 0
+          },
+          "hand": {
+            "killed": 62,
+            "survived": 6
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2e round 2",
+          "tests_before_wave7": 41,
+          "tests_now": 56,
+          "sha256": "bc8d1f2e979ac3d1a631d92eb910675ff7c49a7b4d9cfb163348be57e3669095",
+          "notes": "survivors equivalent/unreachable (the L108 floor is dead through the public API)."
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed (minor)",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        }
       },
       "tests/mcp_takeoff/test_tool_catalog.py": {
         "auditor": "A4",
@@ -43555,67 +43771,134 @@
       },
       "tests/mcp_server/test_bridge_client.py": {
         "auditor": "A4",
-        "status": "Verification Failed",
+        "status": "Verified",
         "verifier": "V4",
-        "mutation": {
-          "total": 84,
-          "killed": 83,
-          "survived": 1,
-          "equivalent": 1,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V2c round 3",
+        "mutation": {
+          "note": "{\"ast\": {\"total\": 178, \"killed\": 161, \"survived\": 17}, \"bridge_mutants.py\": \"85 killed / 7 survived (baseline no-op, access ^ and +, success is True, write <, empty-break inline, handler reset) / 1 infra (bad pattern; same mutant killed in bridge_m2)\", \"bridge_m2.py\": \"8 killed / 1 survived (success"
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2c round 3",
+          "tests_before_wave7": 24,
+          "tests_now": 37,
+          "sha256": "bf2b496e8205222664725cdc15aef557f7f6350c750619805c2fb61bb685cd50"
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict.",
+          "mutation": {
+            "total": 84,
+            "killed": 83,
+            "survived": 1,
+            "equivalent": 1,
+            "excluded": 0,
+            "timeouts": 0
+          }
+        }
       },
       "tests/mcp_server/test_main.py": {
         "auditor": "A4",
-        "status": "Verification Failed (minor)",
+        "status": "Verified",
         "verifier": "V4",
-        "mutation": {
-          "total": 40,
-          "killed": 39,
-          "survived": 1,
-          "equivalent": 1,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V2b round 1",
+        "mutation": {
+          "total": 101,
+          "killed": 97,
+          "survived": 4,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2b round 1",
+          "tests_before_wave7": 14,
+          "tests_now": 15,
+          "sha256": "eb487203f1b3b8e33ca4fde134c10add2529920347f947181dd525e6592062a3"
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed (minor)",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict.",
+          "mutation": {
+            "total": 40,
+            "killed": 39,
+            "survived": 1,
+            "equivalent": 1,
+            "excluded": 0,
+            "timeouts": 0
+          }
+        }
       },
       "tests/mcp_server/test_output_artifacts.py": {
         "auditor": "A4",
-        "status": "Verification Failed (minor)",
+        "status": "Verified",
         "verifier": "V4",
-        "mutation": {
-          "total": 112,
-          "killed": 108,
-          "survived": 4,
-          "equivalent": 4,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V2c round 2",
+        "mutation": {
+          "note": "{\"ast\": {\"total\": 225, \"killed\": 214, \"survived\": 11}, \"textual_out_mutants.py\": \"136 killed / 5 survived\", \"out_m3 (split on LF)\": \"killed\", \"extra killers (6 + 3)\": \"pass on repo code\", \"probe_preview.py\": \"11,049,536 cases, 0 differences for all five _preview survivors (unchanged)\", \"uncapped\": t"
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2c round 2",
+          "tests_before_wave7": 29,
+          "tests_now": 46,
+          "sha256": "df90ee97a36d61cc5d51a5159023fc2900ed2d27ae819a31df969c6efb2559a5"
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed (minor)",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict.",
+          "mutation": {
+            "total": 112,
+            "killed": 108,
+            "survived": 4,
+            "equivalent": 4,
+            "excluded": 0,
+            "timeouts": 0
+          }
+        }
       },
       "tests/mcp_server/test_registry.py": {
         "auditor": "A4",
-        "status": "Verification Failed",
+        "status": "Verified",
         "verifier": "V4",
-        "mutation": {
-          "total": 98,
-          "killed": 96,
-          "survived": 2,
-          "equivalent": 2,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V9d round 2 (V2b round 2 earlier)",
+        "mutation": {
+          "total": 207,
+          "killed": 197,
+          "survived": 10
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9d round 2 (V2b round 2 earlier)",
+          "tests_before_wave7": 22,
+          "tests_now": 43,
+          "sha256": "ecb5b2b2fae64e8a20647518c21ae73af6d44a79ded2fe1989c4dc6fc21cb698",
+          "notes": "13 tests fail under a subst drive (Path.resolve): run tests/mcp_server with --no-subst; a path longer than 32767 characters is now ignored with a warning."
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict.",
+          "mutation": {
+            "total": 98,
+            "killed": 96,
+            "survived": 2,
+            "equivalent": 2,
+            "excluded": 0,
+            "timeouts": 0
+          }
+        }
       },
       "tests/mcp_server/test_serializers.py": {
         "auditor": "A4",
@@ -43671,19 +43954,38 @@
       },
       "tests/application/services/test_ai_takeoff_tokens.py": {
         "auditor": "A4",
-        "status": "Verification Failed",
+        "status": "Verified",
         "verifier": "V4",
-        "mutation": {
-          "total": 57,
-          "killed": 57,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before": "Verified (first pass; not re-run after A4 rework; A4 says untouched)",
         "second_verifier": "VAI",
-        "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict."
+        "verifier_wave7_8": "V2a round 2",
+        "mutation": {
+          "total": 157,
+          "killed": 150,
+          "survived": 7,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2a round 2",
+          "tests_before_wave7": 8,
+          "tests_now": 15,
+          "sha256": "5ca5da984fdf524475072e88978bc1d07ce86dc2c29fbb2bbe56da38a0bcb0ef"
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed",
+          "note": "Independently re-verified by VAI on 2026-11-06 after the first pass: killers saved, rework not done. The evidence file VAI_SHUTDOWN.json was not retained (deleted 2026-11-06); the ledger keeps the conclusions. test_registry also received an additive test in the 2026-11-06 resolution phase (non-UTF-8 file_state.json); that does not change this verdict.",
+          "mutation": {
+            "total": 57,
+            "killed": 57,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
+        }
       },
       "tests/application/services/test_ai_takeoff_sidecar_service.py": {
         "auditor": "A4",
@@ -43699,7 +44001,7 @@
         }
       },
       "tests/infrastructure/mdb/components/test_layer_operations.py": {
-        "status": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
+        "status": "Verified",
         "auditor": "W3-LAYER",
         "verifier": "V3-LAYER",
         "second_pass": {
@@ -43784,10 +44086,29 @@
           "changes": "item 1: BuiltInDefaultLayerUidAgreementTests (1 test: the dialog rule and the writer guard name the same uids)",
           "status_unchanged": "Awaiting Verification (wave-5 additions; the earlier version was Verified)",
           "independent_verification": "none yet"
+        },
+        "verifier_wave7_8": "V1a round 2",
+        "mutation": {
+          "total": 928,
+          "killed": 889,
+          "survived": 39,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1a round 2",
+          "tests_before_wave7": 108,
+          "tests_now": 112,
+          "sha256": "6e1e152b48252a75c075788535c2e51969906164195a8cd3bb6a4e2e5b8252d4"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-5 additions; the earlier version was Verified)"
         }
       },
       "tests/infrastructure/mdb/components/test_bid_data_reader.py": {
-        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "status": "Verified",
         "auditor": "W3-BIDREAD",
         "verifier": "V3-BIDREAD",
         "second_pass": {
@@ -43864,6 +44185,25 @@
           "changes": "item 9: OverlayResized text flag and folder ParentUID '' normalisation (sqlite tests and the real-Access class); 3 characterisation pins moved",
           "status_unchanged": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
           "independent_verification": "none yet"
+        },
+        "verifier_wave7_8": "V1c round 1",
+        "mutation": {
+          "total": 1923,
+          "killed": 1851,
+          "survived": 72,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1c round 1",
+          "tests_before_wave7": 184,
+          "tests_now": 184,
+          "sha256": "b4eeabcd7f2eebf61bbd1b59262b038e2197c77edaced63f4a752989ecbe6266"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)"
         }
       },
       "tests/infrastructure/mdb/components/test_bid_operations.py": {
@@ -43897,7 +44237,7 @@
         }
       },
       "tests/domain/services/test_ai_planar_regions.py": {
-        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "status": "Partial",
         "auditor": "W3-PLANAR",
         "verifier": "V3-PLANAR",
         "second_pass": {
@@ -43975,34 +44315,96 @@
         "wave4_2026-11-07": {
           "changes": "item 3: SegmentOrderIndependenceTests (6), CanonicalOrderHelperTests (8), 2 cadence tests; 12 tests re-baselined (drawing-order or luck-dependent values)",
           "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        },
+        "status_before_wave7": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Partial",
+          "verifier": "V1d round 2 (round 1 Partial)",
+          "tests_before_wave7": 226,
+          "tests_now": 246,
+          "sha256": "5f51fdab09d530e2fc66b04c3c2b6297e7f951f6b76814ca16466b0ed9d82480",
+          "mutation": {
+            "wave4_functions": {
+              "total": 316,
+              "killed": 294,
+              "survived": 20,
+              "timeouts": 2
+            },
+            "total_run": 1228
+          },
+          "remaining_gaps": [
+            "REAL GAP (V1d round 2): _runs_along_an_edge const 0.0 -> -1.0 (anti-parallel closing edge at unit scale); a scratch killer exists.",
+            "REAL GAP, low (V1d round 2): _VertexIndex._cell const 1 -> 0 (vertex-snapping tie rule and cell key).",
+            "The two tests SmallScaleGapClosingTests (L533) and VertexIndexTieTests (L97) were added after V1d round 2 (file 246 tests, V1d saw 244) and no verifier has seen them; the owner tie rule (last vertex wins) is pinned by PlanarTieRuleTests and VertexIndexTieTests, and AGENTS.md M2.3 now states the code's rule.",
+            "Offsets 2 and 3 of the sampled rest-of-module sweep were not re-run by V1d (A1d2 ran them); 7 non-terminating mutants counted as hangs."
+          ],
+          "left_open": "by owner decision (reduced scope); not finished in this round"
         }
       },
       "tests/infrastructure/mdb/components/test_overlay_rect.py": {
         "auditor": "A5",
-        "status": "Awaiting Verification",
-        "note": "V5 failed first pass; reworked, not re-verified",
-        "outstanding": "Notes cover the 6 earlier new tests; the 5 pre-existing tests and the 0.5-inch test have no independent note.",
+        "status": "Verified",
+        "verifier_wave7_8": "V9d round 2 (V3e round 3 earlier)",
         "mutation": {
-          "total": 91,
-          "killed": 91,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 8,
-          "timeouts": 0
+          "total": 191,
+          "killed": 191,
+          "survived": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9d round 2 (V3e round 3 earlier)",
+          "tests_before_wave7": 13,
+          "tests_now": 23,
+          "sha256": "df6a7e1a049af2b5f060ab1e65d0d796a72fc0c26584b8f3a41dc9ff6adc2947",
+          "notes": "full_page_overlay_rect(None or non-numeric) is pinned as a characterisation (owner question open)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "Notes cover the 6 earlier new tests; the 5 pre-existing tests and the 0.5-inch test have no independent note.",
+          "note": "V5 failed first pass; reworked, not re-verified",
+          "mutation": {
+            "total": 91,
+            "killed": 91,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 8,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_identity_allocation.py": {
         "auditor": "A5",
-        "status": "Awaiting Verification",
-        "note": "V5 failed first pass; reworked, not re-verified",
-        "outstanding": "Notes cover 5 tests; 3 pre-existing tests and the new text-uid/edge classes lack independent notes.",
+        "status": "Verified",
+        "verifier_wave7_8": "V3e round 1",
         "mutation": {
-          "total": 49,
-          "killed": 45,
-          "survived": 4,
-          "equivalent": 4,
-          "excluded": 5,
-          "timeouts": 0
+          "total": 124,
+          "killed": 109,
+          "survived": 15,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3e round 1",
+          "tests_before_wave7": 14,
+          "tests_now": 16,
+          "sha256": "ed8f37eb9ee6e6d8290405a59937bc2ac20ecd3287d3e093f45a6eb11bcd79d7"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "Notes cover 5 tests; 3 pre-existing tests and the new text-uid/edge classes lack independent notes.",
+          "note": "V5 failed first pass; reworked, not re-verified",
+          "mutation": {
+            "total": 49,
+            "killed": 45,
+            "survived": 4,
+            "equivalent": 4,
+            "excluded": 5,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_serialization.py": {
@@ -44032,7 +44434,7 @@
         }
       },
       "tests/infrastructure/mdb/components/test_project_operations.py": {
-        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "status": "Verified",
         "auditor": "W3-DELETE",
         "verifier": "V3-DELETE",
         "second_pass": {
@@ -44097,6 +44499,25 @@
         "wave4_2026-11-07": {
           "changes": "item 1: DeletedBidsProjectGuardTests (6 tests); 7 existing tests that deleted project UID 1 as an ordinary project now use another uid",
           "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        },
+        "verifier_wave7_8": "V1b round 2",
+        "mutation": {
+          "total": 289,
+          "killed": 277,
+          "survived": 12,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1b round 2",
+          "tests_before_wave7": 40,
+          "tests_now": 40,
+          "sha256": "15bee5857639314523a988c435994af1e7c49f5fca6e45bbcf5d5abe582ad341"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)"
         }
       },
       "tests/infrastructure/mdb/components/test_condition_folder_operations.py": {
@@ -44235,7 +44656,7 @@
         "earlier_auditor": "A5"
       },
       "tests/infrastructure/parsers/test_position_parser.py": {
-        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "status": "Verified",
         "auditor": "W3-PARSE",
         "verifier": "V3-POSPARSER",
         "second_pass": {
@@ -44313,45 +44734,136 @@
           "changes": "items 1 and 6: MetricSignAppliesToTheWholeValueTests (6), MetricFormattingDropsRoundingNoiseTests (6); 3 pins moved from -80 to -120 cm; 1 pin of the '1.00 cm' bug replaced; dead replace() removed (differential run, 0 differences in 16,933 inputs)",
           "status_unchanged": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
           "independent_verification": "none yet"
+        },
+        "verifier_wave7_8": "V1d round 3",
+        "mutation": {
+          "total": 735,
+          "note": "harness AST 400: 365/35 (equivalent/tooling); hand 82: 73/9; regex-quantifier set 78: 78/0; killers retest 18/18; own set 87: 66 killed/21 equivalent (exhaustive regex checks)"
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1d round 3",
+          "tests_before_wave7": 81,
+          "tests_now": 98,
+          "sha256": "8d2be7ee00ae3bfacc6ed31629ccc6d0508cb7db5e33fa642463057961c39c7b",
+          "notes": "98 tests; the 20+18 real gaps of rounds 1-2 are killed by the repo module."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)"
         }
       },
       "tests/infrastructure/mdb/importers/test_ost_importer.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 7 survivors listed (all argued equivalent/unreachable).",
+        "status": "Verified",
+        "verifier_wave7_8": "V3h round 2",
         "mutation": {
-          "total": 273,
-          "killed": 266,
-          "survived": 7,
-          "equivalent": 7,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 1030,
+          "killed": 919,
+          "survived": 50,
+          "infra": 61
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3h round 2",
+          "tests_before_wave7": 54,
+          "tests_now": 66,
+          "sha256": "d89bd4cc7dbb73aa65241a2c703c0ecda6b30a74f366422ff414be0be5f367ae",
+          "notes": "survivors tooling/equivalent."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 7 survivors listed (all argued equivalent/unreachable).",
+          "mutation": {
+            "total": 273,
+            "killed": 266,
+            "survived": 7,
+            "equivalent": 7,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/importers/test_osp_importer.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 8 survivors listed (all argued equivalent/unreachable).",
+        "status": "Verified",
+        "verifier_wave7_8": "V3h round 4 (F8 rework; V3h round 2 earlier)",
         "mutation": {
-          "total": 250,
-          "killed": 242,
-          "survived": 8,
-          "equivalent": 8,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 966,
+          "killed": 876,
+          "survived": 81,
+          "timeouts": 3,
+          "infra": 6,
+          "hand_mutants_new_code": {
+            "total": 28,
+            "killed": 28,
+            "survived": 0
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3h round 4 (F8 rework; V3h round 2 earlier)",
+          "tests_before_wave7": 58,
+          "tests_now": 103,
+          "sha256": "a8e89369a72f5e22c8327bb50a58b88214d84d28e491c8410609b547cafa2630",
+          "notes": "survivors tooling/equivalent/closed; the three subst-sensitive tests now compare resolved paths; production fix Approved."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 8 survivors listed (all argued equivalent/unreachable).",
+          "mutation": {
+            "total": 250,
+            "killed": 242,
+            "survived": 8,
+            "equivalent": 8,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_import_operations.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 32 survivors listed (all argued equivalent/unreachable).",
+        "status": "Verified",
+        "verifier_wave7_8": "V8a round 3",
         "mutation": {
-          "total": 433,
-          "killed": 401,
-          "survived": 32,
-          "equivalent": 32,
-          "excluded": 0,
-          "timeouts": 0
+          "ast": {
+            "total": 886,
+            "killed": 824,
+            "survived": 62
+          },
+          "extra_operators": {
+            "total": 173,
+            "killed": 84,
+            "survived": 89
+          },
+          "hand": {
+            "total": 60,
+            "killed": 56,
+            "survived": 4
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V8a round 3",
+          "tests_before_wave7": 62,
+          "tests_now": 102,
+          "sha256": "b9b676e380588eb4f2bbe7ae93099fedabe06a4b44e38bdf2723ec6dff7e33ab",
+          "notes": "survivors equivalent/unreachable/tooling; an OverflowError from an absurd datetime text propagates (CHARACTERISATION, owner question open)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 32 survivors listed (all argued equivalent/unreachable).",
+          "mutation": {
+            "total": 433,
+            "killed": 401,
+            "survived": 32,
+            "equivalent": 32,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/exporters/test_ost_exporter.py": {
@@ -44369,84 +44881,223 @@
       },
       "tests/infrastructure/mdb/components/test_annotation_operations.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 4 survivors listed (all argued equivalent).",
+        "status": "Verified",
+        "verifier_wave7_8": "V8a round 2",
         "mutation": {
-          "total": 482,
-          "killed": 478,
-          "survived": 4,
-          "equivalent": 4,
-          "excluded": 0,
-          "timeouts": 0
+          "ast": {
+            "total": 940,
+            "killed": 929,
+            "survived": 11
+          },
+          "extra_operators": {
+            "total": 237,
+            "killed": 152,
+            "survived": 85
+          },
+          "hand": {
+            "total": 102,
+            "killed": 95,
+            "survived": 7
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V8a round 2",
+          "tests_before_wave7": 74,
+          "tests_now": 95,
+          "sha256": "27ca533e152fa626b1ca89f905c69e2400bc1f938ea1f3b6503d32781b7245c4",
+          "notes": "survivors equivalent/tuning; padded or float uids are accepted by position saves (characterisation, owner question open); a TEXT-typed UID column is outside the Access contract (tuning)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 4 survivors listed (all argued equivalent).",
+          "mutation": {
+            "total": 482,
+            "killed": 478,
+            "survived": 4,
+            "equivalent": 4,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_annotation_reader.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 0 survivors (219/219 killed).",
+        "status": "Verified",
+        "verifier_wave7_8": "V3e round 2",
         "mutation": {
-          "total": 219,
-          "killed": 219,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 808,
+          "killed": 797,
+          "survived": 10,
+          "timeouts": 0,
+          "infra": 1
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3e round 2",
+          "tests_before_wave7": 20,
+          "tests_now": 29,
+          "sha256": "f35c9e261ea1245ba3591fd798f6f1f101d1fe2f15bf554135ef30742595fd3f"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 0 survivors (219/219 killed).",
+          "mutation": {
+            "total": 219,
+            "killed": 219,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/mappers/test_annotation_mapper.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None.",
+        "status": "Verified",
+        "verifier_wave7_8": "V3e round 1",
         "mutation": {
-          "total": 2,
-          "killed": 2,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 12,
+          "killed": 10,
+          "survived": 2,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3e round 1",
+          "tests_before_wave7": 5,
+          "tests_now": 5,
+          "sha256": "e97c2182a6e48b8176dfc17372b96a4fb84345fc2a584ef42fb1cee9352c7cb4"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None.",
+          "mutation": {
+            "total": 2,
+            "killed": 2,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_mdb_writer.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 3 survivors listed (2 ContextVar debug names and 1 depth>0 vs >=0 comparison, all argued equivalent)",
+        "status": "Verified",
+        "verifier_wave7_8": "V9b round 2 (V3f round 2 earlier)",
         "mutation": {
-          "total": 127,
-          "killed": 124,
-          "survived": 3,
-          "equivalent": 3,
-          "excluded": 0,
-          "timeouts": 0
+          "wave8_changed_functions": {
+            "total": 90,
+            "killed": 64,
+            "survived": 7,
+            "infra": 19,
+            "note": "infra = escaped interrupt, detected"
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9b round 2 (V3f round 2 earlier)",
+          "tests_before_wave7": 46,
+          "tests_now": 68,
+          "sha256": "b4749acb7c44752c507eb94ac7221bebfdfcc2129b939e05e36f44cda84e594e",
+          "notes": "survivors: widen no-op, depth-0-only equivalents; production fix Approved."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 3 survivors listed (2 ContextVar debug names and 1 depth>0 vs >=0 comparison, all argued equivalent)",
+          "mutation": {
+            "total": 127,
+            "killed": 124,
+            "survived": 3,
+            "equivalent": 3,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_database_creator.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None (all 225 mutants killed in the final sweep)",
+        "status": "Verified",
+        "verifier_wave7_8": "V8c round 2",
         "mutation": {
-          "total": 225,
-          "killed": 225,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "ast": {
+            "total": 308,
+            "killed": 303,
+            "survived": 5
+          },
+          "hand": {
+            "total": 430,
+            "killed": 425,
+            "survived": 5
+          },
+          "real_access_sample": "seed 98/143, int 6/44, race 3/16 killed by the real-Access test; every survivor killed by the unit suite or equivalent"
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V8c round 2",
+          "tests_before_wave7": 62,
+          "tests_now": 87,
+          "sha256": "5ab04569217afdee5bb3de7834755db1ac738a132da7a91da8c3ef982a107fff",
+          "notes": "production fix Approved; all survivors equivalent or tooling (except-widen on handlers that already catch BaseException, ASCII-only script text)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None (all 225 mutants killed in the final sweep)",
+          "mutation": {
+            "total": 225,
+            "killed": 225,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_database_maintenance.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 3 survivors listed (ReplaceFileW flags 0->1 and removal of argtypes/restype declarations, argued equivalent)",
+        "status": "Verified",
+        "verifier_wave7_8": "V9a round 3 (V3f round 2 earlier)",
         "mutation": {
-          "total": 148,
-          "killed": 145,
-          "survived": 3,
-          "equivalent": 3,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 323,
+          "killed": 315,
+          "survived": 8,
+          "hand_mutants": {
+            "total": 77,
+            "killed": 70,
+            "survived": 7
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9a round 3 (V3f round 2 earlier)",
+          "tests_before_wave7": 47,
+          "tests_now": 86,
+          "sha256": "bad250d5f356600da8da5f2df26d64706dbe56b46cc903cf72302ecaedfeda43",
+          "notes": "all survivors equivalent or tuning; production fix Approved (round 3). The work folder is still deleted after a successful rename-back (owner confirmed, pinned)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 3 survivors listed (ReplaceFileW flags 0->1 and removal of argtypes/restype declarations, argued equivalent)",
+          "mutation": {
+            "total": 148,
+            "killed": 145,
+            "survived": 3,
+            "equivalent": 3,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_connection_manager.py": {
-        "status": "Verified",
+        "status": "Partial",
         "auditor": "W3-CONN",
         "verifier": "V3-CONN",
         "second_pass": {
@@ -44513,19 +45164,72 @@
           "timeouts": 0
         },
         "outstanding_before_wave3": "None beyond the 1 survivor(s) listed (classified equivalent mutant, justified)",
-        "earlier_auditor": "A5b"
+        "earlier_auditor": "A5b",
+        "status_before_wave7": "Verified",
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Partial",
+          "verifier": "V9b round 2 (round 1 Partial)",
+          "tests_before_wave7": 121,
+          "tests_now": 137,
+          "sha256": "dff5abec5703ddba5993f6322ac38afc01929b65285fbdaa2f6231e229dd025d",
+          "mutation": {
+            "connection_lease_V9b": {
+              "total": 238,
+              "killed": 212,
+              "survived": 8,
+              "infra": 18
+            },
+            "wrapper_rollback": {
+              "total": 11,
+              "killed": 8,
+              "survived": 1,
+              "infra": 2
+            },
+            "hand_mutants": {
+              "total": 36,
+              "killed": 33,
+              "survived": 2
+            }
+          },
+          "remaining_gaps": [
+            "REAL GAP: widening the two eviction close() guards (connection_manager L213 and L239, `pyodbc.Error` -> `Exception`) survives. That equals the owner-pending behaviour: a non-driver Exception from conn.close() during eviction replaces an in-flight interrupt (real pyodbc raises only pyodbc.Error; data safe: the handle is already flagged unhealthy). Pin or fix once the owner decides.",
+            "UNCLASSIFIED (pre-existing lines this wave did not touch): L78 default argument (harness tooling), L110/L115 keep operand 1, L241 const 0 -> -1.",
+            "The production fix (connection_wrapper, connection_manager, sql/writer) is Approved by V9b round 2; the 11 new manager/wrapper tests have exact assertions."
+          ],
+          "left_open": "by owner decision (reduced scope); not finished in this round"
+        }
       },
       "tests/infrastructure/mdb/test_mdb_reader.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None (all 31 mutants killed)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3f round 1",
         "mutation": {
-          "total": 31,
-          "killed": 31,
+          "total": 58,
+          "killed": 58,
           "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3f round 1",
+          "tests_before_wave7": 20,
+          "tests_now": 22,
+          "sha256": "ba9d1b1a60c88f17c2a794a3a3c00af9e8b63e7fa51fda8f3dd2b1fa270852fa"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None (all 31 mutants killed)",
+          "mutation": {
+            "total": 31,
+            "killed": 31,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_raw_bid_integrity.py": {
@@ -44539,110 +45243,284 @@
           "equivalent": 15,
           "excluded": 10,
           "timeouts": 6
+        },
+        "status_before_wave7": "Awaiting Verification",
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Awaiting Verification",
+          "verifier": "none (A3k auditor only; no verifier ran in wave 7/8)",
+          "tests_before_wave7": 112,
+          "tests_now": 118,
+          "sha256": "ba1eec12dbf3e07a82e641aea0f2f3f4cc1702092a7c4fba288572becfce8b94",
+          "mutation": {
+            "A3k_sweep": {
+              "total": 4246,
+              "killed": 4081,
+              "survived": 165,
+              "note": "before the new tests; about 155 AST survivors remain, not re-measured on the 118 tests"
+            }
+          },
+          "remaining_gaps": [
+            "REAL GAP, open: L408 keep operand 0 (a duplicate UID with a self-parent row plus a null-parent twin in BidAreas/BidConditionFolders/BidPageFolders).",
+            "Six tests added (112 -> 118); the full 3868-mutant sweep was not re-run on the final file, only the 12 targeted mutants (all killed). Equivalence claims rest on a 6000-case differential fuzz plus reasoning."
+          ],
+          "left_open": "by owner decision (reduced scope); not finished in this round"
         }
       },
       "tests/infrastructure/mdb/test_schema_compatibility.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3d round 1",
         "mutation": {
-          "total": 47,
-          "killed": 47,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 270,
+          "killed": 238,
+          "survived": 32,
+          "timeouts": 0,
+          "infra": 3
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3d round 1",
+          "tests_before_wave7": 25,
+          "tests_now": 28,
+          "sha256": "41ef5052fecb59f93bcc34d2d951beac45eddab5de354baa4832ab7dbb406a6c"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 47,
+            "killed": 47,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_schema_contract.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 1 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3d round 1",
         "mutation": {
-          "total": 77,
-          "killed": 74,
-          "survived": 1,
-          "equivalent": 1,
-          "excluded": 2,
-          "timeouts": 0
+          "total": 604,
+          "killed": 574,
+          "survived": 30,
+          "timeouts": 0,
+          "infra": 10
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3d round 1",
+          "tests_before_wave7": 8,
+          "tests_now": 8,
+          "sha256": "2b1934d40deb318a69eb6eb76b373f786be1e859f4fbe8a5ad059c66347e47c1"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 1 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 77,
+            "killed": 74,
+            "survived": 1,
+            "equivalent": 1,
+            "excluded": 2,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_constants.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3e round 1",
         "mutation": {
-          "total": 115,
-          "killed": 109,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 6,
-          "timeouts": 0
+          "total": 473,
+          "killed": 461,
+          "survived": 12,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3e round 1",
+          "tests_before_wave7": 13,
+          "tests_now": 13,
+          "sha256": "8e988cacb0e79c8417d09792070008318053631c3fcc4ba6271d93996a8dcb92"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 115,
+            "killed": 109,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 6,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_reference_schema_metadata.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3d round 1",
         "mutation": {
-          "total": 1187,
-          "killed": 1187,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 10939,
+          "killed": 10762,
+          "survived": 177,
+          "timeouts": 0,
+          "infra": 61
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3d round 1",
+          "tests_before_wave7": 11,
+          "tests_now": 12,
+          "sha256": "4abe5e0c46ec8b02f1a5879e9b151c3f1465bef69f816e875ef83a3553abce47"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 1187,
+            "killed": 1187,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_reference_validation.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3d round 1",
         "mutation": {
-          "total": 5,
-          "killed": 5,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 38,
+          "killed": 32,
+          "survived": 6,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3d round 1",
+          "tests_before_wave7": 4,
+          "tests_now": 4,
+          "sha256": "234207eddf01b5ad81c0662c7d83f7e26937ba1d9b8b7b7718d86e0b060b378f"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 5,
+            "killed": 5,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/test_bid_settings_contract.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3d round 1",
         "mutation": {
-          "total": 7,
-          "killed": 7,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 70,
+          "killed": 63,
+          "survived": 7,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3d round 1",
+          "tests_before_wave7": 9,
+          "tests_now": 11,
+          "sha256": "59345da8fed051af3ade48d74570756f3ec6eb762e946c4374c2b52d8b2c11a4"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 7,
+            "killed": 7,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_legend_position.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 2 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3e round 1",
         "mutation": {
-          "total": 26,
-          "killed": 24,
-          "survived": 2,
-          "equivalent": 2,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 72,
+          "killed": 68,
+          "survived": 4,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3e round 1",
+          "tests_before_wave7": 16,
+          "tests_now": 16,
+          "sha256": "5323469daee0aea88ceec3fa1c957796e2cc31792ce30b80680fad429c7c4242"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 2 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 26,
+            "killed": 24,
+            "survived": 2,
+            "equivalent": 2,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_sql_helpers.py": {
         "auditor": "A5b",
-        "status": "Awaiting Verification",
-        "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+        "status": "Verified",
+        "verifier_wave7_8": "V3e round 1",
         "mutation": {
-          "total": 4,
-          "killed": 4,
+          "total": 17,
+          "killed": 17,
           "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3e round 1",
+          "tests_before_wave7": 5,
+          "tests_now": 5,
+          "sha256": "8ee6c0efee413df663c5ae492be88266d94b013052172e60d2bbf532e0b9b38e"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "outstanding": "None beyond the 0 survivors listed (all argued equivalent/unreachable)",
+          "mutation": {
+            "total": 4,
+            "killed": 4,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/infrastructure/mdb/components/test_page_operations.py": {
@@ -44685,7 +45563,7 @@
         }
       },
       "tests/infrastructure/mdb/components/test_settings_reader.py": {
-        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "status": "Verified",
         "auditor": "W3-PARSE",
         "verifier": "V3-SETREAD",
         "second_pass": {
@@ -44769,6 +45647,25 @@
           "changes": "item 2: the strict-reader test that expected a raise now expects the per-field default; 2 new tests (every field on its own under a fatal reader, the hydration parser)",
           "status_unchanged": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
           "independent_verification": "none yet"
+        },
+        "verifier_wave7_8": "V1c round 3",
+        "mutation": {
+          "total": 753,
+          "killed": 729,
+          "survived": 24,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1c round 3",
+          "tests_before_wave7": 76,
+          "tests_now": 84,
+          "sha256": "ede29e450aa0c6cd7f6c2ea08bcb0a7019398c6f3220b27030f9f1a4e0789f83"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)"
         }
       },
       "tests/presentation/visualization/exporters/test_pdf_exporter.py": {
@@ -44890,16 +45787,35 @@
       },
       "tests/presentation/visualization/pdf/services/test_composite_renderer.py": {
         "auditor": "A6",
-        "status": "Verification Failed (22 more genuine gaps; V6 scratch killers were not retained (deleted 2026-11-06); the ledger keeps the conclusions)",
+        "status": "Verified",
         "verifier": "V6",
-        "outstanding": "See mutation block for any survivors; PDF-overlay frame fallback paths that need a failing native renderer are only covered through the fake page cache.",
+        "verifier_wave7_8": "V2g round 2",
         "mutation": {
-          "total": 359,
-          "killed": 307,
-          "survived": 52,
-          "equivalent": 45,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 767,
+          "killed": 715,
+          "survived": 50,
+          "infra": 2
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V2g round 2",
+          "tests_before_wave7": 91,
+          "tests_now": 139,
+          "sha256": "80403be6b9c7685997c3a9086275823089f9d504584412355bfdd2dec4e156cb",
+          "notes": "survivors equivalent or default-value tooling; the None-overlay TypeError in render_composite_frame stays a latent defect report (unreachable from the app), left alone."
+        },
+        "pre_wave7_8": {
+          "status": "Verification Failed (22 more genuine gaps; V6 scratch killers were not retained (deleted 2026-11-06); the ledger keeps the conclusions)",
+          "outstanding": "See mutation block for any survivors; PDF-overlay frame fallback paths that need a failing native renderer are only covered through the fake page cache.",
+          "mutation": {
+            "total": 359,
+            "killed": 307,
+            "survived": 52,
+            "equivalent": 45,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/presentation/visualization/pdf/renderers/test_annotation_renderer.py": {
@@ -45083,20 +45999,38 @@
       },
       "tests/domain/entities/test_layer.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification (wave-6 additions; the earlier version was Verified)",
+        "status": "Verified",
         "verifier": "V7",
-        "mutation": {
-          "total": 51,
-          "killed": 51,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
-        },
         "status_before_wave6": "Verified",
         "wave6_2026-11-07": {
           "changes": "item 1: LockedBuiltInDefaultLayerTests (2 tests) for is_locked_built_in_default_layer",
           "independent_verification": "none yet: written and mutation-checked by their author only"
+        },
+        "verifier_wave7_8": "V1a round 4",
+        "mutation": {
+          "total": 144,
+          "killed": 134,
+          "survived": 10
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1a round 4",
+          "tests_before_wave7": 21,
+          "tests_now": 26,
+          "sha256": "517d1dbe3fad34f007db470f772663568151637e39a27be2fffa329d5ef33ef7",
+          "notes": "owner approved the one-line fixture change (low='z',9 / high='a',10); survivors equivalent or tuning (name.strip().lower()/casefold merge key: identity rule unspecified, owner question)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-6 additions; the earlier version was Verified)",
+          "mutation": {
+            "total": 51,
+            "killed": 51,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/domain/entities/test_pattern.py": {
@@ -45257,14 +46191,33 @@
       },
       "tests/domain/entities/test_page.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3g round 1",
         "mutation": {
-          "total": 203,
-          "killed": 200,
-          "survived": 3,
-          "equivalent": 3,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 418,
+          "killed": 392,
+          "survived": 26,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3g round 1",
+          "tests_before_wave7": 27,
+          "tests_now": 32,
+          "sha256": "e67e4a7e4f53062a4ba820ad4a5c5c0b283eea7f6d38514b5091d7ba5eabc1bd"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 203,
+            "killed": 200,
+            "survived": 3,
+            "equivalent": 3,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/domain/entities/test_takeoff.py": {
@@ -45282,14 +46235,32 @@
       },
       "tests/domain/entities/test_workspace_state.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3g round 2",
         "mutation": {
-          "total": 343,
-          "killed": 343,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 668,
+          "killed": 656,
+          "survived": 12
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3g round 2",
+          "tests_before_wave7": 44,
+          "tests_now": 49,
+          "sha256": "00a1d6596484374c8e83659fb93cdf1f604a4940c1fba7928159e42e36f9f61e",
+          "notes": "all 12 survivors equivalent."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 343,
+            "killed": 343,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/domain/services/test_condition_quantity_service.py": {
@@ -45360,26 +46331,63 @@
       },
       "tests/domain/services/test_elevation.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3g round 2",
         "mutation": {
-          "total": 179,
-          "killed": 170,
-          "survived": 9,
-          "equivalent": 9,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 306,
+          "killed": 289,
+          "survived": 17
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3g round 2",
+          "tests_before_wave7": 51,
+          "tests_now": 57,
+          "sha256": "93d0f7585731b39b2300d4ba7bc596a5f4c21ae0e3441e9cc3b74303e070993b",
+          "notes": "17 equivalents (differential 0 differences)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 179,
+            "killed": 170,
+            "survived": 9,
+            "equivalent": 9,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/domain/services/test_elevation_callout_service.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3g round 1",
         "mutation": {
-          "total": 44,
-          "killed": 44,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 127,
+          "killed": 123,
+          "survived": 4,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3g round 1",
+          "tests_before_wave7": 11,
+          "tests_now": 17,
+          "sha256": "6b334e648f36aba29a8baade2de9105e6595ca3c8d85d44ede783a0c8951862b"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 44,
+            "killed": 44,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/domain/services/test_page_scale_transform.py": {
@@ -45478,14 +46486,37 @@
       },
       "tests/domain/services/test_project_data_service.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3j round 2",
         "mutation": {
-          "total": 810,
-          "killed": 805,
-          "survived": 5,
-          "equivalent": 5,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 1113,
+          "killed": 1082,
+          "survived": 31,
+          "hand_text_mutants": {
+            "total": 424,
+            "killed": 388,
+            "survived": 36
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3j round 2",
+          "tests_before_wave7": 111,
+          "tests_now": 165,
+          "sha256": "f9d352e2244e7881ba6e0974f4d0ecfa695cc25e874063002398a70b2ef139af",
+          "notes": "165 tests; survivors equivalent/tooling as agreed in round 1."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 810,
+            "killed": 805,
+            "survived": 5,
+            "equivalent": 5,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/test_condition_change_impact.py": {
@@ -45503,74 +46534,184 @@
       },
       "tests/application/test_layer_change_impact.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3b round 2",
         "mutation": {
-          "total": 39,
-          "killed": 38,
-          "survived": 1,
-          "equivalent": 1,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 74,
+          "killed": 73,
+          "survived": 1
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3b round 2",
+          "tests_before_wave7": 6,
+          "tests_now": 7,
+          "sha256": "8dd5696a7e4d3f4c51ee44c6e90c37a5109acfd851a3327c1946e3a94ff87b17"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 39,
+            "killed": 38,
+            "survived": 1,
+            "equivalent": 1,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/test_render_quality.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3b round 2",
         "mutation": {
-          "total": 33,
-          "killed": 33,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 69,
+          "killed": 63,
+          "survived": 6
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3b round 2",
+          "tests_before_wave7": 7,
+          "tests_now": 8,
+          "sha256": "e813d6aeed0ab4d28c99f8354a84d9775510023ee0316aab984f5dda542130c7"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 33,
+            "killed": 33,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_annotation_caption_dto.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 31,
-          "killed": 31,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 131,
+          "killed": 127,
+          "survived": 4,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 3,
+          "tests_now": 4,
+          "sha256": "902e404b60ada04f36cd15a30dce2b01aba366f6884e23842cc12631638be935"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 31,
+            "killed": 31,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_annotation_creation_factory.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 12,
-          "killed": 12,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 50,
+          "killed": 48,
+          "survived": 2,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 6,
+          "tests_now": 8,
+          "sha256": "848e5ebf95eb1d3aa859db6dd14b2b44127cd3665f6faed27f27f17e1b73d6af"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 12,
+            "killed": 12,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_file_import_args.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 2",
         "mutation": {
-          "total": 28,
-          "killed": 28,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 95,
+          "killed": 90,
+          "survived": 5,
+          "note": "4 of the killed die at import"
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 2",
+          "tests_before_wave7": 8,
+          "tests_now": 12,
+          "sha256": "413614768fa9cacf46785391bd13466242323c7eaeab44f4080fe0266e130fbc",
+          "notes": "survivors: 3 field-order swaps (tuning), 2 equivalents."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 28,
+            "killed": 28,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_license_activation_identity_dto.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 61,
-          "killed": 60,
-          "survived": 1,
-          "equivalent": 1,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 172,
+          "killed": 157,
+          "survived": 15,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 7,
+          "tests_now": 10,
+          "sha256": "97cea1ed689d7c946db533aeb89114e8f246da631fcbcbe11ff17172f61ac78f"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 61,
+            "killed": 60,
+            "survived": 1,
+            "equivalent": 1,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_collaboration_dtos.py": {
@@ -45592,50 +46733,126 @@
       },
       "tests/application/dtos/test_collaboration_resource_catalog.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 212,
-          "killed": 210,
-          "survived": 2,
-          "equivalent": 2,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 579,
+          "killed": 555,
+          "survived": 24,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 12,
+          "tests_now": 15,
+          "sha256": "2941f551968a0aa281d1c9752446ee5e62f6c05fc4abeb53db3ce7c3bb05e1ca"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 212,
+            "killed": 210,
+            "survived": 2,
+            "equivalent": 2,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_mesh_geometry_dto.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 7,
-          "killed": 7,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 64,
+          "killed": 55,
+          "survived": 9,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 5,
+          "tests_now": 7,
+          "sha256": "67beb641ef8b6e5ce91d3b4dabb36e686dbfa6b938cc2e74eefe628632a3fc0b"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 7,
+            "killed": 7,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_page_view_dto.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 10,
-          "killed": 10,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 72,
+          "killed": 63,
+          "survived": 9,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 3,
+          "tests_now": 6,
+          "sha256": "648c853f164e98ef6b024cd9525abcc557cc6228b2f30314f4e96c495eba4ddd"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 10,
+            "killed": 10,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_paste_ref_remap_dto.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 37,
-          "killed": 37,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 118,
+          "killed": 112,
+          "survived": 6,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 7,
+          "tests_now": 8,
+          "sha256": "eba887361d5ee5efaaeead7bcb523bbbb370c0e1aecea8b79e9b8ad7078aef35"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 37,
+            "killed": 37,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_plan_items_paste.py": {
@@ -45653,26 +46870,63 @@
       },
       "tests/application/dtos/test_remote_projection_dtos.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 2",
         "mutation": {
-          "total": 81,
-          "killed": 74,
-          "survived": 7,
-          "equivalent": 7,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 168,
+          "killed": 134,
+          "survived": 34
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 2",
+          "tests_before_wave7": 20,
+          "tests_now": 23,
+          "sha256": "494bc8524ce5a1d12d8d1d3dfbc639360377c8304476ae1cc712e845f28fac9f",
+          "notes": "survivors equivalent or annotation-only."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 81,
+            "killed": 74,
+            "survived": 7,
+            "equivalent": 7,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/dtos/test_scene_data_dto.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3a round 1",
         "mutation": {
-          "total": 0,
-          "killed": 0,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 209,
+          "killed": 127,
+          "survived": 82,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3a round 1",
+          "tests_before_wave7": 2,
+          "tests_now": 4,
+          "sha256": "6124de90ec9b4c568a1df279da131a21cc520e3145c06056c4d28ddb5ce0fc37"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 0,
+            "killed": 0,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/builders/test_service_builder.py": {
@@ -45703,110 +46957,278 @@
       },
       "tests/application/utils/test_quantity_display.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3b round 2",
         "mutation": {
-          "total": 18,
-          "killed": 18,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 63,
+          "killed": 62,
+          "survived": 1
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3b round 2",
+          "tests_before_wave7": 3,
+          "tests_now": 5,
+          "sha256": "8320cc2b4eb198928561c97dea237e7e82150d7d05504f9d3c9127b0aa939bfd"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 18,
+            "killed": 18,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/orchestrators/test_lifecycle_orchestrator.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V9c round 1",
         "mutation": {
-          "total": 25,
-          "killed": 25,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 3,
-          "timeouts": 0
+          "total": 71,
+          "killed": 68,
+          "survived": 3,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9c round 1",
+          "tests_before_wave7": 8,
+          "tests_now": 15,
+          "sha256": "3b205d47a2355fecd33e897952a7450c0329c08a9e7317cc40ab3b51bcf33751",
+          "notes": "production fix Approved (V9c); known windows: interrupt landing in a non-blocking call (is_alive, logger) outside the guarded calls."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 25,
+            "killed": 25,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 3,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/orchestrators/test_visualization_orchestrator.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3c round 1",
         "mutation": {
-          "total": 7,
-          "killed": 7,
+          "total": 9,
+          "killed": 9,
           "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3c round 1",
+          "tests_before_wave7": 3,
+          "tests_now": 3,
+          "sha256": "9b95398195573f4ae2df029e2fcb961b0f50a7837b89745fba638dcaa5cd2d36"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 7,
+            "killed": 7,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/orchestrators/test_license_event_publisher.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3c round 2",
         "mutation": {
-          "total": 25,
-          "killed": 25,
+          "total": 31,
+          "killed": 31,
           "survived": 0,
-          "equivalent": 0,
-          "excluded": 0,
-          "timeouts": 0
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3c round 2",
+          "tests_before_wave7": 5,
+          "tests_now": 6,
+          "sha256": "2081259ab12e445021019a84aebbd200b597ab198407f08208668d3a328424e5"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 25,
+            "killed": 25,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/orchestrators/test_license_thread_manager.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V9c round 1",
         "mutation": {
-          "total": 50,
-          "killed": 49,
-          "survived": 1,
-          "equivalent": 1,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 112,
+          "killed": 102,
+          "survived": 9,
+          "timeouts": 1,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9c round 1",
+          "tests_before_wave7": 21,
+          "tests_now": 33,
+          "sha256": "450404a55cfc5de1eb331af7a559eea985863dd06407d1bb2e8508b0065308c1",
+          "notes": "production fix Approved (V9c)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 50,
+            "killed": 49,
+            "survived": 1,
+            "equivalent": 1,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/orchestrators/test_license_orchestrator.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V9c round 1",
         "mutation": {
-          "total": 191,
-          "killed": 189,
-          "survived": 2,
-          "equivalent": 2,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 324,
+          "killed": 310,
+          "survived": 14,
+          "timeouts": 0,
+          "infra": 0
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9c round 1",
+          "tests_before_wave7": 42,
+          "tests_now": 60,
+          "sha256": "6336c2731b8ac17fa42b94137840fb424674fa4d336ca990fe1fcfc1c1fc6036",
+          "notes": "production fix Approved (V9c); pre-existing: a failing request_callback leaves _operation_in_progress True."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 191,
+            "killed": 189,
+            "survived": 2,
+            "equivalent": 2,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/services/test_annotation_view_event_handler.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3b round 2",
         "mutation": {
-          "total": 26,
-          "killed": 26,
-          "survived": 0,
-          "equivalent": 0,
-          "excluded": 1,
-          "timeouts": 0
+          "total": 64,
+          "killed": 58,
+          "survived": 5
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3b round 2",
+          "tests_before_wave7": 7,
+          "tests_now": 9,
+          "sha256": "e8de6ee11a4e9e3cdcb5b75e3651d8632c9b566adf4b98509222aad06a722dd1"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 26,
+            "killed": 26,
+            "survived": 0,
+            "equivalent": 0,
+            "excluded": 1,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/services/test_working_directory_service.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3b round 2",
         "mutation": {
-          "total": 75,
-          "killed": 74,
-          "survived": 1,
-          "equivalent": 1,
-          "excluded": 0,
-          "timeouts": 0
+          "total": 181,
+          "killed": 167,
+          "survived": 9
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3b round 2",
+          "tests_before_wave7": 14,
+          "tests_now": 19,
+          "sha256": "f8d98f7ac2526001af696959d712f079711618656dfd03ff706abeba448e9918"
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 75,
+            "killed": 74,
+            "survived": 1,
+            "equivalent": 1,
+            "excluded": 0,
+            "timeouts": 0
+          }
         }
       },
       "tests/application/services/test_update_check_service.py": {
         "auditor": "A7",
-        "status": "Awaiting Verification",
+        "status": "Verified",
+        "verifier_wave7_8": "V3b round 2",
         "mutation": {
-          "total": 87,
-          "killed": 80,
-          "survived": 3,
-          "equivalent": 3,
-          "excluded": 4,
+          "total": 198,
+          "killed": 187,
+          "survived": 7,
           "timeouts": 4
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3b round 2",
+          "tests_before_wave7": 9,
+          "tests_now": 12,
+          "sha256": "6e5d6f6d3f9c540f3360e6003ebdc8aba3cfba97f05657132b3fdcd82ae557b1",
+          "notes": "test_negative_components_are_accepted_characterisation pins int() semantics; the owner may prefer rejecting negatives."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification",
+          "mutation": {
+            "total": 87,
+            "killed": 80,
+            "survived": 3,
+            "equivalent": 3,
+            "excluded": 4,
+            "timeouts": 4
+          }
         }
       },
       "tests/integration/navigation/test_bid_switch_last_page.py": {
@@ -45850,7 +47272,7 @@
         "verifier": "V4"
       },
       "tests/presentation/components/test_progress_dialog.py": {
-        "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)",
+        "status": "Verified",
         "auditor": "W3-IMPORTDLG",
         "verifier": "V3-IMPORTDLG",
         "second_pass": {
@@ -45921,6 +47343,113 @@
         "wave4_2026-11-07": {
           "changes": "item 4: 1 test (no _worker attribute); 3 tests no longer assign or assert _worker",
           "independent_verification": "none yet: the additions were written and mutation-checked by their author only"
+        },
+        "verifier_wave7_8": "V9d round 2 (V1b round 3 earlier)",
+        "mutation": {
+          "total": 230,
+          "killed": 193,
+          "survived": 18,
+          "infra": 19
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V9d round 2 (V1b round 3 earlier)",
+          "tests_before_wave7": 39,
+          "tests_now": 47,
+          "sha256": "e50f2c32e58948864ba8a285fdef3d00c23bacc1d8cf2c4a78e9dbbcb6a84f16",
+          "notes": "survivors tooling/unreachable (default arguments, handlers a stub cannot reach)."
+        },
+        "pre_wave7_8": {
+          "status": "Awaiting Verification (wave-4 additions; the wave-3 version was Verified)"
+        }
+      },
+      "tests/domain/services/test_elevation_text.py": {
+        "auditor": "wave 7/8 audit",
+        "status": "Verified",
+        "verifier_wave7_8": "V3g round 3",
+        "mutation": {
+          "total": 522,
+          "killed": 501,
+          "survived": 21
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3g round 3",
+          "tests_before_wave7": 4,
+          "tests_now": 16,
+          "sha256": "28382705724f81efe0cb893cf0f13eef81d4ff13b86700220e8f6d638fca1fc0",
+          "notes": "own tests only; the 21 survivors are equivalents (no ledger entry existed before)."
+        }
+      },
+      "tests/domain/entities/test_cover_sheet.py": {
+        "auditor": "wave 7/8 audit",
+        "status": "Verified",
+        "verifier_wave7_8": "V1f round 2",
+        "mutation": {
+          "resolve_bid_status_lock": {
+            "total": 17,
+            "killed": 15,
+            "survived": 2,
+            "note": "the 2 survivors are the implicit-None returns (equivalent)"
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V1f round 2",
+          "tests_before_wave7": 0,
+          "tests_now": 9,
+          "sha256": "5fc162c41c27fec07a7f9b97bc13752b312ae51f8741084f7ad0fd17606e0a4c",
+          "notes": "new untracked module (9 tests); verified together with test_ui_event_coordinator."
+        }
+      },
+      "tests/helpers/test_import_workflow.py": {
+        "auditor": "wave 7/8 audit",
+        "status": "Verified",
+        "verifier_wave7_8": "V3h round 3 (F8)",
+        "mutation": {
+          "scope": "hostile_cab_member_names, FakeOspCab.extract_cab/_member_destination/_normal_windows_path (lines 75-138 of tests/helpers/import_workflow.py)",
+          "whole_file_sweep": {
+            "total": 516,
+            "killed": 198,
+            "survived": 313,
+            "infra": 5,
+            "note": "survivors outside the scope are fixtures this module does not exercise"
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V3h round 3 (F8)",
+          "tests_before_wave7": 0,
+          "tests_now": 11,
+          "sha256": "0124c65ac4d62a183e47573eb34c1a709cbdf8a08c45c3d005f5da23516fe975",
+          "notes": "new untracked module for the FakeOspCab guard; in-scope survivors classified (docstrings/tooling)."
+        }
+      },
+      "tests/tools/test_check_stray_folders.py": {
+        "auditor": "wave 7/8 audit",
+        "status": "Verified",
+        "verifier_wave7_8": "V10 round 3 (tool Approved)",
+        "mutation": {
+          "tool": {
+            "total": 842,
+            "killed": 731,
+            "survived": 110,
+            "infra": 1,
+            "real_gaps": 0
+          }
+        },
+        "wave7_8_2026-11-08": {
+          "date": "2026-11-08",
+          "verdict": "Verified",
+          "verifier": "V10 round 3 (tool Approved)",
+          "tests_before_wave7": 0,
+          "tests_now": 118,
+          "sha256": "d03555f927a8a4b4e6b1370235c2e5063edb1e9c7b11bdf9411bd97d532ccfee",
+          "notes": "118 tests, 1 skipped (symlink privilege); new untracked module with tools/check_stray_folders.py; tool state version is 1."
         }
       }
     },
@@ -45979,6 +47508,24 @@
         "ost_visualizer/infrastructure/mdb/components/settings_reader.py": "_read_settings_field no longer re-raises under a fatal read-error policy: a malformed value defaults its own field for the SQL readers too (warning names Settings.<Column>).",
         "ost_visualizer/domain/entities/cover_sheet.py": "resolve_bid_status_lock: only None and '' mean no status; integer 0 is an unknown uid and reads locked.",
         "ost_visualizer/application/services/project_read_service.py": "is_bid_locked: same rule for the early return (None or '')."
+      },
+      "wave8_2026-11-08": {
+        "ost_visualizer/infrastructure/mdb/database_maintenance.py": "Compact/Repair: a swap-in-progress flag is armed BEFORE the swap and cleared only after the replacement is verified in place (or the backup is missing or renamed back); close() keeps the work folder and original.backup while it or the recovery flag is set; _recover_swap renames original.backup back after an interrupt; compact() keeps try/finally with interrupts routed through _cleanup_after_interrupt (secondary errors logged, original interrupt re-raised). Failing tests first: test_compact_keeps_the_only_copy_of_the_original_when_interrupted_mid_swap, test_a_second_interrupt_inside_the_recovery_never_deletes_the_original, test_a_second_interrupt_on_entry_to_the_recovery_never_deletes_the_original (+ two opcode-sweep tests). Approved by V9a round 3.",
+        "ost_visualizer/infrastructure/mdb/mdb_writer.py": "Interrupt policy: an interrupt (any non-Exception BaseException) in the outermost write transaction rolls back, logs a rollback failure with the real type name and re-raises the ORIGINAL; a nested lease records it as the transaction error (first failure wins). Failing tests first: MdbWriterSqliteTransactionTests.test_an_interrupt_rolls_the_transaction_back_before_the_connection_is_reused, MdbConnectionManagerHandleHealthTests.test_an_interrupted_write_is_not_committed_by_the_next_transaction. Approved by V9b round 2.",
+        "ost_visualizer/infrastructure/mdb/connection_manager.py": "Interrupt policy: a borrowed-writer read-lease rollback error is logged and never replaces an in-flight interrupt; a failed rollback during an interrupt evicts the physical handle through wrapper.rollback_failed. Failing tests first: test_a_borrowed_read_lease_rollback_error_never_replaces_a_baseexception, test_a_failed_rollback_after_any_baseexception_evicts_the_handle. Approved by V9b round 2 (the two eviction close() guards stay pyodbc.Error only: owner question).",
+        "ost_visualizer/infrastructure/database/connection_wrapper.py": "rollback sets rollback_failed for a driver error or any interrupted (non-Exception) rollback, then re-raises; a plain non-driver Exception does not. Failing tests first: ConnectionWrapperContractTests.test_a_rollback_interrupted_by_any_baseexception_marks_the_wrapper, MdbConnectionManagerHandleHealthTests.test_an_interrupt_raised_by_the_rollback_itself_evicts_the_handle. Approved by V9b round 2.",
+        "ost_visualizer/infrastructure/sql/writer.py": "_execute_mutation_transaction: any BaseException that is not an Exception rolls back (secondary rollback and session-context-clear errors logged, never replacing it); an interrupt during lease.commit() keeps the commit-status-unknown rule (no rollback). Failing test first: test_any_baseexception_in_the_operation_rolls_back_and_is_reraised. Approved by V9b round 2.",
+        "ost_visualizer/infrastructure/mdb/database_creator.py": "Interrupt policy: an interrupt is re-raised in all three phases (ODBC, DAO, cscript), each resource is closed individually, secondary close errors are logged naming the interrupt type and never replace it, and create_database discards the partial file; ordinary paths unchanged. Failing tests first: DatabaseCreatorInterruptPolicyTests.test_an_interrupt_in_the_dao_phase_survives_a_failing_dao_close and test_interrupts_are_never_swallowed_by_the_cleanup_helpers. Approved by V8c.",
+        "ost_visualizer/presentation/services/ai_takeoff_bridge.py": "start() stages the session token (token_factory, encode, write session.token.tmp), listens, then publishes with os.replace; a failed listen never touches session.token. _run_steps/_abandon_start: an interrupt always wins over an earlier ordinary error, the first interrupt is never replaced, other errors are logged by type name; a plain OSError or failed listen still returns False; cleanup() runs every step guarded and re-raises the winner after all ran. Failing tests first: BridgeStartAbortTests (test_an_interrupt_during_start_leaves_nothing_listening, test_an_interrupt_during_the_cleanup_after_an_os_error_is_still_raised, test_an_interrupt_during_the_cleanup_replaces_an_earlier_ordinary_error) and BridgeCleanupInterruptTests. Approved by V2f round 3.",
+        "ost_visualizer/infrastructure/mdb/importers/osp_importer.py": "OSP member names: reserved Windows device names (CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM1-9, LPT1-9 incl. superscript digits; case-insensitive, any extension or trailing spaces) are rejected in every path component by the module's own table; '//?/' and drive-without-root names stay rejected; any component ending in a dot or a space is rejected; _cab_member_destination re-checks that the resolved destination is strictly inside the extraction folder (junction escapes included) before any mkdir/extract; image staging refuses reserved names. Failing tests first: OspImporterReservedAndDeviceNameTests, OspImporterTrailingDotAndContainmentTests. Approved by V3h rounds 2-4.",
+        "ost_visualizer/mcp_server/registry.py": "DatabaseRegistry._read_json treats OSError, ValueError (bad UTF-8, JSON, the 4300-digit integer limit) and RecursionError like truncated JSON ({}); a non-object takeoff_workspace keeps the default view; a configured database path longer than 32767 characters (Path.resolve ValueError) is ignored with the 'Ignoring invalid configured database path' warning. Failing tests first: test_state_files_the_json_parser_cannot_handle_are_treated_like_truncated_json, test_a_takeoff_workspace_that_is_not_an_object_keeps_the_default_view, test_a_configured_path_longer_than_windows_allows_is_ignored. Approved by V9d.",
+        "ost_visualizer/infrastructure/mdb/components/overlay_rect.py": "An int too large for float() is rejected like other unusable numbers: OverflowError becomes ValueError in the rect validator ('must be numeric') and in full_page_overlay_rect ('Page dimensions must be finite'). Failing test first: test_an_int_too_large_for_float_is_rejected_like_other_unusable_numbers. Approved by V9d.",
+        "ost_visualizer/presentation/components/progress_dialog.py": "ProgressDialog.cleanup() ignores (TypeError, RuntimeError, SystemError) from both signal disconnects, so a destroyed dialog no longer raises SystemError. Failing test first: test_cleanup_completes_for_a_destroyed_dialog_that_was_connected_to_signals. Approved by V9d.",
+        "ost_visualizer/application/orchestrators/lifecycle_orchestrator.py": "Interrupt policy: every shutdown stage runs, every owner reference is released, later interrupts and secondary errors are logged (_note_interrupt), the original interrupt is re-raised; _shutdown_performed stays True. Failing tests first: LifecycleInterruptPolicyTests (9 failing incl. subtests). Approved by V9c.",
+        "ost_visualizer/application/orchestrators/license_orchestrator.py": "Interrupt policy: activate/deactivate reset _operation_in_progress on any BaseException from spawn; cleanup runs every labelled step, keeps the first interrupt, logs later ones, releases every reference. Failing tests first: LicenseOrchestratorInterruptPolicyTests.test_an_interrupt_while_starting_an_operation_does_not_leave_license_operations_busy, test_an_interrupt_in_any_cleanup_stage_still_runs_the_other_stages_and_releases_every_reference. Approved by V9c.",
+        "ost_visualizer/application/orchestrators/license_thread_manager.py": "Interrupt policy: an interrupt from Thread.start removes the worker's registration; an interrupt in a join keeps the first interrupt, logs later ones, joins the rest and empties the registry. Failing tests first: LicenseThreadManagerInterruptPolicyTests.test_an_interrupt_while_starting_the_worker_releases_its_registration_and_is_re_raised, test_an_interrupt_while_joining_a_worker_still_joins_the_rest_and_empties_the_registry. Approved by V9c.",
+        "tools/check_stray_folders.py": "New tool: snapshot/compare of the top level of the system drive root, the stray names T, outside and OSTVTemp (recursive fingerprint) and the number of ostv_osp_* folders in the real temp folder; exit 0 clean, 1 findings, 2 tool error; --state must be outside the repo and every drive root; state version 1 (a state from another version is rejected). Failing test first: tests.tools.test_check_stray_folders on the missing tool (ImportError), test_a_snapshot_that_cannot_be_serialised_leaves_no_state_file. Approved by V10 round 3.",
+        "tests/helpers/import_workflow.py": "FakeOspCab.extract_cab computes every member destination first (_member_destination) and raises AssertionError before writing anything outside its output folder; new hostile_cab_member_names(outside_dir, extract_root) builds hostile forms from a caller sandbox. Failing tests first: tests.helpers.test_import_workflow.FakeOspCabExtractionTests (8). Verified by V3h round 3."
       }
     },
     "owner_decisions_needed": {
@@ -46000,7 +47547,8 @@
         "DatabaseMutationRequest accepts the .value string but rejects enum members",
         "CLOSED 2026-11-07 (fixed): NULL, blank or 'NULL' JobStatuses.Sequence is tolerated, and the bid lock read now fails closed. Original finding: NULL JobStatuses.Sequence makes get_job_statuses return []"
       ],
-      "agents_md_documentation": "PARTLY DONE 2026-11-06: AGENTS.md now documents OPEN-2, the arc rule and tie rule, curved area_sf, skipped conditions and the SQL '|' identity rule. A4's proposed golden-file / OSTV_SLOW_TESTS text is still NOT applied and still needs review. Previous text: A4 proposed AGENTS.md text for the golden files, their regeneration policy and OSTV_SLOW_TESTS (A4.json proposed_docs). NOT applied; the proposed text was not retained (deleted 2026-11-06) and the ledger does not hold it."
+      "agents_md_documentation": "PARTLY DONE 2026-11-06: AGENTS.md now documents OPEN-2, the arc rule and tie rule, curved area_sf, skipped conditions and the SQL '|' identity rule. A4's proposed golden-file / OSTV_SLOW_TESTS text is still NOT applied and still needs review. Previous text: A4 proposed AGENTS.md text for the golden files, their regeneration policy and OSTV_SLOW_TESTS (A4.json proposed_docs). NOT applied; the proposed text was not retained (deleted 2026-11-06) and the ledger does not hold it.",
+      "wave8_2026-11-08": "see wave8_2026-11-08.owner_questions_open (18 open questions) and owner_decisions_taken"
     },
     "tests": {
       "defined_before": 14641,
@@ -46369,6 +47917,530 @@
         },
         "4_agents_md": "AGENTS.md: built-in default layers paragraph (client guards, SQL Server side unguarded), settings-defaults paragraph, and the wave-5 lock paragraph now says integer 0 too (added lines only, LF)."
       }
+    },
+    "wave8_2026-11-08": {
+      "date": "2026-11-08",
+      "nature": "Second-pass verification wave (wave 7, 2026-11-07 to 11-08: independent verifiers re-ran the mutation sweeps of the wave-3..6 modules) and rework wave (wave 8, 2026-11-08: fixers closed the verifier findings and the owner decisions with failing tests first, then verifiers re-checked). Ledger written by the ledger writer from the agents' result files.",
+      "rule": "Status follows the latest independent verdict. A module with no verifier verdict in this round stays Awaiting Verification; a module whose tests changed after its last verification is Awaiting Verification (wave-8 additions). No module needed that downgrade: every changed test file has a verdict below.",
+      "counts": {
+        "module_counts_before": {
+          "Awaiting Verification": 60,
+          "Verified": 48,
+          "In Progress": 24,
+          "Partial": 1,
+          "Verification Failed": 9,
+          "Blocked": 18,
+          "Merged into test_pdf_exporter.py": 1,
+          "Merged into test_schema_validator.py": 1,
+          "Merged into test_server.py": 1
+        },
+        "module_counts_after": {
+          "Verified": 115,
+          "Awaiting Verification": 5,
+          "In Progress": 24,
+          "Blocked": 18,
+          "Partial": 2,
+          "Merged into test_pdf_exporter.py": 1,
+          "Merged into test_schema_validator.py": 1,
+          "Merged into test_server.py": 1
+        },
+        "verified_before": {
+          "modules": 48,
+          "tests": 2235,
+          "pct_of_inventory_modules": 8.0,
+          "pct_of_inventory_tests": 12.4,
+          "inventory": [
+            597,
+            17965
+          ]
+        },
+        "verified_after": {
+          "modules": 115,
+          "tests": 6542,
+          "pct_of_inventory_modules": 19.2,
+          "pct_of_inventory_tests": 34.6,
+          "inventory": [
+            600,
+            18923
+          ]
+        },
+        "definition": "Verified tests = the methods of every Verified module in the inventory (untouched first-pass tests inside a Verified module are counted, as in the earlier waves)."
+      },
+      "verified": [
+        {
+          "module": "tests/presentation/components/test_progress_dialog.py",
+          "tests": 47,
+          "verifier": "V9d round 2 (V1b round 3 earlier)"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_project_operations.py",
+          "tests": 40,
+          "verifier": "V1b round 2"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_settings_reader.py",
+          "tests": 84,
+          "verifier": "V1c round 3"
+        },
+        {
+          "module": "tests/infrastructure/parsers/test_position_parser.py",
+          "tests": 98,
+          "verifier": "V1d round 3"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_layer_operations.py",
+          "tests": 112,
+          "verifier": "V1a round 2"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_bid_data_reader.py",
+          "tests": 184,
+          "verifier": "V1c round 1"
+        },
+        {
+          "module": "tests/infrastructure/sql/test_writer.py",
+          "tests": 259,
+          "verifier": "V9b round 2 (V1e round 2 earlier)"
+        },
+        {
+          "module": "tests/presentation/coordinators/test_ui_event_coordinator.py",
+          "tests": 1477,
+          "verifier": "V1f round 2"
+        },
+        {
+          "module": "tests/application/services/test_ai_takeoff_tokens.py",
+          "tests": 15,
+          "verifier": "V2a round 2"
+        },
+        {
+          "module": "tests/mcp_server/test_main.py",
+          "tests": 15,
+          "verifier": "V2b round 1"
+        },
+        {
+          "module": "tests/mcp_server/test_registry.py",
+          "tests": 43,
+          "verifier": "V9d round 2 (V2b round 2 earlier)"
+        },
+        {
+          "module": "tests/mcp_server/test_bridge_client.py",
+          "tests": 37,
+          "verifier": "V2c round 3"
+        },
+        {
+          "module": "tests/mcp_server/test_output_artifacts.py",
+          "tests": 46,
+          "verifier": "V2c round 2"
+        },
+        {
+          "module": "tests/application/services/test_ai_changeset_store.py",
+          "tests": 59,
+          "verifier": "V2a round 3"
+        },
+        {
+          "module": "tests/mcp_takeoff/test_proxy.py",
+          "tests": 56,
+          "verifier": "V2e round 2"
+        },
+        {
+          "module": "tests/presentation/visualization/pdf/services/test_composite_renderer.py",
+          "tests": 139,
+          "verifier": "V2g round 2"
+        },
+        {
+          "module": "tests/application/dtos/test_scene_data_dto.py",
+          "tests": 4,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_annotation_caption_dto.py",
+          "tests": 4,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_page_view_dto.py",
+          "tests": 6,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_mesh_geometry_dto.py",
+          "tests": 7,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_annotation_creation_factory.py",
+          "tests": 8,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_license_activation_identity_dto.py",
+          "tests": 10,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_paste_ref_remap_dto.py",
+          "tests": 8,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_file_import_args.py",
+          "tests": 12,
+          "verifier": "V3a round 2"
+        },
+        {
+          "module": "tests/application/dtos/test_collaboration_resource_catalog.py",
+          "tests": 15,
+          "verifier": "V3a round 1"
+        },
+        {
+          "module": "tests/application/dtos/test_remote_projection_dtos.py",
+          "tests": 23,
+          "verifier": "V3a round 2"
+        },
+        {
+          "module": "tests/application/orchestrators/test_visualization_orchestrator.py",
+          "tests": 3,
+          "verifier": "V3c round 1"
+        },
+        {
+          "module": "tests/application/orchestrators/test_license_event_publisher.py",
+          "tests": 6,
+          "verifier": "V3c round 2"
+        },
+        {
+          "module": "tests/application/orchestrators/test_lifecycle_orchestrator.py",
+          "tests": 15,
+          "verifier": "V9c round 1"
+        },
+        {
+          "module": "tests/application/orchestrators/test_license_thread_manager.py",
+          "tests": 33,
+          "verifier": "V9c round 1"
+        },
+        {
+          "module": "tests/application/orchestrators/test_license_orchestrator.py",
+          "tests": 60,
+          "verifier": "V9c round 1"
+        },
+        {
+          "module": "tests/application/utils/test_quantity_display.py",
+          "tests": 5,
+          "verifier": "V3b round 2"
+        },
+        {
+          "module": "tests/application/test_layer_change_impact.py",
+          "tests": 7,
+          "verifier": "V3b round 2"
+        },
+        {
+          "module": "tests/application/test_render_quality.py",
+          "tests": 8,
+          "verifier": "V3b round 2"
+        },
+        {
+          "module": "tests/application/services/test_annotation_view_event_handler.py",
+          "tests": 9,
+          "verifier": "V3b round 2"
+        },
+        {
+          "module": "tests/application/services/test_update_check_service.py",
+          "tests": 12,
+          "verifier": "V3b round 2"
+        },
+        {
+          "module": "tests/application/services/test_working_directory_service.py",
+          "tests": 19,
+          "verifier": "V3b round 2"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_reference_validation.py",
+          "tests": 4,
+          "verifier": "V3d round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_schema_contract.py",
+          "tests": 8,
+          "verifier": "V3d round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_bid_settings_contract.py",
+          "tests": 11,
+          "verifier": "V3d round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_reference_schema_metadata.py",
+          "tests": 12,
+          "verifier": "V3d round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_schema_compatibility.py",
+          "tests": 28,
+          "verifier": "V3d round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_sql_helpers.py",
+          "tests": 5,
+          "verifier": "V3e round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/mappers/test_annotation_mapper.py",
+          "tests": 5,
+          "verifier": "V3e round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_constants.py",
+          "tests": 13,
+          "verifier": "V3e round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_overlay_rect.py",
+          "tests": 23,
+          "verifier": "V9d round 2 (V3e round 3 earlier)"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_identity_allocation.py",
+          "tests": 16,
+          "verifier": "V3e round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_legend_position.py",
+          "tests": 16,
+          "verifier": "V3e round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_annotation_reader.py",
+          "tests": 29,
+          "verifier": "V3e round 2"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_mdb_reader.py",
+          "tests": 22,
+          "verifier": "V3f round 1"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_mdb_writer.py",
+          "tests": 68,
+          "verifier": "V9b round 2 (V3f round 2 earlier)"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_database_maintenance.py",
+          "tests": 86,
+          "verifier": "V9a round 3 (V3f round 2 earlier)"
+        },
+        {
+          "module": "tests/domain/services/test_elevation_callout_service.py",
+          "tests": 17,
+          "verifier": "V3g round 1"
+        },
+        {
+          "module": "tests/domain/entities/test_page.py",
+          "tests": 32,
+          "verifier": "V3g round 1"
+        },
+        {
+          "module": "tests/domain/entities/test_workspace_state.py",
+          "tests": 49,
+          "verifier": "V3g round 2"
+        },
+        {
+          "module": "tests/domain/services/test_elevation.py",
+          "tests": 57,
+          "verifier": "V3g round 2"
+        },
+        {
+          "module": "tests/domain/services/test_project_data_service.py",
+          "tests": 165,
+          "verifier": "V3j round 2"
+        },
+        {
+          "module": "tests/domain/services/test_elevation_text.py",
+          "tests": 16,
+          "verifier": "V3g round 3"
+        },
+        {
+          "module": "tests/domain/entities/test_cover_sheet.py",
+          "tests": 9,
+          "verifier": "V1f round 2"
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_database_creator.py",
+          "tests": 87,
+          "verifier": "V8c round 2"
+        },
+        {
+          "module": "tests/presentation/services/test_ai_takeoff_bridge.py",
+          "tests": 144,
+          "verifier": "V2f round 3"
+        },
+        {
+          "module": "tests/infrastructure/mdb/importers/test_osp_importer.py",
+          "tests": 103,
+          "verifier": "V3h round 4 (F8 rework; V3h round 2 earlier)"
+        },
+        {
+          "module": "tests/infrastructure/mdb/importers/test_ost_importer.py",
+          "tests": 66,
+          "verifier": "V3h round 2"
+        },
+        {
+          "module": "tests/helpers/test_import_workflow.py",
+          "tests": 11,
+          "verifier": "V3h round 3 (F8)"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_import_operations.py",
+          "tests": 102,
+          "verifier": "V8a round 3"
+        },
+        {
+          "module": "tests/infrastructure/mdb/components/test_annotation_operations.py",
+          "tests": 95,
+          "verifier": "V8a round 2"
+        },
+        {
+          "module": "tests/domain/entities/test_layer.py",
+          "tests": 26,
+          "verifier": "V1a round 4"
+        },
+        {
+          "module": "tests/tools/test_check_stray_folders.py",
+          "tests": 118,
+          "verifier": "V10 round 3 (tool Approved)"
+        }
+      ],
+      "not_verified": [
+        {
+          "module": "tests/infrastructure/mdb/test_connection_manager.py",
+          "status": "Partial",
+          "tests": 137,
+          "gaps": [
+            "REAL GAP: widening the two eviction close() guards (connection_manager L213 and L239, `pyodbc.Error` -> `Exception`) survives. That equals the owner-pending behaviour: a non-driver Exception from conn.close() during eviction replaces an in-flight interrupt (real pyodbc raises only pyodbc.Error; data safe: the handle is already flagged unhealthy). Pin or fix once the owner decides.",
+            "UNCLASSIFIED (pre-existing lines this wave did not touch): L78 default argument (harness tooling), L110/L115 keep operand 1, L241 const 0 -> -1.",
+            "The production fix (connection_wrapper, connection_manager, sql/writer) is Approved by V9b round 2; the 11 new manager/wrapper tests have exact assertions."
+          ]
+        },
+        {
+          "module": "tests/domain/services/test_ai_planar_regions.py",
+          "status": "Partial",
+          "tests": 246,
+          "gaps": [
+            "REAL GAP (V1d round 2): _runs_along_an_edge const 0.0 -> -1.0 (anti-parallel closing edge at unit scale); a scratch killer exists.",
+            "REAL GAP, low (V1d round 2): _VertexIndex._cell const 1 -> 0 (vertex-snapping tie rule and cell key).",
+            "The two tests SmallScaleGapClosingTests (L533) and VertexIndexTieTests (L97) were added after V1d round 2 (file 246 tests, V1d saw 244) and no verifier has seen them; the owner tie rule (last vertex wins) is pinned by PlanarTieRuleTests and VertexIndexTieTests, and AGENTS.md M2.3 now states the code's rule.",
+            "Offsets 2 and 3 of the sampled rest-of-module sweep were not re-run by V1d (A1d2 ran them); 7 non-terminating mutants counted as hangs."
+          ]
+        },
+        {
+          "module": "tests/application/services/test_ai_takeoff_proposal_service.py",
+          "status": "Awaiting Verification (wave-7 rework; V2h round 2 was interim and not completed)",
+          "tests": 297,
+          "gaps": [
+            "No verdict reached. V2h leaned Verified: the full sweep on the final 303-test file is clean (the 8 round-1 gap mutants of the sweep are killed, no new survivor), but the operator (277), constant (36) and default (14) sweeps and the probes were NOT re-run, so four round-1 gaps that live only in the operator set are not mutation-confirmed killed: _touches_box y orientation, L437 text centre, L712 gap order, L1382 cap hint (L1614/L1615 also).",
+            "Seven timeouts were argued, not re-run with a larger limit; 2 infra mutants (L1786/L1788) are genuine infinite loops.",
+            "Moderate coupling: WaveSevenRoundTwoListingTests pin which wall-end/dimension-line pairs _close_gaps bridges (greedy matching order); test_a_slow_dashed_analysis_stops_at_its_time_budget still depends on a real 0.5 s budget.",
+            "The 6 FullSizeSeededSegmentCapTests are skipped without OSTV_SLOW_TESTS (303 run, 297 defined here)."
+          ]
+        },
+        {
+          "module": "tests/presentation/test_main_window.py",
+          "status": "Awaiting Verification",
+          "tests": 343,
+          "gaps": [
+            "No independent verification. A3m (343 tests, +8) closed 11 survivors; the 12 left are equivalent by argument (return None / delete Return, const 0 -> -1, keep operand 1).",
+            "Open question for the owner: is the bool() coercion of the four sidebar/status setters (None or str accepted) a contract or incidental? The new test pins it as current behaviour.",
+            "About 200 later A3-era tests were audited through the sweep and AST triage only, not re-read."
+          ]
+        },
+        {
+          "module": "tests/infrastructure/mdb/test_raw_bid_integrity.py",
+          "status": "Awaiting Verification",
+          "tests": 118,
+          "gaps": [
+            "REAL GAP, open: L408 keep operand 0 (a duplicate UID with a self-parent row plus a null-parent twin in BidAreas/BidConditionFolders/BidPageFolders).",
+            "Six tests added (112 -> 118); the full 3868-mutant sweep was not re-run on the final file, only the 12 targeted mutants (all killed). Equivalence claims rest on a 6000-case differential fuzz plus reasoning."
+          ]
+        },
+        {
+          "module": "tests/presentation/managers/test_deferred_persistence_manager.py",
+          "status": "Awaiting Verification",
+          "tests": 216,
+          "gaps": [
+            "No tests added (216 unchanged). The supplementary 1007-mutant sweep stopped at 300 (40 survivors unanalysed, 707 not run); 121 hand text mutants, the multi-seed PYTHONHASHSEED sweep and the four hang-only mutants (connected-states closure loop) were not run or re-verified.",
+            "Two tests were drafted but not inserted (deterministic debounce timer through timeout.emit; cancel_pages remaining-key set). About 40 percent of the tests were read line by line.",
+            "Owner question: the L698 mutants are classified unreachable because a database is SQL or MDB for its lifetime; confirm that holds if a database can be converted in place."
+          ]
+        },
+        {
+          "module": "tests/presentation/handlers/test_plan_view_action_handler.py",
+          "status": "Awaiting Verification",
+          "tests": 590,
+          "gaps": [
+            "No tests added (590 unchanged). The 237 survivors (67 functions; most in _execute_local_plan_properties 23, _push_sql_paste_history 14, _push_sql_delete_history 12, on_elements_deleted 11, _push_sql_geometry_history 10) were NOT classified.",
+            "By eye likely real gaps: user-facing warning text/title (L3486-3487), history dict keys and kind strings, error messages (L1543/1561/2789/4534), annotation_text/annotation_style branches (L993-1003), deepcopy deletions (aliasing).",
+            "Survivors were not re-run against the whole module in fresh processes; about 530 of the 590 tests were not read whole."
+          ]
+        }
+      ],
+      "production_changes": "see production_changes.wave8_2026-11-08 (14 modified production files, 1 new tool, 1 test helper; the helper has its own new test module)",
+      "strays": {
+        "outcome": "All three strays under C:\\ (T, outside, OSTVTemp) were side effects of in-memory MUTANTS of osp_importer exercised by test_osp_importer with the real cwd/TEMP and literal C:\\ fixtures; no production defect. The unmutated tool and tests create nothing there.",
+        "fixes": [
+          "shared sandbox runner (kept outside the repo, scratchpad w7/runner/sandbox_run.py): cwd and TEMP/TMP/TMPDIR in a throw-away folder, a subst drive by default (--no-subst to disable), SystemDrive redirected to it, PYTHONDONTWRITEBYTECODE=1, a before/after snapshot of the top level of C:\\ and of ostv_osp_* in the real temp (STRAY report, exit 97);",
+          "FakeOspCab guard (tests/helpers/import_workflow.py): refuses to write any destination outside its output folder (AssertionError);",
+          "sandbox-derived hostile member names (hostile_cab_member_names) instead of literal C:\\outside, \\outside, ..\\outside names in test_osp_importer;",
+          "tools/check_stray_folders.py snapshot/compare around full runs."
+        ],
+        "still_present": "an empty C:\\OSTVTemp (mtime 11-08 12:05) predates the fixes and was left in place; the tool does not fail on an old untouched copy. Delete it only by the owner.",
+        "one_more_incident": "while sweeping the new tool, a mutant that disabled the repository refusal left an empty state.json in the repo root (the test used the real repo as a state location). Fixed: the test replaces REPO_ROOT by a sandbox and the tool serialises before creating the file; the file was deleted."
+      },
+      "owner_decisions_taken": [
+        "Tie rule (planar closing): the AGENTS.md M2.3 sentence was fixed to describe the code (component roots use the smallest vertex number; closing candidates are scanned in ascending vertex order and among equal distances the last, largest vertex number, wins in both passes) and pinned as characterisations (PlanarTieRuleTests, VertexIndexTieTests).",
+        "OSP reserved device names are rejected (table owned by the module, including conin$/conout$ and the superscript forms); '//?/' and drive-without-root stay rejected; components ending in a dot or space are rejected; destinations must stay strictly inside the extraction folder.",
+        "Interrupt policy for write/maintenance/creation/lifecycle code: roll back or evict, run every cleanup stage, log secondary errors naming the interrupt, re-raise the ORIGINAL; ordinary exceptions keep their existing handling.",
+        "A configured database path longer than 32767 characters in file_state.json is ignored with a warning (the server keeps starting), like other bad paths.",
+        "The one-line test_layer fixture change (z/9 vs a/10 so the merge sort key cannot be name or text order) was approved.",
+        "The None-overlay TypeError in render_composite_frame (not reachable from the app) is left alone and noted as a latent defect report.",
+        "Test hygiene: tests never use literal C:\\ names for hostile paths (derive them from a sandbox); mutation sweeps run with cwd and TEMP in a sandbox, a subst drive for OSP and SystemDrive pointed at it."
+      ],
+      "owner_questions_open": [
+        "Bridge _run_worker_job: a SystemExit (or KeyboardInterrupt) raised by job() in the AiTakeoffBridgeWorker thread is not an Exception, so _job_finished is never emitted: no reply, and the worker slot stays unreleased (two such events starve the pool until restart). Catch BaseException, release the slot, answer with an error and re-raise? Low severity, not changed, not pinned.",
+        "Bridge test-teardown deadlock hygiene: handle.Close() while a helper thread is blocked in ReadFile hangs the suite instead of failing when a reply is lost. An additive fix (CancelIoEx before Close, or overlapped reads with a deadline) is possible; nobody implemented it.",
+        "overlay_units_per_sheet_inch (domain) still leaks OverflowError for huge int or Fraction scale factors; return None so full_page_overlay_rect reports 'Overlay calibration must contain finite positive values'?",
+        "full_page_overlay_rect with a None or non-numeric page dimension raises a raw TypeError/ValueError (serialize says 'must be numeric'): convert to a 'Page dimensions' ValueError? Currently pinned as a characterisation in test_overlay_rect.",
+        "Maintenance work folder: it is deleted after a successful rename-back of original.backup after an interrupt (the original is back, only the disposable compacted file remains). Kept and pinned (confirmed once); keeping the folder is a one-line change plus two test expectations.",
+        "MdbWriter catches any BaseException at the outermost depth (also GeneratorExit); the manager and SQL writer were aligned UP (any non-Exception), not narrowed. Confirm?",
+        "import_operations._convert_access_value: an OverflowError from an absurd datetime text propagates and fails the import (characterisation); should it read as NULL like ValueError?",
+        "annotation_operations: padded text uids (' 1') and float uids (1.0) are accepted by position saves because int() runs first (characterisation); keep that leniency?",
+        "MdbConnectionManager.connection: a NON-driver Exception from conn.close() during eviction (the two guards are still `except pyodbc.Error`) replaces an in-flight interrupt. Guard with `except Exception` plus a log while an interrupt is in flight? test_connection_manager stays Partial until decided. Data is safe (the handle is already flagged unhealthy).",
+        "Orchestrators: unguarded non-blocking calls (thread_manager is_alive before and after join, logger.warning, logger.exception inside the ordinary handlers and _note_interrupt) can still let an asynchronous interrupt abort the remaining stages; a logger whose call raises an ordinary Exception replaces the interrupt (not reachable with stdlib handlers); an interrupt inside thread.start() after the OS thread started unregisters a running worker. A finally-style structure would close the windows.",
+        "Pre-existing (not changed): a failing callback_bridge.request_callback in the worker means on_main never runs, so LicenseOrchestrator._operation_in_progress stays True and later license operations are refused.",
+        "Windows second instance: a second app instance listening on the same pipe name overwrites/deletes the bridge session token file (a single-instance guard elsewhere is assumed).",
+        "OSP names ending in a dot or a space are now rejected for every component (decision taken for safety); confirm that no legitimate package needs them (Windows cannot create them).",
+        "OSP superscript device names (COM1-3/LPT1-3 with superscript digits) and CONIN$/CONOUT$ are rejected because the stdlib reserves them on Python 3.11; keep the table the module's own (no dependence on PureWindowsPath.is_reserved)?",
+        "Path.resolve() maps a subst drive to its real folder, so a few path-equality tests behave differently under subst. The runner defaults to subst; the three OSP tests were rewritten to compare resolved paths; 13 tests in tests/mcp_server/test_registry.py fail under subst: run tests/mcp_server with --no-subst.",
+        "check_stray_folders state version is 1: a state file written by a previous version of the tool is rejected (exit 2); re-take the snapshot.",
+        "test_main_window: is the bool() coercion of the four sidebar/status setters (None or str accepted) a contract or incidental? Pinned as current behaviour.",
+        "deferred_persistence_manager L698 mutants are classified unreachable because a database is SQL or MDB for its lifetime; confirm that holds if a database can be converted in place."
+      ],
+      "files_mixing_concerns": "none reported: no wave-7/8 report contains a mixed-concerns or files-mixing note (searched every result file). Large modules that remain candidates for splitting are the existing ones (test_ui_event_coordinator 1,477 tests, plan_view/test_view).",
+      "rework_rounds": {
+        "test_osp_importer": "F5 (reserved device names), F8 rounds 1-2 (+ V3h rounds 1-4; F8 round 2 was the second rework round)",
+        "tools/check_stray_folders.py + tests/tools/test_check_stray_folders.py": "F9 round 1 and F10 round 2 (+ V10 rounds 1-3)",
+        "test_database_maintenance": "F1 rounds 1-3 (+ V9a rounds 1-3)",
+        "test_ai_takeoff_bridge": "F4 rounds 1-2 (+ V2f rounds 1-3)",
+        "writer group (mdb_writer, connection_manager, connection_wrapper, sql/writer)": "F2 rounds 1-2 (+ V9b rounds 1-2)",
+        "registry, overlay_rect, progress_dialog": "F6 rounds 1-2 (+ V9d rounds 1-2)",
+        "database_creator": "F3 rounds 1-2 (+ V8c rounds 1-2)",
+        "orchestrators (lifecycle, license, license_thread_manager)": "one round only: F7 (+ V9c)"
+      },
+      "format_only_sha_drift": [
+        "tests/domain/services/test_uom_service.py",
+        "tests/infrastructure/mdb/components/test_bid_data_reader.py",
+        "tests/infrastructure/mdb/components/test_condition_folder_operations.py",
+        "tests/infrastructure/mdb/components/test_project_operations.py"
+      ],
+      "per_test_notes": "not recorded for waves 7 and 8; the inventory's per-method second_pass_status is unchanged (6,501 reviewed); module status here is the authority.",
+      "full_suite": "not run by the ledger writer; the coordinator runs it after this change."
     }
   },
   "audit_evidence_note": "The audit evidence folder tests/_audit_progress/ (agent, verifier and resolution-phase reports, per-test notes, survivor lists, killer-test drafts, harness copies) was deleted on 2026-11-06 and is not retained anywhere, including git. References to files in it are kept only to identify the source and say 'not retained'. The ledger keeps the conclusions it records (module statuses, owner decisions, the resolution section, per-test notes inside module entries); wave-2 verifier outcomes that were never consolidated into modules{} are not kept (see audit_2026-11-05_checkpoint.resolution_2026-11-06.module_status_note). Wave-3 (2026-11-07) verdicts are recorded in the module entries (second_pass) and in audit_2026-11-05_checkpoint.wave3_2026-11-07."
