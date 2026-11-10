@@ -118,8 +118,11 @@ class MeshGeometryFieldTests(unittest.TestCase):
                 "page_uid",
                 "condition_uid",
                 "takeoff_uid",
+                "tower_crane",
             },
         )
+        # Only "(CRANE)" count footings carry a crane placement.
+        self.assertIsNone(mesh.tower_crane)
         self.assertNotEqual(mesh, replace(mesh, vertices=[9.0]))
 
     def test_scene_identity_is_frozen_and_normalizes_to_a_plain_tuple_and_int(self):

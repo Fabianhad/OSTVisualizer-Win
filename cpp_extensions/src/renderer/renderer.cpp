@@ -14,6 +14,7 @@
 #include <climits>
 #include <cstdint>
 #include "earcut/earcut.hpp"
+#include "instanced_model.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <functional>
@@ -66,6 +67,100 @@ namespace ost_renderer
             ContextGuard(void *, void *) {}
         };
 #endif
+        std::vector<uint32_t> feature_edge_indices(const std::vector<Vec3> &vertices,
+                                                   const std::vector<uint32_t> &indices)
+        {
+            int triCount = (int)(indices.size() / 3);
+            struct PositionKey
+            {
+                long long x, y, z;
+                bool operator==(const PositionKey &o) const { return x == o.x && y == o.y && z == o.z; }
+            };
+            struct PositionKeyHash
+            {
+                size_t operator()(const PositionKey &k) const
+                {
+                    size_t h = std::hash<long long>{}(k.x);
+                    h ^= std::hash<long long>{}(k.y) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                    h ^= std::hash<long long>{}(k.z) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                    return h;
+                }
+            };
+            const double positionPrecision = 1.0e4;
+            std::vector<uint32_t> canonical(vertices.size());
+            std::unordered_map<PositionKey, uint32_t, PositionKeyHash> positionIds;
+            positionIds.reserve(vertices.size());
+            for (size_t i = 0; i < vertices.size(); ++i)
+            {
+                const auto &p = vertices[i];
+                if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+                {
+                    canonical[i] = (uint32_t)i;
+                    continue;
+                }
+                PositionKey key{
+                    std::llround((double)p.x * positionPrecision),
+                    std::llround((double)p.y * positionPrecision),
+                    std::llround((double)p.z * positionPrecision)};
+                canonical[i] = positionIds.emplace(key, (uint32_t)i).first->second;
+            }
+            struct EdgeInfo
+            {
+                int face;
+                uint32_t v0, v1;
+            };
+            std::unordered_map<uint64_t, EdgeInfo> edgeMap;
+            std::vector<uint32_t> lineIndices;
+            const float creaseThreshold = cosf(15.0f * 3.14159f / 180.0f);
+            auto faceNormal = [&](int t) -> glm::vec3
+            {
+                auto &a = vertices[indices[t * 3]];
+                auto &b = vertices[indices[t * 3 + 1]];
+                auto &c = vertices[indices[t * 3 + 2]];
+                glm::vec3 e1(b.x - a.x, b.y - a.y, b.z - a.z);
+                glm::vec3 e2(c.x - a.x, c.y - a.y, c.z - a.z);
+                return glm::normalize(glm::cross(e1, e2));
+            };
+            for (int t = 0; t < triCount; t++)
+            {
+                uint32_t idx[3] = {indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2]};
+                for (int e = 0; e < 3; e++)
+                {
+                    uint32_t va = idx[e], vb = idx[(e + 1) % 3];
+                    uint32_t ca = canonical[va], cb = canonical[vb];
+                    if (ca == cb)
+                        continue;
+                    uint64_t key = ((uint64_t)std::min(ca, cb) << 32) | std::max(ca, cb);
+                    auto it = edgeMap.find(key);
+                    if (it == edgeMap.end())
+                    {
+                        edgeMap[key] = {t, va, vb};
+                    }
+                    else
+                    {
+                        glm::vec3 n1 = faceNormal(it->second.face);
+                        glm::vec3 n2 = faceNormal(t);
+                        if (glm::dot(n1, n2) < creaseThreshold)
+                        {
+                            lineIndices.push_back(it->second.v0);
+                            lineIndices.push_back(it->second.v1);
+                        }
+                        edgeMap.erase(it);
+                    }
+                }
+            }
+            for (auto &kv : edgeMap)
+            {
+                lineIndices.push_back(kv.second.v0);
+                lineIndices.push_back(kv.second.v1);
+            }
+            return lineIndices;
+        }
+        void reset_instance_attributes()
+        {
+            glVertexAttrib4f(3, 0.0f, 0.0f, 0.0f, 0.0f);
+            glVertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 0.0f);
+        }
     }
     void Box3::expand(const Vec3 &point)
     {
@@ -301,9 +396,19 @@ namespace ost_renderer
                 glDeleteBuffers(1, &m.line_ibo);
         }
         meshes_.clear();
+        instances_.clear();
         bounds_.clear();
         selected_.clear();
         ++revision_;
+        ++instance_revision_;
+    }
+    void Scene::add_model_instance(const Vec3 &position, float rotation, const Color &tint)
+    {
+        if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+            !std::isfinite(rotation))
+            throw std::invalid_argument("Model instance position and rotation must be finite");
+        instances_.push_back(ModelInstance{position, rotation, tint});
+        ++instance_revision_;
     }
     void Scene::add_mesh(const MeshData &data)
     {
@@ -385,89 +490,7 @@ namespace ost_renderer
         int triCount = (int)(data.indices.size() / 3);
         if (triCount > 0)
         {
-            struct PositionKey
-            {
-                long long x, y, z;
-                bool operator==(const PositionKey &o) const { return x == o.x && y == o.y && z == o.z; }
-            };
-            struct PositionKeyHash
-            {
-                size_t operator()(const PositionKey &k) const
-                {
-                    size_t h = std::hash<long long>{}(k.x);
-                    h ^= std::hash<long long>{}(k.y) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-                    h ^= std::hash<long long>{}(k.z) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-                    return h;
-                }
-            };
-            const double positionPrecision = 1.0e4;
-            std::vector<uint32_t> canonical(data.vertices.size());
-            std::unordered_map<PositionKey, uint32_t, PositionKeyHash> positionIds;
-            positionIds.reserve(data.vertices.size());
-            for (size_t i = 0; i < data.vertices.size(); ++i)
-            {
-                const auto &p = data.vertices[i];
-                if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
-                {
-                    canonical[i] = (uint32_t)i;
-                    continue;
-                }
-                PositionKey key{
-                    std::llround((double)p.x * positionPrecision),
-                    std::llround((double)p.y * positionPrecision),
-                    std::llround((double)p.z * positionPrecision)};
-                canonical[i] = positionIds.emplace(key, (uint32_t)i).first->second;
-            }
-            struct EdgeInfo
-            {
-                int face;
-                uint32_t v0, v1;
-            };
-            std::unordered_map<uint64_t, EdgeInfo> edgeMap;
-            std::vector<uint32_t> lineIndices;
-            const float creaseThreshold = cosf(15.0f * 3.14159f / 180.0f);
-            auto faceNormal = [&](int t) -> glm::vec3
-            {
-                auto &a = data.vertices[data.indices[t * 3]];
-                auto &b = data.vertices[data.indices[t * 3 + 1]];
-                auto &c = data.vertices[data.indices[t * 3 + 2]];
-                glm::vec3 e1(b.x - a.x, b.y - a.y, b.z - a.z);
-                glm::vec3 e2(c.x - a.x, c.y - a.y, c.z - a.z);
-                return glm::normalize(glm::cross(e1, e2));
-            };
-            for (int t = 0; t < triCount; t++)
-            {
-                uint32_t idx[3] = {data.indices[t * 3], data.indices[t * 3 + 1], data.indices[t * 3 + 2]};
-                for (int e = 0; e < 3; e++)
-                {
-                    uint32_t va = idx[e], vb = idx[(e + 1) % 3];
-                    uint32_t ca = canonical[va], cb = canonical[vb];
-                    if (ca == cb)
-                        continue;
-                    uint64_t key = ((uint64_t)std::min(ca, cb) << 32) | std::max(ca, cb);
-                    auto it = edgeMap.find(key);
-                    if (it == edgeMap.end())
-                    {
-                        edgeMap[key] = {t, va, vb};
-                    }
-                    else
-                    {
-                        glm::vec3 n1 = faceNormal(it->second.face);
-                        glm::vec3 n2 = faceNormal(t);
-                        if (glm::dot(n1, n2) < creaseThreshold)
-                        {
-                            lineIndices.push_back(it->second.v0);
-                            lineIndices.push_back(it->second.v1);
-                        }
-                        edgeMap.erase(it);
-                    }
-                }
-            }
-            for (auto &kv : edgeMap)
-            {
-                lineIndices.push_back(kv.second.v0);
-                lineIndices.push_back(kv.second.v1);
-            }
+            std::vector<uint32_t> lineIndices = feature_edge_indices(data.vertices, data.indices);
             if (!lineIndices.empty())
             {
                 mesh.line_count = lineIndices.size();
@@ -512,17 +535,25 @@ namespace ost_renderer
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec4 aColor;
+layout (location = 3) in vec4 aInstance;
+layout (location = 4) in vec4 aTint;
 out vec4 vertexColor;
 out vec3 normal;
 out vec3 worldPos;
+out float vTinted;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 void main() {
-    vec4 worldPosition = model * vec4(aPos, 1.0);
+    float c = cos(aInstance.w);
+    float s = sin(aInstance.w);
+    vec3 placed = vec3(c * aPos.x - s * aPos.y, s * aPos.x + c * aPos.y, aPos.z) + aInstance.xyz;
+    vec3 placedNormal = vec3(c * aNormal.x - s * aNormal.y, s * aNormal.x + c * aNormal.y, aNormal.z);
+    vec4 worldPosition = model * vec4(placed, 1.0);
     worldPos = worldPosition.xyz;
-    normal = mat3(transpose(inverse(model))) * aNormal;
-    vertexColor = aColor;
+    normal = mat3(transpose(inverse(model))) * placedNormal;
+    vertexColor = aTint.a > 0.0 ? vec4(aTint.rgb, aColor.a) : aColor;
+    vTinted = aTint.a > 0.0 ? 1.0 : 0.0;
     gl_Position = projection * view * worldPosition;
 }
 )";
@@ -669,15 +700,18 @@ void main() {
     const char *flat_color_fragment_shader = R"(
 #version 330 core
 in vec3 worldPos;
+in vec4 vertexColor;
+in float vTinted;
 out vec4 FragColor;
 uniform vec4 u_color;
+uniform float u_tintScale;
 uniform vec4 sectionCut;
 bool sectionCutRemoved(vec3 p) {
     return (sectionCut.x > 0.5 && p.y > sectionCut.y) || (sectionCut.z > 0.5 && p.x > sectionCut.w);
 }
 void main() {
     if (sectionCutRemoved(worldPos)) discard;
-    FragColor = u_color;
+    FragColor = (u_tintScale > 0.0 && vTinted > 0.5) ? vec4(vertexColor.rgb * u_tintScale, 1.0) : u_color;
 }
 )";
     const char *selection_post_fragment_shader = R"(
@@ -956,6 +990,20 @@ void main() {
             Color color;
         };
         std::vector<CapMesh> caps;
+        struct ModelPartGL
+        {
+            GLuint vao = 0, vbo = 0, ebo = 0, line_vao = 0, line_ebo = 0;
+            GLsizei index_count = 0, line_count = 0;
+            bool transparent = false;
+            Color color;
+        };
+        std::vector<ModelPartGL> model_parts;
+        Box3 model_bounds;
+        GLuint instance_vbo = 0;
+        GLsizei instance_count = 0;
+        uint64_t instance_upload_revision = UINT64_MAX;
+        bool show_instances = true;
+        float frame_far_plane = 0.0f;
         bool caps_dirty = true;
         uint64_t caps_scene_revision = UINT64_MAX;
         bool pick_initialized = false;
@@ -1015,6 +1063,14 @@ void main() {
         void ensure_caps();
         void draw_caps(bool transparent);
         void set_section_cut(int axis, bool enabled, float position);
+        void set_instanced_model(const std::string &glb_bytes, float units_per_metre);
+        void clear_instanced_model();
+        void upload_instances();
+        bool instances_drawable() const;
+        void draw_instances(bool transparent);
+        void draw_instance_edges(GLint color_location);
+        Box3 instance_bounds() const;
+        glm::mat4 projection_matrix() const;
         void composite();
         void setup_quad();
         void resize(int w, int h);
@@ -1157,9 +1213,9 @@ void main() {
     void Renderer::Impl::upload_matrices(GLuint shader)
     {
         glm::mat4 model(1.0f);
-        glm::mat4 view, projection;
+        glm::mat4 view;
         camera->get_view_matrix(glm::value_ptr(view));
-        camera->get_projection_matrix(glm::value_ptr(projection));
+        glm::mat4 projection = projection_matrix();
         glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
@@ -1263,6 +1319,194 @@ void main() {
         caps_dirty = true;
     }
 
+    glm::mat4 Renderer::Impl::projection_matrix() const
+    {
+        glm::mat4 projection;
+        camera->get_projection_matrix(glm::value_ptr(projection));
+        if (frame_far_plane > camera->far_plane)
+            projection = glm::perspective(glm::radians(camera->fov), camera->aspect_ratio, camera->near_plane,
+                                          frame_far_plane);
+        return projection;
+    }
+    void Renderer::Impl::clear_instanced_model()
+    {
+        for (auto &part : model_parts)
+        {
+            if (part.vao)
+                glDeleteVertexArrays(1, &part.vao);
+            if (part.line_vao)
+                glDeleteVertexArrays(1, &part.line_vao);
+            if (part.vbo)
+                glDeleteBuffers(1, &part.vbo);
+            if (part.ebo)
+                glDeleteBuffers(1, &part.ebo);
+            if (part.line_ebo)
+                glDeleteBuffers(1, &part.line_ebo);
+        }
+        model_parts.clear();
+        model_bounds.clear();
+        if (instance_vbo)
+            glDeleteBuffers(1, &instance_vbo);
+        instance_vbo = 0;
+        instance_count = 0;
+        instance_upload_revision = UINT64_MAX;
+    }
+    void Renderer::Impl::set_instanced_model(const std::string &glb_bytes, float units_per_metre)
+    {
+        ModelParts parsed = parse_instanced_model(glb_bytes, units_per_metre);
+        if (!initialized)
+            return;
+#ifdef _WIN32
+        ContextGuard guard(hdc, hglrc);
+#endif
+        clear_instanced_model();
+        glGenBuffers(1, &instance_vbo);
+        const GLsizei instance_stride = 8 * sizeof(float);
+        auto bind_instance_attributes = [&]()
+        {
+            glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, instance_stride, 0);
+            glVertexAttribDivisor(3, 1);
+            glEnableVertexAttribArray(4);
+            glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, instance_stride, (void *)(4 * sizeof(float)));
+            glVertexAttribDivisor(4, 1);
+        };
+        struct Vertex
+        {
+            float x, y, z, nx, ny, nz, r, g, b, a;
+        };
+        for (const auto &part : parsed.parts)
+        {
+            ModelPartGL gl_part;
+            gl_part.color = part.color;
+            gl_part.transparent = part.color.a < 0.99f;
+            gl_part.index_count = (GLsizei)part.indices.size();
+            std::vector<Vertex> verts;
+            verts.reserve(part.positions.size());
+            for (size_t i = 0; i < part.positions.size(); ++i)
+            {
+                const Vec3 &p = part.positions[i];
+                const Vec3 &n = part.normals[i];
+                verts.push_back({p.x, p.y, p.z, n.x, n.y, n.z, part.color.r, part.color.g, part.color.b, part.color.a});
+            }
+            glGenVertexArrays(1, &gl_part.vao);
+            glGenBuffers(1, &gl_part.vbo);
+            glGenBuffers(1, &gl_part.ebo);
+            glBindVertexArray(gl_part.vao);
+            glBindBuffer(GL_ARRAY_BUFFER, gl_part.vbo);
+            glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_part.ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, part.indices.size() * sizeof(uint32_t), part.indices.data(),
+                         GL_STATIC_DRAW);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, nx));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, r));
+            bind_instance_attributes();
+            std::vector<uint32_t> lines = feature_edge_indices(part.positions, part.indices);
+            if (!lines.empty())
+            {
+                gl_part.line_count = (GLsizei)lines.size();
+                glGenVertexArrays(1, &gl_part.line_vao);
+                glGenBuffers(1, &gl_part.line_ebo);
+                glBindVertexArray(gl_part.line_vao);
+                glBindBuffer(GL_ARRAY_BUFFER, gl_part.vbo);
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), 0);
+                bind_instance_attributes();
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_part.line_ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, lines.size() * sizeof(uint32_t), lines.data(), GL_STATIC_DRAW);
+            }
+            glBindVertexArray(0);
+            model_parts.push_back(gl_part);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        model_bounds = parsed.bounds;
+    }
+    void Renderer::Impl::upload_instances()
+    {
+        if (!instance_vbo)
+        {
+            instance_count = 0;
+            return;
+        }
+        if (instance_upload_revision == scene->instance_revision())
+            return;
+        instance_upload_revision = scene->instance_revision();
+        std::vector<float> data;
+        data.reserve(scene->model_instances().size() * 8);
+        for (const auto &instance : scene->model_instances())
+        {
+            data.insert(data.end(), {instance.position.x, instance.position.y, instance.position.z, instance.rotation,
+                                     instance.tint.r, instance.tint.g, instance.tint.b, instance.tint.a});
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
+        glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.empty() ? nullptr : data.data(),
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        instance_count = (GLsizei)scene->model_instances().size();
+    }
+    bool Renderer::Impl::instances_drawable() const
+    {
+        return show_instances && instance_count > 0 && !model_parts.empty();
+    }
+    void Renderer::Impl::draw_instances(bool transparent)
+    {
+        if (!instances_drawable())
+            return;
+        for (const auto &part : model_parts)
+        {
+            if (part.transparent != transparent)
+                continue;
+            glBindVertexArray(part.vao);
+            glDrawElementsInstanced(GL_TRIANGLES, part.index_count, GL_UNSIGNED_INT, 0, instance_count);
+        }
+        glBindVertexArray(0);
+        reset_instance_attributes();
+    }
+    void Renderer::Impl::draw_instance_edges(GLint color_location)
+    {
+        if (!instances_drawable())
+            return;
+        const float edge_scale = 0.45f;
+        GLint tint_scale_location = glGetUniformLocation(flat_color_shader_prog, "u_tintScale");
+        glUniform1f(tint_scale_location, edge_scale);
+        for (const auto &part : model_parts)
+        {
+            if (!part.line_vao)
+                continue;
+            float color[4] = {part.color.r * edge_scale, part.color.g * edge_scale, part.color.b * edge_scale, 1.0f};
+            glUniform4fv(color_location, 1, color);
+            glBindVertexArray(part.line_vao);
+            glDrawElementsInstanced(GL_LINES, part.line_count, GL_UNSIGNED_INT, 0, instance_count);
+        }
+        glUniform1f(tint_scale_location, 0.0f);
+        glBindVertexArray(0);
+        reset_instance_attributes();
+    }
+    Box3 Renderer::Impl::instance_bounds() const
+    {
+        Box3 bounds;
+        if (!show_instances || model_parts.empty() || model_bounds.is_empty())
+            return bounds;
+        for (const auto &instance : scene->model_instances())
+        {
+            float c = std::cos(instance.rotation), s = std::sin(instance.rotation);
+            for (int corner = 0; corner < 8; ++corner)
+            {
+                float x = (corner & 1) ? model_bounds.max.x : model_bounds.min.x;
+                float y = (corner & 2) ? model_bounds.max.y : model_bounds.min.y;
+                float z = (corner & 4) ? model_bounds.max.z : model_bounds.min.z;
+                bounds.expand(Vec3(c * x - s * y + instance.position.x, s * x + c * y + instance.position.y,
+                                   z + instance.position.z));
+            }
+        }
+        return bounds;
+    }
+
     void Renderer::Impl::shutdown()
     {
         if (!initialized)
@@ -1273,6 +1517,7 @@ void main() {
 #endif
             scene->clear();
             clear_caps();
+            clear_instanced_model();
             clear_plan_texture();
             if (opaque_shader)
                 glDeleteProgram(opaque_shader);
@@ -1556,6 +1801,10 @@ void main() {
             glBindVertexArray(cap.vao);
             glDrawElements(GL_TRIANGLES, cap.index_count, GL_UNSIGNED_INT, 0);
         }
+        float background_id[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        glUniform4fv(loc, 1, background_id);
+        draw_instances(false);
+        draw_instances(true);
         glBindVertexArray(0);
         pick_buffer.resize((size_t)width * height * 4);
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pick_buffer.data());
@@ -1641,6 +1890,7 @@ void main() {
             glDrawElements(GL_LINES, cap.line_count, GL_UNSIGNED_INT, 0);
         }
         glBindVertexArray(0);
+        draw_instance_edges(colorLoc);
         glDepthMask(GL_TRUE);
     }
     void Renderer::Impl::setup_quad()
@@ -1802,9 +2052,9 @@ void main() {
         if (!has_visible_plan_texture() || !plan_texture_shader)
             return;
         glUseProgram(plan_texture_shader);
-        glm::mat4 view, projection;
+        glm::mat4 view;
         camera->get_view_matrix(glm::value_ptr(view));
-        camera->get_projection_matrix(glm::value_ptr(projection));
+        glm::mat4 projection = projection_matrix();
         glUniformMatrix4fv(glGetUniformLocation(plan_texture_shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(plan_texture_shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniform1f(glGetUniformLocation(plan_texture_shader, "opacity"), plan_texture_opacity);
@@ -1840,6 +2090,7 @@ void main() {
         }
         draw_caps(false);
         glBindVertexArray(0);
+        draw_instances(false);
         if (show_edges)
         {
             glDisable(GL_POLYGON_OFFSET_FILL);
@@ -1880,6 +2131,7 @@ void main() {
         }
         draw_caps(true);
         glBindVertexArray(0);
+        draw_instances(true);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
@@ -1944,6 +2196,22 @@ void main() {
             SwapBuffers(hdc);
 #endif
             return;
+        }
+        reset_instance_attributes();
+        upload_instances();
+        frame_far_plane = 0.0f;
+        if (instances_drawable())
+        {
+            Box3 extra = instance_bounds();
+            glm::vec3 eye = camera->position.to_glm();
+            float farthest = 0.0f;
+            for (int corner = 0; corner < 8; ++corner)
+            {
+                glm::vec3 p((corner & 1) ? extra.max.x : extra.min.x, (corner & 2) ? extra.max.y : extra.min.y,
+                            (corner & 4) ? extra.max.z : extra.min.z);
+                farthest = std::max(farthest, glm::length(p - eye));
+            }
+            frame_far_plane = farthest * 1.25f;
         }
         ensure_caps();
         if (scene->empty())
@@ -2123,5 +2391,32 @@ void main() {
         return (axis >= 0 && axis <= 1) ? pImpl->cut_position[axis] : 0.0f;
     }
     bool Renderer::edges_visible() const { return pImpl->show_edges; }
+    void Renderer::set_instanced_model(const std::string &glb_bytes, float units_per_metre)
+    {
+        pImpl->set_instanced_model(glb_bytes, units_per_metre);
+    }
+    void Renderer::clear_instanced_model()
+    {
+        if (!pImpl->initialized)
+            return;
+#ifdef _WIN32
+        ContextGuard guard(pImpl->hdc, pImpl->hglrc);
+#endif
+        pImpl->clear_instanced_model();
+    }
+    bool Renderer::has_instanced_model() const { return !pImpl->model_parts.empty(); }
+    void Renderer::set_model_instances_visible(bool visible) { pImpl->show_instances = visible; }
+    bool Renderer::model_instances_visible() const { return pImpl->show_instances; }
+    Box3 Renderer::render_bounds() const
+    {
+        Box3 bounds = scene.get_bounds();
+        Box3 extra = pImpl->instance_bounds();
+        if (!extra.is_empty())
+        {
+            bounds.expand(extra.min);
+            bounds.expand(extra.max);
+        }
+        return bounds;
+    }
     int Renderer::get_samples() const { return pImpl->samples; }
 }

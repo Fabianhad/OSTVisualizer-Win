@@ -58,7 +58,7 @@ class SceneDataDtoTests(unittest.TestCase):
 
 class SceneDataContractTests(unittest.TestCase):
     def test_every_scene_typed_dict_pins_its_exact_keys_and_value_types(self):
-        from typing import List, get_type_hints
+        from typing import Dict, List, get_type_hints
         from ost_visualizer.application.dtos import scene_data_dto as module
 
         expected = {
@@ -70,6 +70,23 @@ class SceneDataContractTests(unittest.TestCase):
                 "mode_2d": str,
             },
             "SceneViewOptionsConfig": {"edges": bool},
+            "SceneTowerCranePlacement": {
+                "position": List[float],
+                "rotation_y": float,
+                "tint": List[float],
+                "takeoff_uid": str,
+                "condition_uid": str,
+                "layer_uid": str,
+                "area_uid": str,
+                "page_uid": str,
+            },
+            "SceneTowerCranes": {
+                "model_base64": str,
+                "units_per_metre": float,
+                "credit": Dict[str, str],
+                "placements": List[module.SceneTowerCranePlacement],
+                "render_bounds": module.SceneBoundsConfig,
+            },
             "SceneGeometryEntry": {
                 "vertices": List[float],
                 "normals": List[float],
@@ -174,12 +191,13 @@ class SceneDataContractTests(unittest.TestCase):
                 "display_modes": module.SceneDisplayModesConfig,
                 "subtitle": str,
                 "view_options": module.SceneViewOptionsConfig,
+                "tower_cranes": module.SceneTowerCranes,
             },
         }
         for name, hints in expected.items():
             with self.subTest(typed_dict=name):
                 self.assertEqual(get_type_hints(getattr(module, name)), hints)
-        self.assertEqual(len(expected), 14)
+        self.assertEqual(len(expected), 16)
 
     def test_required_and_optional_key_sets_are_exact(self):
         from ost_visualizer.application.dtos import scene_data_dto as module
@@ -228,6 +246,7 @@ class SceneDataContractTests(unittest.TestCase):
                 "display_modes",
                 "subtitle",
                 "view_options",
+                "tower_cranes",
             },
         )
         for name in (
@@ -235,6 +254,8 @@ class SceneDataContractTests(unittest.TestCase):
             "SceneBoundsConfig",
             "SceneDisplayModesConfig",
             "SceneViewOptionsConfig",
+            "SceneTowerCranePlacement",
+            "SceneTowerCranes",
             "SceneGeometryEntry",
             "SceneLayerEntry",
             "SceneConditionEntry",

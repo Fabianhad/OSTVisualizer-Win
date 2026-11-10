@@ -4,12 +4,14 @@ from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from ....domain.dtos.mesh_metadata_dto import MeshMetadata
+from ....domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 from ....domain.entities.condition import Condition
 from ....domain.entities.config import Config
 from ....domain.entities.takeoff import Takeoff
 from ..core.boolean_operations import apply_boolean_operations
 from ..core.mesh_generator import MeshData
 from .mesh_factory import MeshFactory
+from .tower_crane import tower_crane_placement
 
 Bounds = Tuple[float, float, float, float, float, float]
 
@@ -114,6 +116,9 @@ def process_takeoffs_to_meshes(
     filtered_area_takeoffs = takeoffs_by_type.get(1, [])
     meshes_with_metadata: List[Tuple[MeshData, MeshMetadata]] = []
     mesh_colors_temp: Dict[int, Tuple[str, float]] = {}
+    # Cranes stay out of the boolean step and the bounds; they ride on their
+    # footing's colour entry instead.
+    crane_by_takeoff: Dict[str, TowerCranePlacement] = {}
     temp_idx = 0
     processing_order = [
         (1, filtered_area_takeoffs),
@@ -156,17 +161,33 @@ def process_takeoffs_to_meshes(
                 meshes_with_metadata.append((mesh, metadata))
                 mesh_colors_temp[temp_idx] = (color_hex, opacity)
                 temp_idx += 1
+                if condition.shows_tower_crane:
+                    crane = tower_crane_placement(
+                        takeoff,
+                        condition,
+                        coord_system,
+                        page_coord_system,
+                        inactive=color_service.is_inactive_area_takeoff(
+                            takeoff, page_area_selections
+                        ),
+                    )
+                    if crane is not None:
+                        crane_by_takeoff[str(takeoff.uid)] = crane
     meshes_with_metadata = apply_boolean_operations(meshes_with_metadata)
     meshes: List[MeshData] = []
     mesh_colors: Dict[str, Union[Dict[str, object], str]] = {}
     for mesh_idx, (mesh, metadata) in enumerate(meshes_with_metadata):
         meshes.append(mesh)
-        mesh_colors[f"mesh_{mesh_idx}"] = {
+        entry: Dict[str, object] = {
             "color": metadata["color"],
             "opacity": metadata["opacity"],
             "condition_uid": metadata.get("condition_uid", ""),
             "takeoff_uid": metadata.get("takeoff_uid", ""),
             "page_uid": metadata.get("page_uid", ""),
         }
+        crane = crane_by_takeoff.pop(str(metadata.get("takeoff_uid", "")), None)
+        if crane is not None:
+            entry["tower_crane"] = crane
+        mesh_colors[f"mesh_{mesh_idx}"] = entry
     bounds = calculate_mesh_bounds(meshes)
     return meshes, mesh_colors, bounds

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Iterable, List
+from typing import Iterable, List, Optional
+from ...domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 from ...domain.entities.identity_refs import BidRef
 
 
@@ -32,3 +33,5 @@ class MeshGeometry:
     page_uid: str
     condition_uid: str
     takeoff_uid: str
+    # The crane standing on this footing, for "(CRANE)" count takeoffs.
+    tower_crane: Optional[TowerCranePlacement] = None

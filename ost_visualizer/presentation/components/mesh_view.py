@@ -8,6 +8,10 @@ from ...application.dtos.mesh_geometry_dto import (
     MeshSceneIdentity,
     normalize_scene_page_uids,
 )
+from ...domain.dtos.tower_crane_placement_dto import (
+    INCHES_PER_METRE,
+    TowerCranePlacement,
+)
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ..actions.action_ids import (
@@ -29,6 +33,7 @@ from ..utils.view_context_menu import (
     add_context_page_actions,
     add_reassign_condition_submenu,
 )
+from ..visualization.assets.tower_crane_asset import read_tower_crane_model
 from ..visualization.native_page_plane import NativePageImagePlaneData
 from ..visualization.render_surface_metrics import RenderSurfaceMetrics
 from . import ost_renderer
@@ -78,6 +83,10 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._surface_hidden = True
         self._color_service = color_service
         self._edges_visible = False
+        self._tower_crane_visible = True
+        self._tower_crane_count = 0
+        # None: not loaded into the current renderer yet; False: failed once.
+        self._tower_crane_model_loaded: Optional[bool] = None
         self._section_cut_fractions = dict.fromkeys(_SECTION_CUT_AXES, 1.0)
         self.scene_content_changed.connect(self._apply_section_cuts)
         self.setAttribute(QtCore.Qt.WA_PaintOnScreen)
@@ -179,6 +188,8 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._resize_render_surface()
             self._set_palette_background()
             self._renderer.set_edges_visible(self._edges_visible)
+            self._renderer.set_model_instances_visible(self._tower_crane_visible)
+            self._tower_crane_model_loaded = None
             self._apply_section_cuts()
             self._renderer.suspend()
             if self._pending_camera_reset:
@@ -847,6 +858,56 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._renderer.set_edges_visible(visible)
         self.update()
 
+    def tower_crane_visible(self) -> bool:
+        return self._tower_crane_visible
+
+    def set_tower_crane_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if visible == self._tower_crane_visible:
+            return
+        self._tower_crane_visible = visible
+        if self._renderer is not None:
+            self._renderer.set_model_instances_visible(visible)
+        self.update()
+
+    def tower_crane_count(self) -> int:
+        return self._tower_crane_count
+
+    def _ensure_tower_crane_model(self) -> bool:
+        if self._renderer is None:
+            return False
+        if self._tower_crane_model_loaded is None:
+            try:
+                self._renderer.set_instanced_model(
+                    read_tower_crane_model(), INCHES_PER_METRE
+                )
+                self._tower_crane_model_loaded = True
+            except (OSError, ValueError):
+                logger.warning(
+                    "Tower crane model could not be loaded; cranes are not shown",
+                    exc_info=True,
+                )
+                self._tower_crane_model_loaded = False
+        return bool(self._tower_crane_model_loaded)
+
+    def _add_tower_cranes(
+        self,
+        tower_cranes: Sequence[TowerCranePlacement],
+        footing_colors: Mapping[str, tuple[float, float, float]],
+    ) -> None:
+        self._tower_crane_count = 0
+        if not tower_cranes or not self._ensure_tower_crane_model():
+            return
+        for crane in tower_cranes:
+            tint = ost_renderer.Color(0.0, 0.0, 0.0, 0.0)
+            footing_color = footing_colors.get(crane.takeoff_uid)
+            if crane.inactive and footing_color is not None:
+                tint = ost_renderer.Color(*footing_color, 1.0)
+            self._renderer.scene.add_model_instance(
+                ost_renderer.Vec3(crane.x, crane.y, crane.z), crane.rotation, tint
+            )
+            self._tower_crane_count += 1
+
     def section_cut_fraction(self, cut: str) -> float:
         return self._section_cut_fractions[cut]
 
@@ -947,6 +1008,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         page_floor_elevations: Mapping[str, float],
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
+        tower_cranes: Sequence[TowerCranePlacement] = (),
     ) -> None:
         if self._destroyed:
             return
@@ -969,6 +1031,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                     "page_floor_elevations": dict(page_floor_elevations),
                     "condition_uids": condition_uids,
                     "takeoff_uids": takeoff_uids,
+                    "tower_cranes": tuple(tower_cranes),
                 }
             )
             return
@@ -981,6 +1044,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             page_floor_elevations,
             condition_uids,
             takeoff_uids,
+            tuple(tower_cranes),
         )
 
     def _claim_scene_result(self, scene_identity: MeshSceneIdentity) -> bool:
@@ -1061,6 +1125,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             data["page_floor_elevations"],
             data["condition_uids"],
             data["takeoff_uids"],
+            data.get("tower_cranes", ()),
         )
 
     def _do_apply_mesh_data(
@@ -1073,6 +1138,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         page_floor_elevations: Mapping[str, float],
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
+        tower_cranes: Sequence[TowerCranePlacement] = (),
     ) -> None:
         self._validate_mesh_buffer_lengths(
             vertices_list,
@@ -1091,6 +1157,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         if not self._ensure_renderer():
             return
         meshes = []
+        footing_colors: dict[str, tuple[float, float, float]] = {}
         for i, (verts, norms, idxs, color) in enumerate(
             zip(vertices_list, normals_list, indices_list, colors)
         ):
@@ -1106,6 +1173,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                 mesh.condition_uid = condition_uids[i]
             if takeoff_uids and i < len(takeoff_uids):
                 mesh.takeoff_uid = takeoff_uids[i]
+                footing_colors[str(takeoff_uids[i])] = (r, g, b)
             meshes.append(mesh)
         if not self._claim_scene_result(scene_identity):
             return
@@ -1127,6 +1195,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._renderer.scene.clear()
         for mesh in meshes:
             self._renderer.scene.add_mesh(mesh)
+        self._add_tower_cranes(tower_cranes, footing_colors)
         if scene_identity.page_uids:
             self._replace_plan_texture()
         else:
@@ -1172,6 +1241,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._camera_initialized_for_scene = False
         self._displayed_scene_page_uids = ()
         self._page_floor_elevations = {}
+        self._tower_crane_count = 0
         if self._renderer:
             self._renderer.scene.clear()
             self._renderer.clear_plan_texture()

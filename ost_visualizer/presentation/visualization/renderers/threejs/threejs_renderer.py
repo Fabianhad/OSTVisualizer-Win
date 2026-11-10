@@ -28,6 +28,7 @@ from .....domain.services.page_image_plane_transform import (
 from ...exporters import ost_pdf_writer
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs
+from .tower_crane_scene import build_tower_crane_scene_data
 from .two_d_takeoff_processor import process_takeoffs_2d_for_threejs
 
 
@@ -92,6 +93,9 @@ def visualize_with_threejs(
     }
     scene_data["subtitle"] = subtitle
     scene_data["view_options"] = {"edges": bool(show_edges)}
+    tower_cranes = build_tower_crane_scene_data(processed_meshes)
+    if tower_cranes is not None:
+        scene_data["tower_cranes"] = tower_cranes
     page_entries, pdf_documents, takeoffs_2d, elevation_callouts = (
         _build_multi_page_data(
             pages or [],

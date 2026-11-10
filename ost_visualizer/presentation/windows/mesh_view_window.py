@@ -3,6 +3,7 @@ from typing import Mapping, Optional, Sequence, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
+from ...domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 from ...domain.entities.identity_refs import BidRef
 from ..actions.action_ids import (
     ACTION_REDO,
@@ -333,6 +334,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         page_floor_elevations: Mapping[str, float],
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
+        tower_cranes: Sequence[TowerCranePlacement] = (),
     ) -> None:
         if self._is_closing:
             return
@@ -345,6 +347,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             page_floor_elevations=page_floor_elevations,
             condition_uids=condition_uids,
             takeoff_uids=takeoff_uids,
+            tower_cranes=tower_cranes,
         )
 
     def begin_scene_load(self, bid_ref: BidRef) -> None:
@@ -386,6 +389,10 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def set_edges_visible(self, visible: bool) -> None:
         if self.viewer:
             self.viewer.set_edges_visible(visible)
+
+    def set_tower_crane_visible(self, visible: bool) -> None:
+        if self.viewer:
+            self.viewer.set_tower_crane_visible(visible)
 
     def set_selected_takeoffs(self, takeoff_uids: list) -> None:
         if self.viewer:

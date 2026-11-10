@@ -2,6 +2,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 from ....application.dtos.mesh_geometry_dto import MeshGeometry
+from ....domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 from ....application.interfaces.i_color_service import IColorService
 
 if TYPE_CHECKING:
@@ -231,10 +232,14 @@ def meshes_to_geometries(
         condition_uid = ""
         takeoff_uid = ""
         page_uid = ""
+        tower_crane = None
         if isinstance(color_entry, dict):
             condition_uid = str(color_entry.get("condition_uid", ""))
             takeoff_uid = str(color_entry.get("takeoff_uid", ""))
             page_uid = str(color_entry.get("page_uid", ""))
+            crane = color_entry.get("tower_crane")
+            if isinstance(crane, TowerCranePlacement):
+                tower_crane = crane
         geometry = MeshGeometry(
             vertices=vertex_buffer,
             normals=normal_buffer,
@@ -244,6 +249,7 @@ def meshes_to_geometries(
             page_uid=page_uid,
             condition_uid=condition_uid,
             takeoff_uid=takeoff_uid,
+            tower_crane=tower_crane,
         )
         geometries.append(geometry)
     return geometries

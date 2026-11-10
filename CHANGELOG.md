@@ -14,6 +14,14 @@
   the model's edge in feet, and the right end turns it off. Cut faces are filled,
   slightly darker than the element, also on transparent objects and with Edges
   on, and clicking in the 3D view ignores anything on the removed side.
+- **Tower cranes in 3D.** Count takeoffs whose condition notes contain
+  "(CRANE)" show a tower crane standing on the takeoff in the 3D view and in
+  HTML exports, turned with the takeoff. The takeoff itself is the crane
+  footing and keeps its size and quantities; the crane is for show only and
+  follows the layer, condition and area filters, section cuts and Edges. A
+  **Tower crane** checkbox next to the cut sliders (and in the export's View
+  controls) hides the cranes. Crane model: "Tower Crane" by Chamod on
+  Sketchfab, CC BY 4.0, credited in Help > About.
 
 ### Changed
 

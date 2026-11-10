@@ -221,6 +221,7 @@ class FakeViewer:
 class FakeMeshReceiver:
     def __init__(self, visible=True):
         self.mesh_calls = []
+        self.tower_crane_calls = []
         self.clear_calls = 0
         self.visible = visible
         self.scene_loads = []
@@ -241,7 +242,9 @@ class FakeMeshReceiver:
         page_floor_elevations,
         condition_uids,
         takeoff_uids,
+        tower_cranes=(),
     ):
+        self.tower_crane_calls.append(tuple(tower_cranes))
         self.mesh_calls.append(
             (
                 (vertices, normals, indices, colors),
@@ -315,6 +318,7 @@ class _CollaborationStatusPanel:
 class FakeConstructedMeshWindow:
     def __init__(self, *args, **_window_options):
         self.mesh_calls = []
+        self.tower_crane_calls = []
         self.visible = True
         self.destroyed = FakeSignal()
         self.mesh_clicked = FakeSignal()
@@ -356,7 +360,9 @@ class FakeConstructedMeshWindow:
         page_floor_elevations,
         condition_uids,
         takeoff_uids,
+        tower_cranes=(),
     ):
+        self.tower_crane_calls.append(tuple(tower_cranes))
         self.mesh_calls.append(
             (
                 (vertices, normals, indices, colors),

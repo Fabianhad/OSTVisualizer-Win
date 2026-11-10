@@ -12,6 +12,7 @@ $TakeoffOutDir = Join-Path $ProjectRoot 'dist_takeoff_mcp'
 $IconPath = Join-Path $ProjectRoot 'ost_visualizer\resources\icon.ico'
 $TemplatePath = Join-Path $ProjectRoot 'ost_visualizer\presentation\visualization\renderers\threejs\templates\viewer.html'
 $IconsDir = Join-Path $ProjectRoot 'ost_visualizer\resources\icons'
+$TowerCraneModelPath = Join-Path $ProjectRoot 'ost_visualizer\resources\models\tower_crane.glb'
 $SecretsPublicKeyPath = Join-Path $ProjectRoot '.secrets\license_public_key.pem'
 $CommonNofollowArgs = @(
     "--nofollow-import-to=aifc,antigravity,asynchat,asyncore,audioop,cgitb,chunk,codeop,crypt,doctest,ensurepip,faulthandler,ftplib,genericpath,idlelib,imaplib,imghdr,lib2to3,mailbox,mailcap,modulefinder,msilib,nis,nntplib,nt,opcode,ossaudiodev,pickletools,pipes,poplib,posix,pydoc_data"
@@ -46,6 +47,7 @@ $nuitkaArgs = @(
     "--include-data-file=$SecretsPublicKeyPath=ost_visualizer/config/license_public_key.pem"
     "--include-data-file=$TemplatePath=ost_visualizer/presentation/visualization/renderers/threejs/templates/viewer.html"
     "--include-data-dir=$IconsDir=ost_visualizer/resources/icons"
+    "--include-data-file=$TowerCraneModelPath=ost_visualizer/resources/models/tower_crane.glb"
 ) + $CommonNofollowArgs + @(
     '--assume-yes-for-downloads'
     '--lto=yes'

@@ -46,6 +46,12 @@ namespace ost_renderer
         void set_vertices(const std::vector<float> &flat_verts);
         void set_normals(const std::vector<float> &flat_norms);
     };
+    struct ModelInstance
+    {
+        Vec3 position;
+        float rotation = 0.0f;
+        Color tint{0.0f, 0.0f, 0.0f, 0.0f};
+    };
     class Camera
     {
     public:
@@ -84,6 +90,10 @@ namespace ost_renderer
     public:
         void clear();
         void add_mesh(const MeshData &mesh);
+        void add_model_instance(const Vec3 &position, float rotation, const Color &tint);
+        size_t model_instance_count() const { return instances_.size(); }
+        const std::vector<ModelInstance> &model_instances() const { return instances_; }
+        uint64_t instance_revision() const { return instance_revision_; }
         Box3 get_bounds() const;
         bool empty() const { return meshes_.empty(); }
         void attach_gl_context(void *hdc, void *hglrc);
@@ -113,9 +123,11 @@ namespace ost_renderer
 
     private:
         std::vector<GLMesh> meshes_;
+        std::vector<ModelInstance> instances_;
         Box3 bounds_;
         std::set<int> selected_;
         uint64_t revision_ = 0;
+        uint64_t instance_revision_ = 0;
         static const std::string kEmptyString;
         void *gl_hdc_ = nullptr;
         void *gl_hglrc_ = nullptr;
@@ -156,6 +168,12 @@ namespace ost_renderer
         void set_section_cut(int axis, bool enabled, float position);
         bool section_cut_enabled(int axis) const;
         float section_cut_position(int axis) const;
+        void set_instanced_model(const std::string &glb_bytes, float units_per_metre);
+        void clear_instanced_model();
+        bool has_instanced_model() const;
+        void set_model_instances_visible(bool visible);
+        bool model_instances_visible() const;
+        Box3 render_bounds() const;
         int get_samples() const;
         Scene scene;
         Camera camera;

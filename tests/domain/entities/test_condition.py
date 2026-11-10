@@ -1,6 +1,9 @@
 import unittest
 from dataclasses import fields
-from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.condition import (
+    TOWER_CRANE_NOTES_TAG,
+    Condition,
+)
 
 
 class ConditionConditionBehaviorTests(unittest.TestCase):
@@ -107,3 +110,32 @@ class ConditionTypeTests(unittest.TestCase):
         ):
             with self.subTest(field=flag):
                 self.assertIs(getattr(condition, flag), False)
+
+
+class ConditionTowerCraneTests(unittest.TestCase):
+    def test_count_conditions_with_the_crane_tag_in_any_case_show_a_crane(self):
+        for notes in ("(CRANE)", "(crane)", "Footing 20x20 (Crane) by others"):
+            with self.subTest(notes=notes):
+                condition = Condition(
+                    "c", condition_type=Condition.TYPE_COUNT, notes=notes
+                )
+                self.assertTrue(condition.shows_tower_crane)
+        self.assertEqual(TOWER_CRANE_NOTES_TAG, "(CRANE)")
+
+    def test_other_types_missing_tags_and_loose_words_do_not(self):
+        for condition_type in (
+            Condition.TYPE_LINEAR,
+            Condition.TYPE_AREA,
+            Condition.TYPE_ATTACHMENT,
+        ):
+            with self.subTest(condition_type=condition_type):
+                condition = Condition(
+                    "c", condition_type=condition_type, notes="(CRANE)"
+                )
+                self.assertFalse(condition.shows_tower_crane)
+        for notes in ("", None, "crane", "CRANE pad", "( crane )"):
+            with self.subTest(notes=notes):
+                condition = Condition(
+                    "c", condition_type=Condition.TYPE_COUNT, notes=notes
+                )
+                self.assertFalse(condition.shows_tower_crane)

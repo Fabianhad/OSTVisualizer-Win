@@ -1,4 +1,5 @@
 from typing import TypedDict
+from .tower_crane_placement_dto import TowerCranePlacement
 
 
 class MeshMetadata(TypedDict, total=False):
@@ -18,3 +19,4 @@ class MeshMetadata(TypedDict, total=False):
     condition_type: int
     layer_uid: str
     visible: bool
+    tower_crane: TowerCranePlacement

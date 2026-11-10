@@ -1,4 +1,4 @@
-from typing import List, TypedDict
+from typing import Dict, List, TypedDict
 
 
 class SceneCameraConfig(TypedDict):
@@ -19,6 +19,25 @@ class SceneDisplayModesConfig(TypedDict):
 
 class SceneViewOptionsConfig(TypedDict):
     edges: bool
+
+
+class SceneTowerCranePlacement(TypedDict):
+    position: List[float]
+    rotation_y: float
+    tint: List[float]
+    takeoff_uid: str
+    condition_uid: str
+    layer_uid: str
+    area_uid: str
+    page_uid: str
+
+
+class SceneTowerCranes(TypedDict):
+    model_base64: str
+    units_per_metre: float
+    credit: Dict[str, str]
+    placements: List[SceneTowerCranePlacement]
+    render_bounds: SceneBoundsConfig
 
 
 class SceneGeometryEntry(TypedDict):
@@ -140,6 +159,7 @@ class _OptionalSceneData(TypedDict, total=False):
     display_modes: SceneDisplayModesConfig
     subtitle: str
     view_options: SceneViewOptionsConfig
+    tower_cranes: SceneTowerCranes
 
 
 class SceneData(_OptionalSceneData):

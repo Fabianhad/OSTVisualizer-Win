@@ -265,6 +265,7 @@ add_custom_command(TARGET ost_pdf_writer POST_BUILD
 nanobind_add_module(ost_renderer
     src/module_renderer.cpp
     src/renderer/renderer.cpp
+    src/renderer/instanced_model.cpp
 )
 
 target_include_directories(ost_renderer PRIVATE

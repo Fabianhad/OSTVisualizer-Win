@@ -430,6 +430,30 @@ Threading and events:
   viewers show the plan the same way round. `Camera::reset` without bounds looks
   from the same side. Change both together;
   `tests/integration/native/test_renderer_boundaries.py` pins the match.
+- Tower crane: count takeoffs whose condition notes contain "(CRANE)" (any
+  case; `Condition.shows_tower_crane`, count type only, never negative takeoffs)
+  carry a crane model on top of their footing, visual only. The takeoff stays an
+  ordinary count solid; quantities never read meshes. `meshing/tower_crane.py`
+  places it at the footing centre and top (`point_takeoff_vertical_extent`, the
+  same as `MeshFactory`) with the footing's `-rotation`, through the native page
+  transform. Placements ride on the footing's mesh colour entry (native) or
+  metadata (export), outside the boolean step and the bounds. Native:
+  `Renderer.set_instanced_model` parses the GLB with cgltf
+  (`renderer/instanced_model.cpp`, glTF (x, y, z) -> (-x, z, y) x inches per
+  metre) and draws every `Scene.add_model_instance` with instanced draws in the
+  opaque, weighted-transparent, edge and pick passes (pick id 0: visual only);
+  instances get no caps or selection, stay out of `Scene.get_bounds()` (fit,
+  reset and cut extents) and only widen the far plane. Export:
+  `sceneData.tower_cranes` (GLB base64, placements, credit, clip bounds) exists
+  only when a bid has cranes; `GLTFLoader` is imported on demand and the parts
+  use the native materials and the footing's visibility keys. The "Tower crane"
+  checkbox (`components/tower_crane_toggle.py`, in the section-cut row; on by
+  default, per view, not persisted) and the export toggle hide them. A notes edit
+  rebuilds the 3D scene only when the set of crane conditions changes
+  (`tower_crane_condition_uids`). The shipped model
+  `resources/models/tower_crane.glb` is built from `assets/models` by
+  `tools/prepare_tower_crane_asset.py`; both build scripts package it, and the
+  CC BY 4.0 credit is in Help > About and in exports that show a crane.
 - Authoritative Takeoff events refresh derived sidebar quantities even when Plan
   projection is deferred or skipped for an unaffected active Page. In 3D these
   quantities cover the selected Page set, not only the active 2D Page.

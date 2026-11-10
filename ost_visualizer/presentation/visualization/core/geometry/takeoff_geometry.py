@@ -82,6 +82,16 @@ def compute_count_vertices(
     return [(cx + px, cy + py) for px, py in points]
 
 
+def point_takeoff_vertical_extent(condition: Condition) -> Tuple[float, float]:
+    height = max(condition.height if condition.height else 1, 1)
+    if condition.is_count:
+        height *= max(condition.display_size, 0.1) / 100.0
+    z_offset = condition.z_value if condition.z_value else 0
+    if condition.is_top:
+        z_offset = z_offset - height
+    return z_offset, height
+
+
 def resolve_point_takeoff_shape(
     condition: Condition,
 ) -> Tuple[int, float, float]:

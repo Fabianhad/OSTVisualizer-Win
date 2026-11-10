@@ -1,0 +1,2 @@
+# Binary assets: never normalize line endings.
+*.glb binary

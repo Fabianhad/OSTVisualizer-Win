@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from typing import Optional
 
+# Notes tag that turns a count condition into a tower crane footing (any case).
+TOWER_CRANE_NOTES_TAG = "(CRANE)"
+
 
 @dataclass
 class Condition:
@@ -66,3 +69,10 @@ class Condition:
     @property
     def is_attachment(self) -> bool:
         return self.condition_type == self.TYPE_ATTACHMENT
+
+    @property
+    def shows_tower_crane(self) -> bool:
+        return (
+            self.condition_type == self.TYPE_COUNT
+            and TOWER_CRANE_NOTES_TAG.casefold() in (self.notes or "").casefold()
+        )

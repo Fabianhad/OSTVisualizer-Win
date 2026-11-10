@@ -142,7 +142,17 @@ _ABOUT_HTML_TEMPLATE = """<!DOCTYPE html>
           <td>Apache 2.0</td>
           <td>&copy; Kay Hayen</td>
         </tr>
+        <tr class="alt">
+          <td>cgltf</td>
+          <td>MIT</td>
+          <td>&copy; Johannes Kuhlmann</td>
+        </tr>
       </table>
+      <h2>3D Models</h2>
+      <p>&ldquo;<a href="https://sketchfab.com/3d-models/tower-crane-49851dc7a51b43bda6aea06856c26a85">Tower Crane</a>&rdquo;
+        by <a href="https://sketchfab.com/Chamodp">Chamod</a> on Sketchfab, licensed under
+        <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
+        Modified: textures removed, geometry merged and quantized, base slab removed.</p>
     </main>
   </body>
 </html>"""

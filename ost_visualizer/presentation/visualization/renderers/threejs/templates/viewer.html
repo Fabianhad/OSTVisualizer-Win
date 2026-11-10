@@ -544,6 +544,11 @@
         margin: 8px 0 0;
       }
 
+      .note a {
+        color: inherit;
+        text-decoration: underline;
+      }
+
       @media (max-width: 860px) {
         html,
         body {
@@ -675,6 +680,14 @@
           <div class="ctl">
             <label for="edges-toggle">Edges</label
             ><input id="edges-toggle" type="checkbox" /><span></span>
+            <label for="tower-crane-toggle" id="tower-crane-label" hidden
+              >Tower crane</label
+            ><input
+              id="tower-crane-toggle"
+              type="checkbox"
+              checked
+              hidden
+            /><span id="tower-crane-spacer" hidden></span>
             <label for="cut-north-south">Cut north&ndash;south</label
             ><input
               id="cut-north-south"
@@ -696,6 +709,7 @@
               value="1000"
             /><output id="cut-east-west-value" for="cut-east-west">off</output>
           </div>
+          <p class="note" id="tower-crane-credit" hidden></p>
         </section>
       </aside>
     </div>
@@ -854,6 +868,8 @@
       const VISIBILITY_GROUPS = ["layer", "condition", "area"];
       let visibilityGroup = "layer";
       let edgesEnabled = viewOptions.edges === true;
+      // Tower cranes (sceneData.tower_cranes) are visual only; this toggle hides them all.
+      let towerCraneEnabled = true;
 
       function updateThemeToggle(theme) {
         const nextTheme = theme === "light" ? "dark" : "light";
@@ -1099,6 +1115,7 @@
       function isObjectVisible(object) {
         return (
           object.userData.baseVisible !== false &&
+          (object.userData.towerCrane !== true || towerCraneEnabled) &&
           (object.userData.usesPage3dVisibility !== true ||
             isGroupVisible(page3dVisibility, object.userData.pageUid)) &&
           isGroupVisible(layerVisibility, object.userData.layerUid) &&
@@ -1923,8 +1940,33 @@
         return buildFromBox(box);
       }
 
+      // Cranes extend the clipping volume only; camera fit and section-cut extents
+      // keep using the takeoff bounds, like the native viewer.
+      function unionSceneBounds(bounds, extra) {
+        const valid = (b) =>
+          b &&
+          Array.isArray(b.min) &&
+          Array.isArray(b.max) &&
+          b.min.length === 3 &&
+          b.max.length === 3 &&
+          b.min.concat(b.max).every((v) => Number.isFinite(Number(v)));
+        if (!valid(extra)) return bounds;
+        if (!valid(bounds)) return extra;
+        return {
+          min: bounds.min.map((v, i) =>
+            Math.min(Number(v), Number(extra.min[i])),
+          ),
+          max: bounds.max.map((v, i) =>
+            Math.max(Number(v), Number(extra.max[i])),
+          ),
+        };
+      }
+
       const sceneClippingBounds = getSceneClippingBounds(
-        sceneData.bounds,
+        unionSceneBounds(
+          sceneData.bounds,
+          sceneData.tower_cranes && sceneData.tower_cranes.render_bounds,
+        ),
         maxPageW,
         maxPageH,
       );
@@ -2436,6 +2478,260 @@
       edgesToggle.addEventListener("change", () =>
         setEdgesEnabled(edgesToggle.checked),
       );
+
+      // Tower cranes on "(CRANE)" count footings (visual only). The GLB is decoded
+      // once; every part gets the native shading. Local frame as in the native
+      // renderer: turn the glTF model half a turn about +Y (jib to plan +x), then
+      // metres to inches; each placement sits on its footing top, turned with it.
+      const towerCraneData = sceneData.tower_cranes || null;
+      const towerCraneToggle = document.getElementById("tower-crane-toggle");
+      const towerCraneCredit = document.getElementById("tower-crane-credit");
+      const towerCraneControls = [
+        document.getElementById("tower-crane-label"),
+        towerCraneToggle,
+        document.getElementById("tower-crane-spacer"),
+      ];
+
+      function showTowerCraneControls(visible) {
+        towerCraneControls.forEach((element) => {
+          element.hidden = !visible;
+        });
+        towerCraneCredit.hidden = !visible;
+      }
+
+      function setTowerCraneEnabled(enabled) {
+        towerCraneEnabled = Boolean(enabled);
+        towerCraneToggle.checked = towerCraneEnabled;
+        applyObjectVisibility();
+      }
+
+      towerCraneToggle.addEventListener("change", () =>
+        setTowerCraneEnabled(towerCraneToggle.checked),
+      );
+
+      function renderTowerCraneCredit(credit) {
+        towerCraneCredit.textContent = "";
+        if (!credit) return;
+        const link = (text, href) => {
+          const anchor = document.createElement("a");
+          anchor.textContent = text;
+          anchor.href = href;
+          anchor.target = "_blank";
+          anchor.rel = "noopener";
+          return anchor;
+        };
+        towerCraneCredit.append(
+          "Crane model: \u201c",
+          link(credit.title, credit.source_url),
+          "\u201d by ",
+          link(credit.author, credit.author_url),
+          ` on ${credit.site}, `,
+          link(credit.license, credit.license_url),
+          `; ${credit.modified}.`,
+        );
+      }
+
+      function base64ToArrayBuffer(text) {
+        const binary = atob(text);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes.buffer;
+      }
+
+      function towerCraneLocalMatrix(unitsPerMetre) {
+        return new THREE.Matrix4()
+          .makeScale(unitsPerMetre, unitsPerMetre, unitsPerMetre)
+          .multiply(new THREE.Matrix4().makeRotationY(Math.PI));
+      }
+
+      // Bakes the glTF node transforms (including quantization) and the local
+      // frame into float geometry, one entry per material.
+      function towerCraneParts(gltf, unitsPerMetre) {
+        const local = towerCraneLocalMatrix(unitsPerMetre);
+        const parts = [];
+        gltf.scene.updateMatrixWorld(true);
+        gltf.scene.traverse((node) => {
+          if (!node.isMesh || !node.geometry) return;
+          const matrix = local.clone().multiply(node.matrixWorld);
+          const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
+          const source = node.geometry;
+          const positions = source.getAttribute("position");
+          const normals = source.getAttribute("normal");
+          const geometry = new THREE.BufferGeometry();
+          const outPositions = new Float32Array(positions.count * 3);
+          const outNormals = new Float32Array(positions.count * 3);
+          const v = new THREE.Vector3();
+          for (let i = 0; i < positions.count; i++) {
+            v.fromBufferAttribute(positions, i).applyMatrix4(matrix);
+            outPositions.set([v.x, v.y, v.z], i * 3);
+            if (normals) {
+              v.fromBufferAttribute(normals, i)
+                .applyMatrix3(normalMatrix)
+                .normalize();
+              outNormals.set([v.x, v.y, v.z], i * 3);
+            }
+          }
+          geometry.setAttribute(
+            "position",
+            new THREE.BufferAttribute(outPositions, 3),
+          );
+          geometry.setAttribute(
+            "normal",
+            new THREE.BufferAttribute(outNormals, 3),
+          );
+          if (source.index) geometry.setIndex(source.index.clone());
+          if (!normals) geometry.computeVertexNormals();
+          const material = node.material || {};
+          const color = material.color
+            ? [material.color.r, material.color.g, material.color.b]
+            : [0.7, 0.7, 0.7];
+          const alpha =
+            material.transparent && Number.isFinite(material.opacity)
+              ? material.opacity
+              : 1.0;
+          parts.push({
+            geometry: geometry,
+            edgesGeometry: new THREE.EdgesGeometry(
+              geometry,
+              EDGE_THRESHOLD_DEGREES,
+            ),
+            color: color,
+            alpha: alpha,
+          });
+        });
+        return parts;
+      }
+
+      function towerCranePlacementKeys(placement) {
+        return {
+          pageUid: placement.page_uid,
+          usesPage3dVisibility: true,
+          layerUid: normalizeLayerUid(placement.layer_uid),
+          conditionUid: placement.condition_uid,
+          areaUid: placement.area_uid,
+        };
+      }
+
+      function addTowerCraneObject(object, keys) {
+        object.userData.towerCrane = true;
+        registerVisibilityObject(keys, object, true);
+      }
+
+      function placeTowerCranes(parts, placements) {
+        const materials = new Map();
+        const materialFor = (kind, color, alpha) => {
+          const key = `${kind}:${color.join(",")}:${alpha}`;
+          if (!materials.has(key)) {
+            materials.set(key, createNativeMaterial(kind, color, alpha));
+          }
+          return materials.get(key);
+        };
+        placements.forEach((placement) => {
+          const position = readVector3(
+            placement.position,
+            new THREE.Vector3(NaN, NaN, NaN),
+          );
+          const rotation = Number(placement.rotation_y);
+          if (!Number.isFinite(position.x) || !Number.isFinite(rotation))
+            return;
+          const tint =
+            Array.isArray(placement.tint) && placement.tint.length === 3
+              ? readColor(placement.tint)
+              : null;
+          const keys = towerCranePlacementKeys(placement);
+          const group = new THREE.Group();
+          const edgeGroup = new THREE.Group();
+          [group, edgeGroup].forEach((target) => {
+            target.position.copy(position);
+            target.rotation.y = rotation;
+          });
+          scene.add(group);
+          edgesRoot.add(edgeGroup);
+          parts.forEach((part) => {
+            const color = tint || part.color;
+            let mesh;
+            if (part.alpha < NATIVE_TRANSPARENT_ALPHA) {
+              mesh = new THREE.Mesh(
+                part.geometry,
+                materialFor("accum", color, part.alpha),
+              );
+              mesh.userData.accumMaterial = mesh.material;
+              mesh.userData.revealageMaterial = materialFor(
+                "revealage",
+                color,
+                part.alpha,
+              );
+              mesh.userData.fallbackMaterial = materialFor(
+                "fallback",
+                color,
+                part.alpha,
+              );
+              mesh.layers.set(TRANSPARENT_LAYER);
+              transparentMeshes.push(mesh);
+            } else {
+              mesh = new THREE.Mesh(
+                part.geometry,
+                materialFor("opaque", color, 1.0),
+              );
+              mesh.layers.set(OPAQUE_LAYER);
+            }
+            group.add(mesh);
+            addTowerCraneObject(mesh, keys);
+            const edges = new THREE.LineSegments(
+              part.edgesGeometry,
+              new THREE.LineBasicMaterial({
+                color: new THREE.Color(
+                  color[0] * EDGE_COLOR_SCALE,
+                  color[1] * EDGE_COLOR_SCALE,
+                  color[2] * EDGE_COLOR_SCALE,
+                ),
+                depthWrite: false,
+                toneMapped: false,
+                clippingPlanes: sectionPlanes,
+              }),
+            );
+            edges.layers.set(EDGE_LAYER);
+            edgeGroup.add(edges);
+            addTowerCraneObject(edges, keys);
+          });
+        });
+      }
+
+      function loadTowerCranes() {
+        const placements =
+          towerCraneData && Array.isArray(towerCraneData.placements)
+            ? towerCraneData.placements
+            : [];
+        if (!placements.length || !towerCraneData.model_base64) return;
+        const unitsPerMetre = Number(towerCraneData.units_per_metre);
+        if (!(unitsPerMetre > 0)) return;
+        renderTowerCraneCredit(towerCraneData.credit);
+        showTowerCraneControls(true);
+        let buffer;
+        try {
+          buffer = base64ToArrayBuffer(towerCraneData.model_base64);
+        } catch (error) {
+          console.warn("Tower crane model could not be decoded", error);
+          showTowerCraneControls(false);
+          return;
+        }
+        import("three/addons/loaders/GLTFLoader.js")
+          .then(
+            ({ GLTFLoader }) =>
+              new Promise((resolve, reject) =>
+                new GLTFLoader().parse(buffer, "", resolve, reject),
+              ),
+          )
+          .then((gltf) =>
+            placeTowerCranes(towerCraneParts(gltf, unitsPerMetre), placements),
+          )
+          .catch((error) => {
+            console.warn("Tower crane model could not be loaded", error);
+            showTowerCraneControls(false);
+          });
+      }
+
+      loadTowerCranes();
 
       function ringArea(ring) {
         let area = 0;

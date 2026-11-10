@@ -4,7 +4,10 @@ from ....domain.entities import shape as shapes
 from ....domain.entities.condition import Condition
 from ....domain.entities.takeoff import Takeoff
 from ..core.boolean_operations import boolean_union
-from ..core.geometry.takeoff_geometry import resolve_point_takeoff_shape
+from ..core.geometry.takeoff_geometry import (
+    point_takeoff_vertical_extent,
+    resolve_point_takeoff_shape,
+)
 from ..core.mesh_generator import MeshData, MeshGenerator
 
 
@@ -180,14 +183,7 @@ class MeshFactory:
             return None
         x, y = position[:2]
         shape_id, width, depth = resolve_point_takeoff_shape(condition)
-        height = max(condition.height if condition.height else 1, 1)
-        if condition.is_count:
-            scale = max(condition.display_size, 0.1) / 100.0
-            height *= scale
-        z_offset = condition.z_value if condition.z_value else 0
-        is_top = condition.is_top if condition.is_top else False
-        if is_top:
-            z_offset = z_offset - height
+        z_offset, height = point_takeoff_vertical_extent(condition)
         rotation = takeoff.rotation
         spec = shapes.ShapeSpec(shape_id, width, depth, rotation)
         return self._generate_count_mesh_from_spec(x, y, height, z_offset, spec)

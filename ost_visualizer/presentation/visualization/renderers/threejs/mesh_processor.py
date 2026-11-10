@@ -11,6 +11,7 @@ from ...core.boolean_operations import apply_boolean_operations
 from ...core.mesh_generator import MeshData
 from ...meshing.mesh_builder import calculate_mesh_bounds, get_holes_for_takeoff
 from ...meshing.mesh_factory import MeshFactory
+from ...meshing.tower_crane import tower_crane_placement
 from ...services.color_service import int_to_hex
 
 Bounds = Tuple[float, float, float, float, float, float]
@@ -82,6 +83,17 @@ def process_meshes_for_threejs(
                     "condition_color": int_to_hex(condition.color_fill or 0),
                     "condition_ref_no": condition.ref_no,
                 }
+                if condition.shows_tower_crane:
+                    crane = tower_crane_placement(
+                        takeoff,
+                        condition,
+                        coord_system,
+                        inactive=color_service.is_inactive_area_takeoff(
+                            takeoff, page_area_selections
+                        ),
+                    )
+                    if crane is not None:
+                        metadata["tower_crane"] = crane
                 meshes_with_metadata.append((mesh_data, metadata))
     processed_meshes = apply_boolean_operations(meshes_with_metadata)
     bounds = calculate_mesh_bounds(processed_meshes)

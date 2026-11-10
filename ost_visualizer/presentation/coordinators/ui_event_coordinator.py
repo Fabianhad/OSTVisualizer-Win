@@ -7,6 +7,7 @@ from shiboken6 import isValid
 from ...application.condition_change_impact import (
     condition_changes_require_mesh_refresh,
     condition_changes_require_plan_refresh,
+    tower_crane_condition_uids,
 )
 from ...application.dtos.active_bid_locked_error import ActiveBidLockedError
 from ...application.dtos.collaboration_dtos import (
@@ -42,6 +43,7 @@ from ...application.dtos.remote_projection_dtos import (
 )
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
+from ...domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 from ...domain.entities.bid import Bid
 from ...domain.entities.condition import Condition
 from ...domain.entities.cover_sheet import resolve_bid_status_lock
@@ -140,6 +142,7 @@ class _MeshScenePublication:
     page_floor_elevations: Mapping[str, float]
     condition_uids: List[str]
     takeoff_uids: List[str]
+    tower_cranes: Tuple[TowerCranePlacement, ...] = ()
 
     def apply_to(self, surface) -> None:
         surface.apply_mesh_data(
@@ -151,6 +154,7 @@ class _MeshScenePublication:
             page_floor_elevations=self.page_floor_elevations,
             condition_uids=self.condition_uids,
             takeoff_uids=self.takeoff_uids,
+            tower_cranes=self.tower_cranes,
         )
 
 
@@ -171,6 +175,9 @@ def _mesh_geometries_to_render_buffers(
 
 
 class UIEventCoordinator:
+    # Replay buffer of the last published native scene (set in __init__).
+    _last_mesh_scene: Optional[_MeshScenePublication] = None
+
     def __init__(
         self,
         main_window,
@@ -869,6 +876,23 @@ class UIEventCoordinator:
             return
         self._mesh_scene_dirty = True
         self._dirty_mesh_page_uids.update(valid_uids)
+
+    def _current_tower_crane_condition_uids(self) -> frozenset:
+        conditions = self.project_data.get_bid_conditions()
+        if not isinstance(conditions, Mapping):
+            return frozenset()
+        return tower_crane_condition_uids(conditions)
+
+    def _tower_crane_tag_changed(self, changed_fields, condition_uids=()) -> bool:
+        if "notes" not in set(changed_fields or ()):
+            return False
+        scene = self._last_mesh_scene
+        shown = frozenset(
+            crane.condition_uid for crane in (scene.tower_cranes if scene else ())
+        )
+        flipped = shown ^ self._current_tower_crane_condition_uids()
+        changed = {str(uid) for uid in condition_uids or () if uid}
+        return bool(flipped & changed) if changed else bool(flipped)
 
     def _request_or_defer_mesh_refresh(
         self,
@@ -3658,8 +3682,9 @@ class UIEventCoordinator:
             self._update_plan_view_for_active(
                 condition_uids=condition_uids, refresh_quantities=False
             )
-        if not defer_plan_projection and condition_changes_require_mesh_refresh(
-            changed_fields or (), operations
+        if not defer_plan_projection and (
+            condition_changes_require_mesh_refresh(changed_fields or (), operations)
+            or self._tower_crane_tag_changed(changed_fields, condition_uids)
         ):
             self._request_or_defer_mesh_refresh(
                 self.project_data.get_selected_page_uids()
@@ -3921,11 +3946,11 @@ class UIEventCoordinator:
             CollaborationResourceFamily.PAGES.value,
             CollaborationResourceFamily.TAKEOFFS.value,
         }
-        condition_mesh_refresh = (
-            condition_changed_fields is not None
-            and condition_changes_require_mesh_refresh(
+        condition_mesh_refresh = condition_changed_fields is not None and (
+            condition_changes_require_mesh_refresh(
                 condition_changed_fields, condition_change_operations
             )
+            or self._tower_crane_tag_changed(condition_changed_fields, condition_uids)
         )
         if (
             page_texture_only
@@ -4491,6 +4516,11 @@ class UIEventCoordinator:
             page_floor_elevations=page_floor_elevations,
             condition_uids=condition_uids,
             takeoff_uids=takeoff_uids,
+            tower_cranes=tuple(
+                geometry.tower_crane
+                for geometry in geometries
+                if geometry.tower_crane is not None
+            ),
         )
         self._last_mesh_scene = publication
         if self._pending_dirty_mesh_refresh:

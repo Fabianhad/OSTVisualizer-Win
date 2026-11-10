@@ -358,3 +358,29 @@ class MeshWindowContextCommandTests(unittest.TestCase):
         window._context_menu_action_state = lambda key: None
         MeshViewWindow._request_undo(window)
         self.assertEqual(requests, ["undo"])
+
+
+class MeshWindowTowerCraneTests(unittest.TestCase):
+    def test_scene_cranes_and_visibility_reach_the_viewer(self):
+        calls = []
+        window = MeshViewWindow.__new__(MeshViewWindow)
+        window._is_closing = False
+        window.viewer = SimpleNamespace(
+            apply_mesh_data=lambda *args, **kwargs: calls.append(
+                kwargs["tower_cranes"]
+            ),
+            set_tower_crane_visible=lambda visible: calls.append(("visible", visible)),
+        )
+        cranes = (object(),)
+        MeshViewWindow.apply_mesh_data(
+            window,
+            [],
+            [],
+            [],
+            [],
+            scene_identity=None,
+            page_floor_elevations={},
+            tower_cranes=cranes,
+        )
+        MeshViewWindow.set_tower_crane_visible(window, False)
+        self.assertEqual(calls, [cranes, ("visible", False)])

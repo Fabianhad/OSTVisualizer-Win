@@ -263,6 +263,8 @@ import tests.integration.refresh.test_local_family_ownership as scope_fixture
 import random
 import traceback
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
+from ost_visualizer.domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
@@ -25535,6 +25537,7 @@ class Sp3a5eRemotePlanProjectionTests(unittest.TestCase):
             "data",
             ("get_selected_page_uids",),
             returns={"get_selected_page_uids": ["page-1", "page-2"]},
+            get_bid_conditions=lambda: {},
         )
         coordinator.plan_view = object() if plan_view else None
         self.completions = []
@@ -36164,3 +36167,137 @@ class A1fSaveInterruptTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
         self.assertNotIn(("bar", "p1"), calls)
+
+
+_CRANE_BID = BidRef("a.mdb", "bid-1")
+
+
+def _crane_placement(takeoff_uid, condition_uid="crane"):
+    return TowerCranePlacement(takeoff_uid, condition_uid, "page-1", 1.0, 2.0, 3.0, 0.5)
+
+
+def _crane_count(uid, notes):
+    return Condition(uid, condition_type=Condition.TYPE_COUNT, notes=notes)
+
+
+class TowerCraneTagChangeTests(unittest.TestCase):
+    def _coordinator(self, conditions, shown_condition_uids=()):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: conditions
+        )
+        publication = mesh_publication(
+            ([], [], [], []), scene_identity(_CRANE_BID, 1), {}
+        )
+        coordinator._last_mesh_scene = dataclass_replace(
+            publication,
+            tower_cranes=tuple(
+                _crane_placement(f"t-{uid}", uid) for uid in shown_condition_uids
+            ),
+        )
+        return coordinator
+
+    def test_only_a_notes_edit_that_flips_the_tag_rebuilds(self):
+        tagged = {
+            "crane": _crane_count("crane", "(CRANE)"),
+            "pad": _crane_count("pad", "pad"),
+        }
+        coordinator = self._coordinator(tagged, shown_condition_uids=("crane",))
+        # Same tags as the published scene: no rebuild.
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["name"], ["crane"]))
+        # The tag was removed from the shown crane condition.
+        untagged = {
+            "crane": _crane_count("crane", "footing"),
+            "pad": _crane_count("pad", "pad"),
+        }
+        coordinator = self._coordinator(untagged, shown_condition_uids=("crane",))
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
+        # A condition gained the tag; unknown condition lists compare everything.
+        added = {
+            "crane": _crane_count("crane", "(crane)"),
+            "pad": _crane_count("pad", "(Crane)"),
+        }
+        coordinator = self._coordinator(added, shown_condition_uids=("crane",))
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"]))
+
+    def test_without_a_published_scene_a_new_tag_still_rebuilds(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: {"crane": _crane_count("crane", "(CRANE)")}
+        )
+        self.assertIsNone(coordinator._last_mesh_scene)
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+
+    def test_condition_change_requests_a_mesh_refresh_for_a_tag_flip(self):
+        coordinator = self._coordinator(
+            {"crane": _crane_count("crane", "(CRANE)")}, shown_condition_uids=()
+        )
+        refreshes = []
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: _CRANE_BID,
+            highlighted_condition_uids=set(),
+            set_highlighted_conditions=lambda _uids: None,
+        )
+        coordinator.plan_view = None
+        coordinator._undo_service = None
+        coordinator._reconcile_active_placement = lambda **_kwargs: None
+        coordinator._validate_condition_uids = lambda uids: set(uids)
+        coordinator._sidebar = SimpleNamespace(
+            refresh_conditions_from_memory=lambda: None
+        )
+        coordinator.main_window = SimpleNamespace(
+            project_view=SimpleNamespace(
+                update_bid_content_counts=lambda *_a, **_k: None
+            )
+        )
+        coordinator._restore_sidebar_highlight = lambda _uids, reveal=False: None
+        coordinator._update_plan_view_for_active = lambda **_kwargs: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator.project_data.get_selected_page_uids = lambda: ["page-1"]
+        coordinator._request_or_defer_mesh_refresh = lambda pages: refreshes.append(
+            pages
+        )
+        coordinator._on_conditions_changed(
+            database_id=_CRANE_BID.file_path,
+            bid_uid=_CRANE_BID.bid_uid,
+            condition_uids=["crane"],
+            changed_fields=["notes"],
+            change_operations=["update"],
+        )
+        self.assertEqual(refreshes, [["page-1"]])
+
+
+class TowerCranePublicationTests(unittest.TestCase):
+    def test_native_scene_publishes_and_replays_the_footing_cranes(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: _CRANE_BID
+        coordinator.project_data = FakeProjectData()
+        coordinator._nav = FakeNav()
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator._plan_view_signaler = FakeMeshPlanSignaler()
+        embedded = FakeMeshReceiver(visible=True)
+        configure_mesh_state(coordinator, view_index=0, opengl_viewer=embedded)
+        coordinator._begin_mesh_views_for_bid_load(_CRANE_BID)
+        embedded.prepare_scene_refresh(_CRANE_BID, ["page-1"])
+        crane = _crane_placement("takeoff-2")
+        geometries = [
+            mesh_geometry("page-1", 0.0, "takeoff-1"),
+            dataclass_replace(
+                mesh_geometry("page-1", 0.0, "takeoff-2"), tower_crane=crane
+            ),
+        ]
+        coordinator._on_native_scene_updated(
+            geometries=geometries,
+            scene_identity=scene_identity(_CRANE_BID, 7),
+            scene_failed=False,
+        )
+        self.assertEqual(coordinator._last_mesh_scene.tower_cranes, (crane,))
+        self.assertEqual(embedded.tower_crane_calls, [(crane,)])
+        reopened = FakeMeshReceiver(visible=True)
+        coordinator._replay_mesh_if_current(reopened)
+        self.assertEqual(reopened.tower_crane_calls, [(crane,)])

@@ -87,6 +87,11 @@ SECTION_CUT_EAST_WEST_TOOLTIP = (
     "drag to the right end to turn it off."
 )
 SECTION_CUT_OFF_TEXT = "off"
+TOWER_CRANE_TOGGLE_LABEL = "Tower crane"
+TOWER_CRANE_TOGGLE_TOOLTIP = (
+    "Show the tower crane on count takeoffs whose condition notes contain "
+    '"(CRANE)". The crane is visual only; the footing counts as usual.'
+)
 MESH_WINDOW_TITLE = "3D View"
 ANNOTATION_WINDOW_TITLE = "Annotation Window"
 VIEW_WINDOW_TITLE = "View Window"

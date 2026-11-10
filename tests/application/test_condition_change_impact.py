@@ -2,7 +2,9 @@ import unittest
 from ost_visualizer.application.condition_change_impact import (
     condition_changes_require_mesh_refresh,
     condition_changes_require_plan_refresh,
+    tower_crane_condition_uids,
 )
+from ost_visualizer.domain.entities.condition import Condition
 
 
 class ConditionChangesRequireMeshRefreshTests(unittest.TestCase):
@@ -152,3 +154,26 @@ class ConditionFieldClassificationTableTests(unittest.TestCase):
         self.assertIs(condition_changes_require_plan_refresh([], ["create"]), True)
         self.assertIs(condition_changes_require_plan_refresh([], ["delete"]), True)
         self.assertIs(condition_changes_require_plan_refresh([], ["update"]), True)
+
+
+class TowerCraneConditionUidsTests(unittest.TestCase):
+    def test_only_count_conditions_with_the_crane_tag_are_listed(self):
+        conditions = {
+            "crane": Condition(
+                "crane", condition_type=Condition.TYPE_COUNT, notes="(crane)"
+            ),
+            "count": Condition(
+                "count", condition_type=Condition.TYPE_COUNT, notes="pad"
+            ),
+            "area": Condition(
+                "area", condition_type=Condition.TYPE_AREA, notes="(CRANE)"
+            ),
+            "missing": None,
+        }
+        self.assertEqual(tower_crane_condition_uids(conditions), frozenset({"crane"}))
+        self.assertEqual(tower_crane_condition_uids({}), frozenset())
+
+    def test_notes_stay_a_non_mesh_field_so_only_a_tag_change_rebuilds(self):
+        # The coordinator compares tower_crane_condition_uids before and after a
+        # notes edit; the field gate alone never rebuilds for notes.
+        self.assertFalse(condition_changes_require_mesh_refresh(["notes"]))

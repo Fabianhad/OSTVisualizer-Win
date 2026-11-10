@@ -86,7 +86,8 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertCodeIn(
             "new THREE.Plane(new THREE.Vector3(-1, 0, 0), SECTION_PLANE_OFF),", html
         )
-        self.assertEqual(_compact_code(html).count("clippingPlanes:sectionPlanes"), 3)
+        # Takeoff edges, cap outlines, depth pre-pass and tower crane edges.
+        self.assertEqual(_compact_code(html).count("clippingPlanes:sectionPlanes"), 4)
         self.assertCodeIn("const SECTION_CAP_SHADE = 0.86;", html)
         self.assertCodeIn("const MODEL_UNITS_PER_FOOT = 12.0;", html)
         self.assertCodeIn("plane: -northSouth + SECTION_CAP_INSET,", html)
@@ -631,7 +632,8 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             ),
             1,
         )
-        self.assertEqual(_compact_code(html).count("transparentMeshes.push(mesh)"), 1)
+        # Takeoff geometries and the tower crane's glass parts.
+        self.assertEqual(_compact_code(html).count("transparentMeshes.push(mesh)"), 2)
 
     def test_viewer_shading_matches_the_native_renderer(self):
         html = _generate_html(_MINIMAL_SCENE, "Viewer")

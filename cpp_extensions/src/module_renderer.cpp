@@ -3,9 +3,21 @@
 #include <nanobind/stl/string.h>
 #include <stdexcept>
 #include "renderer/renderer.hpp"
+#include "renderer/instanced_model.hpp"
 namespace nb = nanobind;
 using namespace nb::literals;
 using namespace ost_renderer;
+namespace
+{
+    std::string bytes_to_string(nb::bytes data, const char *name)
+    {
+        char *buffer = nullptr;
+        Py_ssize_t length = 0;
+        if (PyBytes_AsStringAndSize(data.ptr(), &buffer, &length) != 0)
+            throw std::invalid_argument(std::string(name) + " must be bytes");
+        return std::string(buffer, static_cast<size_t>(length));
+    }
+}
 NB_MODULE(ost_renderer, m)
 {
     m.doc() = "OST 3D Renderer - OpenGL backend with PyGFX-like API";
@@ -57,7 +69,33 @@ NB_MODULE(ost_renderer, m)
         .def("get_takeoff_uid", &Scene::get_takeoff_uid, "index")
         .def("set_selected", &Scene::set_selected, "mesh_index", "selected")
         .def("clear_selection", &Scene::clear_selection)
-        .def("is_selected", &Scene::is_selected, "index");
+        .def("is_selected", &Scene::is_selected, "index")
+        .def("add_model_instance", &Scene::add_model_instance, "position", "rotation", "tint")
+        .def("model_instance_count", &Scene::model_instance_count);
+    m.def(
+        "parse_instanced_model_summary",
+        [](nb::bytes glb_bytes, float units_per_metre)
+        {
+            ModelParts parsed = parse_instanced_model(bytes_to_string(glb_bytes, "glb_bytes"), units_per_metre);
+            nb::list parts;
+            for (const auto &part : parsed.parts)
+            {
+                nb::dict entry;
+                entry["name"] = part.name;
+                entry["vertices"] = part.positions.size();
+                entry["triangles"] = part.indices.size() / 3;
+                entry["color"] = nb::make_tuple(part.color.r, part.color.g, part.color.b, part.color.a);
+                parts.append(entry);
+            }
+            nb::dict summary;
+            summary["parts"] = parts;
+            summary["min"] = nb::make_tuple(parsed.bounds.min.x, parsed.bounds.min.y, parsed.bounds.min.z);
+            summary["max"] = nb::make_tuple(parsed.bounds.max.x, parsed.bounds.max.y, parsed.bounds.max.z);
+            return summary;
+        },
+        "glb_bytes"_a,
+        "units_per_metre"_a,
+        "Parse a GLB like Renderer.set_instanced_model (no GL needed) and summarise its parts.");
     nb::class_<Renderer>(m, "Renderer")
         .def(nb::init<uintptr_t>(), "native_window_handle")
         .def("render", &Renderer::render)
@@ -121,6 +159,19 @@ NB_MODULE(ost_renderer, m)
         .def("set_section_cut", &Renderer::set_section_cut, "axis", "enabled", "position")
         .def("section_cut_enabled", &Renderer::section_cut_enabled, "axis")
         .def("section_cut_position", &Renderer::section_cut_position, "axis")
+        .def(
+            "set_instanced_model",
+            [](Renderer &renderer, nb::bytes glb_bytes, float units_per_metre)
+            {
+                renderer.set_instanced_model(bytes_to_string(glb_bytes, "glb_bytes"), units_per_metre);
+            },
+            "glb_bytes"_a,
+            "units_per_metre"_a)
+        .def("clear_instanced_model", &Renderer::clear_instanced_model)
+        .def("has_instanced_model", &Renderer::has_instanced_model)
+        .def("set_model_instances_visible", &Renderer::set_model_instances_visible, "visible")
+        .def("model_instances_visible", &Renderer::model_instances_visible)
+        .def("render_bounds", &Renderer::render_bounds)
         .def("pick", &Renderer::pick, "screen_x_px", "screen_y_px")
         .def_rw("scene", &Renderer::scene)
         .def_rw("camera", &Renderer::camera);

@@ -66,6 +66,56 @@ class NativeRendererBoundaryTests(unittest.TestCase):
             (0.0, 1000.0, 1500.0),
         )
 
+    def test_shipped_tower_crane_parses_into_the_scene_frame(self):
+        from ost_visualizer.domain.dtos.tower_crane_placement_dto import (
+            INCHES_PER_METRE,
+        )
+        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+            read_tower_crane_model,
+        )
+
+        summary = ost_renderer.parse_instanced_model_summary(
+            read_tower_crane_model(), INCHES_PER_METRE
+        )
+        self.assertEqual(
+            [part["name"] for part in summary["parts"]],
+            ["material", "frame", "CONCRETE", "IRON", "BUCKET", "ROPE", "GLASS"],
+        )
+        alphas = {part["name"]: part["color"][3] for part in summary["parts"]}
+        self.assertLess(alphas["GLASS"], 0.99)
+        self.assertEqual(alphas["material"], 1.0)
+        # Z-up inches: the jib points to scene -x (plan +x), the mast is ~2000 in.
+        self.assertAlmostEqual(summary["min"][0], -37.172 * INCHES_PER_METRE, delta=5)
+        self.assertAlmostEqual(summary["max"][2], 50.796 * INCHES_PER_METRE, delta=5)
+        self.assertAlmostEqual(summary["min"][2], -0.372 * INCHES_PER_METRE, delta=2)
+
+    def test_instanced_model_and_instances_reject_bad_input(self):
+        for data in (b"", b"not a glb", b"glTF" + bytes(16)):
+            with self.subTest(data=data[:8]):
+                with self.assertRaises(ValueError):
+                    ost_renderer.parse_instanced_model_summary(data, 39.37)
+        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+            read_tower_crane_model,
+        )
+
+        for units in (0.0, -1.0, float("nan")):
+            with self.subTest(units=units):
+                with self.assertRaises(ValueError):
+                    ost_renderer.parse_instanced_model_summary(
+                        read_tower_crane_model(), units
+                    )
+        scene = ost_renderer.Scene()
+        clear = ost_renderer.Color(0.0, 0.0, 0.0, 0.0)
+        scene.add_model_instance(ost_renderer.Vec3(1.0, 2.0, 3.0), 0.5, clear)
+        self.assertEqual(scene.model_instance_count(), 1)
+        self.assertTrue(scene.get_bounds().is_empty())
+        with self.assertRaisesRegex(ValueError, "finite"):
+            scene.add_model_instance(
+                ost_renderer.Vec3(1.0, 2.0, 3.0), float("inf"), clear
+            )
+        scene.clear()
+        self.assertEqual(scene.model_instance_count(), 0)
+
     def test_native_mesh_vectors_reject_incomplete_coordinates(self):
         mesh = ost_renderer.MeshData()
         with self.assertRaisesRegex(ValueError, "vertex array length"):

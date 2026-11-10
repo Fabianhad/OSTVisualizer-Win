@@ -35,3 +35,22 @@ class AboutDialogTests(unittest.TestCase):
         self.assertIsNone(dialog.close_button)
         self.assertIsNone(dialog.creator_name)
         self.assertIsNone(dialog.icon_provider)
+
+
+class AboutDialogCreditTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def test_crane_model_and_gltf_loader_are_credited(self):
+        dialog = AboutDialog(Mock(spec=IWindowIconProvider), creator_name="Creator")
+        self.addCleanup(delete, dialog)
+        text = " ".join(dialog.content_view.toPlainText().split())
+        self.assertIn("\u201cTower Crane\u201d by Chamod on Sketchfab", text)
+        self.assertIn("CC BY 4.0", text)
+        self.assertIn("Modified:", text)
+        self.assertIn("cgltf", text)
+        html = dialog.content_view.toHtml()
+        self.assertIn("https://creativecommons.org/licenses/by/4.0/", html)
+        self.assertIn("tower-crane-49851dc7a51b43bda6aea06856c26a85", html)
+        dialog.cleanup()

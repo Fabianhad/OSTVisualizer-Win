@@ -47,6 +47,21 @@ class FakeMeshScene:
         self.bounds = ost_renderer.Box3()
         self.bounds.min = ost_renderer.Vec3(0.0, 0.0, 0.0)
         self.bounds.max = ost_renderer.Vec3(1.0, 1.0, 1.0)
+        self.model_instances = []
+
+    def add_model_instance(self, position, rotation, tint):
+        self.model_instances.append(
+            (
+                position.x,
+                position.y,
+                position.z,
+                rotation,
+                (tint.r, tint.g, tint.b, tint.a),
+            )
+        )
+
+    def model_instance_count(self):
+        return len(self.model_instances)
 
     def mesh_count(self):
         return len(self.takeoff_uids)
@@ -71,6 +86,7 @@ class FakeMeshScene:
         self.scene_clear_calls += 1
         self.takeoff_uids = []
         self.condition_uids = []
+        self.model_instances = []
         self.selected.clear()
 
     def empty(self):
@@ -134,9 +150,20 @@ class FakeMeshRenderer:
         self.clear_frame_calls = 0
         self.edges_visible_calls = []
         self.section_cut_calls = []
+        self.instanced_models = []
+        self.instanced_model_error = None
+        self.model_instances_visible_calls = []
 
     def set_edges_visible(self, visible):
         self.edges_visible_calls.append(visible)
+
+    def set_instanced_model(self, glb_bytes, units_per_metre):
+        if self.instanced_model_error is not None:
+            raise self.instanced_model_error
+        self.instanced_models.append((bytes(glb_bytes[:4]), units_per_metre))
+
+    def set_model_instances_visible(self, visible):
+        self.model_instances_visible_calls.append(visible)
 
     def set_section_cut(self, axis, enabled, position):
         self.section_cut_calls.append((axis, enabled, position))

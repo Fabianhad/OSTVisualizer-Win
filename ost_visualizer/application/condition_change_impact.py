@@ -1,4 +1,5 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from ..domain.entities.condition import Condition
 from .dtos.collaboration_dtos import ChangeOperation
 
 _MESH_FIELDS = frozenset(
@@ -76,6 +77,14 @@ def condition_changes_require_mesh_refresh(
         return bool(fields.intersection(_MESH_FIELDS) or unknown_fields)
     return not operations or not operations.issubset(
         {ChangeOperation.CREATE.value, ChangeOperation.REORDER.value}
+    )
+
+
+def tower_crane_condition_uids(conditions: Mapping[str, Condition]) -> frozenset:
+    return frozenset(
+        str(uid)
+        for uid, condition in conditions.items()
+        if isinstance(condition, Condition) and condition.shows_tower_crane
     )
 
 
