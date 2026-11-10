@@ -57,6 +57,8 @@ def visualize_with_threejs(
         DEFAULT_ELEVATION_CALLOUT_SETTINGS
     ),
     elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
+    subtitle: str = "",
+    show_edges: bool = False,
 ) -> Optional[str]:
     if not bid_conditions or not bid_takeoffs:
         return None
@@ -88,6 +90,8 @@ def visualize_with_threejs(
         "mode_3d": display_mode_3d,
         "mode_2d": display_mode_2d,
     }
+    scene_data["subtitle"] = subtitle
+    scene_data["view_options"] = {"edges": bool(show_edges)}
     page_entries, pdf_documents, takeoffs_2d, elevation_callouts = (
         _build_multi_page_data(
             pages or [],
@@ -125,7 +129,7 @@ def visualize_with_threejs(
             scene_data["elevation_callouts"] = elevation_callouts
         if pdf_documents:
             scene_data["pdf_documents"] = pdf_documents
-    html_content = _generate_html(scene_data, title)
+    html_content = _generate_html(scene_data, title, subtitle)
     if output_path is None:
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
         output_path = temp_file.name
@@ -267,17 +271,18 @@ def _extract_pdf_page_base64(pdf_path: str, page_index: int) -> str:
                 pass
 
 
-def _generate_html(scene_data: SceneData, title: str) -> str:
+def _generate_html(scene_data: SceneData, title: str, subtitle: str = "") -> str:
     template_path = Path(__file__).parent / "templates" / "viewer.html"
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
     scene_json = json.dumps(scene_data, separators=(",", ":")).replace("<", "\\u003c")
     replacements = {
         "{{TITLE}}": html.escape(title, quote=False),
+        "{{SUBTITLE}}": html.escape(subtitle, quote=False),
         "{{SCENE_DATA}}": scene_json,
     }
     return re.sub(
-        r"\{\{(?:TITLE|SCENE_DATA)\}\}",
+        r"\{\{(?:TITLE|SUBTITLE|SCENE_DATA)\}\}",
         lambda match: replacements[match.group(0)],
         template,
     )

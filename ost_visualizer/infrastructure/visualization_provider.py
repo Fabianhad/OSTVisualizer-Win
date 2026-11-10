@@ -188,6 +188,8 @@ class _HtmlRendererAdapter(IHtmlRenderer):
             DEFAULT_ELEVATION_CALLOUT_SETTINGS
         ),
         elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
+        subtitle: str = "",
+        show_edges: bool = False,
     ) -> bool:
         coord_system = self._coord_factory.create()
         return bool(
@@ -214,6 +216,8 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 include_elevation_callouts=include_elevation_callouts,
                 elevation_callout_settings=elevation_callout_settings,
                 elevation_callout_color=elevation_callout_color,
+                subtitle=subtitle,
+                show_edges=show_edges,
             )
         )
 
@@ -313,20 +317,14 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             "include_elevation_callouts": config.html_elevation_callouts_enabled,
             "elevation_callout_settings": config.elevation_callout_settings(),
             "elevation_callout_color": config.html_elevation_callout_color,
+            "show_edges": config.show_edges,
         }
         if page_area_selections is not None:
             export_options["page_area_selections"] = page_area_selections
         return export_options
 
     def prepare_title(self, bid_name: str, page_names: List[str]) -> str:
-        if len(page_names) == 1:
-            return f"{bid_name} - {page_names[0]}"
-        if len(page_names) == 2:
-            return f"{bid_name} - {page_names[0]} + {page_names[1]}"
-        first_page = page_names[0]
-        second_page = page_names[1]
-        remaining = len(page_names) - 2
-        return f"{bid_name} - {first_page} + {second_page} + {remaining} more"
+        return bid_name.strip()
 
     def execute_export(
         self, bid_conditions: Dict, takeoffs: List, output_path: str, **export_options
@@ -359,6 +357,8 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             include_elevation_callouts=export_options["include_elevation_callouts"],
             elevation_callout_settings=export_options["elevation_callout_settings"],
             elevation_callout_color=export_options["elevation_callout_color"],
+            subtitle=export_options.get("subtitle", ""),
+            show_edges=bool(export_options.get("show_edges", False)),
         )
 
 

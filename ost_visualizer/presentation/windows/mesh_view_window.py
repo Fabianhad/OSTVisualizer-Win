@@ -18,6 +18,7 @@ from ..components.popup_tracking_combo import (
     update_zoom_combo,
 )
 from ..components.scene_navigation_controls import SceneNavigationControls
+from ..components.section_cut_controls import SectionCutControls
 from ..components.viewer_cursors import make_zoom_cursor
 from ..config import (
     ACTION_ORBIT_LABEL,
@@ -212,6 +213,8 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             self._trigger_context_command,
             self._context_command_state,
         )
+        self.section_cut_controls = SectionCutControls(self.viewer, central)
+        main_layout.addWidget(self.section_cut_controls)
         main_layout.addWidget(self.viewer, 1)
         if negative_check_fn:
             self.viewer.set_negative_check_fn(negative_check_fn)
@@ -379,6 +382,10 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def update_plan_texture(self) -> None:
         if self.viewer:
             self.viewer.update_plan_texture()
+
+    def set_edges_visible(self, visible: bool) -> None:
+        if self.viewer:
+            self.viewer.set_edges_visible(visible)
 
     def set_selected_takeoffs(self, takeoff_uids: list) -> None:
         if self.viewer:

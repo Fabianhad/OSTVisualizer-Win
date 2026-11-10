@@ -382,6 +382,27 @@ class TestMeshViewLifecycle(unittest.TestCase):
         renderer_class.assert_not_called()
         viewer.cleanup()
 
+    def test_edges_preference_reaches_current_and_later_native_renderers(self):
+        self._app()
+        viewer = OpenGLViewer(None, SimpleNamespace())
+        try:
+            self.assertFalse(viewer.edges_visible())
+            viewer.set_edges_visible(True)
+            self.assertTrue(viewer.edges_visible())
+            with patch(
+                "ost_visualizer.presentation.components.mesh_view.ost_renderer.Renderer"
+            ) as renderer_class:
+                self.assertTrue(viewer._ensure_renderer())
+            renderer = renderer_class.return_value
+            renderer.set_edges_visible.assert_called_once_with(True)
+            viewer.set_edges_visible(True)
+            renderer.set_edges_visible.assert_called_once_with(True)
+            viewer.set_edges_visible(False)
+            renderer.set_edges_visible.assert_called_with(False)
+            self.assertFalse(viewer.edges_visible())
+        finally:
+            viewer.cleanup()
+
     def test_mesh_context_command_rejects_replaced_scene_generation(self):
         self._app()
         viewer = OpenGLViewer(None, SimpleNamespace())

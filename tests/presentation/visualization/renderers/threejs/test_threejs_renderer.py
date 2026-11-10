@@ -41,7 +41,59 @@ def _embedded_scene(rendered_html):
     return json.loads(encoded_scene)
 
 
+def _compact_code(text: str) -> str:
+    """Drops whitespace and trailing commas so code checks survive reformatting."""
+    return re.sub(r",(?=[\]\)}])", "", re.sub(r"\s+", "", text))
+
+
 class ThreejsHtmlViewerTests(unittest.TestCase):
+    def assertCodeIn(self, needle, html):
+        self.assertIn(_compact_code(needle).rstrip(","), _compact_code(html))
+
+    def assertCodeNotIn(self, needle, html):
+        self.assertNotIn(_compact_code(needle).rstrip(","), _compact_code(html))
+
+    def test_viewer_offers_section_cut_sliders_next_to_edges(self):
+        html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        for cut in ("cut-north-south", "cut-east-west"):
+            self.assertCodeIn(
+                f'<input id="{cut}" type="range" min="0" max="1000" step="1" value="1000" />',
+                html,
+            )
+            self.assertCodeIn(
+                f'<output id="{cut}-value" for="{cut}">off</output>', html
+            )
+        self.assertIn("Cut north&ndash;south", html)
+        self.assertIn("Cut east&ndash;west", html)
+        self.assertCodeIn("grid-template-columns: auto minmax(0, 1fr) 4.2em;", html)
+        self.assertCodeIn("renderer.localClippingEnabled = true;", html)
+        # One shared uniform drives every native material; each pass discards.
+        self.assertCodeIn("uSectionCut: sectionCutUniform,", html)
+        self.assertEqual(
+            _compact_code(html).count("if(sectionCutRemoved())discard;"), 3
+        )
+        self.assertCodeIn(
+            "return (uSectionCut.x > 0.5 && vWorldPosition.z < uSectionCut.y)"
+            " || (uSectionCut.z > 0.5 && vWorldPosition.x > uSectionCut.w);",
+            html,
+        )
+        # Native y > cut is z < -cut here; x > cut is the same in both viewers.
+        self.assertCodeIn("northSouth === null ? 0 : -northSouth,", html)
+        self.assertCodeIn("eastWest === null ? 0 : eastWest,", html)
+        self.assertCodeIn(
+            "new THREE.Plane(new THREE.Vector3(0, 0, 1), SECTION_PLANE_OFF),", html
+        )
+        self.assertCodeIn(
+            "new THREE.Plane(new THREE.Vector3(-1, 0, 0), SECTION_PLANE_OFF),", html
+        )
+        self.assertEqual(_compact_code(html).count("clippingPlanes:sectionPlanes"), 3)
+        self.assertCodeIn("const SECTION_CAP_SHADE = 0.86;", html)
+        self.assertCodeIn("const MODEL_UNITS_PER_FOOT = 12.0;", html)
+        self.assertCodeIn("plane: -northSouth + SECTION_CAP_INSET,", html)
+        self.assertCodeIn("plane: eastWest - SECTION_CAP_INSET,", html)
+        self.assertCodeIn("THREE.ShapeUtils.triangulateShape(outer, holes)", html)
+        self.assertCodeIn("if (sectionCapsDirty) {", html)
+
     def test_html_generation_escapes_title_and_script_terminators(self):
         injected_text = "</script><script>window.injected=true</script>"
         scene_data = {
@@ -325,88 +377,94 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             ],
         }
         html = _generate_html(scene_data, "Layer Test")
-        self.assertIn('id="view-mode-switch"', html)
-        self.assertIn('id="view-mode-plan"', html)
-        self.assertIn('id="view-mode-3d"', html)
-        self.assertIn('id="page-combo"', html)
-        self.assertIn('id="page-combo-button"', html)
-        self.assertIn('id="page-combo-menu"', html)
-        self.assertIn('id="plan-view"', html)
-        self.assertIn('id="plan-content"', html)
-        self.assertIn('id="plan-pdf-canvas"', html)
-        self.assertIn('id="plan-overlay"', html)
-        self.assertIn('id="layer-panel"', html)
-        self.assertIn('id="layer-list"', html)
-        self.assertIn('id="layer-show-all"', html)
-        self.assertIn("const layerVisibility = new Map()", html)
-        self.assertIn("const conditionVisibility = new Map()", html)
-        self.assertIn("const areaVisibility = new Map()", html)
-        self.assertIn("const page3dVisibility = new Map()", html)
-        self.assertIn("function normalizeScenePages()", html)
-        self.assertIn("function buildPdfDocumentMap()", html)
-        self.assertIn("const runtimePages = normalizeScenePages()", html)
-        self.assertIn("let activePageUid = resolveActivePageUid(runtimePages)", html)
-        self.assertIn("function registerVisibilityObject(keys, object", html)
-        self.assertIn("object.userData.usesPage3dVisibility", html)
-        self.assertIn("function setGroupVisible(registry, uid, visible)", html)
-        self.assertIn("function setAllGroupsVisible(visible)", html)
-        self.assertIn("function setRenderedObjectVisible(object, visible)", html)
-        self.assertIn("function createVisibilityRow(entry, registry, rows", html)
-        self.assertIn("function buildPageCombo()", html)
-        self.assertIn("function setPage3dVisible(pageUid, visible)", html)
-        self.assertIn('checkbox.addEventListener("change"', html)
-        self.assertIn('name.addEventListener("click"', html)
-        self.assertNotIn('renderVisibilitySection("Pages"', html)
-        self.assertIn('renderVisibilitySection("Layers"', html)
-        self.assertIn("function renderConditionSection()", html)
-        self.assertIn("getConditionTypeUid(condition)", html)
-        self.assertIn("getConditionTypeName(condition)", html)
-        self.assertIn('const UNASSIGNED_CDN_TYPE_NAME = "(unassigned)"', html)
-        self.assertIn('const IMAGE_LAYER_DISPLAY_NAME = "Image"', html)
-        self.assertIn('renderVisibilitySection("Areas"', html)
-        self.assertIn("setGroupVisible(registry, entry.uid", html)
-        self.assertIn("function compareConditionEntries(a, b)", html)
-        self.assertIn(".sort(compareConditionEntries)", html)
-        self.assertIn("mesh.userData.takeoffUid = geomData.takeoff_uid", html)
-        self.assertIn("object.userData.pageUid = pageUid", html)
-        self.assertIn("object.userData.conditionUid = conditionUid", html)
-        self.assertIn("object.userData.areaUid = areaUid", html)
-        self.assertIn("registerVisibilityObject(", html)
-        self.assertNotIn("const legacyPage = sceneData.page_2d || null", html)
-        self.assertNotIn("sceneData.pdf_base64", html)
-        self.assertIn("const takeoffs2D = Array.isArray(sceneData.takeoffs_2d)", html)
-        self.assertIn("function fitPlanToViewport(force = false)", html)
-        self.assertIn("function renderPlanTakeoffs()", html)
-        self.assertIn("function setupPlanView(pdfCanvas = null, forceFit = true)", html)
-        self.assertIn("function setActivePlanPage(pageUid)", html)
-        self.assertIn("function updatePdfPlaneForActivePage()", html)
-        self.assertIn('pageComboButton.addEventListener("click"', html)
-        self.assertIn("planView.addEventListener(", html)
-        self.assertIn('"wheel",', html)
-        self.assertIn('planView.addEventListener("pointerdown"', html)
-        self.assertIn('setViewMode("plan")', html)
-        self.assertIn("controls.enabled = !usePlan", html)
-        self.assertIn("document.createElementNS(", html)
-        self.assertIn('"http://www.w3.org/2000/svg"', html)
-        self.assertIn('"path"', html)
-        self.assertIn("layerUid: takeoff.layer_uid", html)
-        self.assertIn("pageUid: takeoffPageUid", html)
-        self.assertIn("usesPage3dVisibility: false", html)
-        self.assertIn("conditionUid: takeoff.condition_uid", html)
-        self.assertIn("areaUid: takeoff.area_uid", html)
-        self.assertIn("sceneData.page_image_layer", html)
-        self.assertIn("pageEntry.visible = layer.visible !== false", html)
-        self.assertIn("usesPage3dVisibility: true", html)
-        self.assertIn("pdfPlane.userData.usesPage3dVisibility = false", html)
-        self.assertIn("pdfPlane.userData.baseVisible = true", html)
-        self.assertIn("planPdfCanvas.userData.usesPage3dVisibility = false", html)
-        self.assertNotIn("pdf-toggle", html)
-        self.assertNotIn("layer-swatch", html)
-        self.assertIn("condition-color-swatch", html)
-        self.assertIn(
+        self.assertCodeIn('id="view-mode-switch"', html)
+        self.assertCodeIn('id="view-mode-plan"', html)
+        self.assertCodeIn('id="view-mode-3d"', html)
+        self.assertCodeIn('id="page-combo"', html)
+        self.assertCodeIn('id="page-combo-button"', html)
+        self.assertCodeIn('id="page-combo-menu"', html)
+        self.assertCodeIn('id="plan-view"', html)
+        self.assertCodeIn('id="plan-content"', html)
+        self.assertCodeIn('id="plan-pdf-canvas"', html)
+        self.assertCodeIn('id="plan-overlay"', html)
+        self.assertCodeIn('id="layer-panel"', html)
+        self.assertCodeIn('id="layer-list"', html)
+        self.assertCodeIn('id="layer-show-all"', html)
+        self.assertCodeIn("const layerVisibility = new Map()", html)
+        self.assertCodeIn("const conditionVisibility = new Map()", html)
+        self.assertCodeIn("const areaVisibility = new Map()", html)
+        self.assertCodeIn("const page3dVisibility = new Map()", html)
+        self.assertCodeIn("function normalizeScenePages()", html)
+        self.assertCodeIn("function buildPdfDocumentMap()", html)
+        self.assertCodeIn("const runtimePages = normalizeScenePages()", html)
+        self.assertCodeIn(
+            "let activePageUid = resolveActivePageUid(runtimePages)", html
+        )
+        self.assertCodeIn("function registerVisibilityObject(keys, object", html)
+        self.assertCodeIn("object.userData.usesPage3dVisibility", html)
+        self.assertCodeIn("function setGroupVisible(registry, uid, visible)", html)
+        self.assertCodeIn("function setAllGroupsVisible(visible)", html)
+        self.assertCodeIn("function setRenderedObjectVisible(object, visible)", html)
+        self.assertCodeIn("function createVisibilityRow(entry, registry, rows", html)
+        self.assertCodeIn("function buildPageCombo()", html)
+        self.assertCodeIn("function setPage3dVisible(pageUid, visible)", html)
+        self.assertCodeIn('checkbox.addEventListener("change"', html)
+        self.assertCodeIn('name.addEventListener("click"', html)
+        self.assertCodeNotIn('renderVisibilitySection("Pages"', html)
+        self.assertCodeIn('renderVisibilitySection("Layers"', html)
+        self.assertCodeIn("function renderConditionSection()", html)
+        self.assertCodeIn("getConditionTypeUid(condition)", html)
+        self.assertCodeIn("getConditionTypeName(condition)", html)
+        self.assertCodeIn('const UNASSIGNED_CDN_TYPE_NAME = "(unassigned)"', html)
+        self.assertCodeIn('const IMAGE_LAYER_DISPLAY_NAME = "Image"', html)
+        self.assertCodeIn('renderVisibilitySection("Areas"', html)
+        self.assertCodeIn("setGroupVisible(registry, entry.uid", html)
+        self.assertCodeIn("function compareConditionEntries(a, b)", html)
+        self.assertCodeIn(".sort(compareConditionEntries)", html)
+        self.assertCodeIn("mesh.userData.takeoffUid = geomData.takeoff_uid", html)
+        self.assertCodeIn("object.userData.pageUid = pageUid", html)
+        self.assertCodeIn("object.userData.conditionUid = conditionUid", html)
+        self.assertCodeIn("object.userData.areaUid = areaUid", html)
+        self.assertCodeIn("registerVisibilityObject(", html)
+        self.assertCodeNotIn("const legacyPage = sceneData.page_2d || null", html)
+        self.assertCodeNotIn("sceneData.pdf_base64", html)
+        self.assertCodeIn(
+            "const takeoffs2D = Array.isArray(sceneData.takeoffs_2d)", html
+        )
+        self.assertCodeIn("function fitPlanToViewport(force = false)", html)
+        self.assertCodeIn("function renderPlanTakeoffs()", html)
+        self.assertCodeIn(
+            "function setupPlanView(pdfCanvas = null, forceFit = true)", html
+        )
+        self.assertCodeIn("function setActivePlanPage(pageUid)", html)
+        self.assertCodeIn("function updatePdfPlaneForActivePage()", html)
+        self.assertCodeIn('pageComboButton.addEventListener("click"', html)
+        self.assertCodeIn("planView.addEventListener(", html)
+        self.assertCodeIn('"wheel",', html)
+        self.assertCodeIn('planView.addEventListener("pointerdown"', html)
+        self.assertCodeIn('setViewMode("plan")', html)
+        self.assertCodeIn("controls.enabled = !usePlan", html)
+        self.assertCodeIn("document.createElementNS(", html)
+        self.assertCodeIn('"http://www.w3.org/2000/svg"', html)
+        self.assertCodeIn('"path"', html)
+        self.assertCodeIn("layerUid: takeoff.layer_uid", html)
+        self.assertCodeIn("pageUid: takeoffPageUid", html)
+        self.assertCodeIn("usesPage3dVisibility: false", html)
+        self.assertCodeIn("conditionUid: takeoff.condition_uid", html)
+        self.assertCodeIn("areaUid: takeoff.area_uid", html)
+        self.assertCodeIn("sceneData.page_image_layer", html)
+        self.assertCodeIn("pageEntry.visible = layer.visible !== false", html)
+        self.assertCodeIn("usesPage3dVisibility: true", html)
+        self.assertCodeIn("pdfPlane.userData.usesPage3dVisibility = false", html)
+        self.assertCodeIn("pdfPlane.userData.baseVisible = true", html)
+        self.assertCodeIn("planPdfCanvas.userData.usesPage3dVisibility = false", html)
+        self.assertCodeNotIn("pdf-toggle", html)
+        self.assertCodeNotIn("layer-swatch", html)
+        self.assertCodeIn("condition-color-swatch", html)
+        self.assertCodeIn(
             "section.appendChild(createVisibilityRow(entry, registry, rows))", html
         )
-        self.assertIn('swatchClass: "condition-color-swatch"', html)
+        self.assertCodeIn('swatchClass: "condition-color-swatch"', html)
 
     def test_viewer_combines_layer_condition_and_area_visibility(self):
         html = _generate_html(
@@ -435,7 +493,7 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("isGroupVisible(areaVisibility, object.userData.areaUid)", html)
         self.assertIn("if (!uid) return true", html)
 
-    def test_wboit_transparent_mesh_render_respects_visibility_filters(self):
+    def test_transparent_mesh_render_respects_visibility_filters(self):
         html = _generate_html(
             {
                 "title": "Transparent Visibility Test",
@@ -466,14 +524,20 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             },
             "Transparent Visibility Test",
         )
-        self.assertIn("const wboitPass = hasTransparent", html)
-        self.assertIn("function renderWboitPassWithVisibility()", html)
-        self.assertIn("if (object.material && object.visible === false)", html)
-        self.assertIn("object.material = null", html)
-        self.assertIn("wboitPass.render(renderer)", html)
-        self.assertIn("entry.object.material = entry.material", html)
-        self.assertIn("renderWboitPassWithVisibility()", html)
-        self.assertIn("usesPage3dVisibility: true", html)
+        self.assertCodeNotIn("wboit", html.lower())
+        self.assertCodeIn("function getVisibleTransparentMeshes()", html)
+        self.assertCodeIn(
+            "transparentMeshes.filter((mesh) => mesh.visible === true)", html
+        )
+        self.assertCodeIn("if (!getVisibleTransparentMeshes().length) {", html)
+        self.assertCodeIn("mesh.layers.set(TRANSPARENT_LAYER)", html)
+        self.assertCodeIn(
+            'renderTransparentPass(targets.accum, "accumMaterial", 0.0)', html
+        )
+        self.assertCodeIn(
+            'renderTransparentPass(targets.reveal, "revealageMaterial", 1.0)', html
+        )
+        self.assertCodeIn("usesPage3dVisibility: true", html)
 
     def test_scene_json_includes_split_display_modes(self):
         html = _generate_html(
@@ -508,7 +572,7 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn(f'"mode_3d":"{Config.DISPLAY_MODE_SOLID}"', html)
         self.assertIn(f'"mode_2d":"{Config.DISPLAY_MODE_TRANSPARENT}"', html)
 
-    def test_wboit_detection_uses_3d_geometry_opacity_only(self):
+    def test_transparency_split_uses_3d_geometry_opacity_only(self):
         html = _generate_html(
             {
                 "title": "2D Transparent Only Test",
@@ -555,12 +619,110 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             },
             "2D Transparent Only Test",
         )
-        self.assertIn("sceneData.geometries.forEach((geomData) => {", html)
-        self.assertIn("if (geomData.opacity < 1.0) hasTransparent = true", html)
-        # Transparency is decided only here; 2D takeoff opacity never enables
-        # the weighted-blended OIT pass.
-        self.assertEqual(html.count("hasTransparent = true"), 1)
-        self.assertEqual(html.count("let hasTransparent = false"), 1)
+        self.assertCodeIn("sceneData.geometries.forEach((geomData) => {", html)
+        self.assertCodeIn("const NATIVE_TRANSPARENT_ALPHA = 0.99;", html)
+        # Transparency is decided only here, with the native renderer's alpha
+        # threshold; 2D takeoff opacity never enables the weighted blended pass.
+        self.assertEqual(
+            _compact_code(html).count(
+                _compact_code(
+                    "const isTransparent = opacity < NATIVE_TRANSPARENT_ALPHA;"
+                )
+            ),
+            1,
+        )
+        self.assertEqual(_compact_code(html).count("transparentMeshes.push(mesh)"), 1)
+
+    def test_viewer_shading_matches_the_native_renderer(self):
+        html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        self.assertCodeIn("renderer.toneMapping = THREE.NoToneMapping;", html)
+        self.assertCodeIn("renderer.outputEncoding = THREE.LinearEncoding;", html)
+        self.assertCodeIn(
+            "if (THREE.ColorManagement) THREE.ColorManagement.enabled = false;", html
+        )
+        self.assertCodeNotIn("legacyMode", html)
+        self.assertCodeNotIn("ACESFilmic", html)
+        self.assertCodeNotIn("toneMappingExposure", html)
+        self.assertCodeNotIn("MeshPhongMaterial", html)
+        self.assertCodeNotIn("DirectionalLight", html)
+        self.assertCodeNotIn("AmbientLight", html)
+        # renderer.cpp lights, mapped from Z-up to Y-up as (x, z, -y).
+        self.assertCodeIn("const NATIVE_AMBIENT_INTENSITY = 0.55;", html)
+        self.assertCodeIn(
+            "const NATIVE_KEY_LIGHT = { dir: [500.0, 500.0, 500.0], intensity: 0.45 };",
+            html,
+        )
+        self.assertCodeIn(
+            "const NATIVE_FILL_LIGHT = { dir: [-500.0, 500.0, -500.0], intensity: 0.35 };",
+            html,
+        )
+        self.assertCodeIn(
+            "const NATIVE_RIM_LIGHT = { dir: [0.0, -500.0, -500.0], intensity: 0.2 };",
+            html,
+        )
+        self.assertCodeIn("return lighting * uColor;", html)
+        self.assertCodeIn("return alpha * max(1e-2, 3e3 * pow(1.0 - z, 3.0));", html)
+        self.assertCodeIn(
+            "vec3 finalColor = avgColor * (1.0 - transmittance) + opaque.rgb * transmittance;",
+            html,
+        )
+        self.assertCodeIn("material.blendDst = THREE.OneMinusSrcColorFactor;", html)
+
+    def test_header_shows_escaped_title_and_subtitle(self):
+        html = _generate_html(
+            _MINIMAL_SCENE,
+            "26-063 41 Maryland Ave <Apartments>, MD",
+            "11-6-26 Bid & {{TITLE}} notes",
+        )
+        self.assertIn(
+            "<title>26-063 41 Maryland Ave &lt;Apartments&gt;, MD</title>", html
+        )
+        self.assertIn(
+            '<h1 id="viewer-title">26-063 41 Maryland Ave &lt;Apartments&gt;, MD</h1>',
+            html,
+        )
+        self.assertIn(
+            '<p id="viewer-subtitle">11-6-26 Bid &amp; {{TITLE}} notes</p>', html
+        )
+        self.assertIn("header p:empty", html)
+        empty = _generate_html(_MINIMAL_SCENE, "Bid")
+        self.assertIn('<p id="viewer-subtitle"></p>', empty)
+
+    def test_viewer_offers_edges_toggle_initialized_from_view_options(self):
+        html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        self.assertCodeIn('<input id="edges-toggle" type="checkbox" />', html)
+        self.assertCodeIn("let edgesEnabled = viewOptions.edges === true;", html)
+        self.assertCodeIn(
+            "new THREE.EdgesGeometry(geometry, EDGE_THRESHOLD_DEGREES)", html
+        )
+        self.assertCodeIn("const EDGE_THRESHOLD_DEGREES = 15;", html)
+        self.assertCodeIn("const EDGE_COLOR_SCALE = 0.45;", html)
+        self.assertCodeIn("if (edgesEnabled) camera.layers.enable(EDGE_LAYER);", html)
+
+    def test_visibility_panel_shows_one_group_chosen_by_show_by(self):
+        html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        self.assertCodeIn('<select id="visibility-group">', html)
+        for value, label in (
+            ("layer", "Layer"),
+            ("condition", "Condition"),
+            ("area", "Area"),
+        ):
+            self.assertCodeIn(f'<option value="{value}">{label}</option>', html)
+        self.assertCodeIn('if (visibilityGroup === "condition") {', html)
+        self.assertCodeIn("entryCount = renderConditionSection();", html)
+        self.assertCodeIn(
+            'entryCount = renderVisibilitySection("Areas", areaVisibility, areaRows);',
+            html,
+        )
+        self.assertCodeIn(
+            "setRegistryVisible(getVisibilityGroupRegistry(visibilityGroup), true)",
+            html,
+        )
+        self.assertCodeIn(
+            "setRegistryVisible(getVisibilityGroupRegistry(visibilityGroup), false)",
+            html,
+        )
+        self.assertCodeNotIn("layerHeader", html)
 
 
 class ThreejsExportLayerTests(unittest.TestCase):
@@ -601,7 +763,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         }
         captured_scene = {}
 
-        def capture_scene(scene_data, _title):
+        def capture_scene(scene_data, _title, _subtitle=""):
             captured_scene.update(copy.deepcopy(scene_data))
             return "<html></html>"
 
@@ -715,7 +877,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         )
         captured_scene = {}
 
-        def capture_scene(scene_data, _title):
+        def capture_scene(scene_data, _title, _subtitle=""):
             captured_scene.update(copy.deepcopy(scene_data))
             return "<html></html>"
 
@@ -838,7 +1000,7 @@ class VisualizeWithThreejsPipelineTests(unittest.TestCase):
             )
         captured = {}
 
-        def capture_scene(scene_data, title):
+        def capture_scene(scene_data, title, _subtitle=""):
             captured["scene"] = copy.deepcopy(scene_data)
             captured["title"] = title
             return "<html>generated</html>"
@@ -1146,37 +1308,279 @@ class ThreejsViewerScriptTests(unittest.TestCase):
         results = json.loads(_run_node(script))
         self.assertEqual(results, [entry["expected"] for entry in cases])
 
-    def test_transparent_pass_hides_materials_of_invisible_objects_and_restores_them(
+    def test_only_visible_transparent_meshes_enter_the_weighted_pass(self):
+        viewer_html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        function = _extract_js_function(viewer_html, "getVisibleTransparentMeshes")
+        script = f"""
+        const transparentMeshes = [
+          {{ name: "shown", visible: true }},
+          {{ name: "hidden", visible: false }},
+        ];
+        {function}
+        console.log(JSON.stringify(getVisibleTransparentMeshes().map((m) => m.name)));
+        transparentMeshes[0].visible = false;
+        console.log(JSON.stringify(getVisibleTransparentMeshes().length));
+        """
+        lines = _run_node(script).splitlines()
+        self.assertEqual(json.loads(lines[0]), ["shown"])
+        self.assertEqual(json.loads(lines[1]), 0)
+
+    def test_transparency_weight_uses_native_clip_planes(self):
+        viewer_html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        function = _extract_js_function(viewer_html, "getNativeClipPlanes")
+        script = f"""
+        {function}
+        console.log(JSON.stringify([
+          getNativeClipPlanes({{ min: [0, 0, 0], max: [500, 20, 40] }}),
+          getNativeClipPlanes({{ min: [0, 0, 0], max: [0.5, 0.2, 0.1] }}),
+          getNativeClipPlanes({{ min: [0, 0, 0], max: [2000, 10, 10] }}),
+          getNativeClipPlanes(null),
+        ]));
+        """
+        planes = json.loads(_run_node(script))
+        # Camera::configure_clip_planes: a size under 1 becomes 100;
+        # near = max(0.1, size * 0.001), far = max(10000, size * 20).
+        self.assertEqual(planes[0], {"near": 0.5, "far": 10000})
+        self.assertEqual(planes[1], {"near": 0.1, "far": 10000})
+        self.assertEqual(planes[2], {"near": 2, "far": 40000})
+        self.assertEqual(planes[3], {"near": 0.1, "far": 10000})
+
+    def test_show_all_and_hide_all_change_only_the_shown_group(self):
+        viewer_html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        functions = "\n".join(
+            _extract_js_function(viewer_html, name)
+            for name in ("setRegistryVisible", "getVisibilityGroupRegistry")
+        )
+        script = f"""
+        const layerVisibility = new Map([["l", {{ visible: true }}]]);
+        const conditionVisibility = new Map([
+          ["c1", {{ visible: true }}],
+          ["c2", {{ visible: false }}],
+        ]);
+        const areaVisibility = new Map([["a", {{ visible: true }}]]);
+        let applied = 0;
+        function applyObjectVisibility() {{ applied += 1; }}
+        {functions}
+        setRegistryVisible(getVisibilityGroupRegistry("condition"), false);
+        const afterHide = [layerVisibility, conditionVisibility, areaVisibility]
+          .map((registry) => Array.from(registry.values()).map((entry) => entry.visible));
+        setRegistryVisible(getVisibilityGroupRegistry("condition"), true);
+        const afterShow = Array.from(conditionVisibility.values()).map((e) => e.visible);
+        console.log(JSON.stringify({{ afterHide, afterShow, applied }}));
+        """
+        outcome = json.loads(_run_node(script))
+        self.assertEqual(outcome["afterHide"], [[True], [False, False], [True]])
+        self.assertEqual(outcome["afterShow"], [True, True])
+        self.assertEqual(outcome["applied"], 2)
+
+    def _cube(self, low, high, offset=0):
+        (x0, y0, z0), (x1, y1, z1) = low, high
+        vertices = [
+            x0,
+            y0,
+            z0,
+            x1,
+            y0,
+            z0,
+            x1,
+            y1,
+            z0,
+            x0,
+            y1,
+            z0,
+            x0,
+            y0,
+            z1,
+            x1,
+            y0,
+            z1,
+            x1,
+            y1,
+            z1,
+            x0,
+            y1,
+            z1,
+        ]
+        faces = [
+            0,
+            1,
+            2,
+            0,
+            2,
+            3,
+            4,
+            6,
+            5,
+            4,
+            7,
+            6,
+            0,
+            4,
+            5,
+            0,
+            5,
+            1,
+            1,
+            5,
+            6,
+            1,
+            6,
+            2,
+            2,
+            6,
+            7,
+            2,
+            7,
+            3,
+            3,
+            7,
+            4,
+            3,
+            4,
+            0,
+        ]
+        return vertices, [index + offset for index in faces]
+
+    def _section_functions(self, viewer_html):
+        return "\n".join(
+            _extract_js_function(viewer_html, name)
+            for name in (
+                "ringArea",
+                "ringContains",
+                "sliceMeshLoops",
+                "nestSectionLoops",
+            )
+        )
+
+    def test_section_slice_of_a_closed_box_is_one_filled_loop(self):
+        viewer_html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        vertices, index = self._cube((0, 0, 0), (4, 2, 6))
+        script = f"""
+        {self._section_functions(viewer_html)}
+        const positions = {json.dumps(vertices)};
+        const index = {json.dumps(index)};
+        const z = sliceMeshLoops(positions, index, 2, 3.0);
+        const x = sliceMeshLoops(positions, index, 0, 1.5);
+        const above = sliceMeshLoops(positions, index, 2, 9.0);
+        console.log(JSON.stringify({{
+          zLoops: z.length, zArea: Math.abs(ringArea(z[0])),
+          xLoops: x.length, xArea: Math.abs(ringArea(x[0])),
+          above: above.length,
+          zU: z[0].map((p) => p[0]).sort((a, b) => a - b),
+        }}));
+        """
+        result = json.loads(_run_node(script))
+        # Cut across z: the loop spans x (u) by y (v) = 4 x 2; across x: z by y = 6 x 2.
+        self.assertEqual(result["zLoops"], 1)
+        self.assertAlmostEqual(result["zArea"], 8.0)
+        self.assertEqual(result["xLoops"], 1)
+        self.assertAlmostEqual(result["xArea"], 12.0)
+        self.assertEqual(result["above"], 0)
+        self.assertEqual(result["zU"][0], 0)
+        self.assertEqual(result["zU"][-1], 4)
+
+    def test_section_loops_inside_others_become_holes_and_open_meshes_are_skipped(self):
+        viewer_html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        outer_vertices, outer_index = self._cube((0, 0, 0), (10, 10, 10))
+        inner_vertices, inner_index = self._cube((3, 3, 0), (7, 7, 10), offset=8)
+        script = f"""
+        {self._section_functions(viewer_html)}
+        const positions = {json.dumps(outer_vertices + inner_vertices)};
+        const index = {json.dumps(outer_index + inner_index)};
+        const polygons = nestSectionLoops(sliceMeshLoops(positions, index, 2, 5.0));
+        const open = sliceMeshLoops([0, 0, 0, 1, 0, 2, 0, 1, 2], [0, 1, 2], 2, 1.0);
+        console.log(JSON.stringify({{
+          polygons: polygons.length,
+          holes: polygons.map((polygon) => polygon.holes.length),
+          outerArea: Math.abs(ringArea(polygons[0].outer)),
+          holeArea: Math.abs(ringArea(polygons[0].holes[0])),
+          open: open.length,
+        }}));
+        """
+        result = json.loads(_run_node(script))
+        self.assertEqual(result["polygons"], 1)
+        self.assertEqual(result["holes"], [1])
+        self.assertAlmostEqual(result["outerArea"], 100.0)
+        self.assertAlmostEqual(result["holeArea"], 16.0)
+        self.assertEqual(result["open"], 0)
+
+    def test_section_cut_positions_use_native_axes_and_feet(self):
+        viewer_html = _generate_html(_MINIMAL_SCENE, "Viewer")
+        functions = "\n".join(
+            _extract_js_function(viewer_html, name)
+            for name in (
+                "getSectionCutExtent",
+                "getSectionCutPosition",
+                "formatSectionCutValue",
+            )
+        )
+        script = f"""
+        const MODEL_UNITS_PER_FOOT = 12.0;
+        {functions}
+        // Y-up bounds: x -120..0, z -2418..-78 (native y 78..2418).
+        const bounds = {{ min: [-120, 0, -2418], max: [0, 332, -78] }};
+        const sectionCuts = {{
+          northSouth: {{ fraction: 0.25, extent: getSectionCutExtent(bounds, "northSouth") }},
+          eastWest: {{ fraction: 1, extent: getSectionCutExtent(bounds, "eastWest") }},
+        }};
+        console.log(JSON.stringify({{
+          nsExtent: sectionCuts.northSouth.extent,
+          ewExtent: sectionCuts.eastWest.extent,
+          ns: getSectionCutPosition("northSouth"),
+          ew: getSectionCutPosition("eastWest"),
+          nsText: formatSectionCutValue("northSouth"),
+          ewText: formatSectionCutValue("eastWest"),
+          missing: getSectionCutExtent(null, "eastWest"),
+        }}));
+        """
+        result = json.loads(_run_node(script))
+        self.assertEqual(result["nsExtent"], [78, 2418])
+        self.assertEqual(result["ewExtent"], [-120, 0])
+        self.assertAlmostEqual(result["ns"], 78 + 0.25 * 2340)
+        self.assertIsNone(result["ew"])
+        self.assertEqual(result["nsText"], "48.8'")
+        self.assertEqual(result["ewText"], "off")
+        self.assertIsNone(result["missing"])
+
+    def test_clearing_caps_disposes_every_material_once_even_after_fallback_rendering(
         self,
     ):
         viewer_html = _generate_html(_MINIMAL_SCENE, "Viewer")
-        function = _extract_js_function(viewer_html, "renderWboitPassWithVisibility")
+        function = _extract_js_function(viewer_html, "clearSectionCaps")
         script = f"""
-        const objects = [
-          {{ name: "visible", material: "m-visible", visible: true }},
-          {{ name: "hidden", material: "m-hidden", visible: false }},
-          {{ name: "hidden-without-material", visible: false }},
-        ];
-        const scene = {{ traverse: (callback) => objects.forEach(callback) }};
-        const renderer = {{}};
-        const snapshot = () => objects.map((object) => object.material ?? null);
-        const outcome = {{}};
-        let wboitPass = {{ render: (target) => {{
-          outcome.renderTarget = target === renderer;
-          outcome.during = snapshot();
-        }} }};
+        const disposed = [];
+        const material = (name) => ({{ name, dispose: () => disposed.push(name) }});
+        const accum = material("accum");
+        const fallback = material("fallback");
+        // The no-float-target path leaves the fallback material on the mesh.
+        const cap = {{
+          parent: null,
+          geometry: {{ dispose() {{}} }},
+          material: fallback,
+          userData: {{
+            accumMaterial: accum,
+            revealageMaterial: material("revealage"),
+            fallbackMaterial: fallback,
+          }},
+        }};
+        const opaqueCap = {{
+          parent: null,
+          geometry: {{ dispose() {{}} }},
+          material: material("opaque"),
+          userData: {{}},
+        }};
+        const sectionCapObjects = [cap, opaqueCap];
+        const visibilityObjects = [cap, opaqueCap];
+        const transparentMeshes = [cap];
         {function}
-        renderWboitPassWithVisibility();
-        outcome.after = snapshot();
-        wboitPass = {{ render: () => {{ outcome.duringFailing = snapshot(); throw new Error("boom"); }} }};
-        try {{ renderWboitPassWithVisibility(); }} catch (error) {{ outcome.error = error.message; }}
-        outcome.afterFailure = snapshot();
-        console.log(JSON.stringify(outcome));
+        clearSectionCaps();
+        console.log(JSON.stringify({{
+          disposed: disposed.sort(),
+          left: [sectionCapObjects.length, visibilityObjects.length, transparentMeshes.length],
+        }}));
         """
-        outcome = json.loads(_run_node(script))
-        self.assertTrue(outcome["renderTarget"])
-        self.assertEqual(outcome["during"], ["m-visible", None, None])
-        self.assertEqual(outcome["after"], ["m-visible", "m-hidden", None])
-        self.assertEqual(outcome["duringFailing"], ["m-visible", None, None])
-        self.assertEqual(outcome["error"], "boom")
-        self.assertEqual(outcome["afterFailure"], ["m-visible", "m-hidden", None])
+        result = json.loads(_run_node(script))
+        self.assertEqual(
+            result["disposed"], ["accum", "fallback", "opaque", "revealage"]
+        )
+        self.assertEqual(result["left"], [0, 0, 0])

@@ -334,9 +334,15 @@ class AccessMaintenanceOwnershipTests(unittest.TestCase):
 
     def test_prepare_pairs_com_initialisation_and_releases_the_lease_on_failure(self):
         module = "ost_visualizer.infrastructure.mdb.database_maintenance"
-        for fails in (False, True):
+        s_ok, s_false, changed_mode = 0, 1, -2147417850
+        cases = [
+            (fails, result)
+            for fails in (False, True)
+            for result in (s_ok, s_false, changed_mode)
+        ]
+        for fails, result in cases:
             with self.subTest(
-                build_fails=fails
+                build_fails=fails, hresult=result
             ), tempfile.TemporaryDirectory() as folder:
                 source = Path(folder) / "db.mdb"
                 source.write_bytes(b"original")
@@ -344,7 +350,12 @@ class AccessMaintenanceOwnershipTests(unittest.TestCase):
                 backend = MdbDatabaseMaintenance(manager)
                 events = []
                 com = Mock()
-                com.CoInitialize.side_effect = lambda: events.append("init")
+
+                def initialise(reserved, flags, result=result):
+                    events.append(("init", reserved, flags))
+                    return result
+
+                com.CoInitializeEx.side_effect = initialise
                 com.CoUninitialize.side_effect = lambda: events.append("uninit")
 
                 def build(_prepared, fails=fails):
@@ -354,7 +365,7 @@ class AccessMaintenanceOwnershipTests(unittest.TestCase):
 
                 target = backend.capture_target(str(source))
                 self.assertEqual(len(manager._maintenance_paths), 1)
-                with patch(f"{module}.pythoncom", com), patch(
+                with patch(f"{module}._ole32", return_value=com), patch(
                     f"{module}._PreparedMdbMaintenance.build", build
                 ):
                     if fails:
@@ -365,9 +376,61 @@ class AccessMaintenanceOwnershipTests(unittest.TestCase):
                         prepared = backend.prepare(str(source), target)
                         self.assertTrue(target.active)
                         prepared.close()
-                self.assertEqual(events, ["init", "build", "uninit"])
+                # CoUninitialize only balances a successful CoInitializeEx; a thread
+                # already in another apartment (RPC_E_CHANGED_MODE) is left alone.
+                expected = [("init", None, 2), "build"]
+                if result in (s_ok, s_false):
+                    expected.append("uninit")
+                self.assertEqual(events, expected)
                 self.assertFalse(target.active)
                 self.assertFalse(manager._maintenance_paths)
+
+    def test_prepare_reports_a_failed_com_initialisation_without_building(self):
+        module = "ost_visualizer.infrastructure.mdb.database_maintenance"
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "db.mdb"
+            source.write_bytes(b"original")
+            manager = MdbConnectionManager()
+            backend = MdbDatabaseMaintenance(manager)
+            com = Mock()
+            com.CoInitializeEx.return_value = -2147024882  # E_OUTOFMEMORY
+            build = Mock()
+            target = backend.capture_target(str(source))
+            with patch(f"{module}._ole32", return_value=com), patch(
+                f"{module}._PreparedMdbMaintenance.build", build
+            ):
+                with self.assertRaisesRegex(OSError, "0x8007000E"):
+                    backend.prepare(str(source), target)
+            build.assert_not_called()
+            com.CoUninitialize.assert_not_called()
+            self.assertFalse(target.active)
+            self.assertFalse(manager._maintenance_paths)
+            self.assertEqual(source.read_bytes(), b"original")
+
+    def test_com_initialisation_is_balanced_on_the_thread_that_imported_pythoncom(self):
+        import ctypes
+        import pythoncom  # initialises COM on this thread, as the app's main thread does
+        from ost_visualizer.infrastructure.mdb.database_maintenance import (
+            _com_initialized,
+        )
+
+        del pythoncom
+        ole32 = ctypes.WinDLL("ole32")
+        ole32.CoInitializeEx.restype = ctypes.c_long
+
+        def probe():
+            result = ole32.CoInitializeEx(None, 2)
+            if result in (0, 1):
+                ole32.CoUninitialize()
+            return result
+
+        before = probe()
+        with _com_initialized():
+            pass
+        with _com_initialized():
+            pass
+        # Still initialised exactly as before (S_FALSE means already initialised).
+        self.assertEqual(probe(), before)
 
     def test_capture_releases_its_lease_when_the_file_changes_after_it_is_taken(self):
         module = "ost_visualizer.infrastructure.mdb.database_maintenance"
@@ -1020,10 +1083,12 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
     ):
         self.counts.side_effect = [{"Data": 1}, KeyboardInterrupt()]
         target = self.backend.capture_target(str(self.source))
-        with patch(f"{_MODULE}.pythoncom") as com:
+        com = Mock()
+        com.CoInitializeEx.return_value = 0
+        with patch(f"{_MODULE}._ole32", return_value=com):
             with self.assertRaises(KeyboardInterrupt):
                 self.backend.prepare(str(self.source), target)
-        com.CoInitialize.assert_called_once_with()
+        com.CoInitializeEx.assert_called_once_with(None, 2)
         com.CoUninitialize.assert_called_once_with()
         self.assertFalse(target.active)
         self.assertEqual(self.manager._maintenance_paths, set())
@@ -1187,7 +1252,24 @@ class MdbDatabaseMaintenanceRealDaoTests(unittest.TestCase):
             if counts != expected:
                 raise AssertionError(f"table counts {counts} != {expected}")
             before = source.read_bytes()
-            result = MdbDatabaseMaintenance(MdbConnectionManager()).compact(str(source))
+            # The app compacts on a ProgressDialog worker thread; the main-thread
+            # case is covered by _exercise_compact_on_the_main_thread.
+            outcome = {}
+
+            def run_compact():
+                try:
+                    outcome["result"] = MdbDatabaseMaintenance(
+                        MdbConnectionManager()
+                    ).compact(str(source))
+                except BaseException as error:  # reported below on the main thread
+                    outcome["error"] = error
+
+            worker = threading.Thread(target=run_compact)
+            worker.start()
+            worker.join()
+            if "error" in outcome:
+                raise outcome["error"]
+            result = outcome["result"]
             if (result.success, result.message) != (
                 True,
                 "Compact/Repair completed successfully.",
@@ -1201,6 +1283,71 @@ class MdbDatabaseMaintenanceRealDaoTests(unittest.TestCase):
             if [path.name for path in Path(folder).iterdir()] != ["scratch.mdb"]:
                 raise AssertionError("maintenance left files behind")
         pythoncom.CoUninitialize()
+
+    @staticmethod
+    def _exercise_compact_on_the_main_thread():
+        # Importing pythoncom initialises COM on this thread. A pythoncom
+        # CoInitialize()/CoUninitialize() pair here used to drop that reference and
+        # tear COM down under the open engine (access violation on its next call).
+        import ctypes
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "main.mdb"
+            engine = win32com.client.Dispatch("DAO.DBEngine.120")
+            database = engine.CreateDatabase(
+                str(source), ";LANGID=0x0409;CP=1252;COUNTRY=0", 64
+            )
+            database.Execute("CREATE TABLE Plain (UID INTEGER)")
+            database.Execute("INSERT INTO Plain VALUES (7)")
+            database.Close()
+            result = MdbDatabaseMaintenance(MdbConnectionManager()).compact(str(source))
+            if not result.success:
+                raise AssertionError(f"unexpected result {result}")
+            ole32 = ctypes.WinDLL("ole32")
+            ole32.CoInitializeEx.restype = ctypes.c_long
+            probe = ole32.CoInitializeEx(None, 2)
+            if probe in (0, 1):
+                ole32.CoUninitialize()
+            if probe != 1:
+                raise AssertionError(f"COM was torn down on this thread: {probe}")
+            reopened = engine.OpenDatabase(str(source), True, True)
+            try:
+                rows = reopened.OpenRecordset("SELECT UID FROM Plain", 4)
+                value = rows.Fields(0).Value
+                rows.Close()
+            finally:
+                reopened.Close()
+            if value != 7:
+                raise AssertionError(f"unexpected row {value}")
+        pythoncom.CoUninitialize()
+
+    def _run_real_dao_child(self, function_name):
+        import subprocess
+        import sys
+        from tests.helpers.mdb.schema_support import _access_available
+        from tests.paths import REPO_ROOT
+
+        if not _access_available():
+            self.skipTest("Access ODBC driver or win32com is not available")
+        code = (
+            "from tests.infrastructure.mdb.test_database_maintenance "
+            "import MdbDatabaseMaintenanceRealDaoTests as Tests; "
+            f"Tests.{function_name}()"
+        )
+        return subprocess.run(
+            [sys.executable, "-X", "faulthandler", "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+    def test_compact_on_the_main_thread_keeps_an_open_dao_engine_usable(self):
+        result = self._run_real_dao_child("_exercise_compact_on_the_main_thread")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_table_counts_and_compact_run_on_a_real_access_database(self):
         import subprocess

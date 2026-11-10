@@ -92,6 +92,10 @@ class ConfigAggregate:
         return self._config.enable_advanced_mouse_controls
 
     @property
+    def show_edges(self) -> bool:
+        return self._config.show_edges
+
+    @property
     def default_auto_zoom_level(self) -> int:
         return self._config.default_auto_zoom_level
 
@@ -311,6 +315,7 @@ class ConfigAggregate:
             disable_high_resolution_images=bool(config.disable_high_resolution_images),
             enable_intelligent_paste=bool(config.enable_intelligent_paste),
             enable_advanced_mouse_controls=bool(config.enable_advanced_mouse_controls),
+            show_edges=bool(config.show_edges),
             default_auto_zoom_level=auto_zoom_level,
             use_full_window_crosshairs=bool(config.use_full_window_crosshairs),
             crosshair_color=colors["crosshair_color"],

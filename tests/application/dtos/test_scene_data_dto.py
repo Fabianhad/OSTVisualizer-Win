@@ -69,6 +69,7 @@ class SceneDataContractTests(unittest.TestCase):
                 "mode_3d": str,
                 "mode_2d": str,
             },
+            "SceneViewOptionsConfig": {"edges": bool},
             "SceneGeometryEntry": {
                 "vertices": List[float],
                 "normals": List[float],
@@ -171,12 +172,14 @@ class SceneDataContractTests(unittest.TestCase):
                 "takeoffs_2d": List[module.SceneTakeoff2DEntry],
                 "elevation_callouts": List[module.SceneElevationCalloutEntry],
                 "display_modes": module.SceneDisplayModesConfig,
+                "subtitle": str,
+                "view_options": module.SceneViewOptionsConfig,
             },
         }
         for name, hints in expected.items():
             with self.subTest(typed_dict=name):
                 self.assertEqual(get_type_hints(getattr(module, name)), hints)
-        self.assertEqual(len(expected), 13)
+        self.assertEqual(len(expected), 14)
 
     def test_required_and_optional_key_sets_are_exact(self):
         from ost_visualizer.application.dtos import scene_data_dto as module
@@ -223,12 +226,15 @@ class SceneDataContractTests(unittest.TestCase):
                 "takeoffs_2d",
                 "elevation_callouts",
                 "display_modes",
+                "subtitle",
+                "view_options",
             },
         )
         for name in (
             "SceneCameraConfig",
             "SceneBoundsConfig",
             "SceneDisplayModesConfig",
+            "SceneViewOptionsConfig",
             "SceneGeometryEntry",
             "SceneLayerEntry",
             "SceneConditionEntry",

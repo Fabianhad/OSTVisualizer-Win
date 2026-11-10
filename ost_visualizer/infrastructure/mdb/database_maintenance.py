@@ -4,15 +4,47 @@ import os
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from ctypes import wintypes
 from pathlib import Path
-import pythoncom
 import win32com.client
 import win32con
 import win32file
 from ...application.interfaces.i_database_maintenance import DatabaseMaintenanceResult
 
 _LOGGER = logging.getLogger(__name__)
+_COINIT_APARTMENTTHREADED = 0x2
+_S_OK = 0
+_S_FALSE = 1
+_RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 as a signed HRESULT
+_ole32_dll = None
+
+
+def _ole32():
+    global _ole32_dll
+    if _ole32_dll is None:
+        ole32 = ctypes.WinDLL("ole32")
+        ole32.CoInitializeEx.argtypes = [wintypes.LPVOID, wintypes.DWORD]
+        ole32.CoInitializeEx.restype = ctypes.c_long
+        ole32.CoUninitialize.argtypes = []
+        ole32.CoUninitialize.restype = None
+        _ole32_dll = ole32
+    return _ole32_dll
+
+
+@contextmanager
+def _com_initialized():
+    ole32 = _ole32()
+    result = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
+    if result not in (_S_OK, _S_FALSE, _RPC_E_CHANGED_MODE):
+        raise OSError(
+            f"COM could not be initialised (HRESULT 0x{result & 0xFFFFFFFF:08X})."
+        )
+    try:
+        yield
+    finally:
+        if result in (_S_OK, _S_FALSE):
+            ole32.CoUninitialize()
 
 
 def _replace_file(source: Path, destination: Path, backup: Path) -> None:
@@ -138,11 +170,8 @@ class MdbDatabaseMaintenance:
                 raise RuntimeError(
                     "The selected database changed; start maintenance again."
                 )
-            pythoncom.CoInitialize()
-            try:
+            with _com_initialized():
                 prepared.build()
-            finally:
-                pythoncom.CoUninitialize()
             return prepared
         except Exception:
             prepared.close()

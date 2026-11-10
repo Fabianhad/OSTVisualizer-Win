@@ -37,4 +37,6 @@ class IHtmlRenderer(Protocol):
             DEFAULT_ELEVATION_CALLOUT_SETTINGS
         ),
         elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
+        subtitle: str = "",
+        show_edges: bool = False,
     ) -> bool: ...

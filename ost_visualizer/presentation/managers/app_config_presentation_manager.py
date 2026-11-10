@@ -29,6 +29,7 @@ class AppConfigPresentationManager:
             )
         if window.plan_view:
             self.apply_plan_view_config(window.plan_view, config_model)
+        self.apply_native_3d_config(window, config_model)
         for detached_window in (
             window.get_annotation_window(),
             window.get_view_window(),
@@ -53,6 +54,11 @@ class AppConfigPresentationManager:
         )
         for button in window.get_toolbar_text_buttons():
             button.setToolButtonStyle(button_style)
+
+    def apply_native_3d_config(self, window, config_model) -> None:
+        for view in (window.opengl_viewer, window.get_mesh_window()):
+            if view is not None:
+                view.set_edges_visible(config_model.show_edges)
 
     def apply_plan_view_config(self, plan_view, config_model) -> None:
         plan_view.set_roping_selection_method(config_model.roping_selection_method)

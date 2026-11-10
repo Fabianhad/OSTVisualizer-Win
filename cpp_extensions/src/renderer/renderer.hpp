@@ -53,9 +53,9 @@ namespace ost_renderer
         float near_plane = 0.1f;
         float far_plane = 10000.0f;
         float aspect_ratio = 1.0f;
-        Vec3 position{0, -2000, 1000};
+        Vec3 position{0, 1000, 1500};
         Vec3 target{0, 0, 0};
-        Vec3 prev_position{0, -2000, 1000};
+        Vec3 prev_position{0, 1000, 1500};
         Vec3 prev_target{0, 0, 0};
         float interpolation_alpha = 0.0f;
         glm::vec2 rotational_velocity{0.0f};
@@ -98,6 +98,8 @@ namespace ost_renderer
             Color color;
             std::string condition_uid;
             std::string takeoff_uid;
+            std::vector<float> positions;
+            std::vector<uint32_t> indices;
         };
         const std::vector<GLMesh> &get_meshes() const { return meshes_; }
         size_t mesh_count() const { return meshes_.size(); }
@@ -107,11 +109,13 @@ namespace ost_renderer
         void clear_selection();
         const std::set<int> &get_selected() const { return selected_; }
         bool is_selected(int index) const { return selected_.count(index) > 0; }
+        uint64_t revision() const { return revision_; }
 
     private:
         std::vector<GLMesh> meshes_;
         Box3 bounds_;
         std::set<int> selected_;
+        uint64_t revision_ = 0;
         static const std::string kEmptyString;
         void *gl_hdc_ = nullptr;
         void *gl_hglrc_ = nullptr;
@@ -147,6 +151,11 @@ namespace ost_renderer
         void clear_plan_texture();
         void set_plan_texture_visibility(bool visible);
         void set_plan_texture_opacity(float opacity);
+        void set_edges_visible(bool visible);
+        bool edges_visible() const;
+        void set_section_cut(int axis, bool enabled, float position);
+        bool section_cut_enabled(int axis) const;
+        float section_cut_position(int axis) const;
         int get_samples() const;
         Scene scene;
         Camera camera;

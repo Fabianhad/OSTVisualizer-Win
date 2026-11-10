@@ -2348,9 +2348,15 @@ class MainWindowPreferenceTests(unittest.TestCase):
                     mouse_pressed_snap_angle=45,
                     **_preferences_support_SNAP_PREF_UPDATE,
                     default_auto_zoom_level=125,
+                    show_edges=True,
                 )
             )
         )
+        edge_calls = []
+
+        class FakeViewer:
+            def set_edges_visible(self, visible):
+                edge_calls.append(visible)
 
         class FakeWindow:
             def __init__(self):
@@ -2362,9 +2368,13 @@ class MainWindowPreferenceTests(unittest.TestCase):
                     QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
                 )
                 self.annotation_style_refreshes = 0
+                self.opengl_viewer = FakeViewer()
 
             def apply_takeoff_toolbar_visibility(self, hidden_items):
                 self.hidden_toolbar_items = hidden_items
+
+            def get_mesh_window(self):
+                return None
 
             def get_workspace_toolbars(self):
                 return []
@@ -2383,6 +2393,7 @@ class MainWindowPreferenceTests(unittest.TestCase):
 
         window = FakeWindow()
         MainWindow.apply_config_preferences(window)
+        self.assertEqual(edge_calls, [True])
         self.assertEqual(window.annotation_style_refreshes, 1)
         self.assertEqual(window.hidden_toolbar_items, ())
         self.assertEqual(
@@ -6499,17 +6510,27 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
         saved.geometry_b64 = _detached_support__encoded_geometry(b"saved")
         saved.is_maximized = False
         window._workspace_state_model = SimpleNamespace(state=state)
+        edge_calls = []
+        mesh_window = SimpleNamespace(
+            set_edges_visible=lambda visible: edge_calls.append(("detached", visible))
+        )
+        window.opengl_viewer = SimpleNamespace(
+            set_edges_visible=lambda visible: edge_calls.append(("embedded", visible))
+        )
+        window._config_model = SimpleNamespace(show_edges=True)
         window.handlers = SimpleNamespace(
             ui_event=SimpleNamespace(
                 set_mesh_window_visible=lambda visible, **kwargs: calls.append(
                     (visible, kwargs)
-                )
+                ),
+                get_mesh_window=lambda: mesh_window,
             )
         )
         window._mesh_window_action.setChecked(True)
         toggles.clear()
         window.set_mesh_window_visible(True)
         self.assertEqual(calls, [])
+        self.assertEqual(edge_calls, [])
         self.assertFalse(window._mesh_window_action.isChecked())
         self.assertFalse(window._mesh_window_action.signalsBlocked())
         self.assertEqual(toggles, [])
@@ -6525,6 +6546,7 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
         window.set_mesh_window_visible(True)
         ((visible, kwargs),) = calls
         self.assertTrue(visible)
+        self.assertEqual(edge_calls, [("embedded", True), ("detached", True)])
         self.assertEqual(bytes(kwargs["initial_geometry"]), b"saved")
         self.assertIs(kwargs["initial_is_maximized"], False)
         self.assertTrue(window._mesh_window_action.isChecked())

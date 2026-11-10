@@ -70,6 +70,8 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
                 plan_view=self.bundle.plan_view,
                 get_annotation_window=lambda: detached,
                 get_view_window=lambda: None,
+                opengl_viewer=None,
+                get_mesh_window=lambda: None,
             )
             window.apply_takeoff_toolbar_visibility = MethodType(
                 MainWindow.apply_takeoff_toolbar_visibility, window

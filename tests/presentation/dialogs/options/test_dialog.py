@@ -132,6 +132,7 @@ class DialogPreferenceTests(unittest.TestCase):
             display_mode_3d=Config.DISPLAY_MODE_ORIGINAL,
             display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
             grayscale_enabled=False,
+            show_edges=True,
             roping_selection_method="inclusive",
             display_page_index_with_sheet_name=True,
             display_sheet_number_with_sheet_name=True,
@@ -163,6 +164,7 @@ class DialogPreferenceTests(unittest.TestCase):
         self.assertTrue(dialog._display_mode_3d_original_radio.isChecked())
         self.assertTrue(dialog._display_mode_2d_transparent_radio.isChecked())
         self.assertFalse(dialog._grayscale_check.isChecked())
+        self.assertTrue(dialog._edges_check.isChecked())
         self.assertTrue(dialog._roping_inclusive_radio.isChecked())
         self.assertTrue(dialog._page_index_check.isChecked())
         self.assertTrue(dialog._sheet_number_check.isChecked())
@@ -424,6 +426,18 @@ class DialogPreferenceTests(unittest.TestCase):
         self.assertEqual(len(applied), 1)
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
 
+    def test_options_dialog_applies_the_edges_preference(self):
+        applied = []
+        dialog = OptionsDialog(Config(), apply_callback=applied.append)
+        apply_button = _preferences_support__apply_button(dialog)
+        self.assertEqual(dialog._edges_check.text(), "Edges")
+        self.assertFalse(dialog._edges_check.isChecked())
+        dialog._edges_check.setChecked(True)
+        self.assertTrue(apply_button.isEnabled())
+        apply_button.click()
+        self.assertEqual(applied, [Config(show_edges=True)])
+        dialog.close()
+
     def test_options_dialog_applied_config_becomes_new_pending_baseline(self):
         dialog = OptionsDialog(Config(), apply_callback=lambda _config: None)
         apply_button = _preferences_support__apply_button(dialog)
@@ -449,6 +463,7 @@ class DialogPreferenceTests(unittest.TestCase):
                 display_mode_3d=Config.DISPLAY_MODE_SOLID,
                 display_mode_2d=Config.DISPLAY_MODE_SOLID,
                 grayscale_enabled=True,
+                show_edges=True,
                 disable_high_resolution_images=True,
                 default_auto_zoom_level=125,
                 snap_to_right_angle_enabled=False,
@@ -482,6 +497,7 @@ class DialogPreferenceTests(unittest.TestCase):
         self.assertTrue(dialog._display_mode_3d_original_radio.isChecked())
         self.assertTrue(dialog._display_mode_2d_original_radio.isChecked())
         self.assertFalse(dialog._grayscale_check.isChecked())
+        self.assertFalse(dialog._edges_check.isChecked())
         self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
         self.assertFalse(dialog._disable_high_res_check.isChecked())
         self.assertEqual(dialog._auto_zoom_spin.value(), Config.DEFAULT_AUTO_ZOOM_LEVEL)

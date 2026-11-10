@@ -2603,6 +2603,10 @@ class MainWindow(QtWidgets.QMainWindow):
             initial_geometry=initial_geometry,
             initial_is_maximized=initial_is_maximized,
         )
+        if visible:
+            AppConfigPresentationManager().apply_native_3d_config(
+                self, self._config_model
+            )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         if (

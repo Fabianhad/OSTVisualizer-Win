@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 _CLICK_DRAG_THRESHOLD_PX = 3
 _ZOOM_CLICK_WHEEL_DELTA = 120
 _CameraState = tuple[float, float, float, float, float, float, float]
+SECTION_CUT_NORTH_SOUTH = "north_south"
+SECTION_CUT_EAST_WEST = "east_west"
+# Native renderer axes (Z-up): the north-south cut moves along y, east-west along x.
+_SECTION_CUT_AXES = {SECTION_CUT_NORTH_SOUTH: 1, SECTION_CUT_EAST_WEST: 0}
+MODEL_UNITS_PER_FOOT = 12.0
 
 
 class OpenGLViewer(QtWidgets.QWidget):
@@ -72,6 +77,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._render_suspended = True
         self._surface_hidden = True
         self._color_service = color_service
+        self._edges_visible = False
+        self._section_cut_fractions = dict.fromkeys(_SECTION_CUT_AXES, 1.0)
+        self.scene_content_changed.connect(self._apply_section_cuts)
         self.setAttribute(QtCore.Qt.WA_PaintOnScreen)
         self.setAttribute(QtCore.Qt.WA_DontCreateNativeAncestors)
         self.setAttribute(QtCore.Qt.WA_NativeWindow)
@@ -170,6 +178,8 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._connect_surface_notifications()
             self._resize_render_surface()
             self._set_palette_background()
+            self._renderer.set_edges_visible(self._edges_visible)
+            self._apply_section_cuts()
             self._renderer.suspend()
             if self._pending_camera_reset:
                 self._renderer.camera.reset()
@@ -824,6 +834,62 @@ class OpenGLViewer(QtWidgets.QWidget):
             self.zoom_changed.emit(self._zoom_reference_distance / dist)
         self.update()
         event.accept()
+
+    def edges_visible(self) -> bool:
+        return self._edges_visible
+
+    def set_edges_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if visible == self._edges_visible:
+            return
+        self._edges_visible = visible
+        if self._renderer is not None:
+            self._renderer.set_edges_visible(visible)
+        self.update()
+
+    def section_cut_fraction(self, cut: str) -> float:
+        return self._section_cut_fractions[cut]
+
+    def set_section_cut(self, cut: str, fraction: float) -> None:
+        if cut not in _SECTION_CUT_AXES:
+            raise ValueError(f"Unknown section cut: {cut!r}")
+        fraction = min(1.0, max(0.0, float(fraction)))
+        if fraction == self._section_cut_fractions[cut]:
+            return
+        self._section_cut_fractions[cut] = fraction
+        self._apply_section_cuts()
+        self.update()
+
+    def section_cut_offset_feet(self, cut: str) -> Optional[float]:
+        fraction = self._section_cut_fractions[cut]
+        if fraction >= 1.0:
+            return None
+        extent = self._section_cut_extent(_SECTION_CUT_AXES[cut])
+        if extent is None:
+            return None
+        return fraction * (extent[1] - extent[0]) / MODEL_UNITS_PER_FOOT
+
+    def _section_cut_extent(self, axis: int) -> Optional[tuple[float, float]]:
+        if self._renderer is None:
+            return None
+        bounds = self._renderer.scene.get_bounds()
+        if bounds.is_empty():
+            return None
+        low = bounds.min.x if axis == 0 else bounds.min.y
+        high = bounds.max.x if axis == 0 else bounds.max.y
+        return (float(low), float(high))
+
+    def _apply_section_cuts(self) -> None:
+        if self._renderer is None:
+            return
+        for cut, axis in _SECTION_CUT_AXES.items():
+            fraction = self._section_cut_fractions[cut]
+            extent = None if fraction >= 1.0 else self._section_cut_extent(axis)
+            if extent is None:
+                self._renderer.set_section_cut(axis, False, 0.0)
+                continue
+            position = extent[0] + fraction * (extent[1] - extent[0])
+            self._renderer.set_section_cut(axis, True, position)
 
     def set_background_color(self, color: Union[QtGui.QColor, Sequence[float]]) -> None:
         if isinstance(color, QtGui.QColor):

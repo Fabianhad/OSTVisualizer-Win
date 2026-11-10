@@ -173,9 +173,13 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 inactive_object_color="#345678",
                 include_elevation_callouts=True,
                 elevation_callout_color="#123456",
+                subtitle="Bid notes",
+                show_edges=True,
             )
         self.assertIs(result, True)
         kwargs = renderer.call_args.kwargs
+        self.assertEqual(kwargs["subtitle"], "Bid notes")
+        self.assertIs(kwargs["show_edges"], True)
         self.assertEqual(kwargs["title"], "Bid - Page")
         self.assertEqual(kwargs["output_path"], "out.html")
         self.assertIs(kwargs["auto_open"], False)
@@ -246,6 +250,33 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertIs(options["display_modes_synced"], False)
         self.assertIs(options["grayscale_enabled"], True)
         self.assertIs(options["auto_open"], False)
+        self.assertIs(options["show_edges"], False)
+        self.assertEqual(options["subtitle"], "")
+
+    def test_html_strategy_forwards_edges_preference_and_subtitle(self):
+        renderer = create_autospec(IHtmlRenderer, instance=True)
+        renderer.render.return_value = True
+        strategy = _HtmlExportStrategyAdapter(renderer)
+        conditions = {"condition-1": Condition(uid="condition-1", condition_type=1)}
+        takeoffs = [Takeoff(uid="takeoff-1", condition_uid="condition-1")]
+        options = strategy.get_export_options(Config(show_edges=True))
+        self.assertIs(options["show_edges"], True)
+        options["subtitle"] = "11-6-26 Bid"
+        strategy.execute_export(conditions, takeoffs, "out.html", **options)
+        kwargs = renderer.render.call_args.kwargs
+        self.assertIs(kwargs["show_edges"], True)
+        self.assertEqual(kwargs["subtitle"], "11-6-26 Bid")
+
+    def test_html_title_is_the_bid_name_without_page_names(self):
+        strategy = _HtmlExportStrategyAdapter(
+            create_autospec(IHtmlRenderer, instance=True)
+        )
+        self.assertEqual(
+            strategy.prepare_title(
+                " 26-063 41 Maryland Ave Apartments, MD ", ["A1", "A2", "A3"]
+            ),
+            "26-063 41 Maryland Ave Apartments, MD",
+        )
 
     def test_html_strategy_exports_only_supported_condition_types(self):
         renderer = create_autospec(IHtmlRenderer, instance=True)

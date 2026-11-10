@@ -27,6 +27,45 @@ class NativeRendererBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(camera.fov, 38.0)
 
+    def test_default_camera_frames_the_model_like_the_html_export(self):
+        from ost_visualizer.presentation.visualization.renderers.threejs.adapters.threejs_mesh_adapter import (
+            ThreejsMeshAdapter,
+        )
+
+        # Native Z-up bounds of bid 2828: x, y, z min/max.
+        x0, x1, y0, y1, z0, z1 = -3306.0, -528.0, 77.0, 2418.0, 0.0, 332.0
+        bounds = ost_renderer.Box3()
+        bounds.min = ost_renderer.Vec3(x0, y0, z0)
+        bounds.max = ost_renderer.Vec3(x1, y1, z1)
+        camera = ost_renderer.Camera()
+        camera.show_object(bounds)
+        export = ThreejsMeshAdapter(None).build_scene_data(
+            [], (x0, x1, y0, y1, z0, z1), "Camera"
+        )["camera"]
+
+        def to_native(v):  # the export is Y-up: (x, y, z) -> native (x, -z, y)
+            return (v[0], -v[2], v[1])
+
+        for native, exported in (
+            (camera.position, export["position"]),
+            (camera.target, export["target"]),
+        ):
+            for actual, expected in zip(
+                (native.x, native.y, native.z), to_native(exported)
+            ):
+                self.assertAlmostEqual(actual, expected, places=2)
+        # Seen from the +y side looking toward -y, as in the export.
+        self.assertGreater(camera.position.y, camera.target.y)
+        self.assertGreater(camera.position.z, camera.target.z)
+
+    def test_native_camera_reset_looks_from_the_same_side(self):
+        camera = ost_renderer.Camera()
+        camera.reset()
+        self.assertEqual(
+            (camera.position.x, camera.position.y, camera.position.z),
+            (0.0, 1000.0, 1500.0),
+        )
+
     def test_native_mesh_vectors_reject_incomplete_coordinates(self):
         mesh = ost_renderer.MeshData()
         with self.assertRaisesRegex(ValueError, "vertex array length"):

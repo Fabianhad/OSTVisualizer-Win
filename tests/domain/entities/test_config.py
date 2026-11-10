@@ -34,6 +34,7 @@ class ConfigPreferenceTests(unittest.TestCase):
         self.assertEqual(config.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)
         self.assertEqual(config.display_mode_2d, Config.DISPLAY_MODE_ORIGINAL)
         self.assertFalse(config.grayscale_enabled)
+        self.assertFalse(config.show_edges)
         self.assertFalse(config.disable_high_resolution_images)
         self.assertTrue(config.enable_intelligent_paste)
         self.assertTrue(config.enable_advanced_mouse_controls)
@@ -230,6 +231,7 @@ def custom_config():
         display_mode_3d="Solid",
         display_mode_2d="Transparent",
         grayscale_enabled=True,
+        show_edges=True,
         roping_selection_method="inclusive",
         display_page_index_with_sheet_name=True,
         display_sheet_number_with_sheet_name=True,
@@ -413,7 +415,7 @@ class ConfigFullRoundTripTests(unittest.TestCase):
             for f in dataclass_fields(Config)
             if isinstance(getattr(Config(), f.name), bool)
         ]
-        self.assertEqual(len(bool_fields), 24)
+        self.assertEqual(len(bool_fields), 25)
         for name in bool_fields:
             for value in ("true", 1, 0, None, "false"):
                 with self.subTest(field=name, value=value):

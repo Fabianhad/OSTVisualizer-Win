@@ -17,6 +17,10 @@ class SceneDisplayModesConfig(TypedDict):
     mode_2d: str
 
 
+class SceneViewOptionsConfig(TypedDict):
+    edges: bool
+
+
 class SceneGeometryEntry(TypedDict):
     vertices: List[float]
     normals: List[float]
@@ -134,6 +138,8 @@ class _OptionalSceneData(TypedDict, total=False):
     takeoffs_2d: List[SceneTakeoff2DEntry]
     elevation_callouts: List[SceneElevationCalloutEntry]
     display_modes: SceneDisplayModesConfig
+    subtitle: str
+    view_options: SceneViewOptionsConfig
 
 
 class SceneData(_OptionalSceneData):

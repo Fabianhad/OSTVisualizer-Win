@@ -205,6 +205,7 @@ class ConfigAggregatePropertyTests(unittest.TestCase):
         "disable_high_resolution_images",
         "enable_intelligent_paste",
         "enable_advanced_mouse_controls",
+        "show_edges",
         "default_auto_zoom_level",
         "use_full_window_crosshairs",
         "crosshair_color",

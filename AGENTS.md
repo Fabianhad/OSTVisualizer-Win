@@ -388,6 +388,48 @@ Threading and events:
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
+- Options > Edges (`Config.show_edges`, default off) draws feature edges in the
+  native 3D view and is the default of the HTML export's Edges toggle.
+  `AppConfigPresentationManager.apply_native_3d_config` pushes it to the
+  embedded viewer and the detached 3D window (startup, every Options apply, and
+  each time `MainWindow.set_mesh_window_visible(True)` opens the window);
+  `OpenGLViewer` keeps the flag and re-applies it to a lazily created renderer.
+  `ost_renderer` builds edge lines from quantized vertex positions (boundary
+  edges plus creases over 15 degrees, never triangulation diagonals), draws them
+  in the opaque pass at mesh colour x 0.45 with depth test on, and offsets opaque
+  fills while edges are on. The selection outline uses the same lines.
+- The HTML export (`threejs/templates/viewer.html`) copies the native shading:
+  the Lambert lights of `renderer.cpp` mapped from Z-up to Y-up as (x, z, -y),
+  no tone mapping or colour conversion, the `alpha < 0.99` transparency split
+  and the native weighted blended pass (same weight, 8-bit revealage and
+  composite formula, with the weight depth taken from the native clip planes
+  of `Camera::configure_clip_planes`). Change both renderers together. The
+  header shows `Bid.name` (`Bids.JobName`, which already holds the location)
+  and `Bid.notes` (`Bids.Notes`) on one line; the Visibility panel shows one
+  group at a time (Show by Layer / Condition / Area) over the three unchanged
+  visibility registries.
+- Section cuts: "Cut north–south" and "Cut east–west" sliders
+  (`components/section_cut_controls.py`, above the embedded 3D view and below the
+  detached 3D window's toolbar, not persisted) set a fraction of the model extent
+  on `OpenGLViewer`, where 1.0 is off. The viewer re-applies it to each new scene's
+  bounds on `scene_content_changed` and passes native coordinates to
+  `Renderer.set_section_cut(axis, enabled, position)`: axis 1 (y, north-south) and
+  axis 0 (x, east-west) each remove the side greater than the cut. The export
+  maps them through the Y-up conversion (x, y, z) -> (x, z, -y), so north-south
+  removes z < -cut there. Both viewers discard removed fragments in every mesh,
+  edge, pick and selection pass, and fill cut faces with caps built by slicing
+  each closed mesh at the cut (loops chained by quantized points, holes by
+  nesting depth, earcut triangulation). Caps sit 0.01 units inside the kept side,
+  use the element colour x 0.86 and its alpha (transparent caps go through the
+  weighted pass), are outlined with the edge lines, and are pickable. The page
+  image is never cut. Model units are inches, so slider labels show feet from the
+  model's minimum edge.
+- Default 3D camera: `Camera::show_object` (fit and reset) frames the model like
+  the HTML export's `ThreejsMeshAdapter` camera, from center + (0, +size, +1.5 size)
+  in native Z-up (export Y-up position (cx, cz + 1.5 size, -cy - size)), so both
+  viewers show the plan the same way round. `Camera::reset` without bounds looks
+  from the same side. Change both together;
+  `tests/integration/native/test_renderer_boundaries.py` pins the match.
 - Authoritative Takeoff events refresh derived sidebar quantities even when Plan
   projection is deferred or skipped for an unaffected active Page. In 3D these
   quantities cover the selected Page set, not only the active 2D Page.

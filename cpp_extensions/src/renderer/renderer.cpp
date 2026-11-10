@@ -10,6 +10,10 @@
 #include <chrono>
 #include <stdexcept>
 #include <unordered_map>
+#include <array>
+#include <climits>
+#include <cstdint>
+#include "earcut/earcut.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <functional>
@@ -226,8 +230,8 @@ namespace ost_renderer
             (bounds.min.z + bounds.max.z) * 0.5f);
         target = center;
         position.x = center.x;
-        position.y = center.y - size * 1.5f;
-        position.z = center.z + size * 0.5f;
+        position.y = center.y + size;
+        position.z = center.z + size * 1.5f;
         prev_position = position;
         prev_target = target;
     }
@@ -248,7 +252,7 @@ namespace ost_renderer
     }
     void Camera::reset()
     {
-        position = Vec3(0, -2000, 1000);
+        position = Vec3(0, 1000, 1500);
         target = Vec3(0, 0, 0);
         prev_position = position;
         prev_target = target;
@@ -299,6 +303,7 @@ namespace ost_renderer
         meshes_.clear();
         bounds_.clear();
         selected_.clear();
+        ++revision_;
     }
     void Scene::add_mesh(const MeshData &data)
     {
@@ -322,6 +327,14 @@ namespace ost_renderer
         mesh.color = data.color;
         mesh.condition_uid = data.condition_uid;
         mesh.takeoff_uid = data.takeoff_uid;
+        mesh.positions.reserve(data.vertices.size() * 3);
+        for (const auto &v : data.vertices)
+        {
+            mesh.positions.push_back(v.x);
+            mesh.positions.push_back(v.y);
+            mesh.positions.push_back(v.z);
+        }
+        mesh.indices = data.indices;
         struct Vertex
         {
             float x, y, z, nx, ny, nz, r, g, b, a;
@@ -372,18 +385,39 @@ namespace ost_renderer
         int triCount = (int)(data.indices.size() / 3);
         if (triCount > 0)
         {
-            struct UEdge
+            struct PositionKey
             {
-                uint32_t a, b;
-                bool operator==(const UEdge &o) const { return a == o.a && b == o.b; }
+                long long x, y, z;
+                bool operator==(const PositionKey &o) const { return x == o.x && y == o.y && z == o.z; }
             };
-            struct UEdgeHash
+            struct PositionKeyHash
             {
-                size_t operator()(const UEdge &e) const
+                size_t operator()(const PositionKey &k) const
                 {
-                    return std::hash<uint64_t>{}(((uint64_t)e.a << 32) | e.b);
+                    size_t h = std::hash<long long>{}(k.x);
+                    h ^= std::hash<long long>{}(k.y) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                    h ^= std::hash<long long>{}(k.z) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                    return h;
                 }
             };
+            const double positionPrecision = 1.0e4;
+            std::vector<uint32_t> canonical(data.vertices.size());
+            std::unordered_map<PositionKey, uint32_t, PositionKeyHash> positionIds;
+            positionIds.reserve(data.vertices.size());
+            for (size_t i = 0; i < data.vertices.size(); ++i)
+            {
+                const auto &p = data.vertices[i];
+                if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+                {
+                    canonical[i] = (uint32_t)i;
+                    continue;
+                }
+                PositionKey key{
+                    std::llround((double)p.x * positionPrecision),
+                    std::llround((double)p.y * positionPrecision),
+                    std::llround((double)p.z * positionPrecision)};
+                canonical[i] = positionIds.emplace(key, (uint32_t)i).first->second;
+            }
             struct EdgeInfo
             {
                 int face;
@@ -407,7 +441,10 @@ namespace ost_renderer
                 for (int e = 0; e < 3; e++)
                 {
                     uint32_t va = idx[e], vb = idx[(e + 1) % 3];
-                    uint64_t key = ((uint64_t)std::min(va, vb) << 32) | std::max(va, vb);
+                    uint32_t ca = canonical[va], cb = canonical[vb];
+                    if (ca == cb)
+                        continue;
+                    uint64_t key = ((uint64_t)std::min(ca, cb) << 32) | std::max(ca, cb);
                     auto it = edgeMap.find(key);
                     if (it == edgeMap.end())
                     {
@@ -447,6 +484,7 @@ namespace ost_renderer
             }
         }
         meshes_.push_back(mesh);
+        ++revision_;
     }
     Box3 Scene::get_bounds() const { return bounds_; }
     const std::string &Scene::get_condition_uid(int index) const
@@ -494,6 +532,10 @@ in vec4 vertexColor;
 in vec3 normal;
 in vec3 worldPos;
 out vec4 FragColor;
+uniform vec4 sectionCut;
+bool sectionCutRemoved(vec3 p) {
+    return (sectionCut.x > 0.5 && p.y > sectionCut.y) || (sectionCut.z > 0.5 && p.x > sectionCut.w);
+}
 uniform float ambientIntensity = 0.55;
 uniform vec3 keyLightDir = normalize(vec3(500.0, -500.0, 500.0));
 uniform float keyLightIntensity = 0.45;
@@ -502,6 +544,7 @@ uniform float fillLightIntensity = 0.35;
 uniform vec3 rimLightDir = normalize(vec3(0.0, 500.0, -500.0));
 uniform float rimLightIntensity = 0.2;
 void main() {
+    if (sectionCutRemoved(worldPos)) discard;
     vec3 norm = normalize(normal);
     vec3 ambient = ambientIntensity * vec3(1.0);
     float keyDiff = max(dot(norm, normalize(keyLightDir)), 0.0);
@@ -522,6 +565,10 @@ in vec3 normal;
 in vec3 worldPos;
 layout(location = 0) out vec4 accumColor;
 layout(location = 1) out float revealage;
+uniform vec4 sectionCut;
+bool sectionCutRemoved(vec3 p) {
+    return (sectionCut.x > 0.5 && p.y > sectionCut.y) || (sectionCut.z > 0.5 && p.x > sectionCut.w);
+}
 uniform float ambientIntensity = 0.55;
 uniform vec3 keyLightDir = normalize(vec3(500.0, -500.0, 500.0));
 uniform float keyLightIntensity = 0.45;
@@ -533,6 +580,7 @@ float weight(float alpha, float z) {
     return alpha * max(1e-2, 3e3 * pow(1.0 - z, 3.0));
 }
 void main() {
+    if (sectionCutRemoved(worldPos)) discard;
     vec3 norm = normalize(normal);
     vec3 ambient = ambientIntensity * vec3(1.0);
     float keyDiff = max(dot(norm, normalize(keyLightDir)), 0.0);
@@ -606,17 +654,29 @@ void main() {
 )";
     const char *pick_fragment_shader = R"(
 #version 330 core
+in vec3 worldPos;
 out vec4 FragColor;
 uniform vec4 u_meshId;
+uniform vec4 sectionCut;
+bool sectionCutRemoved(vec3 p) {
+    return (sectionCut.x > 0.5 && p.y > sectionCut.y) || (sectionCut.z > 0.5 && p.x > sectionCut.w);
+}
 void main() {
+    if (sectionCutRemoved(worldPos)) discard;
     FragColor = u_meshId;
 }
 )";
     const char *flat_color_fragment_shader = R"(
 #version 330 core
+in vec3 worldPos;
 out vec4 FragColor;
 uniform vec4 u_color;
+uniform vec4 sectionCut;
+bool sectionCutRemoved(vec3 p) {
+    return (sectionCut.x > 0.5 && p.y > sectionCut.y) || (sectionCut.z > 0.5 && p.x > sectionCut.w);
+}
 void main() {
+    if (sectionCutRemoved(worldPos)) discard;
     FragColor = u_color;
 }
 )";
@@ -641,6 +701,216 @@ void main() {
     );
 }
 )";
+
+    namespace
+    {
+        struct CapVertex
+        {
+            float x, y, z, nx, ny, nz, r, g, b, a;
+        };
+        struct CutKey
+        {
+            long long u, v;
+            bool operator==(const CutKey &o) const { return u == o.u && v == o.v; }
+        };
+        struct CutKeyHash
+        {
+            size_t operator()(const CutKey &k) const
+            {
+                size_t h = std::hash<long long>{}(k.u);
+                h ^= std::hash<long long>{}(k.v) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+        using CutPoint = std::array<double, 2>;
+        double ring_area(const std::vector<CutPoint> &ring)
+        {
+            double area = 0.0;
+            for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++)
+                area += (ring[j][0] - ring[i][0]) * (ring[j][1] + ring[i][1]);
+            return area * 0.5;
+        }
+        bool ring_contains(const std::vector<CutPoint> &ring, const CutPoint &p)
+        {
+            bool inside = false;
+            for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++)
+            {
+                const CutPoint &a = ring[i];
+                const CutPoint &b = ring[j];
+                if ((a[1] > p[1]) != (b[1] > p[1]) &&
+                    p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0])
+                    inside = !inside;
+            }
+            return inside;
+        }
+    }
+    void append_section_cap(const Scene::GLMesh &mesh, int axis, float plane, std::vector<CapVertex> &verts,
+                            std::vector<uint32_t> &tris, std::vector<uint32_t> &lines)
+    {
+        const std::vector<float> &pos = mesh.positions;
+        const std::vector<uint32_t> &idx = mesh.indices;
+        const int ua = axis == 0 ? 1 : 0;
+        const int va = 2;
+        auto coord = [&](uint32_t i, int c)
+        { return (double)pos[(size_t)i * 3 + c]; };
+        auto before = [&](uint32_t a, uint32_t b)
+        {
+            for (int c = 0; c < 3; ++c)
+            {
+                double ca = coord(a, c), cb = coord(b, c);
+                if (ca != cb)
+                    return ca < cb;
+            }
+            return a < b;
+        };
+        struct Segment
+        {
+            CutPoint a, b;
+        };
+        std::vector<Segment> segments;
+        for (size_t t = 0; t + 2 < idx.size(); t += 3)
+        {
+            uint32_t tri[3] = {idx[t], idx[t + 1], idx[t + 2]};
+            double d[3];
+            for (int k = 0; k < 3; ++k)
+            {
+                d[k] = coord(tri[k], axis) - plane;
+                if (d[k] == 0.0)
+                    d[k] = 1e-12;
+            }
+            CutPoint hits[2];
+            int count = 0;
+            for (int k = 0; k < 3 && count < 2; ++k)
+            {
+                int j = (k + 1) % 3;
+                if ((d[k] > 0.0) == (d[j] > 0.0))
+                    continue;
+                uint32_t a = tri[k], b = tri[j];
+                double da = d[k], db = d[j];
+                if (before(b, a))
+                {
+                    std::swap(a, b);
+                    std::swap(da, db);
+                }
+                double s = da / (da - db);
+                hits[count][0] = coord(a, ua) + s * (coord(b, ua) - coord(a, ua));
+                hits[count][1] = coord(a, va) + s * (coord(b, va) - coord(a, va));
+                ++count;
+            }
+            if (count == 2)
+                segments.push_back({hits[0], hits[1]});
+        }
+        if (segments.empty())
+            return;
+        const double quantum = 1.0e4;
+        auto key_of = [&](const CutPoint &p)
+        { return CutKey{std::llround(p[0] * quantum), std::llround(p[1] * quantum)}; };
+        std::unordered_map<CutKey, std::vector<size_t>, CutKeyHash> at;
+        std::vector<char> used(segments.size(), 0);
+        for (size_t s = 0; s < segments.size(); ++s)
+        {
+            CutKey ka = key_of(segments[s].a), kb = key_of(segments[s].b);
+            if (ka == kb)
+            {
+                used[s] = 1;
+                continue;
+            }
+            at[ka].push_back(s);
+            at[kb].push_back(s);
+        }
+        std::vector<std::vector<CutPoint>> loops;
+        for (size_t s = 0; s < segments.size(); ++s)
+        {
+            if (used[s])
+                continue;
+            used[s] = 1;
+            std::vector<CutPoint> loop{segments[s].a, segments[s].b};
+            CutKey start = key_of(segments[s].a);
+            CutKey current = key_of(segments[s].b);
+            bool closed = false;
+            for (size_t guard = 0; guard <= segments.size(); ++guard)
+            {
+                if (current == start)
+                {
+                    closed = true;
+                    break;
+                }
+                auto found = at.find(current);
+                if (found == at.end())
+                    break;
+                size_t next = SIZE_MAX;
+                for (size_t candidate : found->second)
+                    if (!used[candidate])
+                    {
+                        next = candidate;
+                        break;
+                    }
+                if (next == SIZE_MAX)
+                    break;
+                used[next] = 1;
+                const CutPoint &other = key_of(segments[next].a) == current ? segments[next].b : segments[next].a;
+                loop.push_back(other);
+                current = key_of(other);
+            }
+            if (!closed)
+                continue;
+            loop.pop_back();
+            if (loop.size() >= 3 && std::abs(ring_area(loop)) > 1e-9)
+                loops.push_back(std::move(loop));
+        }
+        if (loops.empty())
+            return;
+        const size_t n = loops.size();
+        std::vector<double> areas(n);
+        for (size_t i = 0; i < n; ++i)
+            areas[i] = std::abs(ring_area(loops[i]));
+        std::vector<int> parent(n, -1), depth(n, 0);
+        for (size_t i = 0; i < n; ++i)
+        {
+            for (size_t j = 0; j < n; ++j)
+            {
+                if (i == j || areas[j] <= areas[i] || !ring_contains(loops[j], loops[i][0]))
+                    continue;
+                ++depth[i];
+                if (parent[i] < 0 || areas[j] < areas[(size_t)parent[i]])
+                    parent[i] = (int)j;
+            }
+        }
+        const float normal[3] = {axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, 0.0f};
+        const float shade = 0.86f;
+        for (size_t outer = 0; outer < n; ++outer)
+        {
+            if (depth[outer] % 2 != 0)
+                continue;
+            std::vector<std::vector<CutPoint>> polygon{loops[outer]};
+            for (size_t h = 0; h < n; ++h)
+                if (depth[h] % 2 != 0 && parent[h] == (int)outer)
+                    polygon.push_back(loops[h]);
+            std::vector<uint32_t> local = mapbox::earcut<uint32_t>(polygon);
+            const uint32_t base = (uint32_t)verts.size();
+            for (const auto &ring : polygon)
+            {
+                const uint32_t ring_base = (uint32_t)verts.size();
+                for (const CutPoint &p : ring)
+                {
+                    float xyz[3];
+                    xyz[axis] = plane;
+                    xyz[ua] = (float)p[0];
+                    xyz[va] = (float)p[1];
+                    verts.push_back({xyz[0], xyz[1], xyz[2], normal[0], normal[1], normal[2],
+                                     mesh.color.r * shade, mesh.color.g * shade, mesh.color.b * shade, mesh.color.a});
+                }
+                const uint32_t count = (uint32_t)ring.size();
+                for (uint32_t k = 0; k < count; ++k)
+                {
+                    lines.push_back(ring_base + k);
+                    lines.push_back(ring_base + (k + 1) % count);
+                }
+            }
+            for (uint32_t i : local)
+                tris.push_back(base + i);
+        }
+    }
     class Renderer::Impl
     {
     public:
@@ -674,6 +944,20 @@ void main() {
         bool plan_texture_ready = false;
         bool plan_texture_visible = false;
         float plan_texture_opacity = 1.0f;
+        bool show_edges = false;
+        bool cut_enabled[2] = {false, false};
+        float cut_position[2] = {0.0f, 0.0f};
+        struct CapMesh
+        {
+            GLuint vao = 0, vbo = 0, ebo = 0, line_vao = 0, line_ebo = 0;
+            GLsizei index_count = 0, line_count = 0;
+            bool transparent = false;
+            int mesh_index = -1;
+            Color color;
+        };
+        std::vector<CapMesh> caps;
+        bool caps_dirty = true;
+        uint64_t caps_scene_revision = UINT64_MAX;
         bool pick_initialized = false;
         std::vector<uint8_t> pick_buffer;
         float bg_r = 0.08f, bg_g = 0.08f, bg_b = 0.08f, bg_a = 1.0f;
@@ -726,6 +1010,11 @@ void main() {
         void render_transparent();
         void render_pick_pass();
         void render_wireframe();
+        void render_edges();
+        void clear_caps();
+        void ensure_caps();
+        void draw_caps(bool transparent);
+        void set_section_cut(int axis, bool enabled, float position);
         void composite();
         void setup_quad();
         void resize(int w, int h);
@@ -874,7 +1163,106 @@ void main() {
         glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        GLint cutLoc = glGetUniformLocation(shader, "sectionCut");
+        if (cutLoc >= 0)
+            glUniform4f(cutLoc, cut_enabled[1] ? 1.0f : 0.0f, cut_position[1], cut_enabled[0] ? 1.0f : 0.0f,
+                        cut_position[0]);
     }
+    void Renderer::Impl::clear_caps()
+    {
+        for (auto &cap : caps)
+        {
+            if (cap.vao)
+                glDeleteVertexArrays(1, &cap.vao);
+            if (cap.line_vao)
+                glDeleteVertexArrays(1, &cap.line_vao);
+            if (cap.vbo)
+                glDeleteBuffers(1, &cap.vbo);
+            if (cap.ebo)
+                glDeleteBuffers(1, &cap.ebo);
+            if (cap.line_ebo)
+                glDeleteBuffers(1, &cap.line_ebo);
+        }
+        caps.clear();
+    }
+    void Renderer::Impl::ensure_caps()
+    {
+        if (!caps_dirty && caps_scene_revision == scene->revision())
+            return;
+        clear_caps();
+        caps_dirty = false;
+        caps_scene_revision = scene->revision();
+        if (!cut_enabled[0] && !cut_enabled[1])
+            return;
+        const float inset = 0.01f;
+        for (const auto &mesh : scene->get_meshes())
+        {
+            std::vector<CapVertex> verts;
+            std::vector<uint32_t> tris, lines;
+            for (int axis = 0; axis < 2; ++axis)
+                if (cut_enabled[axis])
+                    append_section_cap(mesh, axis, cut_position[axis] - inset, verts, tris, lines);
+            if (tris.empty())
+                continue;
+            CapMesh cap;
+            cap.mesh_index = mesh.mesh_index;
+            cap.transparent = mesh.transparent;
+            cap.color = mesh.color;
+            cap.index_count = (GLsizei)tris.size();
+            cap.line_count = (GLsizei)lines.size();
+            glGenVertexArrays(1, &cap.vao);
+            glGenBuffers(1, &cap.vbo);
+            glGenBuffers(1, &cap.ebo);
+            glBindVertexArray(cap.vao);
+            glBindBuffer(GL_ARRAY_BUFFER, cap.vbo);
+            glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(CapVertex), verts.data(), GL_STATIC_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cap.ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, tris.size() * sizeof(uint32_t), tris.data(), GL_STATIC_DRAW);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(CapVertex), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(CapVertex), (void *)offsetof(CapVertex, nx));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(CapVertex), (void *)offsetof(CapVertex, r));
+            if (!lines.empty())
+            {
+                glGenVertexArrays(1, &cap.line_vao);
+                glGenBuffers(1, &cap.line_ebo);
+                glBindVertexArray(cap.line_vao);
+                glBindBuffer(GL_ARRAY_BUFFER, cap.vbo);
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(CapVertex), 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cap.line_ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, lines.size() * sizeof(uint32_t), lines.data(), GL_STATIC_DRAW);
+            }
+            glBindVertexArray(0);
+            caps.push_back(cap);
+        }
+    }
+    void Renderer::Impl::draw_caps(bool transparent)
+    {
+        for (const auto &cap : caps)
+        {
+            if (cap.transparent != transparent)
+                continue;
+            glBindVertexArray(cap.vao);
+            glDrawElements(GL_TRIANGLES, cap.index_count, GL_UNSIGNED_INT, 0);
+        }
+        glBindVertexArray(0);
+    }
+    void Renderer::Impl::set_section_cut(int axis, bool enabled, float position)
+    {
+        if (axis < 0 || axis > 1)
+            throw std::invalid_argument("section cut axis must be 0 (x) or 1 (y)");
+        if (!std::isfinite(position))
+            enabled = false;
+        if (cut_enabled[axis] == enabled && (!enabled || cut_position[axis] == position))
+            return;
+        cut_enabled[axis] = enabled;
+        cut_position[axis] = enabled ? position : 0.0f;
+        caps_dirty = true;
+    }
+
     void Renderer::Impl::shutdown()
     {
         if (!initialized)
@@ -884,6 +1272,7 @@ void main() {
             ContextGuard guard(hdc, hglrc);
 #endif
             scene->clear();
+            clear_caps();
             clear_plan_texture();
             if (opaque_shader)
                 glDeleteProgram(opaque_shader);
@@ -1156,6 +1545,17 @@ void main() {
             glBindVertexArray(m.vao);
             glDrawElements(GL_TRIANGLES, (GLsizei)m.index_count, GL_UNSIGNED_INT, 0);
         }
+        for (const auto &cap : caps)
+        {
+            int encoded = cap.mesh_index + 1;
+            float mid[4] = {
+                ((encoded) & 0xFF) / 255.0f,
+                ((encoded >> 8) & 0xFF) / 255.0f,
+                0.0f, 1.0f};
+            glUniform4fv(loc, 1, mid);
+            glBindVertexArray(cap.vao);
+            glDrawElements(GL_TRIANGLES, cap.index_count, GL_UNSIGNED_INT, 0);
+        }
         glBindVertexArray(0);
         pick_buffer.resize((size_t)width * height * 4);
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pick_buffer.data());
@@ -1200,8 +1600,47 @@ void main() {
             glBindVertexArray(m.line_vao);
             glDrawElements(GL_LINES, (GLsizei)m.line_count, GL_UNSIGNED_INT, 0);
         }
+        for (const auto &cap : caps)
+        {
+            if (!scene->is_selected(cap.mesh_index) || !cap.line_vao)
+                continue;
+            glBindVertexArray(cap.line_vao);
+            glDrawElements(GL_LINES, cap.line_count, GL_UNSIGNED_INT, 0);
+        }
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+    }
+    void Renderer::Impl::render_edges()
+    {
+        if (!flat_color_shader_prog)
+            return;
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_BLEND);
+        glUseProgram(flat_color_shader_prog);
+        upload_matrices(flat_color_shader_prog);
+        GLint colorLoc = glGetUniformLocation(flat_color_shader_prog, "u_color");
+        const float edge_scale = 0.45f;
+        for (auto &m : scene->get_meshes())
+        {
+            if (m.line_count == 0 || m.line_vao == 0)
+                continue;
+            float color[4] = {m.color.r * edge_scale, m.color.g * edge_scale, m.color.b * edge_scale, 1.0f};
+            glUniform4fv(colorLoc, 1, color);
+            glBindVertexArray(m.line_vao);
+            glDrawElements(GL_LINES, (GLsizei)m.line_count, GL_UNSIGNED_INT, 0);
+        }
+        for (const auto &cap : caps)
+        {
+            if (!cap.line_vao)
+                continue;
+            float color[4] = {cap.color.r * edge_scale, cap.color.g * edge_scale, cap.color.b * edge_scale, 1.0f};
+            glUniform4fv(colorLoc, 1, color);
+            glBindVertexArray(cap.line_vao);
+            glDrawElements(GL_LINES, cap.line_count, GL_UNSIGNED_INT, 0);
+        }
+        glBindVertexArray(0);
         glDepthMask(GL_TRUE);
     }
     void Renderer::Impl::setup_quad()
@@ -1387,6 +1826,11 @@ void main() {
         render_plan_texture();
         glUseProgram(opaque_shader);
         upload_matrices(opaque_shader);
+        if (show_edges)
+        {
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 1.0f);
+        }
         for (auto &m : scene->get_meshes())
         {
             if (m.transparent)
@@ -1394,7 +1838,13 @@ void main() {
             glBindVertexArray(m.vao);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(m.index_count), GL_UNSIGNED_INT, 0);
         }
+        draw_caps(false);
         glBindVertexArray(0);
+        if (show_edges)
+        {
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            render_edges();
+        }
         if (opaque_ms_fbo != 0)
         {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, opaque_ms_fbo);
@@ -1428,6 +1878,7 @@ void main() {
             glBindVertexArray(m.vao);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(m.index_count), GL_UNSIGNED_INT, 0);
         }
+        draw_caps(true);
         glBindVertexArray(0);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1494,6 +1945,7 @@ void main() {
 #endif
             return;
         }
+        ensure_caps();
         if (scene->empty())
             pick_buffer.clear();
         else
@@ -1521,6 +1973,13 @@ void main() {
                     continue;
                 glBindVertexArray(m.vao);
                 glDrawElements(GL_TRIANGLES, (GLsizei)m.index_count, GL_UNSIGNED_INT, 0);
+            }
+            for (const auto &cap : caps)
+            {
+                if (!scene->is_selected(cap.mesh_index))
+                    continue;
+                glBindVertexArray(cap.vao);
+                glDrawElements(GL_TRIANGLES, cap.index_count, GL_UNSIGNED_INT, 0);
             }
             glBindVertexArray(0);
             glEnable(GL_DEPTH_TEST);
@@ -1650,5 +2109,19 @@ void main() {
     {
         pImpl->set_plan_texture_opacity(opacity);
     }
+    void Renderer::set_edges_visible(bool visible) { pImpl->show_edges = visible; }
+    void Renderer::set_section_cut(int axis, bool enabled, float position)
+    {
+        pImpl->set_section_cut(axis, enabled, position);
+    }
+    bool Renderer::section_cut_enabled(int axis) const
+    {
+        return axis >= 0 && axis <= 1 && pImpl->cut_enabled[axis];
+    }
+    float Renderer::section_cut_position(int axis) const
+    {
+        return (axis >= 0 && axis <= 1) ? pImpl->cut_position[axis] : 0.0f;
+    }
+    bool Renderer::edges_visible() const { return pImpl->show_edges; }
     int Renderer::get_samples() const { return pImpl->samples; }
 }

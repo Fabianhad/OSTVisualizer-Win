@@ -25,6 +25,7 @@ from ..components.conditions_sidebar import ConditionsSidebar
 from ..components.layers_sidebar import BidLayersSidebar
 from ..components.pan_sidebar import PanSidebar
 from ..components.mesh_view import OpenGLViewer
+from ..components.section_cut_controls import SectionCutControls
 from ..components.page_combo import PageComboBox
 from ..components.page_settings_bar import PageSettingsBar
 from ..components.plan_view.view import TakeoffPlanView
@@ -355,6 +356,7 @@ class ComponentBuilder:
         viewer_layout_3d.setSpacing(NO_SPACING)
         canvas = OpenGLViewer(viewer_frame_3d, color_service)
         canvas.setContentsMargins(*NO_MARGINS)
+        viewer_layout_3d.addWidget(SectionCutControls(canvas, viewer_frame_3d))
         viewer_layout_3d.addWidget(canvas)
         viewer_frame_2d = QtWidgets.QFrame()
         viewer_frame_2d.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)

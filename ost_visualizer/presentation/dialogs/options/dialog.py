@@ -160,6 +160,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._display_mode_2d_solid_radio = tab.display_mode_2d_solid_radio
         self._display_mode_2d_original_radio = tab.display_mode_2d_original_radio
         self._grayscale_check = tab.grayscale_check
+        self._edges_check = tab.edges_check
         self._roping_touching_radio = tab.roping_touching_radio
         self._roping_inclusive_radio = tab.roping_inclusive_radio
         self._hotlink_view_radio = tab.hotlink_view_radio
@@ -208,6 +209,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._set_display_mode_radios("2d", self._applied_config.display_mode_2d)
         self._sync_display_modes_when_enabled()
         self._grayscale_check.setChecked(self._applied_config.grayscale_enabled)
+        self._edges_check.setChecked(self._applied_config.show_edges)
         self._roping_inclusive_radio.setChecked(
             self._applied_config.roping_selection_method
             == Config.ROPING_SELECTION_INCLUSIVE
@@ -337,6 +339,7 @@ class OptionsDialog(QtWidgets.QDialog):
             self._display_mode_2d_solid_radio,
             self._display_mode_2d_original_radio,
             self._grayscale_check,
+            self._edges_check,
             self._roping_touching_radio,
             self._roping_inclusive_radio,
             self._hotlink_view_radio,
@@ -434,6 +437,7 @@ class OptionsDialog(QtWidgets.QDialog):
             display_mode_3d=display_mode_3d,
             display_mode_2d=display_mode_2d,
             grayscale_enabled=self._grayscale_check.isChecked(),
+            show_edges=self._edges_check.isChecked(),
             show_toolbar_text=self._toolbar_text_check.isChecked(),
             hidden_takeoff_toolbar_items=self._takeoff_toolbar_tab.hidden_items(),
             roping_selection_method=(

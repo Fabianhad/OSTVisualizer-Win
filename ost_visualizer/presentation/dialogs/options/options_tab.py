@@ -22,6 +22,7 @@ from ...config import (
     OPTIONS_LABEL_DISPLAY_MODE_ORIGINAL,
     OPTIONS_LABEL_DISPLAY_MODE_SOLID,
     OPTIONS_LABEL_DISPLAY_MODE_TRANSPARENT,
+    OPTIONS_LABEL_EDGES,
     OPTIONS_LABEL_FULL_WINDOW_CROSSHAIRS,
     OPTIONS_LABEL_GRAYSCALE,
     OPTIONS_LABEL_HOTLINK_ANNOTATION,
@@ -47,6 +48,7 @@ from ...config import (
     OPTIONS_MOUSE_SNAP_ANGLE_VALUES,
     OPTIONS_SNAP_THRESHOLD_MAX,
     OPTIONS_SNAP_THRESHOLD_MIN,
+    OPTIONS_TOOLTIP_EDGES,
     RELAXED_SPACING,
 )
 from .components import disabled_check
@@ -144,6 +146,9 @@ class OptionsTab(QtWidgets.QWidget):
         )
         self.grayscale_check = QtWidgets.QCheckBox(OPTIONS_LABEL_GRAYSCALE)
         left_column.addWidget(self.grayscale_check)
+        self.edges_check = QtWidgets.QCheckBox(OPTIONS_LABEL_EDGES)
+        self.edges_check.setToolTip(OPTIONS_TOOLTIP_EDGES)
+        left_column.addWidget(self.edges_check)
         self.roping_touching_radio = QtWidgets.QRadioButton(
             OPTIONS_LABEL_ROPING_TOUCHING
         )

@@ -421,6 +421,40 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertFalse(page["flip_x"])
         self.assertFalse(page["flip_y"])
 
+    def test_html_export_passes_the_bid_notes_as_a_single_line_subtitle(self):
+        strategy = _ExportStrategy("html")
+        project_data = _ProjectData()
+        project_data.bid = Bid(
+            uid="bid",
+            name="26-063 41 Maryland Ave Apartments, MD",
+            notes="11-6-26 Bid 08-07-2026\r\n35% DD   Deleted Prior Takeoff (Submission)\n",
+        )
+        service = ExportService(
+            _Provider(strategy),
+            project_data,
+            PageVisualizationMetadataService(project_data),
+        )
+        result = service.export(
+            Config(), ExportRequestDto(["page-1"], "html", "out.html")
+        )
+        self.assertTrue(result.success)
+        export_options = strategy.calls[0][3]
+        self.assertEqual(
+            export_options["subtitle"],
+            "11-6-26 Bid 08-07-2026 35% DD Deleted Prior Takeoff (Submission)",
+        )
+
+    def test_html_export_subtitle_is_empty_without_bid_notes(self):
+        strategy = _ExportStrategy("html")
+        project_data = _ProjectData()
+        service = ExportService(
+            _Provider(strategy),
+            project_data,
+            PageVisualizationMetadataService(project_data),
+        )
+        service.export(Config(), ExportRequestDto(["page-1"], "html", "out.html"))
+        self.assertEqual(strategy.calls[0][3]["subtitle"], "")
+
     def test_html_export_passes_all_pages_and_resolves_active_page(self):
         strategy = _ExportStrategy("html")
         project_data = _ProjectData()

@@ -110,6 +110,7 @@ class ExportService:
                 export_options.update(
                     {
                         "title": title or "3D View",
+                        "subtitle": _single_line(bid.notes if bid else ""),
                         "layers": layers,
                         "areas": areas,
                         "pages": pages,
@@ -150,3 +151,7 @@ class ExportService:
         return self.project_data.collect_takeoffs_for_pages(
             page_uids, visible_only=strategy.extension != HTML_EXTENSION
         )
+
+
+def _single_line(text: str) -> str:
+    return " ".join(str(text or "").split())

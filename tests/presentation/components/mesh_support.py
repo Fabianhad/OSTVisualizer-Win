@@ -132,6 +132,14 @@ class FakeMeshRenderer:
         self.clear_plan_texture_calls = 0
         self.resize_calls = []
         self.clear_frame_calls = 0
+        self.edges_visible_calls = []
+        self.section_cut_calls = []
+
+    def set_edges_visible(self, visible):
+        self.edges_visible_calls.append(visible)
+
+    def set_section_cut(self, axis, enabled, position):
+        self.section_cut_calls.append((axis, enabled, position))
 
     def suspend(self):
         self.suspend_calls += 1

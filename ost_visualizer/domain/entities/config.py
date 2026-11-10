@@ -56,6 +56,7 @@ class Config:
     display_mode_3d: str = DEFAULT_DISPLAY_MODE
     display_mode_2d: str = DEFAULT_DISPLAY_MODE
     grayscale_enabled: bool = False
+    show_edges: bool = False
     roping_selection_method: str = DEFAULT_ROPING_SELECTION_METHOD
     display_page_index_with_sheet_name: bool = False
     display_sheet_number_with_sheet_name: bool = False
@@ -134,6 +135,7 @@ class Config:
             "disable_high_resolution_images": self.disable_high_resolution_images,
             "enable_intelligent_paste": self.enable_intelligent_paste,
             "enable_advanced_mouse_controls": self.enable_advanced_mouse_controls,
+            "show_edges": self.show_edges,
             "default_auto_zoom_level": self.default_auto_zoom_level,
             "use_full_window_crosshairs": self.use_full_window_crosshairs,
             "crosshair_color": self.crosshair_color,
@@ -238,6 +240,8 @@ class Config:
             config.enable_advanced_mouse_controls = _config_bool(
                 data, "enable_advanced_mouse_controls"
             )
+        if "show_edges" in data:
+            config.show_edges = _config_bool(data, "show_edges")
         if "default_auto_zoom_level" in data:
             config.default_auto_zoom_level = int(data["default_auto_zoom_level"])
         if "use_full_window_crosshairs" in data:
